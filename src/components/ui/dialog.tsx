@@ -33,14 +33,16 @@ type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.
    * changing the shared dialog treatment used elsewhere in the product.
    */
   overlayClassName?: string
+  /** Inline shell offsets for a dialog whose portal must respect application chrome. */
+  overlayStyle?: React.CSSProperties
 }
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, overlayClassName, ...props }, ref) => (
+>(({ className, children, overlayClassName, overlayStyle, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay className={overlayClassName} />
+    <DialogOverlay className={overlayClassName} style={overlayStyle} />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
