@@ -137,6 +137,13 @@ export function PropertyComparisonModal({
   const { addNotification } = useNotifications();
   const { user } = useAuth();
 
+  useEffect(() => {
+    if (!isOpen) return;
+
+    document.body.classList.add('comparison-analysis-dialog-open');
+    return () => document.body.classList.remove('comparison-analysis-dialog-open');
+  }, [isOpen]);
+
   // Load templates from database on mount
   useEffect(() => {
     loadTemplates();
@@ -590,8 +597,11 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
         onClose();
       }
     }}>
-      <DialogContent className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 !p-0 sm:h-auto sm:max-h-[90vh] sm:w-[96vw] sm:max-w-[1440px] sm:rounded-xl sm:border lg:w-[90vw] xl:w-[80vw] 2xl:w-[min(75vw,1440px)]">
-        <DialogHeader className="shrink-0 border-b bg-background px-4 py-4 pr-14 text-left sm:px-6 sm:py-5 sm:pr-16">
+      <DialogContent
+        overlayClassName="comparison-analysis-dialog-overlay"
+        className="comparison-analysis-dialog flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 !p-0 sm:h-auto sm:max-h-[90vh] sm:w-[96vw] sm:max-w-[1440px] sm:rounded-xl sm:border lg:w-[90vw] xl:w-[80vw] 2xl:w-[min(75vw,1440px)]"
+      >
+        <DialogHeader className="comparison-analysis-dialog-header shrink-0 border-b bg-background px-4 py-4 pr-14 text-left sm:px-6 sm:py-5 sm:pr-16">
           <DialogTitle className="flex flex-wrap items-center gap-2 text-base sm:text-lg">
             <TrendingUp className="h-5 w-5" />
             Multi-Property Comparison Analysis
@@ -602,7 +612,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+        <div className="comparison-analysis-dialog-body min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
           <div className="flex min-h-full flex-col">{!hasStarted && !analysis && (
             <div className="flex-1 p-4 sm:p-6">
               <div className="mx-auto w-full max-w-[1320px] space-y-5">
@@ -1679,7 +1689,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
           </div>
         </div>
         {!hasStarted && !analysis && (
-          <div className="shrink-0 border-t bg-background px-4 py-3 sm:px-6">
+          <div className="comparison-analysis-dialog-footer shrink-0 border-t bg-background px-4 py-3 sm:px-6">
             <div className="mx-auto flex w-full max-w-[1320px] flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="ghost" onClick={onClose} className="sm:w-auto">Cancel</Button>
               <Button

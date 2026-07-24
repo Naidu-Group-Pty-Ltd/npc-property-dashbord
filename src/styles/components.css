@@ -2899,6 +2899,107 @@
 
 
 @layer utilities {
+  /* Scoped to the Generated Reports comparison workspace. The shared Radix
+     dialog primitive remains unchanged for every other modal. */
+  .comparison-analysis-dialog-overlay {
+    z-index: 70 !important;
+    background: hsl(0 0% 5% / 0.48) !important;
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    transition-duration: 180ms;
+  }
+
+  .dark .comparison-analysis-dialog-overlay {
+    background: hsl(0 0% 0% / 0.74) !important;
+  }
+
+  .comparison-analysis-dialog {
+    z-index: 70 !important;
+    border-color: hsl(var(--primary) / 0.4) !important;
+    background-color: hsl(var(--background)) !important;
+    box-shadow:
+      0 28px 72px hsl(0 0% 0% / 0.34),
+      0 0 0 1px hsl(var(--primary) / 0.12),
+      0 0 32px hsl(var(--primary) / 0.08),
+      inset 0 1px 0 hsl(var(--primary-foreground) / 0.18);
+    transition-duration: 200ms;
+  }
+
+  .dark .comparison-analysis-dialog {
+    background-color: hsl(var(--background)) !important;
+    box-shadow:
+      0 28px 90px hsl(0 0% 0% / 0.64),
+      0 0 0 1px hsl(var(--primary) / 0.14),
+      0 0 36px hsl(var(--primary) / 0.1),
+      inset 0 1px 0 hsl(var(--primary-foreground) / 0.06);
+  }
+
+  .comparison-analysis-dialog-header,
+  .comparison-analysis-dialog-footer {
+    position: relative;
+    z-index: 10;
+    background-color: hsl(var(--background)) !important;
+  }
+
+  .comparison-analysis-dialog-header {
+    border-bottom-color: hsl(var(--border-strong) / 0.78) !important;
+    box-shadow: inset 0 -1px 0 hsl(var(--primary) / 0.08);
+  }
+
+  .comparison-analysis-dialog-footer {
+    border-top-color: hsl(var(--border-strong) / 0.78) !important;
+    box-shadow: 0 -10px 24px hsl(0 0% 0% / 0.06);
+  }
+
+  .comparison-analysis-dialog-body {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.48) hsl(var(--muted) / 0.54);
+  }
+
+  .comparison-analysis-dialog-body::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .comparison-analysis-dialog-body::-webkit-scrollbar-track {
+    background: hsl(var(--muted) / 0.54);
+  }
+
+  .comparison-analysis-dialog-body::-webkit-scrollbar-thumb {
+    border: 2px solid hsl(var(--muted) / 0.54);
+    border-radius: 999px;
+    background: hsl(var(--primary) / 0.48);
+  }
+
+  .comparison-analysis-dialog-body::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.66);
+  }
+
+  .dark .comparison-analysis-dialog-body {
+    scrollbar-color: hsl(var(--primary) / 0.52) hsl(0 0% 9%);
+  }
+
+  .dark .comparison-analysis-dialog-body::-webkit-scrollbar-track {
+    background: hsl(0 0% 9%);
+  }
+
+  .dark .comparison-analysis-dialog-body::-webkit-scrollbar-thumb {
+    border-color: hsl(0 0% 9%);
+    background: hsl(var(--primary) / 0.52);
+  }
+
+  /* Radix Select portals its menu to document.body. Keep menus opened from
+     this active workspace above its elevated backdrop and content layer. */
+  body.comparison-analysis-dialog-open .luxury-select-content {
+    z-index: 80 !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .comparison-analysis-dialog-overlay,
+    .comparison-analysis-dialog {
+      transition-duration: 1ms;
+    }
+  }
+
   .client-tracker-kanban-scroll {
     scrollbar-width: thin;
     scrollbar-color: hsl(var(--primary) / 0.42) hsl(var(--background) / 0.36);
