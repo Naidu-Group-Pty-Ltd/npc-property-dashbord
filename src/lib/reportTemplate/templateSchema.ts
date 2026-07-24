@@ -643,6 +643,28 @@ export const PageSchema = z.object({
       }).optional(),
       complete: z.boolean().optional(),
       problems: z.array(z.string()).optional(),
+      // E7: compact, additive projection of the resolved E6 render plan so the
+      // FINAL renderer + quality capture consume the SAME composition (suppress
+      // overlays, paint final crops, exclude editor references, stamp the plan
+      // hash). Carries only durable paths — never a signed URL.
+      renderPlan: z.object({
+        renderPlanVersion: z.string(),
+        renderPlanHash: z.string(),
+        pageOutputStrategy: z.enum(['native', 'raster-only']),
+        renderFullPageRaster: z.boolean(),
+        renderNativeOverlayIds: z.array(z.string()),
+        suppressedOverlayIds: z.array(z.string()),
+        suppressedRegionIds: z.array(z.string()),
+        hiddenSemanticRegionIds: z.array(z.string()),
+        finalRegionCrops: z.array(z.object({
+          regionId: z.string(),
+          bbox: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
+          artifactPath: z.string(),
+          assetId: z.string().nullable(),
+          sha256: z.string().nullable(),
+          cropRole: z.literal('final-output'),
+        })),
+      }).optional(),
     }).optional(),
   }).passthrough().optional(),
 });
