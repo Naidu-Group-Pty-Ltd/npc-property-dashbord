@@ -33,6 +33,10 @@ const aliases: Record<string, ReportVariant> = {
 
 export const REPORT_VARIANT_LABELS: Record<ReportVariant, string> = Object.fromEntries(REPORT_VARIANT_ORDER.map(type => [type, REPORT_TYPE_CONFIG[type].label])) as Record<ReportVariant, string>;
 export function normalizeReportType(value: unknown): ReportVariant | undefined { if (typeof value !== 'string') return undefined; return aliases[value.trim().toLowerCase().replace(/[\s-]+/g, '_')]; }
+/** Comparison identity comes from persisted `report_tier`, never a display title. */
+export function normalizeComparableReportType(report?: Pick<ReportVariantSource, 'report_tier'> | string | null): ReportVariant | undefined {
+  return normalizeReportType(typeof report === 'string' ? report : report?.report_tier);
+}
 export function isClientReportVariant(value: unknown): value is ClientReportVariant { return typeof value === 'string' && (CLIENT_REPORT_VARIANTS as readonly string[]).includes(value); }
 function metadataCandidates(value: unknown): unknown[] { if (!value || typeof value !== 'object' || Array.isArray(value)) return []; const metadata = value as Record<string, unknown>; return [metadata.report_variant, metadata.report_subtype, metadata.variant, metadata.reportType, metadata.reportSubtype, metadata.tier, metadata.report_type, metadata.report_tier, metadata.report_code, metadata.template_type, metadata.template_id, metadata.generation_mode]; }
 function findSpecific(candidates: unknown[]): ReportVariant | undefined { for (const candidate of candidates) { const variant = normalizeReportType(candidate); if (variant && variant !== 'compass') return variant; } return undefined; }

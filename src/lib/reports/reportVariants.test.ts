@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CLIENT_REPORT_VARIANTS, REPORT_TYPE_CONFIG, REPORT_VARIANT_ORDER, getCanonicalReportType, getReportVariantLabel, isClientReportVariant, normalizeReportType, resolveInvestmentReportType } from './reportVariants';
+import { CLIENT_REPORT_VARIANTS, REPORT_TYPE_CONFIG, REPORT_VARIANT_ORDER, getCanonicalReportType, getReportVariantLabel, isClientReportVariant, normalizeComparableReportType, normalizeReportType, resolveInvestmentReportType } from './reportVariants';
 import { buildGeneratedReportGroups } from './generatedReportGroups';
 
 describe('canonical report type system', () => {
@@ -9,6 +9,12 @@ describe('canonical report type system', () => {
   });
   it.each([['FIN', 'financial'], ['finance', 'financial'], ['PLDD', 'strategic'], ['brief', 'briefing'], ['snap', 'snapshot'], ['full', 'compass']])('normalizes %s to %s', (input, expected) => expect(normalizeReportType(input)).toBe(expected));
   it('safely treats an unrecognized report identifier as Other', () => expect(getCanonicalReportType('legacy-unknown')).toBe('other'));
+  it('uses only persisted report_tier for comparison compatibility', () => {
+    expect(normalizeComparableReportType({ report_tier: 'financial_report' })).toBe('financial');
+    expect(normalizeComparableReportType({ report_tier: 'strategy' })).toBe('strategic');
+    expect(normalizeComparableReportType({ report_tier: 'unsupported' })).toBeUndefined();
+    expect(normalizeComparableReportType({})).toBeUndefined();
+  });
 
   it('prefers an explicit specific tier over a legacy Compass engine', () => {
     expect(resolveInvestmentReportType({ report_variant: 'composite', report_tier: 'SNAP' })).toBe('snapshot');

@@ -8,6 +8,24 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+type ComparableReportType = 'compass' | 'financial' | 'strategic' | 'snapshot' | 'briefing';
+const comparableReportTypes = new Set<ComparableReportType>(['compass', 'financial', 'strategic', 'snapshot', 'briefing']);
+
+// `report_tier` is the persisted canonical field. Do not infer comparison type
+// from titles or presentation metadata in a request supplied by the browser.
+const normalizeComparableReportType = (report: { report_tier?: unknown }): ComparableReportType | null => {
+  const tier = typeof report.report_tier === 'string' ? report.report_tier.trim().toLowerCase().replace(/[\s-]+/g, '_') : '';
+  const aliases: Record<string, ComparableReportType> = {
+    compass: 'compass', composite: 'compass', investment: 'compass', investment_report: 'compass', full: 'compass',
+    financial: 'financial', fin: 'financial', financial_report: 'financial',
+    strategic: 'strategic', strategy: 'strategic', pldd: 'strategic', property_level_due_diligence: 'strategic', due_diligence: 'strategic',
+    snapshot: 'snapshot', snap: 'snapshot', snp: 'snapshot', overview: 'snapshot', quick_snapshot: 'snapshot',
+    briefing: 'briefing', brief: 'briefing', brf: 'briefing', client_briefing: 'briefing',
+  };
+  const normalized = aliases[tier];
+  return normalized && comparableReportTypes.has(normalized) ? normalized : null;
+};
+
 const __compareInvestmentReportsHandler = async (req: Request): Promise<Response> => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -52,6 +70,9 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    if (new Set(reportIds).size !== reportIds.length || reportIds.some((id) => typeof id !== 'string' || !id.trim())) {
+      return new Response(JSON.stringify({ error: 'Each selected report must be unique and valid' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     // Fetch all investment reports
     const { data: reports, error: fetchError } = await supabase
@@ -73,6 +94,15 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
         { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    if (reports.some((report) => report.is_archived || report.status !== 'completed')) {
+      return new Response(JSON.stringify({ error: 'Selected reports must be active and completed' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const reportTypes = new Set(reports.map(normalizeComparableReportType));
+    if (reportTypes.size !== 1 || reportTypes.has(null)) {
+      return new Response(JSON.stringify({ error: 'Selected reports must all be the same report type.' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const comparisonType = [...reportTypes][0] as ComparableReportType;
 
     console.log(`Comparing ${reports.length} properties...`);
 
@@ -578,6 +608,7 @@ Format your response as valid JSON with this structure:
         property_addresses: propertyAddresses,
         property_states: propertyStates,
         report_title: reportTitle,
+        comparison_type: comparisonType,
         structure_version: 1,
         executive_summary: analysis.executiveSummary,
         rankings: analysis.rankings,
@@ -622,10 +653,7 @@ Format your response as valid JSON with this structure:
   } catch (error) {
     console.error('Comparison error:', error);
     return new Response(
-      JSON.stringify({ 
-        error: error instanceof Error ? error.message : 'Unknown error occurred',
-        details: error instanceof Error ? error.stack : undefined
-      }),
+      JSON.stringify({ error: 'Unable to generate comparison. Please try again.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

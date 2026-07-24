@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { useComparison } from '@/contexts/ComparisonContext';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { REPORT_TYPE_CONFIG } from '@/lib/reports/reportVariants';
 
 interface ComparisonBasketProps {
   onCompare: () => void;
@@ -16,7 +17,7 @@ interface ComparisonBasketProps {
 const MAX_COMPARISON_REPORTS = 5;
 
 export function ComparisonBasket({ onCompare }: ComparisonBasketProps) {
-  const { selectedReports, removeReport, clearSelection } = useComparison();
+  const { selectedReports, removeReport, clearSelection, activeComparisonType } = useComparison();
   const [isExpanded, setIsExpanded] = useState(false);
   const isMobile = useIsMobile();
 
@@ -25,6 +26,7 @@ export function ComparisonBasket({ onCompare }: ComparisonBasketProps) {
   }
 
   const canCompare = selectedReports.length >= 2;
+  const typeLabel = activeComparisonType ? REPORT_TYPE_CONFIG[activeComparisonType].label : 'Report';
   const progressPercent = (selectedReports.length / MAX_COMPARISON_REPORTS) * 100;
 
   const handleClearAll = () => {
@@ -49,8 +51,8 @@ export function ComparisonBasket({ onCompare }: ComparisonBasketProps) {
                       <BarChart3 className="h-5 w-5" />
                     </div>
                     <div className="min-w-0">
-                      <div className="comparison-basket-title text-sm font-semibold text-foreground transition-colors">Compare Properties</div>
-                      <div className="text-xs text-muted-foreground">{selectedReports.length} of {MAX_COMPARISON_REPORTS} selected</div>
+                      <div className="comparison-basket-title text-sm font-semibold text-foreground transition-colors">Compare {typeLabel} Reports</div>
+                      <div className="text-xs text-muted-foreground">{selectedReports.length} of {MAX_COMPARISON_REPORTS} {typeLabel.toLowerCase()} reports selected</div>
                     </div>
                   </div>
                 </button>
@@ -99,11 +101,11 @@ export function ComparisonBasket({ onCompare }: ComparisonBasketProps) {
               </div>
               <div className="min-w-[12rem]">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="comparison-basket-title text-sm font-semibold text-foreground transition-colors">Compare Properties</span>
+                  <span className="comparison-basket-title text-sm font-semibold text-foreground transition-colors">Compare {typeLabel} Reports</span>
                   <Badge variant="secondary" className="comparison-basket-count rounded-full border-primary/45 bg-primary/18 text-foreground shadow-sm shadow-primary/15 transition-colors">{selectedReports.length}/{MAX_COMPARISON_REPORTS}</Badge>
                 </div>
                 <div className="mt-1 text-xs text-muted-foreground">
-                  {canCompare ? 'Ready to compare' : 'Select one more to compare'}
+                  {canCompare ? 'Ready to compare' : `Select one more ${typeLabel} report to compare`}
                 </div>
                 <ProgressBar value={progressPercent} className="comparison-basket-progress mt-2" />
               </div>
@@ -118,9 +120,9 @@ export function ComparisonBasket({ onCompare }: ComparisonBasketProps) {
               <div>
                 <CardTitle className="flex items-center gap-2 text-lg">
                   <BarChart3 className="h-5 w-5 text-brand-600" />
-                  Comparison Tray
+                  Compare {typeLabel} Reports
                 </CardTitle>
-                <CardDescription>{selectedReports.length} of {MAX_COMPARISON_REPORTS} properties selected</CardDescription>
+                <CardDescription>{selectedReports.length} of {MAX_COMPARISON_REPORTS} {typeLabel.toLowerCase()} reports selected</CardDescription>
               </div>
               <Button variant="ghost" size="icon" onClick={() => setIsExpanded(false)} className="rounded-full">
                 <X className="h-4 w-4" />
