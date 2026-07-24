@@ -48,15 +48,15 @@ Deno.serve(async (req) => {
 
     const roles = (roleRows ?? [])
       .map((row: any) => String(row.role ?? ""))
-      .filter((role) => AML_ROLES.has(role));
-    const uniqueRoles = [...new Set(roles)];
+      .filter((role: string) => AML_ROLES.has(role));
+    const uniqueRoles: string[] = [...new Set(roles)];
     const flagEnabled = Boolean((flag?.value as { enabled?: boolean } | null | undefined)?.enabled);
 
     return json({
       flagEnabled,
       roles: uniqueRoles,
       hasAnyRole: uniqueRoles.length > 0,
-      canWrite: uniqueRoles.some((role) => ["analyst", "reviewer", "mlro"].includes(role)),
+      canWrite: uniqueRoles.some((role: string) => ["analyst", "reviewer", "mlro"].includes(role)),
       isMlro: uniqueRoles.includes("mlro"),
       userId: auth.userId,
     });
