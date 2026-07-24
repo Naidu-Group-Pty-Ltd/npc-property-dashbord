@@ -796,6 +796,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                           </div>
                         )}
                       </div>
+                      </div>
                     </CollapsibleContent>
                   </Collapsible>
                   
