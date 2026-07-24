@@ -50,6 +50,8 @@ import {
   Square,
   Download,
   AlertCircle,
+  Share2,
+  Users,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -94,6 +96,7 @@ import { Citations, type DocumentCitation } from '@/components/report-qa/Citatio
 import { ReportSnippetViewer } from '@/components/report-qa/ReportSnippetViewer';
 import { BranchedFromIndicator } from '@/components/report-qa/BranchedFromIndicator';
 import { PinnedAnswersStrip } from '@/components/report-qa/PinnedAnswersStrip';
+import { ShareConversationDialog } from '@/components/report-qa/ShareConversationDialog';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 
 interface UploadProgress {
@@ -252,6 +255,7 @@ interface SavedConversation {
   shared_by?: string;
   permission?: string;
   handoff_note?: string;
+  legacy?: boolean;
   branched_from_conversation_id?: string | null;
   branched_from_message_id?: string | null;
 }
@@ -300,6 +304,7 @@ export default function ReportQA() {
   const [titleSaveError, setTitleSaveError] = useState<string | null>(null);
   const historyButtonRef = useRef<HTMLButtonElement | null>(null);
   const historyListRef = useRef<HTMLDivElement | null>(null);
+  const [shareDialogConversation, setShareDialogConversation] = useState<{ id: string; title: string } | null>(null);
 
   const setActiveConversationId = useCallback((nextConversationId: string | null) => {
     conversationIdRef.current = nextConversationId;
@@ -551,8 +556,11 @@ export default function ReportQA() {
 
       const ownConversations = (data?.conversations || []).map((c: any) => ({ ...c, shared: false }));
       const sharedConversations = (data?.shared_conversations || []).map((c: any) => ({ ...c, shared: true }));
-      const allConversations = [...ownConversations, ...sharedConversations];
-      console.log('[ReportQA] Loaded conversations:', allConversations.length, `(${sharedConversations.length} shared)`);
+      // Legacy conversations predate ownership tracking; superadmins receive
+      // them from the backend so pre-migration history stays reachable.
+      const legacyConversations = (data?.legacy_conversations || []).map((c: any) => ({ ...c, shared: false, legacy: true }));
+      const allConversations = [...ownConversations, ...sharedConversations, ...legacyConversations];
+      console.log('[ReportQA] Loaded conversations:', allConversations.length, `(${sharedConversations.length} shared, ${legacyConversations.length} legacy)`);
       setSavedConversations(allConversations);
     } catch (error) {
       console.error('[ReportQA] Failed to load conversations:', error);
@@ -1709,6 +1717,7 @@ export default function ReportQA() {
                   const base64 = (reader.result as string).split(',')[1];
                   const { data } = await invokeSecureFunction('report-qa', {
                     action: 'transcribe', audio: base64,
+                    ...(conversationIdRef.current ? { conversationId: conversationIdRef.current } : {}),
                   });
                   if (data?.success && data?.text) {
                     setLiveTranscript(data.text);
@@ -1844,9 +1853,23 @@ export default function ReportQA() {
       reader.readAsDataURL(audioBlob);
       const base64Audio = await base64Promise;
 
+      // Ensure a conversation exists and send its id with the request.
+      // Deployed backends that scope 'transcribe' to a conversation reject
+      // requests without one (surfacing as "Transcription failed" in a new
+      // chat); newer backends simply ignore the extra field.
+      let transcribeConversationId = conversationIdRef.current;
+      if (!transcribeConversationId) {
+        try {
+          transcribeConversationId = await startNewConversation();
+        } catch (convErr) {
+          console.warn('[ReportQA] Could not pre-create conversation for transcription:', convErr);
+        }
+      }
+
       const { data, error } = await invokeSecureFunction('report-qa', {
         action: 'transcribe',
         audio: base64Audio,
+        ...(transcribeConversationId ? { conversationId: transcribeConversationId } : {}),
       });
 
       if (error) throw error;
@@ -1864,13 +1887,16 @@ export default function ReportQA() {
       } else {
         throw new Error('No transcription result');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Transcription error:', error);
       // Clear pending audio on error
       setPendingAudioUrl(null);
+      const detail = error?.message && error.message !== 'Not found'
+        ? error.message
+        : 'Could not convert voice to text. Please try again.';
       toast({
         title: 'Transcription failed',
-        description: 'Could not convert voice to text',
+        description: detail,
         variant: 'destructive',
       });
     } finally {
@@ -3396,10 +3422,21 @@ export default function ReportQA() {
                                     <p className="truncate text-sm font-semibold leading-5 text-foreground sm:text-base" title={conv.title}>{conv.title}</p>
                                     {restoringConversationId === conv.id && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" aria-label="Loading conversation" />}
                                   </div>
-                                  <div className="flex items-center gap-2 mt-1">
+                                  <div className="flex flex-wrap items-center gap-2 mt-1">
                                     <Badge variant="secondary" className="h-5 rounded-full px-2 text-[10px] font-semibold">
                                       {conv.report_names.length} report{conv.report_names.length !== 1 ? 's' : ''}
                                     </Badge>
+                                    {conv.shared && (
+                                      <Badge variant="outline" className="h-5 rounded-full border-primary/30 px-2 text-[10px] font-semibold text-primary">
+                                        <Users className="mr-1 h-2.5 w-2.5" />
+                                        {conv.shared_by ? `Shared by ${conv.shared_by}` : 'Shared'}
+                                      </Badge>
+                                    )}
+                                    {conv.legacy && (
+                                      <Badge variant="outline" className="h-5 rounded-full px-2 text-[10px] font-semibold text-muted-foreground">
+                                        Legacy
+                                      </Badge>
+                                    )}
                                     <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                                       <Clock className="h-2.5 w-2.5" />
                                       {new Date(conv.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -3451,6 +3488,15 @@ export default function ReportQA() {
                                         <Pin className="h-3.5 w-3.5 mr-2" />
                                         {pinnedIds.includes(conv.id) ? 'Unpin' : 'Pin'}
                                       </DropdownMenuItem>
+                                      {!conv.shared && (
+                                        <DropdownMenuItem onClick={(e) => {
+                                          e.stopPropagation();
+                                          setShareDialogConversation({ id: conv.id, title: conv.title });
+                                        }}>
+                                          <Share2 className="h-3.5 w-3.5 mr-2" />
+                                          Share with team
+                                        </DropdownMenuItem>
+                                      )}
                                       <DropdownMenuSeparator />
                                       <DropdownMenuItem
                                         className="text-destructive focus:text-destructive"
@@ -3506,6 +3552,15 @@ export default function ReportQA() {
             </div>
         </DialogContent>
       </Dialog>
+
+      {/* Share conversation with teammates */}
+      <ShareConversationDialog
+        conversationId={shareDialogConversation?.id ?? null}
+        conversationTitle={shareDialogConversation?.title}
+        open={!!shareDialogConversation}
+        onOpenChange={(open) => { if (!open) setShareDialogConversation(null); }}
+        onShared={loadSavedConversations}
+      />
 
       {/* Email Dialog */}
       <Dialog open={showEmailModal} onOpenChange={(open) => {
