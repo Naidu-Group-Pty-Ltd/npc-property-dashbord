@@ -157,7 +157,7 @@ function renderVariantMarkdown(
 async function loadComposite(supabase: any, id: string) {
   const { data, error } = await supabase
     .from('investment_reports')
-    .select('id, property_address, property_listing_id, client_property_id, generated_by, report_content, financial_calculations, demographics_data, economic_data, location_intelligence, property_specs, manual_overrides, status, report_variant, report_tier, sources_content')
+    .select('id, property_address, property_listing_id, client_property_id, canonical_property_key, generated_by, report_content, financial_calculations, demographics_data, economic_data, location_intelligence, property_specs, manual_overrides, status, report_variant, report_tier, sources_content')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Failed to load composite: ${error.message}`);
@@ -235,6 +235,7 @@ async function upsertFork(
       property_address: parent.property_address,
       property_listing_id: parent.property_listing_id,
       client_property_id: parent.client_property_id,
+      canonical_property_key: parent.canonical_property_key,
       generated_by: parent.generated_by,
       report_variant: persistedVariant,
       derived_from_report_id: parent.id,

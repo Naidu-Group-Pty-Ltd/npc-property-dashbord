@@ -25,6 +25,8 @@ export interface InvestmentReport {
   id: string;
   property_address: string;
   property_listing_id: string | null;
+  /** Server-resolved identity used to keep all report variants on one property package. */
+  canonical_property_key?: string | null;
   report_content?: string;
   sources_content?: string | null;
   created_at: string;

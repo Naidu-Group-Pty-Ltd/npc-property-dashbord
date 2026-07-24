@@ -449,6 +449,8 @@ Deno.serve(async (req) => {
         .insert({
         property_address: parentReport.property_address,
         property_listing_id: parentReport.property_listing_id,
+        client_property_id: parentReport.client_property_id,
+        canonical_property_key: parentReport.canonical_property_key,
         report_content: `Generating ${TIER_CONFIG[targetTier].name}...`,
         status: 'pending',
         report_tier: targetTier,

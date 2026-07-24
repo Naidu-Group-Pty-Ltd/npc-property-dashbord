@@ -52,4 +52,20 @@ export function getCanonicalReportType(report?: ReportVariantSource | string | n
 /** Compatibility helper for legacy callers that treat missing type as Compass. */
 export function normalizeReportVariant(report?: ReportVariantSource | string | null): ReportVariant { return resolveInvestmentReportType(report) || 'compass'; }
 export function getReportVariantLabel(report?: ReportVariantSource | string | null): string { return REPORT_TYPE_CONFIG[getCanonicalReportType(report)].label; }
-export function getReportPackageKey(report: { property_listing_id?: string | null; derived_from_report_id?: string | null; property_address: string }): string { return report.property_listing_id || report.derived_from_report_id || `address:${report.property_address.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()}`; }
+/**
+ * Uses the identity resolved and persisted by the database. Lineage deliberately
+ * never forms a package key: it describes how a report was created, not the
+ * physical property it belongs to. The address branch is a compatibility
+ * fallback for rows returned by an older API during a rolling deployment.
+ */
+export function getReportPackageKey(report: {
+  canonical_property_key?: string | null;
+  property_listing_id?: string | null;
+  client_property_id?: string | null;
+  property_address: string;
+}): string {
+  if (report.canonical_property_key?.trim()) return report.canonical_property_key.trim();
+  if (report.property_listing_id?.trim()) return `listing:${report.property_listing_id.trim()}`;
+  if (report.client_property_id?.trim()) return `client:${report.client_property_id.trim()}`;
+  return `address:${report.property_address.toLowerCase().trim().replace(/[^a-z0-9]+/g, ' ').trim()}`;
+}
