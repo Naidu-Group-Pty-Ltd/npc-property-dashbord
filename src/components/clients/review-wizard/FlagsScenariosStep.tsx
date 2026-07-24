@@ -154,9 +154,9 @@ export function FlagsScenariosStep({ flags, scenarios }: FlagsScenariosStepProps
             See how different market conditions could impact your portfolio cash flow.
           </p>
 
-          <div className="grid md:grid-cols-2 gap-4">
+          <div className="grid gap-4 md:grid-cols-2">
             {scenarios.map((scenario, i) => (
-              <div key={i} className="border rounded-lg p-4 space-y-3">
+              <div key={i} className="min-w-0 border rounded-lg p-4 space-y-3">
                 <div className="flex items-center gap-2">
                   {scenario.impact.cashFlowChange >= 0 ? (
                     <TrendingUp className="h-5 w-5 text-success" />
@@ -168,8 +168,8 @@ export function FlagsScenariosStep({ flags, scenarios }: FlagsScenariosStepProps
                 
                 <p className="text-xs text-muted-foreground">{scenario.description}</p>
                 
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t">
-                  <div>
+                <div className="grid gap-3 border-t pt-3 sm:grid-cols-2">
+                  <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">Cash Flow Impact</p>
                     <p className={`text-lg font-bold ${
                       scenario.impact.cashFlowChange >= 0 ? 'text-success' : 'text-destructive'
@@ -177,12 +177,12 @@ export function FlagsScenariosStep({ flags, scenarios }: FlagsScenariosStepProps
                       {formatCurrency(scenario.impact.cashFlowChange)}/mo
                     </p>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <p className="text-xs text-muted-foreground">New Monthly CF</p>
                     <p className={`text-lg font-bold ${
                       scenario.impact.newNetCashflow >= 0 ? 'text-success' : 'text-destructive'
                     }`}>
-                      ${scenario.impact.newNetCashflow.toLocaleString()}
+                      {formatCurrency(scenario.impact.newNetCashflow)}/mo
                     </p>
                   </div>
                 </div>

@@ -87,8 +87,8 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
   return (
     <div className="space-y-6">
       {/* Header with Recalculate */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h3 className="text-lg font-semibold flex items-center gap-2">
             <Calculator className="h-5 w-5" />
             Borrowing Capacity Assessment
@@ -97,7 +97,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
             Last calculated: {new Date(latestAssessment.created_at).toLocaleDateString()}
           </p>
         </div>
-        <Button variant="outline" size="sm" onClick={handleRecalculate} disabled={isCalculating}>
+        <Button variant="outline" size="sm" onClick={handleRecalculate} disabled={isCalculating} className="self-start sm:self-auto">
           {isCalculating ? (
             <RefreshCw className="h-4 w-4 animate-spin" />
           ) : (
@@ -155,7 +155,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
           <CardTitle className="text-sm font-medium">Financial Summary</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <div className="space-y-1">
               <div className="flex items-center gap-1 text-xs text-muted-foreground">
                 <DollarSign className="h-3 w-3" />
@@ -196,7 +196,7 @@ export function BorrowingCapacityStep({ clientId, clientName }: BorrowingCapacit
 
           <Separator />
 
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-sm font-medium">Monthly Surplus</p>
               <p className="text-xs text-muted-foreground">Available for loan servicing</p>

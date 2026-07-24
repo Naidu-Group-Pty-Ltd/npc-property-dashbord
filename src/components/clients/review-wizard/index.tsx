@@ -84,11 +84,12 @@ export function ReviewWizard({
             onIncludeBorrowingCapacityChange={wizard.setIncludeBorrowingCapacity}
             analysisConfig={wizard.analysisConfig}
             onAnalysisConfigChange={wizard.setAnalysisConfig}
+            notes={wizard.notes}
+            onNotesChange={wizard.setNotes}
+            customInstructions={wizard.customInstructions}
+            onCustomInstructionsChange={wizard.setCustomInstructions}
             ownerOccupiedCount={ownerOccupiedCount}
             investmentCount={investmentCount}
-            onSaveDraft={handleSaveDraft}
-            onComplete={handleComplete}
-            isSaving={wizard.isSaving}
           />
         );
       default:
@@ -98,17 +99,20 @@ export function ReviewWizard({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[90vh] h-[90vh] p-0 flex flex-col overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-0 flex-shrink-0">
+      <DialogContent
+        bareLayout
+        className="fixed left-1/2 top-1/2 grid h-[min(90vh,980px)] w-[calc(100vw-3rem)] max-w-[1320px] -translate-x-1/2 -translate-y-1/2 grid-rows-[auto_auto_minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg p-0 sm:left-[calc(50%+8rem)] sm:w-[min(78vw,1320px)] sm:max-w-[calc(100vw-19rem)] [&>button]:hidden"
+      >
+        <DialogHeader className="min-w-0 border-b bg-background px-6 py-5">
           <div className="flex items-center justify-between">
-            <DialogTitle>Portfolio Review: {clientName}</DialogTitle>
-            <Button variant="ghost" size="icon" onClick={onClose}>
+            <DialogTitle className="min-w-0 truncate pr-4">Portfolio Review: {clientName}</DialogTitle>
+            <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close portfolio review" className="shrink-0">
               <X className="h-4 w-4" />
             </Button>
           </div>
         </DialogHeader>
 
-        <div className="flex-shrink-0">
+        <div className="min-w-0 bg-background">
           <ReviewWizardSteps
             steps={wizard.steps}
             currentStep={wizard.currentStep}
@@ -117,14 +121,20 @@ export function ReviewWizard({
           />
         </div>
 
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="px-6 py-4">
+        <ScrollArea key={wizard.currentStep} className="min-h-0">
+          <div className="min-w-0 px-6 py-5">
             {renderStep()}
           </div>
         </ScrollArea>
 
-        {wizard.currentStep !== 'generate_report' && (
-          <div className="flex items-center justify-between px-6 py-4 border-t flex-shrink-0">
+        <div className="flex items-center justify-between gap-3 border-t bg-background px-6 py-4">
+          {wizard.currentStep === 'generate_report' ? <>
+            <Button variant="outline" onClick={wizard.goPrev} disabled={!wizard.canGoPrev}><ChevronLeft className="mr-1 h-4 w-4" />Previous</Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={handleSaveDraft} disabled={wizard.isSaving}>Save as Draft</Button>
+              <Button onClick={handleComplete} disabled={wizard.isSaving}>{wizard.isSaving ? 'Completing…' : 'Complete Review'}</Button>
+            </div>
+          </> : <>
             <Button
               variant="outline"
               onClick={wizard.goPrev}
@@ -137,8 +147,8 @@ export function ReviewWizard({
               Next
               <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
-          </div>
-        )}
+          </>}
+        </div>
       </DialogContent>
     </Dialog>
   );

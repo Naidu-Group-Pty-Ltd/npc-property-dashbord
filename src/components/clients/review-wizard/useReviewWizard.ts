@@ -75,6 +75,8 @@ export function useReviewWizard(
   const [includeOwnerOccupied, setIncludeOwnerOccupied] = useState(true);
   const [includeBorrowingCapacity, setIncludeBorrowingCapacity] = useState(true);
   const [analysisConfig, setAnalysisConfig] = useState<PortfolioAnalysisSettings>(DEFAULT_SETTINGS);
+  const [notes, setNotes] = useState('');
+  const [customInstructions, setCustomInstructions] = useState('');
 
   // Calculate data completeness for each property
   const dataCompleteness = useMemo(() => {
@@ -793,6 +795,10 @@ export function useReviewWizard(
     setIncludeBorrowingCapacity,
     analysisConfig,
     setAnalysisConfig,
+    notes,
+    setNotes,
+    customInstructions,
+    setCustomInstructions,
     
     // Calculated data
     dataCompleteness,
