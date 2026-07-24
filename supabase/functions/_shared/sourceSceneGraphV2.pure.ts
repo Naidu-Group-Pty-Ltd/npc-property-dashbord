@@ -86,6 +86,28 @@ export interface SourceTableTopologyV2 {
   complete: boolean;
 }
 
+export type ChartDetectionMethod =
+  | 'classification' | 'caption+numeric' | 'heuristic-signals' | 'none';
+
+/** Deterministic chart-detection evidence (E3). Mirrors the Python producer's
+ * `build_chart_detection_signals`; counts/booleans only — no text bodies. */
+export interface ChartDetectionSignals {
+  version?: string;
+  classificationChart: boolean;
+  captionChartTerm: boolean;
+  pageNumericLabels: boolean;
+  axisTickCount: number;
+  legendEntryCount: number;
+  gridlinePathCount: number;
+  numericLabelCount: number;
+  axisPresent: boolean;
+  legendPresent: boolean;
+  gridlinesPresent: boolean;
+  score: number;
+  method: ChartDetectionMethod;
+  promote: boolean;
+}
+
 export interface SourceChartMetadataV2 {
   version: typeof SOURCE_CHART_METADATA_VERSION;
   chartType: 'bar' | 'line' | 'area' | 'pie' | 'scatter' | 'combo' | 'unknown';
@@ -96,6 +118,16 @@ export interface SourceChartMetadataV2 {
   axisLabelRegionIds: string[];
   legendRegionIds: string[];
   extractionState: 'crop_only' | 'structured_partial' | 'structured_complete' | 'unavailable';
+  // ── E3 additive fields (chart-preservation-v1). Semantic metadata lives BESIDE
+  // the rendered crop and never replaces it. All optional for backward compat. ──
+  detectionScore?: number | null;
+  detectionMethod?: ChartDetectionMethod;
+  detectionSignals?: ChartDetectionSignals | null;
+  axisLabels?: string[];
+  legendText?: string[];
+  seriesLabels?: string[];
+  numericValues?: string[];
+  renderMode?: 'crop-preferred' | 'chart-crop' | 'containment-fallback';
   problems: string[];
 }
 
