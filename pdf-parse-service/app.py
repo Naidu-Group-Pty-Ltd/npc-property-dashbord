@@ -89,6 +89,9 @@ from operational_metrics import (
 )
 # E1 — source-scene-graph-v2 pure producer (no Docling model init on import).
 import source_scene_graph as ssg
+# E4 — table candidate arbitration + preservation (pure; no Docling init on import).
+import table_candidates as tcand
+import table_integrity as tinteg
 
 REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -1851,6 +1854,9 @@ async def _upload_per_page_docling_artifacts(
                     "region_count": sp.get("region_count") or 0,
                     "critical_region_count": sp.get("critical_region_count") or 0,
                     "chart_region_count": sp.get("chart_region_count") or 0,
+                    "table_region_count": sp.get("table_region_count") or 0,
+                    "table_candidates_path": sp.get("table_candidates_path"),
+                    "table_arbitration_path": sp.get("table_arbitration_path"),
                     "scene_graph_version": sp.get("scene_graph_version"),
                     "complete": bool(sp.get("complete")),
                     "problems": sp.get("problems") or [],
@@ -1875,12 +1881,19 @@ async def _upload_per_page_docling_artifacts(
             "artifact_contract_version": ssg.PAGE_ARTIFACT_CONTRACT_VERSION,
             "scene_graph_version": source_scene.get("source_scene_graph_version"),
             "chart_preservation_version": source_scene.get("chart_preservation_version"),
+            "table_candidate_contract_version": source_scene.get("table_candidate_contract_version"),
+            "table_arbitration_version": source_scene.get("table_arbitration_version"),
+            "table_preservation_version": source_scene.get("table_preservation_version"),
             "source_scene_path": source_scene.get("source_scene_path"),
             "total_region_count": source_scene.get("total_region_count") or 0,
             "total_critical_region_count": source_scene.get("total_critical_region_count") or 0,
             "total_crop_count": source_scene.get("total_crop_count") or 0,
             "total_chart_region_count": source_scene.get("total_chart_region_count") or 0,
             "total_chart_crop_rendered_count": source_scene.get("total_chart_crop_rendered_count") or 0,
+            "total_table_region_count": source_scene.get("total_table_region_count") or 0,
+            "total_native_verified_table_count": source_scene.get("total_native_verified_table_count") or 0,
+            "total_source_crop_table_count": source_scene.get("total_source_crop_table_count") or 0,
+            "total_blocked_table_count": source_scene.get("total_blocked_table_count") or 0,
             "source_scene_complete": bool(source_scene.get("complete")),
             "source_scene_problems": source_scene.get("problems") or [],
         })
@@ -1948,6 +1961,81 @@ def _png_bytes(pil_img) -> bytes:
     return buf.getvalue()
 
 
+async def _build_table_arbitration(
+    client: httpx.AsyncClient,
+    page_prefix: str,
+    global_page_no: int,
+    regions: list[dict],
+    spans: list[dict],
+    vectors: list[dict],
+    source_raster: dict,
+) -> tuple[dict, Optional[str], Optional[str]]:
+    """E4 — build source table evidence + the primary candidate + integrity +
+    arbitration + preservation plan for every table region on a page, and upload
+    the private `table-candidates.json` / `table-arbitration.json` artifacts.
+
+    Never raises: a failure here degrades to an empty (E0-protected) plan so a
+    bad table can never abort the source-scene pass. No alternate conversions run
+    in the primary parse (bounded-candidate policy); alternate vNext/PyMuPDF
+    candidates are a later, budgeted step. Source truth is never rewritten."""
+    empty = {"version": tinteg.TABLE_PRESERVATION_VERSION, "tables": [], "metrics": {}, "problems": [], "complete": True}
+    try:
+        table_regions = [r for r in regions if r.get("type") == "table"]
+        if not table_regions:
+            return empty, None, None
+        arbitrations: dict[str, dict] = {}
+        candidates_out: list[dict] = []
+        arb_out: list[dict] = []
+        raster_available = bool(source_raster.get("path"))
+        for treg in table_regions:
+            evidence = tcand.build_source_table_evidence(
+                region=treg, page_spans=spans, page_vectors=vectors,
+                adjacent_source_table_region_ids=[o["id"] for o in table_regions if o["id"] != treg["id"]],
+            )
+            financial = tinteg.is_financial_table(evidence)
+            profile = {"runtimeProfile": os.environ.get("DOCLING_RUNTIME_PROFILE", "legacy"),
+                       "tableMode": None, "cellMatching": None}
+            primary = tcand.candidate_from_source_topology(region=treg, provider="docling-primary", profile=profile)
+            cands = [c for c in [primary] if c is not None]
+            # Budget: never exceed the per-table candidate cap.
+            if len(cands) > tcand.MAX_TABLE_CANDIDATES_PER_TABLE:
+                cands = cands[:tcand.MAX_TABLE_CANDIDATES_PER_TABLE]
+            reports: list[dict] = []
+            for c in cands:
+                rep = tinteg.evaluate_table_integrity(c, evidence, financial=financial)
+                merge_defect = tinteg.detect_adjacent_merge(c, table_regions)
+                if merge_defect:
+                    rep["hardDefects"].append(merge_defect)
+                    rep["state"] = "rejected"
+                    rep["score"] = None
+                reports.append(rep)
+            arb = tinteg.arbitrate_table_candidates(
+                source_region_id=treg["id"], candidates=cands, reports=reports,
+                source_crop_available=bool((treg.get("sourceCrop") or {}).get("path")),
+                page_raster_available=raster_available, financial=financial,
+            )
+            arbitrations[treg["id"]] = arb
+            candidates_out.append({"sourceRegionId": treg["id"], "financial": financial, "candidates": cands})
+            arb_out.append(arb)
+
+        plan = tinteg.build_table_preservation_plan(regions=regions, arbitrations=arbitrations)
+
+        candidates_path = None
+        arb_path = None
+        if candidates_out:
+            body = json.dumps({"version": tcand.TABLE_CANDIDATE_CONTRACT_VERSION,
+                               "page_no": global_page_no, "tables": candidates_out}).encode("utf-8")
+            candidates_path = await _storage_upload(client, f"{page_prefix}/table-candidates.json", body, "application/json")
+        if arb_out:
+            body = json.dumps({"version": tinteg.TABLE_ARBITRATION_VERSION,
+                               "page_no": global_page_no, "arbitrations": arb_out}).encode("utf-8")
+            arb_path = await _storage_upload(client, f"{page_prefix}/table-arbitration.json", body, "application/json")
+        return plan, candidates_path, arb_path
+    except Exception as exc:  # pragma: no cover — defensive; E0 protects the page
+        LOG.warning("E4 table arbitration failed page=%s: %s", global_page_no, exc)
+        return {**empty, "problems": ["table_arbitration_failed"]}, None, None
+
+
 async def _build_and_upload_source_scene_artifacts(
     client: httpx.AsyncClient,
     prefix: str,
@@ -1996,6 +2084,10 @@ async def _build_and_upload_source_scene_artifacts(
     total_crops = 0
     total_chart_regions = 0
     total_chart_crop_rendered = 0
+    total_table_regions = 0
+    total_native_verified_tables = 0
+    total_source_crop_tables = 0
+    total_blocked_tables = 0
     problems: list[str] = []
 
     try:
@@ -2122,6 +2214,18 @@ async def _build_and_upload_source_scene_artifacts(
             if source_chunk is not None:
                 chunk_meta = {**source_chunk, "localPageNumber": local_page_no, "parentPageNumber": global_page_no}
 
+            # ── E4 — table candidate arbitration + preservation (additive; never
+            # fatal). Builds source evidence + the primary candidate from the E1
+            # topology, evaluates integrity, arbitrates the strongest SAFE
+            # candidate (else source crop / E0 fallback) and produces a table
+            # preservation plan. Alternate vNext/PyMuPDF candidates are gated
+            # behind budgets/runtime and are NOT generated here (no extra
+            # conversions in the primary parse). Source truth is never rewritten. ──
+            table_plan, table_candidates_path, table_arb_path = await _build_table_arbitration(
+                client, page_prefix, global_page_no, regions, spans, vectors, source_raster,
+            )
+            page_table_metrics = table_plan.get("metrics") or {}
+
             page_scene = ssg.assemble_page_scene(
                 global_page=global_page_no, page_id=page_id,
                 width_pt=width_pt, height_pt=height_pt, rotation=0,
@@ -2130,6 +2234,10 @@ async def _build_and_upload_source_scene_artifacts(
                 source_spans_path=spans_path, source_chunk=chunk_meta,
                 problems=page_problems + span_problems,
             )
+            # Attach the E4 table preservation plan additively (never changes E0/E3
+            # page completeness — E0 still owns the page-level fallback decision).
+            page_scene["tablePreservation"] = table_plan
+            page_scene["tableRegionCount"] = int(page_table_metrics.get("tableRegionCount") or 0)
             page_scenes.append(page_scene)
 
             critical = [r for r in regions if r["type"] in ssg.CROP_REQUIRED_TYPES]
@@ -2143,6 +2251,12 @@ async def _build_and_upload_source_scene_artifacts(
             total_crops += len(region_crop_paths)
             total_chart_regions += chart_region_count
             total_chart_crop_rendered += int((chart_metrics.get("chartRenderModeCounts") or {}).get("chart-crop") or 0)
+            # E4 — additive table preservation counts.
+            table_region_count = int(page_table_metrics.get("tableRegionCount") or 0)
+            total_table_regions += table_region_count
+            total_native_verified_tables += int(page_table_metrics.get("nativeVerifiedTableCount") or 0)
+            total_source_crop_tables += int(page_table_metrics.get("sourceCropTableCount") or 0)
+            total_blocked_tables += int(page_table_metrics.get("blockedTableCount") or 0)
             v3_pages.append({
                 "page_no": global_page_no,
                 "page_id": page_id,
@@ -2158,6 +2272,13 @@ async def _build_and_upload_source_scene_artifacts(
                 "critical_region_count": len(critical),
                 "chart_region_count": chart_region_count,
                 "chart_preservation": chart_plan,
+                "table_region_count": table_region_count,
+                "table_preservation": table_plan,
+                "table_candidates_path": table_candidates_path,
+                "table_arbitration_path": table_arb_path,
+                "table_candidate_contract_version": tcand.TABLE_CANDIDATE_CONTRACT_VERSION,
+                "table_arbitration_version": tinteg.TABLE_ARBITRATION_VERSION,
+                "table_preservation_version": tinteg.TABLE_PRESERVATION_VERSION,
                 "scene_graph_version": ssg.SOURCE_SCENE_GRAPH_VERSION,
                 "source_chunk_index": (source_chunk or {}).get("chunkIndex"),
                 "source_chunk_page_no": local_page_no,
@@ -2187,6 +2308,9 @@ async def _build_and_upload_source_scene_artifacts(
         "source_scene_graph_version": ssg.SOURCE_SCENE_GRAPH_VERSION,
         "artifact_contract_version": ssg.PAGE_ARTIFACT_CONTRACT_VERSION,
         "chart_preservation_version": ssg.CHART_PRESERVATION_VERSION,
+        "table_candidate_contract_version": tcand.TABLE_CANDIDATE_CONTRACT_VERSION,
+        "table_arbitration_version": tinteg.TABLE_ARBITRATION_VERSION,
+        "table_preservation_version": tinteg.TABLE_PRESERVATION_VERSION,
         "source_scene_path": scene_path,
         "pages": v3_pages,
         "total_region_count": total_regions,
@@ -2194,6 +2318,10 @@ async def _build_and_upload_source_scene_artifacts(
         "total_crop_count": total_crops,
         "total_chart_region_count": total_chart_regions,
         "total_chart_crop_rendered_count": total_chart_crop_rendered,
+        "total_table_region_count": total_table_regions,
+        "total_native_verified_table_count": total_native_verified_tables,
+        "total_source_crop_table_count": total_source_crop_tables,
+        "total_blocked_table_count": total_blocked_tables,
         "complete": bool(scene_graph.get("complete")),
         "problems": problems,
         "bytes_out": bytes_out,

@@ -23,6 +23,7 @@ import type {
 } from '@/lib/reportTemplate/ingestion/reconciliation';
 import type { DoclingDocument, DoclingPageInfo, DoclingRasterByPage } from './doclingTypes';
 import { mapDoclingToRawBlocks } from './mapDoclingToRawBlocks';
+import { deriveNativeHeaderPolicy, TABLE_PRESERVATION_VERSION } from '../tableArbitration.pure';
 
 export type DoclingPlanMode = 'semantic' | 'hybrid' | 'pixel-perfect';
 
@@ -133,10 +134,16 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
     const td = block.meta?.tableData;
     const numCols = td?.numCols ?? 0;
     const headerRows = td?.headerRows ?? 0;
-    const firstHeaderRow = headerRows > 0 ? td?.rows[0] ?? [] : [];
+    // E4 — SOURCE-DERIVED header policy. The mapper NO LONGER synthesizes generic
+    // `Column N` labels: labels come from the source header row only (a blank stays
+    // blank), and `showHeader` follows the source (a header-less table shows no
+    // header rather than fabricated column titles). The sidecar arbitration +
+    // preservation plan remain authoritative for native-vs-crop; this fixes the
+    // visible-header defect at the reconstruction boundary.
+    const headerPolicy = deriveNativeHeaderPolicy({ headerRows, numCols, rows: td?.rows ?? [] });
     const columns = Array.from({ length: numCols }, (_, i) => ({
       key: `c${i}`,
-      label: (firstHeaderRow[i] ?? `Column ${i + 1}`).trim() || `Column ${i + 1}`,
+      label: headerPolicy.columnLabels[i] ?? '',
       align: 'left' as const,
       format: 'raw' as const,
     }));
@@ -151,13 +158,23 @@ function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null 
       type: 'table',
       columns,
       rows: bodyRows,
-      showHeader: headerRows > 0 || numCols > 0,
+      showHeader: headerPolicy.showHeader,
       headerHeight: 22,
       rowHeight: 20,
       fontSize: block.style?.fontSize ?? 9,
       headerFontWeight: 'bold',
       borderWidth: 0.5,
       cellPadding: 6,
+      fitPolicy: headerPolicy.hasSourceHeaders ? 'source-derived' : 'auto',
+      // Bounded E4 audit — flags only, never source text or a URL. `renderMode`
+      // is intentionally omitted here (the persisted arbitration decides it); the
+      // header-safety flags let the review UI surface a generic-header risk.
+      tablePreservation: {
+        version: TABLE_PRESERVATION_VERSION,
+        integrityState: 'unarbitrated',
+        genericHeaderInSource: headerPolicy.genericHeaderInSource,
+        hasSourceHeaders: headerPolicy.hasSourceHeaders,
+      },
       cellSpans: (td?.cells ?? [])
         .filter((cell) => cell.rowSpan > 1 || cell.colSpan > 1)
         .map((cell) => ({
