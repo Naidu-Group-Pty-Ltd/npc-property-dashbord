@@ -1302,14 +1302,15 @@ Deno.serve(async (req: Request) => {
         });
         if (!reservation.ok) {
           if (reservation.error === 'seat_limit_reached') {
+            const limitInfo = reservation as import('../_shared/missionControlSeats.ts').SeatLimitReached;
             return new Response(
               JSON.stringify({
                 success: false,
                 error: 'seat_limit_reached',
-                message: `Seat limit reached on the ${reservation.plan} plan (${reservation.seats_used}/${reservation.seat_limit}). Upgrade to invite more team members.`,
-                seat_limit: reservation.seat_limit,
-                seats_used: reservation.seats_used,
-                plan: reservation.plan,
+                message: `Seat limit reached on the ${limitInfo.plan} plan (${limitInfo.seats_used}/${limitInfo.seat_limit}). Upgrade to invite more team members.`,
+                seat_limit: limitInfo.seat_limit,
+                seats_used: limitInfo.seats_used,
+                plan: limitInfo.plan,
               }),
               { status: 402, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
             );
