@@ -126,7 +126,7 @@ function enforcementModeFor(capability: string): "enforce" | "audit" {
   if (raw === "false" || raw === "off" || raw === "0") return "audit";
   if (!raw) return "enforce";
   if (raw === "true" || raw === "on" || raw === "1" || raw === "*") return "enforce";
-  const list = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  const list = raw.split(",").map((s: string) => s.trim()).filter(Boolean);
   return list.includes(capability.toLowerCase()) ? "enforce" : "audit";
 }
 
