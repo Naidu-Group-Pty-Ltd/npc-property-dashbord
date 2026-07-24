@@ -36,7 +36,7 @@ interface RequestBody {
 }
 
 const DEFAULT_SELECTS: Record<TableName, string> = {
-  investment_reports: 'id, property_address, property_listing_id, created_at, current_version, report_scope, report_tier, parent_report_id, status, is_archived, investment_score',
+  investment_reports: 'id, property_address, property_listing_id, canonical_property_key, created_at, current_version, report_scope, report_tier, parent_report_id, status, is_archived, investment_score',
   // NOTE: do NOT default to '*' on generated_reports — the row contains large
   // JSONB report content that will trip the Postgres statement timeout.
   generated_reports: 'id, title, report_type, created_at, updated_at, status',
