@@ -94,7 +94,7 @@ async function fetchSEIFAData(postcode: string, state?: string) {
         console.log('ABS SEIFA API response received');
         
         // Parse the JSON-stat format
-        const parsedData = parseSEIFAResponseReal(data, postcode);
+        const parsedData = await parseSEIFAResponseReal(data, postcode);
         
         if (parsedData && parsedData.irsadDecile) {
           return {
