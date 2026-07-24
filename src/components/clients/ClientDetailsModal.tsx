@@ -83,6 +83,7 @@ import { PropertyEditSheet } from './PropertyEditSheet';
 import { ClientPropertyInvestmentReport } from './ClientPropertyInvestmentReport';
 import { CGTCalculator } from './CGTCalculator';
 import { ClientPortfolioActions } from './ClientPortfolioActions';
+import { PortfolioAnalysisPDFGenerator } from './PortfolioAnalysisPDFGenerator';
 import { ReviewWizard } from './review-wizard';
 import { ClientEmailsTab } from './ClientEmailsTab';
 import { ClientSentReportsTab } from './ClientSentReportsTab';
@@ -313,7 +314,7 @@ The Team`
     <>
       {/* Header actions - always wrap cleanly to avoid overflow */}
       <div className={cn(
-        "flex min-w-0 flex-wrap items-center gap-2 overflow-visible px-1 [&>button]:max-w-full [&>button]:whitespace-normal sm:[&>button]:whitespace-nowrap",
+        "client-action-toolbar flex min-w-0 flex-wrap items-center gap-2 overflow-visible px-1 [&>button]:h-9 [&>button]:max-w-full [&>button]:whitespace-normal [&>button]:transition-all [&>button]:duration-200 [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-ring sm:[&>button]:whitespace-nowrap",
         isMobile ? "pb-2 border-b border-border mb-2" : "mr-10 pr-2"
       )}>
 
@@ -337,8 +338,9 @@ The Team`
           clientName={`${client.primary_first_name} ${client.primary_surname}`}
           onEmailClick={handlePdfEmailClick}
           buttonLabel={isMobile ? "Finance" : "Send to Finance"}
+          variant="default"
         />
-        
+
         <Button
           variant="outline"
           size="sm"
@@ -357,8 +359,25 @@ The Team`
           compact={isMobile}
         />
 
+        {properties.length > 0 && (
+          <PortfolioAnalysisPDFGenerator
+            clientId={client.id}
+            clientName={`${client.primary_first_name} ${client.primary_surname}`}
+            onComplete={() => queryClient.invalidateQueries({ queryKey: ['portfolio-analysis-reports', client.id] })}
+          />
+        )}
 
-        
+        <VownetPDFGenerator
+          data={{
+            client: (fullClient || client) as any,
+            properties: properties as any[], employment: employment as any[], income: income as any[], incomeSources: incomeSources as any[],
+            assets: assets as any[], liabilities: liabilities as any[], expenses: expenses as any[],
+          }}
+          clientName={`${client.primary_first_name} ${client.primary_surname}`}
+          buttonLabel={isMobile ? 'Download PDF' : 'Download Client Details PDF'}
+          action="download"
+        />
+
         <Button
           variant="default"
           size="sm"
@@ -1072,6 +1091,7 @@ The Team`
         clientName={`${client.primary_first_name} ${client.primary_surname}`}
         defaultSubject={portfolioEmailSubject || undefined}
         defaultBody={portfolioEmailBody || undefined}
+        inlineAttachment={pdfAttachment}
       />
 
       {/* Portfolio Review Wizard */}

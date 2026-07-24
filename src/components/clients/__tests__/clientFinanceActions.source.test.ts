@@ -1,0 +1,33 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const source = (file: string) => readFileSync(resolve(process.cwd(), 'src/components/clients', file), 'utf8');
+
+describe('client finance action regression guards', () => {
+  it('keeps PDF download as a dedicated guarded client action and removes legacy menu items', () => {
+    const generator = source('VownetPDFGenerator.tsx');
+    const workspace = source('ClientDetailsModal.tsx');
+
+    expect(generator).toContain("action?: 'finance' | 'download'");
+    expect(generator).toContain("if (action === 'download')");
+    expect(generator).toContain('actionLock.current');
+    expect(generator).not.toContain('Export Client Details as PDF');
+    expect(generator).not.toContain('FlattenPdfMenuItem');
+    expect(workspace).toContain('Download Client Details PDF');
+  });
+
+  it('keeps finance delivery actions in the finance menu and moves portfolio analysis from Reports', () => {
+    const generator = source('VownetPDFGenerator.tsx');
+    const reports = source('ClientReportsTab.tsx');
+    const portfolio = source('PortfolioAnalysisPDFGenerator.tsx');
+    const workspace = source('ClientDetailsModal.tsx');
+
+    expect(generator).toContain('Compose Email with PDF');
+    expect(generator).toContain('Quick Send to Finance');
+    expect(reports).not.toContain('PortfolioAnalysisPDFGenerator');
+    expect(reports).not.toContain('FlattenPdfIconButton');
+    expect(portfolio).not.toContain('Flattened PDF');
+    expect(workspace).toContain('<PortfolioAnalysisPDFGenerator');
+  });
+});

@@ -41,6 +41,7 @@ interface SenderMailbox {
   emailAddress: string;
   displayName: string;
   provider: 'outlook';
+  source: 'personal' | 'admin';
   isDefault: boolean;
 }
 
@@ -60,6 +61,7 @@ interface ClientEmailComposeProps {
   preSelectedAttachmentId?: string;
   defaultSubject?: string;
   defaultBody?: string;
+  inlineAttachment?: { blob: Blob; fileName: string } | null;
 }
 
 export function ClientEmailCompose({
@@ -71,7 +73,8 @@ export function ClientEmailCompose({
   attachments = [],
   preSelectedAttachmentId,
   defaultSubject,
-  defaultBody
+  defaultBody,
+  inlineAttachment = null
 }: ClientEmailComposeProps) {
   const [to, setTo] = useState(clientEmail || '');
   const [cc, setCc] = useState('');
@@ -97,14 +100,29 @@ export function ClientEmailCompose({
         .maybeSingle();
 
       if (error) throw error;
-      if (!data?.personal_mailbox?.trim()) return [];
-      return [{
-        id: data.id,
-        emailAddress: data.personal_mailbox.trim(),
-        displayName: data.email || data.personal_mailbox.trim(),
+      const personalMailbox = data?.personal_mailbox?.trim();
+      const available: SenderMailbox[] = [];
+      if (personalMailbox) {
+        available.push({
+          id: user.id,
+          emailAddress: personalMailbox,
+          displayName: data?.email || personalMailbox,
+          provider: 'outlook',
+          source: 'personal',
+          isDefault: true,
+        });
+      }
+      // The server remains the permission authority for this option and rejects
+      // unauthorised shared-mailbox sends without exposing mailbox credentials.
+      available.push({
+        id: 'admin',
+        emailAddress: 'Organisation shared mailbox',
+        displayName: 'Organisation shared mailbox',
         provider: 'outlook',
-        isDefault: true,
-      }];
+        source: 'admin',
+        isDefault: !personalMailbox,
+      });
+      return available;
     },
     enabled: open && !!user?.id
   });
@@ -151,6 +169,12 @@ export function ClientEmailCompose({
       return;
     }
 
+    const sender = mailboxes.find((mailbox) => mailbox.id === selectedMailbox);
+    if (!sender) {
+      toast.error('Please select a valid sender mailbox');
+      return;
+    }
+
     setIsSending(true);
 
     try {
@@ -175,6 +199,14 @@ export function ClientEmailCompose({
       );
 
       const validAttachments = attachmentData.filter(Boolean);
+      if (inlineAttachment) {
+        const contentBytes = Array.from(new Uint8Array(await inlineAttachment.blob.arrayBuffer()));
+        validAttachments.push({
+          name: inlineAttachment.fileName,
+          contentType: 'application/pdf',
+          contentBytes,
+        });
+      }
 
       // Parse CC and BCC emails
       const ccEmails = cc.split(',').map(e => e.trim()).filter(Boolean);
@@ -186,8 +218,8 @@ export function ClientEmailCompose({
         bcc: bccEmails,
         subject: subject.trim(),
         body: body,
-        senderMailboxId: selectedMailbox,
-        mailboxSource: 'personal',
+        senderMailboxId: sender.source === 'personal' ? sender.id : undefined,
+        mailboxSource: sender.source,
         attachments: validAttachments,
         clientId,
       });
@@ -244,7 +276,7 @@ export function ClientEmailCompose({
               <SelectContent className="z-[100]" position="popper">
                 {mailboxes.map((mailbox) => (
                   <SelectItem key={mailbox.id} value={mailbox.id}>
-                    {mailbox.displayName} — {mailbox.emailAddress} ({mailbox.provider})
+                    {mailbox.displayName}{mailbox.source === 'personal' ? ` — ${mailbox.emailAddress}` : ''}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -328,6 +360,13 @@ export function ClientEmailCompose({
               rows={6}
             />
           </div>
+
+          {inlineAttachment && (
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+              <span className="flex items-center gap-2 min-w-0"><Paperclip className="h-4 w-4 shrink-0" /> <span className="truncate">{inlineAttachment.fileName}</span></span>
+              <Badge variant="secondary">{formatFileSize(inlineAttachment.blob.size)}</Badge>
+            </div>
+          )}
 
           {/* Attachments */}
           {attachments.length > 0 && (

@@ -1,6 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { FlattenPdfMenuItem } from '@/components/common/FlattenPdfMenuItem';
 import { Download, FileText, Home, Loader2, Mail, Send, Users, Calculator } from 'lucide-react';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
@@ -238,6 +237,7 @@ interface VownetPDFGeneratorProps {
   variant?: 'default' | 'outline' | 'ghost';
   size?: 'default' | 'sm' | 'lg';
   buttonLabel?: string;
+  action?: 'finance' | 'download';
 }
 
 // Helper functions
@@ -368,9 +368,11 @@ export function VownetPDFGenerator({
   onQuickSendComplete,
   variant = 'outline',
   size = 'sm',
-  buttonLabel = 'Send to Finance'
+  buttonLabel = 'Send to Finance',
+  action = 'finance'
 }: VownetPDFGeneratorProps) {
   const [isGenerating, setIsGenerating] = useState(false);
+  const actionLock = useRef(false);
   const [isSending, setIsSending] = useState(false);
   const [includeOwnerOccupied, setIncludeOwnerOccupied] = useState(true);
   const [includeBorrowingCapacity, setIncludeBorrowingCapacity] = useState(false);
@@ -455,6 +457,12 @@ export function VownetPDFGenerator({
   };
 
   const generatePDF = async (forEmail: boolean = false): Promise<Blob | null> => {
+    if (!data.client?.id) {
+      toast.error('Client details are not available yet. Please try again.');
+      return null;
+    }
+    if (actionLock.current) return null;
+    actionLock.current = true;
     setIsGenerating(true);
     applyBrandGold(brand.brandColor);
     let iframe: HTMLIFrameElement | null = null;
@@ -573,7 +581,9 @@ export function VownetPDFGenerator({
           // ── Fluid-height page: single PDF page sized to fit ALL content ──
           // No tiling, no splits → no truncated tables, no orphan pages.
           // Content rendered at 80% wholesale (20% smaller) and centred.
-          const naturalHeight = page.scrollHeight;
+          // A malformed/long client record can otherwise create an enormous canvas
+          // and crash Chromium. Keep the client-side capture bounded to three A4 pages.
+          const naturalHeight = Math.min(page.scrollHeight, PAGE_HEIGHT_PX * 3);
           const canvas = await html2canvasWithTimeout(page, {
             ...renderOptions,
             height: naturalHeight,
@@ -722,7 +732,7 @@ export function VownetPDFGenerator({
         a.href = url;
         a.download = fileName;
         a.click();
-        URL.revokeObjectURL(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
         persistVownetPdf(pdfBlob, fileName, data.client.id);
         toast.success('Vownet PDF downloaded & saved to Reports');
         return null;
@@ -738,6 +748,7 @@ export function VownetPDFGenerator({
       if (iframe && iframe.parentNode) {
         iframe.parentNode.removeChild(iframe);
       }
+      actionLock.current = false;
       setIsGenerating(false);
     }
   };
@@ -747,6 +758,7 @@ export function VownetPDFGenerator({
   };
 
   const handleEmailSend = async () => {
+    if (isDisabled) return;
     const pdfBlob = await generatePDF(true);
     if (pdfBlob && onEmailClick) {
       const fileName = `Vownet_Form_${clientName.replace(/\s+/g, '_')}_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
@@ -755,6 +767,7 @@ export function VownetPDFGenerator({
   };
 
   const handleQuickSend = async (contactId?: string) => {
+    if (isDisabled) return;
     if (!hasContacts) {
       toast.error('No finance contacts configured. Add contacts in Settings → Finance Agent Contacts.');
       return;
@@ -817,10 +830,19 @@ export function VownetPDFGenerator({
 
   const isDisabled = isGenerating || isSending;
 
+  if (action === 'download') {
+    return (
+      <Button type="button" variant="outline" size={size} onClick={handleDownload} disabled={isDisabled} title="Download the current client details as a PDF">
+        {isGenerating ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <Download className="h-4 w-4 mr-1.5" />}
+        {isGenerating ? 'Downloading…' : buttonLabel}
+      </Button>
+    );
+  }
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant={variant} size={size} disabled={isDisabled}>
+        <Button type="button" variant={variant} size={size} disabled={isDisabled}>
           {isDisabled ? (
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
           ) : (
@@ -862,29 +884,16 @@ export function VownetPDFGenerator({
           />
         </div>
         
-        <DropdownMenuItem onClick={handleDownload} disabled={isDisabled} className="mt-1">
-          <Download className="h-4 w-4 mr-2" />
-          Export Client Details as PDF
-        </DropdownMenuItem>
-        <FlattenPdfMenuItem
-          getPdfBlob={async () => {
-            const b = await generatePDF(true);
-            if (!b) throw new Error('Failed to generate client details PDF');
-            return b;
-          }}
-          filename={`Vownet_Form_${clientName.replace(/\s+/g, '_')}.pdf`}
-          disabled={isDisabled}
-        />
         {onEmailClick && (
           <>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleEmailSend} disabled={isDisabled}>
+            <DropdownMenuItem onSelect={() => { void handleEmailSend(); }} disabled={isDisabled}>
               <Mail className="h-4 w-4 mr-2" />
               Compose Email with PDF
             </DropdownMenuItem>
             {hasContacts ? (
               contacts.length === 1 ? (
-                <DropdownMenuItem onClick={() => handleQuickSend()} disabled={isDisabled}>
+                <DropdownMenuItem onSelect={() => { void handleQuickSend(); }} disabled={isDisabled}>
                   <Send className="h-4 w-4 mr-2" />
                   Quick Send to {defaultContact?.name}
                 </DropdownMenuItem>
@@ -898,7 +907,7 @@ export function VownetPDFGenerator({
                     {contacts.map((contact) => (
                       <DropdownMenuItem 
                         key={contact.id}
-                        onClick={() => handleQuickSend(contact.id)}
+                        onSelect={() => { void handleQuickSend(contact.id); }}
                       >
                         <Users className="h-4 w-4 mr-2" />
                         {contact.name}
