@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, lazy, Suspense, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
+import { useAuthenticatedSupabase } from "@/hooks/useAuthenticatedSupabase";
 import { useUserNames } from "@/hooks/useUserNames";
 import { QuantitativeReportCard } from "@/components/reports/library/QuantitativeReportCard";
 import type { GeneratedReport } from "@/components/reports/library/types";
@@ -1031,6 +1031,9 @@ function QuantitativeReportHistory() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const focusedReportId = (searchParams.get("focus") || "").trim();
+  // Read with the staff JWT so generated_reports can drop its anon SELECT grant
+  // (RLS-W2) without breaking this history view.
+  const { supabase: authedSupabase } = useAuthenticatedSupabase();
   const {
     data: reports = [],
     isLoading,
@@ -1039,7 +1042,7 @@ function QuantitativeReportHistory() {
   } = useQuery({
     queryKey: ["quantitative-reports"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await authedSupabase
         .from("generated_reports")
         .select("*")
         .eq("report_type", "quantitative")

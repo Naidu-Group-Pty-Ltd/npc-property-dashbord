@@ -25,7 +25,7 @@ import {
   Loader2,
   Database
 } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
+import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { useToast } from '@/hooks/use-toast';
 import { formatNumberWithCommas, removeCommas } from '@/hooks/useFormattedNumber';
 import {
@@ -42,6 +42,9 @@ import {
 
 export function DepreciationCompsAdmin() {
   const { toast } = useToast();
+  // Use the JWT-bearing client so depreciation_comps can drop its anon/public
+  // read+write grants (RLS-W2); this admin surface is staff-only.
+  const { supabase } = useAuthenticatedSupabase();
   const [comps, setComps] = useState<DepreciationComp[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
