@@ -319,7 +319,7 @@ export async function runWithMetrics<T>(
   } finally {
     const latency = Date.now() - started;
     try {
-      if (!admin) return;
+      if (admin) {
       const today = new Date().toISOString().slice(0, 10);
       const { data: existing } = await admin.schema("aml").from("provider_metrics_daily")
         .select("id, call_count, failure_count, latency_ms_sum, cost_cents_sum")
