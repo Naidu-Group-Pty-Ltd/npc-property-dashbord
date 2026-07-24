@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { CheckCircle2, XCircle, Clock, Loader2, FileText, AlertCircle, PlayCircle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { getAuthenticatedSupabaseClient } from '@/hooks/useAuthenticatedSupabase';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useToast } from '@/hooks/use-toast';
 import { PropertyListing } from '@/lib/airtable';
@@ -410,7 +411,9 @@ export function BulkGenerationModal({
                       variant="outline"
                       onClick={async () => {
                         if (!jobId) return;
-                        const { error } = await supabase.rpc('retry_failed_bulk_items' as any, { p_job_id: jobId });
+                        // Use the staff-JWT client so retry_failed_bulk_items can
+                        // drop anon EXECUTE (RLS-W2); retrying is a staff action.
+                        const { error } = await getAuthenticatedSupabaseClient().rpc('retry_failed_bulk_items' as any, { p_job_id: jobId });
                         if (error) {
                           toast({ title: 'Retry failed', description: error.message, variant: 'destructive' });
                           return;
