@@ -35,3 +35,11 @@ Working audit + traceability lives at `archives/aml-v2/phase-0-audit.md`.
 
 ## 5. Codex execution rule (verbatim, applies each phase)
 > Inspect the repository, state the plan, implement only this phase, run the applicable checks, provide evidence and stop.
+
+## 6. Frontend / UI changes
+For any UI or frontend work, follow `FRONTEND_TOOLING.md` (repo root). It is the
+cross-tool source of truth: it defines the installed frontend packages — the
+`shadcn`, `chrome-devtools`, and `@21st-dev/magic` MCP servers (`.mcp.json`) and the
+`frontend-design` / `web-design-guidelines` skills (`.claude/skills/`) — and the
+non-negotiable rules (semantic design tokens only, shadcn-first, accessibility floor,
+verify in a browser). Prefer those packages when your tool supports them.
