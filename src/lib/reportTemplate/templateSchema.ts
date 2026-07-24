@@ -362,6 +362,32 @@ export const TableOverlaySchema = BaseOverlay.extend({
     fontWeight: z.enum(['normal','bold']).optional(),
     icon: z.enum(['none','up','down','flag','star','dot']).optional(),
   })).optional(),
+  // ── E4 (table-arbitration) additive, OPTIONAL, backward-compatible metadata ──
+  // Links this native table back to its immutable E1 source table region so the
+  // review UI + E0 can reconcile it with the arbitration result. Never a URL.
+  sourceTableRegionId: z.string().optional(),
+  // How the native layout was derived. 'source-derived' when column widths/header
+  // policy came from the source topology; 'auto' otherwise. Informational.
+  fitPolicy: z.enum(['source-derived','auto']).optional(),
+  // Right-align numeric columns only when source evidence supports it.
+  numericAlignment: z.boolean().optional(),
+  // Bounded readable floor for deterministic font fitting (never below this).
+  minFontSize: z.number().optional(),
+  // Bounded E4 audit summary (counts/codes/enums only — never source text, never
+  // a signed URL). Lets the renderer/review know whether this native table was
+  // integrity-verified or is a placeholder pending source-crop preservation.
+  tablePreservation: z.object({
+    version: z.string(),
+    renderMode: z.enum(['verified-native-table','table-source-crop','containment-fallback','blocked']).optional(),
+    integrityState: z.string().optional(),
+    integrityScore: z.number().nullable().optional(),
+    hardDefectCodes: z.array(z.string()).optional(),
+    genericHeaderInSource: z.boolean().optional(),
+    hasSourceHeaders: z.boolean().optional(),
+    manualReviewRequired: z.boolean().optional(),
+    selectedCandidateId: z.string().nullable().optional(),
+    sourceCropPath: z.string().nullable().optional(),
+  }).optional(),
 });
 
 export const ImageOverlaySchema = BaseOverlay.extend({
