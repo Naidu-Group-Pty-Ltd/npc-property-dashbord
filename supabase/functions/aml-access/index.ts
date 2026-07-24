@@ -46,10 +46,10 @@ Deno.serve(async (req) => {
     if (flagError) throw flagError;
     if (roleError) throw roleError;
 
-    const roles = (roleRows ?? [])
+    const roles: string[] = (roleRows ?? [])
       .map((row: any) => String(row.role ?? ""))
       .filter((role: string) => AML_ROLES.has(role));
-    const uniqueRoles: string[] = [...new Set(roles)];
+    const uniqueRoles: string[] = Array.from(new Set(roles));
     const flagEnabled = Boolean((flag?.value as { enabled?: boolean } | null | undefined)?.enabled);
 
     return json({
