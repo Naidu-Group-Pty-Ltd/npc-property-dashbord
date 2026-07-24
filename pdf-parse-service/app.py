@@ -92,6 +92,9 @@ import source_scene_graph as ssg
 # E4 — table candidate arbitration + preservation (pure; no Docling init on import).
 import table_candidates as tcand
 import table_integrity as tinteg
+# E5 — source typography evidence + font assets (pure; no Docling init on import).
+import source_typography as stypo
+import font_assets as fassets
 
 REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -1857,6 +1860,9 @@ async def _upload_per_page_docling_artifacts(
                     "table_region_count": sp.get("table_region_count") or 0,
                     "table_candidates_path": sp.get("table_candidates_path"),
                     "table_arbitration_path": sp.get("table_arbitration_path"),
+                    "typography_run_count": sp.get("typography_run_count") or 0,
+                    "unmapped_glyph_count": sp.get("unmapped_glyph_count") or 0,
+                    "typography_path": sp.get("typography_path"),
                     "scene_graph_version": sp.get("scene_graph_version"),
                     "complete": bool(sp.get("complete")),
                     "problems": sp.get("problems") or [],
@@ -1894,6 +1900,10 @@ async def _upload_per_page_docling_artifacts(
             "total_native_verified_table_count": source_scene.get("total_native_verified_table_count") or 0,
             "total_source_crop_table_count": source_scene.get("total_source_crop_table_count") or 0,
             "total_blocked_table_count": source_scene.get("total_blocked_table_count") or 0,
+            "source_typography_evidence_version": source_scene.get("source_typography_evidence_version"),
+            "font_asset_manifest_version": source_scene.get("font_asset_manifest_version"),
+            "total_typography_run_count": source_scene.get("total_typography_run_count") or 0,
+            "total_unmapped_glyph_count": source_scene.get("total_unmapped_glyph_count") or 0,
             "source_scene_complete": bool(source_scene.get("complete")),
             "source_scene_problems": source_scene.get("problems") or [],
         })
@@ -2088,6 +2098,8 @@ async def _build_and_upload_source_scene_artifacts(
     total_native_verified_tables = 0
     total_source_crop_tables = 0
     total_blocked_tables = 0
+    total_typography_runs = 0
+    total_unmapped_glyphs = 0
     problems: list[str] = []
 
     try:
@@ -2194,6 +2206,32 @@ async def _build_and_upload_source_scene_artifacts(
             spans_path = await _storage_upload(client, f"{page_prefix}/source-spans.json", spans_body, "application/json")
             bytes_out += len(spans_body)
 
+            # ── E5 — source typography evidence (additive; never fatal). Builds
+            # immutable typography runs from the source spans (raw Unicode +
+            # exact punctuation/numeric tokens + source font identity + glyph
+            # evidence). The typography fidelity + preservation decision is made
+            # by the consumer (typographyFidelity.pure.ts) against these runs;
+            # source truth is never rewritten here. ──
+            typography_path = None
+            typography_run_count = 0
+            typography_unmapped_glyphs = 0
+            try:
+                text_regions = [r for r in regions if r.get("type") == "text"]
+                typo_runs, typo_problems = stypo.build_page_typography(
+                    global_page=global_page_no, page_id=page_id, spans=spans, text_regions=text_regions,
+                )
+                typography_run_count = len(typo_runs)
+                typography_unmapped_glyphs = sum(int(r.get("unmappedGlyphCount") or 0) for r in typo_runs)
+                typo_body = json.dumps({
+                    "version": stypo.SOURCE_TYPOGRAPHY_EVIDENCE_VERSION,
+                    "page_no": global_page_no, "runs": typo_runs, "problems": typo_problems,
+                }).encode("utf-8")
+                typography_path = await _storage_upload(
+                    client, f"{page_prefix}/source-typography.json", typo_body, "application/json")
+                bytes_out += len(typo_body)
+            except Exception as exc:  # pragma: no cover — defensive; E0 protects the page
+                LOG.warning("E5 typography evidence failed page=%s: %s", global_page_no, exc)
+
             foreground_path = None
             if page_foreground is not None:
                 fg_body = json.dumps(page_foreground).encode("utf-8")
@@ -2238,6 +2276,9 @@ async def _build_and_upload_source_scene_artifacts(
             # page completeness — E0 still owns the page-level fallback decision).
             page_scene["tablePreservation"] = table_plan
             page_scene["tableRegionCount"] = int(page_table_metrics.get("tableRegionCount") or 0)
+            # E5 — additive typography counts on the page scene.
+            page_scene["typographyRunCount"] = typography_run_count
+            page_scene["unmappedGlyphCount"] = typography_unmapped_glyphs
             page_scenes.append(page_scene)
 
             critical = [r for r in regions if r["type"] in ssg.CROP_REQUIRED_TYPES]
@@ -2257,6 +2298,8 @@ async def _build_and_upload_source_scene_artifacts(
             total_native_verified_tables += int(page_table_metrics.get("nativeVerifiedTableCount") or 0)
             total_source_crop_tables += int(page_table_metrics.get("sourceCropTableCount") or 0)
             total_blocked_tables += int(page_table_metrics.get("blockedTableCount") or 0)
+            total_typography_runs += typography_run_count
+            total_unmapped_glyphs += typography_unmapped_glyphs
             v3_pages.append({
                 "page_no": global_page_no,
                 "page_id": page_id,
@@ -2279,6 +2322,10 @@ async def _build_and_upload_source_scene_artifacts(
                 "table_candidate_contract_version": tcand.TABLE_CANDIDATE_CONTRACT_VERSION,
                 "table_arbitration_version": tinteg.TABLE_ARBITRATION_VERSION,
                 "table_preservation_version": tinteg.TABLE_PRESERVATION_VERSION,
+                "typography_run_count": typography_run_count,
+                "unmapped_glyph_count": typography_unmapped_glyphs,
+                "typography_path": typography_path,
+                "source_typography_evidence_version": stypo.SOURCE_TYPOGRAPHY_EVIDENCE_VERSION,
                 "scene_graph_version": ssg.SOURCE_SCENE_GRAPH_VERSION,
                 "source_chunk_index": (source_chunk or {}).get("chunkIndex"),
                 "source_chunk_page_no": local_page_no,
@@ -2311,6 +2358,8 @@ async def _build_and_upload_source_scene_artifacts(
         "table_candidate_contract_version": tcand.TABLE_CANDIDATE_CONTRACT_VERSION,
         "table_arbitration_version": tinteg.TABLE_ARBITRATION_VERSION,
         "table_preservation_version": tinteg.TABLE_PRESERVATION_VERSION,
+        "source_typography_evidence_version": stypo.SOURCE_TYPOGRAPHY_EVIDENCE_VERSION,
+        "font_asset_manifest_version": fassets.FONT_ASSET_MANIFEST_VERSION,
         "source_scene_path": scene_path,
         "pages": v3_pages,
         "total_region_count": total_regions,
@@ -2322,6 +2371,8 @@ async def _build_and_upload_source_scene_artifacts(
         "total_native_verified_table_count": total_native_verified_tables,
         "total_source_crop_table_count": total_source_crop_tables,
         "total_blocked_table_count": total_blocked_tables,
+        "total_typography_run_count": total_typography_runs,
+        "total_unmapped_glyph_count": total_unmapped_glyphs,
         "complete": bool(scene_graph.get("complete")),
         "problems": problems,
         "bytes_out": bytes_out,
