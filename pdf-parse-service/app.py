@@ -1850,6 +1850,7 @@ async def _upload_per_page_docling_artifacts(
                     "region_crop_paths": sp.get("region_crop_paths") or {},
                     "region_count": sp.get("region_count") or 0,
                     "critical_region_count": sp.get("critical_region_count") or 0,
+                    "chart_region_count": sp.get("chart_region_count") or 0,
                     "scene_graph_version": sp.get("scene_graph_version"),
                     "complete": bool(sp.get("complete")),
                     "problems": sp.get("problems") or [],
@@ -1873,10 +1874,13 @@ async def _upload_per_page_docling_artifacts(
         manifest.update({
             "artifact_contract_version": ssg.PAGE_ARTIFACT_CONTRACT_VERSION,
             "scene_graph_version": source_scene.get("source_scene_graph_version"),
+            "chart_preservation_version": source_scene.get("chart_preservation_version"),
             "source_scene_path": source_scene.get("source_scene_path"),
             "total_region_count": source_scene.get("total_region_count") or 0,
             "total_critical_region_count": source_scene.get("total_critical_region_count") or 0,
             "total_crop_count": source_scene.get("total_crop_count") or 0,
+            "total_chart_region_count": source_scene.get("total_chart_region_count") or 0,
+            "total_chart_crop_rendered_count": source_scene.get("total_chart_crop_rendered_count") or 0,
             "source_scene_complete": bool(source_scene.get("complete")),
             "source_scene_problems": source_scene.get("problems") or [],
         })
@@ -1990,6 +1994,8 @@ async def _build_and_upload_source_scene_artifacts(
     total_regions = 0
     total_critical = 0
     total_crops = 0
+    total_chart_regions = 0
+    total_chart_crop_rendered = 0
     problems: list[str] = []
 
     try:
@@ -2032,6 +2038,13 @@ async def _build_and_upload_source_scene_artifacts(
             page_bitmap = None  # rendered lazily only when a crop is needed
             crop_count = 0
 
+            # E3 — charts are SOURCE TRUTH: render this page at a >=300 DPI floor
+            # when it carries any chart region so the preserved chart crop stays
+            # sharp even if the page crop DPI was lowered. Deterministic; when the
+            # configured crop_dpi is already >=300 (default) this is a no-op.
+            has_chart_region = any(r["type"] == "chart" for r in regions)
+            effective_crop_dpi = max(crop_dpi, ssg.CHART_CROP_MIN_DPI) if has_chart_region else crop_dpi
+
             for region in regions:
                 if region["type"] not in ssg.CROP_REQUIRED_TYPES:
                     continue
@@ -2039,11 +2052,11 @@ async def _build_and_upload_source_scene_artifacts(
                     page_problems.append("region_crops_truncated")
                     break
                 if page_bitmap is None:
-                    page_bitmap = _render_page_bitmap(pdf, local_page_no - 1, crop_dpi)
+                    page_bitmap = _render_page_bitmap(pdf, local_page_no - 1, effective_crop_dpi)
                     if page_bitmap is None:
                         page_problems.append("page_render_failed")
                         break
-                px = ssg.crop_bbox_pixels(region["bbox"], height_pt, crop_dpi, ssg.CROP_PADDING_PT, width_pt)
+                px = ssg.crop_bbox_pixels(region["bbox"], height_pt, effective_crop_dpi, ssg.CROP_PADDING_PT, width_pt)
                 if not px:
                     region["problems"].append("crop_geometry_invalid")
                     continue
@@ -2062,7 +2075,7 @@ async def _build_and_upload_source_scene_artifacts(
                 foreground = ssg.build_foreground_summary(crop_bytes)
                 ssg.attach_crop(
                     region, path=crop_path, sha256=_sha256_hex(crop_bytes), mime="image/png",
-                    width_px=crop_img.width, height_px=crop_img.height, source_dpi=crop_dpi,
+                    width_px=crop_img.width, height_px=crop_img.height, source_dpi=effective_crop_dpi,
                     padding_pt=ssg.CROP_PADDING_PT, foreground=foreground,
                 )
                 if region["sourceCrop"].get("path"):
@@ -2120,9 +2133,16 @@ async def _build_and_upload_source_scene_artifacts(
             page_scenes.append(page_scene)
 
             critical = [r for r in regions if r["type"] in ssg.CROP_REQUIRED_TYPES]
+            # E3 — chart preservation plan (built by assemble_page_scene from the
+            # crop-attached regions); surface its counts additively per page.
+            chart_plan = page_scene.get("chartPreservation") or {}
+            chart_metrics = chart_plan.get("metrics") or {}
+            chart_region_count = int(chart_metrics.get("chartRegionCount") or 0)
             total_regions += len(regions)
             total_critical += len(critical)
             total_crops += len(region_crop_paths)
+            total_chart_regions += chart_region_count
+            total_chart_crop_rendered += int((chart_metrics.get("chartRenderModeCounts") or {}).get("chart-crop") or 0)
             v3_pages.append({
                 "page_no": global_page_no,
                 "page_id": page_id,
@@ -2136,6 +2156,8 @@ async def _build_and_upload_source_scene_artifacts(
                 "region_crop_paths": region_crop_paths,
                 "region_count": len(regions),
                 "critical_region_count": len(critical),
+                "chart_region_count": chart_region_count,
+                "chart_preservation": chart_plan,
                 "scene_graph_version": ssg.SOURCE_SCENE_GRAPH_VERSION,
                 "source_chunk_index": (source_chunk or {}).get("chunkIndex"),
                 "source_chunk_page_no": local_page_no,
@@ -2164,11 +2186,14 @@ async def _build_and_upload_source_scene_artifacts(
     return {
         "source_scene_graph_version": ssg.SOURCE_SCENE_GRAPH_VERSION,
         "artifact_contract_version": ssg.PAGE_ARTIFACT_CONTRACT_VERSION,
+        "chart_preservation_version": ssg.CHART_PRESERVATION_VERSION,
         "source_scene_path": scene_path,
         "pages": v3_pages,
         "total_region_count": total_regions,
         "total_critical_region_count": total_critical,
         "total_crop_count": total_crops,
+        "total_chart_region_count": total_chart_regions,
+        "total_chart_crop_rendered_count": total_chart_crop_rendered,
         "complete": bool(scene_graph.get("complete")),
         "problems": problems,
         "bytes_out": bytes_out,

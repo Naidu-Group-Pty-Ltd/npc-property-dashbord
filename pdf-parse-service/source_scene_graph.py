@@ -41,6 +41,9 @@ SOURCE_TABLE_TOPOLOGY_VERSION = "source-table-topology-v2"
 SOURCE_CHART_METADATA_VERSION = "source-chart-metadata-v2"
 SOURCE_FOREGROUND_SUMMARY_VERSION = "source-foreground-summary-v1"
 PROVIDER_REGION_EVIDENCE_VERSION = "provider-region-evidence-v1"
+# E3 — Chart & Picture Preservation: deterministic chart render plan + metrics.
+CHART_PRESERVATION_VERSION = "chart-preservation-v1"
+CHART_DETECTION_SIGNALS_VERSION = "chart-detection-signals-v1"
 
 # Region types requiring a durable source crop for a *complete* critical region.
 CROP_REQUIRED_TYPES = frozenset({"table", "chart", "picture", "logo", "vector-cluster"})
@@ -70,6 +73,30 @@ DENSE_VECTOR_MIN_PATHS = 14
 # Deterministic crop padding, in PDF points.
 CROP_PADDING_PT = 2.0
 
+# ── E3 — chart preservation tuning (deterministic; no AI, no remote APIs) ────
+#
+# Chart crops are SOURCE TRUTH: a chart is preserved by rendering its exact source
+# pixels, never by redrawing bars/axes/legends. Charts get a dedicated crop at a
+# floor of 300 DPI so the preserved visual stays sharp even if the page crop DPI
+# is lowered. Detection combines Docling classification, caption/title terms,
+# vector (gridline) density, axis-tick detection, legend detection and numeric-
+# label density — all pure geometric/lexical heuristics with fixed thresholds.
+CHART_CROP_MIN_DPI = 300
+# A picture with none of the strong signals below is NEVER promoted to a chart,
+# so weak-keyword-only pages (E1 test 40) stay pictures. Promotion requires
+# corroboration from real in-region evidence, not a single title term.
+CHART_PROMOTE_MIN_SCORE = 0.5
+CHART_AXIS_MIN_TICKS = 2           # numeric tick-labels along an edge → axis present
+CHART_LEGEND_MIN_ENTRIES = 2       # short repeated labels → legend present
+CHART_GRIDLINE_MIN_PATHS = 10      # vector paths inside the region → gridlines/series
+CHART_NUMERIC_MIN_LABELS = 2       # numeric tokens inside the region → data labels
+# A text box counts as an "edge" axis tick when its centre sits within this
+# fraction of the region's width/height from the left or bottom edge.
+CHART_EDGE_BAND = 0.18
+# A legend entry is a short text box (few characters) — bounded to avoid treating
+# paragraphs as legend keys.
+CHART_LEGEND_MAX_CHARS = 24
+
 # ── Chart lexicon (mirrors E0 STRONG_CHART_TERMS; conservative) ─────────────
 
 STRONG_CHART_TERMS = (
@@ -81,6 +108,8 @@ STRONG_CHART_TERMS = (
 CHART_CLASS_RE = re.compile(r"chart|graph|plot|bar|line|pie|scatter|histogram|diagram", re.I)
 LOGO_CLASS_RE = re.compile(r"logo|brand|icon", re.I)
 NUMERIC_LABEL_RE = re.compile(r"[$£€]|\d[\d,]*\.?\d*\s*%|\b\d{4}\b|\d[\d,]{2,}")
+# Axis-tick-like text: a short standalone number, year, percentage or currency.
+AXIS_TICK_RE = re.compile(r"^[$£€]?\s*[-+]?\d[\d,]*\.?\d*\s*%?$|^\d{4}$")
 
 
 # ── Deterministic hashing (FNV-1a 32-bit) ───────────────────────────────────
@@ -557,6 +586,142 @@ def _picture_caption_terms(pic: dict) -> list[str]:
     return out
 
 
+# ── E3 — deterministic chart-detection signals + geometry ───────────────────
+
+
+def _bbox_center(bbox: dict) -> tuple[float, float]:
+    x = float(bbox.get("x") or 0.0)
+    y = float(bbox.get("y") or 0.0)
+    return x + float(bbox.get("width") or 0.0) / 2.0, y + float(bbox.get("height") or 0.0) / 2.0
+
+
+def bbox_contains(outer: dict, inner: dict, *, tolerance: float = 1.5) -> bool:
+    """True when `inner`'s centre lies inside `outer` and `inner` is substantially
+    within `outer`'s bounds (deterministic geometric containment, tolerant of
+    small overshoot). Used to attach axis/legend/child regions to a chart."""
+    if not isinstance(outer, dict) or not isinstance(inner, dict):
+        return False
+    ox, oy = float(outer.get("x") or 0.0), float(outer.get("y") or 0.0)
+    ow, oh = float(outer.get("width") or 0.0), float(outer.get("height") or 0.0)
+    if ow <= 0 or oh <= 0:
+        return False
+    cx, cy = _bbox_center(inner)
+    if not (ox - tolerance <= cx <= ox + ow + tolerance and oy - tolerance <= cy <= oy + oh + tolerance):
+        return False
+    # The inner box must not be dramatically larger than the outer (a page-wide
+    # box whose centre happens to fall inside a chart is not a chart child).
+    iw, ih = float(inner.get("width") or 0.0), float(inner.get("height") or 0.0)
+    return iw <= ow * 1.5 + tolerance and ih <= oh * 1.5 + tolerance
+
+
+def _bbox_overlaps(a: dict, b: dict) -> bool:
+    ax, ay = float(a.get("x") or 0.0), float(a.get("y") or 0.0)
+    aw, ah = float(a.get("width") or 0.0), float(a.get("height") or 0.0)
+    bx, by = float(b.get("x") or 0.0), float(b.get("y") or 0.0)
+    bw, bh = float(b.get("width") or 0.0), float(b.get("height") or 0.0)
+    return not (ax + aw <= bx or bx + bw <= ax or ay + ah <= by or by + bh <= ay)
+
+
+def _is_axis_tick(text: str) -> bool:
+    return bool(AXIS_TICK_RE.match((text or "").strip()))
+
+
+def build_chart_detection_signals(
+    *,
+    region_bbox: dict,
+    classification: Optional[str],
+    caption_terms: list[str],
+    title_terms: list[str],
+    page_numeric: bool,
+    contained_texts: list[tuple[str, dict]],
+    gridline_path_count: int,
+) -> dict:
+    """Deterministic chart-detection evidence for one candidate visual region.
+
+    Combines Docling picture classification, caption/title chart terms, vector
+    (gridline) density, axis-tick detection, legend detection and numeric-label
+    density. Returns a bounded signal dict + a fixed-weight score in [0, 1] and a
+    boolean promotion recommendation. NO AI, NO remote calls, NO randomness —
+    identical inputs always yield the identical result.
+    """
+    classification_chart = bool(classification and CHART_CLASS_RE.search(classification))
+    caption_chart_term = _has_strong_chart_term(list(caption_terms) + list(title_terms))
+
+    axis_ticks = 0
+    legend_entries = 0
+    numeric_labels = 0
+    rw = float(region_bbox.get("width") or 0.0)
+    rh = float(region_bbox.get("height") or 0.0)
+    rx = float(region_bbox.get("x") or 0.0)
+    ry = float(region_bbox.get("y") or 0.0)
+    left_band = rx + rw * CHART_EDGE_BAND
+    bottom_band = ry + rh * (1.0 - CHART_EDGE_BAND)
+    for raw, bbox in contained_texts:
+        text = (raw or "").strip()
+        if not text:
+            continue
+        cx, cy = _bbox_center(bbox)
+        if extract_numeric_tokens(text):
+            numeric_labels += 1
+        if _is_axis_tick(text) and (cx <= left_band or cy >= bottom_band):
+            axis_ticks += 1
+        elif len(text) <= CHART_LEGEND_MAX_CHARS and not _is_axis_tick(text):
+            # A short non-numeric label inside a chart is a candidate legend key.
+            legend_entries += 1
+
+    axis_present = axis_ticks >= CHART_AXIS_MIN_TICKS
+    legend_present = legend_entries >= CHART_LEGEND_MIN_ENTRIES
+    gridlines_present = int(gridline_path_count) >= CHART_GRIDLINE_MIN_PATHS
+    numeric_dense = numeric_labels >= CHART_NUMERIC_MIN_LABELS
+
+    score = 0.0
+    if classification_chart:
+        score += 0.6
+    if caption_chart_term and page_numeric:
+        score += 0.4
+    if axis_present:
+        score += 0.25
+    if legend_present:
+        score += 0.2
+    if gridlines_present:
+        score += 0.2
+    if numeric_dense:
+        score += 0.15
+    score = round(min(score, 1.0), 4)
+
+    # Heuristic (unclassified) promotion requires REAL corroboration: an axis plus
+    # either a legend or gridlines, and in-region numeric labels. This never fires
+    # on a plain picture or a weak single title term.
+    strong_signals = axis_present and (legend_present or gridlines_present) and numeric_dense
+    if classification_chart:
+        method = "classification"
+    elif caption_chart_term and page_numeric:
+        method = "caption+numeric"
+    elif strong_signals:
+        method = "heuristic-signals"
+    else:
+        method = "none"
+    promote = classification_chart or (caption_chart_term and page_numeric) or (
+        score >= CHART_PROMOTE_MIN_SCORE and strong_signals
+    )
+    return {
+        "version": CHART_DETECTION_SIGNALS_VERSION,
+        "classificationChart": classification_chart,
+        "captionChartTerm": caption_chart_term,
+        "pageNumericLabels": bool(page_numeric),
+        "axisTickCount": axis_ticks,
+        "legendEntryCount": legend_entries,
+        "gridlinePathCount": int(gridline_path_count),
+        "numericLabelCount": numeric_labels,
+        "axisPresent": axis_present,
+        "legendPresent": legend_present,
+        "gridlinesPresent": gridlines_present,
+        "score": score,
+        "method": method,
+        "promote": bool(promote),
+    }
+
+
 # ── Region assembly (Phase 7) ───────────────────────────────────────────────
 
 
@@ -639,6 +804,23 @@ def build_page_regions(
         if isinstance(t.get("text"), str) and t.get("label") in ("title", "section_header", "caption")
     ]
 
+    # E3 — precompute normalised text + vector geometry once so chart detection
+    # can look for axis ticks, legend keys and gridlines contained by a picture.
+    page_text_boxes: list[tuple[str, dict]] = []
+    for t in texts or []:
+        if not isinstance(t.get("text"), str) or not t["text"].strip():
+            continue
+        tb, _ = normalize_bbox(_prov_bbox(t), page_width, page_height)
+        if tb is not None:
+            page_text_boxes.append((t["text"], tb))
+    page_vector_boxes: list[tuple[dict, int]] = []
+    for v in vectors or []:
+        vb = _vector_bbox(v, page_width, page_height)
+        if vb is None:
+            continue
+        vpaths = v.get("paths")
+        page_vector_boxes.append((vb, len(vpaths) if isinstance(vpaths, list) else 0))
+
     # Tables — one region each, never merged.
     for table in tables or []:
         bbox, bprob = normalize_bbox(_prov_bbox(table), page_width, page_height)
@@ -666,9 +848,16 @@ def build_page_regions(
             continue
         cls = _picture_class(pic)
         caption_terms = _picture_caption_terms(pic)
-        chart_like = (cls is not None and CHART_CLASS_RE.search(cls) is not None) or (
-            _has_strong_chart_term(caption_terms + title_terms) and page_numeric
+        # E3 — deterministic chart-detection evidence from real in-region signals.
+        contained_texts = [(raw, tb) for (raw, tb) in page_text_boxes if bbox_contains(bbox, tb)]
+        gridline_paths = sum(cnt for (vb, cnt) in page_vector_boxes if _bbox_overlaps(bbox, vb))
+        signals = build_chart_detection_signals(
+            region_bbox=bbox, classification=cls,
+            caption_terms=caption_terms, title_terms=title_terms,
+            page_numeric=page_numeric, contained_texts=contained_texts,
+            gridline_path_count=gridline_paths,
         )
+        chart_like = bool(signals["promote"])
         if chart_like:
             region_type = "chart"
         elif cls is not None and LOGO_CLASS_RE.search(cls) is not None:
@@ -688,11 +877,12 @@ def build_page_regions(
                 "docling", "classification", confidence=pic.get("confidence"),
                 claims=[c for c in [f"class:{cls}" if cls else None,
                                     "chart_like" if chart_like else None,
+                                    f"chart_detection:{signals['method']}" if chart_like else None,
                                     "embedded_image" if has_embedded else "needs_source_crop"] if c],
             ),
         }
         if region_type == "chart":
-            payload["chart"] = _chart_metadata(cls, pic.get("caption"))
+            payload["chart"] = _chart_metadata(cls, pic.get("caption"), signals=signals)
         staged.append((region_type, bbox, payload))
 
     # Dense vector clusters — conservative, bounded, deterministic.
@@ -776,10 +966,13 @@ def build_page_regions(
         region["complete"] = region_type == "text" or region_type == "background"
         regions.append(region)
 
+    # E3 — attach chart ⇢ child relationships + semantic labels (deterministic).
+    assign_chart_relationships(regions)
+
     return regions, page_problems
 
 
-def _chart_metadata(cls: Optional[str], caption: Optional[str]) -> dict:
+def _chart_metadata(cls: Optional[str], caption: Optional[str], *, signals: Optional[dict] = None) -> dict:
     chart_type = "unknown"
     if isinstance(cls, str):
         for name in ("bar", "line", "area", "pie", "scatter"):
@@ -798,7 +991,269 @@ def _chart_metadata(cls: Optional[str], caption: Optional[str]) -> dict:
         # The current production engine cannot extract series; crop_only is the
         # expected, honest state once a crop is attached.
         "extractionState": "crop_only",
+        # ── E3 additive fields (backward compatible; consumers may ignore) ──
+        # Semantic metadata lives BESIDE the rendered crop; it never replaces it.
+        "detectionScore": (signals or {}).get("score"),
+        "detectionMethod": (signals or {}).get("method", "classification"),
+        "detectionSignals": signals if isinstance(signals, dict) else None,
+        "axisLabels": [],       # text of axis-tick child regions (source truth)
+        "legendText": [],       # text of legend child regions
+        "seriesLabels": [],     # distinct legend labels = series names
+        "numericValues": [],    # numeric tokens found within the chart region
+        # 'crop-preferred' until the render plan confirms a durable crop exists;
+        # the plan may refine to 'chart-crop' or 'containment-fallback'.
+        "renderMode": "crop-preferred",
         "problems": [],
+    }
+
+
+# ── E3 — chart relationships + semantic labels (deterministic) ──────────────
+
+
+def _region_text_align_axis(raw: str, bbox: dict, chart_bbox: dict) -> str:
+    """Classify a chart-contained text region as 'axis' | 'legend' | 'caption'
+    | 'other' from its position + shape (pure geometry, no NLP)."""
+    text = (raw or "").strip()
+    cx, cy = _bbox_center(bbox)
+    cw = float(chart_bbox.get("width") or 0.0)
+    ch = float(chart_bbox.get("height") or 0.0)
+    cx0 = float(chart_bbox.get("x") or 0.0)
+    cy0 = float(chart_bbox.get("y") or 0.0)
+    left_band = cx0 + cw * CHART_EDGE_BAND
+    bottom_band = cy0 + ch * (1.0 - CHART_EDGE_BAND)
+    if _is_axis_tick(text) and (cx <= left_band or cy >= bottom_band):
+        return "axis"
+    if text and len(text) <= CHART_LEGEND_MAX_CHARS and not _is_axis_tick(text):
+        return "legend"
+    return "other"
+
+
+def assign_chart_relationships(regions: list[dict]) -> None:
+    """Attach parent/child relationships from each chart to the source regions it
+    geometrically contains, and populate the chart's semantic label lists.
+
+    Charts MAY own text/legend/axis/vector/picture children. All relationships are
+    kept (source truth); the render plan later renders only the parent crop and
+    suppresses the children. Deterministic + in-place. Nested charts: a smaller
+    chart contained by a larger one becomes the larger chart's child, so only the
+    outermost chart is rendered. A child is attached to its SMALLEST containing
+    chart so nesting is respected.
+    """
+    charts = [r for r in regions if r.get("type") == "chart" and isinstance(r.get("bbox"), dict)]
+    if not charts:
+        return
+    # Smallest-area charts first so a child binds to its innermost container.
+    def _area(r: dict) -> float:
+        b = r["bbox"]
+        return float(b.get("width") or 0.0) * float(b.get("height") or 0.0)
+
+    charts_by_area = sorted(charts, key=_area)
+    chart_ids = {c["id"] for c in charts}
+
+    for region in regions:
+        if region.get("type") == "background" or not isinstance(region.get("bbox"), dict):
+            continue
+        if region.get("relationships", {}).get("parentRegionId"):
+            continue  # already owned (deterministic first-wins by smallest area)
+        for chart in charts_by_area:
+            if chart["id"] == region["id"]:
+                continue
+            if not bbox_contains(chart["bbox"], region["bbox"]):
+                continue
+            # Bind child ⇢ chart.
+            region.setdefault("relationships", {})
+            region["relationships"]["parentRegionId"] = chart["id"]
+            rel = chart.setdefault("relationships", {})
+            rel.setdefault("childRegionIds", [])
+            if region["id"] not in rel["childRegionIds"]:
+                rel["childRegionIds"].append(region["id"])
+            _classify_chart_child(chart, region)
+            break
+
+    # Freeze deterministic ordering of the populated lists.
+    for chart in charts:
+        meta = chart.get("chart") or {}
+        for key in ("axisLabelRegionIds", "legendRegionIds", "axisLabels", "legendText", "seriesLabels", "numericValues"):
+            if isinstance(meta.get(key), list):
+                # de-dup preserving first-seen order for label text lists.
+                seen: set = set()
+                out = []
+                for v in meta[key]:
+                    marker = v
+                    if marker in seen:
+                        continue
+                    seen.add(marker)
+                    out.append(v)
+                meta[key] = out
+        rel = chart.get("relationships") or {}
+        for key in ("childRegionIds", "captionRegionIds", "labelRegionIds"):
+            if isinstance(rel.get(key), list):
+                # keep insertion order but drop any accidental self/dupe references.
+                rel[key] = [rid for i, rid in enumerate(rel[key])
+                            if rid != chart["id"] and rid not in rel[key][:i]]
+
+
+def _classify_chart_child(chart: dict, child: dict) -> None:
+    """Record a child region under the right chart-metadata bucket (in-place)."""
+    meta = chart.setdefault("chart", _chart_metadata(None, None))
+    rel = chart.setdefault("relationships", {})
+    ctype = child.get("type")
+    cid = child["id"]
+    if ctype == "text":
+        payload = child.get("text") or {}
+        raw = payload.get("raw") or ""
+        label = payload.get("label")
+        kind = _region_text_align_axis(raw, child["bbox"], chart["bbox"])
+        numeric = payload.get("numericTokens") or []
+        if label == "caption":
+            rel.setdefault("captionRegionIds", [])
+            if cid not in rel["captionRegionIds"]:
+                rel["captionRegionIds"].append(cid)
+            if raw and not meta.get("caption"):
+                meta["caption"] = raw
+        elif kind == "axis":
+            meta.setdefault("axisLabelRegionIds", [])
+            meta["axisLabelRegionIds"].append(cid)
+            if raw:
+                meta.setdefault("axisLabels", []).append(raw.strip())
+        elif kind == "legend":
+            meta.setdefault("legendRegionIds", [])
+            meta["legendRegionIds"].append(cid)
+            if raw:
+                meta.setdefault("legendText", []).append(raw.strip())
+                meta.setdefault("seriesLabels", []).append(raw.strip())
+        else:
+            rel.setdefault("labelRegionIds", [])
+            rel["labelRegionIds"].append(cid)
+        for tok in numeric:
+            raw_tok = tok.get("raw") if isinstance(tok, dict) else None
+            if isinstance(raw_tok, str) and raw_tok:
+                meta.setdefault("numericValues", []).append(raw_tok)
+    # Non-text children (vector-cluster, picture, logo, nested chart) are visual
+    # children: kept in childRegionIds only, rendered by the parent crop.
+
+
+# ── E3 — chart render plan + preservation metrics (chart-preservation-v1) ────
+
+
+def _descendant_region_ids(chart_id: str, by_parent: dict[str, list[str]]) -> list[str]:
+    """All region IDs transitively owned by a chart (children, nested charts'
+    children …), in deterministic BFS order."""
+    out: list[str] = []
+    seen: set[str] = set()
+    queue = list(by_parent.get(chart_id, []))
+    while queue:
+        rid = queue.pop(0)
+        if rid in seen:
+            continue
+        seen.add(rid)
+        out.append(rid)
+        queue.extend(by_parent.get(rid, []))
+    return out
+
+
+def build_chart_render_plan(regions: list[dict]) -> dict:
+    """Deterministic per-page chart render plan + preservation metrics.
+
+    Every chart region resolves to exactly one render mode:
+      - 'chart-crop'            a durable, non-blank source crop is rendered as a
+                                single locked visual object; its child regions are
+                                suppressed to prevent double-rendering.
+      - 'containment-fallback'  no usable crop → defer to E0 containment (source
+                                raster / hybrid). NEVER a semantic redraw.
+
+    The plan carries the child region IDs each rendered chart suppresses and the
+    page-level metrics the visual-quality report consumes. Pure; no I/O.
+    """
+    region_ids = {r["id"] for r in regions if isinstance(r.get("id"), str)}
+    by_parent: dict[str, list[str]] = {}
+    for r in regions:
+        parent = (r.get("relationships") or {}).get("parentRegionId")
+        if parent:
+            by_parent.setdefault(parent, []).append(r["id"])
+
+    charts = [r for r in regions if r.get("type") == "chart"]
+    chart_plans: list[dict] = []
+    mode_counts = {"chart-crop": 0, "containment-fallback": 0}
+    suppressed_total = 0
+    complete_charts = 0
+    charts_with_crop = 0
+    suppression_ok = 0
+
+    for chart in charts:
+        crop = chart.get("sourceCrop") or {}
+        has_crop = bool(crop.get("path")) and bool(crop.get("sha256"))
+        blank = "crop_appears_blank" in (chart.get("problems") or [])
+        renderable = has_crop and not blank
+        mode = "chart-crop" if renderable else "containment-fallback"
+        mode_counts[mode] += 1
+        if has_crop:
+            charts_with_crop += 1
+        if renderable:
+            complete_charts += 1
+
+        suppressed = _descendant_region_ids(chart["id"], by_parent) if renderable else []
+        # Suppression is "successful" when every suppressed id is a real region on
+        # this page (no orphan/unknown reference). A rendered chart with no
+        # children is trivially successful.
+        orphans = [rid for rid in suppressed if rid not in region_ids]
+        if mode == "chart-crop":
+            if not orphans:
+                suppression_ok += 1
+        suppressed_total += len(suppressed)
+
+        meta = chart.get("chart") or {}
+        # Reflect the resolved mode back onto the chart metadata (source truth).
+        if isinstance(chart.get("chart"), dict):
+            chart["chart"]["renderMode"] = mode
+        child_ids = list((chart.get("relationships") or {}).get("childRegionIds") or [])
+        chart_plans.append({
+            "regionId": chart["id"],
+            "pageNumber": chart.get("pageNumber"),
+            "bbox": chart.get("bbox"),
+            "renderMode": mode,
+            "hasCrop": has_crop,
+            "cropBlank": blank,
+            "cropPath": crop.get("path"),
+            "cropSha256": crop.get("sha256"),
+            "cropDpi": crop.get("sourceDpi"),
+            "childRegionIds": child_ids,
+            "suppressedChildRegionIds": suppressed,
+            "orphanSuppressedRegionIds": orphans,
+            "chartType": meta.get("chartType"),
+            "detectionMethod": meta.get("detectionMethod"),
+            "detectionScore": meta.get("detectionScore"),
+            "complete": renderable,
+        })
+
+    chart_count = len(charts)
+    rendered = mode_counts["chart-crop"]
+
+    def _ratio(numerator: int, denominator: int) -> Optional[float]:
+        if denominator <= 0:
+            return None
+        return round(numerator / denominator, 4)
+
+    metrics = {
+        "chartRegionCount": chart_count,
+        "chartCropAvailability": _ratio(charts_with_crop, chart_count),
+        "chartCompleteness": _ratio(complete_charts, chart_count),
+        "chartSuppressionSuccess": _ratio(suppression_ok, rendered),
+        "chartRenderModeCounts": dict(mode_counts),
+        "suppressedRegionCount": suppressed_total,
+    }
+    problems: list[str] = []
+    for plan in chart_plans:
+        if plan["renderMode"] == "containment-fallback":
+            problems.append(f"chart_crop_unavailable:{plan['regionId']}")
+        if plan["orphanSuppressedRegionIds"]:
+            problems.append(f"chart_suppression_orphan:{plan['regionId']}")
+    return {
+        "version": CHART_PRESERVATION_VERSION,
+        "charts": chart_plans,
+        "metrics": metrics,
+        "problems": problems,
+        "complete": chart_count == 0 or (rendered == chart_count and not problems),
     }
 
 
@@ -1001,6 +1456,7 @@ def assemble_page_scene(
     source_spans_path: Optional[str],
     source_chunk: Optional[dict],
     problems: Optional[list[str]] = None,
+    chart_preservation: Optional[dict] = None,
 ) -> dict:
     problems = list(problems or [])
     rot = rotation if rotation in (0, 90, 180, 270) else 0
@@ -1016,7 +1472,11 @@ def assemble_page_scene(
         and all(r.get("complete") for r in critical)
         and (source_raster is not None and bool(source_raster.get("path")))
     )
-    return {
+    # E3 — the chart preservation plan is additive page-artifact metadata; it
+    # never changes page completeness (E0 still owns the fallback decision).
+    if chart_preservation is None:
+        chart_preservation = build_chart_render_plan(regions)
+    scene = {
         "version": SOURCE_SCENE_GRAPH_VERSION,
         "pageId": page_id,
         "pageNumber": global_page,
@@ -1030,10 +1490,13 @@ def assemble_page_scene(
         "regionsPath": regions_path,
         "regionCount": len(regions),
         "criticalRegionCount": len(critical),
+        "chartRegionCount": chart_preservation.get("metrics", {}).get("chartRegionCount", 0),
+        "chartPreservation": chart_preservation,
         "regionIds": region_ids,
         "problems": sorted(set(problems)),
         "complete": complete,
     }
+    return scene
 
 
 def assemble_scene_graph(
