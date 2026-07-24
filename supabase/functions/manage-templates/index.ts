@@ -493,6 +493,21 @@ Deno.serve(async (req) => {
     const permissionError = await assertTemplatePermission(supabase, userId, table, operation, corsHeaders);
     if (permissionError) return permissionError;
 
+    // Comparison analysis templates are personal configurations. The function
+    // uses a service-role client, so scope them explicitly rather than relying
+    // on browser-side filters or service-role RLS bypass behaviour.
+    const isComparisonTemplate = table === 'comparison_analysis_templates';
+    if (isComparisonTemplate && ['get', 'update', 'delete'].includes(operation) && recordId) {
+      const { data: ownedTemplate, error: ownershipError } = await supabase
+        .from('comparison_analysis_templates').select('id').eq('id', recordId).eq('created_by', userId).maybeSingle();
+      if (ownershipError || !ownedTemplate) {
+        return jsonResponse({ error: 'Template not found or not accessible.' }, 404, corsHeaders);
+      }
+    }
+    if (isComparisonTemplate && operation === 'insert' && data && !Array.isArray(data)) {
+      data = { ...data, created_by: userId };
+    }
+
     // Handle RPC calls
     if (operation === 'rpc' && rpcName) {
       const { data: rpcData, error: rpcError } = await supabase.rpc(rpcName, rpcParams || {});
@@ -516,6 +531,8 @@ Deno.serve(async (req) => {
       const { select = DEFAULT_SELECTS[table], orderBy = 'created_at', orderAsc = false, limit, filters } = listOptions;
       
       let query = supabase.from(table).select(select);
+
+      if (isComparisonTemplate) query = query.eq('created_by', userId);
       
       // Apply filters
       if (filters) {

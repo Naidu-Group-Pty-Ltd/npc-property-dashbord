@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -27,6 +27,7 @@ import { useNotifications } from '@/contexts/NotificationsContext';
 import { useAuth } from '@/hooks/useAuth';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
+import { ComparisonWeights, DEFAULT_COMPARISON_SETTINGS, DEFAULT_COMPARISON_WEIGHTS, cloneComparisonWeights, comparisonWeightsEqual, parseComparisonTemplateSettings, validateComparisonWeights } from './comparisonConfiguration';
 
 interface PropertyComparisonModalProps {
   isOpen: boolean;
@@ -118,20 +119,20 @@ export function PropertyComparisonModal({
   const [templateName, setTemplateName] = useState('');
   const [templateDescription, setTemplateDescription] = useState('');
   const [savedTemplates, setSavedTemplates] = useState<any[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateError, setTemplateError] = useState('');
+  const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
+  const [activeTemplateName, setActiveTemplateName] = useState<string | null>(null);
   
   // Analysis parameters (all optional with sensible defaults)
-  const [investorProfile, setInvestorProfile] = useState<string>('general');
-  const [analysisDepth, setAnalysisDepth] = useState<string>('comprehensive');
-  const [timeHorizon, setTimeHorizon] = useState<string>('5-7 years');
-  const [riskTolerance, setRiskTolerance] = useState<string>('moderate');
-  const [useCustomWeights, setUseCustomWeights] = useState(false);
-  const [customWeights, setCustomWeights] = useState({
-    growth: 30,
-    location: 25,
-    yield: 20,
-    demand: 15,
-    risk: 10
-  });
+  const [investorProfile, setInvestorProfile] = useState<string>(DEFAULT_COMPARISON_SETTINGS.investorProfile);
+  const [analysisDepth, setAnalysisDepth] = useState<string>(DEFAULT_COMPARISON_SETTINGS.analysisDepth);
+  const [timeHorizon, setTimeHorizon] = useState<string>(DEFAULT_COMPARISON_SETTINGS.timeHorizon);
+  const [riskTolerance, setRiskTolerance] = useState<string>(DEFAULT_COMPARISON_SETTINGS.riskTolerance);
+  const [draftWeights, setDraftWeights] = useState<ComparisonWeights>(cloneComparisonWeights());
+  const [appliedWeights, setAppliedWeights] = useState<ComparisonWeights>(cloneComparisonWeights());
+  const [weightMessage, setWeightMessage] = useState('');
   
   const { toast } = useToast();
   const { addNotification } = useNotifications();
@@ -144,12 +145,34 @@ export function PropertyComparisonModal({
     return () => document.body.classList.remove('comparison-analysis-dialog-open');
   }, [isOpen]);
 
-  // Load templates from database on mount
+  useEffect(() => {
+    if (isOpen) {
+      setDraftWeights(cloneComparisonWeights(appliedWeights));
+      setWeightMessage('');
+    }
+  // Modal open is the reset boundary; applied weights intentionally persist through an active session.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
+
+  const draftValidation = useMemo(() => validateComparisonWeights(draftWeights), [draftWeights]);
+  const appliedValidation = useMemo(() => validateComparisonWeights(appliedWeights), [appliedWeights]);
+  const hasUnappliedWeightChanges = !comparisonWeightsEqual(draftWeights, appliedWeights);
+  const isUsingDefaults = comparisonWeightsEqual(appliedWeights, DEFAULT_COMPARISON_WEIGHTS);
+  // The completed-analysis settings panel remains a re-run editor. It renders the
+  // same draft controls while submission continues to use appliedWeights.
+  const customWeights = draftWeights;
+  const setCustomWeights = setDraftWeights;
+  const useCustomWeights = true;
+  const setUseCustomWeights = () => setDraftWeights(cloneComparisonWeights());
+  const availableTemplates = useMemo(() => savedTemplates.filter((template) => !!parseComparisonTemplateSettings(template.settings)), [savedTemplates]);
+
+  // Fetch once per modal session and refresh after a successful save.
   useEffect(() => {
     loadTemplates();
   }, []);
 
   const loadTemplates = async () => {
+    setTemplatesLoading(true);
     try {
       const { data, error } = await invokeSecureFunction('manage-templates', {
         operation: 'list',
@@ -166,7 +189,7 @@ export function PropertyComparisonModal({
         description: "Could not load saved templates",
         variant: "destructive",
       });
-    }
+    } finally { setTemplatesLoading(false); }
   };
   useEffect(() => {
     if (analysis && comparisonHistory.length === 0 && !loadingHistory) {
@@ -175,6 +198,11 @@ export function PropertyComparisonModal({
   }, [analysis]);
 
   const startAnalysis = async (background = false) => {
+    if (!appliedValidation.isValid || hasUnappliedWeightChanges) {
+      setSettingsOpen(true);
+      setWeightMessage(hasUnappliedWeightChanges ? 'Apply the custom scoring weights before starting the analysis.' : appliedValidation.message);
+      return;
+    }
     setRunInBackground(background);
     setIsAnalyzing(true);
     setHasStarted(true);
@@ -198,9 +226,9 @@ export function PropertyComparisonModal({
         riskTolerance
       };
       
-      if (useCustomWeights) {
-        requestBody.customWeights = customWeights;
-      }
+      requestBody.customWeights = cloneComparisonWeights(appliedWeights);
+      requestBody.scoring_weights = cloneComparisonWeights(appliedWeights);
+      requestBody.templateId = activeTemplateId;
       
       const { data, error } = await invokeSecureFunction('compare-investment-reports', requestBody, { timeoutMs: 150000 });
 
@@ -359,9 +387,9 @@ export function PropertyComparisonModal({
           
           if (summary.timeHorizon) setTimeHorizon(summary.timeHorizon);
           if (summary.riskTolerance) setRiskTolerance(summary.riskTolerance);
-          if (summary.customWeights) {
-            setCustomWeights(summary.customWeights);
-            setUseCustomWeights(true);
+          if (summary.customWeights && validateComparisonWeights(summary.customWeights).isValid) {
+            const weights = cloneComparisonWeights(summary.customWeights);
+            setDraftWeights(weights); setAppliedWeights(cloneComparisonWeights(weights));
           }
         } catch (e) {
           console.error('Error parsing analysis summary:', e);
@@ -407,6 +435,12 @@ export function PropertyComparisonModal({
       return;
     }
 
+    if (hasUnappliedWeightChanges || !appliedValidation.isValid) {
+      setTemplateError('Apply the scoring changes before saving this template.');
+      return;
+    }
+    if (templateName.trim().length > 120) { setTemplateError('Template names must be 120 characters or fewer.'); return; }
+    setTemplateSaving(true); setTemplateError('');
     try {
       const { data, error } = await invokeSecureFunction('manage-templates', {
         operation: 'insert',
@@ -419,8 +453,8 @@ export function PropertyComparisonModal({
             analysisDepth,
             timeHorizon,
             riskTolerance,
-            useCustomWeights,
-            customWeights: useCustomWeights ? customWeights : undefined
+            reportFamily: 'investment_comparison',
+            appliedWeights: cloneComparisonWeights(appliedWeights)
           },
           created_by: user.id
         },
@@ -430,6 +464,7 @@ export function PropertyComparisonModal({
       const inserted = data?.record;
 
       setSavedTemplates(prev => [inserted, ...prev]);
+      setActiveTemplateId(inserted?.id ?? null); setActiveTemplateName(inserted?.name ?? templateName.trim());
       setSaveTemplateOpen(false);
       setTemplateName('');
       setTemplateDescription('');
@@ -439,26 +474,25 @@ export function PropertyComparisonModal({
         description: `Template "${inserted?.name}" has been saved successfully`,
       });
     } catch (error) {
-      console.error('Error saving template:', error);
+      const traceId = crypto.randomUUID();
+      console.error('comparison-template-save', { traceId, userId: user?.id, templateName, error });
+      setTemplateError(`Could not save this template. Reference: ${traceId}`);
       toast({
         title: "Failed to Save Template",
         description: error instanceof Error ? error.message : "Could not save template",
         variant: "destructive",
       });
-    }
+    } finally { setTemplateSaving(false); }
   };
 
   // Load a template
   const loadTemplate = (template: any) => {
-    const settings = template.settings;
-    setInvestorProfile(settings.investorProfile);
-    setAnalysisDepth(settings.analysisDepth);
-    setTimeHorizon(settings.timeHorizon);
-    setRiskTolerance(settings.riskTolerance);
-    setUseCustomWeights(settings.useCustomWeights || false);
-    if (settings.customWeights) {
-      setCustomWeights(settings.customWeights);
-    }
+    const settings = parseComparisonTemplateSettings(template.settings);
+    if (!settings) { setTemplateError('This template has invalid or incompatible settings and cannot be loaded.'); return; }
+    setInvestorProfile(settings.investorProfile); setAnalysisDepth(settings.analysisDepth);
+    setTimeHorizon(settings.timeHorizon); setRiskTolerance(settings.riskTolerance);
+    setDraftWeights(cloneComparisonWeights(settings.appliedWeights)); setAppliedWeights(cloneComparisonWeights(settings.appliedWeights));
+    setActiveTemplateId(template.id); setActiveTemplateName(template.name);
 
     setTemplatesOpen(false);
     toast({
@@ -496,18 +530,10 @@ export function PropertyComparisonModal({
 
   // Reset settings to defaults
   const resetToDefaults = () => {
-    setInvestorProfile('general');
-    setAnalysisDepth('comprehensive');
-    setTimeHorizon('5-7 years');
-    setRiskTolerance('moderate');
-    setUseCustomWeights(false);
-    setCustomWeights({
-      growth: 30,
-      location: 25,
-      yield: 20,
-      demand: 15,
-      risk: 10
-    });
+    setInvestorProfile(DEFAULT_COMPARISON_SETTINGS.investorProfile); setAnalysisDepth(DEFAULT_COMPARISON_SETTINGS.analysisDepth);
+    setTimeHorizon(DEFAULT_COMPARISON_SETTINGS.timeHorizon); setRiskTolerance(DEFAULT_COMPARISON_SETTINGS.riskTolerance);
+    const weights = cloneComparisonWeights(); setDraftWeights(weights); setAppliedWeights(cloneComparisonWeights(weights));
+    setActiveTemplateId(null); setActiveTemplateName(null); setWeightMessage('All settings restored to defaults.');
 
     toast({
       title: "Settings Reset",
@@ -724,87 +750,24 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setUseCustomWeights(!useCustomWeights)}
+                            type="button"
+                            aria-label="Restore default scoring weights"
+                            onClick={(event) => { event.preventDefault(); event.stopPropagation(); setDraftWeights(cloneComparisonWeights()); setWeightMessage('Default weights restored. Apply the changes to use them in this comparison.'); }}
                           >
-                            {useCustomWeights ? 'Use Default' : 'Customize'}
+                            Use Default
                           </Button>
                         </div>
-                        
-                        {useCustomWeights && (
-                          <div className="space-y-4 rounded-lg border bg-background/70 p-4">
-                            <div className="space-y-2">
-                              <div className="flex justify-between items-center">
-                                <Label className="text-xs">Growth Score</Label>
-                                <span className="text-xs font-medium">{customWeights.growth}%</span>
-                              </div>
-                              <Slider className="w-full"
-                                value={[customWeights.growth]}
-                                onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, growth: value }))}
-                                min={0}
-                                max={50}
-                                step={5}
-                              />
+                        <div className="space-y-4 rounded-lg border bg-background/70 p-4" aria-live="polite">
+                          {(Object.entries(draftWeights) as Array<[keyof ComparisonWeights, number]>).map(([key, value]) => (
+                            <div className="space-y-2" key={key}>
+                              <div className="flex justify-between items-center"><Label className="text-xs" htmlFor={`weight-${key}`}>{key[0].toUpperCase() + key.slice(1)} Score</Label><span className="text-xs font-medium">{value}%</span></div>
+                              <Slider id={`weight-${key}`} aria-label={`${key} score`} value={[value]} onValueChange={([next]) => setDraftWeights(prev => ({ ...prev, [key]: next }))} min={0} max={100} step={1} />
                             </div>
-                            <div className="space-y-2">
-                              <div className="flex justify-between items-center">
-                                <Label className="text-xs">Location Score</Label>
-                                <span className="text-xs font-medium">{customWeights.location}%</span>
-                              </div>
-                              <Slider className="w-full"
-                                value={[customWeights.location]}
-                                onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, location: value }))}
-                                min={0}
-                                max={50}
-                                step={5}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex justify-between items-center">
-                                <Label className="text-xs">Yield Score</Label>
-                                <span className="text-xs font-medium">{customWeights.yield}%</span>
-                              </div>
-                              <Slider className="w-full"
-                                value={[customWeights.yield]}
-                                onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, yield: value }))}
-                                min={0}
-                                max={50}
-                                step={5}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex justify-between items-center">
-                                <Label className="text-xs">Demand Score</Label>
-                                <span className="text-xs font-medium">{customWeights.demand}%</span>
-                              </div>
-                              <Slider className="w-full"
-                                value={[customWeights.demand]}
-                                onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, demand: value }))}
-                                min={0}
-                                max={30}
-                                step={5}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex justify-between items-center">
-                                <Label className="text-xs">Risk Score</Label>
-                                <span className="text-xs font-medium">{customWeights.risk}%</span>
-                              </div>
-                              <Slider className="w-full"
-                                value={[customWeights.risk]}
-                                onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, risk: value }))}
-                                min={0}
-                                max={30}
-                                step={5}
-                              />
-                            </div>
-                            <div className="pt-2 text-xs text-muted-foreground">
-                              Total: {customWeights.growth + customWeights.location + customWeights.yield + customWeights.demand + customWeights.risk}%
-                              {(customWeights.growth + customWeights.location + customWeights.yield + customWeights.demand + customWeights.risk) !== 100 && (
-                                <span className="text-destructive ml-1">(Must equal 100%)</span>
-                              )}
-                            </div>
-                          </div>
-                        )}
+                          ))}
+                          <div className={`pt-2 text-xs ${draftValidation.isValid ? 'text-muted-foreground' : 'text-destructive'}`}>{draftValidation.isValid ? `Total: ${draftValidation.total}%` : draftValidation.message}</div>
+                          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{hasUnappliedWeightChanges ? 'Unapplied changes' : isUsingDefaults ? 'Using default weights' : 'Custom weights applied'}</span><Button type="button" size="sm" onClick={() => { if (draftValidation.isValid) { setAppliedWeights(cloneComparisonWeights(draftWeights)); setWeightMessage('Custom scoring weights applied.'); } else setWeightMessage(draftValidation.message); }} disabled={!draftValidation.isValid || !hasUnappliedWeightChanges}>Apply Weights</Button></div>
+                          {weightMessage && <p className="text-xs text-muted-foreground" role="status">{weightMessage}</p>}
+                        </div>
                       </div>
                       </div>
                     </CollapsibleContent>
@@ -817,36 +780,37 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                   <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                     <Button
                       variant="outline"
-                      onClick={() => setSaveTemplateOpen(true)}
+                      onClick={() => { setTemplateError(hasUnappliedWeightChanges ? 'Apply the scoring changes before saving this template.' : ''); setSaveTemplateOpen(true); }}
                       className="w-full sm:w-auto"
+                      disabled={hasUnappliedWeightChanges || !appliedValidation.isValid}
                     >
                       <Save className="h-3.5 w-3.5 mr-2" />
                       Save Template
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={() => setTemplatesOpen(true)}
+                      onClick={() => { setTemplateError(''); setTemplatesOpen(true); }}
                       className="w-full sm:w-auto"
-                      disabled={savedTemplates.length === 0}
                     >
                       <FolderOpen className="h-3.5 w-3.5 mr-2" />
                       Load Template
                       {savedTemplates.length > 0 && (
                         <Badge variant="secondary" className="ml-2 h-5 px-1.5">
-                          {savedTemplates.length}
+                          {availableTemplates.length}
                         </Badge>
                       )}
                     </Button>
                   </div>
                   </div>
                   <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                    {activeTemplateName && <span>Active template: {activeTemplateName}</span>}
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={resetToDefaults}
                       className="h-7"
                     >
-                      Reset to Defaults
+                      Reset All Settings
                     </Button>
                   </div>
                   </section>
@@ -1696,7 +1660,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                 onClick={() => startAnalysis(true)}
                 variant="outline"
                 className="sm:w-auto"
-                disabled={useCustomWeights && (customWeights.growth + customWeights.location + customWeights.yield + customWeights.demand + customWeights.risk) !== 100}
+                disabled={isAnalyzing || hasUnappliedWeightChanges || !appliedValidation.isValid}
               >
                 <PlayCircle className="mr-2 h-4 w-4" />
                 Run in Background
@@ -1704,7 +1668,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
               <Button
                 onClick={() => startAnalysis(false)}
                 className="sm:w-auto"
-                disabled={useCustomWeights && (customWeights.growth + customWeights.location + customWeights.yield + customWeights.demand + customWeights.risk) !== 100}
+                disabled={isAnalyzing || hasUnappliedWeightChanges || !appliedValidation.isValid}
               >
                 Start Analysis
               </Button>
@@ -1716,7 +1680,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
 
     {/* Save Template Dialog */}
     <Dialog open={saveTemplateOpen} onOpenChange={setSaveTemplateOpen}>
-      <DialogContent>
+      <DialogContent className="!z-[60]" overlayClassName="!z-[55]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <BookmarkPlus className="h-5 w-5" />
@@ -1734,6 +1698,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
               placeholder="e.g., Growth Focused Analysis"
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
+              maxLength={120}
             />
           </div>
           <div className="space-y-2">
@@ -1754,19 +1719,18 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
               <div>• Analysis Depth: <span className="text-foreground font-medium">{analysisDepth}</span></div>
               <div>• Time Horizon: <span className="text-foreground font-medium">{timeHorizon}</span></div>
               <div>• Risk Tolerance: <span className="text-foreground font-medium">{riskTolerance}</span></div>
-              {useCustomWeights && (
-                <div>• Custom Weights: <span className="text-foreground font-medium">Enabled</span></div>
-              )}
+              <div>• Weights: <span className="text-foreground font-medium">Growth {appliedWeights.growth}% · Location {appliedWeights.location}% · Yield {appliedWeights.yield}% · Demand {appliedWeights.demand}% · Risk {appliedWeights.risk}% (Total {appliedValidation.total}%)</span></div>
             </div>
           </div>
+          {templateError && <p className="text-sm text-destructive" role="alert">{templateError}</p>}
 
           <div className="flex gap-2 pt-2">
             <Button variant="outline" onClick={() => setSaveTemplateOpen(false)} className="flex-1">
               Cancel
             </Button>
-            <Button onClick={saveTemplate} className="flex-1">
+            <Button onClick={saveTemplate} className="flex-1" disabled={templateSaving || !templateName.trim() || hasUnappliedWeightChanges || !appliedValidation.isValid}>
               <Save className="h-4 w-4 mr-2" />
-              Save Template
+              {templateSaving ? 'Saving…' : 'Save Template'}
             </Button>
           </div>
         </div>
@@ -1775,18 +1739,18 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
 
     {/* Load Templates Dialog */}
     <Dialog open={templatesOpen} onOpenChange={setTemplatesOpen}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="!z-[60] max-w-2xl" overlayClassName="!z-[55]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FolderOpen className="h-5 w-5" />
-            Saved Templates
+            Load Analysis Template
           </DialogTitle>
           <DialogDescription>
-            Load a saved template to quickly apply analysis settings
+            {templatesLoading ? 'Fetching compatible templates…' : `${availableTemplates.length} saved template${availableTemplates.length === 1 ? '' : 's'} available for this comparison.`}
           </DialogDescription>
         </DialogHeader>
         <ScrollArea className="max-h-[60vh]">
-          {savedTemplates.length === 0 ? (
+          {templatesLoading ? <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin" /></div> : availableTemplates.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <BookmarkPlus className="h-12 w-12 mx-auto mb-3 opacity-50" />
               <p>No saved templates yet</p>
@@ -1794,7 +1758,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
             </div>
           ) : (
             <div className="space-y-3 pr-4">
-              {savedTemplates.map((template) => (
+              {availableTemplates.map((template) => (
                 <Card key={template.id} className="hover:bg-muted/50 transition-colors">
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
@@ -1835,16 +1799,13 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         <Badge variant="secondary" className="text-xs">
                           Risk: {template.settings.riskTolerance}
                         </Badge>
-                        {template.settings.useCustomWeights && (
-                          <Badge variant="outline" className="text-xs">
-                            Custom Weights
-                          </Badge>
-                        )}
+                        <Badge variant="outline" className="text-xs">{parseComparisonTemplateSettings(template.settings) ? 'Compatible' : 'Invalid template'}</Badge>
                       </div>
                       <Button
                         variant="default"
                         size="sm"
                         onClick={() => loadTemplate(template)}
+                        disabled={!parseComparisonTemplateSettings(template.settings)}
                         className="w-full"
                       >
                         Load Template
