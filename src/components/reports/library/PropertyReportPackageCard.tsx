@@ -5,15 +5,15 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { ReportTypeBadge } from '@/components/reports/ReportTypeBadge';
 import { InvestmentReportCard } from './InvestmentReportCard';
 import type { InvestmentReport } from './types';
-import { normalizeReportVariant, REPORT_VARIANT_ORDER, resolveInvestmentReportType } from '@/lib/reports/reportVariants';
+import { normalizeReportVariant, REPORT_VARIANT_ORDER, resolveInvestmentReportType, type ReportVariant } from '@/lib/reports/reportVariants';
 import type { ReportTier } from '@/components/reports/TierBadge';
 import { Button } from '@/components/ui/button';
 import { resolveInvestmentGrade } from '@/components/reports/report-view/utils';
 import { InvestmentGradeSummary } from './InvestmentGradeSummary';
 
-type Props = Omit<React.ComponentProps<typeof InvestmentReportCard>, 'report' | 'isSelected' | 'generatingTier'> & { reports: InvestmentReport[]; isSelected: (id: string) => boolean; generatingTier: { reportId: string; tier: ReportTier } | null; onTogglePackageArchive?: (reports: InvestmentReport[]) => void };
+type Props = Omit<React.ComponentProps<typeof InvestmentReportCard>, 'report' | 'isSelected' | 'generatingTier' | 'comparisonSelectable' | 'activeComparisonType'> & { reports: InvestmentReport[]; isSelected: (id: string) => boolean; generatingTier: { reportId: string; tier: ReportTier } | null; activeComparisonType: ReportVariant | null; canSelectReport: (report: Pick<InvestmentReport, 'id' | 'report_tier'>) => boolean; onTogglePackageArchive?: (reports: InvestmentReport[]) => void };
 
-export function PropertyReportPackageCard({ reports, isSelected, generatingTier, onTogglePackageArchive, ...cardProps }: Props) {
+export function PropertyReportPackageCard({ reports, isSelected, generatingTier, activeComparisonType, canSelectReport, onTogglePackageArchive, ...cardProps }: Props) {
   const [open, setOpen] = useState(false);
   const contentId = useId();
   const ordered = [...reports].sort((a, b) => REPORT_VARIANT_ORDER.indexOf(normalizeReportVariant(a)) - REPORT_VARIANT_ORDER.indexOf(normalizeReportVariant(b)) || +new Date(b.created_at) - +new Date(a.created_at));
@@ -61,7 +61,7 @@ export function PropertyReportPackageCard({ reports, isSelected, generatingTier,
     </CardHeader>
     <div id={contentId} className={`grid transition-[grid-template-rows] duration-200 motion-reduce:transition-none ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
       <div className="overflow-hidden">
-        <CardContent className="border-t border-border/60 bg-muted/15 p-4"><div className="grid gap-4">{ordered.map(report => <InvestmentReportCard key={report.id} {...cardProps} report={report} isSelected={isSelected(report.id)} generatingTier={generatingTier?.reportId === report.id ? generatingTier.tier : null} />)}</div></CardContent>
+        <CardContent className="border-t border-border/60 bg-muted/15 p-4"><div className="grid gap-4">{ordered.map(report => <InvestmentReportCard key={report.id} {...cardProps} report={report} isSelected={isSelected(report.id)} comparisonSelectable={canSelectReport(report)} activeComparisonType={activeComparisonType} generatingTier={generatingTier?.reportId === report.id ? generatingTier.tier : null} />)}</div></CardContent>
       </div>
     </div>
   </Card>;
