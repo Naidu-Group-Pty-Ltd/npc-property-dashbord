@@ -55,9 +55,13 @@ export const MANUAL_OVERRIDE_OVERLAY_CLASSNAME = [
  * within that band, so the modal is centred in the main content frame with
  * balanced gutters and never overflows onto the sidebar or past the viewport.
  *
- * Vertical band: anchored one gutter below the top header, height grows with the
- * form up to the remaining viewport height, after which the body scrolls
- * internally while the header, tabs and footer stay pinned.
+ * Vertical band: pinned one gutter below the top header and one gutter above the
+ * viewport bottom. Anchoring BOTH insets gives the fixed dialog a *definite*
+ * height (viewport − top − bottom), which is essential: the internally scrollable
+ * body relies on a `height: 100%` chain (Radix ScrollArea), and a percentage
+ * height only resolves against a definite ancestor. With `max-height` alone the
+ * ancestor stays indefinite, the chain collapses to content height, and the body
+ * never scrolls. The `max-h` is kept purely as a belt-and-suspenders cap.
  */
 export const MANUAL_OVERRIDE_CONTENT_CLASSNAME = [
   'manual-data-override-dialog',
@@ -71,8 +75,9 @@ export const MANUAL_OVERRIDE_CONTENT_CLASSNAME = [
   // NOTE: keep this a static literal so Tailwind's JIT scanner emits the rule;
   // it must stay in sync with MANUAL_OVERRIDE_MAX_WIDTH_PX above.
   'max-w-[1500px]',
-  // Vertical placement: below the header, capped to the remaining viewport height.
+  // Vertical placement: below the header, above the viewport bottom. Both insets
+  // are required so the height is definite and the body can scroll internally.
   'top-[calc(var(--manual-override-header-height)_+_1rem)]',
-  'h-auto',
+  'bottom-4',
   'max-h-[calc(100dvh_-_var(--manual-override-header-height)_-_2rem)]',
 ].join(' ');

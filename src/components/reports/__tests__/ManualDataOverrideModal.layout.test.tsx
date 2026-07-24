@@ -84,6 +84,8 @@ describe('ManualDataOverrideModal — shell-contained layout', () => {
     expect(dialog.className).toContain('max-w-[1500px]');
     expect(dialog.className).toContain('left-[calc(var(--manual-override-sidebar-width)_+_1rem)]');
     expect(dialog.className).toContain('top-[calc(var(--manual-override-header-height)_+_1rem)]');
+    // Both vertical insets pinned => definite height => the body can scroll internally.
+    expect(dialog.className).toContain('bottom-4');
     expect(dialog.className).toContain('mx-auto');
     // Never edge-to-edge.
     expect(dialog.className).not.toContain('w-screen');

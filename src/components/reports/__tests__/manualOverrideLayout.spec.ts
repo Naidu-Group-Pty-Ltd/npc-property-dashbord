@@ -81,7 +81,18 @@ describe('Manual Data Override content contract', () => {
     expect(MANUAL_OVERRIDE_CONTENT_CLASSNAME).not.toContain('max-w-none');
   });
 
-  it('bounds its height to the remaining viewport so the body can scroll internally', () => {
+  it('pins both vertical insets so the height is definite (required for internal scroll)', () => {
+    // A Radix ScrollArea body scrolls via a height:100% chain, which only resolves
+    // against a definite ancestor height. Pinning top AND bottom makes the fixed
+    // dialog height definite; max-height alone (indefinite) would collapse the chain.
+    expect(MANUAL_OVERRIDE_CONTENT_CLASSNAME).toContain(
+      'top-[calc(var(--manual-override-header-height)_+_1rem)]',
+    );
+    expect(MANUAL_OVERRIDE_CONTENT_CLASSNAME).toContain('bottom-4');
+    expect(MANUAL_OVERRIDE_CONTENT_CLASSNAME).not.toContain('h-auto');
+  });
+
+  it('keeps a responsive maximum height as a safety cap', () => {
     expect(MANUAL_OVERRIDE_CONTENT_CLASSNAME).toContain(
       'max-h-[calc(100dvh_-_var(--manual-override-header-height)_-_2rem)]',
     );
