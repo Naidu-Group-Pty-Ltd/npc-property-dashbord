@@ -340,7 +340,7 @@ Deno.serve(async (req) => {
           const cutoff = new Date(Date.now() - Number(sched.retention_years) * 365.25 * 24 * 3600 * 1000).toISOString();
           const selectCols = `id, ${src.timestampCol}${src.refCol ? `, ${src.refCol}` : ""}`;
           const { data: rows } = await aml.from(src.table).select(selectCols).lt(src.timestampCol, cutoff).limit(500);
-          for (const row of (rows ?? [])) {
+          for (const row of ((rows ?? []) as any[])) {
             candidates++;
             perType[sched.entity_type] = (perType[sched.entity_type] ?? 0) + 1;
             const holdId = await activeHoldFor(admin, sched.entity_type, row.id);
