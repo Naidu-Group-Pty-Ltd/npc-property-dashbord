@@ -8,6 +8,8 @@ import type { InvestmentReport } from './types';
 import { normalizeReportVariant, REPORT_VARIANT_ORDER, resolveInvestmentReportType } from '@/lib/reports/reportVariants';
 import type { ReportTier } from '@/components/reports/TierBadge';
 import { Button } from '@/components/ui/button';
+import { resolveInvestmentGrade } from '@/components/reports/report-view/utils';
+import { InvestmentGradeSummary } from './InvestmentGradeSummary';
 
 type Props = Omit<React.ComponentProps<typeof InvestmentReportCard>, 'report' | 'isSelected' | 'generatingTier'> & { reports: InvestmentReport[]; isSelected: (id: string) => boolean; generatingTier: { reportId: string; tier: ReportTier } | null; onTogglePackageArchive?: (reports: InvestmentReport[]) => void };
 
@@ -18,6 +20,7 @@ export function PropertyReportPackageCard({ reports, isSelected, generatingTier,
   const availableVariants = REPORT_VARIANT_ORDER.filter((variant) => ordered.some((report) => resolveInvestmentReportType(report) === variant));
   const latest = ordered.reduce((newest, item) => new Date(item.created_at) > new Date(newest.created_at) ? item : newest, ordered[0]);
   const packageArchived = ordered.length > 0 && ordered.every(report => report.is_archived === true);
+  const resolvedGrade = resolveInvestmentGrade(ordered as any);
   const toggle = () => setOpen(value => !value);
   const onHeaderKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -44,6 +47,7 @@ export function PropertyReportPackageCard({ reports, isSelected, generatingTier,
             <h3 className="break-words text-lg font-semibold leading-snug">{latest.property_address}</h3>
             <p className="mt-1 text-xs text-muted-foreground">Latest {format(new Date(latest.created_at), 'PPp')} · {latest.status || 'completed'}</p>
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label={`${availableVariants.length} available report types`}>{availableVariants.map(variant => <ReportTypeBadge key={variant} type={variant} />)}</div>
+            <InvestmentGradeSummary grade={resolvedGrade} variant="compact" />
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">

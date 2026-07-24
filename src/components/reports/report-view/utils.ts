@@ -39,6 +39,60 @@ export function getInvestmentScoreSummary(report: InvestmentReport | null) {
   };
 }
 
+export type InvestmentGradeStatus = 'calculated' | 'pending' | 'insufficient_data' | 'failed' | 'not_graded';
+
+export interface ResolvedInvestmentGrade {
+  grade: string | null;
+  recommendation: string | null;
+  score: number | null;
+  partialLabel: string | null;
+  status: InvestmentGradeStatus;
+  sourceReportId: string | null;
+}
+
+type GradeReport = Pick<InvestmentReport, 'id' | 'created_at' | 'status' | 'investment_score'>;
+
+const reportTimestamp = (report: Pick<InvestmentReport, 'created_at'>) => {
+  const timestamp = Date.parse(report.created_at);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+/**
+ * Resolves the persisted score already used by report cards. It deliberately does
+ * not calculate a score or grade in the client; it only selects the newest usable
+ * score snapshot from reports that are already present in the list response.
+ */
+export function resolveInvestmentGrade(reports: readonly GradeReport[]): ResolvedInvestmentGrade {
+  const ordered = [...reports].sort((a, b) => reportTimestamp(b) - reportTimestamp(a));
+  const toResolved = (report: GradeReport, status: InvestmentGradeStatus): ResolvedInvestmentGrade => {
+    const summary = getInvestmentScoreSummary(report as InvestmentReport);
+    return {
+      grade: summary.grade,
+      recommendation: summary.recommendation,
+      score: summary.score,
+      partialLabel: summary.partialLabel,
+      status,
+      sourceReportId: report.id,
+    };
+  };
+
+  // A completed, numeric score is authoritative even when a newer regeneration is pending.
+  const calculated = ordered.find((report) => {
+    const summary = getInvestmentScoreSummary(report as InvestmentReport);
+    return report.status !== 'failed' && summary.score != null;
+  });
+  if (calculated) return toResolved(calculated, 'calculated');
+
+  const latest = ordered[0];
+  if (!latest) return { grade: null, recommendation: null, score: null, partialLabel: null, status: 'not_graded', sourceReportId: null };
+  if (latest.status === 'pending' || latest.status === 'processing') return toResolved(latest, 'pending');
+  if (latest.status === 'failed') return toResolved(latest, 'failed');
+
+  const summary = getInvestmentScoreSummary(latest as InvestmentReport);
+  if (latest.investment_score || summary.insufficient) return toResolved(latest, 'insufficient_data');
+  return toResolved(latest, 'not_graded');
+}
+
 export function getInvestmentGradeTone(grade?: string | null) {
   const normalizedGrade = grade?.toUpperCase();
   if (normalizedGrade === 'A+' || normalizedGrade === 'A') return 'bg-emerald-500 text-foreground dark:text-white';
