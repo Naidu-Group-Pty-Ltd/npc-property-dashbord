@@ -22,6 +22,7 @@ import {
   MANUAL_OVERRIDE_CONTENT_CLASSNAME,
   MANUAL_OVERRIDE_OVERLAY_CLASSNAME,
 } from './manualOverrideLayout';
+import { OVERRIDE_FIELD_PATHS, resolveOriginalFieldValue } from './overrideOriginalValue';
 import { AlertCircle, RotateCcw, Save, Calculator, ExternalLink, ChevronDown, ChevronRight, ArrowRight, Check, Table, Copy, Banknote, Info, FileText, TrendingUp, Sparkles, Loader2 } from 'lucide-react';
 import { Table as UITable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { STATE_MAPPING } from '@/lib/states';
@@ -1077,59 +1078,11 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
       // Merge overrides with existing financial_calculations
       const mergedFinancialData = { ...report.financial_calculations };
       
-      // Apply override mapping to nested structure
-      const overrideMapping: Record<string, string> = {
-        'purchasePrice': 'initialCosts.propertyValue',
-        'propertyType': 'propertySpecs.propertyType',
-        'carSpaces': 'propertySpecs.carSpaces',
-        'stampDuty': 'initialCosts.stampDuty',
-        'isFirstHomeBuyer': 'purchaseDetails.isFirstHomeBuyer',
-        'depositValue': 'initialCosts.deposit',
-        'loanToValueRatio': 'keyMetrics.lvr',
-        'interestRate': 'loanDetails.interestRate',
-        'weeklyRent': 'income.weeklyRent',
-        'councilRates': 'annualCosts.councilRates',
-        'waterRates': 'annualCosts.waterRates',
-        'bodyCorporateFees': 'annualCosts.strataFees',
-        'strataAdminFund': 'annualCosts.strataAdminFund',
-        'strataSinkingFund': 'annualCosts.strataSinkingFund',
-        'strataSpecialLevies': 'annualCosts.strataSpecialLevies',
-        'landTax': 'annualCosts.landTax',
-        'buildingLandlordInsurance': 'annualCosts.landlordInsurance',
-        'propertyManagementFees': 'annualCosts.propertyManagementPercent',
-        'solicitorFees': 'initialCosts.legalFees',
-        'repairsMaintenance': 'annualCosts.maintenance',
-        'lettingFees': 'annualCosts.lettingFees',
-        'capitalGrowth': 'assumptions.capitalGrowth',
-        'buildPrice': 'initialCosts.buildPrice',
-        'landPrice': 'initialCosts.landPrice',
-        'landSizeSqm': 'propertySpecs.landSizeSqm',
-        'buildSizeSqm': 'propertySpecs.buildSizeSqm',
-        // Cash flow and loan fields
-        'marketValueNow': 'cashFlow.marketValueNow',
-        'loanAmount': 'cashFlow.loanAmount',
-        'loanType': 'cashFlow.loanType',
-        'loanTermYears': 'cashFlow.loanTermYears',
-        'interestOnlyPeriodYears': 'cashFlow.interestOnlyPeriodYears',
-        'repaymentFrequency': 'cashFlow.repaymentFrequency',
-        'extraRepaymentPerMonth': 'cashFlow.extraRepaymentPerMonth',
-        'offsetBalance': 'cashFlow.offsetBalance',
-        'occupancyRate': 'cashFlow.occupancyRate',
-        'cpiGrowthRate': 'cashFlow.cpiGrowthRate',
-        'depreciation': 'cashFlow.depreciation',
-        'taxRate': 'cashFlow.taxRate',
-        'constructionYear': 'cashFlow.constructionYear',
-        // Construction stage fields
-        'constructionDurationMonths': 'construction.durationMonths',
-        'agentFee': 'initialCosts.agentFee',
-        'stageDepositPercent': 'construction.stageDepositPercent',
-        'stageSlabPercent': 'construction.stageSlabPercent',
-        'stageFramePercent': 'construction.stageFramePercent',
-        'stageLockupPercent': 'construction.stageLockupPercent',
-        'stageFixingPercent': 'construction.stageFixingPercent',
-        'stageCompletionPercent': 'construction.stageCompletionPercent'
-      };
-      
+      // Apply override mapping to nested structure.
+      // Canonical field->path map lives in overrideOriginalValue.ts so the Original
+      // Value display reads back from the exact locations overrides persist to.
+      const overrideMapping = OVERRIDE_FIELD_PATHS;
+
       // Apply overrides to nested structure
       for (const [flatKey, overrideValue] of Object.entries(overrides)) {
         const nestedPath = overrideMapping[flatKey];
@@ -1337,7 +1290,16 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
         <div className="min-w-0 space-y-2">
           <Label className="text-sm text-muted-foreground">Original Value (API)</Label>
           <div className="flex min-h-10 min-w-0 items-center rounded-md border bg-muted/50 px-3 py-2 text-muted-foreground">
-            <span className="min-w-0 break-words">{formatValue(field.originalValue, field.prefix, field.suffix)}</span>
+            <span className="min-w-0 break-words">{formatValue(
+              resolveOriginalFieldValue(
+                report?.financial_calculations,
+                report?.manual_overrides,
+                field.key,
+                field.originalValue,
+              ),
+              field.prefix,
+              field.suffix,
+            )}</span>
           </div>
         </div>
 
