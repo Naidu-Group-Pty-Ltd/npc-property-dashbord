@@ -28,7 +28,9 @@ export type TokenKind =
   | "report.portfolio-review"
   | "report.bulk-item"
   | "report.chart-analysis"
-  | "report.qualitative-regen";
+  | "report.qualitative-regen"
+  | "aml_identity_check"
+  | "aml_screening_check";
 
 export interface ReserveArgs {
   kind: TokenKind;
