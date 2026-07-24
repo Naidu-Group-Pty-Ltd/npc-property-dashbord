@@ -5288,7 +5288,7 @@ async function executeGetDocumentReadiness(sb: any, args: any) {
   const requiredDocs = ['ID Verification', 'Income Evidence', 'Bank Statements', 'Tax Returns', 'Employment Letter', 'Contract of Sale', 'Valuation Report', 'Insurance Certificate'];
   const fileNames = (files || []).map((f: any) => f.file_name?.toLowerCase() || '');
   const checklist = requiredDocs.map(doc => {
-    const found = fileNames.some(fn => fn.includes(doc.toLowerCase().split(' ')[0]));
+    const found = fileNames.some((fn: string) => fn.includes(doc.toLowerCase().split(' ')[0]));
     return { document: doc, status: found ? 'submitted' : 'missing', required: true };
   });
   const submitted = checklist.filter(d => d.status === 'submitted').length;
