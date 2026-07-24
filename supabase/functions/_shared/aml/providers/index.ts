@@ -347,6 +347,7 @@ export async function runWithMetrics<T>(
           cost_cents_sum: failed ? 0 : Number(args.costCents ?? 0),
         });
       }
+      }
     } catch (metricErr) {
       console.warn("[aml/providers] metric recording failed", (metricErr as Error)?.message);
     }
