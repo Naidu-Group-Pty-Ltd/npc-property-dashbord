@@ -49,7 +49,8 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
       investorProfile = 'general',
       timeHorizon = '5-7 years',
       riskTolerance = 'moderate',
-      customWeights
+      customWeights,
+      templateId
     } = body;
 
     // SECURITY: Verify authentication
@@ -63,6 +64,13 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
       return createUnauthorizedResponse(authError, corsHeaders);
     }
     console.log('[compare-investment-reports] Authenticated user:', userId);
+
+    const weightKeys = ['growth', 'location', 'yield', 'demand', 'risk'];
+    if (!customWeights || typeof customWeights !== 'object' ||
+      weightKeys.some((key) => !Number.isInteger(customWeights[key]) || customWeights[key] < 0 || customWeights[key] > 100) ||
+      weightKeys.reduce((total, key) => total + customWeights[key], 0) !== 100) {
+      return new Response(JSON.stringify({ error: 'Applied scoring weights must contain five whole-number values totalling 100%.' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     if (!reportIds || !Array.isArray(reportIds) || reportIds.length < 2 || reportIds.length > 5) {
       return new Response(
@@ -626,7 +634,8 @@ Format your response as valid JSON with this structure:
         analysis_summary: JSON.stringify({
           timeHorizon,
           riskTolerance,
-          customWeights: customWeights || null
+          customWeights,
+          templateId: typeof templateId === 'string' ? templateId : null
         })
       })
       .select()
