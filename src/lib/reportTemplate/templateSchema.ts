@@ -276,6 +276,26 @@ export const TextOverlaySchema = BaseOverlay.extend({
   fontVariantNumeric: z.enum(['normal','lining-nums','oldstyle-nums','tabular-nums','proportional-nums']).optional(),
   fontFeatureSettings: z.string().optional(),                     // raw, advanced override
   fontVariationSettings: z.string().optional(),                   // variable axes
+  // ── E5 (typography-fidelity) additive, OPTIONAL, backward-compatible metadata ──
+  // Links this native text overlay back to its immutable source typography runs
+  // + selected font asset + resolution/preservation state, so the review UI + E0
+  // can reconcile it with the fidelity report. Bounded metadata only — never
+  // source paragraph text, never a signed URL, never font bytes.
+  sourceTypographyRunIds: z.array(z.string()).optional(),
+  fontAssetId: z.string().optional(),
+  fontResolutionState: z.enum(['exact','embedded-subset','metric-compatible','source-crop','unavailable']).optional(),
+  baselineShift: z.number().optional(),
+  wordSpacing: z.number().optional(),
+  typographyPreservation: z.object({
+    version: z.string(),
+    renderMode: z.enum(['verified-native-text','source-text-crop','containment-fallback','blocked']).optional(),
+    fidelityState: z.string().optional(),
+    fidelityScore: z.number().nullable().optional(),
+    hardDefectCodes: z.array(z.string()).optional(),
+    fontResolutionState: z.string().optional(),
+    manualReviewRequired: z.boolean().optional(),
+    sourceCropPath: z.string().nullable().optional(),
+  }).optional(),
   // Section 3 — reference a paragraph style (overlay-level fields still win)
   styleRef: z.string().optional(),
   // Section 3 — drop cap (rendered as a floated span on the first character)
