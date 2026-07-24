@@ -33,7 +33,7 @@ export interface SeatLimitReached {
 }
 export interface SeatGenericError {
   ok: false;
-  error: Exclude<string, "seat_limit_reached"> & { __brand?: never };
+  error: string;
   message?: string;
 }
 export type SeatReserveResult = SeatReserveSuccess | SeatLimitReached | SeatGenericError;
