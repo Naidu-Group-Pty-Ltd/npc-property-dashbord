@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { smartCapitalize } from '@/lib/nameUtils';
 import { isAdvisorySourced } from '@/utils/propertySourcing';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -87,6 +87,7 @@ import { PortfolioAnalysisPDFGenerator } from './PortfolioAnalysisPDFGenerator';
 import { ReviewWizard } from './review-wizard';
 import { ClientEmailsTab } from './ClientEmailsTab';
 import { ClientSentReportsTab } from './ClientSentReportsTab';
+import { SendPortfolioToClientDialog } from './SendPortfolioToClientDialog';
 import { ClientReportRequestsTab } from './ClientReportRequestsTab';
 import { ClientAppointmentsTab } from './ClientAppointmentsTab';
 import { DealTrackerTab } from './deal-tracker';
@@ -119,7 +120,8 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
   const isMobile = useIsMobile();
   const [showEmailCompose, setShowEmailCompose] = useState(false);
   const [pdfAttachment, setPdfAttachment] = useState<{ blob: Blob; fileName: string } | null>(null);
-  const [isGeneratingPortfolio, setIsGeneratingPortfolio] = useState(false);
+  const [isPreparingPortfolio, setIsPreparingPortfolio] = useState(false);
+  const [isSendPortfolioModalOpen, setIsSendPortfolioModalOpen] = useState(false);
   const [portfolioAnalysisConfig, setPortfolioAnalysisConfig] = useState<PortfolioAnalysisSettings>(DEFAULT_SETTINGS);
   const [showPortfolioConfig, setShowPortfolioConfig] = useState(false);
   const [portfolioEmailSubject, setPortfolioEmailSubject] = useState('');
@@ -179,76 +181,22 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
     toast.success('PDF attached to email');
   };
 
-  // Handle "Send Portfolio to Client" - generates portfolio PDF and opens email with template
-  const handleSendPortfolioToClient = async () => {
-    if (!client.primary_email) {
-      toast.error('Client does not have an email address');
+  // The header action publishes an existing, saved report. Generation remains in the canonical Reports workflow.
+  const handleSendPortfolioToClient = () => {
+    if (isPreparingPortfolio) return;
+    if (!client.id) {
+      toast.error('This client could not be resolved. Please close and reopen the client.');
       return;
     }
-
-    if (properties.length === 0) {
-      toast.error('Client has no properties for portfolio analysis');
-      return;
-    }
-
-    setIsGeneratingPortfolio(true);
-    
-    try {
-      // Generate portfolio analysis
-      const { data, error } = await invokeSecureFunction('generate-portfolio-analysis', {
-        clientId: client.id,
-        investorProfile: 'general',
-        analysisDepth: 'comprehensive',
-        includeProjections: true,
-        projectionYears: portfolioAnalysisConfig?.projectionPeriod || 10,
-        analysisConfig: portfolioAnalysisConfig,
-      });
-
-      if (error) throw error;
-      if (!data?.success) throw new Error(data?.error || 'Analysis generation failed');
-
-      // Set templated email content
-      const clientFirstName = client.primary_first_name;
-      setPortfolioEmailSubject(`Your Portfolio Analysis Report - ${clientFirstName} ${client.primary_surname}`);
-      setPortfolioEmailBody(
-`Dear ${clientFirstName},
-
-Please find attached your comprehensive Portfolio Performance Analysis report.
-
-This report includes:
-• Executive summary of your portfolio health
-• Detailed analysis of each property
-• Risk assessment and mitigation strategies
-• 10-year growth projections
-• Strategic recommendations
-
-If you have any questions about the report or would like to discuss your investment strategy, please don't hesitate to reach out.
-
-Best regards,
-The Team`
-      );
-
-      logActivityDirect({
-        actionType: 'portfolio_report_generated',
-        entityType: 'portfolio_report',
-        entityName: `${clientFirstName} ${client.primary_surname}`,
-        metadata: { client_id: client.id, delivery: 'email' }
-      });
-
-      // Generate PDF from analysis data - store in session for email attachment
-      toast.success('Portfolio analysis ready. Preparing email...');
-      
-      // Open email compose with template
-      setPdfAttachment(null); // Clear any existing attachment
-      setShowEmailCompose(true);
-      
-    } catch (error: any) {
-      console.error('Portfolio generation error:', error);
-      toast.error('Failed to generate portfolio: ' + error.message);
-    } finally {
-      setIsGeneratingPortfolio(false);
-    }
+    setIsPreparingPortfolio(true);
+    setIsSendPortfolioModalOpen(true);
+    window.setTimeout(() => setIsPreparingPortfolio(false), 0);
   };
+
+  useEffect(() => {
+    setIsSendPortfolioModalOpen(false);
+    setIsPreparingPortfolio(false);
+  }, [client.id]);
 
   const queryClient = useQueryClient();
 
@@ -382,15 +330,16 @@ The Team`
           variant="default"
           size="sm"
           onClick={handleSendPortfolioToClient}
-          disabled={isGeneratingPortfolio || properties.length === 0 || !client.primary_email}
-          title={!client.primary_email ? 'Client has no email' : properties.length === 0 ? 'No properties to analyze' : 'Send portfolio analysis to client'}
+          type="button"
+          disabled={isPreparingPortfolio}
+          title="Send a saved portfolio analysis report to the client portal"
         >
-          {isGeneratingPortfolio ? (
+          {isPreparingPortfolio ? (
             <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
           ) : (
             <Send className="h-4 w-4 mr-1.5" />
           )}
-          <span className={isMobile ? "text-xs" : ""}>{isMobile ? "Send" : "Send Portfolio to Client"}</span>
+          <span className={isMobile ? "text-xs" : ""}>{isPreparingPortfolio ? "Preparing Portfolio…" : isMobile ? "Send" : "Send Portfolio to Client"}</span>
         </Button>
 
         <Button
@@ -1075,6 +1024,13 @@ The Team`
           </DialogContent>
         </Dialog>
       )}
+
+      <SendPortfolioToClientDialog
+        client={client}
+        open={isSendPortfolioModalOpen}
+        onOpenChange={setIsSendPortfolioModalOpen}
+        onGeneratePortfolioAnalysis={() => { setIsSendPortfolioModalOpen(false); setActiveTab('reports'); }}
+      />
 
       {/* Email Compose Modal */}
       <ClientEmailCompose

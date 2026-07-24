@@ -14,7 +14,7 @@ type TableName = 'clients' | 'client_properties' | 'client_income' | 'client_exp
                  'portfolio_analysis_reports' | 'client_reminders' | 'lead_source_attributions' | 'client_portal_report_requests' |
                  'client_address_history';
 
-type Operation = 'create' | 'update' | 'delete' | 'upsert' | 'bulkDelete';
+type Operation = 'create' | 'update' | 'delete' | 'upsert' | 'bulkDelete' | 'publish_portfolio_report';
 
 interface RequestBody {
   operation: Operation;
@@ -405,9 +405,11 @@ Deno.serve(async (req) => {
       : undefined;
     let resolvedClientId: string | undefined;
 
+    // The dedicated publication operation has the same reports permission as creating a portal report.
+    const permissionOperation = operation === 'publish_portfolio_report' ? 'create' : operation;
     // ── Server-side permission check ──
     // Verify the user has the required module-level permission for this operation
-    const permCheck = await checkPermission(supabase, userId!, table, operation, authMethod);
+    const permCheck = await checkPermission(supabase, userId!, table, permissionOperation, authMethod);
     if (!permCheck.allowed) {
       console.log(`[manage-client-data] Permission denied for user ${userId} on ${table}.${operation}: ${permCheck.reason}`);
       return new Response(
@@ -425,7 +427,7 @@ Deno.serve(async (req) => {
     }
 
     // Validate operation
-    if (!['create', 'update', 'delete', 'upsert', 'bulkDelete'].includes(operation)) {
+    if (!['create', 'update', 'delete', 'upsert', 'bulkDelete', 'publish_portfolio_report'].includes(operation)) {
       return new Response(
         JSON.stringify({ error: `Invalid operation: ${operation}` }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -446,6 +448,55 @@ Deno.serve(async (req) => {
 
     let result: any;
     let error: any;
+
+    // Canonical, server-validated path for publishing a saved portfolio report.
+    // It deliberately links the source object rather than copying it and is idempotent by client/report.
+    if (operation === 'publish_portfolio_report') {
+      if (table !== 'client_portal_reports' || !clientId || !reportId) {
+        return new Response(JSON.stringify({ success: false, error: 'A client and portfolio report are required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const { data: sourceReport, error: sourceError } = await supabase
+        .from('portfolio_analysis_reports')
+        .select('id, client_id, created_at, status, pdf_file_path')
+        .eq('id', reportId).eq('client_id', clientId).maybeSingle();
+      if (sourceError || !sourceReport) {
+        return new Response(JSON.stringify({ success: false, error: 'The selected portfolio report is unavailable' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (sourceReport.status !== 'completed') {
+        return new Response(JSON.stringify({ success: false, error: 'The selected report is still being generated' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (!sourceReport.pdf_file_path || !sourceReport.pdf_file_path.toLowerCase().endsWith('.pdf')) {
+        return new Response(JSON.stringify({ success: false, error: 'The report file could not be located' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const { error: storageError } = await supabase.storage.from('client-files').createSignedUrl(sourceReport.pdf_file_path, 60);
+      if (storageError) {
+        console.warn('[manage-client-data] Portfolio publication file validation failed', { reportId, clientId, code: storageError.statusCode || null });
+        return new Response(JSON.stringify({ success: false, error: 'The report file could not be located' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const { data: existing, error: existingError } = await supabase.from('client_portal_reports')
+        .select('id').eq('client_id', clientId).eq('source_report_id', reportId).maybeSingle();
+      if (existingError) throw existingError;
+      if (existing) {
+        return new Response(JSON.stringify({ success: true, alreadyPublished: true, publication: existing }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const title = `Portfolio Analysis - ${new Date(sourceReport.created_at).toLocaleDateString('en-AU')}`;
+      const { data: publication, error: publicationError } = await supabase.from('client_portal_reports').insert({
+        client_id: clientId, source_report_id: reportId, storage_path: sourceReport.pdf_file_path,
+        report_title: title, report_type: 'portfolio', published_by: userId,
+        published_at: new Date().toISOString(), client_visible_notes: data?.client_visible_notes || null,
+      }).select().single();
+      if (publicationError) throw publicationError;
+      try {
+        const notificationMessage = `Your advisor has published "${title}" to your portal.${data?.client_visible_notes ? ' Note: ' + data.client_visible_notes : ''}`;
+        await supabase.from('client_portal_notifications').insert({ client_id: clientId, title: 'New Report Available', message: notificationMessage, type: 'info', category: 'document', action_url: '/client/reports' });
+        if (data?.notify_email === true) {
+          const { resolveClientEmailInfo, sendPortalNotificationEmail } = await import('../_shared/portal-notification-email.ts');
+          const emailInfo = await resolveClientEmailInfo(supabase, clientId);
+          if (emailInfo) await sendPortalNotificationEmail({ to: emailInfo.email, clientFirstName: emailInfo.firstName, title: 'New Report Available', message: notificationMessage, type: 'info', category: 'document', actionUrl: '/client/reports', companyName: emailInfo.companyName });
+        }
+      } catch (notificationError) { console.warn('[manage-client-data] Portfolio publication notification failed', { reportId, clientId }); }
+      return new Response(JSON.stringify({ success: true, alreadyPublished: false, publication }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     switch (operation) {
       case 'create': {
