@@ -590,46 +590,49 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
         onClose();
       }
     }}>
-      <DialogContent className="max-w-7xl h-[90vh] flex flex-col w-[95vw] sm:w-[95vw] p-3 sm:p-6">
-        <DialogHeader className="flex-shrink-0">
-          <DialogTitle className="flex items-center gap-2">
+      <DialogContent className="flex h-[100dvh] w-screen max-w-none flex-col gap-0 overflow-hidden rounded-none border-0 !p-0 sm:h-auto sm:max-h-[90vh] sm:w-[96vw] sm:max-w-[1440px] sm:rounded-xl sm:border lg:w-[90vw] xl:w-[80vw] 2xl:w-[min(75vw,1440px)]">
+        <DialogHeader className="shrink-0 border-b bg-background px-4 py-4 pr-14 text-left sm:px-6 sm:py-5 sm:pr-16">
+          <DialogTitle className="flex flex-wrap items-center gap-2 text-base sm:text-lg">
             <TrendingUp className="h-5 w-5" />
             Multi-Property Comparison Analysis
+            <Badge variant="secondary" className="font-normal">{reportIds.length} selected</Badge>
           </DialogTitle>
-          <DialogDescription>
-            Comprehensive AI-powered qualitative comparison of {reportIds.length} investment properties
+          <DialogDescription className="mt-1 max-w-4xl">
+            Comprehensive AI-powered qualitative comparison of {reportIds.length} compatible investment properties.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto min-h-0">
-          <div className="h-full flex flex-col">{!hasStarted && !analysis && (
-            <div className="flex-1 flex items-center justify-center p-8">
-              <Card className="w-full max-w-5xl">
-                <CardHeader>
-                  <CardTitle>Ready to Compare Properties</CardTitle>
-                  <CardDescription>
-                    Generate a detailed AI analysis comparing these properties across financial performance,
-                    location quality, risk factors, and investment potential.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-4">
-                  <div className="space-y-2">
-                    <h4 className="text-sm font-medium">Selected Properties:</h4>
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
+          <div className="flex min-h-full flex-col">{!hasStarted && !analysis && (
+            <div className="flex-1 p-4 sm:p-6">
+              <div className="mx-auto w-full max-w-[1320px] space-y-5">
+                <section className="rounded-xl border bg-card/50 p-4 sm:p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-semibold">Ready to Compare Properties</h3>
+                      <p className="mt-1 text-sm text-muted-foreground">Generate a detailed AI analysis across financial performance, location quality, risk factors, and investment potential.</p>
+                    </div>
+                    <Badge variant="outline" className="shrink-0">Compatible investment reports</Badge>
+                  </div>
+                  <div className="mt-5 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {propertyAddresses.map((address, index) => (
-                      <div key={index} className="flex items-start gap-2 text-sm">
-                        <Badge variant="outline">{index + 1}</Badge>
-                        <span className="text-muted-foreground">{address}</span>
+                      <div key={index} className="min-w-0 rounded-lg border bg-background/60 p-3">
+                        <div className="flex items-start gap-3">
+                          <Badge variant="outline" className="shrink-0 rounded-full">{index + 1}</Badge>
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-medium leading-5">{address}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">Investment report · Included in this comparison</p>
+                          </div>
+                        </div>
                       </div>
                     ))}
                   </div>
-
-                  <Separator />
+                </section>
 
                   {/* Analysis Settings */}
-                  <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen}>
+                  <Collapsible open={settingsOpen} onOpenChange={setSettingsOpen} className="rounded-xl border bg-card/50">
                     <CollapsibleTrigger asChild>
-                      <Button variant="ghost" size="sm" className="w-full justify-between">
+                      <Button variant="ghost" className="h-auto w-full justify-between rounded-b-none px-4 py-4 sm:px-5">
                         <div className="flex items-center gap-2">
                           <Settings className="h-4 w-4" />
                           <span>Analysis Settings</span>
@@ -638,16 +641,16 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         <ChevronDown className={`h-4 w-4 transition-transform ${settingsOpen ? 'rotate-180' : ''}`} />
                       </Button>
                     </CollapsibleTrigger>
-                    <CollapsibleContent className="space-y-4 pt-4">
-                      <div className="max-h-[400px] overflow-y-auto pr-4 space-y-4">
+                    <CollapsibleContent className="space-y-4 border-t px-4 py-4 sm:px-5">
                       <p className="text-xs text-muted-foreground">
                         Customize the analysis or use defaults. All settings are optional with sensible defaults applied automatically.
                       </p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
+                      <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(300px,0.8fr)_minmax(420px,1.2fr)]">
+                      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                      <div className="min-w-0 space-y-2">
                         <Label htmlFor="investor-profile">Investor Profile</Label>
                         <Select value={investorProfile} onValueChange={setInvestorProfile}>
-                          <SelectTrigger id="investor-profile">
+                          <SelectTrigger id="investor-profile" className="w-full min-w-0">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -661,10 +664,10 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         </Select>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="min-w-0 space-y-2">
                         <Label htmlFor="analysis-depth">Analysis Depth</Label>
                         <Select value={analysisDepth} onValueChange={setAnalysisDepth}>
-                          <SelectTrigger id="analysis-depth">
+                          <SelectTrigger id="analysis-depth" className="w-full min-w-0">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -676,10 +679,10 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         </Select>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="min-w-0 space-y-2">
                         <Label htmlFor="time-horizon">Investment Time Horizon</Label>
                         <Select value={timeHorizon} onValueChange={setTimeHorizon}>
-                          <SelectTrigger id="time-horizon">
+                          <SelectTrigger id="time-horizon" className="w-full min-w-0">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -690,10 +693,10 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         </Select>
                       </div>
 
-                      <div className="space-y-2">
+                      <div className="min-w-0 space-y-2">
                         <Label htmlFor="risk-tolerance">Risk Tolerance</Label>
                         <Select value={riskTolerance} onValueChange={setRiskTolerance}>
-                          <SelectTrigger id="risk-tolerance">
+                          <SelectTrigger id="risk-tolerance" className="w-full min-w-0">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -704,7 +707,8 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         </Select>
                       </div>
 
-                      <div className="space-y-3 md:col-span-2">
+                      </div>
+                      <div className="min-w-0 space-y-3 rounded-lg border bg-muted/30 p-4">
                         <div className="flex items-center justify-between">
                           <Label>Custom Scoring Weights</Label>
                           <Button
@@ -717,13 +721,13 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                         </div>
                         
                         {useCustomWeights && (
-                          <div className="space-y-3 p-3 border rounded-lg bg-muted/50">
+                          <div className="space-y-4 rounded-lg border bg-background/70 p-4">
                             <div className="space-y-2">
                               <div className="flex justify-between items-center">
                                 <Label className="text-xs">Growth Score</Label>
                                 <span className="text-xs font-medium">{customWeights.growth}%</span>
                               </div>
-                              <Slider
+                              <Slider className="w-full"
                                 value={[customWeights.growth]}
                                 onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, growth: value }))}
                                 min={0}
@@ -736,7 +740,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                                 <Label className="text-xs">Location Score</Label>
                                 <span className="text-xs font-medium">{customWeights.location}%</span>
                               </div>
-                              <Slider
+                              <Slider className="w-full"
                                 value={[customWeights.location]}
                                 onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, location: value }))}
                                 min={0}
@@ -749,7 +753,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                                 <Label className="text-xs">Yield Score</Label>
                                 <span className="text-xs font-medium">{customWeights.yield}%</span>
                               </div>
-                              <Slider
+                              <Slider className="w-full"
                                 value={[customWeights.yield]}
                                 onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, yield: value }))}
                                 min={0}
@@ -762,7 +766,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                                 <Label className="text-xs">Demand Score</Label>
                                 <span className="text-xs font-medium">{customWeights.demand}%</span>
                               </div>
-                              <Slider
+                              <Slider className="w-full"
                                 value={[customWeights.demand]}
                                 onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, demand: value }))}
                                 min={0}
@@ -775,7 +779,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                                 <Label className="text-xs">Risk Score</Label>
                                 <span className="text-xs font-medium">{customWeights.risk}%</span>
                               </div>
-                              <Slider
+                              <Slider className="w-full"
                                 value={[customWeights.risk]}
                                 onValueChange={([value]) => setCustomWeights(prev => ({ ...prev, risk: value }))}
                                 min={0}
@@ -792,28 +796,26 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                           </div>
                         )}
                       </div>
-                      </div>
-                      </div>
                     </CollapsibleContent>
                   </Collapsible>
                   
                   {/* Template Management */}
-                  <Separator />
-                  <div className="flex items-center gap-2">
+                  <section className="rounded-xl border bg-card/50 p-4 sm:p-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div><h4 className="font-medium">Analysis templates</h4><p className="text-xs text-muted-foreground">Save the current configuration or load a previous template.</p></div>
+                  <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={() => setSaveTemplateOpen(true)}
-                      className="h-8 flex-1"
+                      className="w-full sm:w-auto"
                     >
                       <Save className="h-3.5 w-3.5 mr-2" />
                       Save Template
                     </Button>
                     <Button
                       variant="outline"
-                      size="sm"
                       onClick={() => setTemplatesOpen(true)}
-                      className="h-8 flex-1"
+                      className="w-full sm:w-auto"
                       disabled={savedTemplates.length === 0}
                     >
                       <FolderOpen className="h-3.5 w-3.5 mr-2" />
@@ -825,8 +827,8 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                       )}
                     </Button>
                   </div>
-                  
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -836,24 +838,8 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                       Reset to Defaults
                     </Button>
                   </div>
-                  
-                  <div className="flex gap-3">
-                    <Button 
-                      onClick={() => startAnalysis(false)} 
-                      size="lg" 
-                      className="flex-1"
-                      disabled={useCustomWeights && (customWeights.growth + customWeights.location + customWeights.yield + customWeights.demand + customWeights.risk) !== 100}
-                    >
-                      Start Analysis
-                    </Button>
-                    <Button onClick={() => startAnalysis(true)} variant="outline" size="lg" className="flex-1">
-                      <PlayCircle className="h-4 w-4 mr-2" />
-                      Run in Background
-                    </Button>
-                  </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </section>
+              </div>
             </div>
           )}
 
@@ -1218,7 +1204,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                   <TabsTrigger value="recommendation">Final</TabsTrigger>
                 </TabsList>
 
-                <ScrollArea className="flex-1 mt-4 pr-4">
+                <div className="mt-4 min-w-0">
                   <TabsContent value="overview" className="space-y-4 mt-0">
                     <Card>
                       <CardHeader>
@@ -1685,12 +1671,35 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                       </CardContent>
                     </Card>
                   </TabsContent>
-                </ScrollArea>
+                </div>
               </Tabs>
             </div>
           )}
           </div>
         </div>
+        {!hasStarted && !analysis && (
+          <div className="shrink-0 border-t bg-background px-4 py-3 sm:px-6">
+            <div className="mx-auto flex w-full max-w-[1320px] flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="ghost" onClick={onClose} className="sm:w-auto">Cancel</Button>
+              <Button
+                onClick={() => startAnalysis(true)}
+                variant="outline"
+                className="sm:w-auto"
+                disabled={useCustomWeights && (customWeights.growth + customWeights.location + customWeights.yield + customWeights.demand + customWeights.risk) !== 100}
+              >
+                <PlayCircle className="mr-2 h-4 w-4" />
+                Run in Background
+              </Button>
+              <Button
+                onClick={() => startAnalysis(false)}
+                className="sm:w-auto"
+                disabled={useCustomWeights && (customWeights.growth + customWeights.location + customWeights.yield + customWeights.demand + customWeights.risk) !== 100}
+              >
+                Start Analysis
+              </Button>
+            </div>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
 
