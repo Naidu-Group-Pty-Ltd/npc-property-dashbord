@@ -37,13 +37,18 @@ import { CashFlowChartsWorkspace } from '@/components/cash-flow/modal/CashFlowCh
 import { CashFlowAiPanel } from '@/components/cash-flow/modal/CashFlowAiPanel';
 import { CashFlowConstructionPanel } from '@/components/cash-flow/modal/CashFlowConstructionPanel';
 import { CashFlowProjectionTable } from '@/components/cash-flow/modal/CashFlowProjectionTable';
-import { 
-  get10YearLoanProjection, 
-  type MortgageInput, 
+import {
+  get10YearLoanProjection,
+  type MortgageInput,
   type RateChange,
   type RepaymentFrequency,
-  type LoanType 
+  type LoanType
 } from '@/utils/mortgageCalculations';
+import {
+  parseFinancialInput,
+  resolveYearDepreciation,
+  hydrateYearlyOverrides,
+} from '@/utils/cashFlowDepreciation';
 
 interface InvestmentReport {
   id: string;
@@ -329,28 +334,22 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   useEffect(() => {
     if (report && isOpen) {
       const cfOverrides = report.manual_overrides?.cashFlowYearlyOverrides || {};
-      const depSchedule = report.manual_overrides?.depreciationSchedule as Record<string | number, number> | undefined;
-      
-      // Merge depreciationSchedule into yearlyOverrides.
-      // Schedule values are authoritative and must replace stale per-year
-      // depreciation entries when the depreciation method changes.
-      let mergedOverrides = { ...cfOverrides };
-      if (depSchedule) {
-        for (let year = 1; year <= 10; year++) {
-          const scheduleValue = depSchedule[year] ?? depSchedule[String(year)];
-          if (scheduleValue != null) {
-            if (!mergedOverrides[year]) {
-              mergedOverrides[year] = {};
-            }
-            mergedOverrides[year] = {
-              ...mergedOverrides[year],
-              depreciation: scheduleValue
-            };
-          }
-        }
-      }
-      
-      setYearlyOverrides(mergedOverrides);
+
+      // Hydrate the editable per-year overrides from the persisted record.
+      //
+      // Saved manual overrides (including manual depreciation edits) are
+      // authoritative. We intentionally DO NOT seed the generated
+      // `depreciationSchedule` into the override map here: doing so was the
+      // root cause of manual depreciation edits reverting after Save/refetch,
+      // because the generated figure overwrote the saved value on every open.
+      // Years the user has never edited carry no depreciation override and fall
+      // back to the generated schedule in the projection calculation below, so
+      // schedule changes still flow through for non-edited years.
+      const hydratedOverrides = hydrateYearlyOverrides<YearOverrides>(
+        cfOverrides as YearlyOverrides,
+      );
+
+      setYearlyOverrides(hydratedOverrides);
       setHasChanges(false);
       setEditingCell(null);
       setComparisonMode(false);
@@ -826,13 +825,17 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   // Handle cell edit commit
   const handleCellEditCommit = useCallback(() => {
     if (!editingCell) return;
-    
-    const numValue = editValue === '' ? null : parseFloat(editValue);
-    if (numValue !== null && isNaN(numValue)) {
+
+    // parseFinancialInput strips currency symbols/commas and returns null for a
+    // temporarily-blank field. Zero parses to 0 (a valid override), never null.
+    const numValue = parseFinancialInput(editValue);
+    if (editValue.trim() !== '' && numValue === null) {
+      // Non-empty but unparseable (invalid text) — discard the edit, keep the
+      // previously committed value rather than corrupting the override.
       setEditingCell(null);
       return;
     }
-    
+
     setOverrideValue(editingCell.year, editingCell.field, numValue);
     setEditingCell(null);
   }, [editingCell, editValue, setOverrideValue]);
@@ -1064,20 +1067,16 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
       // =====================================================
       // DEPRECIATION - LOCKED (schedule-based or direct override)
+      // Priority: saved/draft manual override > generated 10-year schedule >
+      // single default. Manual overrides (incl. 0) always win so saved edits
+      // are never overwritten by the generated figure during recalculation.
       // =====================================================
-      let depreciation: number;
-      if (year === 0) {
-        depreciation = 0;
-      } else if (yearOverrides.depreciation !== undefined && yearOverrides.depreciation !== null) {
-        // Manual per-year override takes precedence (LOCKED)
-        depreciation = yearOverrides.depreciation;
-      } else if (baseFinancialData.depreciationSchedule && baseFinancialData.depreciationSchedule[year] != null) {
-        // Use year-specific value from 10-year schedule
-        depreciation = baseFinancialData.depreciationSchedule[year];
-      } else {
-        // Fallback to single depreciation value
-        depreciation = baseFinancialData.depreciation;
-      }
+      const depreciation = resolveYearDepreciation({
+        year,
+        override: yearOverrides.depreciation,
+        scheduleValue: baseFinancialData.depreciationSchedule?.[year],
+        defaultValue: baseFinancialData.depreciation,
+      });
 
       // =====================================================
       // LAND TAX - LOCKED (direct override or base value)
@@ -2170,18 +2169,36 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     const isEditable = year >= 1; // Years 1-10 are editable
     const hasOverrideValue = hasOverride(year, field);
     const fieldConfig = EDITABLE_FIELDS.find(f => f.key === field);
-    
+    const fieldLabel = fieldConfig?.label ?? field;
+    // Accessible label, e.g. "Year 1 Depreciation $". Keyboard/screen-reader
+    // users get a per-cell label instead of an unlabelled control.
+    const a11yLabel = `Year ${year} ${fieldLabel}`;
+
+    // Shared geometry so the control never changes size between the read-only
+    // button and the editing input (prevents hover/focus layout shift, flicker
+    // and column jump). Fixed height + 1px border in every state. The md:*
+    // variants pin the height/text-size across breakpoints so the shadcn Input
+    // base classes (md:h-10 / md:text-sm) can't reintroduce a size mismatch.
+    const cellBox = 'box-border h-9 md:h-9 w-full min-w-[88px] rounded-lg border px-2 text-center text-xs md:text-xs';
+
     if (isEditing) {
       return (
         <Input
           type="number"
+          inputMode="decimal"
           step={fieldConfig?.step || 1}
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
           onBlur={handleCellEditCommit}
           onKeyDown={handleEditKeyDown}
           autoFocus
-          className="h-8 w-full min-w-[88px] rounded-lg border-primary/40 bg-primary/5 p-1 text-center text-xs shadow-sm"
+          aria-label={a11yLabel}
+          className={cn(
+            cellBox,
+            'border-primary/50 bg-primary/5 py-0 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-0',
+            // Hide native number spinners so the field width stays constant on focus.
+            '[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none',
+          )}
         />
       );
     }
@@ -2189,15 +2206,27 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     if (isEditable) {
       return (
         <button
+          type="button"
           onClick={() => handleCellEditStart(year, field, displayValue)}
-          className={`group relative w-full min-w-[88px] rounded-xl border px-2 py-1.5 text-center text-xs transition-all hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/5 hover:shadow-md ${
-            hasOverrideValue ? 'border-primary/30 bg-primary/10 font-semibold text-primary shadow-sm' : 'border-transparent bg-transparent'
-          }`}
+          aria-label={hasOverrideValue ? `${a11yLabel} (overridden)` : a11yLabel}
           title={hasOverrideValue ? 'Click to edit (overridden)' : 'Click to edit'}
+          className={cn(
+            cellBox,
+            // Only colours transition on hover/focus — no transform, size or
+            // border-width change — so adjacent columns never shift.
+            'group relative inline-flex items-center justify-center transition-colors hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+            hasOverrideValue
+              ? 'border-primary/40 bg-primary/10 font-semibold text-primary'
+              : 'border-transparent bg-transparent',
+          )}
         >
-          {hasOverrideValue && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-primary ring-2 ring-background" aria-hidden="true" />}
-          <span className="block">{formatFn(displayValue)}</span>
-          <span className="mt-0.5 hidden text-[9px] font-normal text-muted-foreground group-hover:block">Edit</span>
+          {hasOverrideValue && (
+            <span
+              className="pointer-events-none absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary ring-2 ring-background"
+              aria-hidden="true"
+            />
+          )}
+          <span className="block truncate">{formatFn(displayValue)}</span>
         </button>
       );
     }
