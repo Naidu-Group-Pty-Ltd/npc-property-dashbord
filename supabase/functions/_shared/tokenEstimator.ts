@@ -18,6 +18,8 @@ const BASE: Record<TokenKind, number> = {
   "report.bulk-item": 8, // averaged; caller should override per-item
   "report.chart-analysis": 2,
   "report.qualitative-regen": 3,
+  "aml_identity_check": 4,
+  "aml_screening_check": 4,
 };
 
 export interface EstimateOptions {
