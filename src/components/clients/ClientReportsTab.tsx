@@ -257,7 +257,7 @@ export function ClientReportsTab({
       const { error } = await invokeSecureFunction('manage-client-data', {
         operation: 'delete',
         table: 'portfolio_analysis_reports',
-        recordId: reportId
+        reportId,
       });
       if (error) throw new Error(error.message);
     },
@@ -272,8 +272,8 @@ export function ClientReportsTab({
       toast.success('Report deleted');
       setReportToDelete(null);
     },
-    onError: (error) => {
-      toast.error('Failed to delete: ' + error.message);
+    onError: () => {
+      toast.error('Portfolio report could not be deleted. No data was removed. Please try again.');
     },
   });
 

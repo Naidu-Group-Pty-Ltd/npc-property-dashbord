@@ -4,6 +4,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { checkPermission } from '../_shared/permissions.ts';
 import { buildProvenance, logClientActivity } from '../_shared/client-data-provenance.ts';
 import { buildDocumentDedupeKey, buildNoteDedupeKey, createSyncEvent, resolveSyncConflict, sha256Text, SYNC_CONFLICT_WINDOW_MS } from '../_shared/client-sync.ts';
+import { resolvePortfolioReportDeletionTarget } from './portfolioReportDeletion.ts';
 
 type TableName = 'clients' | 'client_properties' | 'client_income' | 'client_expenses' |
                  'client_assets' | 'client_liabilities' | 'client_employment' |
@@ -20,6 +21,8 @@ interface RequestBody {
   table: TableName;
   clientId?: string; // Optional for report_qa tables
   recordId?: string;
+  // Portfolio report deletes accept only this immutable primary key. The server resolves ownership.
+  reportId?: string;
   data?: Record<string, any> | Record<string, any>[]; // Allow array for batch inserts
   session_token?: string;
 }
@@ -394,7 +397,13 @@ Deno.serve(async (req) => {
 
     const authMethod = (await verifyAuth(supabase, req.headers, body)).authMethod;
 
-    const { operation, table, clientId, recordId, data } = body;
+    const { operation, table, clientId, recordId, reportId, data } = body;
+    // A report ID is the sole browser-supplied identifier for portfolio report deletion.
+    // Never trust a browser-provided client ID to establish report ownership.
+    const portfolioReportId = table === 'portfolio_analysis_reports' && operation === 'delete'
+      ? (reportId || recordId)
+      : undefined;
+    let resolvedClientId: string | undefined;
 
     // ── Server-side permission check ──
     // Verify the user has the required module-level permission for this operation
@@ -427,7 +436,8 @@ Deno.serve(async (req) => {
     const STANDALONE_TABLES = ['clients', 'report_qa_messages', 'report_qa_conversations', 'deal_stages', 'build_progress_payments', 'builder_invoices', 'portal_configuration', 'client_portal_report_requests', 'client_reminders'];
     
     // Validate clientId for client-related tables only
-    if (!STANDALONE_TABLES.includes(table) && !clientId) {
+    const isPortfolioReportDelete = table === 'portfolio_analysis_reports' && operation === 'delete';
+    if (!STANDALONE_TABLES.includes(table) && !isPortfolioReportDelete && !clientId) {
       return new Response(
         JSON.stringify({ error: 'clientId is required for related tables' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -744,6 +754,81 @@ Deno.serve(async (req) => {
       }
 
       case 'delete': {
+        if (table === 'portfolio_analysis_reports') {
+          if (!portfolioReportId) {
+            return new Response(
+              JSON.stringify({ error: 'reportId is required for portfolio report deletion' }),
+              { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+
+          // Resolve the canonical report first. This prevents a missing or forged clientId
+          // from selecting a different client’s data and supports legacy reports with no link.
+          const { data: report, error: reportLookupError } = await supabase
+            .from('portfolio_analysis_reports')
+            .select('id, client_id, client_name, created_at, status, pdf_file_path')
+            .eq('id', portfolioReportId)
+            .maybeSingle();
+
+          if (reportLookupError || !report) {
+            console.warn('[manage-client-data] Portfolio report delete target was not found or could not be resolved', {
+              reportId: portfolioReportId,
+              userId,
+              lookupError: reportLookupError?.code || null,
+            });
+            return new Response(
+              JSON.stringify({ error: 'Portfolio report not found' }),
+              { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+
+          const deletionTarget = resolvePortfolioReportDeletionTarget(portfolioReportId, report);
+          if (!deletionTarget) {
+            return new Response(
+              JSON.stringify({ error: 'Portfolio report not found' }),
+              { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+            );
+          }
+          resolvedClientId = deletionTarget.clientId || undefined;
+          let deleteQuery = supabase
+            .from('portfolio_analysis_reports')
+            .delete()
+            .eq('id', deletionTarget.reportId);
+          // Scope by the server-resolved owner when it exists. Legacy rows without an
+          // owner can still be safely removed by their immutable report ID alone.
+          if (resolvedClientId) deleteQuery = deleteQuery.eq('client_id', resolvedClientId);
+          const { error: deleteError } = await deleteQuery;
+          error = deleteError;
+
+          // There are no report-owned relational child tables in the current schema.
+          // Storage cleanup deliberately runs after the committed database delete and only
+          // removes an object when no other report or client-file record references it.
+          let storageCleanup = 'not_required';
+          if (!error && report.pdf_file_path) {
+            const [{ count: reportReferences, error: reportReferenceError }, { count: fileReferences, error: fileReferenceError }] = await Promise.all([
+              supabase.from('portfolio_analysis_reports').select('id', { count: 'exact', head: true }).eq('pdf_file_path', report.pdf_file_path),
+              supabase.from('client_files').select('id', { count: 'exact', head: true }).eq('file_path', report.pdf_file_path),
+            ]);
+            if (reportReferenceError || fileReferenceError) {
+              storageCleanup = 'deferred';
+              console.warn('[manage-client-data] Deferred portfolio report storage cleanup after reference check failure', { reportId: report.id });
+            } else if ((reportReferences || 0) === 0 && (fileReferences || 0) === 0) {
+              const { error: storageError } = await supabase.storage.from('client-files').remove([report.pdf_file_path]);
+              storageCleanup = storageError ? 'deferred' : 'removed';
+              if (storageError) console.warn('[manage-client-data] Deferred portfolio report storage cleanup', { reportId: report.id });
+            } else {
+              storageCleanup = 'retained_shared_reference';
+            }
+          }
+
+          result = {
+            deleted: !error,
+            id: report.id,
+            storageCleanup,
+          };
+          break;
+        }
+
         if (!recordId && table !== 'clients') {
           return new Response(
             JSON.stringify({ error: 'recordId is required for delete operation' }),
@@ -841,10 +926,11 @@ Deno.serve(async (req) => {
     }
 
     // Log the activity (only for client-related tables)
-    if (clientId && !['report_qa_messages', 'report_qa_conversations'].includes(table)) {
+    const activityClientId = resolvedClientId || clientId;
+    if (activityClientId && !['report_qa_messages', 'report_qa_conversations'].includes(table)) {
       try {
         await logClientActivity(supabase, {
-          clientId,
+          clientId: activityClientId,
           activityType: `${table}_${operation}`,
           title: `${operation.charAt(0).toUpperCase() + operation.slice(1)}d ${table.replace('client_', '').replace('_', ' ')}`,
           description: `Record ${operation}d via secure API`,
