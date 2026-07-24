@@ -619,6 +619,31 @@ export const PageSchema = z.object({
         decidedBy: z.enum(['quality-gate', 'operator', 'migration']),
       }).optional(),
     }).optional(),
+    // ── E6 (pdf-region-output-policy-v1) additive, OPTIONAL, backward-compatible.
+    // Bounded per-page region-composition summary + a reference to the private
+    // region-output manifest. Never inlines source text, full crop maps, font
+    // bytes or signed URLs. The page-level `pdfImport` policy stays authoritative
+    // for page-wide raster/native output; region policy composes BENEATH it.
+    pdfImportRegionOutput: z.object({
+      version: z.literal('pdf-region-output-policy-v1'),
+      manifestPath: z.string().nullable().optional(),
+      automaticPolicyHash: z.string().optional(),
+      activeOverrideIds: z.array(z.string()).optional(),
+      summary: z.object({
+        totalRegionCount: z.number().int().min(0),
+        nativeRegionCount: z.number().int().min(0),
+        sourceCropRegionCount: z.number().int().min(0),
+        nativeReferenceRegionCount: z.number().int().min(0),
+        hiddenSemanticRegionCount: z.number().int().min(0),
+        pageFallbackRegionCount: z.number().int().min(0),
+        blockedRegionCount: z.number().int().min(0),
+        operatorOverrideCount: z.number().int().min(0),
+        hardDefectCount: z.number().int().min(0),
+        mixedRegionOutput: z.boolean(),
+      }).optional(),
+      complete: z.boolean().optional(),
+      problems: z.array(z.string()).optional(),
+    }).optional(),
   }).passthrough().optional(),
 });
 
