@@ -127,6 +127,7 @@ const getCashflowValueClassName = (cashflow: number | null) => {
 export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: PortfolioAnalysisReportsListProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [reportToDelete, setReportToDelete] = useState<PortfolioAnalysisReport | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   // Fetch portfolio analysis reports via secure function
@@ -151,20 +152,30 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
   // Delete mutation via secure function
   const deleteMutation = useMutation({
     mutationFn: async (reportId: string) => {
-      const { error } = await invokeSecureFunction('manage-client-data', {
+      const { data, error } = await invokeSecureFunction('manage-client-data', {
         operation: 'delete',
         table: 'portfolio_analysis_reports',
-        recordId: reportId
+        reportId,
       });
-      if (error) throw new Error(error.message);
+      if (error || !data?.result?.deleted || data.result.id !== reportId) {
+        throw new Error('Portfolio report deletion was not confirmed');
+      }
+      return reportId;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['portfolio-analysis-reports'] });
-      toast.success('Report deleted successfully');
+    onSuccess: async (deletedReportId) => {
+      queryClient.setQueriesData<PortfolioAnalysisReport[]>({ queryKey: ['portfolio-analysis-reports'] }, (current) =>
+        current?.filter((report) => report.id !== deletedReportId),
+      );
+      queryClient.removeQueries({ queryKey: ['portfolio-analysis-report', deletedReportId] });
+      await queryClient.invalidateQueries({ queryKey: ['portfolio-analysis-reports'] });
+      setDeleteError(null);
       setReportToDelete(null);
+      toast.success('Portfolio report deleted successfully.', {
+        description: 'The client and their other records were not affected.',
+      });
     },
-    onError: (error) => {
-      toast.error('Failed to delete report: ' + error.message);
+    onError: () => {
+      setDeleteError('Portfolio report could not be deleted. No data was removed. Please try again.');
     },
   });
 
@@ -520,7 +531,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
                             />
                             <DropdownMenuItem
                               className="rounded-xl text-destructive transition-colors focus:bg-destructive/10 focus:text-destructive"
-                              onClick={() => setReportToDelete(report)}
+                              onClick={() => { setDeleteError(null); setReportToDelete(report); }}
                             >
                               <Trash2 className="h-4 w-4 mr-2" />
                               Delete
@@ -539,22 +550,38 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
       </Card>
 
       {/* Delete Confirmation */}
-      <AlertDialog open={!!reportToDelete} onOpenChange={() => setReportToDelete(null)}>
+      <AlertDialog
+        open={!!reportToDelete}
+        onOpenChange={(open) => {
+          if (!open && !deleteMutation.isPending) {
+            setDeleteError(null);
+            setReportToDelete(null);
+          }
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete Report</AlertDialogTitle>
+            <AlertDialogTitle>Delete portfolio report?</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this portfolio analysis report for {smartCapitalize(reportToDelete?.client_name)}?
-              This action cannot be undone.
+              You are about to permanently delete the portfolio analysis report for{' '}
+              {smartCapitalize(reportToDelete?.client_name || 'this client')} generated{' '}
+              {reportToDelete ? format(new Date(reportToDelete.created_at), 'dd MMM yyyy') : 'on the selected date'}.
+              This will not delete the client, their properties, or any other reports.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => reportToDelete && deleteMutation.mutate(reportToDelete.id)}
+              disabled={deleteMutation.isPending || !reportToDelete}
+              onClick={(event) => {
+                event.preventDefault();
+                if (reportToDelete && !deleteMutation.isPending) deleteMutation.mutate(reportToDelete.id);
+              }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              Delete
+              {deleteMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {deleteMutation.isPending ? 'Deleting…' : 'Delete Report'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
