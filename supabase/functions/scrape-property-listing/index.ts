@@ -406,12 +406,8 @@ async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; tit
     console.warn("[scrape-property-listing] FIRECRAWL_API_KEY not set — skipping page scrape, falling back to URL-only extraction.");
     return null;
   }
-  const attempts = [
-    { formats: ["markdown"], onlyMainContent: false, waitFor: 1000, timeout: 25000 },
-    { formats: ["markdown"], onlyMainContent: true, waitFor: 0, timeout: 25000 },
-    { formats: ["markdown", "html"], onlyMainContent: false, waitFor: 2500, timeout: 35000 },
-  ];
-  for (const attempt of attempts) try {
+  const attempt = { formats: ["markdown"], onlyMainContent: false, waitFor: 1000, timeout: 25000 };
+  try {
     const resp = await fetch("https://api.firecrawl.dev/v2/scrape", {
       method: "POST",
       headers: {
@@ -428,7 +424,7 @@ async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; tit
     if (!resp.ok) {
       const t = await resp.text();
       console.error("[scrape-property-listing] Firecrawl failed", resp.status, t.slice(0, 300));
-      continue;
+      return null;
     }
     const j = await resp.json();
     const root = j?.data ?? j;
@@ -438,14 +434,13 @@ async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; tit
     const description: string | undefined = root?.metadata?.description;
     if (!markdown || markdown.length < 80 || isBadScrapeContent(markdown)) {
       console.warn("[scrape-property-listing] Firecrawl returned empty/short markdown:", markdown.length);
-      continue;
+      return null;
     }
     return { markdown, title, description };
   } catch (e) {
     console.error("[scrape-property-listing] Firecrawl exception", e);
-    continue;
+    return null;
   }
-  return null;
 }
 
 async function scrapeWithReaderMode(url: string): Promise<{ markdown: string; title?: string; description?: string } | null> {
