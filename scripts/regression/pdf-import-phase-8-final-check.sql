@@ -238,7 +238,18 @@ with summary as (
     count(*) filter (where meta->'golden_regression_summary'->>'qualityGateStatus' = 'warning') as golden_warning,
     count(*) filter (where meta->'golden_regression_summary'->>'qualityGateStatus' = 'fail') as golden_fail,
     count(*) filter (where meta->'golden_regression_summary'->>'qualityGateStatus' = 'blocked') as golden_blocked,
-    count(*) filter (where meta->'golden_regression_summary'->>'operatorDecision' in ('rejected', 'needs_rerun')) as operator_blocking_count
+    count(*) filter (where meta->'golden_regression_summary'->>'operatorDecision' in ('rejected', 'needs_rerun')) as operator_blocking_count,
+    count(*) filter (
+      where meta ? 'golden_regression_summary'
+        and (
+          meta->'golden_regression_summary'->>'version' is null
+          or meta->'golden_regression_summary'->>'corpusId' is null
+          or meta->'golden_regression_summary'->>'qualityGateStatus' is null
+          or meta->'golden_regression_summary'->>'qualityGateStatus' not in ('pass', 'warning', 'fail', 'blocked')
+          or meta->'golden_regression_summary'->>'operatorDecision' is null
+          or meta->'golden_regression_summary'->>'persistedAt' is null
+        )
+    ) as malformed_summary_count
   from public.template_imports
 )
 select
@@ -248,8 +259,10 @@ select
   golden_fail,
   golden_blocked,
   operator_blocking_count,
+  malformed_summary_count,
   case
     when golden_fail > 0 or golden_blocked > 0 or operator_blocking_count > 0 then 'phase_8_not_locked_database_failures_present'
+    when malformed_summary_count > 0 then 'phase_8_not_locked_invalid_golden_summaries'
     when golden_summary_count = 0 then 'phase_8_locked_with_warnings_no_golden_runs_persisted'
     when golden_warning > 0 then 'phase_8_locked_with_warnings'
     else 'phase_8_ready_to_lock'
