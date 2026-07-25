@@ -8796,6 +8796,19 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ success: true, runs: data || [] }), { headers: { ...cors, 'Content-Type': 'application/json' } });
       }
       case 'get-trace-log': {
+        const { data: superadminRole, error: roleError } = await sb
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', userId!)
+          .eq('role', 'superadmin')
+          .maybeSingle();
+        if (roleError || !superadminRole) {
+          if (roleError) console.error('[ai-dashboard-agent] Trace-log role check failed:', roleError);
+          return new Response(JSON.stringify({ error: 'Superadmin access required' }), {
+            status: 403,
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
         const limit = Math.min(Number(body.limit) || 100, 500);
         let q = sb.from('agent_action_log').select('id, conversation_id, tool_name, tool_arguments, tool_result, affected_table, affected_record_id, status, confidence_score, execution_time_ms, created_at, is_rolled_back').order('created_at', { ascending: false }).limit(limit);
         if (body.tool_name) q = q.eq('tool_name', body.tool_name);
