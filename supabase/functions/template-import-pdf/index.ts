@@ -1404,7 +1404,8 @@ Deno.serve(async (req) => {
       if (!authedUserId) return json({ error: 'unauthorized' }, 401);
       const templateId = body.template_id as string;
       if (!templateId) return json({ error: 'template_id required' }, 400);
-      const { data, error } = await admin
+      const isAdmin = await userHasAdminRole(admin, authedUserId);
+      let query = admin
         .from('template_imports')
         .select('id,source_filename,updated_at,created_at')
         .eq('created_template_id', templateId)
@@ -1412,8 +1413,9 @@ Deno.serve(async (req) => {
         .not('meta->>cdir_artifact_path', 'is', null)
         .order('updated_at', { ascending: false })
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+      if (!isAdmin) query = query.eq('user_id', authedUserId);
+      const { data, error } = await query.maybeSingle();
       if (error) return json({ error: error.message }, 400);
       return json({ record: data ?? null });
     }
