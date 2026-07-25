@@ -1,4 +1,5 @@
 import type { CommercialScenarioProposal } from '@/components/commercial/calculators/CommercialBCScenarioAgent';
+import { lenderPolicyProfiles } from './borrowing/lenderPolicyProfiles';
 
 /** Map of allowed adjustment keys → state setter from CommercialBorrowingCapacityCard. */
 export interface CommercialScenarioSetters {
@@ -69,12 +70,17 @@ const numericKeys: Array<[keyof CommercialScenarioSetters, string]> = [
   ['setMinDebtYield', 'minDebtYield'],
 ];
 
-const enumKeys: Array<[keyof CommercialScenarioSetters, string]> = [
-  ['setGstTreatment', 'gstTreatment'],
-  ['setLeaseStatus', 'leaseStatus'],
-  ['setGuarantees', 'guarantees'],
-  ['setRelatedPartyTenant', 'relatedPartyTenant'],
-  ['setScenarioType', 'scenarioType'],
+const enumKeys: Array<[keyof CommercialScenarioSetters, string, ReadonlySet<string>]> = [
+  ['setGstTreatment', 'gstTreatment', new Set(['gstInclusive', 'plusGst', 'gstFreeGoingConcern', 'marginScheme', 'unknown'])],
+  ['setLeaseStatus', 'leaseStatus', new Set(['fullyLeased', 'partiallyLeased', 'vacant', 'monthToMonth', 'relatedPartyLease', 'leasePending'])],
+  ['setGuarantees', 'guarantees', new Set(['yes', 'no', 'unknown'])],
+  ['setRelatedPartyTenant', 'relatedPartyTenant', new Set(['yes', 'no'])],
+  ['setScenarioType', 'scenarioType', new Set([
+    'Base Current Position', 'Acquire Commercial Asset', 'Acquire Industrial Asset',
+    'Owner-Occupied Business Premises', 'Related-Party Lease Structure', 'Sell Existing Asset',
+    'Refinance Existing Debt', 'Equity Release', 'Debt Restructure', 'Cash Injection',
+    'Interest Rate Stress', 'Vacancy / Rent Stress', 'Capex Shock', 'Multi-Asset Strategy',
+  ])],
 ];
 
 /** Cascade an AI proposal into the calculator state. Returns the list of
@@ -93,14 +99,14 @@ export function applyCommercialScenarioProposal(
     const setter = setters[setterKey] as ((v: string) => void) | undefined;
     if (setter) { setter(String(num)); changed.push(adjKey); }
   }
-  for (const [setterKey, adjKey] of enumKeys) {
+  for (const [setterKey, adjKey, allowedValues] of enumKeys) {
     const raw = (adj as any)[adjKey];
-    if (raw == null || raw === '') continue;
+    if (typeof raw !== 'string' || !allowedValues.has(raw)) continue;
     const setter = setters[setterKey] as ((v: any) => void) | undefined;
     if (setter) { setter(raw); changed.push(adjKey); }
   }
   const profile = (adj as any).profile;
-  if (profile && setters.applyProfile) {
+  if (typeof profile === 'string' && Object.prototype.hasOwnProperty.call(lenderPolicyProfiles, profile) && setters.applyProfile) {
     setters.applyProfile(profile);
     changed.push('profile');
   }

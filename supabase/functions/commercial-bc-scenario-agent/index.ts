@@ -80,7 +80,7 @@ Allowed adjustment keys (use exact names):
   businessEbitda, businessDebt, currentRent, proposedRent,
   passingRent, marketRent, vacancy, recoveries, rates, water, landTax, insurance, management, repairs,
   rate, buffer, term, ioPeriod, amortisation, maxLvr, minIcr, minDscr, minDebtYield,
-  profile (one of: mainstreamCommercialBank, secondTierLender, nonBankCommercial, smsfCommercial, privateCredit),
+  profile (one of: conservativeBank, mainstreamCommercialBank, nonBankCommercial, privateCreditShortTerm, smsfCommercial, ownerOccupiedBusinessLending, custom),
   gstTreatment (one of: gstInclusive, plusGst, gstFreeGoingConcern, marginScheme, unknown),
   leaseStatus (one of: fullyLeased, partiallyLeased, vacant, monthToMonth, relatedPartyLease, leasePending),
   guarantees (yes | no | unknown),
