@@ -34,6 +34,7 @@ import {
   responseErrorMessage,
   withTimeout,
 } from '@/lib/modelHubData';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 type Route = 'gateway' | 'native' | 'openrouter';
 type Status = 'available' | 'preview' | 'deprecated' | 'unavailable';
@@ -271,7 +272,7 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
     setLoadError(null);
     try {
       const { data, error } = await withTimeout(
-        supabase.functions.invoke('manage-agent-models', { body: { action: 'list' } }),
+        invokeSecureFunction('manage-agent-models', { action: 'list' }),
       );
       if (error) throw error;
       const response = assertObjectResponse(data, 'Agent assignments');
@@ -291,7 +292,7 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
   const updateAssignment = async (agent_key: string, route: Route, model_id: string) => {
     setSavingKey(agent_key);
     try {
-      const { error } = await supabase.functions.invoke('manage-agent-models', { body: { action: 'update', agent_key, route, model_id } });
+      const { error } = await invokeSecureFunction('manage-agent-models', { action: 'update', agent_key, route, model_id });
       if (error) throw error;
       toast.success(`Updated ${agent_key} → ${model_id}`);
       await load();
@@ -305,7 +306,7 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
   const testAgent = async (agent_key: string) => {
     setTestingKey(agent_key);
     try {
-      const { data, error } = await supabase.functions.invoke('manage-agent-models', { body: { action: 'test', agent_key } });
+      const { data, error } = await invokeSecureFunction<any>('manage-agent-models', { action: 'test', agent_key });
       if (error) throw error;
       if (data.success) {
         toast.success(`✓ ${agent_key}: ${data.modelUsed} (${data.latencyMs}ms)`);
