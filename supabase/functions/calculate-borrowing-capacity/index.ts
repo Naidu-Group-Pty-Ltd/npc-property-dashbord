@@ -1377,13 +1377,12 @@ Deno.serve(async (req) => {
       );
     }
 
-    // The service-role client bypasses RLS, so a caller-supplied client ID must
-    // be authorized before any client or financing records are read or changed.
-    const actor = { userId, authMethod };
-    if (!await canAccessClient(supabase, actor, clientId)) {
+    // The service-role client bypasses RLS, so bind this request to a client
+    // the authenticated actor owns or is assigned to before reading any data.
+    if (!await canAccessClient(supabase, { userId, authMethod }, clientId)) {
       return new Response(
         JSON.stringify({ success: false, error: "Client not found" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
