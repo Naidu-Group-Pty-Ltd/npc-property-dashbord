@@ -132,7 +132,8 @@ async function dispatchChunk(admin: Admin, jobId: string, chunk: ChunkRow): Prom
     extractor_lane: selectedLane,
     callback_url: `${SUPABASE_URL}/functions/v1/pdf-parse-chunk-callback`,
     callback_token: CALLBACK_TOKEN,
-    enable_picture_description: rp.description_tier !== 'off' && plan.requires_picture_description === true,
+    enable_picture_description: (rp.description_tier === 'on' || rp.description_tier === 'premium')
+      && plan.requires_picture_description === true,
     include_doctags: true,
     include_markdown: rp.include_markdown !== false,
     redact_pii: Boolean(rp.redact_pii),
