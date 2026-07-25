@@ -24,6 +24,16 @@ const corsHeaders = {
 const jr = (d: unknown, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+function normalizeExternalUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 async function sha256Hex(input: string) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -658,8 +668,14 @@ Deno.serve(async (req) => {
       if (!ev.case_id || !ev.reference_type || !ev.label) {
         return jr({ error: "case_id, reference_type, label required" }, 400);
       }
+      const externalUrl = ev.external_url == null || ev.external_url === ""
+        ? null
+        : normalizeExternalUrl(ev.external_url);
+      if (ev.external_url != null && ev.external_url !== "" && !externalUrl) {
+        return jr({ error: "external_url must be an absolute HTTP(S) URL" }, 400);
+      }
       const { data, error } = await aml.from("evidence_references")
-        .insert({ ...ev, added_by: userId }).select("*").maybeSingle();
+        .insert({ ...ev, external_url: externalUrl, added_by: userId }).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       await appendCaseEvent(admin, ev.case_id, "document_added",
         `Finance evidence attached: ${ev.label}`, { reference_type: ev.reference_type }, userId, userLabel);

@@ -22,6 +22,7 @@ import {
 } from "@/lib/aml/amlFinanceApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { LegacyAliasBanner } from "@/components/aml/LegacyAliasBanner";
+import { normalizeExternalUrl } from "@/lib/security/externalUrl";
 
 
 const SEVERITY_TONE: Record<string, string> = {
@@ -147,6 +148,13 @@ export default function AmlFinance() {
 
   const handleAddEvidence = async () => {
     if (!caseId || !evForm.label) return;
+    const externalUrl = evForm.external_url?.trim()
+      ? normalizeExternalUrl(evForm.external_url)
+      : null;
+    if (evForm.external_url?.trim() && !externalUrl) {
+      toast.error("External URL must be an absolute http:// or https:// URL");
+      return;
+    }
     setBusy(true);
     try {
       await amlFinanceApi.addEvidence({
@@ -154,7 +162,7 @@ export default function AmlFinance() {
         reference_type: evForm.reference_type ?? "finance_document",
         label: evForm.label,
         detail: evForm.detail ?? null,
-        external_url: evForm.external_url ?? null,
+        external_url: externalUrl,
         comparison_id: latestComparison?.id ?? null,
       } as any);
       toast.success("Evidence attached");
@@ -453,13 +461,14 @@ export default function AmlFinance() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {evidence.map((e) => (
-                    <TableRow key={e.id}>
+                  {evidence.map((e) => {
+                    const externalUrl = normalizeExternalUrl(e.external_url);
+                    return <TableRow key={e.id}>
                       <TableCell className="text-xs">{new Date(e.created_at).toLocaleString()}</TableCell>
                       <TableCell><Badge variant="outline" className="capitalize">{e.reference_type.replace("_", " ")}</Badge></TableCell>
                       <TableCell>
-                        {e.external_url
-                          ? <a href={e.external_url} target="_blank" rel="noreferrer" className="text-primary underline">{e.label}</a>
+                        {externalUrl
+                          ? <a href={externalUrl} target="_blank" rel="noopener noreferrer" className="text-primary underline">{e.label}</a>
                           : e.label}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground max-w-[420px]">{e.detail}</TableCell>
@@ -473,8 +482,8 @@ export default function AmlFinance() {
                           </Button>
                         )}
                       </TableCell>
-                    </TableRow>
-                  ))}
+                    </TableRow>;
+                  })}
                   {evidence.length === 0 && (
                     <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
                       No evidence attached yet.
