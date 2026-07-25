@@ -619,7 +619,26 @@ registerTool({
   },
   async execute(args, ctx) {
     if (!args.url) throw new Error('url is required');
-    return invokeService(ctx, 'scrape-property-listing', { url: args.url });
+    const queued = await invokeService(ctx, 'scrape-property-listing', { url: args.url });
+    if (!queued?.jobId) throw new Error('scrape-property-listing did not return a job id');
+
+    const pollIntervalMs = 5000;
+    const maxWaitMs = 1500 * 1000;
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt <= maxWaitMs) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+      const { data, error } = await ctx.supabase.functions.invoke('scrape-property-listing', {
+        body: { jobId: queued.jobId },
+      });
+      if (error) throw new Error(`scrape-property-listing status check failed: ${error.message}`);
+      if (data?.success === false || data?.status === 'failed') {
+        throw new Error(`scrape-property-listing error: ${data?.error || 'unknown'}`);
+      }
+      if (data?.status === 'succeeded') return data.data;
+    }
+
+    throw new Error('scrape-property-listing timed out before completion');
   },
 });
 
