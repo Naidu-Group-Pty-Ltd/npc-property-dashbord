@@ -10,6 +10,7 @@
  * Env required:
  *   SUPABASE_URL       (e.g. https://dduzbchuswwbefdunfct.supabase.co)
  *   SUPABASE_ANON_KEY  (public anon key)
+ *   NON_SUPERADMIN_JWT (access token for an active, non-superadmin user)
  *
  * Optional:
  *   OUTPUT_DIR   (default docs/security/wp15-evidence/<YYYY-MM-DD>)
@@ -26,8 +27,9 @@ import { join } from 'node:path';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const ANON = process.env.SUPABASE_ANON_KEY;
-if (!SUPABASE_URL || !ANON) {
-  console.error('SUPABASE_URL and SUPABASE_ANON_KEY are required.');
+const NON_SUPERADMIN_JWT = process.env.NON_SUPERADMIN_JWT;
+if (!SUPABASE_URL || !ANON || !NON_SUPERADMIN_JWT) {
+  console.error('SUPABASE_URL, SUPABASE_ANON_KEY, and NON_SUPERADMIN_JWT are required.');
   process.exit(2);
 }
 
@@ -106,10 +108,12 @@ let ok = true;
   ok = record('NT-09b', INTERNAL_TARGET, 'forged signature', 401, r.status) && ok;
 }
 
-// NT-11 — Non-superadmin against admin-* fn (anon key only; will be 401 auth_required)
+// NT-11 — Authenticated non-superadmin against the admin management function
 {
-  const r = await call('admin-list-users', {}, {});
-  ok = record('NT-11', 'admin-list-users', 'no user JWT', [401, 403], r.status) && ok;
+  const r = await call('admin-user-management',
+    { authorization: `Bearer ${NON_SUPERADMIN_JWT}` },
+    { action: 'list_users' });
+  ok = record('NT-11', 'admin-user-management', 'authenticated non-superadmin JWT', 403, r.status) && ok;
 }
 
 writeFileSync(OUT, lines.join('\n') + '\n');
