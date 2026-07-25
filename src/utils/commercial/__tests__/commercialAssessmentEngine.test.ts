@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptAiEstimate, calculateCapRateEngine, calculateCommercialGstEngine, calculateIcrDscrEngine, calculateNoiEngine, createAiEstimate, markEstimateVerified, rejectAiEstimate, replaceWithManualValue, runDcfAssessment } from '..';
+import { acceptAiEstimate, calculateCapRateEngine, calculateCommercialGst, calculateCommercialGstEngine, calculateIcrDscrEngine, calculateNoiEngine, createAiEstimate, markEstimateVerified, rejectAiEstimate, replaceWithManualValue, runDcfAssessment } from '..';
 import { calculateCommercialIndustrialBorrowing } from '../borrowing/commercialBorrowingEngine';
 import type { BorrowingInputs } from '../borrowing/calculatorTypes';
 
@@ -136,9 +136,23 @@ describe('Commercial / Industrial Assessment Engine', () => {
   it('GST handles inclusive, plus GST, verified/unverified going concern, unknown and claimable cashflow', () => {
     expect(calculateCommercialGstEngine({ purchasePrice: 1_100_000, treatment: 'gstInclusive', purchaserGstRegistered: 'yes' }).gstClaimableAmount).toBeCloseTo(100_000, 0);
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'plusGst', purchaserGstRegistered: 'yes' }).gstSettlementCashflowRequirement).toBe(100_000);
+    expect(calculateCommercialGst({ purchasePrice: 1_000_000, treatment: 'plus_gst', purchaserRegistered: true })).toMatchObject({ gstAmount: 100_000, gstClaimable: 100_000, netAcquisitionCost: 1_100_000 });
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'goingConcern', vendorGstRegistered: 'yes', purchaserGstRegistered: 'yes', goingConcernAgreedInWriting: 'yes', enterpriseCarriedOnUntilSettlement: 'yes', supplierProvidesAllThingsNecessary: 'yes', propertyLeasedOrOperatingEnterprise: 'yes' }).gstVerificationStatus).toBe('Verified');
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'goingConcern' }).gstVerificationStatus).toBe('Specialist Review Required');
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'unknown' }).warnings.join(' ')).toContain('Unknown GST');
+  });
+
+  it('GST honours an explicit ITC denial for a registered purchaser', () => {
+    const r = calculateCommercialGstEngine({
+      purchasePrice: 1_100_000,
+      treatment: 'gstInclusive',
+      purchaserGstRegistered: 'yes',
+      gstClaimableAsInputTaxCredit: 'no',
+    });
+
+    expect(r.gstClaimableAmount).toBe(0);
+    expect(r.gstEconomicCost).toBeCloseTo(100_000, 0);
+    expect(r.netAcquisitionCost).toBeCloseTo(1_200_000, 0);
   });
 
   it('DCF includes growth, vacancy, capex, debt service, terminal value, sale proceeds, IRR, NPV and equity multiple', () => {
