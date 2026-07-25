@@ -1171,15 +1171,16 @@ Deno.serve(async (req) => {
         : path;
       // Scope: caller must own the underlying job (jobId is the first path segment).
       const jobId = objectPath.split('/')[0];
-      if (userId && jobId) {
-        const { data: jobRow } = await admin
-          .from('pdf_import_jobs')
-          .select('user_id')
-          .eq('id', jobId)
-          .maybeSingle();
-        if (jobRow && jobRow.user_id && jobRow.user_id !== userId) {
-          return json({ error: 'forbidden' }, 403);
-        }
+      if (!userId || !jobId) return json({ error: 'forbidden' }, 403);
+      const { data: jobRow, error: jobError } = await admin
+        .from('pdf_import_jobs')
+        .select('user_id')
+        .eq('id', jobId)
+        .maybeSingle();
+      // Fail closed: non-job prefixes (including pdf-import-sources), missing
+      // owners, and lookup failures must never reach the signed-URL minter.
+      if (jobError || !jobRow?.user_id || jobRow.user_id !== userId) {
+        return json({ error: 'forbidden' }, 403);
       }
       const { data, error } = await admin.storage
         .from(DIAGNOSTICS_BUCKET)
