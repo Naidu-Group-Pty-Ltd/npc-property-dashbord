@@ -5,6 +5,7 @@ import { checkPermission } from '../_shared/permissions.ts';
 import { buildProvenance, logClientActivity } from '../_shared/client-data-provenance.ts';
 import { buildDocumentDedupeKey, buildNoteDedupeKey, createSyncEvent, resolveSyncConflict, sha256Text, SYNC_CONFLICT_WINDOW_MS } from '../_shared/client-sync.ts';
 import { resolvePortfolioReportDeletionTarget } from './portfolioReportDeletion.ts';
+import { canPublishPortfolioForClient } from './portfolioPublicationAuthorization.ts';
 
 type TableName = 'clients' | 'client_properties' | 'client_income' | 'client_expenses' |
                  'client_assets' | 'client_liabilities' | 'client_employment' |
@@ -454,6 +455,31 @@ Deno.serve(async (req) => {
     if (operation === 'publish_portfolio_report') {
       if (table !== 'client_portal_reports' || !clientId || !reportId) {
         return new Response(JSON.stringify({ success: false, error: 'A client and portfolio report are required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      // Publishing crosses two module boundaries: require edit access to the
+      // source portfolio report as well as create access to the portal report.
+      const sourcePermCheck = await checkPermission(supabase, userId!, 'portfolio_analysis_reports', 'update', authMethod);
+      if (!sourcePermCheck.allowed) {
+        return new Response(
+          JSON.stringify({ error: sourcePermCheck.reason || 'Permission denied', permissionDenied: true }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+
+      const [{ data: targetClient }, { data: superadminRole }] = await Promise.all([
+        supabase.from('clients').select('id, created_by, assigned_team_user_id').eq('id', clientId).maybeSingle(),
+        supabase.from('user_roles').select('role').eq('user_id', userId).eq('role', 'superadmin').maybeSingle(),
+      ]);
+      if (!canPublishPortfolioForClient(
+        userId!,
+        targetClient,
+        Boolean(superadminRole),
+        authMethod === 'service_role',
+      )) {
+        return new Response(
+          JSON.stringify({ error: 'You are not authorized to publish reports for this client', permissionDenied: true }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
       }
       const { data: sourceReport, error: sourceError } = await supabase
         .from('portfolio_analysis_reports')
