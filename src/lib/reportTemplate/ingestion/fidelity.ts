@@ -144,6 +144,17 @@ function normalizeText(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
+// Levenshtein is quadratic, so never admit unbounded PDF/OCR-derived strings.
+// Sampling both ends retains useful detection of headers and trailing content
+// while imposing a fixed upper bound on the scorer's CPU and memory usage.
+const MAX_EDIT_DISTANCE_TEXT_LENGTH = 2_048;
+
+function sampleForEditDistance(text: string): string {
+  if (text.length <= MAX_EDIT_DISTANCE_TEXT_LENGTH) return text;
+  const half = MAX_EDIT_DISTANCE_TEXT_LENGTH / 2;
+  return `${text.slice(0, half)}${text.slice(-half)}`;
+}
+
 function levenshtein(a: string, b: string): number {
   if (a === b) return 0;
   if (!a.length) return b.length;
@@ -162,9 +173,12 @@ function levenshtein(a: string, b: string): number {
 }
 
 export function textAccuracy(actual: string, expected: string): number {
-  const a = normalizeText(actual);
-  const e = normalizeText(expected);
-  if (!a && !e) return 1;
+  const normalizedActual = normalizeText(actual);
+  const normalizedExpected = normalizeText(expected);
+  if (!normalizedActual && !normalizedExpected) return 1;
+  if (normalizedActual === normalizedExpected) return 1;
+  const a = sampleForEditDistance(normalizedActual);
+  const e = sampleForEditDistance(normalizedExpected);
   const maxLen = Math.max(a.length, e.length, 1);
   return round3(clamp01(1 - levenshtein(a, e) / maxLen));
 }
