@@ -228,7 +228,7 @@ Deno.serve(async (req) => {
         .from('document_requirement_instances')
         .select('id, label, category, status, purchase_file_id')
         .eq('client_id', clientId)
-        .in('status', ['required', 'requested', 'rejected']);
+        .in('status', ['required', 'requested']);
       if (openDris && openDris.length > 0) {
         const filenameLower = (file.name || '').toLowerCase();
         const fileTokens = new Set(
