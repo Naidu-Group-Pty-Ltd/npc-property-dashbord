@@ -4,6 +4,7 @@
 // - action=report (superadmin): returns the last N days of snapshots.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -77,12 +78,13 @@ Deno.serve(async (req) => {
 
   if (action === 'snapshot') {
     const secret = req.headers.get('x-cron-secret');
-    if (CRON_SECRET && secret && secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
-    const result = await snapshot(sb, body?.day);
-    return json(result);
+    if (verifyRequiredCronSecret(CRON_SECRET, secret)) {
+      const result = await snapshot(sb, body?.day);
+      return json(result);
+    }
   }
 
-  if (action === 'report') {
+  if (action === 'report' || action === 'snapshot') {
     const { verifyAuth } = await import('../_shared/auth.ts');
     const auth = await verifyAuth(sb, req.headers, {});
     if (auth.error || !auth.userId) return json({ error: 'unauthorized' }, 401);
@@ -99,6 +101,10 @@ Deno.serve(async (req) => {
       }
     }
     if (!allowed) return json({ error: 'forbidden' }, 403);
+    if (action === 'snapshot') {
+      const result = await snapshot(sb, body?.day);
+      return json(result);
+    }
     const days = Math.min(90, Math.max(1, Number(body?.days ?? 30)));
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
     const { data, error } = await sb.from('market_qa_quality_daily')
