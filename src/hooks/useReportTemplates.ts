@@ -39,8 +39,7 @@ export interface ReportTemplateRow {
  * JSONB. Some templates created from PDF imports carry multi-hundred-MB
  * schemas (embedded raster data), and selecting `*` for every row makes the
  * list query detoast/serialise all of them — which blows past Postgres'
- * statement timeout and makes the whole page fail to load (both the
- * `manage-templates` edge function → 500 and the direct fallback → error).
+ * statement timeout and makes the `manage-templates` edge function fail.
  * The landing lists only need scalar metadata, so we never fetch `schema`
  * here. Per-template `schema` is still fetched on demand by
  * `useReportTemplate(id)` in the editor.
@@ -117,7 +116,7 @@ export function useReportTemplate(id: string | undefined) {
         recordId: id,
       });
       if (error) throw new Error(error.message);
-      if (!data?.record) throw new Error('Report template not found');
+      if (!data?.record) throw new Error('Template not found');
       return normaliseRow(data.record);
     },
   });
