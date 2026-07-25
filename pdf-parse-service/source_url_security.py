@@ -8,7 +8,6 @@ from collections.abc import Callable
 
 import httpx
 
-
 Resolver = Callable[..., list[tuple]]
 REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
@@ -17,7 +16,22 @@ class UnsafeSourceUrl(ValueError):
     """Raised when a source URL could reach a non-public network address."""
 
 
-def validate_public_http_url(url: str, *, resolver: Resolver = socket.getaddrinfo) -> None:
+def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Reject non-public and IPv6 transition address space explicitly."""
+    if not address.is_global or address.is_reserved or address.is_multicast:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        return (
+            address.ipv4_mapped is None
+            and address.sixtofour is None
+            and address.teredo is None
+        )
+    return True
+
+
+def validate_public_http_url(
+    url: str, *, resolver: Resolver = socket.getaddrinfo
+) -> frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     """Require HTTP(S) and ensure every resolved address is globally routable."""
     try:
         parsed = httpx.URL(url)
@@ -42,10 +56,13 @@ def validate_public_http_url(url: str, *, resolver: Resolver = socket.getaddrinf
             )
             addresses = {ipaddress.ip_address(result[4][0]) for result in results}
         except (OSError, ValueError) as exc:
-            raise UnsafeSourceUrl("Source URL hostname could not be resolved safely.") from exc
+            raise UnsafeSourceUrl(
+                "Source URL hostname could not be resolved safely."
+            ) from exc
 
-    if not addresses or any(not address.is_global for address in addresses):
+    if not addresses or any(not _is_public_address(address) for address in addresses):
         raise UnsafeSourceUrl("Source URL must resolve only to public IP addresses.")
+    return frozenset(addresses)
 
 
 async def fetch_public_url(
@@ -58,14 +75,29 @@ async def fetch_public_url(
 ) -> httpx.Response:
     """Fetch a public URL, revalidating each explicit redirect destination."""
     current_url = httpx.URL(url)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False, transport=transport) as client:
+    async with httpx.AsyncClient(
+        timeout=timeout, follow_redirects=False, transport=transport
+    ) as client:
         for redirect_count in range(max_redirects + 1):
-            validate_public_http_url(str(current_url), resolver=resolver)
-            response = await client.get(current_url)
-            if response.status_code not in REDIRECT_STATUSES or "location" not in response.headers:
+            addresses = validate_public_http_url(str(current_url), resolver=resolver)
+            address = min(addresses, key=lambda item: (item.version, int(item)))
+            pinned_url = current_url.copy_with(host=str(address))
+            request = client.build_request(
+                "GET", pinned_url, headers={"Host": current_url.netloc}
+            )
+            if current_url.scheme == "https":
+                request.extensions["sni_hostname"] = current_url.host
+            response = await client.send(request)
+            response.request.url = current_url
+            if (
+                response.status_code not in REDIRECT_STATUSES
+                or "location" not in response.headers
+            ):
                 return response
             if redirect_count == max_redirects:
-                raise httpx.TooManyRedirects("Exceeded maximum source URL redirects.", request=response.request)
+                raise httpx.TooManyRedirects(
+                    "Exceeded maximum source URL redirects.", request=response.request
+                )
             current_url = response.url.join(response.headers["location"])
 
     raise AssertionError("redirect loop exited unexpectedly")  # pragma: no cover
