@@ -7,11 +7,14 @@
 //   reset_default { agent_key }    → restore initial defaults (no-op if not seeded)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import {
+  createForbiddenResponse,
+  createTokenAuthCorsHeaders,
+  createUnauthorizedResponse,
+  verifyAuth,
+} from '../_shared/auth.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-portal-session-token',
-};
+const corsHeaders = createTokenAuthCorsHeaders();
 
 function admin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
@@ -23,6 +26,28 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const action = body.action ?? 'list';
     const sb = admin();
+
+    const auth = await verifyAuth(sb, req.headers, body);
+    if (auth.error || !auth.userId) {
+      return createUnauthorizedResponse(auth.error ?? 'Authentication required', corsHeaders);
+    }
+
+    if (auth.userId !== 'service_role') {
+      const [{ data: roles }, { data: integrationPermission }] = await Promise.all([
+        sb.from('user_roles').select('role').eq('user_id', auth.userId),
+        sb
+          .from('user_permissions')
+          .select('can_edit, dashboard_modules!inner(module_key)')
+          .eq('user_id', auth.userId)
+          .eq('dashboard_modules.module_key', 'integrations')
+          .eq('can_edit', true)
+          .maybeSingle(),
+      ]);
+      const isAdmin = roles?.some(({ role }: { role: string }) => role === 'admin' || role === 'superadmin');
+      if (!isAdmin && !integrationPermission) {
+        return createForbiddenResponse('Integrations edit permission required', corsHeaders);
+      }
+    }
 
     if (action === 'list') {
       const { data, error } = await sb
