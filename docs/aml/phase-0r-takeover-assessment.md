@@ -99,7 +99,7 @@ production today, so the *only* currently reachable case-creation surfaces are o
 | `npm run build` | ✅ PASS | 1m 45s; chunk-size warnings only |
 | `npm run lint` | ❌ FAIL (pre-existing) | 2,268 problems — **41 errors**, 2,227 warnings on unmodified `main` |
 | `npm run audit:style` | ❌ FAIL (pre-existing) | Ratchet regressed on unmodified `main`: paletteClasses 105→313, hexLiterals 800→844, inlineColorStyles 320→340, fontHardcoded 94→97, cssHexOutsideTokens 15→25 |
-| `npm test` (vitest) | see §5.1 | recorded below |
+| `npm test` (vitest) | ❌ FAIL (pre-existing) | 24/2,980 failures, all pre-existing on `main`; AML suites pass — see §5.1–5.2 |
 | `npm run security:registry` | ❌ FAIL (pre-existing) | `mission-control-invoices` and `mission-control-payment-methods` exist on disk but are missing from `SECURITY_REGISTRY.json` (non-AML surfaces) |
 | `npm run security:static` | ✅ PASS | 462 files scanned |
 | `npm run security:edd-boundary` | ✅ PASS | EDD/MLRO boundary checks pass |
@@ -127,9 +127,29 @@ so later phase gates have a green baseline to ratchet against.
   of sync with `package.json` (missing `@simplewebauthn/browser@10.0.0` /
   `@simplewebauthn/types@10.0.0` entries). Folded into I-02.
 
-### 5.2 Full-suite result
+### 5.2 Full-suite result (`npm test`)
 
-(recorded on completion of the full run)
+❌ FAIL (pre-existing): 270 test files, 2,980 tests — **24 failed, 2,954 passed,
+2 skipped** (148 s). Failing files are the same non-AML engines/branding suites as
+§5.1 plus report-template suites (`applyCriticalContainment`, `cascadeMap`,
+`codeIntake`, `reconciliationBrowser`, `investmentGradeResolution`) and **one
+AML-surface file**: `src/pages/aml/AmlConfiguration.test.tsx` (1 of 2 tests).
+That AML failure is a test-assertion artifact, not a product defect: the test
+expects pretty-printed `JSON.stringify(..., null, 2)` output via
+`toHaveTextContent`, which whitespace-collapses the rendered text, so the
+multi-line expected string can never match — an environment/matcher-version
+mismatch. The `StructuredTerminologyEditor` behaviour under test (blank override
+rows remain visible) passes its sibling assertion. Recorded, not fixed, per the
+Phase 0R rule; the fix belongs to the I-02 baseline-hygiene follow-up.
+
+Failure count varies slightly between runs (24 vs 17 in the scoped set overlap;
+one run showed 15 failing files vs 12 in a re-run), indicating some flakiness in
+the non-AML suites — also noted under I-02.
+
+Incident note (environment, not repo): the first full-suite attempt in this
+container hung because running `deno install` (attempting to satisfy
+`security:edge-check`) rewrote `node_modules` into Deno's layout mid-run. A clean
+`npm install` restored normal execution. No repository change resulted.
 
 ## 6. AML route and component map
 
