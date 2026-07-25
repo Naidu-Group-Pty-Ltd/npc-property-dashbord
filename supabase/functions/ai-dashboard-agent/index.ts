@@ -8491,8 +8491,9 @@ Deno.serve(async (req) => {
     // agent-task-runner, NOT a human request. It is authenticated ONLY by a
     // valid HMAC-signed envelope (verifyInternal) with a receiver-side caller
     // allowlist — never the legacy static-secret/service-role trust and never a
-    // body-supplied caller identity. The scheduled task is always authorized as
-    // its authoritative owner; the runner is transport authentication only.
+    // body-supplied caller identity. The impersonated user is validated against
+    // the scheduled-task's authoritative owner. Transport authentication does
+    // not elevate the task owner's tool permissions or satisfy step-up.
     if (body.action === 'execute-tool') {
       const internalAuth = await verifyInternal(sb, req, rawBody, { allowedCallers: ['agent-task-runner'] });
       if (!internalAuth.ok) {
@@ -8513,8 +8514,9 @@ Deno.serve(async (req) => {
         }
       }
       const toolResult = await executeTool(sb, body.tool_name, body.tool_args || {}, targetUserId, {
-        // Scheduled work must retain the task owner's module and resource
-        // authorization. It cannot satisfy a human step-up confirmation.
+        // Scheduled task definitions contain user-supplied tool arguments.
+        // Run them with the owner's normal authorization context so resource
+        // ownership, module permissions, and step-up checks still apply.
         actorType: 'human',
         stepUpVerified: false,
       });
