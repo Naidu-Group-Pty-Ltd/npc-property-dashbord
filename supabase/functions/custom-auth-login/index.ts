@@ -4,6 +4,8 @@ import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 import { hashSessionToken, isSessionHashConfigured, computeIdleExpiry } from "../_shared/sessionHash.ts"
 
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_MINUTES = 15;
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -88,8 +90,20 @@ Deno.serve(async (req) => {
 
     // Validate password using bcrypt (with legacy plaintext fallback)
     const isValid = await verifyPassword(password, user.password_hash);
-    
-    if (!isValid) {
+
+    const isLocked = user.locked_until && new Date(user.locked_until) > new Date();
+    if (!isValid || isLocked) {
+      if (!isValid && !isLocked) {
+        const newAttempts = (user.failed_login_attempts || 0) + 1;
+        const updates: Record<string, number | string> = { failed_login_attempts: newAttempts };
+        if (newAttempts >= MAX_FAILED_ATTEMPTS) {
+          const lockUntil = new Date();
+          lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
+          updates.locked_until = lockUntil.toISOString();
+          updates.failed_login_attempts = 0;
+        }
+        await supabase.from('custom_users').update(updates).eq('id', user.id);
+      }
       console.log(`Login failed for user ${username}: incorrect password`);
       return new Response(
         JSON.stringify({ error: 'Invalid username or password' }), 
