@@ -306,7 +306,7 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
   const testAgent = async (agent_key: string) => {
     setTestingKey(agent_key);
     try {
-      const { data, error } = await supabase.functions.invoke('manage-agent-models', { body: { action: 'test', agent_key } });
+      const { data, error } = await invokeSecureFunction<any>('manage-agent-models', { action: 'test', agent_key });
       if (error) throw error;
       if (data.success) {
         toast.success(`✓ ${agent_key}: ${data.modelUsed} (${data.latencyMs}ms)`);
