@@ -218,6 +218,14 @@ describe('runImportQualityGate', () => {
     expect(res.recommendedFinalMode).toBe('pixel-perfect');
     expect(res.summary.pagesNeedingReview).toBe(1);
     expect(res.summary.warningCount).toBe(1);
+    expect(res.summary.pagesPixelFallback).toBe(1);
+    expect((res.template.pages[0].meta as any)?.pdfImport?.outputStrategy).toBe('raster-only');
+    expect(res.template.pages[0].background).toMatchObject({
+      imageUrl: 'data:image/png;base64,PAGE1',
+      opacity: 1,
+      imageFit: 'fill',
+      underlay: false,
+    });
   });
 
   it('is fail-open: a failing batch keeps the original template and requires review (C4)', async () => {
