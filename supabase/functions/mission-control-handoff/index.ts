@@ -13,7 +13,9 @@ import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { createBillingHandoff } from "../_shared/missionControl.ts";
 
-const MODES = new Set(["topup", "seat_plan", "setup_package"]);
+// "save_card" is the wallet flow: the storefront auto-launches a Stripe
+// setup-mode Checkout instead of a purchase (billing & usage page).
+const MODES = new Set(["topup", "seat_plan", "setup_package", "save_card"]);
 
 Deno.serve(async (req) => {
   // Credentialed CORS: the app invokes this function with

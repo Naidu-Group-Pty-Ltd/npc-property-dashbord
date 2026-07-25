@@ -79,7 +79,7 @@ const navigationItems = [
   { title: 'Marketing', url: '/marketing-analytics', icon: TrendingUp, moduleKey: 'marketing_analytics' },
   { title: 'Charts', url: '/charts', icon: BarChart3, moduleKey: 'charts' },
   { title: 'User Guide', url: '/user-guide', icon: BookOpen, moduleKey: 'user_guide' },
-  { title: 'Token Usage', url: '/billing/usage', icon: Coins, moduleKey: '__always__' },
+  { title: 'Billing & Usage', url: '/billing', icon: Coins, moduleKey: '__always__' },
 ];
 
 const navigationGroups = [
@@ -101,7 +101,7 @@ const navigationGroups = [
   },
   {
     title: 'Help & Usage',
-    itemTitles: ['User Guide', 'Token Usage'],
+    itemTitles: ['User Guide', 'Billing & Usage'],
   },
 ];
 
