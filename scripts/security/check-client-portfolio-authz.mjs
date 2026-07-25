@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 
 const clientData = readFileSync('supabase/functions/get-client-data/index.ts', 'utf8');
 const scenarios = readFileSync('supabase/functions/manage-bc-scenarios/index.ts', 'utf8');
+const borrowingCapacity = readFileSync('supabase/functions/calculate-borrowing-capacity/index.ts', 'utf8');
 const failures = [];
 
 for (const required of [
@@ -35,6 +36,15 @@ const scenarioGate = scenarios.indexOf('const requiredPermission: ModulePerm');
 const scenarioMutation = scenarios.indexOf(".insert(insertRow)");
 if (scenarioGate < 0 || scenarioMutation < 0 || scenarioGate > scenarioMutation) {
   failures.push('scenario authorization does not precede mutations');
+}
+
+const capacityGate = borrowingCapacity.indexOf('canAccessClient(supabase, actor, clientId)');
+const capacityClientRead = borrowingCapacity.indexOf('.from("clients")', capacityGate);
+if (capacityGate < 0 || capacityClientRead < 0 || capacityGate > capacityClientRead) {
+  failures.push('borrowing-capacity client authorization does not precede sensitive client reads');
+}
+if (borrowingCapacity.includes('overrides?.forceSegmentEngine') || /forceEnabled\s*:/.test(borrowingCapacity)) {
+  failures.push('borrowing-capacity still accepts a caller-controlled segment-engine bypass');
 }
 
 if (failures.length) {

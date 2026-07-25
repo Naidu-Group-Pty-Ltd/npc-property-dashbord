@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { canAccessClient } from '../_shared/clientAccess.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { computeDtiDenominator } from '../_shared/dtiDenominator.ts';
 import type { ScenarioIncomeComponent } from '../_shared/lenderShadingProfiles.ts';
@@ -1362,7 +1363,7 @@ Deno.serve(async (req) => {
     const { clientId, overrides, saveResult = true, scenarioDeltas, acquisition, strictScenarioValidation } = body;
 
     // SECURITY: Verify authentication (enforced - TODO removed)
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log(`[calculate-borrowing-capacity] Auth failed for client ${clientId}:`, authError);
       return createUnauthorizedResponse(authError, corsHeaders);
@@ -1373,6 +1374,16 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ success: false, error: "Client ID is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // The service-role client bypasses RLS, so a caller-supplied client ID must
+    // be authorized before any client or financing records are read or changed.
+    const actor = { userId, authMethod };
+    if (!await canAccessClient(supabase, actor, clientId)) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Client not found" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
@@ -1599,7 +1610,6 @@ Deno.serve(async (req) => {
       segmentReconciliation = await reconcileSegments({
         supabase,
         clientId,
-        forceEnabled: overrides?.forceSegmentEngine === true ? true : undefined,
         userId: userId && userId !== 'service_role' ? userId : null,
       });
       if (segmentReconciliation.triggered) {
