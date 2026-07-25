@@ -33,24 +33,37 @@ type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.
    * changing the shared dialog treatment used elsewhere in the product.
    */
   overlayClassName?: string
+  /** Inline shell offsets for a dialog whose portal must respect application chrome. */
+  overlayStyle?: React.CSSProperties
+  /**
+   * Omits the shared bottom-sheet / centered positioning classes so a dialog can
+   * fully own its placement (e.g. an overlay contained within the app shell). Only
+   * the neutral surface + fade treatment is retained; the caller supplies all
+   * position and size classes via `className`. Default dialogs are unaffected.
+   */
+  bareLayout?: boolean
 }
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, overlayClassName, ...props }, ref) => (
+>(({ className, children, overlayClassName, overlayStyle, bareLayout = false, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay className={overlayClassName} />
+    <DialogOverlay className={overlayClassName} style={overlayStyle} />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        // Mobile (<640px): bottom sheet sliding up; ≥sm: classic centered modal.
-        "luxury-dialog-content fixed z-50 grid gap-4 border bg-background shadow-lg duration-200",
-        "inset-x-0 bottom-0 top-auto w-full max-w-none rounded-t-2xl border-x-0 border-b-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[92vh] overflow-y-auto",
+        // Neutral surface + fade shared by every dialog (bespoke and default).
+        "luxury-dialog-content fixed z-50 border bg-background shadow-lg duration-200",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-        "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
-        "sm:inset-auto sm:left-[50%] sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%] sm:w-full sm:max-w-lg sm:rounded-lg sm:border sm:p-6 sm:max-h-[85vh] sm:overflow-visible sm:pb-6",
-        "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
+        // Default treatment: mobile (<640px) bottom sheet sliding up; ≥sm classic centered modal.
+        !bareLayout && [
+          "grid gap-4",
+          "inset-x-0 bottom-0 top-auto w-full max-w-none rounded-t-2xl border-x-0 border-b-0 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[92vh] overflow-y-auto",
+          "data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom",
+          "sm:inset-auto sm:left-[50%] sm:top-[50%] sm:bottom-auto sm:translate-x-[-50%] sm:translate-y-[-50%] sm:w-full sm:max-w-lg sm:rounded-lg sm:border sm:p-6 sm:max-h-[85vh] sm:overflow-visible sm:pb-6",
+          "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%] sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
+        ],
         className
       )}
       {...props}

@@ -1239,7 +1239,11 @@ Deno.serve(async (req) => {
       'get-conversations': { access: 'none', permission: 'can_view' },
       'load-conversation': { access: 'read', permission: 'can_view' },
       'chat': { access: 'write', permission: 'can_edit', paid: true },
-      'transcribe': { access: 'write', permission: 'can_edit', paid: true },
+      // Transcription converts audio to text only — it never reads or writes
+      // conversation data, and it must work in a brand-new chat before any
+      // conversation row exists. Module permission + paid rate limits still
+      // apply; there is simply no conversation resource to authorize.
+      'transcribe': { access: 'none', permission: 'can_edit', paid: true },
       'extract': { access: 'write', permission: 'can_edit', paid: true },
       'index-reports': { access: 'write', permission: 'can_edit', paid: true },
       'update-conversation': { access: 'admin', permission: 'can_edit' },
@@ -1247,6 +1251,7 @@ Deno.serve(async (req) => {
       'delete-conversation': { access: 'admin', permission: 'can_delete' },
       'share-conversation': { access: 'admin', permission: 'can_edit' },
       'revoke-share': { access: 'admin', permission: 'can_edit' },
+      'get-shares': { access: 'admin', permission: 'can_view' },
       'submit-feedback': { access: 'write', permission: 'can_edit' },
       'get-feedback': { access: 'read', permission: 'can_view' },
       'toggle-pin-message': { access: 'write', permission: 'can_edit' },
@@ -1306,17 +1311,25 @@ Deno.serve(async (req) => {
         conversationId = message.conversation_id;
       }
 
-      if (policy.access === 'none') return null;
-      if (!conversationId) return denyResponse();
-      const access = await resolveReportQaAccess(supabase, { actorId: userId, isSuperadmin, conversationId });
-      const allowed = policy.access === 'read' ? canRead(access.role)
-        : policy.access === 'write' ? canWrite(access.role)
-        : canAdminister(access.role);
-      if (!allowed || !access.conversation) return denyResponse();
+      if (policy.access !== 'none') {
+        if (!conversationId) return denyResponse();
+        const access = await resolveReportQaAccess(supabase, { actorId: userId, isSuperadmin, conversationId });
+        const allowed = policy.access === 'read' ? canRead(access.role)
+          : policy.access === 'write' ? canWrite(access.role)
+          : canAdminister(access.role);
+        if (!allowed || !access.conversation) return denyResponse();
+      }
 
+      // Paid provider quota applies to every paid action, including
+      // conversation-independent ones (access: 'none') such as transcribe.
+      // Transcribe gets a higher ceiling because live-preview transcription
+      // fires repeatedly during a single recording (an 8-minute recording can
+      // legitimately produce ~50 preview calls).
       if (policy.paid) {
+        const perUserLimit = action === 'transcribe' ? 240 : 30;
+        const perIpLimit = action === 'transcribe' ? 720 : 90;
         try {
-          const quota = await consumeRateLimit(supabase, `report-qa:${action}:user:${userId}`, 30, 60 * 60);
+          const quota = await consumeRateLimit(supabase, `report-qa:${action}:user:${userId}`, perUserLimit, 60 * 60);
           if (!quota.allowed) {
             return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
               status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': String(quota.retryAfterSeconds) },
@@ -1324,7 +1337,7 @@ Deno.serve(async (req) => {
           }
           const ip = getTrustedClientIp(req.headers);
           if (ip) {
-            const ipQuota = await consumeRateLimit(supabase, `report-qa:${action}:ip:${ip}`, 90, 60 * 60);
+            const ipQuota = await consumeRateLimit(supabase, `report-qa:${action}:ip:${ip}`, perIpLimit, 60 * 60);
             if (!ipQuota.allowed) return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': String(ipQuota.retryAfterSeconds) } });
           }
         } catch (error) {
@@ -2888,8 +2901,26 @@ Be thorough and include ALL specific numbers, percentages, and data points menti
         }));
       }
 
+      // Legacy conversations: rows created before ownership stamping have
+      // created_by IS NULL and would otherwise be invisible to everyone.
+      // Superadmins (who already hold admin access to any conversation via
+      // resolveReportQaAccess) get them listed, flagged as legacy.
+      let legacyConversations: any[] = [];
+      if (isSuperadmin) {
+        const { data: legacy, error: legacyError } = await supabase
+          .from("report_qa_conversations")
+          .select("id, title, report_names, created_at, updated_at, structured_report, client_id, agent_mode, branched_from_conversation_id, branched_from_message_id")
+          .is("created_by", null)
+          .order("created_at", { ascending: false });
+        if (legacyError) {
+          console.error('[report-qa] get-conversations legacy fetch failed:', legacyError);
+        } else {
+          legacyConversations = (legacy || []).map((c: any) => ({ ...c, legacy: true }));
+        }
+      }
+
       return new Response(
-        JSON.stringify({ success: true, conversations: data, shared_conversations: sharedConversations }),
+        JSON.stringify({ success: true, conversations: data, shared_conversations: sharedConversations, legacy_conversations: legacyConversations }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -3194,6 +3225,30 @@ ${transcript}`;
       );
     }
 
+    // List active shares on a conversation (owner/admin only) so the share
+    // dialog can show who already has access and allow revocation.
+    if (action === "get-shares") {
+      const { conversationId: sharesConvId } = body;
+      const { data: shares, error: sharesError } = await supabase
+        .from("report_qa_conversation_shares")
+        .select("shared_with, permission, handoff_note, created_at, custom_users!report_qa_conversation_shares_shared_with_fkey(username)")
+        .eq("conversation_id", sharesConvId)
+        .eq("is_active", true)
+        .order("created_at", { ascending: false });
+      if (sharesError) throw sharesError;
+      const mapped = (shares || []).map((s: any) => ({
+        shared_with: s.shared_with,
+        username: s.custom_users?.username || 'Unknown',
+        permission: s.permission,
+        handoff_note: s.handoff_note,
+        created_at: s.created_at,
+      }));
+      return new Response(
+        JSON.stringify({ success: true, shares: mapped }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Handle revoking a share
     if (action === "revoke-share") {
       const { conversationId: convId, targetUserId: revokeUserId } = body;
@@ -3400,7 +3455,6 @@ ${transcript}`;
         .from("report_qa_conversations")
         .insert({
           created_by: userId,
-          user_id: srcConv.user_id,
           title: newTitle || `${srcConv.title || "Q&A"} — branch`,
           report_names: srcConv.report_names || [],
           client_id: srcConv.client_id || null,

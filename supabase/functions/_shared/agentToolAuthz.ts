@@ -43,6 +43,10 @@ const REAL_MODULE_OVERRIDES: Record<string, Pick<ToolSecurityPolicy, 'moduleKey'
   bulk_update_clients: { moduleKey: 'client_management', permission: 'can_edit' },
   get_clients_by_pipeline_status: { moduleKey: 'client_management', permission: 'can_view', requiresSuperadmin: true },
   get_clients_needing_follow_up: { moduleKey: 'client_management', permission: 'can_view', requiresSuperadmin: true },
+  // These aggregate organization-wide client/deal records and accept no
+  // resource identifier that the ownership gate can verify.
+  get_proactive_insights: { moduleKey: 'agent', permission: 'can_view', requiresSuperadmin: true },
+  get_top_clients: { moduleKey: 'client_management', permission: 'can_view', requiresSuperadmin: true },
   get_commission_actuals: { moduleKey: 'cash_flow', permission: 'can_view' },
   get_commission_forecast: { moduleKey: 'cash_flow', permission: 'can_view' },
   get_pipeline_overview: { moduleKey: 'cash_flow', permission: 'can_view', requiresSuperadmin: true },

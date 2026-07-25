@@ -1,8 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { PortfolioAnalysisPDFGenerator } from '../PortfolioAnalysisPDFGenerator';
-import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
@@ -16,16 +14,12 @@ import {
 import { 
   FileText,
   Calendar,
-  CheckCircle2,
-  Loader2,
-  Save,
   Home,
   Building2,
   Info,
   Landmark,
   MessageSquareText
 } from 'lucide-react';
-import { useState } from 'react';
 import {
   Tooltip,
   TooltipContent,
@@ -52,11 +46,12 @@ interface GenerateReportStepProps {
   onIncludeBorrowingCapacityChange: (include: boolean) => void;
   analysisConfig: PortfolioAnalysisSettings;
   onAnalysisConfigChange: (config: PortfolioAnalysisSettings) => void;
+  notes: string;
+  onNotesChange: (notes: string) => void;
+  customInstructions: string;
+  onCustomInstructionsChange: (instructions: string) => void;
   ownerOccupiedCount: number;
   investmentCount: number;
-  onSaveDraft: () => Promise<void>;
-  onComplete: () => Promise<void>;
-  isSaving: boolean;
 }
 
 export function GenerateReportStep({
@@ -76,14 +71,13 @@ export function GenerateReportStep({
   onIncludeBorrowingCapacityChange,
   analysisConfig,
   onAnalysisConfigChange,
+  notes,
+  onNotesChange,
+  customInstructions,
+  onCustomInstructionsChange,
   ownerOccupiedCount,
   investmentCount,
-  onSaveDraft,
-  onComplete,
-  isSaving
 }: GenerateReportStepProps) {
-  const [notes, setNotes] = useState('');
-  const [customInstructions, setCustomInstructions] = useState('');
 
   const getNextReviewDate = () => {
     const days = reviewFrequency === 'quarterly' ? 90 : reviewFrequency === 'bi_annual' ? 180 : 365;
@@ -284,7 +278,7 @@ export function GenerateReportStep({
               <Textarea
                 placeholder="e.g. 'Client is very risk-averse — use cautious language and emphasise capital preservation over growth. Highlight the importance of maintaining low LVR across the portfolio.'"
                 value={customInstructions}
-                onChange={(e) => setCustomInstructions(e.target.value)}
+                onChange={(e) => onCustomInstructionsChange(e.target.value)}
                 rows={4}
                 className="text-sm"
               />
@@ -292,7 +286,7 @@ export function GenerateReportStep({
             <div className="flex-shrink-0 pt-1">
               <VoiceNoteRecorder
                 noteType="report-instructions"
-                onTranscriptReady={(text) => setCustomInstructions(prev => prev ? `${prev}\n\n${text}` : text)}
+                onTranscriptReady={(text) => onCustomInstructionsChange(customInstructions ? `${customInstructions}\n\n${text}` : text)}
               />
             </div>
           </div>
@@ -348,7 +342,7 @@ export function GenerateReportStep({
           <Textarea
             placeholder="Add any additional notes or observations from this review..."
             value={notes}
-            onChange={(e) => setNotes(e.target.value)}
+            onChange={(e) => onNotesChange(e.target.value)}
             rows={4}
           />
         </CardContent>
@@ -377,36 +371,6 @@ export function GenerateReportStep({
         </CardContent>
       </Card>
 
-      <Separator />
-
-      {/* Actions */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <Button
-          variant="outline"
-          className="flex-1"
-          onClick={onSaveDraft}
-          disabled={isSaving}
-        >
-          {isSaving ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Save className="h-4 w-4 mr-2" />
-          )}
-          Save as Draft
-        </Button>
-        <Button
-          className="flex-1"
-          onClick={onComplete}
-          disabled={isSaving}
-        >
-          {isSaving ? (
-            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <CheckCircle2 className="h-4 w-4 mr-2" />
-          )}
-          Complete Review
-        </Button>
-      </div>
     </div>
   );
 }

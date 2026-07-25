@@ -40,7 +40,7 @@ export function RecommendationsStep({ recommendations }: RecommendationsStepProp
   };
 
   const RecommendationCard = ({ rec }: { rec: ReviewWizardData['recommendations'][0] }) => (
-    <div className="border rounded-lg p-4 space-y-3">
+    <div className="min-w-0 border rounded-lg p-4 space-y-3">
       <div className="flex items-start gap-3">
         {getPriorityIcon(rec.priority)}
         <div className="flex-1 min-w-0">
@@ -59,7 +59,7 @@ export function RecommendationsStep({ recommendations }: RecommendationsStepProp
           {rec.actionItems.map((item, i) => (
             <div key={i} className="flex items-start gap-2 text-sm">
               <ArrowRight className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-              <span>{item}</span>
+              <span className="min-w-0 break-words">{item}</span>
             </div>
           ))}
         </div>
@@ -70,7 +70,7 @@ export function RecommendationsStep({ recommendations }: RecommendationsStepProp
   return (
     <div className="space-y-6">
       {/* Summary */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card className={highPriority.length > 0 ? 'border-destructive/30' : ''}>
           <CardContent className="pt-4 text-center">
             <div className="text-2xl font-bold text-destructive">{highPriority.length}</div>

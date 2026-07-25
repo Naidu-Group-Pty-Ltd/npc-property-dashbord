@@ -44,6 +44,10 @@ interface RequestBody {
   session_token?: string;
 }
 
+// `custom_users` also stores authentication material. Keep its projection
+// server-owned so callers of this service-role broker cannot request secrets.
+const SAFE_CUSTOM_USERS_SELECT = 'id, username, email, is_active, personal_mailbox';
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -103,9 +107,15 @@ Deno.serve(async (req) => {
 
       const isAscending = order_asc ?? orderAsc ?? false;
 
+      // Do not honour caller-controlled projections for custom_users: it
+      // contains password and MFA secret fields which must never be returned.
+      const safeSelect = targetTable === 'custom_users'
+        ? SAFE_CUSTOM_USERS_SELECT
+        : select;
+
       let query = supabase
         .from(targetTable)
-        .select(select)
+        .select(safeSelect)
         .order(orderBy, { ascending: isAscending });
 
       // Apply filters

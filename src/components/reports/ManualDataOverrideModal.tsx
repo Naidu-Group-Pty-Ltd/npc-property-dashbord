@@ -15,7 +15,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { useToast } from '@/hooks/use-toast';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { useBreakpoint } from '@/hooks/use-breakpoint';
+import { useSidebar } from '@/components/ui/sidebar';
+import {
+  getManualOverrideShellVariables,
+  MANUAL_OVERRIDE_CONTENT_CLASSNAME,
+  MANUAL_OVERRIDE_OVERLAY_CLASSNAME,
+} from './manualOverrideLayout';
+import { OVERRIDE_FIELD_PATHS, resolveOriginalFieldValue } from './overrideOriginalValue';
 import { AlertCircle, RotateCcw, Save, Calculator, ExternalLink, ChevronDown, ChevronRight, ArrowRight, Check, Table, Copy, Banknote, Info, FileText, TrendingUp, Sparkles, Loader2 } from 'lucide-react';
 import { Table as UITable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { STATE_MAPPING } from '@/lib/states';
@@ -53,7 +60,9 @@ interface OverrideField {
 
 export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: ManualDataOverrideModalProps) {
   const { toast } = useToast();
-  const isMobile = useIsMobile();
+  const breakpoint = useBreakpoint();
+  const { state: sidebarState } = useSidebar();
+  const shellVariables = getManualOverrideShellVariables(sidebarState, breakpoint === 'desktop');
   const [saving, setSaving] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, any>>({});
@@ -1069,59 +1078,11 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
       // Merge overrides with existing financial_calculations
       const mergedFinancialData = { ...report.financial_calculations };
       
-      // Apply override mapping to nested structure
-      const overrideMapping: Record<string, string> = {
-        'purchasePrice': 'initialCosts.propertyValue',
-        'propertyType': 'propertySpecs.propertyType',
-        'carSpaces': 'propertySpecs.carSpaces',
-        'stampDuty': 'initialCosts.stampDuty',
-        'isFirstHomeBuyer': 'purchaseDetails.isFirstHomeBuyer',
-        'depositValue': 'initialCosts.deposit',
-        'loanToValueRatio': 'keyMetrics.lvr',
-        'interestRate': 'loanDetails.interestRate',
-        'weeklyRent': 'income.weeklyRent',
-        'councilRates': 'annualCosts.councilRates',
-        'waterRates': 'annualCosts.waterRates',
-        'bodyCorporateFees': 'annualCosts.strataFees',
-        'strataAdminFund': 'annualCosts.strataAdminFund',
-        'strataSinkingFund': 'annualCosts.strataSinkingFund',
-        'strataSpecialLevies': 'annualCosts.strataSpecialLevies',
-        'landTax': 'annualCosts.landTax',
-        'buildingLandlordInsurance': 'annualCosts.landlordInsurance',
-        'propertyManagementFees': 'annualCosts.propertyManagementPercent',
-        'solicitorFees': 'initialCosts.legalFees',
-        'repairsMaintenance': 'annualCosts.maintenance',
-        'lettingFees': 'annualCosts.lettingFees',
-        'capitalGrowth': 'assumptions.capitalGrowth',
-        'buildPrice': 'initialCosts.buildPrice',
-        'landPrice': 'initialCosts.landPrice',
-        'landSizeSqm': 'propertySpecs.landSizeSqm',
-        'buildSizeSqm': 'propertySpecs.buildSizeSqm',
-        // Cash flow and loan fields
-        'marketValueNow': 'cashFlow.marketValueNow',
-        'loanAmount': 'cashFlow.loanAmount',
-        'loanType': 'cashFlow.loanType',
-        'loanTermYears': 'cashFlow.loanTermYears',
-        'interestOnlyPeriodYears': 'cashFlow.interestOnlyPeriodYears',
-        'repaymentFrequency': 'cashFlow.repaymentFrequency',
-        'extraRepaymentPerMonth': 'cashFlow.extraRepaymentPerMonth',
-        'offsetBalance': 'cashFlow.offsetBalance',
-        'occupancyRate': 'cashFlow.occupancyRate',
-        'cpiGrowthRate': 'cashFlow.cpiGrowthRate',
-        'depreciation': 'cashFlow.depreciation',
-        'taxRate': 'cashFlow.taxRate',
-        'constructionYear': 'cashFlow.constructionYear',
-        // Construction stage fields
-        'constructionDurationMonths': 'construction.durationMonths',
-        'agentFee': 'initialCosts.agentFee',
-        'stageDepositPercent': 'construction.stageDepositPercent',
-        'stageSlabPercent': 'construction.stageSlabPercent',
-        'stageFramePercent': 'construction.stageFramePercent',
-        'stageLockupPercent': 'construction.stageLockupPercent',
-        'stageFixingPercent': 'construction.stageFixingPercent',
-        'stageCompletionPercent': 'construction.stageCompletionPercent'
-      };
-      
+      // Apply override mapping to nested structure.
+      // Canonical field->path map lives in overrideOriginalValue.ts so the Original
+      // Value display reads back from the exact locations overrides persist to.
+      const overrideMapping = OVERRIDE_FIELD_PATHS;
+
       // Apply overrides to nested structure
       for (const [flatKey, overrideValue] of Object.entries(overrides)) {
         const nestedPath = overrideMapping[flatKey];
@@ -1307,8 +1268,8 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
 
   const renderField = (field: OverrideField, showSeparator: boolean = true) => (
     <div key={field.key} className="min-w-0 space-y-4 rounded-lg border bg-card/40 p-4">
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(220px,1.1fr)_minmax(240px,1fr)_minmax(280px,1.1fr)_minmax(210px,auto)] xl:items-start">
-        <div className="min-w-0 space-y-2">
+      <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,0.9fr)_minmax(220px,1fr)_minmax(280px,1.15fr)_auto] xl:items-start">
+        <div className="min-w-0 space-y-2 md:col-span-2 xl:col-span-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Label className="min-w-0 text-base font-semibold leading-snug">{field.label}</Label>
             {hasOverride(field.key) && (
@@ -1329,7 +1290,16 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
         <div className="min-w-0 space-y-2">
           <Label className="text-sm text-muted-foreground">Original Value (API)</Label>
           <div className="flex min-h-10 min-w-0 items-center rounded-md border bg-muted/50 px-3 py-2 text-muted-foreground">
-            <span className="min-w-0 break-words">{formatValue(field.originalValue, field.prefix, field.suffix)}</span>
+            <span className="min-w-0 break-words">{formatValue(
+              resolveOriginalFieldValue(
+                report?.financial_calculations,
+                report?.manual_overrides,
+                field.key,
+                field.originalValue,
+              ),
+              field.prefix,
+              field.suffix,
+            )}</span>
           </div>
         </div>
 
@@ -1384,7 +1354,7 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
           )}
         </div>
 
-        <div className="flex min-w-0 flex-wrap items-center justify-start gap-3 xl:justify-end xl:pt-7">
+        <div className="flex min-w-0 flex-wrap items-center justify-start gap-3 md:col-span-2 xl:col-span-1 xl:justify-end xl:pt-7">
           {field.isCashFlowField && (
             <div className="flex min-w-max items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
               <Label className="whitespace-nowrap text-xs text-muted-foreground">Include in Report</Label>
@@ -1414,7 +1384,13 @@ export function ManualDataOverrideModal({ report, isOpen, onClose, onSave }: Man
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="flex h-[min(90dvh,960px)] max-h-[calc(100dvh-40px)] w-[min(94vw,1540px)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100dvh-40px)] sm:max-w-none sm:overflow-hidden">
+      <DialogContent
+        bareLayout
+        overlayClassName={MANUAL_OVERRIDE_OVERLAY_CLASSNAME}
+        overlayStyle={shellVariables}
+        style={shellVariables}
+        className={MANUAL_OVERRIDE_CONTENT_CLASSNAME}
+      >
         <div className="shrink-0 px-6 pb-4 pt-6 sm:px-8">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">

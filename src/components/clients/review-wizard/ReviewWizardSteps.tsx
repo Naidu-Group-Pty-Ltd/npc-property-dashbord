@@ -26,7 +26,7 @@ export function ReviewWizardSteps({
   onStepClick 
 }: ReviewWizardStepsProps) {
   return (
-    <div className="flex items-center justify-between px-4 py-3 border-b bg-muted/30 overflow-x-auto scrollbar-hide gap-1">
+    <div className="grid grid-cols-2 gap-2 border-b bg-muted/30 px-4 py-3 sm:grid-cols-4 lg:grid-cols-7">
       {steps.map((step, index) => {
         const isCompleted = index < currentStepIndex;
         const isCurrent = step === currentStep;
@@ -38,7 +38,7 @@ export function ReviewWizardSteps({
             onClick={() => isClickable && onStepClick(step)}
             disabled={!isClickable}
             className={cn(
-              "flex items-center gap-1.5 sm:gap-2 text-xs font-medium transition-colors whitespace-nowrap flex-shrink-0",
+              "min-w-0 rounded-md px-2 py-1.5 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               isClickable && "cursor-pointer hover:text-primary",
               !isClickable && "cursor-not-allowed opacity-50",
               isCurrent && "text-primary",
@@ -52,8 +52,7 @@ export function ReviewWizardSteps({
             ) : (
               <Circle className="h-4 w-4" />
             )}
-            <span className="hidden sm:inline">{stepLabels[step]}</span>
-            <span className="sm:hidden">{index + 1}</span>
+            <span className="leading-tight">{stepLabels[step]}</span>
           </button>
         );
       })}

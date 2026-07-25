@@ -37,7 +37,9 @@ playwright-report/
 
 # Security Remediation Phase 10 (SECR-001): local environment files must not
 # be tracked. Publishable values live in .env.example; secrets live only in
-# the platform secret stores.
+# the platform secret stores. This also covers local MCP tooling secrets such
+# as MAGIC_API_KEY (referenced by .mcp.json) — keep the real value in a local
+# .env / .env.local, never in a committed file.
 .env
 .env.*
 !.env.example

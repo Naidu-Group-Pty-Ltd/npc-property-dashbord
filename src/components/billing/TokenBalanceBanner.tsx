@@ -21,10 +21,13 @@ export function TokenBalanceBanner() {
 
   if (!balance || (!lowBalance && !criticalBalance)) return null;
 
+  // Only meaningful when the tenant has a plan allowance; tenants running on
+  // top-up credits alone (allowance 0) get absolute-threshold warnings and
+  // the percentage suffix is dropped from the copy below.
   const pct =
     balance.allowance > 0
       ? Math.round((balance.available / balance.allowance) * 100)
-      : 0;
+      : null;
 
   const isCritical = criticalBalance;
 
@@ -82,7 +85,8 @@ export function TokenBalanceBanner() {
                 isCritical ? "text-destructive-foreground" : "text-foreground",
               )}
             >
-              {balance.available.toLocaleString()} tokens remaining ({pct}% of allowance).
+              {balance.available.toLocaleString()} tokens remaining
+              {pct != null ? ` (${pct}% of allowance)` : ""}.
             </span>{" "}
             {isCritical
               ? "Top up now to avoid blocked report generation."

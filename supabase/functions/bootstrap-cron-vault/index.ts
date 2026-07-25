@@ -23,10 +23,10 @@ Deno.serve(async (req) => {
   }
 
   // Handshake: caller must echo the internal secret it doesn't otherwise know.
-  // We use the secret itself as the header — safe because Vault is empty and
-  // the only party that can obtain it is a Lovable operator.
+  // This function is deployed without JWT verification for the one-shot bootstrap,
+  // so the non-public secret is its sole authorization mechanism.
   const handshake = req.headers.get('x-bootstrap-handshake');
-  if (handshake !== INTERNAL_EDGE_SECRET && handshake !== 'lovable-agent-bootstrap') {
+  if (handshake !== INTERNAL_EDGE_SECRET) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

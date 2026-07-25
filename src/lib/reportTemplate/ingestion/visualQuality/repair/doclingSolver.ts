@@ -1,4 +1,13 @@
 /**
+ * ⚠️ LEGACY V1 REPAIR — retained for historical/legacy import flows ONLY. This
+ * solver appends hidden-but-selectable text layers (fontSize 0.5) and missing-
+ * layer placeholders and is accepted purely on V1 score improvement. It is NOT
+ * part of the E8 verified candidate repair cascade (`repair/v2/`), which never
+ * emits `append_text_layer` / `replace_text` / `set_bounds`, never appends
+ * invisible text or blank placeholders, and never accepts on score alone. The
+ * E8/V2 path does not import this module; its own forbidden-operation guard
+ * structurally rejects every op kind below. Do not route V2 pages here.
+ *
  * Phase 6 — Deterministic Docling-based repair solver.
  *
  * Uses the same expectations the visual-diff harness was scored against to

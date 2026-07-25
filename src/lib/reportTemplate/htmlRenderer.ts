@@ -15,6 +15,9 @@ import {
 } from './templateSchema';
 import { resolvePageOutputPolicy, resolvePageRenderPlan } from './rendering/pdfImportPagePolicy';
 import {
+  resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
+} from './rendering/regionRenderPlanApply';
+import {
   type ResolveContext,
   resolveBindable,
   resolveBindableColor,
@@ -59,6 +62,13 @@ export interface HtmlRenderOptions {
    * underlay would duplicate all source content behind the reconstruction.
    */
   showReferenceUnderlay?: boolean;
+  /**
+   * E7 (runtime-only): map an E6 final-crop region id → an ephemeral image src
+   * (signed/object/data URL) to hydrate final source-crop elements at paint
+   * time. Never persisted; when omitted, crops render as locked placeholders so
+   * the quality capture can still detect a missing asset.
+   */
+  regionCropSrc?: (regionId: string) => string | null;
 }
 
 export interface HtmlRenderResult {
@@ -340,7 +350,10 @@ function cascadeDebugBadge(node: { anchors?: any[] }, ctxBase: ResolveContext): 
 function renderBlockOnce(block: any, ctxBase: ResolveContext, blockCtx: HtmlBlockContext, pages: Page[], editorMode = false): string {
   const renderer = getHtmlBlockRenderer(block.type);
   const body = renderer ? renderer(block, blockCtx) : renderUnsupportedHtml(block, blockCtx);
-  const overlays = sortOverlaysForPaint((block.overlays ?? []).filter((o: any) => !o?.hidden)).map((o: any) => renderOverlay(o, ctxBase)).join('');
+  // E7: a native overlay the E6 render plan SUPPRESSES (hidden behind a final
+  // source crop) must not paint — otherwise the crop AND the native text render.
+  const suppressedOverlays = (ctxBase as { _pdfSuppressedOverlayIds?: Set<string> })._pdfSuppressedOverlayIds;
+  const overlays = sortOverlaysForPaint((block.overlays ?? []).filter((o: any) => !o?.hidden && !(suppressedOverlays && o?.id && suppressedOverlays.has(String(o.id))))).map((o: any) => renderOverlay(o, ctxBase)).join('');
   const backdrop = decorationBackdrop(block, ctxBase);
   const s = block.style ?? {};
   const opacity = s.opacity != null ? Number(s.opacity) : 1;
@@ -486,15 +499,33 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
     showReconstructedLayers: Boolean((ctxBase as { _showReconstructedLayers?: boolean })._showReconstructedLayers),
     showReferenceRaster: Boolean((ctxBase as { _showReferenceUnderlay?: boolean })._showReferenceUnderlay),
   });
+  // E7: consume the resolved E6 region render plan (if any) at paint time — the
+  // SAME composition the quality gate evaluates. Suppress the plan's suppressed
+  // overlays and paint its final crops; absent a plan this is a no-op (identical
+  // legacy output). Editor references are never painted in final output.
+  const regionPlan = resolveRegionRenderPlanProjection(page as unknown as Page);
+  const suppressedOverlays = suppressedOverlayIdSet(regionPlan);
+  const blockCtxBase = suppressedOverlays.size
+    ? ({ ...ctxBase, _pdfSuppressedOverlayIds: suppressedOverlays } as ResolveContext)
+    : ctxBase;
   const blocks: string[] = [];
   if (pageRenderPlan.renderNativeBlocks) {
     for (const block of sortBlocksForPaint(page.blocks)) {
       if (block.hidden) continue;
       if (!evalConditional(block.conditional, ctxBase)) continue;
       if (!evalBlockVisibility(block.visibility, ctxBase)) continue;
-      blocks.push(...renderBlockWithRepeat(block, ctxBase, blockCtx, pages, editorMode));
+      blocks.push(...renderBlockWithRepeat(block, blockCtxBase, blockCtx, pages, editorMode));
     }
   }
+  // Final source-crop elements from the E6 plan (final-output only).
+  const regionCropsHtml = (!regionPlan || regionPlan.pageOutputStrategy === 'raster-only')
+    ? '' : buildFinalCropElementsHtml(regionPlan, {
+      escapeHtml,
+      resolveSrc: (crop) => {
+        const resolver = (ctxBase as { _pdfRegionCropSrc?: (regionId: string) => string | null })._pdfRegionCropSrc;
+        return resolver ? resolver(crop.regionId) : null;
+      },
+    });
 
   // Phase 5 — baseline grid (printed when page.baselineGrid.show is true).
   let baselineEl = '';
@@ -506,8 +537,14 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
     baselineEl = `<div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(to bottom, transparent 0, transparent ${size - 1}pt, ${color} ${size - 1}pt, ${color} ${size}pt);background-position:0 ${offset}pt;"></div>`;
   }
 
-  const dataAttrs = editorMode ? ` data-page-id="${escapeHtml(String(page.id))}" data-page-index="${pageIndex}"` : '';
-  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${bgStyle}">${baselineEl}${blocks.join('\n')}</section>`;
+  // E7: stamp composition identity (page id + render-plan hash + strategy) so
+  // the quality capture reads plan identity — in BOTH editor and final output —
+  // never element text. The existing editor `data-page-id`/`data-page-index`
+  // attributes are preserved unchanged for their existing consumers.
+  const editorAttrs = editorMode ? ` data-page-id="${escapeHtml(String(page.id))}" data-page-index="${pageIndex}"` : '';
+  const compositionAttrs = ` ${pageCompositionDataAttrs(page as unknown as Page, regionPlan, escapeHtml)}`;
+  const dataAttrs = editorAttrs + compositionAttrs;
+  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${bgStyle}">${baselineEl}${blocks.join('\n')}${regionCropsHtml}</section>`;
 }
 interface CascadeIndexEntry {
   pageIndex: number;
@@ -680,6 +717,9 @@ export function renderTemplateToHtml(
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;
     (pageCtx as any)._showReferenceUnderlay = !!options.showReferenceUnderlay;
+    // E7: runtime-only resolver mapping a region id → an ephemeral crop src
+    // (signed/object/data URL). Never persisted; consumed only at paint time.
+    if (options.regionCropSrc) (pageCtx as any)._pdfRegionCropSrc = options.regionCropSrc;
     const rendered = renderPage(page, pageCtx, idx, template, visiblePages, !!options.editorMode);
     if (pageCache) pageCache.set(cacheKey, rendered);
     return rendered;

@@ -110,7 +110,7 @@ export function ScorecardStep({
           <CardTitle className="text-lg">Portfolio Scorecard</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-center">
               <div className={`text-5xl font-bold ${getScoreColor(overallScore)}`}>
                 {overallScore}
@@ -123,7 +123,7 @@ export function ScorecardStep({
           </div>
 
           {/* Score Breakdown */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <div className="flex items-center gap-2 text-sm">
                 <Heart className="h-4 w-4 text-muted-foreground" />
@@ -205,14 +205,14 @@ export function ScorecardStep({
           {propertyScores
             .sort((a, b) => b.overallScore - a.overallScore)
             .map((prop, index) => (
-            <div key={prop.propertyId} className="border rounded-lg p-4 space-y-3">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-3">
+            <div key={prop.propertyId} className="min-w-0 border rounded-lg p-4 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
                   <div className="flex items-center justify-center w-8 h-8 rounded-full bg-muted text-sm font-medium">
                     #{index + 1}
                   </div>
-                  <div>
-                    <p className="font-medium text-sm">{prop.address}</p>
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm break-words">{prop.address}</p>
                     <div className="flex items-center gap-2 mt-1">
                       {!prop.isRental && getClassificationIcon(prop.classification)}
                       {getClassificationBadge(prop.classification, prop.isRental)}
@@ -225,7 +225,7 @@ export function ScorecardStep({
               </div>
 
               {/* Mini score bars */}
-              <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="grid gap-2 text-xs sm:grid-cols-3">
                 <div>
                   <span className="text-muted-foreground">Health: </span>
                   <span className="font-medium">{prop.healthScore}%</span>
@@ -241,7 +241,7 @@ export function ScorecardStep({
               </div>
 
               {/* Strengths & Concerns */}
-              <div className="flex gap-4 text-xs">
+              <div className="flex flex-col gap-4 text-xs sm:flex-row">
                 {prop.strengths.length > 0 && (
                   <div className="flex-1">
                     <p className="text-muted-foreground mb-1">Strengths</p>

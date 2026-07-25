@@ -39,14 +39,14 @@ export function DataCompletenessStep({
           <CardTitle className="text-lg">Data Quality Overview</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <div className={`text-4xl font-bold ${getScoreColor(overallScore)}`}>
                 {overallScore}%
               </div>
               <p className="text-sm text-muted-foreground">Overall Completeness</p>
             </div>
-            <div className="text-right space-y-1">
+            <div className="space-y-1 sm:text-right">
               <div className="flex items-center gap-2 justify-end">
                 <AlertTriangle className="h-4 w-4 text-brand-500" />
                 <span className="text-sm">{totalMissingFields} missing fields</span>
@@ -74,11 +74,12 @@ export function DataCompletenessStep({
           <CardTitle className="text-lg">Property Data Quality</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
           {propertyData.map((prop) => (
-            <div key={prop.propertyId} className="border rounded-lg p-4 space-y-3">
+            <div key={prop.propertyId} className="min-w-0 border rounded-lg p-4 space-y-3">
               <div className="flex items-start justify-between">
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm truncate">{prop.address}</p>
+                  <p className="font-medium text-sm break-words">{prop.address}</p>
                   <div className="flex items-center gap-2 mt-1">
                     {prop.isRental && (
                       <Badge className="bg-info/10 text-info border-info/20 text-xs">
@@ -156,6 +157,7 @@ export function DataCompletenessStep({
               )}
             </div>
           ))}
+          </div>
 
           {propertyData.length === 0 && (
             <div className="text-center py-8 text-muted-foreground">

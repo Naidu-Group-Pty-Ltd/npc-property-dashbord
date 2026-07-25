@@ -128,6 +128,8 @@ Deno.serve(async (req) => {
         password_hash: newHash,
         must_change_password: false,
         session_token: newSessionToken,
+        // A rotated token must not retain a hash for the prior session.
+        session_token_hash: null,
         session_expires_at: expiresAt.toISOString(),
         failed_login_attempts: 0,
         locked_until: null,
