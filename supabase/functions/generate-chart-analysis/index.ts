@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
 import { callLLMRaw } from '../_shared/llmRouter.ts';
@@ -355,14 +356,67 @@ const __chartAnalysisHandler = async (req: Request): Promise<Response> => {
 
     // SECURITY: Verify authentication
     const body = await req.json();
-    const { chartId, chartData, reportContext }: ChartAnalysisRequest = body;
+    const { chartId }: ChartAnalysisRequest = body;
     
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('[generate-chart-analysis] Auth failed:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
     console.log(`[generate-chart-analysis] Authenticated user: ${userId}`);
+
+    const authorization = await requireModulePermission(
+      supabase,
+      { userId, authMethod },
+      'charts',
+      'can_edit',
+    );
+    if (!authorization.ok) {
+      return new Response(JSON.stringify({ error: authorization.error, success: false }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // The service-role client bypasses RLS, so bind analysis inputs to the
+    // authorized target instead of trusting chart content supplied by callers.
+    const { data: chart, error: chartError } = await supabase
+      .from('charts')
+      .select('id, report_id, title, chart_type, dataset, chart_config')
+      .eq('id', chartId)
+      .maybeSingle();
+    if (chartError) throw new Error(`Failed to load chart: ${chartError.message}`);
+    if (!chart) {
+      return new Response(JSON.stringify({ error: 'Chart not found', success: false }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const { data: report, error: reportError } = await supabase
+      .from('generated_reports')
+      .select('title, description')
+      .eq('id', chart.report_id)
+      .maybeSingle();
+    if (reportError) throw new Error(`Failed to load chart report: ${reportError.message}`);
+
+    const storedConfig = chart.chart_config && typeof chart.chart_config === 'object'
+      ? chart.chart_config as Record<string, unknown>
+      : {};
+    const storedData = Array.isArray(chart.dataset)
+      ? chart.dataset
+      : Array.isArray(storedConfig.data)
+        ? storedConfig.data
+        : [];
+    const chartData = {
+      title: chart.title,
+      type: chart.chart_type,
+      data: storedData,
+      config: chart.chart_config,
+    };
+    const reportContext = report
+      ? { title: report.title, description: report.description, listingCount: storedData.length }
+      : undefined;
 
     console.log('Generating analysis for chart:', chartId, 'Type:', chartData.type);
 
@@ -436,13 +490,14 @@ const __chartAnalysisHandler = async (req: Request): Promise<Response> => {
       throw new Error(`Failed to store analysis: ${error.message}`);
     }
 
-    await supabase
+    const { error: updateError } = await supabase
       .from('charts')
       .update({
         analysis_text: analysisText,
         summary_text: analysisText.split('\n')[0]?.replace(/^Key finding:\s*/i, '').slice(0, 500) || null,
       })
       .eq('id', chartId);
+    if (updateError) throw new Error(`Failed to update chart: ${updateError.message}`);
 
     console.log('Analysis generated and stored successfully');
 

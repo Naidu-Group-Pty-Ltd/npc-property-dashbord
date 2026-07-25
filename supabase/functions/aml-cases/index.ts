@@ -12,7 +12,9 @@
  *
  * All writes are appended to `aml.case_events` with a per-case SHA-256 hash chain
  * (prev_hash + row_hash) for tamper-evidence. Reads require any AML role; writes
- * require analyst/reviewer/mlro. Enforced in-code AND by RLS.
+ * require action-specific analyst/reviewer/mlro authorization. Because this
+ * function uses the service role, these checks enforce the underlying RLS role
+ * boundaries in code as well.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
@@ -36,6 +38,8 @@ const EVENT_CATEGORIES = [
   'idv_result', 'pep_sanctions_hit', 'edd_note', 'mlro_decision',
   'austrac_report', 'system',
 ] as const;
+
+const MLRO_ONLY_EVENT_CATEGORIES = new Set<string>(['mlro_decision', 'system']);
 
 // Allowed transitions (defence-in-depth on top of MLRO overrides)
 const TRANSITIONS: Record<string, string[]> = {
@@ -164,6 +168,7 @@ Deno.serve(async (req) => {
       .is('revoked_at', null);
     const roles = new Set<string>((roleRows ?? []).map((r: any) => r.role));
     const canWrite = roles.has('analyst') || roles.has('reviewer') || roles.has('mlro');
+    const canCreate = roles.has('analyst') || roles.has('mlro');
     const isMlro = roles.has('mlro');
 
     const op = String(body?.op ?? '');
@@ -204,7 +209,7 @@ Deno.serve(async (req) => {
       }
 
       case 'create': {
-        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        if (!canCreate) return jsonResponse({ error: 'Analyst or MLRO role required' }, 403);
         const subject = String(body.subject_display_name ?? '').trim();
         if (!subject) return jsonResponse({ error: 'subject_display_name is required' }, 400);
         const subjectType = ['individual', 'entity', 'trust'].includes(body.subject_type)
@@ -246,7 +251,7 @@ Deno.serve(async (req) => {
         // Model B: pre-service / earlier activation — REQUIRES tenant-level
         //          `aml_activation_program.legal_approval === true` and a
         //          non-empty `program_version` string. Otherwise 409.
-        if (!canWrite) return jsonResponse({ error: 'Write role required' }, 403);
+        if (!canCreate) return jsonResponse({ error: 'Analyst or MLRO role required' }, 403);
 
         const clientId = String(body.client_id ?? '').trim();
         const displayName = String(body.subject_display_name ?? '').trim();
@@ -271,16 +276,16 @@ Deno.serve(async (req) => {
           return jsonResponse({ error: 'Human confirmation is required to open an AML case' }, 400);
         }
 
-        // Verify the client exists and is not soft-deleted.
+        // Verify the client exists and is active before creating an AML case.
         const { data: client, error: clientErr } = await admin
           .from('clients')
-          .select('id, name, status, deleted_at')
+          .select('id, is_active')
           .eq('id', clientId)
           .maybeSingle();
         if (clientErr) throw clientErr;
         if (!client) return jsonResponse({ error: 'Client not found' }, 404);
-        if ((client as any).deleted_at) {
-          return jsonResponse({ error: 'Client is archived; cannot activate for AML' }, 409);
+        if (client.is_active !== true) {
+          return jsonResponse({ error: 'Client is not active; cannot activate for AML' }, 409);
         }
 
         // Duplicate-open guard: one open case per client at a time.
@@ -400,6 +405,9 @@ Deno.serve(async (req) => {
         const from = caseRow.status;
         const to = body.to_status;
         const legal = TRANSITIONS[from] ?? [];
+        if (from === 'escalated_mlro' && !isMlro) {
+          return jsonResponse({ error: 'MLRO role required for escalated case decisions' }, 403);
+        }
         if (!legal.includes(to) && !isMlro) {
           return jsonResponse({
             error: `Illegal transition ${from} → ${to} (MLRO override required)`,
@@ -428,6 +436,9 @@ Deno.serve(async (req) => {
         }
         if (!EVENT_CATEGORIES.includes(body.category)) {
           return jsonResponse({ error: 'Invalid category' }, 400);
+        }
+        if (MLRO_ONLY_EVENT_CATEGORIES.has(body.category) && !isMlro) {
+          return jsonResponse({ error: 'MLRO role required for this event category' }, 403);
         }
         const ev = await appendEvent(admin, body.case_id, body.category,
           String(body.summary), body.payload ?? {}, userId, userEmail);

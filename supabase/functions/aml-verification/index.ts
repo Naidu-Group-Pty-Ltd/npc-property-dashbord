@@ -220,7 +220,7 @@ Deno.serve(async (req) => {
           ? body.scope.filter((s: string) => ["pep", "sanctions", "adverse_media", "watchlist"].includes(s))
           : ["pep", "sanctions", "adverse_media"];
         const tenantId = await resolveTenantId(admin, caseId);
-        const capability = scope.length === 1 && scope[0] === "adverse_media" ? "adverse_media" : "screening";
+        const capability = scope.length === 1 && scope[0] === "adverse_media" ? "adverse_media" : "pep_sanctions";
         const resolved = await resolveTenantProvider(admin, tenantId, capability);
         const provider = getScreeningProvider({ resolved, preferred: body.provider });
 

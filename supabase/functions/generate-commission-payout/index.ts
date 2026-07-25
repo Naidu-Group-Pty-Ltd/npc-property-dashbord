@@ -9,7 +9,8 @@ import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, create
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireModulePermission, permForAction } from '../_shared/authz.ts';
 import { logSecurityEvent } from '../_shared/auth_v2.ts';
-import { hasRecentStepUp, normalizeIdempotencyKey } from '../_shared/wp09Guards.ts';
+import { requireStepUp } from '../_shared/stepUp.ts';
+import { normalizeIdempotencyKey } from '../_shared/wp09Guards.ts';
 import { isSuperadmin } from '../_shared/wp08Guards.ts';
 
 interface Body {
@@ -91,9 +92,15 @@ Deno.serve(async (req) => {
 
       case 'mark_paid': {
         if (!body.id) return j({ success: false, error: 'Missing id' }, 400);
-        // Step-up gate for money-move
-        if (!isSuper && !hasRecentStepUp(req)) {
-          return j({ success: false, error: 'Step-up verification required', code: 'step_up_required' }, 401);
+        if (!isSuper) {
+          const stepUpGate = await requireStepUp(supabase, {
+            userId: auth.userId,
+            capability: 'commission.payout.mark_paid',
+            req,
+            body,
+            logAudit: true,
+          });
+          if (stepUpGate) return stepUpGate;
         }
         const { data, error } = await supabase.rpc('mark_commission_payout_paid', {
           p_payout_id: body.id,

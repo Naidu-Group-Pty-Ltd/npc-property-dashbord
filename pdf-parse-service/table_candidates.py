@@ -26,6 +26,7 @@ arbitrates and builds the preservation plan.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from typing import Any, Optional
@@ -86,6 +87,40 @@ def _norm_bbox_dict(b: Any) -> Optional[dict]:
         "x": ssg._round2(b["x"]), "y": ssg._round2(b["y"]),
         "width": ssg._round2(b["width"]), "height": ssg._round2(b["height"]),
     }
+
+
+def _raw_candidate_exceeds_budget(cells_raw: list[dict]) -> bool:
+    """Bound raw candidate work before sorting, hashing, or cell expansion.
+
+    The fixed allowance covers the normalized contract fields each raw cell
+    expands into. Text is counted incrementally so a single hostile string does
+    not require a second, potentially very large UTF-8 allocation.
+    """
+    size = 2048 + (len(cells_raw) * 256)
+    if size > MAX_CANDIDATE_JSON_BYTES:
+        return True
+    for cell in cells_raw:
+        if not isinstance(cell, dict):
+            continue
+        provider_refs = cell.get("providerRefs")
+        values = [cell.get("text") or ""]
+        if isinstance(provider_refs, list):
+            values.extend(provider_refs)
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            for char in value:
+                codepoint = ord(char)
+                size += 1 if codepoint < 0x80 else 2 if codepoint < 0x800 else 3 if codepoint < 0x10000 else 4
+                if size > MAX_CANDIDATE_JSON_BYTES:
+                    return True
+    return False
+
+
+def candidate_json_within_budget(candidate: dict) -> bool:
+    """Return whether one fully normalized candidate fits its artifact budget."""
+    encoded = json.dumps(candidate, separators=(",", ":")).encode("utf-8")
+    return len(encoded) <= MAX_CANDIDATE_JSON_BYTES
 
 
 # ── Deterministic identities (Phase 3) ──────────────────────────────────────
@@ -178,12 +213,17 @@ def build_table_candidate(
     source_crop_path: Optional[str] = None,
     confidence: Optional[float] = None,
     elapsed_ms: Optional[int] = None,
-) -> dict:
+) -> Optional[dict]:
     """Assemble ONE normalized `table-candidate-contract-v1`. Deterministic; the
     input lists are never mutated. Anchor-only merged text is expected (a spanned
     cell's text lives only on its anchor)."""
     provider = provider if provider in VALID_PROVIDERS else "unknown"
     norm_bbox = _norm_bbox_dict(bbox) or {"x": 0.0, "y": 0.0, "width": 0.0, "height": 0.0}
+    if (len(cells_raw) > MAX_CELLS_PER_CANDIDATE
+            or num_rows > MAX_ROWS_PER_CANDIDATE
+            or num_cols > MAX_COLS_PER_CANDIDATE
+            or _raw_candidate_exceeds_budget(cells_raw)):
+        return None
     # Deterministic cell order (row, then col) BEFORE hashing so the ID is stable.
     ordered = sorted(
         (c for c in cells_raw if isinstance(c, dict)),
@@ -224,7 +264,7 @@ def build_table_candidate(
     problems = validate_table_candidate(candidate)
     candidate["problems"] = problems
     candidate["complete"] = len(problems) == 0
-    return candidate
+    return candidate if candidate_json_within_budget(candidate) else None
 
 
 def validate_table_candidate(candidate: dict) -> list[str]:
@@ -323,13 +363,22 @@ def candidate_from_source_topology(
     topo = region.get("table")
     if not isinstance(topo, dict):
         return None
+    raw_topology_cells = topo.get("cells") or []
+    num_rows = int(topo.get("numRows") or 0)
+    num_cols = int(topo.get("numCols") or 0)
+    if (not isinstance(raw_topology_cells, list)
+            or len(raw_topology_cells) > MAX_CELLS_PER_CANDIDATE
+            or num_rows > MAX_ROWS_PER_CANDIDATE
+            or num_cols > MAX_COLS_PER_CANDIDATE
+            or _raw_candidate_exceeds_budget(raw_topology_cells)):
+        return None
     cells_raw = [{
         "row": c.get("row"), "col": c.get("col"),
         "rowSpan": c.get("rowSpan", 1), "colSpan": c.get("colSpan", 1),
         "columnHeader": c.get("columnHeader"), "rowHeader": c.get("rowHeader"),
         "text": c.get("text"), "bbox": _relative_cell_bbox(c.get("bbox"), region.get("bbox")),
         "confidence": c.get("confidence"), "providerRefs": c.get("providerRefs") or ["docling"],
-    } for c in (topo.get("cells") or []) if isinstance(c, dict)]
+    } for c in raw_topology_cells if isinstance(c, dict)]
     return build_table_candidate(
         source_region_id=region.get("id"),
         page_id=region.get("pageId") or f"docling-page-{region.get('pageNumber')}",
@@ -339,8 +388,8 @@ def candidate_from_source_topology(
         provider_reference=(region.get("providerEvidence") or [{}])[0].get("providerRef") if region.get("providerEvidence") else None,
         profile=profile or {"runtimeProfile": "legacy", "tableMode": None, "cellMatching": None},
         bbox=region.get("bbox") or {},
-        num_rows=int(topo.get("numRows") or 0),
-        num_cols=int(topo.get("numCols") or 0),
+        num_rows=num_rows,
+        num_cols=num_cols,
         header_row_count=int(topo.get("headerRowCount") or 0),
         header_col_count=int(topo.get("headerColumnCount") or 0),
         cells_raw=cells_raw,

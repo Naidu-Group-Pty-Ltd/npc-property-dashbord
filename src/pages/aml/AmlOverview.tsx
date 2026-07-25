@@ -9,14 +9,12 @@ import {
   Users,
   Info,
   Bell,
-  FileSignature,
   Settings2,
   ArrowRight,
   Lock,
 } from "lucide-react";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlMonitoringApi, type AmlMonitoringSummary } from "@/lib/aml/amlMonitoringApi";
-import { amlReportingApi, type AmlReportingSummary } from "@/lib/aml/amlReportingApi";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
@@ -97,13 +95,18 @@ const QUEUE_LINKS: QueueLink[] = [
 
 export default function AmlOverview() {
   const { complianceHome: v3Home, loading: v3Loading } = useAmlV3Flags();
-  const { roles, loading: accessLoading } = useAmlAccess();
 
   // Phase 3 (V3) — swap to the action-led Compliance Home when the
   // `aml_v3_compliance_home` feature flag is on. Default false → V2 renders.
   if (!v3Loading && v3Home) {
     return <AmlComplianceHomeV3 />;
   }
+
+  return <AmlOverviewV2 />;
+}
+
+function AmlOverviewV2() {
+  const { roles, loading: accessLoading } = useAmlAccess();
 
   const canView = hasAmlCapability(roles, "aml.view");
   const canInvestigate = hasAmlCapability(roles, "aml.investigate");
@@ -117,9 +120,6 @@ export default function AmlOverview() {
 
   const [monitoring, setMonitoring] = useState<AmlMonitoringSummary | null>(null);
   const [loadingMonitoring, setLoadingMonitoring] = useState(false);
-
-  const [reporting, setReporting] = useState<AmlReportingSummary | null>(null);
-  const [loadingReporting, setLoadingReporting] = useState(false);
 
   useEffect(() => {
     if (!canView) return;
@@ -157,23 +157,6 @@ export default function AmlOverview() {
     })();
     return () => { alive = false; };
   }, [canInvestigate]);
-
-  useEffect(() => {
-    if (!canReport) return;
-    let alive = true;
-    (async () => {
-      try {
-        setLoadingReporting(true);
-        const s = await amlReportingApi.summary();
-        if (alive) setReporting(s);
-      } catch (e) {
-        if (alive) setReporting(null);
-      } finally {
-        if (alive) setLoadingReporting(false);
-      }
-    })();
-    return () => { alive = false; };
-  }, [canReport]);
 
   const openCount = useMemo(
     () => cases.filter((c) => !["cleared", "closed", "blocked"].includes(c.status)).length,
@@ -298,40 +281,6 @@ export default function AmlOverview() {
                 : "Awaiting first data refresh."
             }
             to="/admin/aml/monitoring"
-          />
-        </div>
-      )}
-
-      {/* Report-only tiles: MLRO reporting SLA */}
-      {canReport && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <MetricTile
-            title="Awaiting MLRO"
-            icon={FileSignature}
-            loading={loadingReporting}
-            value={reporting?.awaiting_mlro ?? "—"}
-            hint="Draft reports queued for your approval."
-            to="/admin/aml/austrac"
-          />
-          <MetricTile
-            title="Approved, not submitted"
-            icon={FileSignature}
-            loading={loadingReporting}
-            value={reporting?.approved ?? "—"}
-            hint="Lodge to AUSTRAC when ready."
-            to="/admin/aml/austrac"
-          />
-          <MetricTile
-            title="Submitted (recent)"
-            icon={ShieldCheck}
-            loading={loadingReporting}
-            value={reporting?.submitted ?? "—"}
-            hint={
-              reporting
-                ? `${reporting.acknowledged} acknowledged · ${reporting.rejected} rejected`
-                : "Awaiting first data refresh."
-            }
-            to="/admin/aml/austrac"
           />
         </div>
       )}

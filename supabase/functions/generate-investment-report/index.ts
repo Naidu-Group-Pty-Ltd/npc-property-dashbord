@@ -8,6 +8,7 @@ import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shar
 import { insertTargetedNotification } from '../_shared/notify.ts';
 import { compassSections, financialSections, type CompassSectionDefinition as CanonicalSectionDefinition } from '../_shared/compassSectionRegistry.ts';
 import { startRun as traceStartRun, recordChunk as traceRecordChunk, finishRun as traceFinishRun, packetKeysAttached as tracePacketKeys } from '../_shared/generation-trace.ts';
+import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportMeteringKey.ts';
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
@@ -1924,6 +1925,21 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
           .eq('id', reportId)
           .single();
         
+        if (
+          existingReport?.property_address
+          && propertyAddress
+          && existingReport.property_address.trim().toLowerCase() !== propertyAddress.trim().toLowerCase()
+        ) {
+          console.warn('[generate-investment-report] Rejected property address mismatch for report:', reportId);
+          return new Response(JSON.stringify({
+            error: 'Property address does not match the existing report',
+            success: false,
+          }), {
+            status: 409,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
         // CRITICAL: If queryType wasn't passed (e.g., chunked regeneration), use the existing report's scope
         if (existingReport?.report_scope && reportScope === 'address' && !propertyDetails?.queryType) {
           reportScope = existingReport.report_scope;
@@ -2412,7 +2428,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-                'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
+                // The gateway requires a JWT; verifyAuth uses the separate internal credential.
+                'Authorization': `Bearer ${supabaseAnonKey}`,
+                'x-internal-edge-secret': INTERNAL_EDGE_SECRET,
                 ...(supabaseAnonKey ? { 'apikey': supabaseAnonKey } : {})
             },
             body: JSON.stringify({
@@ -2555,7 +2573,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
+                  // The gateway requires a JWT; verifyAuth uses the separate internal credential.
+                  'Authorization': `Bearer ${supabaseAnonKey}`,
+                  'x-internal-edge-secret': INTERNAL_EDGE_SECRET,
                   ...(supabaseAnonKey ? { 'apikey': supabaseAnonKey } : {})
                 },
                 body: JSON.stringify({
@@ -5969,14 +5989,26 @@ Deno.serve(withReportMetering(async (body, req) => {
       : tier === 'snapshot' ? 'report.investment.snapshot'
       : tier === 'financial' ? 'report.investment.financial'
       : 'report.investment.compass');
-  // One reservation per REPORT, not per invocation. Chunked generation drives
-  // this function once per section (singleSection/continueFrom), and resume
-  // loops re-enter it many times — all of those calls must share the parent
-  // report's idempotency key so Mission Control charges the report exactly
-  // once. Keying on the sec/cont flags split one run across multiple charges.
-  const idempotencyKey = body?.reportId
-    ? buildIdempotencyKey('inv-report', [body.reportId])
-    : buildIdempotencyKey('inv-report', [body?.propertyAddress, scope, tier]);
+  let reportVersion: number | string = `unresolved-${crypto.randomUUID()}`;
+  if (body?.reportId) {
+    const supabaseUrl = (Deno.env.get('SUPABASE_URL') || '').trim();
+    const supabaseKey = (Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '').trim();
+    if (supabaseUrl && supabaseKey) {
+      const { data } = await createClient(supabaseUrl, supabaseKey)
+        .from('investment_reports')
+        .select('current_version')
+        .eq('id', body.reportId)
+        .single();
+      reportVersion = data?.current_version ?? reportVersion;
+    }
+  }
+  // One reservation per generation version. All chunks in that version share
+  // the key, but a later regeneration or changed caller-supplied inputs cannot
+  // reuse the original report's paid reservation.
+  const idempotencyKey = buildIdempotencyKey(
+    'inv-report',
+    await buildInvestmentReportMeteringParts(body, reportVersion),
+  );
   return {
     kind: kind as any,
     userId,

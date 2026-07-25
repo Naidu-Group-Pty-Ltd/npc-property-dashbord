@@ -194,6 +194,29 @@ def test_candidate_dimension_budget_enforced():
     assert "candidate_dimensions_exceed_budget" in tc.validate_table_candidate(cand)
 
 
+def test_oversized_candidate_rejected_before_hashing(monkeypatch):
+    cells = [cell(0, 0, "x", 40, 100)] * (tc.MAX_CELLS_PER_CANDIDATE + 1)
+    region = mk_region(cells, num_rows=1, num_cols=1)
+    monkeypatch.setattr(tc, "candidate_id", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("hashed")))
+
+    assert tc.candidate_from_source_topology(region=region) is None
+
+
+def test_candidate_text_budget_rejected_before_hashing(monkeypatch):
+    oversized = "x" * (tc.MAX_CANDIDATE_JSON_BYTES + 1)
+    region = mk_region([cell(0, 0, oversized, 40, 100)], num_rows=1, num_cols=1)
+    monkeypatch.setattr(tc, "candidate_id", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("hashed")))
+
+    assert tc.candidate_from_source_topology(region=region) is None
+
+
+def test_normalized_candidate_json_budget_is_enforced():
+    candidate = tc.candidate_from_source_topology(region=mk_region(FINANCIAL_CELLS))
+    candidate["cells"][0]["normalizedText"] = "x" * tc.MAX_CANDIDATE_JSON_BYTES
+
+    assert tc.candidate_json_within_budget(candidate) is False
+
+
 # ── D. PyMuPDF grid candidate ───────────────────────────────────────────────
 
 def _ruled_vectors():
