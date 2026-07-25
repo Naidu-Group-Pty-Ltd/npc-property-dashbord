@@ -103,8 +103,7 @@ Deno.serve(async (req) => {
           role: customUser.role
         },
         roles,
-        access_token: accessToken,  // Supabase-compatible JWT for direct queries
-        session_token: sessionToken // Fallback token for secure function calls when JWT is unavailable
+        access_token: accessToken,  // Supabase-compatible JWT for direct queries when signing is configured
       }),
       {
         status: 200,
