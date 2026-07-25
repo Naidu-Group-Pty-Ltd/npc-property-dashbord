@@ -84,7 +84,7 @@ BEGIN
                       SELECT 1
                         FROM jsonb_array_elements(COALESCE(j.attempts, '[]'::jsonb)) a
                        WHERE a->>'endpoint' = '/parse'
-                         AND COALESCE((a->>'ok')::boolean, false) = true
+                         AND a->'ok' = 'true'::jsonb
                          AND COALESCE(a->>'status', '') IN ('202', '200')
                     ) THEN interval '45 minutes'
                     ELSE interval '12 minutes'
