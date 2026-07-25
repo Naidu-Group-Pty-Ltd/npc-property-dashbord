@@ -274,6 +274,34 @@ Investor Compass Report.
   }
 };
 
+/**
+ * The service-role client bypasses RLS, so report access must be checked here
+ * before a caller-controlled report ID is read or changed. This mirrors the
+ * investment_reports policy: the report generator and the owning client user
+ * may access a report. Internal service calls retain their existing access.
+ */
+async function canAccessInvestmentReport(supabase: any, report: any, userId: string) {
+  if (userId === 'service_role' || report.generated_by === userId) return true;
+  if (!report.client_property_id) return false;
+
+  const { data: clientProperty, error: clientPropertyError } = await supabase
+    .from('client_properties')
+    .select('client_id')
+    .eq('id', report.client_property_id)
+    .maybeSingle();
+
+  if (clientPropertyError || !clientProperty?.client_id) return false;
+
+  const { data: client, error: clientError } = await supabase
+    .from('clients')
+    .select('id')
+    .eq('id', clientProperty.client_id)
+    .eq('created_by', userId)
+    .maybeSingle();
+
+  return !clientError && !!client;
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -315,11 +343,11 @@ Deno.serve(async (req) => {
     if (reportId && tier && ['compass-40', 'financial-analysis'].includes(tier)) {
       const { data: report, error: reportError } = await supabase
         .from('investment_reports')
-        .select('id, report_content')
+        .select('id, generated_by, client_property_id, report_content')
         .eq('id', reportId)
         .single();
 
-      if (reportError || !report?.report_content) {
+      if (reportError || !report?.report_content || !await canAccessInvestmentReport(supabase, report, userId!)) {
         return new Response(JSON.stringify({
           error: 'Report content not found for post-processing',
           success: false,
@@ -407,6 +435,16 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (!await canAccessInvestmentReport(supabase, parentReport, userId!)) {
+      return new Response(JSON.stringify({
+        error: 'Parent Compass report not found',
+        success: false,
+      }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     console.log('Parent report found:', parentReport.property_address);
 
     // Resolve the exact child in this Compass package before generating. A
@@ -414,7 +452,7 @@ Deno.serve(async (req) => {
     // retries never create an uncontrolled duplicate or silently no-op.
     const { data: existingTier, error: existingTierError } = await supabase
       .from('investment_reports')
-      .select('id')
+      .select('id, generated_by, client_property_id')
       .eq('parent_report_id', parentReportId)
       .eq('report_tier', targetTier)
       .order('updated_at', { ascending: false })
@@ -423,6 +461,16 @@ Deno.serve(async (req) => {
 
     if (existingTierError) {
       throw new Error(`Failed to resolve existing ${TIER_CONFIG[targetTier].name}: ${existingTierError.message}`);
+    }
+
+    if (existingTier && !await canAccessInvestmentReport(supabase, existingTier, userId!)) {
+      return new Response(JSON.stringify({
+        error: 'Parent Compass report not found',
+        success: false,
+      }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
 
     let condensedReport: { id: string } | null = existingTier;
