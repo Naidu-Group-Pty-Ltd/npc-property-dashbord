@@ -20,6 +20,7 @@ const ASSET_BUCKET = 'template-import-assets';
 const ARTIFACT_BUCKET = 'template-import-artifacts';
 const PDF_DIAGNOSTICS_BUCKET = 'pdf-import-diagnostics';
 const PDF_DIAGNOSTICS_SIGNED_URL_TTL_SECONDS = 60 * 60;
+const PDF_PAGE_CONTEXT_SUMMARY_MAX_PAGES = 60;
 const TEMPLATE_FINALIZATION_ARTIFACT_CONTRACT = 'template-finalization-artifacts-v1';
 const TEMPLATE_IMPORT_WORKER_TOKEN = Deno.env.get('TEMPLATE_IMPORT_WORKER_TOKEN') ?? SERVICE_ROLE;
 
@@ -570,15 +571,28 @@ function summarizePdfPageContexts(pageContexts: any[], manifest: any) {
     .filter((n: number) => Number.isFinite(n) && n > 0);
 
   const unique = [...new Set(pageNumbers)].sort((a, b) => a - b);
-  const expectedPageCount = Number(manifest?.page_count ?? pageContexts.length ?? 0);
+  const uniquePageNumbers = new Set(unique);
+  const rawExpectedPageCount = Number(manifest?.page_count ?? pageContexts.length);
+  const hasValidExpectedPageCount = Number.isFinite(rawExpectedPageCount)
+    && Number.isSafeInteger(rawExpectedPageCount)
+    && rawExpectedPageCount >= 0;
+  const expectedPageCount = Math.min(
+    hasValidExpectedPageCount ? rawExpectedPageCount : pageContexts.length,
+    PDF_PAGE_CONTEXT_SUMMARY_MAX_PAGES,
+  );
   const missing: number[] = [];
   for (let i = 1; i <= expectedPageCount; i += 1) {
-    if (!unique.includes(i)) missing.push(i);
+    if (!uniquePageNumbers.has(i)) missing.push(i);
   }
 
   const duplicate_page_numbers = unique.filter((n) => pageNumbers.filter((p) => p === n).length > 1);
 
   const requiredProblems: string[] = [];
+  if (!hasValidExpectedPageCount) {
+    requiredProblems.push('invalid_page_count');
+  } else if (rawExpectedPageCount > PDF_PAGE_CONTEXT_SUMMARY_MAX_PAGES) {
+    requiredProblems.push('page_count_exceeds_summary_limit');
+  }
   for (const ctx of pageContexts) {
     const pageNo = Number(ctx?.page_no ?? 0);
     if (!ctx?.artifacts?.docling_path) requiredProblems.push(`page_${pageNo}_docling_path_missing`);
