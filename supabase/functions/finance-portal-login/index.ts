@@ -143,6 +143,8 @@ Deno.serve(async (req) => {
       .from('finance_portal_users')
       .update({
         session_token: sessionToken,
+        // A rotated token must not retain a hash for the prior session.
+        session_token_hash: null,
         session_expires_at: expiresAt.toISOString(),
         last_login_at: new Date().toISOString(),
         failed_login_attempts: 0,
