@@ -167,19 +167,20 @@ Recovery is a pure function (no wall-clock, no randomness) and carries a determi
 
 ## 9. Cross-runtime parity
 
-The Python `planner_v3` package and the TypeScript `_shared` modules use the same FNV-1a-32 over
-sorted-key compact JSON, so they emit **byte-identical** identities for ASCII inputs. The TS spec
-embeds Python-produced anchors and asserts them:
+The Python `planner_v3` package and the TypeScript `_shared` modules use the same canonical
+sorted-key compact JSON. Non-security identifiers retain the existing FNV-1a-32 compatibility
+scheme, while the security-sensitive cache fingerprint uses SHA-256. Both runtimes emit
+**byte-identical** identities for ASCII inputs. The TS spec embeds Python-produced anchors:
 
 | Identity | Value |
 |---|---|
 | `fnv1a32("abc")` | `1a47e90b` |
 | default registry id | `svcreg-52451c5f` |
 | default routing policy id | `svcpol-f3fd6a52` |
-| mixed-doc plan id | `plan3-99e3a652` |
-| mixed-doc plan hash | `99e3a652` |
-| mixed-doc cache fingerprint | `pf3-f8d3a191` |
-| mixed-doc routing audit id | `raud-336d5709` |
+| mixed-doc plan id | `plan3-a8ce0afb` |
+| mixed-doc plan hash | `a8ce0afb` |
+| mixed-doc cache fingerprint | `pf3-aab8d89ced1d9f08a7250086264be2968872c18c6fdf76c0dbee39ab28aa067b` |
+| mixed-doc routing audit id | `raud-ee8cfe89` |
 
 ---
 
