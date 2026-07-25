@@ -2,8 +2,8 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function normalizeHslString(hsl: string | null | undefined, fallback: string): string {
-  if (!hsl) return fallback;
+export function normalizeHslString(hsl: unknown, fallback: string): string {
+  if (typeof hsl !== 'string' || !hsl) return fallback;
 
   const parts = hsl.match(/(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)%\s+(\d+(?:\.\d+)?)%/);
   if (!parts) return fallback;
