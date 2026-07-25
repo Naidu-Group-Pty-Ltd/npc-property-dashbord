@@ -165,15 +165,10 @@ const normalizeTreatment = (v: unknown): GstTreatmentInput | undefined => {
     return "going_concern";
   if (["margin_scheme", "margin"].includes(s)) return "margin_scheme";
   if (
-    [
-      "standard",
-      "gst_inclusive",
-      "plus_gst",
-      "taxable_supply",
-      "taxable",
-    ].includes(s)
+    ["plus_gst", "taxable_supply", "taxable"].includes(s)
   )
-    return "standard";
+    return "plus_gst";
+  if (["standard", "gst_inclusive"].includes(s)) return "standard";
   if (["input_taxed"].includes(s)) return "no_gst";
   if (["out_of_scope"].includes(s)) return "out_of_scope";
   if (["no_gst", "no_gst_applicable"].includes(s)) return "no_gst";
@@ -200,8 +195,8 @@ const inferTreatmentFromText = (
 ): GstTreatmentInput | undefined => {
   if (/going concern/.test(text)) return "going_concern";
   if (/margin scheme/.test(text)) return "margin_scheme";
-  if (/taxable supply|plus gst|\+\s*gst|gst inclusive/.test(text))
-    return "standard";
+  if (/gst inclusive/.test(text)) return "standard";
+  if (/taxable supply|plus gst|\+\s*gst/.test(text)) return "plus_gst";
   if (/out of scope/.test(text)) return "out_of_scope";
   if (/no gst|input taxed/.test(text)) return "no_gst";
   return undefined;
@@ -656,7 +651,7 @@ export function GstCalculatorCard() {
       /margin scheme/.test(combinedText) || inferred === "margin_scheme";
     const taxableSupplyPresent =
       /taxable supply|plus gst|\+\s*gst|gst inclusive/.test(combinedText) ||
-      inferred === "standard";
+      ["standard", "plus_gst"].includes(inferred);
     const confidence: GstExtractionPreview["confidence"] =
       hasContract && inferred !== "unknown"
         ? "High"
@@ -773,7 +768,7 @@ export function GstCalculatorCard() {
     hasPurchasePrice &&
     treatment !== "unknown" &&
     treatment !== "custom_review" &&
-    (treatment !== "standard" ||
+    (!["standard", "plus_gst"].includes(treatment) ||
       (registered !== "unknown" &&
         itcClaimability !== "unknown" &&
         settlementTiming !== "unknown")) &&
@@ -814,7 +809,8 @@ export function GstCalculatorCard() {
     itcClaimability === "unknown" ||
     (treatment === "going_concern" && goingConcernConfirmed !== "yes") ||
     (treatment === "going_concern" && registered !== "yes") ||
-    (treatment === "standard" && settlementTiming === "unknown") ||
+    (["standard", "plus_gst"].includes(treatment) &&
+      settlementTiming === "unknown") ||
     (treatment === "margin_scheme" && priorCostValue === null) ||
     !contractReviewed ||
     !professionalConfirmed ||
@@ -853,6 +849,8 @@ export function GstCalculatorCard() {
                 ? "goingConcern"
                 : treatment === "standard"
                   ? "gstInclusive"
+                  : treatment === "plus_gst"
+                    ? "plusGst"
                   : treatment === "margin_scheme"
                     ? "marginScheme"
                     : isZeroGstTreatment
@@ -1011,7 +1009,10 @@ export function GstCalculatorCard() {
         detail:
           "GST-free going concern treatment requires purchaser GST registration confirmation.",
       });
-    if (treatment === "standard" && settlementTiming === "unknown")
+    if (
+      ["standard", "plus_gst"].includes(treatment) &&
+      settlementTiming === "unknown"
+    )
       add({
         category: "Settlement Cashflow",
         severity: "Required",
@@ -1256,6 +1257,8 @@ export function GstCalculatorCard() {
             ? "goingConcern"
             : treatment === "standard"
               ? "gstInclusive"
+              : treatment === "plus_gst"
+                ? "plusGst"
               : treatment === "margin_scheme"
                 ? "marginScheme"
                 : "unknown",
@@ -1607,6 +1610,7 @@ export function GstCalculatorCard() {
                   <SelectContent>
                     <SelectItem value="unknown">Unknown</SelectItem>
                     <SelectItem value="standard">Taxable Supply</SelectItem>
+                    <SelectItem value="plus_gst">Price Plus GST</SelectItem>
                     <SelectItem value="going_concern">
                       GST-Free Going Concern
                     </SelectItem>
@@ -2144,6 +2148,7 @@ function TreatmentHero({
   const labels: Record<GstTreatmentInput, string> = {
     unknown: "Unknown / pending confirmation",
     standard: "Taxable supply",
+    plus_gst: "Price plus GST",
     going_concern: "GST-free going concern",
     margin_scheme: "Margin scheme",
     input_taxed: "Input taxed",
@@ -2155,6 +2160,8 @@ function TreatmentHero({
     unknown: "GST treatment has not been confirmed yet.",
     standard:
       "GST-inclusive / taxable supply logic applies based on the selected assumptions.",
+    plus_gst:
+      "GST is calculated in addition to the stated purchase price and included in settlement cashflow.",
     going_concern:
       "Going concern treatment is shown separately and remains subject to confirmation.",
     margin_scheme:
