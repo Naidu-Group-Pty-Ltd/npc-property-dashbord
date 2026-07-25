@@ -59,8 +59,9 @@ export function UserTableRow({
   const actionButtonClass = 'h-9 w-9 rounded-xl border-border/70 bg-background/80 p-0 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:bg-primary/10 hover:text-primary focus-visible:ring-primary/40 motion-reduce:transform-none motion-reduce:transition-none';
   const cautionActionButtonClass = 'h-9 w-9 rounded-xl border-brand-300/40 bg-brand-500/10 p-0 text-brand-700 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-brand-500/15 focus-visible:ring-brand-400/40 motion-reduce:transform-none motion-reduce:transition-none dark:text-brand-200';
   const destructiveActionButtonClass = 'h-9 w-9 rounded-xl p-0 shadow-sm transition-all hover:-translate-y-0.5 focus-visible:ring-destructive/40 motion-reduce:transform-none motion-reduce:transition-none';
+  // Bound work on stored usernames before allocating token arrays.
   const userInitials = u.username
-    .slice(0, 100)
+    .slice(0, 256)
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)
