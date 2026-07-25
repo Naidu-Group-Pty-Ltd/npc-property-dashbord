@@ -39,7 +39,7 @@ const CAPABILITY_LABELS: Record<AmlCapability, string> = {
 export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: StepUpAuthDialogProps) {
   const [phase, setPhase] = useState<"issue" | "verify">("issue");
   const [challengeId, setChallengeId] = useState<string | null>(null);
-  const [devCode, setDevCode] = useState<string | null>(null); // shown in-app until email/authenticator wired
+  const [destinationHint, setDestinationHint] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +47,7 @@ export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: Step
 
   useEffect(() => {
     if (!open) {
-      setPhase("issue"); setChallengeId(null); setDevCode(null); setCode(""); setError(null); setBusy(false);
+      setPhase("issue"); setChallengeId(null); setDestinationHint(null); setCode(""); setError(null); setBusy(false);
     }
   }, [open]);
 
@@ -56,7 +56,7 @@ export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: Step
     try {
       const data = await invokeAmlFunction<any>("aml-step-up", { op: "issue", capability });
       setChallengeId(data.challenge_id);
-      setDevCode(data.code ?? null);
+      setDestinationHint(data.destination_hint ?? null);
       setPhase("verify");
     } catch (e: any) {
       setError(e?.message ?? "Failed to issue challenge");
@@ -106,11 +106,10 @@ export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: Step
           </Alert>
         ) : null}
 
-        {phase === "verify" && devCode ? (
+        {phase === "verify" ? (
           <Alert>
             <AlertDescription>
-              In-app delivery (dev): <code className="font-mono font-semibold text-base">{devCode}</code>.
-              Production will deliver via authenticator app / email.
+              Verification code sent to your staff email{destinationHint ? ` (${destinationHint})` : ""}.
             </AlertDescription>
           </Alert>
         ) : null}
