@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveInvestmentGrade } from '../utils';
+import { getInvestmentGradeTone, getInvestmentScoreSummary, resolveInvestmentGrade } from '../utils';
 
 const report = (overrides: Record<string, unknown> = {}) => ({
   id: 'report-1',
@@ -37,5 +37,29 @@ describe('resolveInvestmentGrade', () => {
     const resolved = resolveInvestmentGrade([report(input)] as any);
     expect(resolved.status).toBe(status);
     expect(resolved.score).toBeNull();
+  });
+});
+
+describe('investment score display values', () => {
+  it('discards malformed JSON values before they reach the report UI', () => {
+    const summary = getInvestmentScoreSummary(report({
+      investment_score: {
+        grade: { unexpected: 'A' },
+        recommendation: ['Buy'],
+        totalScore: 82,
+        coverage: { partialLabel: 42 },
+      },
+    }) as any);
+
+    expect(summary).toMatchObject({
+      grade: null,
+      recommendation: null,
+      partialLabel: null,
+      score: 82,
+    });
+  });
+
+  it('handles a non-string grade defensively when called with untyped data', () => {
+    expect(getInvestmentGradeTone({ unexpected: 'A' } as any)).toBe('bg-muted text-muted-foreground');
   });
 });
