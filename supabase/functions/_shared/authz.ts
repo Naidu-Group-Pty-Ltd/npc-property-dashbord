@@ -14,7 +14,7 @@
  * Roles are resolved with the canonical resolver in auth_v2.
  */
 
-import { canonicalizeRole } from './auth_v2.ts';
+import { canonicalizeRole, resolveRoles } from './auth_v2.ts';
 
 export type ModulePerm = 'can_view' | 'can_edit' | 'can_delete';
 
@@ -107,6 +107,20 @@ export async function requireSuperadmin(
   if (!actor.userId) return { ok: false, error: 'Authentication required', reason_code: 'missing_actor' };
   if (await actorIsSuperadmin(supabase, actor.userId)) return { ok: true };
   return { ok: false, error: 'Superadmin privilege required', reason_code: 'not_superadmin' };
+}
+
+/** Require the actor to hold an admin or superadmin role. Service calls bypass. */
+export async function requireAdmin(
+  supabase: any,
+  actor: { userId: string | null; authMethod?: string | null },
+): Promise<AuthzResult> {
+  if (actor.authMethod === 'service_role' || actor.userId === 'service_role') {
+    return { ok: true };
+  }
+  if (!actor.userId) return { ok: false, error: 'Authentication required', reason_code: 'missing_actor' };
+  const roles = await resolveRoles(supabase, actor.userId);
+  if (roles.includes('admin') || roles.includes('superadmin')) return { ok: true };
+  return { ok: false, error: 'Admin privilege required', reason_code: 'not_admin' };
 }
 
 /** Map an action verb to the module permission flag it requires. */
