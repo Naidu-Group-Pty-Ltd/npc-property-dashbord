@@ -4,7 +4,6 @@
  */
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import {
   type ReportTemplate,
@@ -40,8 +39,7 @@ export interface ReportTemplateRow {
  * JSONB. Some templates created from PDF imports carry multi-hundred-MB
  * schemas (embedded raster data), and selecting `*` for every row makes the
  * list query detoast/serialise all of them — which blows past Postgres'
- * statement timeout and makes the whole page fail to load (both the
- * `manage-templates` edge function → 500 and the direct fallback → error).
+ * statement timeout and makes the `manage-templates` edge function fail.
  * The landing lists only need scalar metadata, so we never fetch `schema`
  * here. Per-template `schema` is still fetched on demand by
  * `useReportTemplate(id)` in the editor.
@@ -89,44 +87,19 @@ function normaliseRow(raw: any): ReportTemplateRow {
   }
 }
 
-async function listTemplatesDirectly(): Promise<ReportTemplateListRow[]> {
-  const { data, error } = await supabase
-    .from('report_templates' as any)
-    .select(TEMPLATE_LIST_SELECT)
-    .order('updated_at', { ascending: false });
-  if (error) throw error;
-  return ((data ?? []) as any[]) as ReportTemplateListRow[];
-}
-
-async function getTemplateDirectly(id: string): Promise<ReportTemplateRow> {
-  const { data, error } = await supabase
-    .from('report_templates' as any)
-    .select('*')
-    .eq('id', id)
-    .single();
-  if (error) throw error;
-  return normaliseRow(data);
-}
-
 // ─── List ─────────────────────────────────────────────────────────────────────
 export function useReportTemplates() {
   return useQuery<ReportTemplateListRow[]>({
     queryKey: LIST_KEY,
     queryFn: async () => {
-      try {
-        const { data, error } = await invokeSecureFunction('manage-templates', {
-          operation: 'list',
-          table: 'report_templates',
-          // Scalar-only select: never pull the heavy `schema` JSONB for the list.
-          listOptions: { select: TEMPLATE_LIST_SELECT, orderBy: 'updated_at', orderAsc: false },
-        });
-        if (error) throw new Error(error.message);
-        const records = ((data?.records || []) as any[]) as ReportTemplateListRow[];
-        if (records.length > 0) return records;
-      } catch (error) {
-        console.warn('[templates] manage-templates list failed; trying direct template list fallback.', error);
-      }
-      return listTemplatesDirectly();
+      const { data, error } = await invokeSecureFunction('manage-templates', {
+        operation: 'list',
+        table: 'report_templates',
+        // Scalar-only select: never pull the heavy `schema` JSONB for the list.
+        listOptions: { select: TEMPLATE_LIST_SELECT, orderBy: 'updated_at', orderAsc: false },
+      });
+      if (error) throw new Error(error.message);
+      return ((data?.records || []) as any[]) as ReportTemplateListRow[];
     },
   });
 }
@@ -137,18 +110,14 @@ export function useReportTemplate(id: string | undefined) {
     queryKey: id ? ONE_KEY(id) : ['report-templates', 'none'],
     enabled: !!id,
     queryFn: async () => {
-      try {
-        const { data, error } = await invokeSecureFunction('manage-templates', {
-          operation: 'get',
-          table: 'report_templates',
-          recordId: id,
-        });
-        if (error) throw new Error(error.message);
-        if (data?.record) return normaliseRow(data.record);
-      } catch (error) {
-        console.warn('[templates] manage-templates get failed; trying direct template get fallback.', { id, error });
-      }
-      return getTemplateDirectly(id!);
+      const { data, error } = await invokeSecureFunction('manage-templates', {
+        operation: 'get',
+        table: 'report_templates',
+        recordId: id,
+      });
+      if (error) throw new Error(error.message);
+      if (!data?.record) throw new Error('Template not found');
+      return normaliseRow(data.record);
     },
   });
 }
