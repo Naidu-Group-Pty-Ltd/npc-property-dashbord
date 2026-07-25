@@ -2,6 +2,21 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+
+// Vapi monitor URLs are bearer capabilities. Older call-log rows may still
+// contain them, so redact them at this API boundary as defense in depth.
+const redactMonitorCapabilities = <T extends Record<string, any>>(call: T): T => {
+  if (!call?.metadata || typeof call.metadata !== 'object' || Array.isArray(call.metadata)) return call;
+
+  const metadata = { ...call.metadata };
+  delete metadata.vapi_monitor_control_url;
+  delete metadata.vapi_monitor_listen_url;
+  return { ...call, metadata };
+};
+
+const redactMonitorCapabilitiesFromCalls = <T extends Record<string, any>>(calls: T[] | null | undefined): T[] =>
+  (calls || []).map(redactMonitorCapabilities);
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -64,7 +79,7 @@ Deno.serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: true, call: data }),
+        JSON.stringify({ success: true, call: redactMonitorCapabilities(data) }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -114,7 +129,7 @@ Deno.serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ success: true, calls: data || [] }),
+        JSON.stringify({ success: true, calls: redactMonitorCapabilitiesFromCalls(data) }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -224,7 +239,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         success: true,
-        calls: data || [],
+        calls: redactMonitorCapabilitiesFromCalls(data),
         total: count ?? null,
         offset,
         limit,
