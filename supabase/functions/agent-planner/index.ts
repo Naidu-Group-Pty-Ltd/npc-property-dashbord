@@ -27,11 +27,20 @@ function nextFromCron(expr: string, from = new Date()): Date | null {
   const [mn, hr, dom, mon, dow] = parts;
   const anyStar = (v: string) => v === '*';
   // Support forms: "* * * * *", "M * * * *", "M H * * *", "M H * * D", "*/N * * * *"
-  const stepMin = mn.startsWith('*/') ? Number(mn.slice(2)) : null;
-  const fixedMin = anyStar(mn) ? null : (Number.isInteger(Number(mn)) ? Number(mn) : null);
-  const fixedHr = anyStar(hr) ? null : (Number.isInteger(Number(hr)) ? Number(hr) : null);
-  const fixedDow = anyStar(dow) ? null : (Number.isInteger(Number(dow)) ? Number(dow) : null);
   if (!anyStar(dom) || !anyStar(mon)) return null; // keep it simple
+  const stepMatch = /^\*\/(\d+)$/.exec(mn);
+  const stepMin = stepMatch ? Number(stepMatch[1]) : null;
+  const parseFixed = (value: string, max: number): number | null | undefined => {
+    if (anyStar(value)) return null;
+    if (!/^\d+$/.test(value)) return undefined;
+    const parsed = Number(value);
+    return parsed <= max ? parsed : undefined;
+  };
+  const fixedMin = stepMatch ? null : parseFixed(mn, 59);
+  const fixedHr = parseFixed(hr, 23);
+  const fixedDow = parseFixed(dow, 6);
+  if (stepMin !== null && (stepMin < 1 || stepMin > 59)) return null;
+  if (fixedMin === undefined || fixedHr === undefined || fixedDow === undefined) return null;
   const d = new Date(from.getTime() + 60_000);
   d.setUTCSeconds(0, 0);
   for (let i = 0; i < 60 * 24 * 8; i++) {
