@@ -73,13 +73,22 @@ Deno.serve(async (req) => {
       if (!id) return json({ error: 'step_id required' }, 400);
       // Must belong to this client AND be client-owned
       const { data: step } = await supabase.from('purchase_file_onboarding_checklist')
-        .select('id, client_id, owner').eq('id', id).maybeSingle();
+        .select('*').eq('id', id).maybeSingle();
       if (!step || step.client_id !== clientId) return json({ error: 'Not found' }, 404);
       if (step.owner === 'broker') return json({ error: 'This step is broker-owned' }, 403);
+      if (step.status === 'complete') return json({ step });
       const { data, error } = await supabase.from('purchase_file_onboarding_checklist')
         .update({ status: 'complete', completed_at: new Date().toISOString(), completed_by: portalUser.email || 'client', updated_at: new Date().toISOString() })
-        .eq('id', id).select().single();
+        .eq('id', id).neq('status', 'complete').select().maybeSingle();
       if (error) return json({ error: error.message }, 500);
+      // A concurrent request may have completed the step after the ownership check.
+      // Return its current state without replaying the completion notification.
+      if (!data) {
+        const { data: current, error: currentError } = await supabase.from('purchase_file_onboarding_checklist')
+          .select('*').eq('id', id).single();
+        if (currentError) return json({ error: currentError.message }, 500);
+        return json({ step: current });
+      }
 
       // Wave B: tell the assigned finance partner(s) the client just finished a step.
       try {
