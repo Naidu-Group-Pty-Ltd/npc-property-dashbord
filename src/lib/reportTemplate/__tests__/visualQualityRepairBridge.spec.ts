@@ -182,11 +182,21 @@ describe('visual quality repair loop bridge', () => {
     const expectations = buildCdirSelfExpectations(cdir());
 
     expect(expectations.expectedText).toHaveLength(1);
-    expect(expectations.expectedText[0].text).toContain('Hello repair bridge');
+    expect(expectations.expectedText[0].text).toBe('Hello repair bridge');
 
     expect(expectations.expectedBounds.map((bound) => bound.layerId)).toContain('headline');
     expect(expectations.expectedBounds.map((bound) => bound.layerId)).toContain('shape_1');
     expect(expectations.expectedBounds.map((bound) => bound.layerId)).not.toContain('trace_fallback');
+  });
+
+  it('falls back to aggregate layer text when text runs are unavailable', () => {
+    const document = cdir();
+    const headline = document.pages[0].layers.find((layer) => layer.id === 'headline');
+    if (headline?.kind === 'text') headline.runs = [];
+
+    const expectations = buildCdirSelfExpectations(document);
+
+    expect(expectations.expectedText[0].text).toBe('Hello repair bridge');
   });
 
   it('converts generated rasters into rendered rasters for the visual diff harness', () => {
