@@ -42,6 +42,7 @@ import {
 } from '../performance';
 import {
   buildProductionOperatorControlAudit,
+  loadProductionOperatorControlAudit,
   saveProductionOperatorControlAudit,
 } from '../operatorControls';
 import { evaluatePdfImportQualityGates } from '../qualityGates/pdfImportQualityGateEvaluator';
@@ -1052,6 +1053,11 @@ async function applyOperatorControlsPhase(
     return;
   }
 
+  const importId = (result.importId ?? request.importId ?? '').trim();
+  const previousAuditResult = importId
+    ? await loadProductionOperatorControlAudit(importId)
+    : { kind: 'missing' as const };
+
   let audit;
   try {
     audit = buildProductionOperatorControlAudit({
@@ -1067,6 +1073,7 @@ async function applyOperatorControlsPhase(
       performanceCostAudit: result.performanceCostAudit,
       qualityGateReport: result.qualityGateReport ?? undefined,
       triageSummary: result.triageSummary ?? undefined,
+      previousOperatorControlAudit: previousAuditResult.kind === 'ok' ? previousAuditResult.audit : undefined,
       now,
     });
   } catch (err) {
@@ -1093,10 +1100,20 @@ async function applyOperatorControlsPhase(
     return;
   }
 
-  const importId = (result.importId ?? '').trim();
   if (!importId) {
     appendStep(createGoldenCorpusOrchestratorStep('persist_operator_control_audit', 'warning', 'No importId to persist the audit.'));
     addWarning('operator_control_audit_persist_skipped_no_import_id');
+    return;
+  }
+
+  if (previousAuditResult.kind === 'error') {
+    result.productionOperatorControlAuditPersistenceResult = previousAuditResult;
+    appendStep(createGoldenCorpusOrchestratorStep(
+      'persist_operator_control_audit',
+      'fail',
+      `Existing operator control audit could not be loaded: ${previousAuditResult.message}`,
+    ));
+    addWarning('operator_control_audit_persistence_failed');
     return;
   }
 

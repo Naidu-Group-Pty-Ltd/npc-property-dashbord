@@ -94,6 +94,18 @@ ALTER TABLE public.notifications
       'agent_plan_scheduled','agent_insight','agent_eval_regression','general',
       'agreement_generated','report_generated','new_ghl_contact','report_failed',
       'new_marketing_lead','info','call_completed','email_received',
-      'report_generation_completed','report_generation_failed'
+      'report_generation_completed','report_generation_failed','portal_report_requested',
+      'missed_call','client_reminder_overdue','client_reminder_due','client_reminder_upcoming',
+      'report_request','conversation_shared','game_plan_created','game_plan_updated',
+      'game_plan_milestone_completed','conversation_reply','lender_submission_status',
+      'lender_rate_alert','client_data_updated','portal_message_received',
+      'finance_portal_message_received','document_requirement_requested',
+      'document_requirement_uploaded','document_requirement_verified','finance_decision_recorded',
+      'condition_added','condition_satisfied','valuation_returned','valuation_short',
+      'risk_added','risk_escalated','risk_resolved','purchase_file_missing_docs_reminder',
+      'purchase_file_finance_clause_t5','purchase_file_finance_clause_t2',
+      'purchase_file_valuation_overdue','purchase_file_settlement_t7',
+      'purchase_file_unconditional_approval','purchase_file_linked','purchase_file_unlinked',
+      'note_added','message_sent','purchase_file_created'
     )
   );

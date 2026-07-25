@@ -32,7 +32,8 @@ my UI" or "design a new landing page"), and can be invoked explicitly with
 ## One-time setup: Magic API key
 
 The `@21st-dev/magic` server needs an API key. It is **not** committed — `.mcp.json`
-references it as the environment variable `${MAGIC_API_KEY}`.
+passes the `${MAGIC_API_KEY}` environment variable to the server through the MCP
+client's `env` configuration, rather than as a command-line argument.
 
 1. Sign in and create a key at the **21st.dev Magic console**: <https://21st.dev/magic/console>
 2. Provide the key to your shell via **either** option:
@@ -50,14 +51,17 @@ references it as the environment variable `${MAGIC_API_KEY}`.
    set -a && source .env.local && set +a   # export it before launching Claude Code
    ```
 
-3. Start (or restart) Claude Code from that shell. It expands `${MAGIC_API_KEY}` in
-   `.mcp.json` at launch. The other two servers (`shadcn`, `chrome-devtools`) need no key.
+3. Start (or restart) Claude Code from that shell. It supplies `${MAGIC_API_KEY}` to
+   the Magic server's environment at launch. The other two servers (`shadcn`,
+   `chrome-devtools`) need no key.
 
 The `shadcn` and `chrome-devtools` servers work with no additional configuration.
 
 ## Secret hygiene
 
-- **Never commit a real key.** Only the `${MAGIC_API_KEY}` placeholder lives in `.mcp.json`.
+- **Never commit a real key.** Only the `${MAGIC_API_KEY}` placeholder lives in
+  `.mcp.json`, and it must remain in the server's `env` configuration so it is not
+  exposed in process arguments.
 - `.env`, `.env.local`, and every `.env.*` (except `.env.example`) are git-ignored —
   see [`.gitignore`](./.gitignore). Keep the real key in one of those local files or in
   your shell environment.

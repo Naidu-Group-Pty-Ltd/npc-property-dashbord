@@ -13,7 +13,7 @@ import {
   type Tokens,
   parseTemplate,
 } from './templateSchema';
-import { resolvePageOutputPolicy, resolvePageRenderPlan } from './rendering/pdfImportPagePolicy';
+import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, pageCompositionDataAttrs,
 } from './rendering/regionRenderPlanApply';
@@ -432,6 +432,12 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
     slots: template.slots ?? {},
   };
 
+  const pagePolicy = resolvePageOutputPolicy(page as unknown as Page);
+  const pageRenderPlan = resolvePageRenderPlan(pagePolicy, {
+    showReconstructedLayers: Boolean((ctxBase as { _showReconstructedLayers?: boolean })._showReconstructedLayers),
+    showReferenceRaster: Boolean((ctxBase as { _showReferenceUnderlay?: boolean })._showReferenceUnderlay),
+  });
+
   let bgStyle = '';
   const bgImages: string[] = [];
   const bgSizes: string[] = [];
@@ -456,8 +462,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   // PDF-import reference underlays are editor-canvas-only alignment aids; in
   // preview/print/export the reconstructed overlays ARE the page, and painting
   // the source raster behind them would double-render every element.
-  const isHiddenUnderlay = Boolean((page.background as any)?.underlay) && !(ctxBase as any)._showReferenceUnderlay;
-  if (page.background?.imageUrl && !isHiddenUnderlay) {
+  if (page.background?.imageUrl && shouldRenderPageBackgroundImage(page, pageRenderPlan)) {
     const url = resolveBindable(page.background.imageUrl, ctxBase);
     if (url) {
       // Full-page source rasters set imageFit:'fill' so the reference exactly
@@ -494,11 +499,6 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   // MUST NOT also render native blocks — otherwise a full raster and duplicate
   // native content render together. Editor opt-in shows the reconstructed layers
   // via `_showReconstructedLayers`.
-  const pagePolicy = resolvePageOutputPolicy(page as unknown as Page);
-  const pageRenderPlan = resolvePageRenderPlan(pagePolicy, {
-    showReconstructedLayers: Boolean((ctxBase as { _showReconstructedLayers?: boolean })._showReconstructedLayers),
-    showReferenceRaster: Boolean((ctxBase as { _showReferenceUnderlay?: boolean })._showReferenceUnderlay),
-  });
   // E7: consume the resolved E6 region render plan (if any) at paint time — the
   // SAME composition the quality gate evaluates. Suppress the plan's suppressed
   // overlays and paint its final crops; absent a plan this is a no-op (identical

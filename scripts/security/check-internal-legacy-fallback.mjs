@@ -23,10 +23,6 @@ const ALLOWLIST = new Set([
   '_shared/auth_v2.ts',        // defines both the legacy fallbacks and the strict gate
   '_shared/auth.ts',            // legacy compatibility surface (kept during migration)
   '_shared/requestSecurity.ts', // wraps verifyInternal with strict defaults
-  // DB-trigger dispatched: cannot compute HMAC. Uses INTERNAL_EDGE_SECRET as a
-  // shared secret via verifyRequiredCronSecret; WP-12 clause 8 residual — a
-  // dedicated per-function Vault cron secret migration is tracked separately.
-  'send-web-push/index.ts',
 ]);
 
 const files = [];

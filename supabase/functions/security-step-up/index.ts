@@ -23,7 +23,7 @@ import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createSessio
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { rotateSession } from '../_shared/sessionRotate.ts';
 import { verifyPassword } from '../_shared/password.ts';
-import { generateStepUpToken, hashStepUpToken, resolveActiveStaffSession } from '../_shared/stepUp.ts';
+import { generateStepUpToken, hashStepUpToken, requireStepUp, resolveActiveStaffSession } from '../_shared/stepUp.ts';
 import { createEncryptedTotpSecret, verifyEncryptedTotp } from '../_shared/totp.ts';
 import { generateRecoveryCodes, hashRecoveryCode, hashRecoveryCodes, isRecoveryCode, isRecoveryCodeHashConfigured } from '../_shared/recoveryCodes.ts';
 import { consumeRateLimit, getTrustedClientIp } from '../_shared/requestSecurity.ts';
@@ -222,6 +222,8 @@ Deno.serve(async (req) => {
     if (action === 'webauthn_delete') {
       const credentialRowId = String(body?.credential_id ?? '');
       if (!credentialRowId) return j({ success: false, error: 'credential_id_required' }, 400);
+      const gate = await requireStepUp(admin, { userId: auth.userId, capability: 'mfa.manage', req, body });
+      if (gate) return gate;
       const { error } = await admin.from('user_webauthn_credentials')
         .delete()
         .eq('user_id', auth.userId)
@@ -251,15 +253,17 @@ Deno.serve(async (req) => {
         return j({ success: false, error: 'invalid_credentials' }, 401);
       }
       // A password alone must not be able to add a second authentication
-      // factor to an MFA-protected account. Supporting an additional
-      // credential there requires a separately verified existing factor.
+      // factor to an MFA-protected account. A current MFA proof is required.
       const { data: mfaState, error: mfaStateError } = await admin
         .from('custom_users')
         .select('mfa_enrolled_at')
         .eq('id', auth.userId)
         .maybeSingle();
       if (mfaStateError || !mfaState) return j({ success: false, error: 'mfa_state_unavailable' }, 503);
-      if (mfaState.mfa_enrolled_at) return j({ success: false, error: 'mfa_verification_required' }, 403);
+      if (mfaState.mfa_enrolled_at) {
+        const gate = await requireStepUp(admin, { userId: auth.userId, capability: 'mfa.manage', req, body });
+        if (gate) return gate;
+      }
       const { data: existing } = await admin.from('user_webauthn_credentials')
         .select('credential_id').eq('user_id', auth.userId);
       const options = await buildRegistrationOptions({
@@ -306,6 +310,17 @@ Deno.serve(async (req) => {
         .gt('expires_at', new Date().toISOString())
         .maybeSingle();
       if (!challenge) return j({ success: false, error: 'invalid_registration' }, 401);
+      // Re-check MFA state at completion so an enrollment begun before another
+      // factor was activated cannot bypass current-factor verification.
+      const { data: mfaState, error: mfaStateError } = await admin.from('custom_users')
+        .select('mfa_enrolled_at')
+        .eq('id', auth.userId)
+        .maybeSingle();
+      if (mfaStateError || !mfaState) return j({ success: false, error: 'mfa_state_unavailable' }, 503);
+      if (mfaState.mfa_enrolled_at) {
+        const gate = await requireStepUp(admin, { userId: auth.userId, capability: 'mfa.manage', req, body });
+        if (gate) return gate;
+      }
       const verified = await verifyRegistration({ cfg, expectedChallenge: challenge.challenge_b64url, response: clientResponse });
       if (!verified) return j({ success: false, error: 'webauthn_verification_failed' }, 401);
       // Consume the challenge before persisting the credential.
@@ -458,7 +473,7 @@ Deno.serve(async (req) => {
         const recoveryCode = isRecoveryCode(suppliedFactor);
         if (recoveryCode) {
           const hash = await hashRecoveryCode(auth.userId, suppliedFactor);
-          const ip = getTrustedClientIp(req);
+          const ip = getTrustedClientIp(req.headers);
           const userRate = await consumeRateLimit(admin, `mfa:recovery:user:${auth.userId}`, RECOVERY_CODE_ATTEMPTS_PER_WINDOW, RECOVERY_CODE_WINDOW_SECONDS);
           const ipRate = ip ? await consumeRateLimit(admin, `mfa:recovery:ip:${ip}`, RECOVERY_CODE_ATTEMPTS_PER_WINDOW, RECOVERY_CODE_WINDOW_SECONDS) : { allowed: true };
           if (!userRate.allowed || !ipRate.allowed || !hash) return j({ success: false, error: !hash ? 'mfa_configuration_invalid' : 'rate_limited', code: 'mfa_verification_required' }, !hash ? 503 : 429);
@@ -500,7 +515,8 @@ Deno.serve(async (req) => {
           await admin.from('security_events').insert({ action: 'session.rotated', decision: 'allow', actor_type: 'human', actor_id: auth.userId, metadata_redacted: { reason: 'step_up', capability, old_session_id: staffSession.id, new_session_id: rot.newSessionId } });
         } catch { /* ignore */ }
       } else {
-        console.warn('[security-step-up] session rotation failed:', rot.error);
+        console.error('[security-step-up] session rotation failed:', rot.error);
+        return j({ success: false, error: 'session_rotation_failed' }, 503);
       }
     }
 

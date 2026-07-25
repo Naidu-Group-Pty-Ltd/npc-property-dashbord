@@ -76,6 +76,18 @@ describe('validateVisualDiffRepairPatches — page-scoped allowlist', () => {
     expect(res.rejected[0].reason).toMatch(/text-content/);
   });
 
+  it.each([
+    ['runs', { runs: [{ text: 'AI-invented visible text' }] }],
+    ['rich', { rich: true }],
+  ])('rejects an alternate text-rendering edit through %s', (_field, changes) => {
+    const res = validateVisualDiffRepairPatches(
+      [{ operation: 'updateOverlay', pageId: 'p1', blockId: 'b1', overlayId: 'ov-text', changes }],
+      { pageId: 'p1' },
+    );
+    expect(res.valid).toHaveLength(0);
+    expect(res.rejected[0].reason).toMatch(/text-content/);
+  });
+
   it('rejects adding a text overlay (invented text content)', () => {
     const res = validateVisualDiffRepairPatches(
       [{ operation: 'addOverlay', pageId: 'p1', blockId: 'b1', overlay: { id: 'x', type: 'text', x: 0, y: 0, width: 10, height: 10, content: 'New' } }],
@@ -122,6 +134,20 @@ describe('applyVisualDiffRepairPatch — single-page, content-preserving', () =>
     expect(JSON.stringify(ok.template.pages[1])).toBe(JSON.stringify(t.pages[1]));
   });
 
+  it.each([
+    ['runs', { runs: [{ text: 'AI-invented visible text' }] }],
+    ['rich', { rich: true }],
+  ])('does not apply a text-rendering change through %s', (_field, changes) => {
+    const t = template();
+    const res = applyVisualDiffRepairPatch(t, 'p1', [
+      { operation: 'updateOverlay', pageId: 'p1', blockId: 'b1', overlayId: 'ov-text', changes },
+    ]);
+
+    expect(res.applied).toBe(0);
+    expect(res.changed).toBe(false);
+    expect(res.template).toBe(t);
+  });
+
   it('adds a shape overlay and removes an overlay on the target page', () => {
     const t = template();
     const added = applyVisualDiffRepairPatch(t, 'p1', [
@@ -161,6 +187,8 @@ describe('filterWellFormedRepairPatches (legacy document path)', () => {
     const out = filterWellFormedRepairPatches([
       { operation: 'updateOverlay', pageId: 'p1', blockId: 'b1', overlayId: 'o', changes: { x: 1 } },
       { operation: 'updateOverlay', pageId: 'p1', blockId: 'b1', overlayId: 'o', changes: { content: 'x' } },
+      { operation: 'updateOverlay', pageId: 'p1', blockId: 'b1', overlayId: 'o', changes: { runs: [{ text: 'x' }] } },
+      { operation: 'updateOverlay', pageId: 'p1', blockId: 'b1', overlayId: 'o', changes: { rich: true } },
       { operation: 'nonsense' },
     ]);
     expect(out).toHaveLength(1);

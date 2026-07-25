@@ -410,12 +410,16 @@ export interface PurchaseRecord {
   status: string;
   mode: string;
   itemSlug: string | null;
+  itemName: string | null;
   quantity: number;
   amountCents: number | null;
   currency: string | null;
+  paymentStatus: string | null;
   originUserId: string | null;
   originUsername: string | null;
   originSource: string;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
 }
 
 export interface PurchaseHistoryResult {
@@ -448,12 +452,171 @@ export async function listPurchases(
           status: String(p.status ?? "completed"),
           mode: String(p.mode ?? ""),
           itemSlug: p.item_slug ?? null,
+          itemName: p.item_name ?? null,
           quantity: Number(p.quantity ?? 1),
           amountCents: p.amount_cents ?? null,
           currency: p.currency ?? null,
+          paymentStatus: p.payment_status ?? null,
           originUserId: p.origin_user_id ?? null,
           originUsername: p.origin_username ?? null,
           originSource: String(p.origin_source ?? ""),
+          stripeCheckoutSessionId: p.stripe_checkout_session_id ?? null,
+          stripePaymentIntentId: p.stripe_payment_intent_id ?? null,
+        }))
+      : [],
+    pagination: {
+      limit: Number(pagination.limit ?? 25),
+      offset: Number(pagination.offset ?? 0),
+      total: Number(pagination.total ?? 0),
+      hasMore: Boolean(pagination.has_more),
+      nextOffset: pagination.next_offset ?? null,
+    },
+  };
+}
+
+// ── Saved payment methods (billing & usage workflow) ───────────────────────
+// Display references only (brand / last4 / expiry) — the cards themselves
+// live at Stripe. Priority 1 = primary, 2 = secondary, 3 = backup (max 3).
+
+export interface PaymentMethodRecord {
+  id: string;
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+  funding: string | null;
+  priority: number;
+  role: string;
+  originUsername: string | null;
+  createdAt: string;
+}
+
+export interface PaymentMethodsResult {
+  paymentMethods: PaymentMethodRecord[];
+  maxPaymentMethods: number;
+}
+
+function mapPaymentMethods(body: any): PaymentMethodsResult {
+  return {
+    paymentMethods: Array.isArray(body?.payment_methods)
+      ? body.payment_methods.map((m: any) => ({
+          id: m.id,
+          brand: m.brand ?? null,
+          last4: m.last4 ?? null,
+          expMonth: m.exp_month ?? null,
+          expYear: m.exp_year ?? null,
+          funding: m.funding ?? null,
+          priority: Number(m.priority ?? 0),
+          role: String(m.role ?? ""),
+          originUsername: m.origin_username ?? null,
+          createdAt: m.created_at,
+        }))
+      : [],
+    maxPaymentMethods: Number(body?.max_payment_methods ?? 3),
+  };
+}
+
+export async function listPaymentMethods(): Promise<PaymentMethodsResult> {
+  const q = new URLSearchParams({ tenant_ref: AGENCY_TENANT_REF });
+  const res = await mcFetch(`/api/public/billing/payment-methods?${q.toString()}`, {
+    method: "GET",
+  });
+  return mapPaymentMethods(await parseOrThrow(res));
+}
+
+export type PaymentMethodAction =
+  | { action: "make_primary"; paymentMethodId: string }
+  | { action: "reorder"; orderedIds: string[] }
+  | { action: "remove"; paymentMethodId: string };
+
+export async function managePaymentMethod(
+  action: PaymentMethodAction,
+): Promise<PaymentMethodsResult> {
+  const payload: Record<string, unknown> = {
+    action: action.action,
+    tenant_ref: AGENCY_TENANT_REF,
+  };
+  if (action.action === "reorder") payload.ordered_ids = action.orderedIds;
+  else payload.payment_method_id = action.paymentMethodId;
+
+  const res = await mcFetch("/api/public/billing/payment-methods", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  return mapPaymentMethods(await parseOrThrow(res));
+}
+
+// ── Invoices (billing & usage workflow) ─────────────────────────────────────
+
+export interface InvoiceRecord {
+  id: string;
+  createdAt: string;
+  issuedAt: string | null;
+  paidAt: string | null;
+  number: string | null;
+  status: string | null;
+  description: string | null;
+  mode: string | null;
+  itemSlug: string | null;
+  itemName: string | null;
+  amountDueCents: number | null;
+  amountPaidCents: number | null;
+  subtotalCents: number | null;
+  taxCents: number | null;
+  totalCents: number | null;
+  currency: string | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdfUrl: string | null;
+  originUsername: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+}
+
+export interface InvoiceHistoryResult {
+  invoices: InvoiceRecord[];
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  };
+}
+
+export async function listInvoices(
+  opts: { limit?: number; offset?: number; status?: string } = {},
+): Promise<InvoiceHistoryResult> {
+  const q = new URLSearchParams({ tenant_ref: AGENCY_TENANT_REF });
+  if (opts.limit) q.set("limit", String(Math.min(opts.limit, 100)));
+  if (opts.offset) q.set("offset", String(opts.offset));
+  if (opts.status) q.set("status", opts.status);
+  const res = await mcFetch(`/api/public/billing/invoices?${q.toString()}`, { method: "GET" });
+  const body = await parseOrThrow(res);
+  const pagination = body?.pagination ?? {};
+  return {
+    invoices: Array.isArray(body?.invoices)
+      ? body.invoices.map((i: any) => ({
+          id: i.id,
+          createdAt: i.created_at,
+          issuedAt: i.issued_at ?? null,
+          paidAt: i.paid_at ?? null,
+          number: i.number ?? null,
+          status: i.status ?? null,
+          description: i.description ?? null,
+          mode: i.mode ?? null,
+          itemSlug: i.item_slug ?? null,
+          itemName: i.item_name ?? null,
+          amountDueCents: i.amount_due_cents ?? null,
+          amountPaidCents: i.amount_paid_cents ?? null,
+          subtotalCents: i.subtotal_cents ?? null,
+          taxCents: i.tax_cents ?? null,
+          totalCents: i.total_cents ?? null,
+          currency: i.currency ?? null,
+          hostedInvoiceUrl: i.hosted_invoice_url ?? null,
+          invoicePdfUrl: i.invoice_pdf_url ?? null,
+          originUsername: i.origin_username ?? null,
+          periodStart: i.period_start ?? null,
+          periodEnd: i.period_end ?? null,
         }))
       : [],
     pagination: {

@@ -64,6 +64,9 @@ const REAL_MODULE_OVERRIDES: Record<string, Pick<ToolSecurityPolicy, 'moduleKey'
   get_audit_trail: { moduleKey: 'user_management', permission: 'can_view', requiresSuperadmin: true },
   get_error_logs: { moduleKey: 'user_management', permission: 'can_view', requiresSuperadmin: true },
   get_error_summary: { moduleKey: 'user_management', permission: 'can_view', requiresSuperadmin: true },
+  // The service-role executor returns unscoped, sensitive tracking records.
+  // Legacy activity_logs module grants must not authorize this system-wide read.
+  get_recent_activity: { moduleKey: 'activity_logs', permission: 'can_view', requiresSuperadmin: true },
 };
 export const TOOL_SECURITY_POLICIES:Record<string,ToolSecurityPolicy>={
   'add_additional_contact':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},

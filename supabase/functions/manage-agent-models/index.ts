@@ -48,8 +48,8 @@ Deno.serve(async (req) => {
           .eq('can_edit', true)
           .maybeSingle(),
       ]);
-      const isAdmin = roles?.some(({ role }: { role: string }) => role === 'admin' || role === 'superadmin');
-      if (!isAdmin && !integrationPermission) {
+      const isSuperadmin = roles?.some(({ role }: { role: string }) => role === 'superadmin');
+      if (!isSuperadmin && !integrationPermission) {
         return createForbiddenResponse('Integrations edit permission required', corsHeaders);
       }
     }

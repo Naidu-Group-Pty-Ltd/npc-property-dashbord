@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 // Dynamic CORS headers for credential-based requests
@@ -53,7 +54,7 @@ Deno.serve(async (req) => {
     const body: RequestBody = await req.json();
 
     // Validate authentication (JWT first, then session token)
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('Auth failed for manage-investment-reports:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
@@ -62,6 +63,18 @@ Deno.serve(async (req) => {
     console.log(`Authenticated user ${userId} managing investment reports - action: ${body.action}`);
 
     const { action, reportId, reportIds, data } = body;
+
+    if (action === 'archivePackage' || action === 'unarchivePackage') {
+      const permission = await requireModulePermission(
+        supabase,
+        { userId, authMethod },
+        'generated_reports',
+        'can_edit',
+      );
+      if (!permission.ok) {
+        return createForbiddenResponse(permission.error || 'Generated reports edit permission required', corsHeaders);
+      }
+    }
 
     switch (action) {
       case 'insert': {

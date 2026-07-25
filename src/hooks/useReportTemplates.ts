@@ -337,4 +337,3 @@ export function useReportTemplateVersionMutations(templateId: string | undefined
 
   return { setLabel, snapshotNow };
 }
-

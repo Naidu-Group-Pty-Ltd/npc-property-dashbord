@@ -27,10 +27,11 @@ export const VISUAL_DIFF_REPAIR_PATCH_VERSION = 'visual-diff-repair-patch-v1';
 export const DEFAULT_MAX_REPAIR_OPERATIONS = 20;
 
 /**
- * Fields a visual-repair patch may never touch. The source text content is
- * authoritative — a visual repair aligns geometry, it does not rewrite text.
+ * Fields a visual-repair patch may never touch. The source text content and
+ * its rendering mode are authoritative — a visual repair aligns geometry, it
+ * does not rewrite text or switch to an alternate text/HTML representation.
  */
-const FORBIDDEN_CHANGE_FIELDS = ['content', 'text'] as const;
+const FORBIDDEN_CHANGE_FIELDS = ['content', 'text', 'runs', 'rich'] as const;
 const TEXT_OVERLAY_TYPES = new Set(['text', 'textOnPath']);
 
 const UpdatePageBackgroundPatchSchema = z.object({
@@ -269,9 +270,18 @@ export function applyVisualDiffRepairPatch(
       return;
     }
 
-    // updateOverlay — preserve id/type/content; text content is never changed.
+    // updateOverlay — preserve identity and every text-bearing/rendering field
+    // as defense in depth; model-authored changes may only adjust visual layout.
     const current = block.overlays[overlayIndex];
-    const updated = { ...current, ...patch.changes, id: current.id, type: current.type, content: current.content };
+    const updated = {
+      ...current,
+      ...patch.changes,
+      id: current.id,
+      type: current.type,
+      content: current.content,
+      runs: current.runs,
+      rich: current.rich,
+    };
     const overlay = validateOverlayBody(updated);
     if (!overlay) {
       rejected.push({ index: i, operation: patch.operation, reason: `updated overlay ${patch.overlayId} is not schema-valid` });

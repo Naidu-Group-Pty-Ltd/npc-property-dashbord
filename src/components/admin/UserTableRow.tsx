@@ -60,6 +60,7 @@ export function UserTableRow({
   const cautionActionButtonClass = 'h-9 w-9 rounded-xl border-brand-300/40 bg-brand-500/10 p-0 text-brand-700 shadow-sm transition-all hover:-translate-y-0.5 hover:bg-brand-500/15 focus-visible:ring-brand-400/40 motion-reduce:transform-none motion-reduce:transition-none dark:text-brand-200';
   const destructiveActionButtonClass = 'h-9 w-9 rounded-xl p-0 shadow-sm transition-all hover:-translate-y-0.5 focus-visible:ring-destructive/40 motion-reduce:transform-none motion-reduce:transition-none';
   const userInitials = u.username
+    .slice(0, 100)
     .split(/\s+/)
     .filter(Boolean)
     .slice(0, 2)

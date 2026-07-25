@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createForbiddenResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { TemplateSchemaVersionError, validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSchemaVersion.ts';
+import { permForAction, requireModulePermission } from '../_shared/authz.ts';
 
 type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'comparison_analysis_templates';
 
@@ -202,7 +203,7 @@ function validateProductionRendererSchema(schema: any, corsHeaders: Record<strin
   }, 422, corsHeaders);
 }
 
-async function getTemplatePermissionContext(supabase: any, userId: string) {
+async function getModulePermissionContext(supabase: any, userId: string, moduleKey: string) {
   if (userId === 'service_role') {
     return { isSuperadmin: true, canView: true, canEdit: true, canDelete: true };
   }
@@ -219,27 +220,36 @@ async function getTemplatePermissionContext(supabase: any, userId: string) {
   const roleNames = (roles ?? []).map((r: any) => String(r.role));
   const userRole = String(user?.role ?? '');
   const isSuperadmin = roleNames.includes('superadmin') || userRole === 'super_admin' || userRole === 'superadmin';
-  const templatePerm = (perms ?? []).find((p: any) => (p.dashboard_modules as any)?.module_key === 'templates') ?? null;
+  const modulePerm = (perms ?? []).find((p: any) => (p.dashboard_modules as any)?.module_key === moduleKey) ?? null;
 
   return {
     isSuperadmin,
-    canView: isSuperadmin || !!templatePerm?.can_view,
-    canEdit: isSuperadmin || !!templatePerm?.can_edit,
-    canDelete: isSuperadmin || !!templatePerm?.can_delete,
+    canView: isSuperadmin || !!modulePerm?.can_view,
+    canEdit: isSuperadmin || !!modulePerm?.can_edit,
+    canDelete: isSuperadmin || !!modulePerm?.can_delete,
   };
 }
+
+const getTemplatePermissionContext = (supabase: any, userId: string) =>
+  getModulePermissionContext(supabase, userId, 'templates');
 
 async function assertTemplatePermission(
   supabase: any,
   userId: string | null,
+  authMethod: string | undefined,
   table: TableName,
   operation: RequestBody['operation'],
   corsHeaders: Record<string, string>,
 ): Promise<Response | null> {
   if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
-  if (table !== 'report_templates' && table !== 'report_template_versions') return null;
+  const moduleKey = table.startsWith('checklist_')
+    ? 'checklists'
+    : table === 'report_templates' || table === 'report_template_versions'
+      ? 'templates'
+      : null;
+  if (!moduleKey) return null;
 
-  const permissions = await getTemplatePermissionContext(supabase, userId);
+  const permissions = await getModulePermissionContext(supabase, userId, moduleKey);
   const required = operation === 'delete'
     ? 'delete'
     : ['insert', 'update', 'upsert', 'rpc'].includes(operation)
@@ -253,7 +263,7 @@ async function assertTemplatePermission(
       : permissions.canView;
 
   if (!allowed) {
-    return createForbiddenResponse(`templates:${required} permission required`, corsHeaders);
+    return createForbiddenResponse(`${moduleKey}:${required} permission required`, corsHeaders);
   }
   return null;
 }
@@ -458,7 +468,7 @@ Deno.serve(async (req) => {
     const body: RequestBody = await req.json();
     
     // SECURITY: Verify authentication
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('[manage-templates] Auth failed:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
@@ -486,7 +496,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    const permissionError = await assertTemplatePermission(supabase, userId, table, operation, corsHeaders);
+    const permissionError = await assertTemplatePermission(supabase, userId, authMethod, table, operation, corsHeaders);
     if (permissionError) return permissionError;
 
     // Comparison analysis templates are personal configurations. The function
