@@ -85,33 +85,15 @@ Deno.serve(async (req) => {
     }
 
     // Mode: live - fetch only active calls (ringing, in-progress, queued)
-    // Sanity cutoff: any "active" row older than 30 minutes is stale (VAPI never
-    // sent an end-of-call webhook). We auto-close it so the Live Monitor never
-    // shows phantom calls with impossible durations. 30 min = hard stop.
+    // Sanity cutoff: omit "active" rows older than the configured hard stop so
+    // the Live Monitor never shows phantom calls with impossible durations.
+    // State changes belong to the admin-only cleanup-stale-calls function.
     if (mode === 'live') {
       console.log('[get-call-logs] Fetching live calls');
 
       const HARD_STOP_MINUTES = Math.max(1, Number(Deno.env.get('LIVE_CALL_HARD_STOP_MINUTES')) || 30);
       const STALE_CUTOFF_MS = HARD_STOP_MINUTES * 60 * 1000; // hard stop, env-configurable
       const staleBefore = new Date(Date.now() - STALE_CUTOFF_MS).toISOString();
-
-
-      const { data: staleRows, error: staleError } = await supabase
-        .from('vapi_call_logs')
-        .update({
-          call_status: 'ended',
-          call_outcome: 'stale',
-          ended_at: new Date().toISOString(),
-        })
-        .in('call_status', ['in-progress', 'ringing', 'queued'])
-        .lt('started_at', staleBefore)
-        .select('id');
-
-      if (staleError) {
-        console.warn('[get-call-logs] Failed to auto-close stale calls:', staleError.message);
-      } else if (staleRows && staleRows.length > 0) {
-        console.log(`[get-call-logs] Auto-closed ${staleRows.length} stale live calls`);
-      }
 
       const { data, error } = await supabase
         .from('vapi_call_logs')
