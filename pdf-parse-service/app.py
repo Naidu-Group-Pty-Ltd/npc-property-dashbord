@@ -2006,7 +2006,7 @@ async def _build_table_arbitration(
             profile = {"runtimeProfile": os.environ.get("DOCLING_RUNTIME_PROFILE", "legacy"),
                        "tableMode": None, "cellMatching": None}
             primary = tcand.candidate_from_source_topology(region=treg, provider="docling-primary", profile=profile)
-            cands = [c for c in [primary] if c is not None]
+            cands = [c for c in [primary] if c is not None and tcand.candidate_json_within_budget(c)]
             # Budget: never exceed the per-table candidate cap.
             if len(cands) > tcand.MAX_TABLE_CANDIDATES_PER_TABLE:
                 cands = cands[:tcand.MAX_TABLE_CANDIDATES_PER_TABLE]
