@@ -5,6 +5,10 @@ import { createCorsHeaders, createSessionCookie, parseCookies } from "../_shared
 const SESSION_HOURS = 12;
 
 function extractSessionToken(req: Request, body: any): string | null {
+  const cookies = parseCookies(req.headers.get('cookie'));
+  const financeCookie = cookies['__Host-finance_session'] || cookies.finance_session;
+  if (financeCookie) return decodeURIComponent(financeCookie);
+
   const header = req.headers.get('x-finance-session-token') || req.headers.get('x-session-token');
   if (header) {
     console.warn('[wp11c.legacy_fallback] finance-portal-change-password using header token');
@@ -18,10 +22,6 @@ function extractSessionToken(req: Request, body: any): string | null {
     console.warn('[wp11c.legacy_fallback] finance-portal-change-password using body.session_token');
     return body.session_token;
   }
-
-  const cookies = parseCookies(req.headers.get('cookie'));
-  const financeCookie = cookies['__Host-finance_session'] || cookies.finance_session;
-  if (financeCookie) return decodeURIComponent(financeCookie);
 
   if (cookies.session_token) {
     console.warn('[wp11c.legacy_fallback] finance-portal-change-password using legacy session_token cookie');
