@@ -239,6 +239,7 @@ Deno.serve(async (req) => {
     const { data: prior } = await sb.from('market_update_questions')
       .select('source_update_ids')
       .eq('conversation_id', conversation_id)
+      .eq('created_by', userId)
       .order('created_at', { ascending: false })
       .limit(3);
     if (prior) {
