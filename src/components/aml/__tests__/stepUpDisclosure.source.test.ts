@@ -16,7 +16,17 @@ describe("AML step-up challenge confidentiality", () => {
 
   it("delivers the code out-of-band without returning it from issue", () => {
     expect(functionSource).toContain('delivery: "email"');
-    expect(functionSource).toContain("await deliverCode(admin, recipient, code, capability)");
+    expect(functionSource).toContain("await deliverCode(recipient, code, capability)");
     expect(functionSource).not.toMatch(/return jr\(\{ challenge_id: data\.id, code[,}]/);
+  });
+
+  it("resolves delivery for custom-auth staff before falling back to native auth", () => {
+    const customUserLookup = functionSource.indexOf('.from("custom_users")');
+    const nativeAuthLookup = functionSource.indexOf("admin.auth.admin.getUserById(userId)");
+
+    expect(customUserLookup).toBeGreaterThan(-1);
+    expect(nativeAuthLookup).toBeGreaterThan(customUserLookup);
+    expect(functionSource).toContain('.eq("is_active", true)');
+    expect(functionSource).toContain("const recipient = await resolveDeliveryEmail(admin, userId)");
   });
 });
