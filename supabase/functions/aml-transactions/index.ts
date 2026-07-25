@@ -10,7 +10,7 @@
  *                     counterparty_cdd_summary
  *   Obligations:      list_obligations, evaluate_obligations,
  *                     acknowledge_obligation, waive_obligation, link_obligation_report
- *   Gate:             settlement_gate_status (returns { gate_enabled, blocked, reasons[] } — auth only)
+ *   Gate:             settlement_gate_status (returns { gate_enabled, blocked, reasons[] } — AML role required)
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
@@ -225,16 +225,17 @@ Deno.serve(async (req) => {
     const userLabel = auth.username ?? null;
     const op = String(body?.op ?? "");
 
-    // Settlement gate — auth only, no AML role needed (used by finance portal).
+    // The gate exposes restricted AML case state, so authenticate AML access
+    // before resolving a caller-supplied purchase-file ID with the service role.
+    const { data: hasAny } = await admin.rpc("has_any_aml_role", { _user_id: userId });
+    if (!hasAny) return jr({ error: "AML role required" }, 403);
+
     if (op === "settlement_gate_status") {
       const pfId = String(body.purchase_file_id ?? "");
       if (!pfId) return jr({ error: "purchase_file_id required" }, 400);
       const result = await evaluateSettlementGate(admin, aml, pfId);
       return jr(result);
     }
-
-    const { data: hasAny } = await admin.rpc("has_any_aml_role", { _user_id: userId });
-    if (!hasAny) return jr({ error: "AML role required" }, 403);
 
     const { data: canWriteRow } = await admin.rpc("has_aml_write_role", { _user_id: userId });
     const canWrite = Boolean(canWriteRow);
