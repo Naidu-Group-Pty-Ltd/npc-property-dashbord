@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptAiEstimate, calculateCapRateEngine, calculateCommercialGst, calculateCommercialGstEngine, calculateIcrDscrEngine, calculateNoiEngine, createAiEstimate, markEstimateVerified, rejectAiEstimate, replaceWithManualValue, runDcfAssessment } from '..';
+import { acceptAiEstimate, calculateBorrowingNoi, calculateCapRateEngine, calculateCommercialGst, calculateCommercialGstEngine, calculateIcrDscrEngine, calculateNoiEngine, createAiEstimate, markEstimateVerified, rejectAiEstimate, replaceWithManualValue, runDcfAssessment } from '..';
 import { calculateCommercialIndustrialBorrowing } from '../borrowing/commercialBorrowingEngine';
 import type { BorrowingInputs } from '../borrowing/calculatorTypes';
 
@@ -15,6 +15,17 @@ const borrowingBase = (patch: Partial<BorrowingInputs> = {}): BorrowingInputs =>
 } as BorrowingInputs);
 
 describe('Commercial / Industrial Assessment Engine', () => {
+  it('borrowing NOI includes non-recoverable, strata and itemised operating expenses together', () => {
+    const inputs = borrowingBase();
+    inputs.income.strataOwnersCorp = 7_000;
+
+    const result = calculateBorrowingNoi(inputs);
+
+    expect(result.totalOperatingExpenses).toBe(62_000);
+    expect(result.actualNoi).toBe(205_500);
+    expect(result.selectedNoi).toBe(205_500);
+  });
+
   it('NOI supports recovered outgoings, vacancy, lender adjustment, over-rent and unknown lease docs', () => {
     const r = calculateNoiEngine({ leaseType: 'unknown', grossPassingRent: 100_000, otherIncome: 5_000, marketRent: 90_000, vacancyAllowancePct: 5, recoveredOutgoings: 20_000, outgoings: [{ name: 'rates', amount: 20_000, recoverablePct: 100 }], incentiveAdjustment: 2_000, overRentAdjustment: 4_000, leaseDocsVerified: false }, 'lenderAdjusted');
     expect(r.potentialGrossIncome).toBe(105_000);
