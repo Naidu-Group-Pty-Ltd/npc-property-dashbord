@@ -111,9 +111,25 @@ state of `main` at commit `be61d50`. Per the directive they are logged, not sile
 fixed, and the lint/style/registry failures are candidates for an early hygiene fix
 so later phase gates have a green baseline to ratchet against.
 
-### 5.1 Vitest result
+### 5.1 Vitest results
 
-(recorded on completion — see §12 issue register if failing)
+- **AML suites (`npx vitest run src/lib/aml`): ✅ PASS — 5 files, 10 tests, 0 failures.**
+- Scoped baseline set from the phase-0 audit §9
+  (`npx vitest run src/branding src/utils src/lib/aml`): ❌ 17 failed / 122 passed
+  across 19 files. Every failing file is **outside** the AML surface:
+  `scenarioDeltaEngine.test.ts` (5), `commercialAssessmentEngine.test.ts` (5),
+  `scenarioModellingEngine.test.ts` (2), `tenYearCashFlow.test.ts` (2),
+  `BrandProvider.persistence.test.tsx` (2, `useAuth` provider wiring in the test
+  environment), `commercial.test.ts` (1). Pre-existing on unmodified `main`;
+  recorded, not fixed, in this phase (see I-02).
+- Full `npm test` result recorded below (§5.2).
+- Tooling note: `npm ci` **fails on unmodified `main`** — `package-lock.json` is out
+  of sync with `package.json` (missing `@simplewebauthn/browser@10.0.0` /
+  `@simplewebauthn/types@10.0.0` entries). Folded into I-02.
+
+### 5.2 Full-suite result
+
+(recorded on completion of the full run)
 
 ## 6. AML route and component map
 
@@ -284,7 +300,7 @@ Severity: 🔴 blocking/critical · 🟠 material · 🟡 hygiene.
 | # | Sev | Issue | Evidence | Owning phase |
 |---|---|---|---|---|
 | I-01 | 🔴 | **32 repo migrations not applied to the live DB** (`20260724160000`…`20260725130000`), incl. AML role-identity and self-scoping security hardening; edge functions are already current and may assume the newer objects | §3; live check of `is_active_aml_role_identity` | **Operator action before any phase** — apply pending migrations via the standard deploy process (not from this coding task) |
-| I-02 | 🔴 | Baseline gate commands fail on unmodified `main`: lint (41 errors), `audit:style` ratchet (all 5 counters above baseline), `security:registry` (2 unregistered non-AML functions) | §5 | Phase 0R follow-up: restore a green baseline or re-baseline the ratchet with sign-off |
+| I-02 | 🔴 | Baseline gate commands fail on unmodified `main`: lint (41 errors), `audit:style` ratchet (all 5 counters above baseline), `security:registry` (2 unregistered non-AML functions), 17 non-AML vitest failures, and `npm ci` lockfile desync | §5 | Phase 0R follow-up: restore a green baseline or re-baseline the ratchet with sign-off |
 | I-03 | 🔴 | `New case` button + `aml-cases` `create` op allow unlinked, non-human-confirmed case creation, bypassing every activation guardrail | §8 | Phase 3 (restrict), Phase 1 (contract) |
 | I-04 | 🔴 | Finance Portal has **no functioning AML channel**: handoff ops hard-403 since `bd4f5bb`, `/finance/aml-snapshot/:token` is a dead-end error page, and the fallback `limited_status` contract still contains `risk_rating` | §11.1 | Phase 7 |
 | I-05 | 🟠 | `limited_status` returns raw `risk_rating` server-side (finance-safe contract violation, even though reachable only with staff auth) | §11.1 | Phase 1 (contract), Phase 7 (implementation) |
