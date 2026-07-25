@@ -109,7 +109,7 @@ Deno.serve(async (req) => {
   // Cron path authenticates with the configured secret instead of user credentials.
   if (action === 'run-scheduled') {
     const secret = req.headers.get('x-cron-secret');
-    if (!verifyRequiredCronSecret(CRON_SECRET, secret)) return json({ error: 'unauthorized' }, 401);
+    if (!CRON_SECRET || secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
     return await runScheduled(sb);
   }
 
