@@ -69,6 +69,7 @@ interface DealStateStore {
   profile: CommercialIndustrialDealProfile;
   sourceModes: Record<CalculatorTabKey, CalculatorSourceMode>;
   updateGlobal: <K extends keyof CommercialIndustrialDealProfile>(section: K, patch: Partial<CommercialIndustrialDealProfile[K]>) => void;
+  clearTenYearCashFlowOutputs: () => void;
   setSourceMode: (tab: CalculatorTabKey, mode: CalculatorSourceMode) => void;
   setScenarioOverride: (tab: CalculatorTabKey, fieldKey: string, value: unknown) => void;
   clearScenarioOverrides: (tab: CalculatorTabKey) => void;
@@ -82,6 +83,11 @@ export const useCommercialDealState = create<DealStateStore>((set) => ({
   profile: defaultProfile,
   sourceModes: { overview: 'global', borrowing: 'global', noi: 'global', capRate: 'global', icrDscr: 'global', gst: 'global', dcf: 'global', tenYearCashFlow: 'global', industrialMetrics: 'global' },
   updateGlobal: (section, patch) => set(state => ({ profile: { ...state.profile, [section]: { ...(state.profile[section] as object), ...(patch as object) } } })),
+  clearTenYearCashFlowOutputs: () => set(state => {
+    const profile = { ...state.profile };
+    delete profile.tenYearCashFlowOutputs;
+    return { profile };
+  }),
   setSourceMode: (tab, mode) => set(state => ({ sourceModes: { ...state.sourceModes, [tab]: mode } })),
   setScenarioOverride: (tab, fieldKey, value) => set(state => ({ profile: { ...state.profile, scenarioOverrides: { ...state.profile.scenarioOverrides, [tab]: { ...(state.profile.scenarioOverrides[tab] ?? {}), [fieldKey]: value } } } })),
   clearScenarioOverrides: (tab) => set(state => ({ profile: { ...state.profile, scenarioOverrides: { ...state.profile.scenarioOverrides, [tab]: {} } } })),

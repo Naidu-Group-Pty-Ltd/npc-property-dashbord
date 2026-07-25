@@ -195,6 +195,7 @@ export function TenYearCashFlowCard() {
     aiEstimateAuditLog: [],
   }), [dealProfile, purchaserStructure, propertyValuation, leaseIncome, operatingExpenses, lendingAssumptions, acquisitionCosts, fundsToComplete, borrowingOutputs, noiOutputs, capRateOutputs, icrDscrOutputs, gstInputs, gstOutputs, dcfInputs, dcfOutputs, aiEstimateMetadata]);
   const updateGlobal = useCommercialDealState(s => s.updateGlobal);
+  const clearTenYearCashFlowOutputs = useCommercialDealState(s => s.clearTenYearCashFlowOutputs);
   const sourceMode = useCommercialDealState(s => s.sourceModes.tenYearCashFlow);
   const setSourceMode = useCommercialDealState(s => s.setSourceMode);
   const [mode, setMode] = useState<TenYearCashFlowMode>('investor');
@@ -358,7 +359,10 @@ export function TenYearCashFlowCard() {
     if (typeof window !== 'undefined') window.localStorage.setItem('ten-year-cash-flow-overview-viewed', 'true');
   }, []);
 
-  useEffect(() => { if (generatedCashFlow && generatedCurrent) updateGlobal('tenYearCashFlowOutputs', generatedCashFlow.result); }, [generatedCashFlow, generatedCurrent, updateGlobal]);
+  useEffect(() => {
+    if (generatedCashFlow && generatedCurrent) updateGlobal('tenYearCashFlowOutputs', generatedCashFlow.result);
+    else clearTenYearCashFlowOutputs();
+  }, [clearTenYearCashFlowOutputs, generatedCashFlow, generatedCurrent, updateGlobal]);
   useEffect(() => { setExitReconciliationConfirmed(false); setReportVerified(false); }, [exitValueMethod, manualVerifiedExitValue]);
   const markOverridden = (field: keyof TenYearCashFlowInputs) => {
     const currentSource = cascade[field];
