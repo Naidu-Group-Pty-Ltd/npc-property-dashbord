@@ -340,9 +340,16 @@ Deno.serve(async (req) => {
           submitted_by_type: 'client', submitted_by: portalUserId,
         }).select('*').single();
         if (error) throw error;
-        // Push case status forward (draft → kyc_in_progress → kyc_complete for review).
+        // Push case status forward (draft → kyc_in_progress → kyc_complete for
+        // review) and keep the Phase 1 dimension columns coherent; retry
+        // without them when the workflow-dimension migration is not applied.
         if (['draft','kyc_in_progress'].includes(c.status)) {
-          await admin.schema('aml').from('cases').update({ status: 'kyc_complete' }).eq('id', c.id);
+          const { error: upErr } = await admin.schema('aml').from('cases')
+            .update({ status: 'kyc_complete', case_stage: 'client_submitted', client_portal_status: 'submitted' })
+            .eq('id', c.id);
+          if (upErr) {
+            await admin.schema('aml').from('cases').update({ status: 'kyc_complete' }).eq('id', c.id);
+          }
         }
         return jsonResponse({ submission: sub, next_version: nextVersion });
       }
