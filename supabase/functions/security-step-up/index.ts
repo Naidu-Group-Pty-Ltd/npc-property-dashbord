@@ -244,6 +244,16 @@ Deno.serve(async (req) => {
       if (!await verifyUserPassword(admin, auth.userId, String(body?.password ?? ''))) {
         return j({ success: false, error: 'invalid_credentials' }, 401);
       }
+      // A password alone must not be able to add a second authentication
+      // factor to an MFA-protected account. Supporting an additional
+      // credential there requires a separately verified existing factor.
+      const { data: mfaState, error: mfaStateError } = await admin
+        .from('custom_users')
+        .select('mfa_enrolled_at')
+        .eq('id', auth.userId)
+        .maybeSingle();
+      if (mfaStateError || !mfaState) return j({ success: false, error: 'mfa_state_unavailable' }, 503);
+      if (mfaState.mfa_enrolled_at) return j({ success: false, error: 'mfa_verification_required' }, 403);
       const { data: existing } = await admin.from('user_webauthn_credentials')
         .select('credential_id').eq('user_id', auth.userId);
       const options = await buildRegistrationOptions({
@@ -379,7 +389,7 @@ Deno.serve(async (req) => {
     if (userRow?.mfa_enrolled_at) {
       const suppliedAssertionToken = typeof body?.assertion_token === 'string' ? String(body.assertion_token) : '';
       const suppliedAssertion = body?.assertion;
-      if (suppliedAssertionToken && suppliedAssertion?.id) {
+      if (userRow.mfa_method === 'webauthn' && suppliedAssertionToken && suppliedAssertion?.id) {
         // WebAuthn assertion path (passkey / security key)
         const cfg = loadWebAuthnConfig();
         if (!cfg) return j({ success: false, error: 'webauthn_not_configured', code: 'mfa_verification_required' }, 503);
