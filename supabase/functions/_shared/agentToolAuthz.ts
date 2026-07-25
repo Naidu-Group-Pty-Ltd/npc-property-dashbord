@@ -310,6 +310,10 @@ export function requireToolPolicy(name:string, actorType:'human'|'scheduled'|'in
 // convention-based arg keys. Keeps the 217-row policy table compact.
 const DEFAULT_ARG_TO_RESOURCE: Record<string, { table: string; ownerColumn: string; parentClientColumn?: string }> = {
   client_id:            { table: 'clients',                ownerColumn: 'created_by' },
+  // Bulk client tools carry a collection rather than a singular client_id.
+  // Keep this alias in the same ownership map so each ID is verified before a
+  // confirmed bulk action reaches its service-role executor.
+  client_ids:           { table: 'clients',                ownerColumn: 'created_by' },
   deal_id:              { table: 'client_deals',           ownerColumn: 'created_by', parentClientColumn: 'client_id' },
   reminder_id:          { table: 'client_reminders',       ownerColumn: 'created_by', parentClientColumn: 'client_id' },
   note_id:              { table: 'client_notes',           ownerColumn: 'created_by', parentClientColumn: 'client_id' },
@@ -554,7 +558,11 @@ export async function authorizeAgentTool(sb: any, name: string, args: Record<str
   if (ctx.actorType === 'internal' && !policy.allowedInternalCallers?.includes(ctx.internalCaller || '')) {
     throw new AgentToolAuthzError('actor_denied', `Internal caller is not allowlisted for tool '${name}'`);
   }
-  const resourceIds = Object.entries(args || {}).filter(([key, value]) => RESOURCE_ARG_KEYS.has(key) && typeof value === 'string').map(([, value]) => value as string);
+  const resourceIds = Object.entries(args || {}).flatMap(([key, value]) => {
+    if (!RESOURCE_ARG_KEYS.has(key)) return [];
+    if (typeof value === 'string') return [value];
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
+  });
   if (ctx.actorType === 'human') {
     const module = await requireModulePermission(sb, { userId, authMethod: 'human' }, policy.moduleKey || '', policy.permission);
     if (!module.ok) {
@@ -622,10 +630,12 @@ export async function authorizeAgentTool(sb: any, name: string, args: Record<str
   } else {
     for (const [key, value] of Object.entries(args || {})) {
       if (!RESOURCE_ARG_KEYS.has(key)) continue;
-      if (typeof value !== 'string') continue;
-      if (!(await ownsResource(sb, userId, key, value))) {
-        await auditToolDecision(sb, userId, name, 'deny', resourceIds, 'resource_denied');
-        throw new AgentToolAuthzError('resource_denied', `User does not own ${key}=${value}`);
+      const resourceValues = Array.isArray(value) ? value : [value];
+      for (const resourceId of resourceValues) {
+        if (typeof resourceId !== 'string' || !(await ownsResource(sb, userId, key, resourceId))) {
+          await auditToolDecision(sb, userId, name, 'deny', resourceIds, 'resource_denied');
+          throw new AgentToolAuthzError('resource_denied', `User does not own ${key}=${String(resourceId)}`);
+        }
       }
     }
   }
