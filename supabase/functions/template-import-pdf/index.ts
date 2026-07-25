@@ -1694,7 +1694,7 @@ Deno.serve(async (req) => {
 
       const meta = ((record.meta && typeof record.meta === 'object') ? record.meta : {}) as any;
       const summaryPath = meta.visual_quality_artifact_path as string | null | undefined;
-      if (!summaryPath) return json(null);
+      if (!isTemplateImportArtifactPathOwnedByImport(summaryPath, importId)) return json(null);
 
       const report = await readJsonArtifact(admin, summaryPath);
       if (!report) return json(null);
