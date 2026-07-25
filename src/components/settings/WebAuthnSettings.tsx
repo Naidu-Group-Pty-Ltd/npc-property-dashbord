@@ -60,7 +60,7 @@ export function WebAuthnSettings({ disabled }: { disabled?: boolean }) {
     if (!currentPassword) return;
     setBusy(true); setError(null);
     const proof = await requestStepUpWithWebAuthn('mfa.manage', currentPassword);
-    if (!proof.ok) {
+    if (proof.ok === false) {
       setBusy(false);
       return setError(proof.error);
     }
