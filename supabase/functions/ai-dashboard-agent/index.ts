@@ -8492,7 +8492,8 @@ Deno.serve(async (req) => {
     // valid HMAC-signed envelope (verifyInternal) with a receiver-side caller
     // allowlist — never the legacy static-secret/service-role trust and never a
     // body-supplied caller identity. The impersonated user is validated against
-    // the scheduled-task's authoritative owner.
+    // the scheduled-task's authoritative owner. Transport authentication does
+    // not elevate the task owner's tool permissions or satisfy step-up.
     if (body.action === 'execute-tool') {
       const internalAuth = await verifyInternal(sb, req, rawBody, { allowedCallers: ['agent-task-runner'] });
       if (!internalAuth.ok) {
@@ -8500,8 +8501,6 @@ Deno.serve(async (req) => {
           status: 403, headers: { ...cors, 'Content-Type': 'application/json' },
         });
       }
-      // Caller identity is the VERIFIED HMAC caller, never body.internal_caller.
-      const internalCaller = internalAuth.actorId || 'agent-task-runner';
       const targetUserId = typeof body.user_id === 'string' ? body.user_id : null;
       if (!targetUserId) {
         return new Response(JSON.stringify({ error: 'user_id required' }), { status: 400, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -8515,9 +8514,11 @@ Deno.serve(async (req) => {
         }
       }
       const toolResult = await executeTool(sb, body.tool_name, body.tool_args || {}, targetUserId, {
-        actorType: 'internal',
-        stepUpVerified: true,
-        internalCaller,
+        // Scheduled task definitions contain user-supplied tool arguments.
+        // Run them with the owner's normal authorization context so resource
+        // ownership, module permissions, and step-up checks still apply.
+        actorType: 'human',
+        stepUpVerified: false,
       });
       return new Response(JSON.stringify({ success: true, result: toolResult }), { headers: { ...cors, 'Content-Type': 'application/json' } });
     }
