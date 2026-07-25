@@ -27,6 +27,13 @@ import { OpenRouterModelTable } from '@/components/model-hub/OpenRouterModelTabl
 import { OpenRouterPager } from '@/components/model-hub/OpenRouterPager';
 import { familyFromId, familyTint, SORT_LABELS, extractExtras, type SortKey } from '@/lib/openrouter/format';
 import { BrandMark } from '@/components/integrations/BrandMark';
+import {
+  assertArrayField,
+  assertObjectResponse,
+  errorMessage,
+  responseErrorMessage,
+  withTimeout,
+} from '@/lib/modelHubData';
 
 type Route = 'gateway' | 'native' | 'openrouter';
 type Status = 'available' | 'preview' | 'deprecated' | 'unavailable';
@@ -257,15 +264,23 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [testingKey, setTestingKey] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const { data, error } = await supabase.functions.invoke('manage-agent-models', { body: { action: 'list' } });
+      const { data, error } = await withTimeout(
+        supabase.functions.invoke('manage-agent-models', { body: { action: 'list' } }),
+      );
       if (error) throw error;
-      setAssignments(data.assignments ?? []);
-    } catch (e: any) {
-      toast.error('Failed to load agent assignments: ' + e.message);
+      const response = assertObjectResponse(data, 'Agent assignments');
+      if (response.success === false) throw new Error(responseErrorMessage(response, 'Failed to load agent assignments.'));
+      setAssignments(assertArrayField(response, 'assignments', 'Agent assignments') as unknown as AgentAssignment[]);
+    } catch (e: unknown) {
+      const message = errorMessage(e);
+      setLoadError(message);
+      toast.error('Failed to load agent assignments: ' + message);
     } finally {
       setLoading(false);
     }
@@ -319,6 +334,31 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
         {Array.from({ length: 6 }).map((_, i) => (
           <Skeleton key={i} className="h-16 w-full rounded-2xl" />
         ))}
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <Alert variant="destructive" className="border-destructive/30 bg-destructive/10">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Agent bindings could not be loaded</AlertTitle>
+        <AlertDescription className="mt-2 flex flex-col items-start gap-3">
+          <span>{loadError} Your existing assignments have not been changed.</span>
+          <Button variant="outline" size="sm" onClick={load} className="border-destructive/30 bg-background/70">
+            <RefreshCw className="mr-2 h-3.5 w-3.5" /> Retry bindings
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (assignments.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-border/70 bg-muted/25 p-6 text-sm">
+        <p className="font-medium text-foreground">No agent bindings are configured</p>
+        <p className="mt-1 text-muted-foreground">Bindings appear after agent assignments are seeded. Refresh the catalogue, then retry this section.</p>
+        <Button variant="outline" size="sm" onClick={onRefresh} className="mt-4"><RefreshCw className="mr-2 h-3.5 w-3.5" /> Refresh catalogue</Button>
       </div>
     );
   }
@@ -759,16 +799,26 @@ function OpenRouterCatalog({ models, lastProbedAt }: { models: CatalogModel[]; l
 export default function ModelHub() {
   const [data, setData] = useState<AvailabilityResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchAll = async (force = false) => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const { data: res, error } = await supabase.functions.invoke('check-model-availability', { body: { force } });
+      const { data: res, error } = await withTimeout(
+        supabase.functions.invoke('check-model-availability', { body: { force } }),
+      );
       if (error) throw error;
-      setData(res as AvailabilityResponse);
+      const response = assertObjectResponse(res, 'Model catalogue');
+      if (response.success !== true) throw new Error(responseErrorMessage(response, 'The model catalogue could not be loaded.'));
+      assertArrayField(response, 'models', 'Model catalogue');
+      assertArrayField(response, 'providers', 'Model catalogue');
+      setData(response as unknown as AvailabilityResponse);
       if (force) toast.success('Live probe complete — catalog refreshed');
-    } catch (e: any) {
-      toast.error('Failed to load: ' + e.message);
+    } catch (e: unknown) {
+      const message = errorMessage(e);
+      setLoadError(message);
+      toast.error('Failed to load: ' + message);
     } finally {
       setLoading(false);
     }
@@ -842,6 +892,19 @@ export default function ModelHub() {
           <MetricTile label="Deprecated" value={stats.deprecated} icon={AlertTriangle} tone="warning" helper="Models flagged for migration or replacement." loading={loading} />
           <MetricTile label="Providers" value={stats.providers} icon={ShieldCheck} tone="success" helper="Distinct providers represented in live data." loading={loading} />
         </section>
+
+        {loadError && (
+          <Alert variant="destructive" className="border-destructive/30 bg-destructive/10" role="alert">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Live model data is unavailable</AlertTitle>
+            <AlertDescription className="mt-2 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <span>{loadError} Check your connection or session, then retry. No model assignments were changed.</span>
+              <Button variant="outline" size="sm" onClick={() => fetchAll(false)} className="shrink-0 border-destructive/30 bg-background/70">
+                <RefreshCw className="mr-2 h-3.5 w-3.5" /> Retry loading
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
         <Tabs defaultValue="bindings" className="space-y-6">
           <DashboardThemeFrame variant="toolbar" className="p-1.5">
