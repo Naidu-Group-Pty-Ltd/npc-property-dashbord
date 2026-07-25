@@ -3,7 +3,7 @@
  * patterns scattered around the codebase. Also wires the "Flatten and download"
  * action so every surface gets identical UX.
  */
-import { flattenPdfBlob, withFlattenedSuffix } from './flattenPdf';
+import { PDF_FLATTEN_LIMITS, flattenPdfBlob, withFlattenedSuffix } from './flattenPdf';
 
 /**
  * Trigger a browser download for a PDF Blob. Cleans up the object URL after
@@ -42,5 +42,36 @@ export async function flattenAndDownloadPdf(
 export async function fetchPdfBlob(url: string): Promise<Blob> {
   const res = await fetch(url, { credentials: 'omit' });
   if (!res.ok) throw new Error(`Failed to fetch PDF (${res.status})`);
-  return await res.blob();
+
+  const contentLength = Number(res.headers.get('content-length'));
+  if (Number.isFinite(contentLength) && contentLength > PDF_FLATTEN_LIMITS.maxInputBytes) {
+    throw new Error('PDF is too large to flatten safely (download exceeds 50 MB)');
+  }
+
+  if (!res.body) {
+    const blob = await res.blob();
+    if (blob.size > PDF_FLATTEN_LIMITS.maxInputBytes) {
+      throw new Error('PDF is too large to flatten safely (download exceeds 50 MB)');
+    }
+    return blob;
+  }
+
+  const reader = res.body.getReader();
+  const chunks: ArrayBuffer[] = [];
+  let receivedBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      receivedBytes += value.byteLength;
+      if (receivedBytes > PDF_FLATTEN_LIMITS.maxInputBytes) {
+        await reader.cancel();
+        throw new Error('PDF is too large to flatten safely (download exceeds 50 MB)');
+      }
+      chunks.push(value.slice().buffer as ArrayBuffer);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new Blob(chunks, { type: res.headers.get('content-type') || 'application/pdf' });
 }
