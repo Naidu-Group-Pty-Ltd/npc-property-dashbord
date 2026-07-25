@@ -357,6 +357,7 @@ function QuestionnaireStep({
   const [status, setStatus] = useState<string>('not_started');
   const dirtyRef = useRef(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAutosaveRef = useRef<Promise<void>>(Promise.resolve());
   const formRef = useRef(form);
   formRef.current = form;
   const statusRef = useRef(status);
@@ -379,19 +380,22 @@ function QuestionnaireStep({
   }, [caseId, section]);
 
   const persistDraft = useCallback(async () => {
-    // Never overwrite a submitted/accepted section from the autosaver
-    if (['submitted', 'accepted', 'complete'].includes(statusRef.current)) return;
-    setAutosaving(true);
-    try {
-      await amlPortalApi.saveQuestionnaire(caseId, section, formRef.current, false);
-      dirtyRef.current = false;
-      setLastSavedAt(new Date());
-      if (statusRef.current === 'not_started') setStatus('draft');
-    } catch {
-      // silent — user can still hit Save/Submit manually
-    } finally {
-      setAutosaving(false);
-    }
+    pendingAutosaveRef.current = pendingAutosaveRef.current.then(async () => {
+      // Never overwrite a submitted/accepted section from the autosaver
+      if (['submitted', 'accepted', 'complete'].includes(statusRef.current)) return;
+      setAutosaving(true);
+      try {
+        await amlPortalApi.saveQuestionnaire(caseId, section, formRef.current, false);
+        dirtyRef.current = false;
+        setLastSavedAt(new Date());
+        if (statusRef.current === 'not_started') setStatus('draft');
+      } catch {
+        // silent — user can still hit Save/Submit manually
+      } finally {
+        setAutosaving(false);
+      }
+    });
+    await pendingAutosaveRef.current;
   }, [caseId, section]);
 
   const set = (k: string, v: any) => {
@@ -416,6 +420,8 @@ function QuestionnaireStep({
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     setSaving(true);
     try {
+      // Serialize manual saves after any draft request that has already started.
+      await pendingAutosaveRef.current;
       await amlPortalApi.saveQuestionnaire(caseId, section, form, submit);
       dirtyRef.current = false;
       setLastSavedAt(new Date());
