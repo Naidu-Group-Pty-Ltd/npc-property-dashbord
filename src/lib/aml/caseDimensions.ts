@@ -187,6 +187,24 @@ export function serviceReadiness(gate: AmlServiceGateStatus): AmlServiceReadines
     : "service_not_ready";
 }
 
+/** Plain-English labels for the internal case stage (Command Centre only). */
+export const CASE_STAGE_LABELS: Record<AmlCaseStage, string> = {
+  draft: "Draft",
+  activated: "Activated",
+  awaiting_client: "Awaiting client",
+  client_in_progress: "Client in progress",
+  client_submitted: "Client submitted",
+  staff_review: "Staff review",
+  checks_in_progress: "Checks in progress",
+  additional_info_required: "Additional information required",
+  decision_pending: "Decision pending",
+  cleared: "Cleared",
+  cleared_with_conditions: "Cleared with conditions",
+  enhanced_cdd: "Enhanced CDD",
+  blocked: "Blocked",
+  closed: "Closed",
+};
+
 /** Plain-English labels for the client-portal dimension (client-safe). */
 export const CLIENT_PORTAL_STATUS_LABELS: Record<AmlClientPortalStatus, string> = {
   not_started: "Not started",

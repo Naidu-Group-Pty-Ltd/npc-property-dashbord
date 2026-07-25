@@ -19,5 +19,6 @@ Maps requirements → build artifacts → tests. Kept in sync with `acceptance-s
 | Rollout + acceptance + risk | 14 | `aml.rollout_stage_history`, `aml.acceptance_scenarios`, `aml.risk_register` | `aml-launch-ops` | Launch Ops | AS-12 |
 | Non-AML regression | X | n/a | n/a | Command Centre / Client Portal / Finance Portal | AS-13 |
 | Canonical workflow dimensions + activation contract + provenance (V2 directive Phase 1) | V2-1 | `aml.cases` (dimension/activation columns), `aml.workflow_dimension_migrations`, `aml.field_provenance` | `aml-cases`, `aml-finance` (`limited_status` finance-safe), `aml-client-portal` (portal-safe status) | Finance portal `LimitedAmlStatusCard`; contracts in `src/lib/aml/caseDimensions.ts` | `caseDimensions.test.ts`; docs/aml/canonical-contracts.md §7 |
+| Operational Compliance Home + production-surface disclosure rules (V2 directive Phase 2) | V2-2 | n/a (uses existing case/monitoring/discrepancy reads) | `aml-cases` list, `aml-monitoring` summary, `aml-finance` list_discrepancies | `AmlComplianceHomeV3` (priority queue, next-best-action, operational metrics), `AmlCases`/`AmlOverview`/`AmlGuard` commercial copy | `amlUiDisclosure.source.test.ts` |
 
 Update this table whenever an AML surface adds or removes a table, edge function, or scenario.

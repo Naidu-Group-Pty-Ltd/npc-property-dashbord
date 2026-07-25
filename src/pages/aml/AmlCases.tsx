@@ -27,9 +27,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "@/hooks/use-toast";
 
 const STATUS_LABELS: Record<AmlCaseStatus, string> = {
-  draft: "Draft", kyc_in_progress: "KYC In Progress", kyc_complete: "KYC Complete",
-  edd_required: "EDD Required", under_review: "Under Review",
-  escalated_mlro: "Escalated → MLRO", cleared: "Cleared", blocked: "Blocked", closed: "Closed",
+  draft: "Draft", kyc_in_progress: "Onboarding in progress", kyc_complete: "Submission received",
+  edd_required: "Additional information required", under_review: "Under review",
+  escalated_mlro: "Awaiting decision", cleared: "Cleared", blocked: "Blocked", closed: "Closed",
+};
+
+const SUBJECT_TYPE_LABELS: Record<string, string> = {
+  individual: "Individual", entity: "Entity / company", trust: "Trust",
 };
 
 const RISK_STYLES: Record<AmlRiskRating, string> = {
@@ -113,15 +117,15 @@ export default function AmlCasesPage() {
 
   if (!access.flagEnabled) {
     return <EmptyGate
-      title="AML/CTF module disabled"
-      body="This module is behind the aml_ctf feature flag. Ask a superadmin to enable it in Feature Flags before use."
+      title="AML/CTF is not enabled"
+      body="The AML/CTF module isn't switched on for your organisation yet. Contact your administrator to enable it."
     />;
   }
 
   if (!access.hasAnyRole) {
     return <EmptyGate
-      title="No AML/CTF role assigned"
-      body="You need an analyst, reviewer, MLRO or auditor role to access AML cases. Contact your MLRO to be granted access."
+      title="You don't have access to AML cases yet"
+      body="Ask your compliance administrator to grant you AML access. The case register appears automatically once access is granted."
     />;
   }
 
@@ -131,8 +135,7 @@ export default function AmlCasesPage() {
         <div>
           <h1 className="text-2xl font-semibold">AML / CTF Cases</h1>
           <p className="text-sm text-muted-foreground">
-            {total} case{total === 1 ? "" : "s"} · roles:{" "}
-            {[...access.roles].join(", ") || "none"}
+            {total} case{total === 1 ? "" : "s"}
           </p>
         </div>
         <div className="flex gap-2">
@@ -186,9 +189,13 @@ export default function AmlCasesPage() {
           {loading ? (
             <div className="py-12 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>
           ) : cases.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-12 text-center">
-              No cases match the current filters.
-            </p>
+            <div className="py-12 text-center space-y-1">
+              <p className="text-sm text-muted-foreground">
+                {status !== "all" || risk !== "all" || search
+                  ? "No cases match the current filters. Clear a filter to widen the search."
+                  : "No cases yet. Open a client's record and choose Start Client Compliance, or use Activate client above."}
+              </p>
+            </div>
           ) : (
             <div className="space-y-2">
               {cases.map((c) => (
@@ -200,7 +207,7 @@ export default function AmlCasesPage() {
                   <div className="flex-1 min-w-[200px]">
                     <div className="font-medium">{c.subject_display_name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {c.case_reference} · {c.subject_type} · opened {new Date(c.opened_at).toLocaleDateString()}
+                      {c.case_reference} · {SUBJECT_TYPE_LABELS[c.subject_type] ?? c.subject_type} · opened {new Date(c.opened_at).toLocaleDateString()}
                     </div>
                   </div>
                   <Badge variant="outline">{STATUS_LABELS[c.status]}</Badge>
@@ -365,7 +372,10 @@ function CaseDetailSheet({
     setTransitioning(true);
     try {
       await amlCasesApi.transition(caseRow.id, to, reason || undefined);
-      toast({ title: "Status updated", description: `${caseRow.status} → ${to}` });
+      toast({
+        title: "Status updated",
+        description: `${STATUS_LABELS[caseRow.status]} → ${STATUS_LABELS[to]}`,
+      });
       setReason(""); await load(caseRow.id); onChanged();
     } catch (e: any) {
       toast({ title: "Transition failed", description: e.message, variant: "destructive" });

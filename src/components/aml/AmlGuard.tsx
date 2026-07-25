@@ -55,9 +55,10 @@ export function AmlGuard({ capability = "aml.view", children }: AmlGuardProps) {
       <div className="p-6">
         <Alert>
           <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>AML/CTF module is not enabled</AlertTitle>
+          <AlertTitle>AML/CTF is not enabled</AlertTitle>
           <AlertDescription>
-            Ask a superadmin to enable the <code>aml_ctf</code> feature flag for this tenant.
+            The AML/CTF module isn't switched on for your organisation yet. Contact your
+            administrator to enable it.
           </AlertDescription>
         </Alert>
       </div>
@@ -69,10 +70,10 @@ export function AmlGuard({ capability = "aml.view", children }: AmlGuardProps) {
       <div className="p-6">
         <Alert variant="destructive">
           <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>No AML role assigned</AlertTitle>
+          <AlertTitle>You don't have access to this area yet</AlertTitle>
           <AlertDescription>
-            You need an assigned AML role (analyst, reviewer, MLRO, or auditor) to access this
-            surface. Contact your MLRO.
+            Ask your compliance administrator to grant you AML access. This area appears
+            automatically once access is granted.
           </AlertDescription>
         </Alert>
       </div>
@@ -84,12 +85,10 @@ export function AmlGuard({ capability = "aml.view", children }: AmlGuardProps) {
       <div className="p-6">
         <Alert variant="destructive">
           <ShieldAlert className="h-4 w-4" />
-          <AlertTitle>Insufficient AML permissions</AlertTitle>
+          <AlertTitle>This area is restricted</AlertTitle>
           <AlertDescription>
-            Your role does not include <code>{capability}</code>. This capability is restricted to
-            {capability === "aml.report" || capability === "aml.configure"
-              ? " the MLRO."
-              : " analyst / reviewer / MLRO roles."}
+            Your current access doesn't include this area. Ask your compliance administrator
+            if you need it for your work.
           </AlertDescription>
         </Alert>
       </div>
