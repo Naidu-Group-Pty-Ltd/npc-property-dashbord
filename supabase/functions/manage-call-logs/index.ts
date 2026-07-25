@@ -211,8 +211,12 @@ Deno.serve(async (req) => {
       // {"type":"end-call"} to the call's monitor.controlUrl.
       const initial = await vapiGetCall(callRow.vapi_call_id, vapiApiKey);
       const initialStatus = typeof initial.call?.status === 'string' ? initial.call.status : null;
-      const controlUrl: string | null = initial.call?.monitor?.controlUrl
-        || (typeof baseMetadata.vapi_monitor_control_url === 'string' ? baseMetadata.vapi_monitor_control_url : null);
+      // Resolve the capability URL only from Vapi's authenticated API response.
+      // Call-log metadata is user-modifiable through legacy update operations and
+      // must never be treated as a URL authority.
+      const controlUrl: string | null = typeof initial.call?.monitor?.controlUrl === 'string'
+        ? initial.call.monitor.controlUrl
+        : null;
 
       // Idempotent path: the call is already over on Vapi's side
       if (initial.status === 404 || (initial.ok && initialStatus === 'ended')) {
