@@ -9,7 +9,7 @@
  *   Evidence:       list_evidence, add_evidence, delete_evidence
  *   Limited view:   limited_status (returns status pill only for finance-portal panel)
  *
- * Reads: any AML role (limited_status is auth-only, no role required — scoped by purchase_file_id).
+ * Reads: any AML role (limited_status requires AML role and is scoped by purchase_file_id/client_id).
  * Writes: analyst/reviewer/mlro.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
@@ -293,9 +293,12 @@ Deno.serve(async (req) => {
     const userLabel = auth.username ?? null;
     const op = opPre;
 
-    // Limited status endpoint — auth only, does NOT require AML role.
+    // Limited status endpoint — AML role required because status/risk are AML case data.
     // Returns just enough for the Finance Portal to show a status pill.
     if (op === "limited_status") {
+      const { data: hasAmlRole } = await admin.rpc("has_any_aml_role", { _user_id: userId });
+      if (!hasAmlRole) return jr({ error: "AML role required" }, 403);
+
       const pfId = body.purchase_file_id ? String(body.purchase_file_id) : null;
       const clientId = body.client_id ? String(body.client_id) : null;
       if (!pfId && !clientId) return jr({ error: "purchase_file_id or client_id required" }, 400);
@@ -514,10 +517,21 @@ Deno.serve(async (req) => {
       const pfId = String(body.purchase_file_id ?? "");
       if (!caseId || !pfId) return jr({ error: "case_id and purchase_file_id required" }, 400);
 
+      const { data: caseRow, error: caseErr } = await aml.from("cases")
+        .select("id, client_id, purchase_file_id")
+        .eq("id", caseId).maybeSingle();
+      if (caseErr || !caseRow) return jr({ error: "case not found" }, 404);
+
       const { data: pf, error: pfErr } = await admin.from("purchase_files")
-        .select("id, purchase_price, lender, finance_status, title, max_approved_budget")
+        .select("id, client_id, purchase_price, lender, finance_status, title, max_approved_budget")
         .eq("id", pfId).maybeSingle();
       if (pfErr || !pf) return jr({ error: "purchase file not found" }, 404);
+      if (String(caseRow.client_id) !== String(pf.client_id)) {
+        return jr({ error: "purchase file is not linked to this AML case client" }, 403);
+      }
+      if (caseRow.purchase_file_id && String(caseRow.purchase_file_id) !== pfId) {
+        return jr({ error: "purchase file is not linked to this AML case" }, 403);
+      }
 
       // Latest lender submission for loan amount / LVR.
       const { data: subs } = await admin.from("lender_submissions")
