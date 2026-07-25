@@ -82,8 +82,7 @@ export async function rotateSession(
       idle_expires_at: idleExpiresAt.toISOString(),
       ip_address: old.ip_address,
       user_agent: old.user_agent,
-      rotated_from: oldSessionId,
-      rotation_reason: reason,
+      rotated_from_session_id: oldSessionId,
     };
     // WP-11A: store only the peppered hash when available; write plaintext solely
     // as a fallback when the pepper is unconfigured (hash-first readers resolve both).
