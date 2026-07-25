@@ -843,7 +843,6 @@ async function runJob(
   signedUrl: string,
   mode: string,
   cleanup?: () => Promise<void>,
-  knownSource?: { hash?: string | null; size?: number | null },
   source?: SourceDescriptor,
 ) {
   const startedAt = Date.now();
@@ -862,9 +861,9 @@ async function runJob(
       .eq('id', jobId)
       .maybeSingle()).data?.request_payload ?? {}) as Record<string, unknown>;
 
-    const hashed = knownSource?.hash
-      ? { hash: knownSource.hash, size: Number(knownSource.size ?? 0) || 0 }
-      : await fetchAndHash(signedUrl);
+    // Hash the resolved source in this trusted process. Request metadata is only
+    // a client hint and must never select another job's cached artifacts.
+    const hashed = await fetchAndHash(signedUrl);
     if (hashed) {
       const cacheFingerprint = await computeCacheFingerprint(hashed.hash, mode, requestPayload);
       await updateJob(admin, jobId, {
@@ -1252,7 +1251,8 @@ Deno.serve(async (req) => {
           source_file_path: sourceFilePath,
           source_file_name: body.source_file_name ?? null,
           source_file_size_bytes: body.source_file_size_bytes ?? null,
-          source_file_hash: typeof body.source_file_hash === 'string' ? body.source_file_hash : null,
+          // Persist only a hash verified by runJob against the resolved source.
+          source_file_hash: null,
           engine: ENGINE,
           engine_version: ENGINE_VERSION_FAMILY,
           idempotency_key: idempotencyKey,
@@ -1304,10 +1304,7 @@ Deno.serve(async (req) => {
 
       // Fire-and-forget background processing.
       // @ts-expect-error EdgeRuntime is provided by Supabase's Deno runtime.
-      EdgeRuntime.waitUntil(runJob(admin, jobRow.id, sourceRes.url, mode, sourceRes.cleanup, {
-        hash: typeof body.source_file_hash === 'string' ? body.source_file_hash : null,
-        size: Number(body.source_file_size_bytes) || null,
-      }, source));
+      EdgeRuntime.waitUntil(runJob(admin, jobRow.id, sourceRes.url, mode, sourceRes.cleanup, source));
 
       return json({ job_id: jobRow.id, status: 'queued', idempotency_key: idempotencyKey });
     }
