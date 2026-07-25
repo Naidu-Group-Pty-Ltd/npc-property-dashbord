@@ -1,29 +1,31 @@
 /**
  * Phase 13 — Client-side lookup for active step-up session tokens.
  *
- * AmlGuard persists a verified session under `aml_step_up_session:<capability>`
- * containing `{ session_token, expires_at }`. `invokeAmlFunction` reads from
- * here to attach the token to privileged edge-function calls, so the server
- * can require a live step-up session for restricted operations.
+ * Tokens are intentionally retained only in memory. AmlGuard may persist
+ * non-secret expiry metadata for the current tab, but bearer credentials must
+ * never be written to Web Storage where same-origin scripts can recover them.
  */
 import type { AmlCapability } from "./permissions";
 
-interface StoredStepUp {
-  session_token?: string;
-  expires_at?: string;
+interface ActiveStepUp {
+  session_token: string;
+  expires_at: string;
+}
+
+const activeStepUps = new Map<AmlCapability, ActiveStepUp>();
+
+export function setStepUpToken(capability: AmlCapability, session: ActiveStepUp): void {
+  activeStepUps.set(capability, session);
 }
 
 export function getStepUpToken(capability: AmlCapability): string | null {
-  try {
-    const raw = sessionStorage.getItem(`aml_step_up_session:${capability}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredStepUp;
-    if (!parsed?.session_token || !parsed?.expires_at) return null;
-    if (new Date(parsed.expires_at).getTime() <= Date.now()) return null;
-    return parsed.session_token;
-  } catch {
+  const session = activeStepUps.get(capability);
+  if (!session) return null;
+  if (new Date(session.expires_at).getTime() <= Date.now()) {
+    activeStepUps.delete(capability);
     return null;
   }
+  return session.session_token;
 }
 
 /**
