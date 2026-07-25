@@ -281,12 +281,12 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
         operation: 'update', table: 'clients', clientId, data: updateData,
       });
       if (edgeErr) {
-        console.error('[client-update] edge function error', edgeErr, updateData);
+        console.error('[client-update] edge function error', edgeErr);
         throw new Error(edgeErr.message || 'Failed to save client details');
       }
       if (!resp?.success) {
         const details = (resp as any)?.details || (resp as any)?.error || 'Unknown error';
-        console.error('[client-update] non-success response', resp, updateData);
+        console.error('[client-update] non-success response', resp);
         throw new Error(String(details));
       }
 

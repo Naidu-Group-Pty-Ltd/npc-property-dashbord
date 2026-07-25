@@ -41,6 +41,7 @@ export default function PortalAml() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AmlPortalOverview | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
+  const [consentedCaseId, setConsentedCaseId] = useState<string | null>(null);
   const resumedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -63,11 +64,12 @@ export default function PortalAml() {
   // (server-side gate enforces this; we mirror it in the UI to prevent bypass via stepper clicks).
   const consented = useMemo(() => {
     if (!caseObj) return false;
+    if (consentedCaseId === caseObj.id) return true;
     try {
       if (localStorage.getItem(consentKey(caseObj.id)) === '1') return true;
     } catch { /* ignore */ }
     return (data?.sections ?? []).some(s => s.status && s.status !== 'not_started');
-  }, [caseObj, data?.sections]);
+  }, [caseObj, consentedCaseId, data?.sections]);
 
   // Resume: on first load, jump to the last section the user was on, or the first incomplete step.
   useEffect(() => {
@@ -192,6 +194,7 @@ export default function PortalAml() {
                 caseId={caseObj.id}
                 onDone={() => {
                   try { localStorage.setItem(consentKey(caseObj.id), '1'); } catch { /* ignore */ }
+                  setConsentedCaseId(caseObj.id);
                   setStepIdx(1);
                 }}
               />
@@ -357,6 +360,7 @@ function QuestionnaireStep({
   const [status, setStatus] = useState<string>('not_started');
   const dirtyRef = useRef(false);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAutosaveRef = useRef<Promise<void>>(Promise.resolve());
   const formRef = useRef(form);
   formRef.current = form;
   const statusRef = useRef(status);
@@ -379,19 +383,22 @@ function QuestionnaireStep({
   }, [caseId, section]);
 
   const persistDraft = useCallback(async () => {
-    // Never overwrite a submitted/accepted section from the autosaver
-    if (['submitted', 'accepted', 'complete'].includes(statusRef.current)) return;
-    setAutosaving(true);
-    try {
-      await amlPortalApi.saveQuestionnaire(caseId, section, formRef.current, false);
-      dirtyRef.current = false;
-      setLastSavedAt(new Date());
-      if (statusRef.current === 'not_started') setStatus('draft');
-    } catch {
-      // silent — user can still hit Save/Submit manually
-    } finally {
-      setAutosaving(false);
-    }
+    pendingAutosaveRef.current = pendingAutosaveRef.current.then(async () => {
+      // Never overwrite a submitted/accepted section from the autosaver
+      if (['submitted', 'accepted', 'complete'].includes(statusRef.current)) return;
+      setAutosaving(true);
+      try {
+        await amlPortalApi.saveQuestionnaire(caseId, section, formRef.current, false);
+        dirtyRef.current = false;
+        setLastSavedAt(new Date());
+        if (statusRef.current === 'not_started') setStatus('draft');
+      } catch {
+        // silent — user can still hit Save/Submit manually
+      } finally {
+        setAutosaving(false);
+      }
+    });
+    await pendingAutosaveRef.current;
   }, [caseId, section]);
 
   const set = (k: string, v: any) => {
@@ -416,6 +423,8 @@ function QuestionnaireStep({
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     setSaving(true);
     try {
+      // Serialize manual saves after any draft request that has already started.
+      await pendingAutosaveRef.current;
       await amlPortalApi.saveQuestionnaire(caseId, section, form, submit);
       dirtyRef.current = false;
       setLastSavedAt(new Date());

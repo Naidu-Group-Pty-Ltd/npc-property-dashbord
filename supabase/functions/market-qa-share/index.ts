@@ -121,7 +121,8 @@ Deno.serve(async (req) => {
       if (qErr || !question) return json({ error: 'question_not_found' }, 404);
       const ownerId = (question as { created_by?: string | null }).created_by ?? null;
       const superadmin = await isSuperadmin(sb, userId);
-      if (!superadmin && ownerId && ownerId !== userId) return json({ error: 'forbidden' }, 403);
+      // Fail closed for historical/imported rows without a recorded owner.
+      if (!superadmin && ownerId !== userId) return json({ error: 'forbidden' }, 403);
 
       let slug = makeSlug();
       for (let i = 0; i < 3; i += 1) {

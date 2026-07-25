@@ -22,7 +22,10 @@ import {
   PLANNER_V3_IMPLEMENTATION_VERSION,
   type PdfPageComplexityV1,
   type ServiceRouteDecisionV1,
+  sha256Hex,
   stableHash,
+  stableJson,
+  stripUrls,
 } from './pdfServiceRoutingV1.pure.ts';
 
 export interface CacheFingerprintV3Input {
@@ -108,9 +111,9 @@ export function routeDigest(decisions: ServiceRouteDecisionV1[]): string {
   return stableHash('rt', rows);
 }
 
-/** The canonical V3 fingerprint string: `pf3-<fnv1a32(...)>`. */
+/** The canonical collision-resistant V3 fingerprint: `pf3-<sha256(...)>`. */
 export function computeCacheFingerprint(inp: CacheFingerprintV3Input): string {
-  return stableHash('pf3', fingerprintPayload(inp));
+  return `pf3-${sha256Hex(stripUrls(stableJson(fingerprintPayload(inp))))}`;
 }
 
 /** Only an exact `pdf-cache-fingerprint-v3` entry is ever reusable by V3. */

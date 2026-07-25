@@ -29,8 +29,8 @@ export const PALETTES = {
 
 export type PaletteKey = keyof typeof PALETTES;
 
-export function resolvePalette(hint?: string): string[] {
-  const key = (hint || '').toLowerCase() as PaletteKey;
+export function resolvePalette(hint?: unknown): string[] {
+  const key = (typeof hint === 'string' ? hint : '').toLowerCase() as PaletteKey;
   if (key && PALETTES[key]) return [...PALETTES[key]];
   return [...AURORA_GOLD_PALETTE];
 }

@@ -4,7 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { SearchProvider } from "@/contexts/SearchContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import { ComparisonProvider } from "@/contexts/ComparisonContext";
@@ -115,7 +115,7 @@ import GamePlan from "./pages/GamePlan";
 import Commissions from "./pages/Commissions";
 import ReportsAnalytics from "./pages/ReportsAnalytics";
 import ModelHub from "./pages/ModelHub";
-import TokenUsageHistory from "./pages/TokenUsageHistory";
+import Billing from "./pages/Billing";
 import TokenAuditLog from "./pages/TokenAuditLog";
 import CommercialProperties from "./pages/commercial/CommercialProperties";
 import CommercialPropertyDetail from "./pages/commercial/CommercialPropertyDetail";
@@ -337,8 +337,8 @@ const App = () => (
                 />
                 <Route path="sources" element={<ModuleGuard moduleKey="sources"><Sources /></ModuleGuard>} />
                 <Route path="reports" element={<ModuleGuard moduleKey="reports"><Reports /></ModuleGuard>} />
-                <Route path="quantitative-reports" element={<ModuleGuard moduleKey="reports"><QuantitativeReports /></ModuleGuard>} />
-                <Route path="quantitative-reports/:reportId" element={<ModuleGuard moduleKey="reports"><ReportViewer /></ModuleGuard>} />
+                <Route path="quantitative-reports" element={<ModuleGuard moduleKey="generated_reports"><QuantitativeReports /></ModuleGuard>} />
+                <Route path="quantitative-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
                 <Route path="charts" element={<ModuleGuard moduleKey="charts"><Charts /></ModuleGuard>} />
                 <Route path="generated-reports" element={<ModuleGuard moduleKey="generated_reports"><GeneratedReports /></ModuleGuard>} />
                 <Route path="generated-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
@@ -428,7 +428,9 @@ const App = () => (
                 <Route path="commissions" element={<Commissions />} />
                 <Route path="reports/analytics" element={<ReportsAnalytics />} />
                 <Route path="model-hub" element={<ModuleGuard moduleKey="integrations" requireEdit><ModelHub /></ModuleGuard>} />
-                <Route path="billing/usage" element={<TokenUsageHistory />} />
+                <Route path="billing" element={<Billing />} />
+                {/* Legacy deep links land on the consolidated page's Usage tab. */}
+                <Route path="billing/usage" element={<Navigate to="/billing?tab=usage" replace />} />
                 <Route path="admin/token-audit" element={<TokenAuditLog />} />
                 <Route path="commercial" element={<CommercialProperties />} />
                 <Route path="commercial/calculators" element={<PropertyCalculators />} />

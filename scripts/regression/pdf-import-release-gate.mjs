@@ -65,9 +65,15 @@ function git(cmd, fallback = null) {
 }
 const branch = git('git rev-parse --abbrev-ref HEAD');
 const commit = git('git rev-parse HEAD');
+const baseCommit = /^[0-9a-f]{40,64}$/i.test(process.env.PDF_IMPORT_BASE_SHA || '')
+  ? git(`git rev-parse --verify ${process.env.PDF_IMPORT_BASE_SHA}^{commit}`)
+  : null;
+const committedFiles = baseCommit
+  ? (git(`git diff --name-only ${baseCommit} HEAD`, '') || '').split('\n').filter(Boolean)
+  : [];
 const stagedFiles = (git('git diff --cached --name-only', '') || '').split('\n').filter(Boolean);
 const changedFiles = (git('git diff --name-only', '') || '').split('\n').filter(Boolean);
-const candidateFiles = Array.from(new Set([...stagedFiles, ...changedFiles]));
+const candidateFiles = Array.from(new Set([...committedFiles, ...stagedFiles, ...changedFiles]));
 
 // ── Severity weights + scoring (mirror releaseGateEvaluator.ts) ──
 const WEIGHT = { critical: 25, high: 12, medium: 6, low: 2, info: 0 };
@@ -125,7 +131,7 @@ for (const rel of requiredFiles) {
     [rel], `Restore or create ${rel}.`);
 }
 
-// 2. Private artifact scan (staged + changed file paths)
+// 2. Private artifact scan (committed CI range + staged/unstaged file paths)
 function classifyArtifact(path) {
   const l = path.toLowerCase();
   if (l.endsWith('.pdf')) return ['private_pdf', 'no_private_pdfs_staged'];
@@ -150,7 +156,7 @@ const ARTIFACT_TITLES = {
 };
 for (const [id, hits] of Object.entries(artifactHits)) {
   add(id, 'private_artifacts', 'critical', hits.length ? 'fail' : 'pass', ARTIFACT_TITLES[id],
-    hits.length ? `${hits.length} offending file(s) staged.` : 'No offending files staged.',
+    hits.length ? `${hits.length} offending candidate file(s).` : 'No offending candidate files.',
     hits, 'Unstage the private artifact(s) and add to .gitignore.');
 }
 

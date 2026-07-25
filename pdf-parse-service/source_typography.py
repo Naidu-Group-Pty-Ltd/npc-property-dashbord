@@ -43,6 +43,10 @@ TYPOGRAPHY_RUN_CONTRACT_VERSION = "typography-run-contract-v1"
 MAX_TYPOGRAPHY_RUNS_PER_PAGE = 4000
 MAX_GLYPHS_PER_RUN = 4000
 MAX_RUN_TEXT_LEN = 20000
+# Aggregate limits prevent individually valid runs from multiplying into an
+# unbounded in-memory page artifact before JSON serialization.
+MAX_TEXT_CODEPOINTS_PER_PAGE = 100000
+MAX_GLYPH_EVIDENCE_PER_PAGE = 20000
 
 # ── Extended punctuation lexicon (E5 — superset of E1 `_PUNCT_MAP`) ──────────
 # Distinguishes visually-similar characters whose identity is CONTENT for
@@ -272,14 +276,15 @@ def typography_run_id(global_page: int, bbox: dict, span_ids: list[str],
     return f"strun-p{int(global_page):04d}-{int(ordinal):04d}-{ssg.fnv1a32(key)}"
 
 
-def build_glyph_evidence(text: str) -> list[dict]:
+def build_glyph_evidence(text: str, max_glyphs: int = MAX_GLYPHS_PER_RUN) -> list[dict]:
     """Per-code-point glyph evidence. Character-level geometry is null when the
     provider does not supply it (never fabricated). An unmapped glyph is flagged,
     never assigned a guessed Unicode."""
     out: list[dict] = []
     if not isinstance(text, str):
         return out
-    for ordinal, ch in enumerate(text[:MAX_GLYPHS_PER_RUN]):
+    limit = max(0, min(int(max_glyphs), MAX_GLYPHS_PER_RUN))
+    for ordinal, ch in enumerate(text[:limit]):
         cp = ord(ch)
         unmapped = cp in (0xFFFD, 0x0000, 0xFFFE)
         out.append({
@@ -322,6 +327,7 @@ def build_typography_run(
     font_object_ref: Optional[str] = None,
     font_identity: Optional[dict] = None,
     source_crop: Optional[dict] = None,
+    max_glyphs: int = MAX_GLYPHS_PER_RUN,
 ) -> dict:
     """Assemble ONE immutable `typography-run-contract-v1` from a source span."""
     raw = str(span.get("raw") or "")[:MAX_RUN_TEXT_LEN]
@@ -337,7 +343,7 @@ def build_typography_run(
     )
     critical = classify_critical_content(raw_text=raw, label=span.get("label"),
                                          region_type=region_type, in_table=in_table, in_chart=in_chart)
-    glyphs = build_glyph_evidence(raw)
+    glyphs = build_glyph_evidence(raw, max_glyphs=max_glyphs)
     placeholder_count = count_unmapped_glyphs(raw)
     unmapped = sum(1 for g in glyphs if g["unmapped"]) + max(0, placeholder_count)
     problems: list[str] = []
@@ -427,10 +433,27 @@ def build_page_typography(
         ordered = ordered[:MAX_TYPOGRAPHY_RUNS_PER_PAGE]
 
     runs: list[dict] = []
+    text_codepoints = 0
+    glyph_evidence = 0
     for ordinal, span in enumerate(ordered, start=1):
+        raw_length = min(len(str(span.get("raw") or "")), MAX_RUN_TEXT_LEN)
+        if text_codepoints + raw_length > MAX_TEXT_CODEPOINTS_PER_PAGE:
+            problems.append("typography_text_budget_exceeded")
+            break
+        glyph_count = min(raw_length, MAX_GLYPHS_PER_RUN,
+                          MAX_GLYPH_EVIDENCE_PER_PAGE - glyph_evidence)
+        if glyph_count <= 0 and raw_length:
+            problems.append("typography_glyph_budget_exceeded")
+            break
         runs.append(build_typography_run(
             global_page=global_page, page_id=page_id, ordinal=ordinal, span=span,
             source_region_id=region_by_span.get(span.get("id")),
             font_object_ref=span.get("fontObjectRef"),
+            max_glyphs=glyph_count,
         ))
+        text_codepoints += raw_length
+        glyph_evidence += glyph_count
+        if glyph_count < min(raw_length, MAX_GLYPHS_PER_RUN):
+            problems.append("typography_glyph_budget_exceeded")
+            break
     return runs, problems

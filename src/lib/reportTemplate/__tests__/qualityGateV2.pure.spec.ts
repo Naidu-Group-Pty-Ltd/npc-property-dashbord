@@ -23,6 +23,7 @@ import {
 import {
   resolveRegionRenderPlanProjection, suppressedOverlayIdSet, buildFinalCropElementsHtml, isDurableArtifactPath,
 } from '../rendering/regionRenderPlanApply';
+import { PageSchema } from '../templateSchema';
 
 // ── A. Versions + validation ──────────────────────────────────────────────────
 
@@ -109,6 +110,15 @@ describe('DOM evaluators', () => {
       { id: 'b', regionId: 'r1', overlayId: null, bboxPx: { x: 10, y: 10, width: 40, height: 40 }, opacity: 1, zIndex: 1, kind: 'text', ownerRegionId: 'r1' },
     ]);
     expect(pairs.length).toBe(0);
+  });
+  it('detectOverlaps bounds bucket construction for hostile rectangles', () => {
+    const started = performance.now();
+    expect(detectOverlaps([{
+      id: 'hostile', regionId: null, overlayId: null,
+      bboxPx: { x: 0, y: 0, width: 100_000_000, height: 100_000_000 },
+      opacity: 1, zIndex: 0, kind: 'image',
+    }], { maxPairs: 0 })).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(100);
   });
   it('evaluateTextRun: hidden-semantic never counts as visible; clipped flagged', () => {
     const hidden = evaluateTextRun(baseRun({ hiddenSemantic: true }));
@@ -285,6 +295,28 @@ describe('region render plan apply (renderer wiring)', () => {
   it('a raster-only page has no plan projection consumed as crops (no projection = no-op)', () => {
     expect(resolveRegionRenderPlanProjection({ id: 'p', meta: {} } as any)).toBeNull();
     expect(buildFinalCropElementsHtml(null)).toBe('');
+  });
+  it('rejects out-of-page crop projections and skips unsafe direct crop input', () => {
+    const hostile = regionPlanProjection({ finalRegionCrops: [{
+      regionId: 'bad', bbox: { x: 0, y: 0, width: 100_000, height: 100_000 },
+      artifactPath: 'job/bad.png', assetId: null, sha256: null, cropRole: 'final-output',
+    }] });
+    const page = { id: 'p', size: { width: 595, height: 842 }, meta: { pdfImportRegionOutput: { renderPlan: hostile } } } as any;
+    expect(resolveRegionRenderPlanProjection(page)).toBeNull();
+    expect(buildFinalCropElementsHtml(hostile)).toBe('');
+  });
+  it('rejects non-finite and extremely large persisted crop geometry', () => {
+    const base = { id: 'p', meta: { pdfImportRegionOutput: { renderPlan: regionPlanProjection() } } };
+    const crops = (base.meta.pdfImportRegionOutput.renderPlan as any).finalRegionCrops;
+    crops.push({ regionId: 'bad', bbox: { x: 0, y: 0, width: Infinity, height: 10 }, artifactPath: 'job/bad.png', assetId: null, sha256: null, cropRole: 'final-output' });
+    expect(PageSchema.safeParse(base).success).toBe(false);
+  });
+  it('rejects persisted crop geometry extending beyond its page', () => {
+    const plan = regionPlanProjection({ finalRegionCrops: [{
+      regionId: 'bad', bbox: { x: 590, y: 0, width: 10, height: 10 },
+      artifactPath: 'job/bad.png', assetId: null, sha256: null, cropRole: 'final-output',
+    }] });
+    expect(PageSchema.safeParse({ id: 'p', size: { width: 595, height: 842 }, meta: { pdfImportRegionOutput: { renderPlan: plan } } }).success).toBe(false);
   });
 });
 

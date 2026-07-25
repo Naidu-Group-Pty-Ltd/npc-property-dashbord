@@ -1,16 +1,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword, verifyPassword } from "../_shared/password.ts"
-import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
+import { createCorsHeaders, createSessionCookie, parseCookies } from "../_shared/auth.ts"
 
 const SESSION_HOURS = 12;
 
 function extractSessionToken(req: Request, body: any): string | null {
-  // WP-11B/C Phase 3: cookie-authoritative; legacy header/body sources emit
-  // telemetry so we can measure the residual surface before sunsetting them.
-  const cookie = req.headers.get('cookie') || '';
-  const cookieMatch = cookie.match(/(?:finance_session|__Host-finance_session)=([^;]+)/);
-  if (cookieMatch) return decodeURIComponent(cookieMatch[1]);
-
   const header = req.headers.get('x-finance-session-token') || req.headers.get('x-session-token');
   if (header) {
     console.warn('[wp11c.legacy_fallback] finance-portal-change-password using header token');
@@ -24,10 +18,14 @@ function extractSessionToken(req: Request, body: any): string | null {
     console.warn('[wp11c.legacy_fallback] finance-portal-change-password using body.session_token');
     return body.session_token;
   }
-  const legacy = cookie.match(/session_token=([^;]+)/);
-  if (legacy) {
+
+  const cookies = parseCookies(req.headers.get('cookie'));
+  const financeCookie = cookies['__Host-finance_session'] || cookies.finance_session;
+  if (financeCookie) return decodeURIComponent(financeCookie);
+
+  if (cookies.session_token) {
     console.warn('[wp11c.legacy_fallback] finance-portal-change-password using legacy session_token cookie');
-    return decodeURIComponent(legacy[1]);
+    return decodeURIComponent(cookies.session_token);
   }
   return null;
 }

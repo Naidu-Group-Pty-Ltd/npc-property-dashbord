@@ -24,7 +24,7 @@ import { compareRegion, type RegionComparisonInput, type RegionComparisonResult 
 import {
   validateStructural, type ExpectedChartRegion, type ExpectedTableRegion, type ExpectedTypographyRun, type TableRenderObservation,
 } from './structuralValidation';
-import { detectOverlaps, type OverlapCandidate } from './domEvidence';
+import { clampRectToSurface, detectOverlaps, type OverlapCandidate } from './domEvidence';
 import { scorePageMetricsV2, aggregateDocumentScore } from './scoreV2';
 import { decidePage, finalizeDocument, type PageDecisionResult } from './decisionV2';
 
@@ -141,11 +141,14 @@ export function computePageMetrics(input: PageEvaluationInputV2): PageMetricsCom
   m.browserExportParity = numOrNull(input.browserExportParity);
 
   // Overlap / off-page / contrast diagnostics from the actual evidence.
-  const candidates: OverlapCandidate[] = input.evidence.elements.map((el) => ({
-    id: el.id, regionId: el.regionId, overlayId: el.overlayId, bboxPx: el.bboxPx,
-    opacity: el.opacity, zIndex: el.zIndex, kind: el.kind, decorative: el.kind === 'page-raster',
-  }));
-  const overlaps = detectOverlaps(candidates);
+  const candidates: OverlapCandidate[] = input.evidence.elements.flatMap((el) => {
+    const bboxPx = clampRectToSurface(el.bboxPx, input.evidence.pageRectPx);
+    return bboxPx ? [{
+      id: el.id, regionId: el.regionId, overlayId: el.overlayId, bboxPx,
+      opacity: el.opacity, zIndex: el.zIndex, kind: el.kind, decorative: el.kind === 'page-raster',
+    }] : [];
+  });
+  const overlaps = detectOverlaps(candidates, { surfaceRect: input.evidence.pageRectPx });
   m.overlapScore = candidates.length === 0 ? null : round4(clamp01(1 - overlaps.length / Math.max(1, candidates.length)));
   for (const o of overlaps) {
     imageDefects.push(makeDefect({ code: o.code, ...base, scope: 'overlay', observed: o.overlapRatio, reason: `${o.code} between ${o.aId} and ${o.bId}` }));
@@ -327,4 +330,3 @@ export function runImportQualityGateV2(input: QualityGateV2Input): ImportQuality
     problems: finalize.finalizationAllowed ? [] : [finalize.reason],
   };
 }
-

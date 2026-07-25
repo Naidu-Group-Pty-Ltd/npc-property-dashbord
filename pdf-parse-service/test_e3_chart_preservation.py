@@ -146,6 +146,43 @@ def test_detection_is_deterministic():
     assert _charts(a)[0]["chart"]["detectionSignals"] == _charts(b)[0]["chart"]["detectionSignals"]
 
 
+def test_chart_detection_inputs_are_bounded_before_nested_scans(monkeypatch):
+    limit = 3
+    contains_calls = 0
+    overlap_calls = 0
+    original_contains = ssg.bbox_contains
+    original_overlaps = ssg._bbox_overlaps
+
+    def counted_contains(outer, inner):
+        nonlocal contains_calls
+        contains_calls += 1
+        return original_contains(outer, inner)
+
+    def counted_overlaps(a, b):
+        nonlocal overlap_calls
+        overlap_calls += 1
+        return original_overlaps(a, b)
+
+    monkeypatch.setattr(ssg, "MAX_REGIONS_PER_PAGE", limit)
+    monkeypatch.setattr(ssg, "bbox_contains", counted_contains)
+    monkeypatch.setattr(ssg, "_bbox_overlaps", counted_overlaps)
+    inputs = limit + 2
+    regions, problems = _build(
+        texts=[_text(str(i), 10, 10, 20, 20) for i in range(inputs)],
+        tables=[{"prov": [{"bbox": _bbox(10, 10, 20, 20)}]} for _ in range(inputs)],
+        pictures=[_picture(0, 0, 100, 100) for _ in range(inputs)],
+        vectors=[_vector(10, 10, 20, 20, 1) for _ in range(inputs)],
+    )
+
+    assert contains_calls == limit * limit
+    assert overlap_calls == limit * limit
+    assert len(regions) <= limit
+    assert set(problems) >= {
+        "texts_truncated_to_limit", "tables_truncated_to_limit",
+        "pictures_truncated_to_limit", "vectors_truncated_to_limit",
+    }
+
+
 # ── 2. Chart region contract ────────────────────────────────────────────────
 
 def test_chart_region_contract_fields():

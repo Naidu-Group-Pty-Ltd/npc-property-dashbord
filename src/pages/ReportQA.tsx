@@ -1914,6 +1914,7 @@ export default function ReportQA() {
   const clearAll = () => {
     abortActiveStream('clear-all');
     conversationLoadRequestRef.current += 1;
+    setRestoringConversationId(null);
     setUploadedReports([]);
     setMessages([]);
     setActiveConversationId(null);
@@ -1923,6 +1924,7 @@ export default function ReportQA() {
   function handleNewChat() {
     abortActiveStream('new-chat');
     conversationLoadRequestRef.current += 1;
+    setRestoringConversationId(null);
     setUploadedReports([]);
     setMessages([]);
     setActiveConversationId(null);

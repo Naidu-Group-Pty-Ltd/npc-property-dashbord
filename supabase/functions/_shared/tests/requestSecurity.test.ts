@@ -1,11 +1,33 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, getTrustedClientIp, securityJsonError, verifyRequiredCronSecret, verifyRequiredWebhookSecret, verifySignedInternal } from '../requestSecurity.ts';
+import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, enforceRawBodyLimit, getTrustedClientIp, securityJsonError, verifyRequiredCronSecret, verifyRequiredWebhookSecret, verifySignedInternal } from '../requestSecurity.ts';
 import { signInternalRequest } from '../auth_v2.ts';
+import { getClientIp } from '../publicAbuseControls.ts';
+
+Deno.test('shared request security exports human authentication for edge handlers', () => {
+  assertEquals(typeof verifyHuman, 'function');
+});
 
 Deno.test('request limits reject oversized JSON before parsing', async () => {
   const req = new Request('https://example.test', { method: 'POST', headers: { 'content-length': '1000' }, body: '{"ok":true}' });
   const result = await enforceJsonBodyLimit(req, 32);
   assert(!result.ok); assertEquals(result.error.status, 413);
+});
+
+Deno.test('raw request limits stop streaming bodies without a content length', async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) { controller.enqueue(new Uint8Array(20)); },
+    cancel() { cancelled = true; },
+  });
+  const req = new Request('https://example.test', { method: 'POST', body });
+  const result = await enforceRawBodyLimit(req, 32);
+  assert(!result.ok); assertEquals(result.error.status, 413); assert(cancelled);
+});
+
+Deno.test('raw request limits preserve accepted UTF-8 bodies for signature checks', async () => {
+  const raw = JSON.stringify({ source: 'crøn' });
+  const req = new Request('https://example.test', { method: 'POST', body: raw });
+  assertEquals(await enforceRawBodyLimit(req, 64), { ok: true, raw });
 });
 
 Deno.test('base64 limits reject malformed and decoded oversize data', () => {
@@ -19,6 +41,12 @@ Deno.test('trusted client IP ignores caller-controlled forwarded chains', () => 
   assertEquals(getTrustedClientIp(new Headers({ 'x-forwarded-for': '198.51.100.10' })), null);
   assertEquals(getTrustedClientIp(new Headers({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '1.2.3.4' })), '203.0.113.7');
   assertEquals(getTrustedClientIp(new Headers({ 'cf-connecting-ip': '203.0.113.7, 1.2.3.4' })), null);
+});
+
+Deno.test('public abuse controls use only validated trusted client IP headers', () => {
+  assertEquals(getClientIp(new Request('https://example.test', { headers: { 'x-forwarded-for': '198.51.100.10' } })), null);
+  assertEquals(getClientIp(new Request('https://example.test', { headers: { 'cf-connecting-ip': 'not-an-ip' } })), null);
+  assertEquals(getClientIp(new Request('https://example.test', { headers: { 'x-real-ip': '2001:DB8::1' } })), '2001:db8::1');
 });
 
 Deno.test('webhook and cron secrets fail closed when weak or missing', () => {
