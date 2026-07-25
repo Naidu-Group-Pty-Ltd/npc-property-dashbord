@@ -8549,6 +8549,27 @@ Deno.serve(async (req) => {
           headers: { ...cors, 'Content-Type': 'application/json' },
         });
       }
+
+      // Evaluation definitions and cross-user traces are operational audit data,
+      // not ordinary agent workspace data. Keep these actions aligned with the
+      // activity-logs route guard even when callers bypass the dashboard UI.
+      if (/^(list-evals|upsert-eval|delete-eval|run-eval|get-eval-runs|get-trace-log)$/.test(String(body.action || ''))) {
+        const auditActionPermission = String(body.action || '') === 'delete-eval'
+          ? 'can_delete'
+          : /^(upsert-eval|run-eval)$/.test(String(body.action || '')) ? 'can_edit' : 'can_view';
+        const auditPermission = await requireModulePermission(
+          sb,
+          { userId, authMethod: 'human' },
+          'activity_logs',
+          auditActionPermission,
+        );
+        if (!auditPermission.ok) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403,
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
+      }
     }
 
     switch (body.action) {

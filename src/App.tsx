@@ -379,7 +379,7 @@ const App = () => (
                 <Route path="admin/market-qa-quality" element={<ModuleGuard moduleKey="activity_logs"><MarketQAQuality /></ModuleGuard>} />
                 <Route path="admin/bc-segment-engine" element={<BcSegmentEngineAdmin />} />
                 <Route path="admin/reclassify-property" element={<ReclassifyPropertyAdmin />} />
-                <Route path="admin/agent-quality" element={<AgentQuality />} />
+                <Route path="admin/agent-quality" element={<ModuleGuard moduleKey="activity_logs"><AgentQuality /></ModuleGuard>} />
                 <Route path="admin/aml" element={<AmlLayout />}>
                   <Route index element={<AmlGuard capability="aml.view"><AmlOverview /></AmlGuard>} />
                   <Route path="intake" element={<AmlGuard capability="aml.view"><AmlIntakeQueue /></AmlGuard>} />
@@ -400,8 +400,8 @@ const App = () => (
                 </Route>
                 <Route path="admin/aml-v3-cutover" element={<AmlV3Cutover />} />
                 <Route path="admin/aml-integration-health" element={<AmlIntegrationHealth />} />
-                <Route path="agent/memories" element={<AgentMemoryManager />} />
-                <Route path="agent-insights" element={<AgentInsights />} />
+                <Route path="agent/memories" element={<ModuleGuard moduleKey="agent"><AgentMemoryManager /></ModuleGuard>} />
+                <Route path="agent-insights" element={<ModuleGuard moduleKey="agent"><AgentInsights /></ModuleGuard>} />
                 <Route path="agent/plans" element={<AgentPlans />} />
                 <Route path="agent/skills" element={<AgentSkills />} />
                 <Route path="qa/subscriptions" element={<MarketQASubscriptions />} />
