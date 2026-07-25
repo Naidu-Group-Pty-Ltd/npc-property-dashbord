@@ -13,6 +13,10 @@
  *  - `is_enabled = false` → mute that event for that user.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
+import {
+  hasFinancePortalPermission,
+  type FinancePortalPermissionAction,
+} from "./finance-portal-permissions.ts";
 
 export interface FinancePortalNotificationInput {
   client_id: string;
@@ -31,6 +35,13 @@ export interface FinancePortalNotificationInput {
   related_entity_id?: string;
   finance_file_id?: string;
   correlation_id?: string;
+  /** Restrict recipients to users with this effective module permission. */
+  required_permission?: {
+    key: string;
+    action: FinancePortalPermissionAction;
+    /** Preserve legacy modules where an absent permission entry means allowed. */
+    default_allow_when_unconfigured?: boolean;
+  };
 }
 
 /** Events that bypass quiet hours — must reach broker in real time. */
@@ -93,7 +104,7 @@ export async function notifyFinancePortalAssignees(
 
     const { data: assignments, error: aErr } = await supabase
       .from('finance_portal_client_assignments')
-      .select('finance_user_id, finance_portal_users!inner(id, is_active, revoked_at, finance_contact_id)')
+      .select('finance_user_id, permissions, finance_portal_users!inner(id, is_active, revoked_at, finance_contact_id, global_permissions)')
       .eq('client_id', input.client_id);
 
     if (aErr) return { inserted: 0, skipped: 0, error: aErr.message };
@@ -104,8 +115,20 @@ export async function notifyFinancePortalAssignees(
         portalUserId: a.finance_user_id as string,
         financeContactId: (a.finance_portal_users?.finance_contact_id ?? null) as string | null,
         active: a.finance_portal_users?.is_active && !a.finance_portal_users?.revoked_at,
+        hasRequiredPermission: !input.required_permission || hasFinancePortalPermission(
+          a.finance_portal_users?.global_permissions,
+          a.permissions,
+          input.required_permission.key,
+          input.required_permission.action,
+          input.required_permission.default_allow_when_unconfigured,
+        ),
       }))
-      .filter((r: any) => r.portalUserId && r.portalUserId !== input.exclude_portal_user_id && r.active);
+      .filter((r: any) =>
+        r.portalUserId &&
+        r.portalUserId !== input.exclude_portal_user_id &&
+        r.active &&
+        r.hasRequiredPermission
+      );
 
     if (recipients.length === 0) return { inserted: 0, skipped: 0 };
 
