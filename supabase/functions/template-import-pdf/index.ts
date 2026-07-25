@@ -1211,9 +1211,8 @@ Deno.serve(async (req) => {
 
       let authorizedPdfJobId: string | null = null;
       let pdfJobResultPayload: any = null;
-      let pdfJobAuthorized = false;
       if (pdfJobId) {
-        let pdfJobQuery = admin
+        const { data: pdfJob, error: pdfJobErr } = await admin
           .from('pdf_import_jobs')
           .select('id,result_payload,diagnostics_path,engine_version')
           .eq('id', pdfJobId)
@@ -1224,7 +1223,7 @@ Deno.serve(async (req) => {
         if (pdfJobErr) {
           logDbError('get_artifacts.pdf_import_jobs.lookup', pdfJobErr);
         } else if (pdfJob) {
-          pdfJobAuthorized = true;
+          authorizedPdfJobId = pdfJob.id;
           if (pdfJob.result_payload && typeof pdfJob.result_payload === 'object') {
             pdfJobResultPayload = pdfJob.result_payload;
           }
@@ -1247,7 +1246,6 @@ Deno.serve(async (req) => {
         ? `${authorizedPdfJobId}/pages-manifest.json`
         : null;
 
-      const authorizedPdfJobId = pdfJobAuthorized ? pdfJobId : null;
       const manifestCandidates = [
         ['per_page_docling_manifest_path', explicitPdfPageManifestPath],
         ['meta_import_manifests_summary_path', metaSummaryPdfPageManifestPath],
