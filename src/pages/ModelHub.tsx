@@ -272,7 +272,7 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
     setLoadError(null);
     try {
       const { data, error } = await withTimeout(
-        supabase.functions.invoke('manage-agent-models', { body: { action: 'list' } }),
+        invokeSecureFunction('manage-agent-models', { action: 'list' }),
       );
       if (error) throw error;
       const response = assertObjectResponse(data, 'Agent assignments');
