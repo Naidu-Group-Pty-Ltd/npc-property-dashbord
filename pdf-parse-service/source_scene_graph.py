@@ -795,6 +795,24 @@ def build_page_regions(
     page_problems: list[str] = []
     staged: list[tuple[str, dict, dict]] = []  # (type, bbox, payload)
 
+    # Provider artifacts are attacker-influenced. Bound every collection before
+    # chart detection performs per-picture scans over text and vector geometry.
+    # Keep the provider order so ordinary pages and deterministic IDs are
+    # unchanged, and surface truncation rather than silently dropping evidence.
+    bounded_inputs: dict[str, list[dict]] = {}
+    for name, items in (
+        ("texts", texts), ("tables", tables),
+        ("pictures", pictures), ("vectors", vectors),
+    ):
+        values = items or []
+        if len(values) > MAX_REGIONS_PER_PAGE:
+            page_problems.append(f"{name}_truncated_to_limit")
+        bounded_inputs[name] = values[:MAX_REGIONS_PER_PAGE]
+    texts = bounded_inputs["texts"]
+    tables = bounded_inputs["tables"]
+    pictures = bounded_inputs["pictures"]
+    vectors = bounded_inputs["vectors"]
+
     page_numeric = any(
         isinstance(t.get("text"), str) and NUMERIC_LABEL_RE.search(t["text"])
         for t in texts or []
