@@ -61,6 +61,20 @@ async function deliverCode(email: string, code: string, capability: string) {
   return { error: null };
 }
 
+async function resolveDeliveryEmail(admin: any, userId: string) {
+  const { data: customUser } = await admin
+    .from("custom_users")
+    .select("email")
+    .eq("id", userId)
+    .eq("is_active", true)
+    .maybeSingle();
+  if (customUser?.email) return customUser.email;
+
+  const { data: authUser, error: authUserError } = await admin.auth.admin.getUserById(userId);
+  if (authUserError) return null;
+  return authUser.user?.email ?? null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -112,9 +126,9 @@ Deno.serve(async (req) => {
           user_id: userId, capability, code_hash: codeHash, expires_at, ip, user_agent: ua,
         }).select("id, expires_at").single();
         if (error) return jr({ error: error.message }, 500);
-        const { data: userData, error: userError } = await admin.auth.admin.getUserById(userId);
-        if (userError || !userData.user?.email) return jr({ error: "No verified delivery address is available" }, 503);
-        const delivery = await deliverCode(userData.user.email, code, capability);
+        const recipient = await resolveDeliveryEmail(admin, userId);
+        if (!recipient) return jr({ error: "No verified delivery address is available" }, 503);
+        const delivery = await deliverCode(recipient, code, capability);
         if (delivery.error) return jr({ error: delivery.error }, 503);
         return jr({ challenge_id: data.id, expires_at: data.expires_at, delivery: "email" });
       }
