@@ -3,6 +3,8 @@
 // for the supplied property snapshot, grounded in 2025 AU market evidence.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { checkModuleView } from "../_shared/permissions.ts";
+import { consumeRateLimit, enforceJsonBodyLimit, securityJsonError } from "../_shared/requestSecurity.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 interface Snapshot {
@@ -29,6 +31,34 @@ interface Snapshot {
   passingNoi?: number | null;
   marketNoi?: number | null;
   current?: Record<string, number | string | null | undefined>;
+}
+
+const MAX_REQUEST_BYTES = 32 * 1024;
+const SNAPSHOT_KEYS = new Set([
+  'propertyId', 'dealId', 'address', 'state', 'location', 'propertyType', 'assetCategory',
+  'assetSubtype', 'gstTreatment', 'purchasePrice', 'valuation', 'gfaSqm', 'nlaSqm', 'glaSqm',
+  'siteAreaSqm', 'siteCoverPct', 'hardstandSqm', 'officePct', 'parkingBays', 'clearanceMetres',
+  'yearBuilt', 'zoning', 'walesYears', 'wale', 'passingNoi', 'marketNoi', 'actualNoi',
+  'stabilisedNoi', 'lenderAdjustedNoi', 'tenant', 'tenantQuality', 'leaseStatus', 'leaseType',
+  'leaseExpiry', 'currentRent', 'marketRent', 'vacancyAllowance', 'outgoingsRecovery',
+  'currentPriceValue', 'ownershipEntity', 'current', 'riskWarnings', 'supportingInputsUsed',
+  'missingInputs',
+]);
+
+function validSnapshotValue(value: unknown, depth = 0): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (depth >= 3) return false;
+  if (Array.isArray(value)) return value.length <= 50 && value.every((item) => validSnapshotValue(item, depth + 1));
+  if (typeof value !== 'object') return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.length <= 50 && entries.every(([key, item]) => key.length <= 64 && validSnapshotValue(item, depth + 1));
+}
+
+export function isValidSnapshot(value: unknown): value is Snapshot {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const entries = Object.entries(value as Record<string, unknown>);
+  return entries.length > 0 && entries.every(([key, item]) => SNAPSHOT_KEYS.has(key) && validSnapshotValue(item));
 }
 
 const SYSTEM_PROMPT = `You are an Australian commercial / industrial property valuer specialising in capitalisation rate benchmarking for lender-grade feasibilities.
@@ -59,17 +89,41 @@ Deno.serve(async (req) => {
   if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
 
   try {
+    const boundedBody = await enforceJsonBodyLimit<{ snapshot?: unknown; session_token?: string }>(req, MAX_REQUEST_BYTES);
+    if (!boundedBody.ok) {
+      const headers = new Headers(boundedBody.error.headers);
+      Object.entries(corsHeaders).forEach(([key, value]) => headers.set(key, value));
+      return new Response(boundedBody.error.body, { status: boundedBody.error.status, headers });
+    }
+
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const body: { snapshot?: Snapshot; session_token?: string } = await req.json();
-    const { error: authError } = await verifyAuth(supabase, req.headers, body);
+    const body = boundedBody.value;
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+    if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
+
+    const permission = await checkModuleView(supabase, userId, 'listings', authMethod);
+    if (!permission.allowed) return securityJsonError(403, 'module_permission_denied');
+    if (!isValidSnapshot(body.snapshot)) return securityJsonError(400, 'invalid_snapshot');
+
+    if (authMethod !== 'service_role') {
+      try {
+        const [userLimit, globalLimit] = await Promise.all([
+          consumeRateLimit(supabase, `caprate-estimate:user:${userId}`, 10, 3600),
+          consumeRateLimit(supabase, 'caprate-estimate:global', 250, 86400),
+        ]);
+        if (!userLimit.allowed || !globalLimit.allowed) return securityJsonError(429, 'rate_limited');
+      } catch {
+        return securityJsonError(503, 'metering_unavailable');
+      }
+    }
 
     const apiKey = Deno.env.get('LOVABLE_API_KEY');
     if (!apiKey) {
       return new Response(JSON.stringify({ success: false, error: 'LOVABLE_API_KEY not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const snap = body.snapshot ?? {};
+    const snap = body.snapshot;
     const userContext = `Estimate the capitalisation rate range for this specific property:\n\n${JSON.stringify(snap, null, 2)}\n\nReturn a single JSON object via the tool call. Be precise to this property's location, asset sub-type, covenant and grade. Do not return generic averages.`;
 
     const tools = [{

@@ -61,7 +61,7 @@ export interface UsePdfImportJobResult {
   reset: () => void;
 }
 
-const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
+const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'recoverable_failed']);
 
 export function usePdfImportJob(): UsePdfImportJobResult {
   const [jobId, setJobId] = useState<string | null>(null);

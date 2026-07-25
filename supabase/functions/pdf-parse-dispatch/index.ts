@@ -18,6 +18,7 @@ import {
   verifyAuthOrNativeUser,
   createTokenAuthCorsHeaders,
   createUnauthorizedResponse,
+  createForbiddenResponse,
 } from '../_shared/auth.ts';
 import {
   normalizePlanV2,
@@ -28,6 +29,7 @@ import {
   buildCacheContractFingerprintInput,
   PDF_CACHE_CONTRACT_VERSION,
 } from '../_shared/pdfCacheContract.pure.ts';
+import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -283,7 +285,7 @@ async function computeCacheFingerprint(
     redactionPolicyVersion: REDACTION_POLICY_VERSION,
     descriptionTier: typeof requestPayload?.description_tier === 'string'
       ? (requestPayload.description_tier as string)
-      : 'on',
+      : 'auto',
     includeMarkdown: requestPayload?.include_markdown !== false,
     includeDoctags: true,
     rasterFormat: 'png',
@@ -712,7 +714,10 @@ async function callSidecarPlan(
 }
 
 function planChunks(pageCount: number, ocrHint: boolean, preferredChunkSize?: number | null): Array<{ page_start: number; page_end: number }> {
-  if (pageCount <= 0) return [];
+  // Validate before allocating ranges: every chunk currently fetches the full
+  // source PDF, so unbounded page counts would amplify one import into many
+  // downloads and parse jobs.
+  assertPdfChunkPlanLimits(pageCount);
 
   let size = preferredChunkSize && Number.isFinite(preferredChunkSize)
     ? Math.max(1, Math.min(50, Math.floor(preferredChunkSize)))
@@ -729,6 +734,7 @@ function planChunks(pageCount: number, ocrHint: boolean, preferredChunkSize?: nu
   for (let s = 1; s <= pageCount; s += size) {
     ranges.push({ page_start: s, page_end: Math.min(pageCount, s + size - 1) });
   }
+  assertPdfChunkPlanLimits(pageCount, ranges.length);
   return ranges;
 }
 
@@ -757,7 +763,8 @@ async function dispatchChunkToSidecar(
     extractor_lane: extractorLane,
     callback_url: `${SUPABASE_URL}/functions/v1/pdf-parse-chunk-callback`,
     callback_token: PARSE_TOKEN,
-    enable_picture_description: requestPayload?.description_tier !== 'off',
+    enable_picture_description: requestPayload?.description_tier === 'on'
+      || requestPayload?.description_tier === 'premium',
     include_doctags: true,
     include_markdown: requestPayload?.include_markdown !== false,
     redact_pii: Boolean(requestPayload?.redact_pii),
@@ -945,16 +952,17 @@ async function runJob(
         requires_picture_description: plan.requires_picture_description,
       });
       await runChunkedDispatch(admin, jobId, signedUrl, effectiveMode, selectedLane, plan.page_count, plan.ocr_hint, requestPayload, selectedChunkSize);
-      await updateJob(admin, jobId, { bytes_in: bytesIn });
       chunkedRan = true;
+      await updateJob(admin, jobId, { bytes_in: bytesIn });
       return;
     }
 
     // ---- Wave F-Option-3: monolithic callback dispatch (small docs) -------
     await setStage(admin, jobId, 'parsing');
-    const descriptionTier = (requestPayload?.description_tier as string) ?? 'on';
+    const descriptionTier = (requestPayload?.description_tier as string) ?? 'auto';
     const includeMarkdown = requestPayload?.include_markdown === false ? false : true;
-    const enablePictureDescription = descriptionTier !== 'off' && (!plan || plan.requires_picture_description === true);
+    const enablePictureDescription = (descriptionTier === 'on' || descriptionTier === 'premium')
+      && (!plan || plan.requires_picture_description === true);
     const rasterDpi = (effectiveMode === 'pixel_perfect' || effectiveMode === 'pixel-perfect') ? 200 : 144;
 
     const parseBody: Record<string, unknown> = {
@@ -1028,9 +1036,8 @@ async function runJob(
       error_text: String((err as Error)?.message ?? err).slice(0, 2000),
     });
   } finally {
-    // For chunked jobs the source must outlive this invocation (chunk callbacks
-    // re-sign / re-fetch it). Cleanup is deferred until finalize, where the
-    // source is already gone from the URL-signed temporary path naturally.
+    // Chunk workers fetch the signed source after dispatch returns, so the
+    // temporary inline source must remain available for their background work.
     if (cleanup && !chunkedRan) await cleanup().catch(() => undefined);
   }
 }
@@ -1171,15 +1178,16 @@ Deno.serve(async (req) => {
         : path;
       // Scope: caller must own the underlying job (jobId is the first path segment).
       const jobId = objectPath.split('/')[0];
-      if (userId && jobId) {
-        const { data: jobRow } = await admin
-          .from('pdf_import_jobs')
-          .select('user_id')
-          .eq('id', jobId)
-          .maybeSingle();
-        if (jobRow && jobRow.user_id && jobRow.user_id !== userId) {
-          return json({ error: 'forbidden' }, 403);
-        }
+      if (!userId || !jobId) return json({ error: 'forbidden' }, 403);
+      const { data: jobRow, error: jobError } = await admin
+        .from('pdf_import_jobs')
+        .select('user_id')
+        .eq('id', jobId)
+        .maybeSingle();
+      // Fail closed: non-job prefixes (including pdf-import-sources), missing
+      // owners, and lookup failures must never reach the signed-URL minter.
+      if (jobError || !jobRow?.user_id || jobRow.user_id !== userId) {
+        return json({ error: 'forbidden' }, 403);
       }
       const { data, error } = await admin.storage
         .from(DIAGNOSTICS_BUCKET)
@@ -1219,7 +1227,7 @@ Deno.serve(async (req) => {
       // NON-redacted job (or vice versa).
       const idempotencyPolicy = [
         `redact=${Boolean(body.redact_pii) ? 1 : 0}`,
-        `desc=${typeof body.description_tier === 'string' ? body.description_tier : 'on'}`,
+        `desc=${typeof body.description_tier === 'string' ? body.description_tier : 'auto'}`,
         `md=${body.include_markdown === false ? 0 : 1}`,
         `override=${body.allow_mode_override !== false ? 1 : 0}`,
       ].join(':');
@@ -1267,7 +1275,7 @@ Deno.serve(async (req) => {
             has_source_path: Boolean(body.source_path),
             has_source_base64: Boolean(body.source_base64),
             // Phase D passthroughs (consumed by runJob).
-            description_tier: typeof body.description_tier === 'string' ? body.description_tier : 'on',
+            description_tier: typeof body.description_tier === 'string' ? body.description_tier : 'auto',
             include_markdown: body.include_markdown === false ? false : true,
             redact_pii: Boolean(body.redact_pii),
             pii_redaction_reason: typeof body.pii_redaction_reason === 'string' ? body.pii_redaction_reason.slice(0, 120) : null,
@@ -1310,6 +1318,19 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'recover') {
+      // Recovery scans and mutates stuck jobs across all tenants, so ordinary
+      // authenticated users must never reach it through this service-role client.
+      // Verified internal callers retain the cron/operator maintenance path.
+      if (auth.userId !== 'service_role') {
+        const { data: roles, error: rolesError } = await admin
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', auth.userId);
+        const isSuperadmin = !rolesError
+          && Array.isArray(roles)
+          && roles.some((row: { role?: string }) => row.role === 'superadmin');
+        if (!isSuperadmin) return createForbiddenResponse('superadmin required', cors);
+      }
       // Stuck-job recovery — re-dispatch chunks past their last_event_at
       // cutoff, mark monolithic stalls as recoverable_failed. Returns a report.
       const result = await recoverStuckJobs(admin);

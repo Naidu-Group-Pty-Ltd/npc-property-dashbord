@@ -167,7 +167,7 @@ export function LenderPacketDialog({ open, onOpenChange, fileId }: Props) {
       y += 13;
     }
 
-    return doc.output('arraybuffer') as unknown as Uint8Array;
+    return doc.output('arraybuffer');
   };
 
   const build = async (flatten: boolean = false) => {
@@ -193,7 +193,7 @@ export function LenderPacketDialog({ open, onOpenChange, fileId }: Props) {
       }
       // Cover sheet — flatten too if requested
       const coverBytes = buildCoverSheet(manifest, included);
-      let cover: Blob = new Blob([(coverBytes as Uint8Array).slice().buffer], { type: 'application/pdf' });
+      let cover: Blob = new Blob([coverBytes], { type: 'application/pdf' });
       if (flatten) {
         cover = await flattenPdfBlob(cover);
       }

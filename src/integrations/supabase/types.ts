@@ -13310,6 +13310,72 @@ export type Database = {
         }
         Relationships: []
       }
+      market_ingestion_runs: {
+        Row: {
+          completed_at: string | null
+          duration_ms: number | null
+          error_summary: string | null
+          id: string
+          items_candidate: number
+          items_classified: number
+          items_deduplicated: number
+          items_discovered: number
+          items_ignored: number
+          items_published: number
+          metadata: Json
+          requested_by: string | null
+          sources_considered: number
+          sources_failed: number
+          sources_processed: number
+          sources_succeeded: number
+          started_at: string
+          status: string
+          trigger_type: string
+        }
+        Insert: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          error_summary?: string | null
+          id?: string
+          items_candidate?: number
+          items_classified?: number
+          items_deduplicated?: number
+          items_discovered?: number
+          items_ignored?: number
+          items_published?: number
+          metadata?: Json
+          requested_by?: string | null
+          sources_considered?: number
+          sources_failed?: number
+          sources_processed?: number
+          sources_succeeded?: number
+          started_at?: string
+          status?: string
+          trigger_type: string
+        }
+        Update: {
+          completed_at?: string | null
+          duration_ms?: number | null
+          error_summary?: string | null
+          id?: string
+          items_candidate?: number
+          items_classified?: number
+          items_deduplicated?: number
+          items_discovered?: number
+          items_ignored?: number
+          items_published?: number
+          metadata?: Json
+          requested_by?: string | null
+          sources_considered?: number
+          sources_failed?: number
+          sources_processed?: number
+          sources_succeeded?: number
+          started_at?: string
+          status?: string
+          trigger_type?: string
+        }
+        Relationships: []
+      }
       market_qa_digests: {
         Row: {
           cadence: string
@@ -13520,55 +13586,181 @@ export type Database = {
         }
         Relationships: []
       }
+      market_source_fetch_runs: {
+        Row: {
+          adapter_used: string | null
+          completed_at: string | null
+          consecutive_failure_count: number
+          feed_url_used: string | null
+          http_status: number | null
+          id: string
+          ingestion_run_id: string
+          items_discovered: number
+          items_published: number
+          latency_ms: number | null
+          safe_error_message: string | null
+          source_id: string
+          started_at: string
+          status: string
+        }
+        Insert: {
+          adapter_used?: string | null
+          completed_at?: string | null
+          consecutive_failure_count?: number
+          feed_url_used?: string | null
+          http_status?: number | null
+          id?: string
+          ingestion_run_id: string
+          items_discovered?: number
+          items_published?: number
+          latency_ms?: number | null
+          safe_error_message?: string | null
+          source_id: string
+          started_at?: string
+          status: string
+        }
+        Update: {
+          adapter_used?: string | null
+          completed_at?: string | null
+          consecutive_failure_count?: number
+          feed_url_used?: string | null
+          http_status?: number | null
+          id?: string
+          ingestion_run_id?: string
+          items_discovered?: number
+          items_published?: number
+          latency_ms?: number | null
+          safe_error_message?: string | null
+          source_id?: string
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_source_fetch_runs_ingestion_run_id_fkey"
+            columns: ["ingestion_run_id"]
+            isOneToOne: false
+            referencedRelation: "market_ingestion_runs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_source_fetch_runs_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "market_sources"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       market_sources: {
         Row: {
+          adapter_config: Json
+          adapter_type: string | null
           category: string
+          consecutive_failures: number
+          copyright_mode: string | null
           created_at: string
+          default_segments: Json
           description: string | null
+          disabled_reason: string | null
           enabled: boolean
+          extraction_policy: Json
+          feed_urls: Json
           geography: string
+          health_status: string
           id: string
           last_error: string | null
           last_fetched_at: string | null
+          last_http_status: number | null
+          last_items_discovered: number
+          last_items_published: number
+          last_latency_ms: number | null
           last_success_at: string | null
+          listing_urls: Json
           name: string
+          perspective: string | null
+          primary_url: string | null
           refresh_frequency_hours: number
+          refresh_frequency_minutes: number
           reliability_tier: string
+          source_authority: string | null
+          source_key: string | null
           source_type: string
+          source_weight: number
           updated_at: string
           url: string
         }
         Insert: {
+          adapter_config?: Json
+          adapter_type?: string | null
           category: string
+          consecutive_failures?: number
+          copyright_mode?: string | null
           created_at?: string
+          default_segments?: Json
           description?: string | null
+          disabled_reason?: string | null
           enabled?: boolean
+          extraction_policy?: Json
+          feed_urls?: Json
           geography?: string
+          health_status?: string
           id?: string
           last_error?: string | null
           last_fetched_at?: string | null
+          last_http_status?: number | null
+          last_items_discovered?: number
+          last_items_published?: number
+          last_latency_ms?: number | null
           last_success_at?: string | null
+          listing_urls?: Json
           name: string
+          perspective?: string | null
+          primary_url?: string | null
           refresh_frequency_hours?: number
+          refresh_frequency_minutes?: number
           reliability_tier?: string
+          source_authority?: string | null
+          source_key?: string | null
           source_type: string
+          source_weight?: number
           updated_at?: string
           url: string
         }
         Update: {
+          adapter_config?: Json
+          adapter_type?: string | null
           category?: string
+          consecutive_failures?: number
+          copyright_mode?: string | null
           created_at?: string
+          default_segments?: Json
           description?: string | null
+          disabled_reason?: string | null
           enabled?: boolean
+          extraction_policy?: Json
+          feed_urls?: Json
           geography?: string
+          health_status?: string
           id?: string
           last_error?: string | null
           last_fetched_at?: string | null
+          last_http_status?: number | null
+          last_items_discovered?: number
+          last_items_published?: number
+          last_latency_ms?: number | null
           last_success_at?: string | null
+          listing_urls?: Json
           name?: string
+          perspective?: string | null
+          primary_url?: string | null
           refresh_frequency_hours?: number
+          refresh_frequency_minutes?: number
           reliability_tier?: string
+          source_authority?: string | null
+          source_key?: string | null
           source_type?: string
+          source_weight?: number
           updated_at?: string
           url?: string
         }
@@ -13679,13 +13871,19 @@ export type Database = {
         Row: {
           ai_summary: string | null
           audience_tags: Json
+          author: string | null
+          canonical_url: string | null
           category: string
           citation_urls: Json
+          classification_version: string | null
           confidence_score: number | null
           created_at: string
           dedupe_hash: string
+          economic_topics: Json
+          effective_date: string | null
           embedding: string | null
           embedding_generated_at: string | null
+          external_id: string | null
           failure_reason: string | null
           finance_implications: string | null
           freshness_tier: string | null
@@ -13694,8 +13892,15 @@ export type Database = {
           impact_level: string
           ingested_at: string
           key_points: Json
+          legal_status: string
+          legal_topics: Json
+          lending_criteria_tags: Json
+          model_used: string | null
+          original_url: string | null
           policy_implications: string | null
+          primary_source_urls: Json
           property_implications: string | null
+          public_excerpt: string | null
           raw_content_hash: string | null
           raw_excerpt: string | null
           relevance_score: number
@@ -13703,11 +13908,15 @@ export type Database = {
           search_tsv: unknown
           segments: Json
           slug: string | null
+          source_authority: string | null
           source_id: string | null
           source_name: string
+          source_payload_hash: string | null
+          source_perspective: string | null
           source_published_at: string | null
           source_url: string
           status: string
+          summarisation_version: string | null
           title: string
           updated_at: string
           why_it_matters: string | null
@@ -13715,13 +13924,19 @@ export type Database = {
         Insert: {
           ai_summary?: string | null
           audience_tags?: Json
+          author?: string | null
+          canonical_url?: string | null
           category: string
           citation_urls?: Json
+          classification_version?: string | null
           confidence_score?: number | null
           created_at?: string
           dedupe_hash: string
+          economic_topics?: Json
+          effective_date?: string | null
           embedding?: string | null
           embedding_generated_at?: string | null
+          external_id?: string | null
           failure_reason?: string | null
           finance_implications?: string | null
           freshness_tier?: string | null
@@ -13730,8 +13945,15 @@ export type Database = {
           impact_level?: string
           ingested_at?: string
           key_points?: Json
+          legal_status?: string
+          legal_topics?: Json
+          lending_criteria_tags?: Json
+          model_used?: string | null
+          original_url?: string | null
           policy_implications?: string | null
+          primary_source_urls?: Json
           property_implications?: string | null
+          public_excerpt?: string | null
           raw_content_hash?: string | null
           raw_excerpt?: string | null
           relevance_score?: number
@@ -13739,11 +13961,15 @@ export type Database = {
           search_tsv?: unknown
           segments?: Json
           slug?: string | null
+          source_authority?: string | null
           source_id?: string | null
           source_name: string
+          source_payload_hash?: string | null
+          source_perspective?: string | null
           source_published_at?: string | null
           source_url: string
           status?: string
+          summarisation_version?: string | null
           title: string
           updated_at?: string
           why_it_matters?: string | null
@@ -13751,13 +13977,19 @@ export type Database = {
         Update: {
           ai_summary?: string | null
           audience_tags?: Json
+          author?: string | null
+          canonical_url?: string | null
           category?: string
           citation_urls?: Json
+          classification_version?: string | null
           confidence_score?: number | null
           created_at?: string
           dedupe_hash?: string
+          economic_topics?: Json
+          effective_date?: string | null
           embedding?: string | null
           embedding_generated_at?: string | null
+          external_id?: string | null
           failure_reason?: string | null
           finance_implications?: string | null
           freshness_tier?: string | null
@@ -13766,8 +13998,15 @@ export type Database = {
           impact_level?: string
           ingested_at?: string
           key_points?: Json
+          legal_status?: string
+          legal_topics?: Json
+          lending_criteria_tags?: Json
+          model_used?: string | null
+          original_url?: string | null
           policy_implications?: string | null
+          primary_source_urls?: Json
           property_implications?: string | null
+          public_excerpt?: string | null
           raw_content_hash?: string | null
           raw_excerpt?: string | null
           relevance_score?: number
@@ -13775,11 +14014,15 @@ export type Database = {
           search_tsv?: unknown
           segments?: Json
           slug?: string | null
+          source_authority?: string | null
           source_id?: string | null
           source_name?: string
+          source_payload_hash?: string | null
+          source_perspective?: string | null
           source_published_at?: string | null
           source_url?: string
           status?: string
+          summarisation_version?: string | null
           title?: string
           updated_at?: string
           why_it_matters?: string | null
@@ -20554,6 +20797,40 @@ export type Database = {
       }
     }
     Functions: {
+      acquire_market_ingestion_run: {
+        Args: {
+          p_requested_by?: string
+          p_timeout_seconds?: number
+          p_trigger: string
+        }
+        Returns: {
+          completed_at: string | null
+          duration_ms: number | null
+          error_summary: string | null
+          id: string
+          items_candidate: number
+          items_classified: number
+          items_deduplicated: number
+          items_discovered: number
+          items_ignored: number
+          items_published: number
+          metadata: Json
+          requested_by: string | null
+          sources_considered: number
+          sources_failed: number
+          sources_processed: number
+          sources_succeeded: number
+          started_at: string
+          status: string
+          trigger_type: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "market_ingestion_runs"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       address_values_match: {
         Args: {
           a_address: string
@@ -21442,6 +21719,7 @@ export type Database = {
         | "margin_scheme"
         | "standard"
         | "input_taxed"
+        | "plus_gst"
       commercial_lease_status:
         | "occupied"
         | "vacant"
@@ -22014,6 +22292,7 @@ export const Constants = {
         "margin_scheme",
         "standard",
         "input_taxed",
+        "plus_gst",
       ],
       commercial_lease_status: [
         "occupied",

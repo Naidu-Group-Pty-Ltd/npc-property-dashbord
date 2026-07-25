@@ -6,6 +6,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { buildNoiPromptSnapshot } from "./promptSnapshot.ts";
+import { consumeRateLimit } from "../_shared/requestSecurity.ts";
+import { isRequestBody, readBoundedJson, RequestTooLargeError } from "./requestGuards.ts";
 interface Snapshot {
   propertyId?: string;
   address?: string;
@@ -131,17 +134,32 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const body: { snapshot?: Snapshot; session_token?: string } = await req.json();
-    const { error: authError } = await verifyAuth(supabase, req.headers, body);
+    const parsedBody = await readBoundedJson(req);
+    if (!isRequestBody(parsedBody)) {
+      return new Response(JSON.stringify({ success: false, error: 'Invalid request body' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    const body = parsedBody;
+    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+    // The database-backed bucket is shared across isolates, so horizontal scaling
+    // cannot bypass the paid-AI allowance. Fail closed if metering is unavailable.
+    const quota = await consumeRateLimit(supabase, `ai:noi:user:${userId}`, 10, 60);
+    if (!quota.allowed) {
+      return new Response(JSON.stringify({ success: false, error: 'Too many estimate requests. Please retry shortly.' }), {
+        status: 429,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Retry-After': String(quota.retryAfterSeconds) },
+      });
+    }
 
     const apiKey = Deno.env.get('LOVABLE_API_KEY');
     if (!apiKey) {
       return new Response(JSON.stringify({ success: false, error: 'LOVABLE_API_KEY not configured' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
-    const snap = body.snapshot ?? {};
-    const userContext = `Estimate NOI inputs for this specific property:\n\n${JSON.stringify(snap, null, 2)}\n\nReturn a single JSON object via the tool call. Be precise to this property's location, asset sub-type and area. Do not return generic averages.`;
+    const snap = (body.snapshot ?? {}) as Snapshot;
+    const promptSnapshot = buildNoiPromptSnapshot(snap);
+    const userContext = `Estimate NOI inputs for this specific property:\n\n${JSON.stringify(promptSnapshot, null, 2)}\n\nReturn a single JSON object via the tool call. Be precise to this property's location, asset sub-type and area. Do not return generic averages.`;
 
     const tools = [{
       type: 'function',
@@ -227,6 +245,12 @@ Deno.serve(async (req) => {
     return new Response(JSON.stringify({ success: true, estimate: buildStructuredNoiEstimate(snap, estimate), rawEstimate: estimate }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (err: any) {
     console.error('[estimate-commercial-noi] fatal', err);
+    if (err instanceof RequestTooLargeError) {
+      return new Response(JSON.stringify({ success: false, error: err.message }), { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    if (err?.message === 'Rate limit unavailable') {
+      return new Response(JSON.stringify({ success: false, error: 'Estimate service temporarily unavailable' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
     return new Response(JSON.stringify({ success: false, error: err?.message || 'Unknown error' }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   }
 });

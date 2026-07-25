@@ -4,6 +4,8 @@
 // cascaded into the calculator state on the client.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { consumeRateLimit, enforceJsonBodyLimit } from "../_shared/requestSecurity.ts";
+import { extractOpenAIUsage, logApiUsage } from "../_shared/logApiUsage.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 interface ChatTurn { role: 'user' | 'assistant'; content: string; }
@@ -48,6 +50,20 @@ interface RequestBody {
   session_token?: string;
 }
 
+const MAX_REQUEST_BYTES = 64 * 1024;
+const MAX_PROMPT_CHARS = 4_000;
+const MAX_HISTORY_TURNS = 8;
+const MAX_TURN_CHARS = 4_000;
+const MAX_SNAPSHOT_CHARS = 32_000;
+const AI_TIMEOUT_MS = 30_000;
+const AI_MAX_TOKENS = 1_200;
+
+const jsonError = (corsHeaders: Record<string, string>, status: number, error: string) =>
+  new Response(JSON.stringify({ success: false, error }), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  });
+
 const SYSTEM_PROMPT = `You are a senior Australian commercial / industrial property finance strategist.
 Given a client's current borrowing-capacity snapshot, propose 2 to 3 distinct, actionable scenarios that could improve their position (e.g. increase borrowing capacity, reduce risk, improve DSCR/ICR/LVR, secure a different lender policy, restructure the deal).
 
@@ -84,13 +100,35 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
-    const body: RequestBody = await req.json();
-    const { error: authError } = await verifyAuth(supabase, req.headers, body);
+    const boundedBody = await enforceJsonBodyLimit<RequestBody>(req, MAX_REQUEST_BYTES);
+    if (!boundedBody.ok) return jsonError(corsHeaders, boundedBody.error.status, boundedBody.error.status === 413 ? 'request is too large' : 'invalid JSON request');
+    const body = boundedBody.value;
+    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
 
-    const prompt = (body.prompt || '').trim();
+    const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
     if (!prompt) {
       return new Response(JSON.stringify({ success: false, error: 'prompt is required' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+    if (prompt.length > MAX_PROMPT_CHARS) return jsonError(corsHeaders, 413, 'prompt is too large');
+
+    if (body.history !== undefined && (!Array.isArray(body.history) || body.history.length > MAX_HISTORY_TURNS || body.history.some(turn =>
+      !turn || (turn.role !== 'user' && turn.role !== 'assistant') || typeof turn.content !== 'string' || turn.content.length > MAX_TURN_CHARS
+    ))) return jsonError(corsHeaders, 400, 'invalid history');
+
+    const snapshotJson = JSON.stringify(body.snapshot ?? {});
+    if (snapshotJson.length > MAX_SNAPSHOT_CHARS) return jsonError(corsHeaders, 413, 'snapshot is too large');
+
+    if (!userId) return jsonError(corsHeaders, 401, 'Authentication required');
+    try {
+      const [minuteLimit, dailyLimit] = await Promise.all([
+        consumeRateLimit(supabase, `commercial-bc-ai:user:${userId}:minute`, 10, 60),
+        consumeRateLimit(supabase, `commercial-bc-ai:user:${userId}:day`, 100, 86_400),
+      ]);
+      if (!minuteLimit.allowed || !dailyLimit.allowed) return jsonError(corsHeaders, 429, 'AI request limit reached. Please try again later.');
+    } catch (error) {
+      console.error('[commercial-bc-scenario-agent] rate limit unavailable', error);
+      return jsonError(corsHeaders, 503, 'AI request controls are temporarily unavailable.');
     }
 
     const apiKey = Deno.env.get('LOVABLE_API_KEY');
@@ -99,10 +137,10 @@ Deno.serve(async (req) => {
     }
 
     const userContext = `## Current snapshot
-${JSON.stringify(body.snapshot ?? {}, null, 2)}
+${snapshotJson}
 
 ## Conversation so far
-${(body.history ?? []).slice(-8).map(t => `${t.role}: ${t.content}`).join('\n')}
+${(body.history ?? []).map(t => `${t.role}: ${t.content}`).join('\n')}
 
 ## User request
 ${prompt}`;
@@ -138,19 +176,34 @@ ${prompt}`;
       },
     }];
 
-    const aiResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userContext },
-        ],
-        tools,
-        tool_choice: { type: 'function', function: { name: 'propose_scenarios' } },
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+    const startedAt = Date.now();
+    let aiResp: Response;
+    try {
+      aiResp = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userContext },
+          ],
+          tools,
+          tool_choice: { type: 'function', function: { name: 'propose_scenarios' } },
+          max_tokens: AI_MAX_TOKENS,
+        }),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return jsonError(corsHeaders, 504, 'AI gateway timed out. Please try again.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!aiResp.ok) {
       const txt = await aiResp.text();
@@ -160,6 +213,12 @@ ${prompt}`;
     }
 
     const aiJson = await aiResp.json();
+    const usage = extractOpenAIUsage(aiJson);
+    await logApiUsage(supabase, {
+      service_name: 'lovable-ai', endpoint: '/v1/chat/completions', model_used: 'gemini-2.5-flash',
+      ...usage, response_time_ms: Date.now() - startedAt, user_id: userId ?? undefined,
+      metadata: { function: 'commercial-bc-scenario-agent' },
+    });
     const toolCall = aiJson.choices?.[0]?.message?.tool_calls?.[0];
     let scenarios: unknown[] = [];
     let assistantText = aiJson.choices?.[0]?.message?.content || '';
