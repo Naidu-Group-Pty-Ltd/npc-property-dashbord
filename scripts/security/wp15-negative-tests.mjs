@@ -53,13 +53,24 @@ async function call(fn, headers, body) {
   return { status: res.status, bodyPreview: text.slice(0, 200) };
 }
 
-function record(id, target, input, expectedStatus, observedStatus) {
+function record(id, target, input, expectedStatus, observedStatus, expectedError, observedBody) {
   const expectedList = Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
-  const result = expectedList.includes(observedStatus) ? 'expected_denial' : 'FAIL';
+  let observedError;
+  if (expectedError) {
+    try {
+      observedError = JSON.parse(observedBody).error;
+    } catch {
+      observedError = undefined;
+    }
+  }
+  const result = expectedList.includes(observedStatus) && (!expectedError || observedError === expectedError)
+    ? 'expected_denial'
+    : 'FAIL';
   const row = {
     id, target, input,
     expected: expectedList.join('|'),
     observed: String(observedStatus),
+    ...(expectedError && { expectedError, observedError: observedError ?? 'unparseable response' }),
     result,
   };
   lines.push(JSON.stringify(row));
@@ -113,7 +124,15 @@ let ok = true;
   const r = await call('admin-user-management',
     { authorization: `Bearer ${NON_SUPERADMIN_JWT}` },
     { action: 'list_users' });
-  ok = record('NT-11', 'admin-user-management', 'authenticated non-superadmin JWT', 403, r.status) && ok;
+  ok = record(
+    'NT-11',
+    'admin-user-management',
+    'authenticated non-superadmin JWT',
+    403,
+    r.status,
+    'Unauthorized: Superadmin access required',
+    r.bodyPreview,
+  ) && ok;
 }
 
 writeFileSync(OUT, lines.join('\n') + '\n');
