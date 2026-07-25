@@ -34,17 +34,15 @@ Deno.serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
-    // ABUSE-003: throttle reset REQUESTS per source IP and per account so an
-    // attacker cannot pump unlimited OTP emails / token rotations. Limits are
-    // enforced atomically in the DB (check_and_bump_rate_limit). On limit we
-    // return the same generic success and send nothing.
+    // ABUSE-003: consume the source-IP limit before doing any account-keyed
+    // write. This ordering prevents a caller that is already IP-limited from
+    // creating persistent limiter rows with arbitrary email addresses.
     const clientIp = (req.headers.get('x-forwarded-for')?.split(',')[0]
       || req.headers.get('cf-connecting-ip') || 'unknown').trim();
-    const [{ data: ipOk }, { data: acctOk }] = await Promise.all([
-      supabase.rpc('check_and_bump_rate_limit', { p_key: `cpfp_ip:${clientIp}`, p_max: 5, p_window_seconds: 900 }),
-      supabase.rpc('check_and_bump_rate_limit', { p_key: `cpfp_email:${normalizedEmail}`, p_max: 5, p_window_seconds: 3600 }),
-    ]);
-    if (ipOk === false || acctOk === false) {
+    const { data: ipOk, error: ipLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `cpfp_ip:${clientIp}`, p_max: 5, p_window_seconds: 900,
+    });
+    if (ipLimitError || ipOk !== true) {
       console.warn('[client-portal-forgot-password] rate limited', { ip: clientIp });
       return genericSuccess();
     }
@@ -59,10 +57,16 @@ Deno.serve(async (req) => {
     // Always return success to prevent email enumeration
     if (!portalUser || portalUser.status === 'disabled') {
       console.log(`Password reset requested for unknown/disabled email: ${normalizedEmail}`)
-      return new Response(
-        JSON.stringify({ success: true, message: 'If an account exists with this email, a reset link has been sent.' }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return genericSuccess()
+    }
+
+    // Only validated, enabled accounts receive a persistent account bucket.
+    const { data: acctOk, error: acctLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `cpfp_email:${normalizedEmail}`, p_max: 5, p_window_seconds: 3600,
+    });
+    if (acctLimitError || acctOk !== true) {
+      console.warn('[client-portal-forgot-password] account rate limited', { ip: clientIp });
+      return genericSuccess();
     }
 
     // Generate reset token (6-digit OTP, crypto-random) and store only its
