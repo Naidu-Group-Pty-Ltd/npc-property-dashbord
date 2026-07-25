@@ -106,6 +106,15 @@ Deno.serve(async (req) => {
     }
 
     switch (op) {
+      case "terminology": {
+        const { data: settings, error } = await aml
+          .from("tenant_settings")
+          .select("terminology_overrides")
+          .eq("tenant_id", tenantId)
+          .maybeSingle();
+        if (error) return jr({ error: error.message }, 500);
+        return jr({ terminology_overrides: settings?.terminology_overrides ?? {} });
+      }
       case "summary": {
         const [{ data: settings }, { data: plans }, { data: providers }, { data: overrides }, { data: metrics }] = await Promise.all([
           aml.from("tenant_settings").select("*").eq("tenant_id", tenantId).maybeSingle(),
