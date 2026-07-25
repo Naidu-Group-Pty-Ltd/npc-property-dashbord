@@ -30,6 +30,10 @@ import {
   amlRiskApi, type AmlRiskAssessment, type AmlCaseCondition, type AmlDecision,
 } from "@/lib/aml/amlRiskApi";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy } from "@/lib/aml/amlFinanceApi";
+import {
+  amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
+  type AmlOwnershipSummary, type AmlProvenanceRow, type AmlQuestionnaireImportReport,
+} from "@/lib/aml/amlEntitiesApi";
 import type { AmlCase, AmlCaseEvent } from "@/lib/aml/amlCasesApi";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 
@@ -98,7 +102,7 @@ export function CaseWorkspaceTabs({ caseRow, events, canWrite, canInvestigate, o
       </TabsContent>
       {v3Case && (
         <TabsContent value="ownership" className="mt-4">
-          <OwnershipControlTab caseRow={caseRow} />
+          <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
         </TabsContent>
       )}
       {v3Case && canInvestigate && (
@@ -471,50 +475,335 @@ export function AuditTab({ events }: { events: AmlCaseEvent[] }) {
   );
 }
 
-/* -------------------- Ownership & Control (V3) -------------------- */
+/* -------------------- Ownership & Control (V3, Phase 6) -------------------- */
+
+const VERIFICATION_LABELS: Record<string, string> = {
+  unverified: "Not verified", pending: "Verification pending", verified: "Verified",
+  failed: "Verification failed", waived: "Waived",
+};
+
+const CONTROL_LABELS: Record<string, string> = {
+  shareholding: "Shareholder", trustee: "Trustee", beneficiary: "Beneficiary",
+  appointor: "Appointor", director: "Director", partner: "Partner",
+  settlor: "Settlor", other: "Other controller",
+};
+
+const ENTITY_TYPE_LABELS: Record<string, string> = {
+  company: "Company", trust: "Trust", smsf: "Self-managed super fund",
+  partnership: "Partnership", sole_trader: "Sole trader", other: "Other",
+};
 
 /**
- * Directive 3 — case-scoped ownership & control summary.
- * Shows the case subject's structure classification and a deep-link
- * to the legacy Ownership & Control (formerly Structures) page. No
- * write actions here — mutations remain on the dedicated page so
- * capability + step-up rules are enforced by that surface.
+ * Phase 6 — the case-scoped ownership & control working surface.
+ * Reads the canonical entity engine (entities / beneficial owners /
+ * authorised representatives) for the case subject, surfaces completeness
+ * warnings, and lets analysts reconcile the client's questionnaire answers
+ * into those records. Source values land in provenance — mismatches are
+ * flagged as conflicts for resolution, never overwritten.
  */
-export function OwnershipControlTab({ caseRow }: { caseRow: AmlCase }) {
-  const isEntity = caseRow.subject_type !== "individual";
+export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: AmlCase; canWrite?: boolean }) {
+  const [loading, setLoading] = useState(true);
+  const [entity, setEntity] = useState<AmlEntity | null>(null);
+  const [owners, setOwners] = useState<AmlBeneficialOwner[]>([]);
+  const [reps, setReps] = useState<AmlAuthorisedRep[]>([]);
+  const [summary, setSummary] = useState<AmlOwnershipSummary | null>(null);
+  const [provenance, setProvenance] = useState<AmlProvenanceRow[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [lastReport, setLastReport] = useState<AmlQuestionnaireImportReport | null>(null);
+
+  const load = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      const [linksRes, provRes] = await Promise.all([
+        amlEntitiesApi.listEntitiesForCase(caseRow.id),
+        amlEntitiesApi.listProvenance(caseRow.id).catch(() => ({ provenance: [] })),
+      ]);
+      setProvenance(provRes.provenance ?? []);
+      const links = linksRes.links ?? [];
+      const subject = links.find((l) => l.link_role === "subject") ?? links[0];
+      if (!subject?.entity_id) {
+        setEntity(null); setOwners([]); setReps([]); setSummary(null);
+        return;
+      }
+      const [detail, summaryRes] = await Promise.all([
+        amlEntitiesApi.getEntity(subject.entity_id),
+        amlEntitiesApi.ownershipSummary(subject.entity_id),
+      ]);
+      setEntity(detail.entity);
+      setOwners(detail.owners ?? []);
+      setReps(detail.reps ?? []);
+      setSummary(summaryRes.summary ?? null);
+    } catch {
+      // panel falls back to its empty state
+    } finally {
+      setLoading(false);
+    }
+  }, [caseRow.id]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const runImport = async () => {
+    setImporting(true);
+    try {
+      const { report } = await amlEntitiesApi.importFromQuestionnaire(caseRow.id);
+      setLastReport(report);
+      const created = report.owners_created.length + report.reps_created.length;
+      toast({
+        title: "Client answers reconciled",
+        description: `${created} part${created === 1 ? "y" : "ies"} recorded, ${report.conflicts.length} conflict${report.conflicts.length === 1 ? "" : "s"} flagged.`,
+      });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const conflicts = useMemo(
+    () => provenance.filter((p) => p.conflict_status === "conflict"),
+    [provenance],
+  );
+
+  const warnings = useMemo(() => {
+    const out: string[] = [];
+    if (!entity) return out;
+    if (summary) {
+      if (summary.total_owners === 0) {
+        out.push("No beneficial owners or controllers are recorded for this structure yet.");
+      } else {
+        if (summary.missing_ownership_percent > 0.5) {
+          out.push(`Recorded ownership covers ${summary.total_ownership_percent}% — ${summary.missing_ownership_percent.toFixed(1)}% is unaccounted for.`);
+        }
+        if (summary.ubo_count === 0) {
+          out.push("No ultimate beneficial owner (25%+ ownership or control) has been identified.");
+        }
+        if (summary.unverified_count > 0) {
+          out.push(`${summary.unverified_count} listed ${summary.unverified_count === 1 ? "person has" : "people have"} not completed identity verification.`);
+        }
+        if (summary.pep_count > 0) {
+          out.push(`${summary.pep_count} listed ${summary.pep_count === 1 ? "person is" : "people are"} politically exposed — enhanced due diligence applies.`);
+        }
+        if (summary.sanctioned_count > 0) {
+          out.push(`${summary.sanctioned_count} listed ${summary.sanctioned_count === 1 ? "person matches" : "people match"} a sanctions listing — do not proceed without a decision.`);
+        }
+      }
+    }
+    return out;
+  }, [entity, summary]);
+
+  if (loading) {
+    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  }
+
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
-          <CardTitle className="text-sm">Ownership & Control</CardTitle>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Structures — beneficial owners, controllers and authorised representatives —
-            scoped to this case subject.
-          </p>
-        </div>
-        <Button asChild size="sm" variant="outline">
-          <Link to="/admin/aml/counterparty">
-            Open Ownership & Control
-            <ExternalLink className="ml-2 h-3.5 w-3.5" />
-          </Link>
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <Row k="Subject" v={caseRow.subject_display_name} />
-        <Row k="Subject type" v={caseRow.subject_type} />
-        {!isEntity ? (
-          <div className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
-            Individual subjects do not carry beneficial ownership or trustee structures.
-            Use the Verification tab for identity evidence.
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-sm">Ownership & Control</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Beneficial owners, controllers and authorised representatives for this
+              case subject, reconciled from the client's own declarations.
+            </p>
           </div>
-        ) : (
-          <div className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
-            Manage this subject's ownership graph on the Ownership & Control page.
-            Changes there flow back to the case decision audit trail.
+          <div className="flex flex-wrap justify-end gap-2">
+            {canWrite && (
+              <Button size="sm" variant="outline" disabled={importing} onClick={runImport}>
+                {importing && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                Import client answers
+              </Button>
+            )}
+            <Button asChild size="sm" variant="ghost">
+              <Link to="/admin/aml/counterparty">
+                Full register <ExternalLink className="ml-2 h-3.5 w-3.5" />
+              </Link>
+            </Button>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {!entity ? (
+            <div className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
+              {caseRow.subject_type === "individual"
+                ? "No entity structure is recorded for this case. Individual purchasers do not carry beneficial ownership structures; related parties the client declares (gift donors, private lenders, co-purchasers) appear below after import."
+                : "No entity has been linked to this case yet. If the client has completed the entity section of their questionnaire, use “Import client answers” to create the canonical record."}
+            </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Row k="Legal name" v={entity.legal_name} />
+              <Row k="Structure" v={ENTITY_TYPE_LABELS[entity.entity_type] ?? entity.entity_type} />
+              <Row k="ABN" v={entity.abn ?? "—"} />
+              <Row k="ACN" v={entity.acn ?? "—"} />
+              <Row k="Established" v={entity.incorporation_date ? new Date(entity.incorporation_date).toLocaleDateString() : "—"} />
+              <Row k="Jurisdiction" v={entity.jurisdiction} />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {warnings.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning" /> Completeness checks
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="list-disc space-y-1 pl-4 text-xs">
+              {warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {entity && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">
+              Owners & controllers
+              {summary && summary.total_owners > 0 && (
+                <span className="ml-2 font-normal text-xs text-muted-foreground">
+                  {summary.total_ownership_percent}% of ownership recorded
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {owners.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No owners or controllers recorded yet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <caption className="sr-only">Beneficial owners and controllers for {entity.legal_name}</caption>
+                  <thead>
+                    <tr className="border-b border-border/60 text-left text-xs text-muted-foreground">
+                      <th scope="col" className="py-2 pr-3 font-medium">Name</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Role</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Ownership</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Verification</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {owners.map((o) => (
+                      <tr key={o.id} className="border-b border-border/40 last:border-0">
+                        <td className="py-2 pr-3">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>{o.full_name}</span>
+                            {o.is_ubo && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">UBO</Badge>}
+                            {o.is_pep && <Badge variant="outline" className="h-5 border-warning/50 px-1.5 text-[10px] text-warning">PEP</Badge>}
+                            {o.is_sanctioned && <Badge variant="outline" className="h-5 border-destructive/50 px-1.5 text-[10px] text-destructive">Sanctions</Badge>}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3">{CONTROL_LABELS[o.control_type] ?? o.control_type}</td>
+                        <td className="py-2 pr-3">{Number(o.ownership_percent) > 0 ? `${o.ownership_percent}%` : "—"}</td>
+                        <td className="py-2 pr-3">
+                          <Badge
+                            variant="outline"
+                            className={
+                              o.verification_state === "verified" || o.verification_state === "waived"
+                                ? "border-success/40 text-success"
+                                : o.verification_state === "failed"
+                                  ? "border-destructive/40 text-destructive"
+                                  : "border-muted-foreground/30 text-muted-foreground"
+                            }
+                          >
+                            {VERIFICATION_LABELS[o.verification_state] ?? o.verification_state}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {entity && reps.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Authorised representatives</CardTitle></CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <caption className="sr-only">Authorised representatives for {entity.legal_name}</caption>
+                <thead>
+                  <tr className="border-b border-border/60 text-left text-xs text-muted-foreground">
+                    <th scope="col" className="py-2 pr-3 font-medium">Name</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Role</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Verification</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reps.map((r) => (
+                    <tr key={r.id} className="border-b border-border/40 last:border-0">
+                      <td className="py-2 pr-3">{r.full_name}</td>
+                      <td className="py-2 pr-3">{r.role_title}</td>
+                      <td className="py-2 pr-3">
+                        <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
+                          {VERIFICATION_LABELS[r.verification_state] ?? r.verification_state}
+                        </Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {conflicts.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning" /> Source conflicts to resolve
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              The client's declared values differ from what is already on record.
+              Recorded values were kept — review each and resolve on the full register.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2 text-xs">
+              {conflicts.map((c) => (
+                <li key={c.id} className="rounded-md border border-border/60 p-2">
+                  <div className="font-medium">{c.field_key.replace(/^entity\./, "").replace(/_/g, " ")}</div>
+                  <div className="text-muted-foreground">
+                    Client declared: {typeof c.value === "object" && c.value !== null && "v" in c.value
+                      ? String((c.value as any).v)
+                      : String(c.value ?? "—")}
+                    {" · "}{new Date(c.submitted_at).toLocaleDateString()}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {lastReport && lastReport.parties_needing_review.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Declared parties needing manual handling</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="space-y-1 text-xs">
+              {lastReport.parties_needing_review.map((p, i) => (
+                <li key={i}>
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-muted-foreground"> — {p.role}. {
+                    p.reason === "no_entity_structure_on_case"
+                      ? "This case has no entity structure; record them via the Requests or Verification workflow."
+                      : "This role is recorded as source information only; add them to the register manually if they hold ownership or control."
+                  }</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+    </div>
   );
 }
 

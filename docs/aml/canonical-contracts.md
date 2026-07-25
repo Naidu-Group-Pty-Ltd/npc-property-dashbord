@@ -140,3 +140,37 @@ existing 409 contract.
   construction; `reviewer_notes` absent from the portal payload.
 - Regression commands per the directive §0.10 — results recorded in the phase
   gate evidence (PR).
+
+## 8. Questionnaire → canonical party reconciliation (Phase 6)
+
+`aml-entities` op `import_from_questionnaire` (write roles only) reconciles a
+case's submitted `purchasing_structure`, `entity_details` and
+`related_parties` answers into the existing entity engine. Rules:
+
+- **Entity resolution order**: existing case `subject` link → ABN/ACN match →
+  create (only for Company / Trust / SMSF / Partnership structures with a
+  declared legal name). ABN vs ACN is decided by digit count (11 vs 9).
+- **No silent overwrite**: on an existing entity, declared registration
+  fields (`legal_name`, `abn`, `acn`, `incorporation_date`) only fill columns
+  that are currently empty. A mismatch is reported and recorded in
+  `aml.field_provenance` with `conflict_status='conflict'` — the recorded
+  value is never replaced by the import.
+- **Party mapping**: Beneficial owner / Beneficiary / Trustee / Director →
+  `aml.beneficial_owners` (control type mapped; UBO set for declared
+  beneficial owners or a parsed ownership ≥ 25%); Authorised representative →
+  `aml.authorised_representatives`. Dedupe by case-insensitive full name;
+  existing rows are left untouched (DOB mismatches are flagged as conflicts).
+  Roles with no canonical home (co-purchaser, donor, private lender, other) —
+  and every party on a case with no entity structure — are preserved in
+  provenance and returned as `parties_needing_review`.
+- **Provenance**: every material declared value lands in
+  `aml.field_provenance` (`source_type='client_portal'`, source record id =
+  the questionnaire response row). Idempotent per (source record, field key):
+  re-imports add rows only for new or changed sources.
+- **Audit**: each import appends a hash-chained `aml.case_events` entry with
+  the reconciliation counts.
+- **Reads**: `list_provenance` (any AML role, case-scoped) powers the
+  workspace conflicts panel. Ownership internals are never exposed to the
+  Client Portal or Finance Portal — `aml-client-portal` and the finance-safe
+  `limited_status` contract have no path to these tables (enforced by the
+  Phase 6 contract tests).

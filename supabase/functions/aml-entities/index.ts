@@ -276,6 +276,298 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── QUESTIONNAIRE RECONCILIATION (V2 directive Phase 6) ──
+    // Imports the client's submitted entity_details + related_parties answers
+    // into the canonical entity/owner/rep records. Append-first: source values
+    // are always recorded in aml.field_provenance; canonical columns are only
+    // filled when currently empty, and any mismatch is flagged as a conflict
+    // for an analyst to resolve — never silently overwritten.
+    if (op === "import_from_questionnaire") {
+      requireWrite();
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+
+      const { data: caseRow, error: caseErr } = await aml.from("cases")
+        .select("id, client_id, subject_display_name, subject_type").eq("id", caseId).maybeSingle();
+      if (caseErr) return jr({ error: caseErr.message }, 400);
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+
+      const { data: responses, error: respErr } = await aml.from("questionnaire_responses")
+        .select("id, section, payload, status, updated_at").eq("case_id", caseId)
+        .in("section", ["purchasing_structure", "entity_details", "related_parties"]);
+      if (respErr) return jr({ error: respErr.message }, 400);
+      const bySection = new Map((responses ?? []).map((r: any) => [r.section, r]));
+      const structResp = bySection.get("purchasing_structure");
+      const entityResp = bySection.get("entity_details");
+      const partiesResp = bySection.get("related_parties");
+
+      const structureType = String(structResp?.payload?.entity_type ?? "");
+      const ENTITY_TYPE_MAP: Record<string, string> = {
+        Company: "company", Trust: "trust", SMSF: "smsf", Partnership: "partnership",
+      };
+      const entityType = ENTITY_TYPE_MAP[structureType] ?? null;
+      const ep = (entityResp?.payload ?? {}) as Record<string, unknown>;
+      const sp = (structResp?.payload ?? {}) as Record<string, unknown>;
+      const declaredName = String(ep.entity_name ?? sp.entity_name ?? "").trim();
+      const abnAcnDigits = String(ep.abn_acn ?? sp.abn_acn ?? "").replace(/\D/g, "");
+      const declaredAbn = abnAcnDigits.length === 11 ? abnAcnDigits : null;
+      const declaredAcn = abnAcnDigits.length === 9 ? abnAcnDigits : null;
+      const deedDate = String(ep.deed_date ?? "").trim() || null;
+
+      // Provenance idempotency: one row per (source response, field) — repeat
+      // imports after new portal saves add rows only for changed sources.
+      const sourceIds = (responses ?? []).map((r: any) => String(r.id));
+      const { data: priorProv } = sourceIds.length
+        ? await aml.from("field_provenance")
+          .select("field_key, source_record_id, value").eq("case_id", caseId)
+          .in("source_record_id", sourceIds)
+        : { data: [] as any[] };
+      const provSeen = new Set((priorProv ?? []).map((p: any) => `${p.source_record_id}:${p.field_key}`));
+      const provRows: any[] = [];
+      const recordProv = (row: {
+        field_key: string; value: unknown; source_record_id: string;
+        entity_id?: string | null; party_id?: string | null; conflict?: boolean;
+      }) => {
+        if (provSeen.has(`${row.source_record_id}:${row.field_key}`)) return;
+        provSeen.add(`${row.source_record_id}:${row.field_key}`);
+        provRows.push({
+          case_id: caseId, entity_id: row.entity_id ?? null, party_id: row.party_id ?? null,
+          field_key: row.field_key, value: row.value == null ? null : { v: row.value },
+          source_type: "client_portal", source_record_id: row.source_record_id,
+          source_portal: "client_portal", submitted_by: caseRow.client_id ?? null,
+          conflict_status: row.conflict ? "conflict" : "none",
+        });
+      };
+
+      const report = {
+        entity_id: null as string | null,
+        entity_created: false,
+        entity_fields_filled: [] as string[],
+        conflicts: [] as Array<{ scope: string; field: string; recorded: unknown; submitted: unknown }>,
+        owners_created: [] as string[],
+        reps_created: [] as string[],
+        parties_already_recorded: [] as string[],
+        parties_needing_review: [] as Array<{ name: string; role: string; reason: string }>,
+        provenance_rows_added: 0,
+      };
+
+      // 1) Resolve the canonical entity: existing subject link first, then an
+      //    ABN/ACN match, then create — but only for entity-type structures.
+      let entity: any = null;
+      const { data: links } = await aml.from("entity_case_links")
+        .select("id, entity_id, link_role, entity:entities(*)").eq("case_id", caseId);
+      const subjectLink = (links ?? []).find((l: any) => l.link_role === "subject") ?? (links ?? [])[0];
+      if (subjectLink?.entity) entity = subjectLink.entity;
+      if (!entity && (declaredAbn || declaredAcn)) {
+        const { data: matched } = await aml.from("entities").select("*")
+          .or([declaredAbn ? `abn.eq.${declaredAbn}` : null, declaredAcn ? `acn.eq.${declaredAcn}` : null]
+            .filter(Boolean).join(","))
+          .limit(1).maybeSingle();
+        if (matched) entity = matched;
+      }
+      if (!entity && entityType && declaredName) {
+        const { data: created, error: createErr } = await aml.from("entities").insert({
+          entity_type: entityType, legal_name: declaredName,
+          abn: declaredAbn, acn: declaredAcn,
+          incorporation_date: deedDate,
+          registered_address: ep.registered_address ? { source_text: String(ep.registered_address) } : {},
+          metadata: {
+            questionnaire_import: {
+              structure_type: structureType,
+              registration_place: ep.registration_place ?? null,
+              business_nature: ep.business_nature ?? null,
+              trustee_type: ep.trustee_type ?? null,
+              corporate_trustee: ep.corporate_trustee ?? null,
+              appointor: ep.appointor ?? null,
+              lrba: ep.lrba ?? null,
+            },
+          },
+          created_by: userId,
+        }).select("*").maybeSingle();
+        if (createErr) return jr({ error: createErr.message }, 400);
+        entity = created;
+        report.entity_created = true;
+      }
+
+      // 2) Reconcile declared registration fields against an existing entity:
+      //    fill blanks, flag mismatches, touch nothing that already disagrees.
+      if (entity && !report.entity_created) {
+        const norm = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+        const fieldChecks: Array<{ field: string; submitted: string | null; recorded: unknown }> = [
+          { field: "legal_name", submitted: declaredName || null, recorded: entity.legal_name },
+          { field: "abn", submitted: declaredAbn, recorded: entity.abn },
+          { field: "acn", submitted: declaredAcn, recorded: entity.acn },
+          { field: "incorporation_date", submitted: deedDate, recorded: entity.incorporation_date },
+        ];
+        const patch: Record<string, unknown> = {};
+        for (const c of fieldChecks) {
+          if (!c.submitted) continue;
+          if (c.recorded == null || String(c.recorded).trim() === "") {
+            patch[c.field] = c.submitted;
+            report.entity_fields_filled.push(c.field);
+          } else if (norm(c.recorded) !== norm(c.submitted)) {
+            report.conflicts.push({ scope: "entity", field: c.field, recorded: c.recorded, submitted: c.submitted });
+          }
+        }
+        if (Object.keys(patch).length > 0) {
+          const { error: patchErr } = await aml.from("entities").update(patch).eq("id", entity.id);
+          if (patchErr) return jr({ error: patchErr.message }, 400);
+          entity = { ...entity, ...patch };
+        }
+      }
+      report.entity_id = entity?.id ?? null;
+
+      const entitySourceId = String(entityResp?.id ?? structResp?.id ?? "");
+      if (entity && entitySourceId) {
+        for (const [key, val] of Object.entries({
+          "entity.legal_name": declaredName || null,
+          "entity.abn_acn": abnAcnDigits || null,
+          "entity.registered_address": ep.registered_address ?? null,
+          "entity.registration_place": ep.registration_place ?? null,
+          "entity.deed_date": deedDate,
+          "entity.trustee_type": ep.trustee_type ?? null,
+          "entity.corporate_trustee": ep.corporate_trustee ?? null,
+          "entity.appointor": ep.appointor ?? null,
+          "entity.lrba": ep.lrba ?? null,
+        })) {
+          if (val == null || val === "") continue;
+          recordProv({
+            field_key: key, value: val, source_record_id: entitySourceId, entity_id: entity.id,
+            conflict: report.conflicts.some((c) => `entity.${c.field}` === key
+              || (key === "entity.abn_acn" && (c.field === "abn" || c.field === "acn"))),
+          });
+        }
+      }
+
+      // 3) Ensure the entity is linked to this case as its subject.
+      if (entity && !(links ?? []).some((l: any) => l.entity_id === entity.id)) {
+        await aml.from("entity_case_links").upsert(
+          { case_id: caseId, entity_id: entity.id, link_role: "subject", created_by: userId },
+          { onConflict: "case_id,entity_id,link_role" },
+        );
+      }
+
+      // 4) Related parties → beneficial owners / authorised representatives.
+      //    Ownership/control roles become canonical rows on the entity; roles
+      //    with no canonical home here (co-purchasers, donors, lenders) are
+      //    preserved in provenance and flagged for analyst review.
+      const OWNER_ROLE_MAP: Record<string, { control_type: string; is_ubo: boolean }> = {
+        "Beneficial owner": { control_type: "shareholding", is_ubo: true },
+        "Beneficiary": { control_type: "beneficiary", is_ubo: false },
+        "Trustee": { control_type: "trustee", is_ubo: false },
+        "Director": { control_type: "director", is_ubo: false },
+      };
+      const parties = Array.isArray(partiesResp?.payload?.parties) ? partiesResp.payload.parties : [];
+      const partySourceId = String(partiesResp?.id ?? "");
+      const { data: existingOwners } = entity
+        ? await aml.from("beneficial_owners").select("id, full_name, date_of_birth").eq("entity_id", entity.id)
+        : { data: [] as any[] };
+      const { data: existingReps } = entity
+        ? await aml.from("authorised_representatives").select("id, full_name").eq("entity_id", entity.id)
+        : { data: [] as any[] };
+      const ownerByName = new Map((existingOwners ?? []).map((o: any) => [String(o.full_name).trim().toLowerCase(), o]));
+      const repByName = new Map((existingReps ?? []).map((r: any) => [String(r.full_name).trim().toLowerCase(), r]));
+
+      for (let i = 0; i < parties.length; i++) {
+        const p = parties[i] ?? {};
+        const name = String(p.full_name ?? "").trim();
+        const role = String(p.role ?? "").trim();
+        if (!name) continue;
+        const nameKey = name.toLowerCase();
+        const pctMatch = String(p.relationship ?? "").match(/(\d+(?:\.\d+)?)\s*%/);
+        const provKey = `related_party.${i}`;
+        let partyId: string | null = null;
+
+        if (entity && OWNER_ROLE_MAP[role]) {
+          const existing = ownerByName.get(nameKey);
+          if (existing) {
+            partyId = existing.id;
+            report.parties_already_recorded.push(name);
+            if (p.dob && existing.date_of_birth && String(existing.date_of_birth) !== String(p.dob)) {
+              report.conflicts.push({ scope: `owner:${name}`, field: "date_of_birth", recorded: existing.date_of_birth, submitted: p.dob });
+            }
+          } else {
+            const { data: owner, error: ownerErr } = await aml.from("beneficial_owners").insert({
+              entity_id: entity.id, full_name: name,
+              date_of_birth: p.dob || null,
+              ownership_percent: pctMatch ? Number(pctMatch[1]) : 0,
+              control_type: OWNER_ROLE_MAP[role].control_type,
+              is_ubo: OWNER_ROLE_MAP[role].is_ubo || (pctMatch ? Number(pctMatch[1]) >= 25 : false),
+              notes: p.relationship ? `Client-declared: ${p.relationship}` : null,
+              metadata: { questionnaire_import: { role, email: p.email ?? null } },
+              created_by: userId,
+            }).select("id").maybeSingle();
+            if (ownerErr) return jr({ error: ownerErr.message }, 400);
+            partyId = owner?.id ?? null;
+            ownerByName.set(nameKey, { id: partyId, full_name: name, date_of_birth: p.dob || null });
+            report.owners_created.push(name);
+          }
+        } else if (entity && role === "Authorised representative") {
+          const existing = repByName.get(nameKey);
+          if (existing) {
+            partyId = existing.id;
+            report.parties_already_recorded.push(name);
+          } else {
+            const { data: rep, error: repErr } = await aml.from("authorised_representatives").insert({
+              entity_id: entity.id, full_name: name, role_title: "Authorised representative",
+              metadata: { questionnaire_import: { email: p.email ?? null, relationship: p.relationship ?? null } },
+              created_by: userId,
+            }).select("id").maybeSingle();
+            if (repErr) return jr({ error: repErr.message }, 400);
+            partyId = rep?.id ?? null;
+            repByName.set(nameKey, { id: partyId, full_name: name });
+            report.reps_created.push(name);
+          }
+        } else {
+          report.parties_needing_review.push({
+            name, role: role || "Unspecified",
+            reason: entity ? "role_has_no_canonical_owner_record" : "no_entity_structure_on_case",
+          });
+        }
+
+        if (partySourceId) {
+          recordProv({
+            field_key: provKey, source_record_id: partySourceId,
+            entity_id: entity?.id ?? null, party_id: partyId,
+            value: { role, full_name: name, dob: p.dob ?? null, email: p.email ?? null, relationship: p.relationship ?? null },
+          });
+        }
+      }
+
+      if (provRows.length > 0) {
+        const { error: provErr } = await aml.from("field_provenance").insert(provRows);
+        if (provErr) return jr({ error: provErr.message }, 400);
+        report.provenance_rows_added = provRows.length;
+      }
+
+      await appendCaseEvent(admin, caseId, "system",
+        "Client questionnaire reconciled into ownership records",
+        {
+          entity_id: report.entity_id, entity_created: report.entity_created,
+          entity_fields_filled: report.entity_fields_filled,
+          owners_created: report.owners_created.length,
+          reps_created: report.reps_created.length,
+          conflicts: report.conflicts.length,
+          parties_needing_review: report.parties_needing_review.length,
+          provenance_rows_added: report.provenance_rows_added,
+        }, userId, userLabel);
+
+      return jr({ report });
+    }
+
+    // Case-scoped provenance read for the Command Centre workspace (any AML
+    // role). Never exposed to the client or finance portals — this function
+    // is not reachable from those surfaces.
+    if (op === "list_provenance") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const { data, error } = await aml.from("field_provenance")
+        .select("id, entity_id, party_id, field_key, value, source_type, source_record_id, submitted_at, conflict_status, verification_status, is_canonical, resolution_reason")
+        .eq("case_id", caseId).order("submitted_at", { ascending: false }).limit(500);
+      if (error) return jr({ error: error.message }, 400);
+      return jr({ provenance: data ?? [] });
+    }
+
     return jr({ error: `Unknown op: ${op}` }, 400);
   } catch (e: any) {
     if (e instanceof Response) return e;

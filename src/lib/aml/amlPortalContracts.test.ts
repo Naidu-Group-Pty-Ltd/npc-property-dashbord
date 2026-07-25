@@ -217,6 +217,62 @@ describe("conditional questionnaire engine (Phase 5, §14.2–14.4)", () => {
   });
 });
 
+describe("questionnaire reconciliation into canonical parties (Phase 6)", () => {
+  const entitiesSource = readFileSync(
+    join(repo, "supabase/functions/aml-entities/index.ts"), "utf8");
+  const importStart = entitiesSource.indexOf('op === "import_from_questionnaire"');
+  const importEnd = entitiesSource.indexOf('op === "list_provenance"');
+  const importBranch = importStart >= 0 && importEnd > importStart
+    ? entitiesSource.slice(importStart, importEnd)
+    : undefined;
+
+  it("exists and requires a write role", () => {
+    expect(importBranch).toBeDefined();
+    expect(importBranch).toContain("requireWrite();");
+  });
+
+  it("never silently overwrites recorded values — blanks fill, mismatches conflict", () => {
+    // Fill is gated on the recorded value being empty…
+    expect(importBranch).toContain('if (c.recorded == null || String(c.recorded).trim() === "")');
+    // …and a disagreement becomes a flagged conflict, not an update.
+    expect(importBranch).toContain("report.conflicts.push");
+    expect(importBranch).not.toContain("upsert(row)");
+  });
+
+  it("records every source value in field_provenance with client-portal attribution", () => {
+    expect(importBranch).toContain('from("field_provenance").insert(');
+    expect(importBranch).toContain('source_type: "client_portal"');
+    expect(importBranch).toContain('conflict_status: row.conflict ? "conflict" : "none"');
+  });
+
+  it("is idempotent per source response and field", () => {
+    expect(importBranch).toContain("provSeen");
+    expect(importBranch).toContain("if (provSeen.has(");
+  });
+
+  it("preserves non-canonical parties for review instead of dropping them", () => {
+    expect(importBranch).toContain("parties_needing_review");
+    expect(importBranch).toContain("no_entity_structure_on_case");
+  });
+
+  it("appends a hash-chained audit event describing the reconciliation", () => {
+    expect(importBranch).toContain("appendCaseEvent(");
+    expect(importBranch).toContain("Client questionnaire reconciled into ownership records");
+  });
+
+  it("scopes provenance reads to a single case", () => {
+    const provBranch = entitiesSource.slice(importEnd);
+    expect(provBranch).toContain('.eq("case_id", caseId)');
+    expect(provBranch).not.toContain(".insert(");
+  });
+
+  it("keeps ownership internals out of the client portal entirely", () => {
+    expect(portalSource).not.toContain("beneficial_owners");
+    expect(portalSource).not.toContain("field_provenance");
+    expect(portalSource).not.toContain("authorised_representatives");
+  });
+});
+
 describe("workflow-dimension migration invariants", () => {
   it("enforces one open case per client with a partial unique index", () => {
     expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");

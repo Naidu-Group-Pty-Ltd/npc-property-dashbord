@@ -31,6 +31,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
+import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
 import {
   CASE_STAGE_LABELS, caseStage, clientPortalStatus, CLIENT_PORTAL_STATUS_LABELS,
   serviceGateStatus, progressRail, type ProgressRailState,
@@ -353,7 +354,7 @@ export default function AmlCaseWorkspace() {
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
             </div>
           )}
-          {section === "ownership" && <OwnershipControlTab caseRow={caseRow} />}
+          {section === "ownership" && <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />}
           {section === "finance" && canInvestigate && <FundingFinanceTab caseId={caseRow.id} />}
           {section === "documents" && (
             <DocumentsEvidenceSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
@@ -519,6 +520,10 @@ function DocumentsEvidenceSection({
   const [requirements, setRequirements] = useState<any[] | null>(null);
   const [documents, setDocuments] = useState<any[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [dupScan, setDupScan] = useState<{
+    duplicates: Array<{ reference_id: string; reference_type: string; label: string; case_count: number; client_count: number }>;
+    discrepancies_created: number;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     const [reqs, docs] = await Promise.all([
@@ -566,6 +571,24 @@ function DocumentsEvidenceSection({
       onChanged();
     } catch (e: any) {
       toast({ title: "Could not add requirements", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const scanDuplicates = async () => {
+    setBusy("dup-scan");
+    try {
+      const res = await amlFinanceApi.duplicateDocumentRefs(caseId);
+      setDupScan(res);
+      if (res.discrepancies_created > 0) onChanged();
+      toast({
+        title: res.duplicates.length === 0
+          ? "No reused documents found"
+          : `${res.duplicates.length} reused document reference${res.duplicates.length === 1 ? "" : "s"} found`,
+      });
+    } catch (e: any) {
+      toast({ title: "Scan failed", description: e.message, variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -653,6 +676,55 @@ function DocumentsEvidenceSection({
           )}
         </CardContent>
       </Card>
+
+      {canWrite && (
+        <Card>
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-sm">Reused-document check</CardTitle>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Scans evidence references for documents that also appear on other
+                  clients' cases. Confirmed reuse is recorded as a discrepancy on every
+                  affected case.
+                </p>
+              </div>
+              <Button size="sm" variant="outline" disabled={busy === "dup-scan"} onClick={scanDuplicates}>
+                {busy === "dup-scan" && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                Run scan
+              </Button>
+            </div>
+          </CardHeader>
+          {dupScan && (
+            <CardContent>
+              {dupScan.duplicates.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No document references on this case are shared with other clients.
+                </p>
+              ) : (
+                <ul className="space-y-2 text-sm">
+                  {dupScan.duplicates.map((d) => (
+                    <li key={`${d.reference_type}:${d.reference_id}`} className="rounded-md border border-warning/40 p-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+                        <span className="min-w-0 truncate">{d.label || d.reference_id}</span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Appears on {d.case_count} cases across {d.client_count} different clients.
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {dupScan.discrepancies_created > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {dupScan.discrepancies_created} discrepanc{dupScan.discrepancies_created === 1 ? "y" : "ies"} recorded for follow-up.
+                </p>
+              )}
+            </CardContent>
+          )}
+        </Card>
+      )}
     </div>
   );
 }
