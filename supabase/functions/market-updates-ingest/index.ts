@@ -4,7 +4,9 @@
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifySupabaseJWT } from "../_shared/jwt.ts";
+import { verifyAuth } from "../_shared/auth.ts";
+import { requireModulePermission } from "../_shared/authz.ts";
+import { verifyRequiredCronSecret, securityJsonError } from "../_shared/requestSecurity.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -214,42 +216,32 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const secret = Deno.env.get("MARKET_INGESTION_CRON_SECRET");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const auth = req.headers.get("authorization") ?? "";
   const bearer = auth.replace(/^Bearer\s+/i, "").trim();
   const apikey = req.headers.get("apikey") ?? "";
-  const publishableKey = Deno.env.get("SUPABASE_PUBLISHABLE_DEFAULT_KEY") ?? "";
-  let authorised =
-    (secret && req.headers.get("x-cron-secret") === secret) ||
-    (serviceRoleKey && ((bearer && bearer === serviceRoleKey) || (apikey && apikey === serviceRoleKey))) ||
-    (anonKey && bearer && bearer === anonKey) ||
-    (publishableKey && bearer && bearer === publishableKey) ||
-    (anonKey && apikey && apikey === anonKey) ||
-    (publishableKey && apikey && apikey === publishableKey);
-
-  // Fallback: accept a bearer/apikey JWT only after cryptographic signature
-  // verification against the project secret. Decoded-but-unverified claims
-  // are forgeable and must never authorise a request.
-  const isVerifiedSupabaseJwt = async (tok: string): Promise<boolean> => {
-    if (!tok.includes(".")) return false;
-    const payload = await verifySupabaseJWT(tok);
-    return typeof payload?.role === "string" && ["anon", "authenticated", "service_role"].includes(payload.role);
-  };
-  if (!authorised && bearer && (await isVerifiedSupabaseJwt(bearer))) authorised = true;
-  if (!authorised && apikey && (await isVerifiedSupabaseJwt(apikey))) authorised = true;
-
-  console.log("[auth]", {
-    hasAuth: Boolean(auth),
-    hasApikey: Boolean(apikey),
-    hasCronSecret: Boolean(req.headers.get("x-cron-secret")),
-    authorised,
-  });
-  if (!authorised) return json({ error: "Unauthorised market ingestion request." }, 401);
+  const automated =
+    verifyRequiredCronSecret(secret, req.headers.get("x-cron-secret")) ||
+    Boolean(serviceRoleKey && (bearer === serviceRoleKey || apikey === serviceRoleKey));
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  if (!automated) {
+    let bodyPreview: any = {};
+    try { bodyPreview = await req.clone().json(); } catch {}
+    const verified = await verifyAuth(sb, req.headers, bodyPreview);
+    if (verified.error || !verified.userId) return securityJsonError(401, "unauthorized");
+    const permission = await requireModulePermission(
+      sb,
+      { userId: verified.userId, authMethod: verified.authMethod },
+      "market_updates",
+      "can_edit",
+    );
+    if (!permission.ok) return securityJsonError(403, "market_ingest_admin_required");
+  }
+
   const { force = false, sourceIds = null } =
     await req.json().catch(() => ({} as any));
 
