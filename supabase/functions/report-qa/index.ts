@@ -2991,6 +2991,20 @@ Be thorough and include ALL specific numbers, percentages, and data points menti
         updateData.client_id = clientId || null;
       }
 
+      const reportSetChanged = reportNames !== undefined || reportContents !== undefined;
+      if (reportSetChanged) {
+        // Chunks and the structural summary are derived from the complete report
+        // set. Remove the chunks before publishing the new set, then clear the
+        // summary in the same update so removed report data cannot remain in RAG.
+        const { error: chunkDeleteError } = await supabase
+          .from("document_chunks")
+          .delete()
+          .eq("conversation_id", conversationId);
+
+        if (chunkDeleteError) throw chunkDeleteError;
+        updateData.structured_report = null;
+      }
+
       updateData.updated_at = new Date().toISOString();
 
 
