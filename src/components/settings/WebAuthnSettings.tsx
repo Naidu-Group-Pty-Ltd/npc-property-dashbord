@@ -42,11 +42,11 @@ export function WebAuthnSettings({ disabled }: { disabled?: boolean }) {
   const doEnroll = async () => {
     setBusy(true); setError(null); setStatus(null);
     const proof = creds.length > 0 ? await requestStepUpWithWebAuthn('mfa.manage', password) : null;
-    if (proof && !proof.ok) {
+    if (proof && proof.ok === false) {
       setBusy(false);
       return setError(proof.error);
     }
-    const r = await enrollWebAuthn(password, deviceName.trim() || undefined, proof?.token);
+    const r = await enrollWebAuthn(password, deviceName.trim() || undefined, proof && proof.ok ? proof.token : undefined);
     setBusy(false);
     if (!r.ok) return setError(r.error);
     setPassword(''); setDeviceName(''); setShowEnroll(false);
