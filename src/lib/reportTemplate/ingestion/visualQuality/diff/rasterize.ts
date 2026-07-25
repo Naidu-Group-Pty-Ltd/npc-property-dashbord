@@ -1,9 +1,8 @@
 /**
  * Phase 4 — Visual diff harness: source rasterisation.
  *
- * Lazy-loads PDF.js from a CDN (no top-level import so the cost is paid only
- * on actual diff runs, and the rest of the visual-quality module avoids a
- * bundled pdfjs-dist dependency). Returns one `ImageData` per page,
+ * Lazy-loads the build-pinned PDF.js dependency (so the cost is paid only on
+ * actual diff runs). Returns one `ImageData` per page,
  * rendered at the requested DPI.
  *
  * Renderers that already produced their own raster (e.g. server-side
@@ -12,6 +11,7 @@
  * screen canvas, keeping the diff path uniform.
  */
 import { emptyImageData } from './imageMetrics';
+import { loadPdfjs } from '@/lib/pdf/pdfjs';
 
 export interface RasterisedPage {
   pageNumber: number;
@@ -55,7 +55,7 @@ function makeCanvas(width: number, height: number): {
 
 /**
  * Rasterise every requested PDF page into `ImageData`. Lazy-imports
- * PDF.js so the module remains importable without a bundled dependency. If
+ * PDF.js so the module remains cheap to import. If
  * the import fails we return an empty array so the orchestrator can fall back
  * to caller-supplied rasters / skip pixel metrics gracefully.
  */
@@ -67,16 +67,11 @@ export async function rasterizePdfPages(
   const maxPixelDim = Math.max(256, opts.maxPixelDim ?? 1024);
   const scale = dpi / 72;
 
-  const PDFJS_VERSION = '4.4.168';
-  const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
-
-  type PdfJsModule = { getDocument: (source: unknown) => { promise: Promise<any> } };
-
-  let pdfjs: PdfJsModule | null = null;
+  let pdfjs: Awaited<ReturnType<typeof loadPdfjs>> | null = null;
   try {
-    pdfjs = await import(/* @vite-ignore */ `${PDFJS_CDN_BASE}/pdf.min.mjs`) as PdfJsModule;
+    pdfjs = await loadPdfjs();
   } catch {
-    return []; // CDN unavailable → caller falls back
+    return []; // PDF.js unavailable → caller falls back
   }
   if (!pdfjs) return [];
 

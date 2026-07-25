@@ -21,20 +21,7 @@ import { Switch } from '@/components/ui/switch';
 import { Loader2, Plus, Send, Save, Trash2, X, Users, MousePointer2, Undo2, Redo2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-
-const PDFJS_VERSION = '4.4.168';
-const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
-let pdfjsPromise: Promise<any> | null = null;
-async function getPdfJs() {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      const mod = await import(/* @vite-ignore */ `${PDFJS_CDN_BASE}/pdf.min.mjs`);
-      mod.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.mjs`;
-      return mod;
-    })();
-  }
-  return pdfjsPromise;
-}
+import { loadPdfjs as getPdfJs } from '@/lib/pdf/pdfjs';
 
 export type SigningTabType =
   | 'signature' | 'initial' | 'dateSigned'

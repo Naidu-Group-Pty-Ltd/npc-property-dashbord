@@ -4,10 +4,11 @@
  * — every page becomes a single embedded JPEG at the original physical size.
  *
  * Designed as a universal "Download as Flattened PDF" step that sits behind
- * every download surface in the dashboard. Lazy-imports PDF.js from the CDN
- * so the app does not need to bundle or install pdfjs-dist.
+ * every download surface in the dashboard. PDF.js is lazy-loaded from the
+ * build-pinned dependency so no executable code is fetched at runtime.
  */
 import { PDFDocument } from 'pdf-lib';
+import { loadPdfjs } from './pdfjs';
 
 export interface FlattenPdfOptions {
   /** Render DPI for each page. Default 150 (print-ready, ~10MB / 50pp). */
@@ -16,27 +17,6 @@ export interface FlattenPdfOptions {
   jpegQuality?: number;
   /** Optional progress hook fired after each page. */
   onProgress?: (page: number, totalPages: number) => void;
-}
-
-const PDFJS_VERSION = '4.4.168';
-const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
-
-type PdfJsModule = {
-  GlobalWorkerOptions: { workerSrc: string };
-  getDocument: (source: unknown) => { promise: Promise<any> };
-};
-
-let pdfjsPromise: Promise<PdfJsModule> | null = null;
-
-async function loadPdfjs(): Promise<PdfJsModule> {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      const pdfjs = await import(/* @vite-ignore */ `${PDFJS_CDN_BASE}/pdf.min.mjs`) as PdfJsModule;
-      pdfjs.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.mjs`;
-      return pdfjs;
-    })();
-  }
-  return pdfjsPromise;
 }
 
 async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {

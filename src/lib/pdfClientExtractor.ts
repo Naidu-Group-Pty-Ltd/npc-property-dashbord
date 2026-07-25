@@ -1,27 +1,10 @@
 /**
  * Browser PDF text extraction compatibility shim.
  *
- * The bundled PDF.js dependency was retired with Docling Wave F7. A few
- * non-template experiences still need lightweight browser text extraction, so
- * this module loads PDF.js from the same CDN-backed utility path used by PDF
- * image previews instead of adding pdf.js back to the application bundle.
+ * A few non-template experiences need lightweight browser text extraction.
+ * PDF.js is lazy-loaded from the build-pinned browser utility.
  */
-
-const PDFJS_VERSION = '4.4.168';
-const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
-
-let pdfjsPromise: Promise<any> | null = null;
-
-async function getPdfJs() {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      const mod = await import(/* @vite-ignore */ `${PDFJS_CDN_BASE}/pdf.min.mjs`);
-      mod.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.mjs`;
-      return mod;
-    })();
-  }
-  return pdfjsPromise;
-}
+import { loadPdfjs as getPdfJs } from '@/lib/pdf/pdfjs';
 
 export interface ExtractionResult {
   text: string;
