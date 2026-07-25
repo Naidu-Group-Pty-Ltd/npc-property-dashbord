@@ -7,22 +7,44 @@
 //   reset_default { agent_key }    → restore initial defaults (no-op if not seeded)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-portal-session-token',
-};
+import {
+  createCorsHeaders,
+  createForbiddenResponse,
+  createUnauthorizedResponse,
+  verifyAuth,
+} from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 
 function admin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
 }
 
 Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+
   try {
     const body = await req.json().catch(() => ({}));
     const action = body.action ?? 'list';
     const sb = admin();
+
+    const auth = await verifyAuth(sb, req.headers, body);
+    if (auth.error || !auth.userId) {
+      return createUnauthorizedResponse(auth.error ?? 'Authentication required', corsHeaders);
+    }
+
+    const { data: roles, error: roleError } = await sb
+      .from('user_roles')
+      .select('role')
+      .eq('user_id', auth.userId)
+      .in('role', ['superadmin', 'admin']);
+    if (roleError || !roles?.length) {
+      console.warn(`[manage-agent-models] Non-admin access denied for user ${auth.userId}`);
+      return createForbiddenResponse('Admin access required', corsHeaders);
+    }
 
     if (action === 'list') {
       const { data, error } = await sb
