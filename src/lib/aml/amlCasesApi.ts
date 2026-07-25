@@ -119,6 +119,15 @@ export const amlCasesApi = {
   listEvents: (case_id: string, limit = 200) =>
     invoke<{ events: AmlCaseEvent[] }>({ op: "list_events", case_id, limit }),
 
+  /** Phase 4 — persistent AML summary for the master client record. */
+  clientSummary: (client_id: string) =>
+    invoke<{
+      case: AmlCase | null;
+      has_open_case: boolean;
+      requirement_progress?: { completed: number; total: number };
+      open_client_requests?: number;
+    }>({ op: "client_summary", client_id }),
+
   // Staff-side wrappers for existing case-scoped server ops (requirements,
   // documents, submissions, client requests) used by the full-page workspace.
   listRequirements: (case_id: string) =>

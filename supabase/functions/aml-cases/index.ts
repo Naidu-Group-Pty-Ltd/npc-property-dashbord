@@ -622,6 +622,43 @@ Deno.serve(async (req) => {
         return jsonResponse({ events: data ?? [] });
       }
 
+      case 'client_summary': {
+        // Phase 4 — persistent AML summary for the master client record.
+        // Read-only; any AML role. Returns the client's current case (open
+        // first, else most recent), requirement progress and open-request
+        // counts so the Client page can show status without duplicating the
+        // case workspace.
+        const clientId = String(body.client_id ?? '').trim();
+        if (!clientId) return jsonResponse({ error: 'client_id is required' }, 400);
+        const { data: caseRows, error: caseErr } = await admin
+          .schema('aml').from('cases').select('*')
+          .eq('client_id', clientId)
+          .order('opened_at', { ascending: false })
+          .limit(5);
+        if (caseErr) throw caseErr;
+        const rows = caseRows ?? [];
+        const OPEN_BLOCKING = new Set(['cleared', 'blocked', 'closed']);
+        const openCase = rows.find((r: any) => !OPEN_BLOCKING.has(r.status)) ?? null;
+        const current = openCase ?? rows[0] ?? null;
+        if (!current) {
+          return jsonResponse({ case: null, has_open_case: false });
+        }
+        const [{ data: reqRows }, { data: requestRows }] = await Promise.all([
+          admin.schema('aml').from('document_requirements')
+            .select('required, status').eq('case_id', current.id),
+          admin.schema('aml').from('client_requests')
+            .select('id, status').eq('case_id', current.id).in('status', ['open', 'responded']),
+        ]);
+        const required = (reqRows ?? []).filter((r: any) => r.required);
+        const completed = required.filter((r: any) => ['uploaded', 'accepted'].includes(r.status));
+        return jsonResponse({
+          case: current,
+          has_open_case: Boolean(openCase),
+          requirement_progress: { completed: completed.length, total: required.length },
+          open_client_requests: (requestRows ?? []).length,
+        });
+      }
+
       case 'list_requirements': {
         if (!body.case_id) return jsonResponse({ error: 'case_id is required' }, 400);
         const { data, error } = await admin.schema('aml').from('document_requirements')

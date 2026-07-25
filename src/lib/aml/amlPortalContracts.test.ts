@@ -139,6 +139,49 @@ describe("manual case creation is a restricted exception (Phase 3, §10.4)", () 
   });
 });
 
+describe("client summary is scoped and read-only (Phase 4, §13)", () => {
+  const summaryBranch = casesSource.match(
+    /case 'client_summary': \{([\s\S]*?)\n {6}\}/,
+  )?.[1];
+
+  it("exists and requires a client id", () => {
+    expect(summaryBranch).toBeDefined();
+    expect(summaryBranch).toContain("client_id is required");
+  });
+
+  it("only reads case, requirement and request data for that client", () => {
+    expect(summaryBranch).toContain(".eq('client_id', clientId)");
+    expect(summaryBranch).not.toContain(".insert(");
+    expect(summaryBranch).not.toContain(".update(");
+    expect(summaryBranch).not.toContain(".delete(");
+  });
+
+  it("reports open-case state matching the duplicate-prevention rule", () => {
+    expect(summaryBranch).toContain("'cleared', 'blocked', 'closed'");
+    expect(summaryBranch).toContain("has_open_case");
+  });
+});
+
+describe("activation dialog has no raw-UUID entry (Phase 4, §13.4)", () => {
+  const dialogSource = readFileSync(
+    join(repo, "src/components/aml/ActivateClientDialog.tsx"), "utf8");
+
+  it("uses a client picker instead of a UUID input", () => {
+    expect(dialogSource).not.toContain("Client ID (UUID)");
+    expect(dialogSource).not.toContain("00000000-0000-0000-0000-000000000000");
+    expect(dialogSource).toContain("Search clients by name");
+  });
+
+  it("loads only a slim, non-sensitive client projection for the picker", () => {
+    expect(dialogSource).toContain("id, primary_first_name, primary_surname, is_active");
+  });
+
+  it("does not surface internal model vocabulary in the options", () => {
+    expect(dialogSource).not.toContain("designated service triggered");
+    expect(dialogSource).not.toContain("Model B — pre-service");
+  });
+});
+
 describe("workflow-dimension migration invariants", () => {
   it("enforces one open case per client with a partial unique index", () => {
     expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");
