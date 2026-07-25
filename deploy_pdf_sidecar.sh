@@ -46,6 +46,7 @@ IMAGE="${IMAGE:-}"
 IMAGE_DIGEST="${IMAGE_DIGEST:-}"
 SERVICE_URL="${SERVICE_URL:-}"
 CANARY_URL="${CANARY_URL:-}"
+AUTH_HEADER_FILE="${AUTH_HEADER_FILE:-}"
 CANARY_REVISION="${CANARY_REVISION:-}"
 PREVIOUS_REVISION="${PREVIOUS_REVISION:-}"
 ORIGINAL_TRAFFIC="${ORIGINAL_TRAFFIC:-}"
@@ -404,10 +405,17 @@ load_sidecar_token() {
     PDF_PARSE_SERVICE_TOKEN="$(gcloud secrets versions access latest \
       --project "$PROJECT_ID" \
       --secret "$TOKEN_SECRET_NAME")"
-    export PDF_PARSE_SERVICE_TOKEN
     return 0
   fi
   return 1
+}
+
+clear_sidecar_credentials() {
+  if [[ -n "${AUTH_HEADER_FILE:-}" ]]; then
+    rm -f -- "$AUTH_HEADER_FILE"
+    AUTH_HEADER_FILE=""
+  fi
+  unset PDF_PARSE_SERVICE_TOKEN 2>/dev/null || true
 }
 
 smoke_canary() {
@@ -419,10 +427,13 @@ smoke_canary() {
     > "$RELEASE_DIR/health-canary.json"
 
   if load_sidecar_token; then
-    trap 'unset PDF_PARSE_SERVICE_TOKEN 2>/dev/null || true' EXIT
+    AUTH_HEADER_FILE="$(mktemp)"
+    chmod 600 "$AUTH_HEADER_FILE"
+    printf 'Authorization: Bearer %s\n' "$PDF_PARSE_SERVICE_TOKEN" > "$AUTH_HEADER_FILE"
+    trap clear_sidecar_credentials EXIT
     log "Checking authenticated capabilities endpoint."
     curl -fsS "$CANARY_URL/capabilities" \
-      -H "Authorization: Bearer $PDF_PARSE_SERVICE_TOKEN" \
+      -H "@$AUTH_HEADER_FILE" \
       | jq -e '.engine_version != null' \
       > "$RELEASE_DIR/capabilities-canary.json"
 
@@ -433,7 +444,7 @@ smoke_canary() {
         > "$RELEASE_DIR/plan-request.json"
 
       curl -fsS "$CANARY_URL/plan" \
-        -H "Authorization: Bearer $PDF_PARSE_SERVICE_TOKEN" \
+        -H "@$AUTH_HEADER_FILE" \
         -H 'Content-Type: application/json' \
         --data-binary @"$RELEASE_DIR/plan-request.json" \
         | tee "$RELEASE_DIR/plan-canary.json" \
@@ -451,7 +462,7 @@ smoke_canary() {
           > "$RELEASE_DIR/parse-request.json"
 
         curl -fsS "$CANARY_URL/parse" \
-          -H "Authorization: Bearer $PDF_PARSE_SERVICE_TOKEN" \
+          -H "@$AUTH_HEADER_FILE" \
           -H 'Content-Type: application/json' \
           --data-binary @"$RELEASE_DIR/parse-request.json" \
           | jq '{engine_version, page_count, summary, extractor_lane, lane_policy}' \
