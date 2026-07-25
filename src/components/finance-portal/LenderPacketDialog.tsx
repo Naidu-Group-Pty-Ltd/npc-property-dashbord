@@ -193,7 +193,7 @@ export function LenderPacketDialog({ open, onOpenChange, fileId }: Props) {
       }
       // Cover sheet — flatten too if requested
       const coverBytes = buildCoverSheet(manifest, included);
-      let cover: Blob = new Blob([coverBytes], { type: 'application/pdf' });
+      let cover: Blob = new Blob([coverBytes as BlobPart], { type: 'application/pdf' });
       if (flatten) {
         cover = await flattenPdfBlob(cover);
       }
