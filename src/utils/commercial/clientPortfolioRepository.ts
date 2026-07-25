@@ -6,14 +6,14 @@ import type { ClientProfile, ClientScenario } from './clientPortfolioTypes';
 const n = (v: unknown, fallback = 0) => typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 const nameOf = (c: any) => [c?.primary_first_name, c?.primary_surname].filter(Boolean).join(' ') || c?.name || c?.clientName || 'Unknown Client';
 
-export interface ClientProfileOption { clientId: string; clientName: string; source: 'supabase' | 'sample'; entityName?: string; email?: string; phone?: string; ownershipEntity?: string; }
+export interface ClientProfileOption { clientId: string; clientName: string; source: 'supabase' | 'sample'; }
 
 export async function searchClientProfiles(): Promise<ClientProfileOption[]> {
   try {
-    const { data, error } = await invokeSecureFunction('get-client-data', { mode: 'list', listOptions: { select: 'id, primary_first_name, primary_surname, email, phone, entity_name, ownership_entity', orderBy: 'primary_first_name', orderAsc: true } });
+    const { data, error } = await invokeSecureFunction('get-client-data', { mode: 'list', listOptions: { select: 'id, primary_first_name, primary_surname', orderBy: 'primary_first_name', orderAsc: true } });
     if (error) throw new Error(error.message);
     const records = data?.clients || data?.records || [];
-    const mapped = records.map((r: any) => ({ clientId: r.id || r.client?.id, clientName: nameOf(r.client || r), source: 'supabase' as const, entityName: r.entity_name || r.client?.entity_name, email: r.email || r.client?.email, phone: r.phone || r.client?.phone, ownershipEntity: r.ownership_entity || r.client?.ownership_entity })).filter((r: ClientProfileOption) => !!r.clientId);
+    const mapped = records.map((r: any) => ({ clientId: r.id || r.client?.id, clientName: nameOf(r.client || r), source: 'supabase' as const })).filter((r: ClientProfileOption) => !!r.clientId);
     if (mapped.length) return mapped;
   } catch (err) {
     console.warn('[clientPortfolioRepository] client search failed; using deterministic sample profiles', err);
