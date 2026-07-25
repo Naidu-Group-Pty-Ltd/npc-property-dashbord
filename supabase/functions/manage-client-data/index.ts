@@ -800,31 +800,9 @@ Deno.serve(async (req) => {
           const { error: deleteError } = await deleteQuery;
           error = deleteError;
 
-          // There are no report-owned relational child tables in the current schema.
-          // Storage cleanup deliberately runs after the committed database delete and only
-          // removes an object when no other report or client-file record references it.
-          let storageCleanup = 'not_required';
-          if (!error && report.pdf_file_path) {
-            const [{ count: reportReferences, error: reportReferenceError }, { count: fileReferences, error: fileReferenceError }] = await Promise.all([
-              supabase.from('portfolio_analysis_reports').select('id', { count: 'exact', head: true }).eq('pdf_file_path', report.pdf_file_path),
-              supabase.from('client_files').select('id', { count: 'exact', head: true }).eq('file_path', report.pdf_file_path),
-            ]);
-            if (reportReferenceError || fileReferenceError) {
-              storageCleanup = 'deferred';
-              console.warn('[manage-client-data] Deferred portfolio report storage cleanup after reference check failure', { reportId: report.id });
-            } else if ((reportReferences || 0) === 0 && (fileReferences || 0) === 0) {
-              const { error: storageError } = await supabase.storage.from('client-files').remove([report.pdf_file_path]);
-              storageCleanup = storageError ? 'deferred' : 'removed';
-              if (storageError) console.warn('[manage-client-data] Deferred portfolio report storage cleanup', { reportId: report.id });
-            } else {
-              storageCleanup = 'retained_shared_reference';
-            }
-          }
-
           result = {
             deleted: !error,
             id: report.id,
-            storageCleanup,
           };
           break;
         }
