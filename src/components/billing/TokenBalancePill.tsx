@@ -30,7 +30,7 @@ function formatCompact(n: number | undefined | null): string {
 
 export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
   const navigate = useNavigate();
-  const { balance, loading, error, refresh, lowBalance } = useTokenBalance();
+  const { balance, loading, error, refresh, lowBalance, criticalBalance } = useTokenBalance();
 
   const available = balance?.available ?? 0;
   const allowance = balance?.allowance ?? 0;
@@ -38,7 +38,7 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
   const reserved = balance?.reserved ?? 0;
 
   const pct = allowance > 0 ? Math.max(0, Math.min(100, (available / allowance) * 100)) : 0;
-  const critical = balance != null && allowance > 0 && available / allowance < 0.05;
+  const critical = criticalBalance;
 
   const stateClass = critical
     ? "text-destructive border-destructive/40 bg-destructive/10"
@@ -57,15 +57,21 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
             stateClass,
             compact && "h-11 w-11 px-0",
           )}
-          aria-label={`Tokens remaining: ${available.toLocaleString()}`}
-          title={`Tokens remaining: ${available.toLocaleString()}`}
+          aria-label={
+            balance ? `Tokens remaining: ${available.toLocaleString()}` : "Token balance unavailable"
+          }
+          title={
+            balance ? `Tokens remaining: ${available.toLocaleString()}` : "Token balance unavailable"
+          }
         >
           <Coins className="h-4 w-4 shrink-0" />
           {!compact && (
             <span className="text-sm tabular-nums">
               {loading && !balance ? (
                 <Skeleton className="inline-block h-4 w-12 align-middle" />
-              ) : error ? (
+              ) : error || !balance ? (
+                // No data ≠ zero balance: a failed/blocked fetch must never
+                // render as "0", which reads as an empty account.
                 "—"
               ) : (
                 formatCompact(available)
@@ -85,14 +91,20 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
               <p className="text-2xl font-semibold tabular-nums">
                 {loading && !balance ? (
                   <Skeleton className="h-7 w-24" />
+                ) : !balance ? (
+                  "—"
                 ) : (
                   available.toLocaleString()
                 )}
               </p>
               <p className="text-xs text-muted-foreground">
-                {balance?.exempt
+                {!balance
+                  ? "Balance unavailable"
+                  : balance.exempt
                   ? "Unmetered · billing exempt"
-                  : `of ${allowance.toLocaleString()} allowance${balance?.planName ? ` · ${balance.planName}` : ""}`}
+                  : allowance > 0
+                  ? `of ${allowance.toLocaleString()} allowance${balance.planName ? ` · ${balance.planName}` : ""}`
+                  : "Top-up credits · no plan allowance"}
               </p>
             </div>
             <Coins

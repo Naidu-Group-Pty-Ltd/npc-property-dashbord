@@ -134,40 +134,8 @@ export function renderChartImage(chart: ChartData, variant: 'card' | 'expanded' 
   }
 
   if (chart.image_data.startsWith('data:image/svg+xml;base64,')) {
-    try {
-      let svgContent = atob(chart.image_data.replace('data:image/svg+xml;base64,', ''));
-      // Legacy safeguard: older records were rendered before scatter/area/radar
-      // support existed and baked "Unsupported chart type" into their SVG.
-      if (/Unsupported chart type/i.test(svgContent)) {
-        return (
-          <ChartImageErrorState
-            title={`Legacy ${chart.chart_type} chart`}
-            helper="This chart was rendered before live support was added. Regenerate the report to render it as an interactive chart."
-          />
-        );
-      }
-      if (svgContent.includes('<svg') && svgContent.includes('</svg>')) {
-        svgContent = svgContent.replace(/<svg[^>]*>/, (match) => {
-          const widthMatch = match.match(/width=["'](\d+)["']/);
-          const heightMatch = match.match(/height=["'](\d+)["']/);
-          const viewBoxMatch = match.match(/viewBox=["']([^"']*)["']/);
-          let viewBox = viewBoxMatch ? viewBoxMatch[1] : '0 0 800 600';
-          if (!viewBoxMatch && widthMatch && heightMatch) {
-            viewBox = `0 0 ${widthMatch[1]} ${heightMatch[1]}`;
-          }
-          return `<svg viewBox="${viewBox}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="display:block;max-width:100%;max-height:100%;overflow:visible;">`;
-        });
-        return (
-          <div
-            dangerouslySetInnerHTML={{ __html: svgContent }}
-            className="flex h-full min-h-0 w-full min-w-0 items-center justify-center overflow-visible [&>svg]:block [&>svg]:h-full [&>svg]:max-h-full [&>svg]:w-full [&>svg]:max-w-full"
-          />
-        );
-      }
-    } catch (error) {
-      console.error('SVG parsing error:', error);
-    }
-    return <ChartImageErrorState helper="The chart SVG could not be parsed safely. Refresh or regenerate the report if this continues." />;
+    // SVG image documents are isolated from the application DOM; never inline persisted SVG markup.
+    return <ChartBitmapImage chart={chart} />;
   }
 
   return <ChartBitmapImage chart={chart} />;

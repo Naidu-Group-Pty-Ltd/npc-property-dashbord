@@ -381,7 +381,7 @@ function collectSourceSceneV3PathsToSign(
   req: { pageNumbers?: unknown; regionIds?: unknown; kinds?: unknown },
 ): { paths: string[]; state: string; contractVersion: string | null } {
   const validation = validatePageArtifactContractV3(manifest, jobId ? { jobId } : {});
-  if (!validation.manifest || (validation.state !== 'valid_v3' && validation.state !== 'invalid_v3')) {
+  if (!validation.manifest || validation.state !== 'valid_v3') {
     return { paths: [], state: validation.state, contractVersion: null };
   }
   const wantPages = Array.isArray(req.pageNumbers)
@@ -415,6 +415,11 @@ function collectSourceSceneV3PathsToSign(
     }
   }
   return { paths: out, state: validation.state, contractVersion: validation.manifest.artifactContractVersion };
+}
+
+function isPdfDiagnosticsPathForJob(path: string | null, jobId: string | null): boolean {
+  const normalizedPath = normalizePdfDiagnosticsObjectPath(path);
+  return Boolean(normalizedPath && jobId && normalizedPath.startsWith(`${jobId}/`));
 }
 
 function buildPdfPageArtifactSignedUrls(
@@ -1204,10 +1209,11 @@ Deno.serve(async (req) => {
           ? importManifestSummaryMeta.job_id
           : null;
 
+      let authorizedPdfJobId: string | null = null;
       let pdfJobResultPayload: any = null;
       let pdfJobAuthorized = false;
       if (pdfJobId) {
-        const { data: pdfJob, error: pdfJobErr } = await admin
+        let pdfJobQuery = admin
           .from('pdf_import_jobs')
           .select('id,result_payload,diagnostics_path,engine_version')
           .eq('id', pdfJobId)
@@ -1237,8 +1243,8 @@ Deno.serve(async (req) => {
         ? pdfJobResultPayload.per_page_docling_manifest_path
         : null;
 
-      const derivedPdfPageManifestPath = pdfJobId
-        ? `${pdfJobId}/pages-manifest.json`
+      const derivedPdfPageManifestPath = authorizedPdfJobId
+        ? `${authorizedPdfJobId}/pages-manifest.json`
         : null;
 
       const authorizedPdfJobId = pdfJobAuthorized ? pdfJobId : null;
@@ -1291,7 +1297,7 @@ Deno.serve(async (req) => {
       // E1 — additionally sign Source Scene Graph V2 artifacts, lazily and only
       // for the requested pages/regions/kinds, derived solely from the trusted V3
       // manifest. Legacy V2 imports return an empty map + a `legacy` state.
-      const sourceSceneV3 = collectSourceSceneV3PathsToSign(pdfJobId ?? null, pdfPageManifest, body);
+      const sourceSceneV3 = collectSourceSceneV3PathsToSign(authorizedPdfJobId, pdfPageManifest, body);
       const sourceSceneSignedByPath = sourceSceneV3.paths.length
         && authorizedPdfJobId
         ? await signPdfDiagnosticsArtifactPaths(admin, sourceSceneV3.paths, authorizedPdfJobId)

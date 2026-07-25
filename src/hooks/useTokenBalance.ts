@@ -1,7 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { fetchTokenBalance, type TokenBalance } from "@/lib/missionControl";
 import { onTokensUsed, onOutOfTokens } from "@/lib/tokenEvents";
-import { hasActiveSession } from "@/lib/secureInvoke";
+import { isAuthExhausted } from "@/lib/secureInvoke";
+
+// Absolute low-balance thresholds (billing credits) used when the tenant has
+// no plan allowance to compute a percentage against — e.g. the prime install
+// (no plan) or top-up-only tenants. A full Investor Compass run costs ~18
+// credits, so "low" ≈ two reports left and "critical" ≈ less than one.
+const LOW_TOKENS_ABS = 40;
+const CRITICAL_TOKENS_ABS = 15;
 
 interface UseTokenBalanceOptions {
   /** Auto-refetch interval in ms. 0 = no polling. Default 3 minutes. */
@@ -27,8 +34,13 @@ export function useTokenBalance(opts: UseTokenBalanceOptions = {}) {
   const lastFetchRef = useRef(0);
 
   const refresh = useCallback(async () => {
-    // Skip silently when no active session — avoids noisy 401s on public/auth screens.
-    if (!hasActiveSession()) {
+    // The staff session lives in an HttpOnly cookie that JS cannot read, so a
+    // missing tab-scoped access token does NOT mean "signed out" — the fetch
+    // below still authenticates via the cookie (and the native supabase-js
+    // session fallback). Gating on hasActiveSession() here made the pill show
+    // a permanent zero balance for cookie-only sessions. Only skip once the
+    // global auth circuit breaker has tripped (genuinely signed out).
+    if (isAuthExhausted()) {
       setBalance(null);
       setError(null);
       setLoading(false);
@@ -94,12 +106,21 @@ export function useTokenBalance(opts: UseTokenBalanceOptions = {}) {
     };
   }, [enabled, refetchOnTokenEvent, refresh]);
 
-  const lowBalance =
-    balance != null && !balance.exempt && balance.allowance > 0 &&
-    balance.available / balance.allowance < 0.1;
+  // Low/critical fire on the allowance percentage when a plan allowance
+  // exists, and on absolute credit thresholds otherwise. The old
+  // `allowance > 0 &&` guard meant tenants without a plan (allowance 0) never
+  // saw ANY low/critical warning, even at a zero balance. Billing-exempt
+  // tenants are never funds-gated, so warnings stay suppressed for them.
   const criticalBalance =
-    balance != null && !balance.exempt && balance.allowance > 0 &&
-    balance.available / balance.allowance < 0.05;
+    balance != null && !balance.exempt &&
+    (balance.allowance > 0
+      ? balance.available / balance.allowance < 0.05
+      : balance.available <= CRITICAL_TOKENS_ABS);
+  const lowBalance =
+    balance != null && !balance.exempt && !criticalBalance &&
+    (balance.allowance > 0
+      ? balance.available / balance.allowance < 0.1
+      : balance.available <= LOW_TOKENS_ABS);
 
   return { balance, loading, error, refresh, lowBalance, criticalBalance };
 }

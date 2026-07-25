@@ -160,7 +160,7 @@ export async function requireStepUp(
   const now = Date.now();
 
   let valid = false;
-  let reason: "missing" | "invalid" | "expired" | "session_required" | "session_mismatch" | "ok" = "missing";
+  let reason: "missing" | "invalid" | "expired" | "session_required" | "session_mismatch" | "insufficient_assurance" | "ok" = "missing";
 
   if (token) {
     const staffSession = await resolveActiveStaffSession(admin, args.userId, args.req, args.body);
@@ -170,7 +170,7 @@ export async function requireStepUp(
       const hash = await hashStepUpToken(args.userId, args.capability, token);
       const { data } = await admin
         .from("step_up_sessions")
-        .select("id, bound_session_id, expires_at, revoked_at, consumed_at")
+        .select("id, bound_session_id, expires_at, revoked_at, consumed_at, assurance_level")
         .eq("user_id", args.userId)
         .eq("capability", args.capability)
         .eq("token_hash", hash)
@@ -178,6 +178,7 @@ export async function requireStepUp(
       if (!data) reason = "invalid";
       else if (data.bound_session_id !== staffSession.id) reason = "session_mismatch";
       else if (data.revoked_at || data.consumed_at || new Date(data.expires_at).getTime() <= now) reason = "expired";
+      else if (mode === "enforce" && Number(data.assurance_level) < 2) reason = "insufficient_assurance";
       else {
         reason = "ok";
         valid = true;

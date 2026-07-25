@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { checkPermission } from "../_shared/permissions.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const VAPI_BASE_URL = 'https://api.vapi.ai';
@@ -47,7 +48,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
 
     // Validate authentication (JWT first, then session token)
-    const { error: authError, userId, username } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, username, authMethod } = await verifyAuth(supabase, req.headers, body);
 
     if (authError) {
       console.log('[manage-call-logs] Auth error:', authError);
@@ -134,6 +135,15 @@ Deno.serve(async (req) => {
         );
       }
 
+      // This operation terminates a live customer call and updates a call-log
+      // record with service-role privileges, so enforce the same server-side
+      // call_logs edit permission used by the UI before performing either action.
+      const permission = await checkPermission(supabase, userId!, 'vapi_call_logs', 'update', authMethod);
+      if (!permission.allowed) {
+        console.warn(`[manage-call-logs] Kill live call denied for user ${userId}: ${permission.reason}`);
+        return createForbiddenResponse(permission.reason || 'Call logs edit permission required', corsHeaders);
+      }
+
       const { data: callRow, error: callFetchError } = await supabase
         .from('vapi_call_logs')
         .select('id, vapi_call_id, call_status, ended_at, metadata')
@@ -211,8 +221,12 @@ Deno.serve(async (req) => {
       // {"type":"end-call"} to the call's monitor.controlUrl.
       const initial = await vapiGetCall(callRow.vapi_call_id, vapiApiKey);
       const initialStatus = typeof initial.call?.status === 'string' ? initial.call.status : null;
-      const controlUrl: string | null = initial.call?.monitor?.controlUrl
-        || (typeof baseMetadata.vapi_monitor_control_url === 'string' ? baseMetadata.vapi_monitor_control_url : null);
+      // Resolve the capability URL only from Vapi's authenticated API response.
+      // Call-log metadata is user-modifiable through legacy update operations and
+      // must never be treated as a URL authority.
+      const controlUrl: string | null = typeof initial.call?.monitor?.controlUrl === 'string'
+        ? initial.call.monitor.controlUrl
+        : null;
 
       // Idempotent path: the call is already over on Vapi's side
       if (initial.status === 404 || (initial.ok && initialStatus === 'ended')) {
