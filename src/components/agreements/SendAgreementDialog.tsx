@@ -14,6 +14,7 @@ import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { format } from 'date-fns';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { useGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { toast } from 'sonner';
 
@@ -47,12 +48,14 @@ export function SendAgreementDialog({ open, onOpenChange, client, dealId }: Send
   const { generateAgreement, sendViaDocuSign } = useAgreementMutations();
   const { settings: brandSettings } = useGlobalReportSettings();
   const agencyLegalName = brandSettings.contactDetails.company_name || 'the Agency';
+  // Staff-JWT client so gamma_agreement_templates can drop its anon grants (RLS-W2).
+  const { supabase: authedSupabase } = useAuthenticatedSupabase();
 
   // Fetch available Gamma templates
   const { data: templates = [] } = useQuery({
     queryKey: ['gamma-templates-active'],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await authedSupabase
         .from('gamma_agreement_templates' as any)
         .select('id, name, gamma_template_id, is_default, is_active')
         .eq('is_active', true)
