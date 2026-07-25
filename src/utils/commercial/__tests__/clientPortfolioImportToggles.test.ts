@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { applyCommercialScenarioProposal } from '../scenarioApplyEngine';
-import { applyPortfolioImportToggles, sampleClientProfiles, summarizeClientPortfolio } from '../clientPortfolioEngine';
+import { applyPortfolioImportToggles, summarizeClientPortfolio } from '../clientPortfolioEngine';
+import { testClientProfiles } from './fixtures/clientProfile';
 
-const client = sampleClientProfiles[0];
+const client = testClientProfiles[0];
 
 describe('commercial borrowing capacity unified data flow', () => {
   it('selecting a client profile exposes client details and current portfolio data', () => {
     const summary = summarizeClientPortfolio(client);
-    expect(client.clientName).toBe('Harper Family Group');
+    expect(client.clientName).toBe('Synthetic Portfolio Test Client');
     expect(client.residentialAssets).toHaveLength(1);
     expect(client.commercialAssets).toHaveLength(1);
     expect(client.industrialAssets).toHaveLength(1);

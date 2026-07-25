@@ -21,7 +21,7 @@ import { buildGlobalSyncLabel } from '@/utils/commercial/calculatorDataSync';
 import { calculateCommercialIndustrialBorrowing, lenderPolicyProfiles, type AcquisitionPurpose, type AssetCategory, type BorrowingInputs, type BorrowingResult, type LenderPolicyProfileKey, type LeaseStatus, type PurchaserStructure } from '@/utils/commercial';
 import { useApplyPrefill } from '@/contexts/CalculatorPrefillContext';
 import { SaveBackButton } from '@/components/commercial/SaveBackButton';
-import { applyPortfolioImportToggles, sampleClientProfiles, summarizeClientPortfolio } from '@/utils/commercial/clientPortfolioEngine';
+import { applyPortfolioImportToggles, summarizeClientPortfolio } from '@/utils/commercial/clientPortfolioEngine';
 import { countProfileImportConflicts } from '@/utils/commercial/clientProfileSyncEngine';
 import { fetchClientProfile, persistClientScenario, persistCommittedScenarioAssessment, searchClientProfiles, type ClientProfileOption } from '@/utils/commercial/clientPortfolioRepository';
 import { buildClientScenario, type ProposedScenarioInputs } from '@/utils/commercial/scenarioModellingEngine';
@@ -188,7 +188,7 @@ function ClientProfileCombobox({ value, options, loading, onChange }: { value: s
       <PopoverTrigger asChild>
         <Button variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between h-10 font-normal">
           <span className={cn('truncate text-sm', !selected && 'text-muted-foreground')}>
-            {selected ? `${selected.clientName}${selected.source === 'sample' ? ' (sample)' : ''}` : (loading ? 'Loading…' : 'Select client profile…')}
+            {selected ? selected.clientName : (loading ? 'Loading…' : 'Select client profile…')}
           </span>
           <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
@@ -341,7 +341,7 @@ export function CommercialBorrowingCapacityCard({ initialAssetCategory = 'commer
   const [includeExistingLoans, setIncludeExistingLoans] = useState(true);
   const [includeLatestBorrowingCapacity, setIncludeLatestBorrowingCapacity] = useState(true);
   const [profileImported, setProfileImported] = useState(false);
-  const [clientOptions, setClientOptions] = useState<ClientProfileOption[]>(sampleClientProfiles.map(c => ({ clientId: c.clientId, clientName: c.clientName, source: 'sample' as const })));
+  const [clientOptions, setClientOptions] = useState<ClientProfileOption[]>([]);
   const [selectedClientProfile, setSelectedClientProfile] = useState<ClientProfile | null>(null);
   const [clientLoading, setClientLoading] = useState(false);
   const [syncMessage, setSyncMessage] = useState('Client profile data has not been imported yet.');

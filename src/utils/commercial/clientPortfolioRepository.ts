@@ -1,12 +1,11 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { supabase } from '@/integrations/supabase/client';
-import { sampleClientProfiles, summarizeClientPortfolio } from './clientPortfolioEngine';
 import type { ClientProfile, ClientScenario } from './clientPortfolioTypes';
 
 const n = (v: unknown, fallback = 0) => typeof v === 'number' && Number.isFinite(v) ? v : fallback;
 const nameOf = (c: any) => [c?.primary_first_name, c?.primary_surname].filter(Boolean).join(' ') || c?.name || c?.clientName || 'Unknown Client';
 
-export interface ClientProfileOption { clientId: string; clientName: string; source: 'supabase' | 'sample'; }
+export interface ClientProfileOption { clientId: string; clientName: string; source: 'supabase'; }
 
 export async function searchClientProfiles(): Promise<ClientProfileOption[]> {
   try {
@@ -16,9 +15,9 @@ export async function searchClientProfiles(): Promise<ClientProfileOption[]> {
     const mapped = records.map((r: any) => ({ clientId: r.id || r.client?.id, clientName: nameOf(r.client || r), source: 'supabase' as const })).filter((r: ClientProfileOption) => !!r.clientId);
     if (mapped.length) return mapped;
   } catch (err) {
-    console.warn('[clientPortfolioRepository] client search failed; using deterministic sample profiles', err);
+    console.warn('[clientPortfolioRepository] client search failed', err);
   }
-  return sampleClientProfiles.map(c => ({ clientId: c.clientId, clientName: c.clientName, source: 'sample' as const }));
+  return [];
 }
 
 function mapClientDataToProfile(clientId: string, payload: any): ClientProfile {
@@ -39,18 +38,9 @@ function mapClientDataToProfile(clientId: string, payload: any): ClientProfile {
 }
 
 export async function fetchClientProfile(clientId: string): Promise<ClientProfile> {
-  const sample = sampleClientProfiles.find(c => c.clientId === clientId);
-  if (sample) return sample;
-  try {
-    const { data, error } = await invokeSecureFunction('get-client-data', { clientId, include: { client: true, properties: true, employment: true, income: true, assets: true, liabilities: true, expenses: true, borrowingCapacity: true } });
-    if (error) throw new Error(error.message);
-    return mapClientDataToProfile(clientId, data);
-  } catch (err) {
-    console.warn('[clientPortfolioRepository] client load failed; using deterministic fallback shape', err);
-    const options = await searchClientProfiles();
-    const found = options.find(o => o.clientId === clientId);
-    return { ...sampleClientProfiles[0], clientId, clientName: found?.clientName ?? 'Selected Client' };
-  }
+  const { data, error } = await invokeSecureFunction('get-client-data', { clientId, include: { client: true, properties: true, employment: true, income: true, assets: true, liabilities: true, expenses: true, borrowingCapacity: true } });
+  if (error) throw new Error(error.message);
+  return mapClientDataToProfile(clientId, data);
 }
 
 export async function persistClientScenario(scenario: ClientScenario): Promise<{ ok: boolean; id?: string; error?: string }> {
