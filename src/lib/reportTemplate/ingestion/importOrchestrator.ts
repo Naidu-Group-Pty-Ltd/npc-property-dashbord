@@ -320,7 +320,7 @@ async function importPdf(
 
   ctx.onStage?.('Reading PDF…');
   // Phase 10: route through the multi-service dispatcher so recoverable
-  // failures escalate transparently (pixel fallback → WeasyPrint reverse).
+  // failures escalate transparently to the pixel fallback.
   // The audit trail is persisted to template_imports.meta.provider_attempts
   // for the diagnostics dashboard.
   const { dispatchImport } = await import('../pdfImport/providers/dispatch');

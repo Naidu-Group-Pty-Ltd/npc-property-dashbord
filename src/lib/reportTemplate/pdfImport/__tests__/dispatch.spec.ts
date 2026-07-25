@@ -11,6 +11,8 @@ import {
   type ImportProvider,
 } from '../providers';
 import type { ImportResult } from '../types';
+import { dispatchImport } from '../providers/dispatch';
+import { renderSourceProvider, weasyprintReverseProvider } from '../providers/services';
 
 function fakeResult(importId = 'imp-1'): ImportResult {
   return {
@@ -88,4 +90,22 @@ describe('runImportWithFallback', () => {
     );
     expect(seen).toEqual(['p:success']);
   });
+});
+
+describe('dispatchImport', () => {
+  it('rejects non-PDF files before invoking a PDF import provider', async () => {
+    const source = new File(['<h1>Hello</h1>'], 'example.html', { type: 'text/html' });
+
+    await expect(dispatchImport(source, { mode: 'semantic' })).rejects.toThrow(
+      /only supports PDF files/i,
+    );
+  });
+
+  it.each([renderSourceProvider, weasyprintReverseProvider])(
+    'keeps incompatible provider $id disabled and side-effect free',
+    async (provider) => {
+      expect(provider.supports?.(blankFile, { mode: 'semantic' })).toBe(false);
+      await expect(provider.run(blankFile, { mode: 'semantic' })).rejects.toThrow(/unavailable/i);
+    },
+  );
 });

@@ -1,5 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
+import { canAccessAllClients, canAccessClient } from '../_shared/clientAccess.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 interface RequestBody {
@@ -70,13 +72,19 @@ Deno.serve(async (req) => {
     const body: RequestBody = await req.json();
 
     // Validate authentication (JWT first, then session token)
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('Auth failed for get-client-data:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
 
     console.log(`Authenticated user ${userId} requesting client data`);
+
+    const actor = { userId, authMethod };
+    const permission = await requireModulePermission(supabase, actor, 'client_management', 'can_view');
+    if (!permission.ok) {
+      return createForbiddenResponse(permission.error, corsHeaders);
+    }
 
     const { clientId, clientIds, listMode, listOptions = {}, notesOptions = {}, include = {} } = body;
 
@@ -93,6 +101,18 @@ Deno.serve(async (req) => {
 
     // Determine which clients to fetch
     const idsToFetch = clientId ? [clientId] : (clientIds || []);
+
+    // Caller-supplied IDs are selectors, not authorization. Hide inaccessible
+    // clients behind a not-found response to avoid turning this broker into an
+    // ID oracle, even for users who can view the client-management module.
+    for (const id of idsToFetch) {
+      if (!await canAccessClient(supabase, actor, id)) {
+        return new Response(
+          JSON.stringify({ error: 'Client not found', success: false }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        );
+      }
+    }
 
     // Handle custom table queries in list mode
     if (listMode && listOptions.table && listOptions.table !== 'clients') {
@@ -169,6 +189,10 @@ Deno.serve(async (req) => {
         .from('clients')
         .select(selectString)
         .order(orderBy, { ascending: isAscending });
+
+      if (!await canAccessAllClients(supabase, actor)) {
+        query = query.or(`created_by.eq.${userId},assigned_team_user_id.eq.${userId}`);
+      }
 
       if (limit) {
         query = query.limit(limit);

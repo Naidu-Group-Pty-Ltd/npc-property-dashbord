@@ -58,6 +58,7 @@ function applyOp(doc: CdirDocument, op: RepairOp): boolean {
       const textLayer = layer as CdirTextLayer;
       const runs = textLayer.runs ?? [];
       const first = runs[0] ?? { text: '' };
+      textLayer.text = op.text;
       textLayer.runs = [{ ...first, text: op.text }];
       return true;
     }
@@ -83,13 +84,14 @@ function applyOp(doc: CdirDocument, op: RepairOp): boolean {
         id: layer.id,
         kind: 'text',
         bounds: layer.bounds,
+        text: layer.text,
         runs: [{
           text: layer.text,
           fontSize: layer.fontSize,
           color: layer.color,
         }],
         align: layer.align,
-      } as CdirTextLayer;
+      };
       page.layers = [...(page.layers ?? []), newLayer];
       return true;
     }

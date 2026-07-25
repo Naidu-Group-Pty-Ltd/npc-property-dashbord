@@ -1,7 +1,9 @@
 // Manage Borrowing Capacity scenarios — secure-mediation pattern
 // Operations: list | create | delete (per client)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
+import { canAccessClient } from "../_shared/clientAccess.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 type Operation = 'list' | 'create' | 'delete';
@@ -38,7 +40,7 @@ Deno.serve(async (req) => {
 
     const body: RequestBody = await req.json();
 
-    const { error: authError, userId, username } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, username, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('[manage-bc-scenarios] Auth error:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
@@ -53,14 +55,56 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+    if (operation === 'delete' && !recordId) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'recordId is required for delete' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+    if (operation === 'list' && !clientId) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'clientId is required for list' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+    if (operation === 'create' && (!clientId || !data || !data.name || !data.payload)) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'clientId, data.name and data.payload are required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    const requiredPermission: ModulePerm = operation === 'list'
+      ? 'can_view'
+      : operation === 'create' ? 'can_edit' : 'can_delete';
+    const actor = { userId, authMethod };
+    const permission = await requireModulePermission(
+      supabase,
+      actor,
+      'client_management',
+      requiredPermission,
+    );
+    if (!permission.ok) {
+      return createForbiddenResponse(permission.error, corsHeaders);
+    }
+
+    let authorizedClientId = clientId;
+    if (operation === 'delete' && recordId) {
+      const { data: scenario } = await supabase
+        .from('bc_scenarios')
+        .select('client_id')
+        .eq('id', recordId)
+        .maybeSingle();
+      authorizedClientId = scenario?.client_id;
+    }
+    if (!authorizedClientId || !await canAccessClient(supabase, actor, authorizedClientId)) {
+      return new Response(
+        JSON.stringify({ success: false, error: 'Scenario not found' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
 
     if (operation === 'list') {
-      if (!clientId) {
-        return new Response(
-          JSON.stringify({ success: false, error: 'clientId is required for list' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
       const { data: rows, error } = await supabase
         .from('bc_scenarios')
         .select('id, client_id, name, is_base, payload, created_by, created_at, updated_at')
@@ -83,13 +127,6 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'create') {
-      if (!clientId || !data || !data.name || !data.payload) {
-        return new Response(
-          JSON.stringify({ success: false, error: 'clientId, data.name and data.payload are required' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
       // Enforce only one is_base per client (replace existing base on conflict)
       if (data.is_base) {
         await supabase.from('bc_scenarios').delete().eq('client_id', clientId).eq('is_base', true);
@@ -123,12 +160,6 @@ Deno.serve(async (req) => {
     }
 
     // delete
-    if (!recordId) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'recordId is required for delete' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
     const { error: delError } = await supabase
       .from('bc_scenarios')
       .delete()

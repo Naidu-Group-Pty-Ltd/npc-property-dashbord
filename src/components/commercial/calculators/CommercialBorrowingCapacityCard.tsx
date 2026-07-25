@@ -21,7 +21,7 @@ import { buildGlobalSyncLabel } from '@/utils/commercial/calculatorDataSync';
 import { calculateCommercialIndustrialBorrowing, lenderPolicyProfiles, type AcquisitionPurpose, type AssetCategory, type BorrowingInputs, type BorrowingResult, type LenderPolicyProfileKey, type LeaseStatus, type PurchaserStructure } from '@/utils/commercial';
 import { useApplyPrefill } from '@/contexts/CalculatorPrefillContext';
 import { SaveBackButton } from '@/components/commercial/SaveBackButton';
-import { applyPortfolioImportToggles, sampleClientProfiles, summarizeClientPortfolio } from '@/utils/commercial/clientPortfolioEngine';
+import { applyPortfolioImportToggles, summarizeClientPortfolio } from '@/utils/commercial/clientPortfolioEngine';
 import { countProfileImportConflicts } from '@/utils/commercial/clientProfileSyncEngine';
 import { fetchClientProfile, persistClientScenario, persistCommittedScenarioAssessment, searchClientProfiles, type ClientProfileOption } from '@/utils/commercial/clientPortfolioRepository';
 import { buildClientScenario, type ProposedScenarioInputs } from '@/utils/commercial/scenarioModellingEngine';
@@ -188,7 +188,7 @@ function ClientProfileCombobox({ value, options, loading, onChange }: { value: s
       <PopoverTrigger asChild>
         <Button variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between h-10 font-normal">
           <span className={cn('truncate text-sm', !selected && 'text-muted-foreground')}>
-            {selected ? `${selected.clientName}${selected.source === 'sample' ? ' (sample)' : ''}` : (loading ? 'Loading…' : 'Select client profile…')}
+            {selected ? selected.clientName : (loading ? 'Loading…' : 'Select client profile…')}
           </span>
           <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
         </Button>
@@ -341,7 +341,7 @@ export function CommercialBorrowingCapacityCard({ initialAssetCategory = 'commer
   const [includeExistingLoans, setIncludeExistingLoans] = useState(true);
   const [includeLatestBorrowingCapacity, setIncludeLatestBorrowingCapacity] = useState(true);
   const [profileImported, setProfileImported] = useState(false);
-  const [clientOptions, setClientOptions] = useState<ClientProfileOption[]>(sampleClientProfiles.map(c => ({ clientId: c.clientId, clientName: c.clientName, source: 'sample' as const })));
+  const [clientOptions, setClientOptions] = useState<ClientProfileOption[]>([]);
   const [selectedClientProfile, setSelectedClientProfile] = useState<ClientProfile | null>(null);
   const [clientLoading, setClientLoading] = useState(false);
   const [syncMessage, setSyncMessage] = useState('Client profile data has not been imported yet.');
@@ -730,7 +730,7 @@ export function CommercialBorrowingCapacityCard({ initialAssetCategory = 'commer
   useEffect(() => {
     if (!globalInputSync) return;
     updateGlobal('dealProfile', { assetCategory, assetSubtype, acquisitionPurpose: purpose, leaseStatus, state, proposedLoan: proposedLoan ? num(proposedLoan) : undefined });
-    updateGlobal('purchaserStructure', { purchaserType, borrowerEntityName: entityName, guaranteesAvailable: guarantees, relatedPartyTenant: relatedPartyTenant === 'yes', gstRegistered, availableCashEquity: valueOrUndefined(availableEquity), sponsorLiquidity: valueOrUndefined(sponsorLiquidity), liquidityMultiplier: num(liquidityMult), existingBusinessDebts: num(businessDebt), existingBusinessEbitda: num(businessEbitda) });
+    updateGlobal('purchaserStructure', { purchaserType, borrowerEntityName: entityName, guaranteesAvailable: guarantees, relatedPartyTenant: relatedPartyTenant === 'yes', gstRegistered, availableCashEquity: valueOrUndefined(availableEquity), sponsorLiquidity: valueOrUndefined(sponsorLiquidity), liquidityMultiplier: num(liquidityMult), existingBusinessDebts: num(businessDebt), existingBusinessEbitda: num(businessEbitda), existingRentPaid: num(currentRent), proposedRentPayable: num(proposedRent) });
     updateGlobal('propertyValuation', { purchasePrice: valueOrUndefined(purchasePrice), estimatedMarketValue: valueOrUndefined(estimatedValue), bankValuation: bankValue ? num(bankValue) : undefined, useConservativeValuation: conservativeValue === 'yes', landArea: valueOrUndefined(landArea), buildingArea: valueOrUndefined(buildingArea), lettableArea: valueOrUndefined(lettableArea), valuationConfidence, clearanceHeight: valueOrUndefined(clearance), rollerDoors: valueOrUndefined(rollerDoors), truckAccessQuality: truckAccess, powerCapacity, slabCondition, roofCondition, siteCoverageRatio: num(landArea) > 0 ? num(buildingArea) / num(landArea) : undefined });
     updateGlobal('leaseIncome', { grossPassingRent: valueOrUndefined(passingRent), otherIncome: num(otherIncome), recoveredOutgoings: valueOrUndefined(recoveries), marketRent: valueOrUndefined(marketRent), vacancyAllowancePct: valueOrUndefined(vacancy) });
     updateGlobal('lendingAssumptions', { profile, contractInterestRatePct: valueOrUndefined(rate), assessmentBufferPct: valueOrUndefined(buffer), assessmentFloorRatePct: num(floorRate), loanTermYears: valueOrUndefined(term), interestOnlyPeriodYears: num(ioPeriod), amortisationYears: valueOrUndefined(amortisation), maxLvr: num(maxLvr), minIcr: num(minIcr), minDscr: num(minDscr), minDebtYield: num(minDebtYield), debtYieldEnabled: true });
@@ -738,7 +738,7 @@ export function CommercialBorrowingCapacityCard({ initialAssetCategory = 'commer
     updateGlobal('fundsToComplete', result.fundsToComplete);
     updateGlobal('borrowingOutputs', result);
     updateGlobal('industrialMetrics', { netRentPerSqm: num(lettableArea) ? num(passingRent) / num(lettableArea) : undefined, grossRentPerSqm: num(lettableArea) ? (num(passingRent) + num(recoveries)) / num(lettableArea) : undefined, siteCover: num(landArea) ? num(buildingArea) / num(landArea) : undefined, gla: valueOrUndefined(lettableArea), siteArea: valueOrUndefined(landArea) });
-  }, [updateGlobal, result, assetCategory, assetSubtype, purpose, leaseStatus, state, proposedLoan, purchaserType, entityName, guarantees, relatedPartyTenant, gstRegistered, availableEquity, sponsorLiquidity, liquidityMult, businessDebt, businessEbitda, purchasePrice, estimatedValue, bankValue, conservativeValue, landArea, buildingArea, lettableArea, valuationConfidence, clearance, rollerDoors, truckAccess, powerCapacity, slabCondition, roofCondition, passingRent, otherIncome, recoveries, marketRent, vacancy, profile, rate, buffer, floorRate, term, ioPeriod, amortisation, maxLvr, minIcr, minDscr, minDebtYield, stampDuty, transferRegistrationFee, mortgageRegistrationFee, pexaSettlementFee, legal, bankLegal, valuationFee, dueDiligence, capexReserve, workingCapital, otherCosts, autoEstimatedAcquisitionCosts, gstTreatment, globalInputSync]);
+  }, [updateGlobal, result, assetCategory, assetSubtype, purpose, leaseStatus, state, proposedLoan, purchaserType, entityName, guarantees, relatedPartyTenant, gstRegistered, availableEquity, sponsorLiquidity, liquidityMult, businessDebt, businessEbitda, currentRent, proposedRent, purchasePrice, estimatedValue, bankValue, conservativeValue, landArea, buildingArea, lettableArea, valuationConfidence, clearance, rollerDoors, truckAccess, powerCapacity, slabCondition, roofCondition, passingRent, otherIncome, recoveries, marketRent, vacancy, profile, rate, buffer, floorRate, term, ioPeriod, amortisation, maxLvr, minIcr, minDscr, minDebtYield, stampDuty, transferRegistrationFee, mortgageRegistrationFee, pexaSettlementFee, legal, bankLegal, valuationFee, dueDiligence, capexReserve, workingCapital, otherCosts, autoEstimatedAcquisitionCosts, gstTreatment, globalInputSync]);
 
   const applyProfile = (next: LenderPolicyProfileKey) => {
     setProfile(next);

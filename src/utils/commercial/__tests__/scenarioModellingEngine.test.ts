@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { calculateCommercialIndustrialBorrowing } from '../borrowing/commercialBorrowingEngine';
-import { sampleClientProfiles } from '../clientPortfolioEngine';
 import { buildClientScenario } from '../scenarioModellingEngine';
 import { buildScenarioComparisonRows, comparePortfolioScenario } from '../scenarioComparisonEngine';
+import { testClientProfiles } from './fixtures/clientProfile';
 
 const baseBorrowingInputs = {
   dealProfile: { assetCategory: 'commercial' as const, assetSubtype: 'Office', acquisitionPurpose: 'investment' as const, leaseStatus: 'fullyLeased' as const, state: 'NSW' as const },
@@ -22,7 +22,7 @@ describe('commercial client portfolio scenario engine', () => {
   });
 
   it('calculates client-profile scenario outputs and comparison rows', () => {
-    const client = sampleClientProfiles[0];
+    const client = testClientProfiles[0];
     const result = calculateCommercialIndustrialBorrowing(baseBorrowingInputs);
     const scenario = buildClientScenario(client, { scenarioName: 'Acquire office', scenarioType: 'Acquire Commercial Asset', purchasePrice: 2_000_000, proposedDebt: result.finalRiskAdjustedLoan, requiredEquity: result.fundsToComplete.requiredEquity, annualNoi: result.noi.actualNoi, annualDebtService: result.annualDebtService, borrowingResult: result });
     const comparison = comparePortfolioScenario(scenario.currentPositionSnapshot, scenario.resultingPosition);
@@ -32,7 +32,7 @@ describe('commercial client portfolio scenario engine', () => {
   });
 
   it('triggers reliability warnings for missing liabilities and business financials', () => {
-    const client = { ...sampleClientProfiles[0], liabilities: { ...sampleClientProfiles[0].liabilities, residentialLoans: 0, commercialLoans: 0, businessLoans: 0, equipmentFinance: 0, vehicleFinance: 0, creditCards: 0, overdrafts: 0, atoPaymentPlans: 0, personalLoans: 0, directorGuarantees: 0, relatedPartyLoans: 0 }, businessFinancials: { ...sampleClientProfiles[0].businessFinancials, ebitdaNpbt: null, financialsAvailable: false } };
+    const client = { ...testClientProfiles[0], liabilities: { ...testClientProfiles[0].liabilities, residentialLoans: 0, commercialLoans: 0, businessLoans: 0, equipmentFinance: 0, vehicleFinance: 0, creditCards: 0, overdrafts: 0, atoPaymentPlans: 0, personalLoans: 0, directorGuarantees: 0, relatedPartyLoans: 0 }, businessFinancials: { ...testClientProfiles[0].businessFinancials, ebitdaNpbt: null, financialsAvailable: false } };
     const scenario = buildClientScenario(client, { scenarioName: 'Limited data', scenarioType: 'Acquire Industrial Asset', purchasePrice: 1_000_000, proposedDebt: 700_000, requiredEquity: 400_000, annualNoi: 60_000, annualDebtService: 70_000 });
     expect(scenario.proposedChanges.reliability).toBe('Limited');
     expect(scenario.warnings.join(' ')).toContain('Liabilities are missing');
@@ -40,7 +40,7 @@ describe('commercial client portfolio scenario engine', () => {
   });
 
   it('marks equity shortfall red and negative liquidity months as N/A', () => {
-    const scenario = buildClientScenario(sampleClientProfiles[0], { scenarioName: 'Shortfall', scenarioType: 'Acquire Commercial Asset', purchasePrice: 10_000_000, proposedDebt: 5_000_000, requiredEquity: 99_000_000, annualNoi: 100_000, annualDebtService: 450_000 });
+    const scenario = buildClientScenario(testClientProfiles[0], { scenarioName: 'Shortfall', scenarioType: 'Acquire Commercial Asset', purchasePrice: 10_000_000, proposedDebt: 5_000_000, requiredEquity: 99_000_000, annualNoi: 100_000, annualDebtService: 450_000 });
     expect(scenario.resultingPosition.riskRating).toBe('red');
     expect(scenario.proposedChanges.postSettlementLiquidityMonths).toBe('N/A');
   });
