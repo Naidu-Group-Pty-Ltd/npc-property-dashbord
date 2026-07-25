@@ -41,6 +41,7 @@ export default function PortalAml() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AmlPortalOverview | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
+  const [consentedCaseId, setConsentedCaseId] = useState<string | null>(null);
   const resumedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -63,11 +64,12 @@ export default function PortalAml() {
   // (server-side gate enforces this; we mirror it in the UI to prevent bypass via stepper clicks).
   const consented = useMemo(() => {
     if (!caseObj) return false;
+    if (consentedCaseId === caseObj.id) return true;
     try {
       if (localStorage.getItem(consentKey(caseObj.id)) === '1') return true;
     } catch { /* ignore */ }
     return (data?.sections ?? []).some(s => s.status && s.status !== 'not_started');
-  }, [caseObj, data?.sections]);
+  }, [caseObj, consentedCaseId, data?.sections]);
 
   // Resume: on first load, jump to the last section the user was on, or the first incomplete step.
   useEffect(() => {
@@ -192,6 +194,7 @@ export default function PortalAml() {
                 caseId={caseObj.id}
                 onDone={() => {
                   try { localStorage.setItem(consentKey(caseObj.id), '1'); } catch { /* ignore */ }
+                  setConsentedCaseId(caseObj.id);
                   setStepIdx(1);
                 }}
               />
