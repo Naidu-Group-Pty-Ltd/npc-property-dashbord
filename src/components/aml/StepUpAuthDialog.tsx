@@ -39,7 +39,6 @@ const CAPABILITY_LABELS: Record<AmlCapability, string> = {
 export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: StepUpAuthDialogProps) {
   const [phase, setPhase] = useState<"issue" | "verify">("issue");
   const [challengeId, setChallengeId] = useState<string | null>(null);
-  const [destinationHint, setDestinationHint] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +46,7 @@ export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: Step
 
   useEffect(() => {
     if (!open) {
-      setPhase("issue"); setChallengeId(null); setDestinationHint(null); setCode(""); setError(null); setBusy(false);
+      setPhase("issue"); setChallengeId(null); setCode(""); setError(null); setBusy(false);
     }
   }, [open]);
 
@@ -56,7 +55,6 @@ export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: Step
     try {
       const data = await invokeAmlFunction<any>("aml-step-up", { op: "issue", capability });
       setChallengeId(data.challenge_id);
-      setDestinationHint(data.destination_hint ?? null);
       setPhase("verify");
     } catch (e: any) {
       setError(e?.message ?? "Failed to issue challenge");
@@ -95,7 +93,7 @@ export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: Step
           </div>
           <DialogDescription>
             Restricted capability: <span className="font-medium">{label}</span>. Enter the
-            6-digit code we just issued to continue. The grant is scoped to your session for
+            6-digit code sent to your account email to continue. The grant is scoped to your session for
             15 minutes and every action taken is written to the AML audit chain.
           </DialogDescription>
         </DialogHeader>
@@ -103,14 +101,6 @@ export function StepUpAuthDialog({ open, capability, onCancel, onConfirm }: Step
         {error ? (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        {phase === "verify" ? (
-          <Alert>
-            <AlertDescription>
-              Verification code sent to your staff email{destinationHint ? ` (${destinationHint})` : ""}.
-            </AlertDescription>
           </Alert>
         ) : null}
 

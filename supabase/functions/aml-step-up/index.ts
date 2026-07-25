@@ -5,7 +5,7 @@
  * (aml.report, aml.configure). Replaces the Phase 2 "type CONFIRM" placeholder.
  *
  * POST { op, ...args }
- *   op: 'issue'   { capability } -> { challenge_id, expires_at, delivery } (code delivered out-of-band)
+ *   op: 'issue'   { capability } -> { challenge_id, expires_at, delivery }
  *   op: 'verify'  { challenge_id, code } -> { session_token, capability, expires_at }
  *   op: 'check'   { capability, session_token } -> { valid: boolean, expires_at }
  *   op: 'revoke'  { session_id } -> { ok }
@@ -13,7 +13,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
-import { getBrandConfig } from "../_shared/brand-config.ts";
+import { canUseAmlCapability, STEP_UP_CAPABILITIES } from "./policy.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
@@ -24,7 +24,6 @@ const corsHeaders = {
 const jr = (d: unknown, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-const STEP_UP_CAPABILITIES = new Set(["aml.report", "aml.configure", "aml.investigate", "aml.view"]);
 const CODE_TTL_SECONDS = 5 * 60;
 const SESSION_TTL_SECONDS = 15 * 60;
 
@@ -41,30 +40,25 @@ function genToken(bytes = 32) {
   return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-function maskEmail(email: string) {
-  const [local, domain] = email.split("@");
-  return `${local.slice(0, 2)}${"*".repeat(Math.max(1, local.length - 2))}@${domain}`;
-}
+async function deliverCode(email: string, code: string, capability: string) {
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  if (!apiKey) return { error: "Step-up email delivery is not configured" };
 
-async function deliverCode(admin: any, recipient: string, code: string, capability: string) {
-  const resendApiKey = Deno.env.get("RESEND_API_KEY");
-  if (!resendApiKey) return { ok: false, error: "Step-up email delivery is not configured" };
-  const brand = await getBrandConfig(admin);
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
-    headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      from: brand.fromHeaderAdmin,
-      to: [recipient],
-      subject: `${brand.companyName} AML verification code`,
-      html: `<p>Your verification code for <strong>${capability}</strong> is:</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">${code}</p><p>This code expires in 5 minutes. If you did not request it, contact your administrator.</p>`,
+      from: "Property Consulting Security <notifications@npcservices.com.au>",
+      to: [email],
+      subject: "Your AML verification code",
+      text: `Your verification code for ${capability} is ${code}. It expires in 5 minutes. If you did not request this code, contact your administrator.`,
     }),
   });
   if (!response.ok) {
-    console.error("[aml-step-up] Resend delivery failed", response.status);
-    return { ok: false, error: "Could not deliver the step-up code" };
+    console.error("[aml-step-up] code delivery failed", response.status);
+    return { error: "Unable to deliver verification code" };
   }
-  return { ok: true };
+  return { error: null };
 }
 
 Deno.serve(async (req) => {
@@ -86,9 +80,19 @@ Deno.serve(async (req) => {
     const userId = auth.userId;
     const userLabel = auth.username ?? null;
 
-    // Confirm user has some AML role at all.
-    const { data: hasRole } = await admin.rpc("has_any_aml_role", { _user_id: userId });
-    if (!hasRole) return jr({ error: "No AML role" }, 403);
+    const [{ data: roleRows, error: roleError }, { data: superadminRow, error: superadminError }] = await Promise.all([
+      admin.rpc("get_aml_roles_for_user", { _user_id: userId }),
+      admin.from("user_roles").select("user_id").eq("user_id", userId).eq("role", "superadmin").maybeSingle(),
+    ]);
+    if (roleError || superadminError) return jr({ error: "Unable to resolve AML permissions" }, 500);
+    const roles = (roleRows ?? []).map((row: { role?: string }) => String(row.role ?? ""));
+    const isSuperadmin = Boolean(superadminRow);
+    if (roles.length === 0 && !isSuperadmin) return jr({ error: "No AML role" }, 403);
+
+    const authorizeCapability = (capability: string) =>
+      canUseAmlCapability(roles, capability, isSuperadmin)
+        ? null
+        : jr({ error: "Capability not permitted" }, 403);
 
     const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? null;
     const ua = req.headers.get("user-agent") ?? null;
@@ -99,12 +103,8 @@ Deno.serve(async (req) => {
       case "issue": {
         const capability = String(body.capability ?? "");
         if (!STEP_UP_CAPABILITIES.has(capability)) return jr({ error: "Unknown capability" }, 400);
-        const { data: user, error: userError } = await admin.from("custom_users")
-          .select("email, username").eq("id", userId).maybeSingle();
-        const recipient = String(user?.email ?? user?.username ?? "").trim();
-        if (userError || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-          return jr({ error: "A verified staff email is required for step-up authentication" }, 409);
-        }
+        const denied = authorizeCapability(capability);
+        if (denied) return denied;
         const code = genNumericCode(6);
         const codeHash = await sha256(`${userId}:${capability}:${code}`);
         const expires_at = new Date(Date.now() + CODE_TTL_SECONDS * 1000).toISOString();
@@ -112,17 +112,11 @@ Deno.serve(async (req) => {
           user_id: userId, capability, code_hash: codeHash, expires_at, ip, user_agent: ua,
         }).select("id, expires_at").single();
         if (error) return jr({ error: error.message }, 500);
-        const delivery = await deliverCode(admin, recipient, code, capability);
-        if (!delivery.ok) {
-          await aml.from("step_up_challenges").delete().eq("id", data.id);
-          return jr({ error: delivery.error }, 503);
-        }
-        return jr({
-          challenge_id: data.id,
-          expires_at: data.expires_at,
-          delivery: "email",
-          destination_hint: maskEmail(recipient),
-        });
+        const { data: userData, error: userError } = await admin.auth.admin.getUserById(userId);
+        if (userError || !userData.user?.email) return jr({ error: "No verified delivery address is available" }, 503);
+        const delivery = await deliverCode(userData.user.email, code, capability);
+        if (delivery.error) return jr({ error: delivery.error }, 503);
+        return jr({ challenge_id: data.id, expires_at: data.expires_at, delivery: "email" });
       }
 
       case "verify": {
@@ -132,6 +126,8 @@ Deno.serve(async (req) => {
         const { data: ch, error } = await aml.from("step_up_challenges").select("*").eq("id", challenge_id).maybeSingle();
         if (error || !ch) return jr({ error: "Challenge not found" }, 404);
         if (ch.user_id !== userId) return jr({ error: "Challenge does not belong to caller" }, 403);
+        const denied = authorizeCapability(String(ch.capability));
+        if (denied) return denied;
         if (ch.verified_at) return jr({ error: "Challenge already used" }, 409);
         if (new Date(ch.expires_at).getTime() < Date.now()) return jr({ error: "Challenge expired" }, 410);
         if (ch.attempts >= ch.max_attempts) return jr({ error: "Too many attempts" }, 429);
@@ -155,6 +151,7 @@ Deno.serve(async (req) => {
         const capability = String(body.capability ?? "");
         const session_token = String(body.session_token ?? "");
         if (!capability || !session_token) return jr({ valid: false });
+        if (authorizeCapability(capability)) return jr({ valid: false });
         const tokenHash = await sha256(`${userId}:${capability}:${session_token}`);
         const { data, error } = await aml.from("step_up_sessions")
           .select("id, expires_at, revoked_at")
