@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { acceptAiEstimate, calculateCapRateEngine, calculateCommercialGstEngine, calculateIcrDscrEngine, calculateNoiEngine, createAiEstimate, markEstimateVerified, rejectAiEstimate, replaceWithManualValue, runDcfAssessment } from '..';
+import { acceptAiEstimate, calculateBorrowingNoi, calculateCapRateEngine, calculateCommercialGst, calculateCommercialGstEngine, calculateIcrDscrEngine, calculateNoiEngine, createAiEstimate, markEstimateVerified, rejectAiEstimate, replaceWithManualValue, runDcfAssessment } from '..';
 import { calculateCommercialIndustrialBorrowing } from '../borrowing/commercialBorrowingEngine';
 import type { BorrowingInputs } from '../borrowing/calculatorTypes';
 
@@ -15,6 +15,17 @@ const borrowingBase = (patch: Partial<BorrowingInputs> = {}): BorrowingInputs =>
 } as BorrowingInputs);
 
 describe('Commercial / Industrial Assessment Engine', () => {
+  it('borrowing NOI includes non-recoverable, strata and itemised operating expenses together', () => {
+    const inputs = borrowingBase();
+    inputs.income.strataOwnersCorp = 7_000;
+
+    const result = calculateBorrowingNoi(inputs);
+
+    expect(result.totalOperatingExpenses).toBe(62_000);
+    expect(result.actualNoi).toBe(205_500);
+    expect(result.selectedNoi).toBe(205_500);
+  });
+
   it('NOI supports recovered outgoings, vacancy, lender adjustment, over-rent and unknown lease docs', () => {
     const r = calculateNoiEngine({ leaseType: 'unknown', grossPassingRent: 100_000, otherIncome: 5_000, marketRent: 90_000, vacancyAllowancePct: 5, recoveredOutgoings: 20_000, outgoings: [{ name: 'rates', amount: 20_000, recoverablePct: 100 }], incentiveAdjustment: 2_000, overRentAdjustment: 4_000, leaseDocsVerified: false }, 'lenderAdjusted');
     expect(r.potentialGrossIncome).toBe(105_000);
@@ -136,9 +147,23 @@ describe('Commercial / Industrial Assessment Engine', () => {
   it('GST handles inclusive, plus GST, verified/unverified going concern, unknown and claimable cashflow', () => {
     expect(calculateCommercialGstEngine({ purchasePrice: 1_100_000, treatment: 'gstInclusive', purchaserGstRegistered: 'yes' }).gstClaimableAmount).toBeCloseTo(100_000, 0);
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'plusGst', purchaserGstRegistered: 'yes' }).gstSettlementCashflowRequirement).toBe(100_000);
+    expect(calculateCommercialGst({ purchasePrice: 1_000_000, treatment: 'plus_gst', purchaserRegistered: true })).toMatchObject({ gstAmount: 100_000, gstClaimable: 100_000, netAcquisitionCost: 1_100_000 });
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'goingConcern', vendorGstRegistered: 'yes', purchaserGstRegistered: 'yes', goingConcernAgreedInWriting: 'yes', enterpriseCarriedOnUntilSettlement: 'yes', supplierProvidesAllThingsNecessary: 'yes', propertyLeasedOrOperatingEnterprise: 'yes' }).gstVerificationStatus).toBe('Verified');
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'goingConcern' }).gstVerificationStatus).toBe('Specialist Review Required');
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'unknown' }).warnings.join(' ')).toContain('Unknown GST');
+  });
+
+  it('GST honours an explicit ITC denial for a registered purchaser', () => {
+    const r = calculateCommercialGstEngine({
+      purchasePrice: 1_100_000,
+      treatment: 'gstInclusive',
+      purchaserGstRegistered: 'yes',
+      gstClaimableAsInputTaxCredit: 'no',
+    });
+
+    expect(r.gstClaimableAmount).toBe(0);
+    expect(r.gstEconomicCost).toBeCloseTo(100_000, 0);
+    expect(r.netAcquisitionCost).toBeCloseTo(1_200_000, 0);
   });
 
   it('DCF includes growth, vacancy, capex, debt service, terminal value, sale proceeds, IRR, NPV and equity multiple', () => {
@@ -161,6 +186,18 @@ describe('Commercial / Industrial Assessment Engine', () => {
     expect(r.fundsToComplete.monthsDebtServiceCovered).toBeNull();
     expect(r.reverseCalculators.requiredPurchasePriceToFitAvailableEquity).toBeGreaterThanOrEqual(0);
     expect(r.fundsToComplete.acquisitionCostLineItems?.transferRegistrationFee).toBe(180);
+  });
+
+  it('Borrowing NOI includes strata and owners corporation expenses', () => {
+    const strataOwnersCorp = 50_000;
+    const withoutStrata = calculateCommercialIndustrialBorrowing(borrowingBase());
+    const withStrata = calculateCommercialIndustrialBorrowing(borrowingBase({
+      income: { ...borrowingBase().income, strataOwnersCorp },
+    }));
+
+    expect(withStrata.noi.totalOperatingExpenses).toBe(withoutStrata.noi.totalOperatingExpenses + strataOwnersCorp);
+    expect(withStrata.noi.actualNoi).toBe(withoutStrata.noi.actualNoi - strataOwnersCorp);
+    expect(withStrata.noi.selectedNoi).toBe(withoutStrata.noi.selectedNoi - strataOwnersCorp);
   });
 
   it('Borrowing scenarios explain changed or unchanged values', () => {

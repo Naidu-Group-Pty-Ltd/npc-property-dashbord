@@ -9,7 +9,7 @@ export type CommercialAssetClass =
   | 'medical' | 'childcare' | 'hospitality' | 'other';
 
 export type CommercialTenure = 'freehold' | 'leasehold' | 'strata';
-export type GstTreatment = 'going_concern' | 'margin_scheme' | 'standard' | 'input_taxed';
+export type GstTreatment = 'going_concern' | 'margin_scheme' | 'plus_gst' | 'standard' | 'input_taxed';
 export type RentBasis = 'gross' | 'net' | 'semi_gross';
 export type ReviewType = 'cpi' | 'fixed_percent' | 'market' | 'hybrid' | 'none';
 export type LeaseStatus = 'occupied' | 'vacant' | 'holdover' | 'under_offer' | 'expired';

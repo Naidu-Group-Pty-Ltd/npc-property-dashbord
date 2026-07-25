@@ -593,21 +593,56 @@ export function InvestmentReportGenerator() {
     try {
       console.log('Scraping property URL:', propertyUrl);
       
-      const { data, error } = await invokeSecureFunction('scrape-property-listing', {
+      const { data: startData, error: startError } = await invokeSecureFunction('scrape-property-listing', {
         url: propertyUrl
       });
 
-      if (error) {
-        console.error('Scrape function error:', error);
-        throw new Error(error.message || 'Failed to scrape property listing');
+      if (startError) {
+        console.error('Scrape function error:', startError);
+        throw new Error(startError.message || 'Failed to scrape property listing');
       }
 
-      if (!data.success) {
-        throw new Error(data.error || 'Scraping failed');
+      if (!startData?.success || !startData?.jobId) {
+        throw new Error(startData?.error || 'Failed to start scraping job');
       }
 
-      console.log('Scrape successful:', data);
-      const scrapedResult = data.data;
+      const pollIntervalMs = 5000;
+      const maxWaitMs = 1500 * 1000;
+      const maxConsecutivePollErrors = 5;
+      const startedAt = Date.now();
+      let consecutivePollErrors = 0;
+      let scrapedResult: any = null;
+
+      while (Date.now() - startedAt <= maxWaitMs) {
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+        const { data: pollData, error: pollError } = await invokeSecureFunction('scrape-property-listing', {
+          jobId: startData.jobId,
+        });
+
+        if (pollError || !pollData?.success) {
+          consecutivePollErrors += 1;
+          if (consecutivePollErrors >= maxConsecutivePollErrors) {
+            throw new Error(pollError?.message || pollData?.error || 'Failed to check scrape status');
+          }
+          continue;
+        }
+
+        consecutivePollErrors = 0;
+        if (pollData.status === 'failed') {
+          throw new Error(pollData.error || 'Scraping failed');
+        }
+        if (pollData.status === 'succeeded') {
+          scrapedResult = pollData.data;
+          break;
+        }
+      }
+
+      if (!scrapedResult) {
+        throw new Error('Scrape is taking longer than expected. Please try again.');
+      }
+
+      console.log('Scrape successful:', scrapedResult);
       
       // Extract property details
       const extracted = scrapedResult.extractedDetails || {};

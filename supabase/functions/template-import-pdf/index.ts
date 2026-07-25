@@ -13,6 +13,10 @@ import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedR
 import { validatePageArtifactContractV3 } from '../_shared/pageArtifactContractV3.pure.ts';
 import { isSafeArtifactPath } from '../_shared/sourceSceneGraphV2.pure.ts';
 import { isPdfDiagnosticsPathOwnedByJob } from '../_shared/pdfDiagnosticsAuthorization.pure.ts';
+import {
+  isAllowedTemplateImportMetaPatch,
+  isTemplateImportArtifactPathOwnedByImport,
+} from '../_shared/templateImportArtifactAuthorization.pure.ts';
 import { authorizeTemplateResync } from '../_shared/templateResyncAuthorization.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -1214,10 +1218,14 @@ Deno.serve(async (req) => {
       if (record?.user_id && authedUserId && record.user_id !== authedUserId) return json({ error: 'forbidden' }, 403);
 
       const meta = ((record.meta && typeof record.meta === 'object') ? record.meta : {}) as any;
-      const cdir = await readJsonArtifact(admin, meta.cdir_artifact_path);
-      const cdirFidelity = await readJsonArtifact(admin, meta.cdir_fidelity_artifact_path);
-      const importAsset = await readJsonArtifact(admin, meta.import_asset_artifact_path);
-      const importManifests = await readJsonArtifact(admin, meta.import_manifests_artifact_path);
+      const readOwnedArtifact = (path: unknown) => readJsonArtifact(
+        admin,
+        isTemplateImportArtifactPathOwnedByImport(path, importId) ? path : null,
+      );
+      const cdir = await readOwnedArtifact(meta.cdir_artifact_path);
+      const cdirFidelity = await readOwnedArtifact(meta.cdir_fidelity_artifact_path);
+      const importAsset = await readOwnedArtifact(meta.import_asset_artifact_path);
+      const importManifests = await readOwnedArtifact(meta.import_manifests_artifact_path);
 
       const pdfImportJob = importManifests?.pdf_import_job && typeof importManifests.pdf_import_job === 'object'
         ? importManifests.pdf_import_job
@@ -1451,12 +1459,12 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
 
-    // ---------- Phase 9: append arbitrary meta patch (provider audit trail) ----------
+    // ---------- Phase 9: append allowlisted audit metadata ----------
     if (operation === 'append_meta') {
       const importId = body.import_id as string;
       const patch = body.meta_patch;
-      if (!importId || !patch || typeof patch !== 'object') {
-        return json({ error: 'import_id and meta_patch required' }, 400);
+      if (!importId || !isAllowedTemplateImportMetaPatch(patch)) {
+        return json({ error: 'import_id and an allowlisted meta_patch are required' }, 400);
       }
       const { data: rec, error: getErr } = await admin
         .from('template_imports')

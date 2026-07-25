@@ -39,6 +39,7 @@ import type { CriticalContainmentPolicy } from './criticalVisualContainment.pure
 import { buildEmbeddedFontFace, type FontFaceEntry } from './fontFaceBuilder';
 import { fontLookupKey, resolveSourceFontFamily, lookupEmbeddedFamily } from './fontResolver';
 import { recommendFidelityMode } from './recommendFidelityMode';
+import { stripTransientRasterUrls } from './stripTransientRasterUrls';
 import type {
   DoclingDocument,
   DoclingRasterByPage,
@@ -724,6 +725,20 @@ export async function extractPdfViaDocling(
         terminalStateVersion: job.result_payload?.terminal_state_version ?? null,
       },
     };
+    // Attach the durable manifest path independently of the optional quality
+    // gate. The signed URL in the mapped background is render-time data only.
+    const sourceRasterRefByPage = buildSourceRasterRefsFromManifest(
+      rasterManifestPayload as RasterManifest | null,
+      jobId,
+      job.result_payload?.rasters_manifest_path ?? null,
+    );
+    template.pages = template.pages.map((page, index) => {
+      const pageNumber = pageNumberFromDoclingId(page.id) ?? index + 1;
+      const sourceRasterRef = sourceRasterRefByPage[pageNumber];
+      return sourceRasterRef
+        ? { ...page, meta: { ...(page.meta ?? {}), sourceRasterRef } }
+        : page;
+    });
     const schemaValidation = validateReconstructedSchema(template);
     if (!schemaValidation.ok) {
       throw new Error(`Docling reconstructed schema failed validation: ${schemaValidation.errors.join('; ')}`);
@@ -771,11 +786,6 @@ export async function extractPdfViaDocling(
         sourceSceneGraph: (options as { sourceSceneGraph?: unknown }).sourceSceneGraph ?? null,
         doclingDoc,
       }).byPage;
-      const sourceRasterRefByPage = buildSourceRasterRefsFromManifest(
-        rasterManifestPayload as RasterManifest | null,
-        jobId,
-        job.result_payload?.rasters_manifest_path ?? null,
-      );
       const gate = await runImportQualityGate({
         importId,
         template,
@@ -876,16 +886,27 @@ export async function extractPdfViaDocling(
       rasterPageCount,
     );
 
+    // Raster URLs are short-lived, caller-scoped values used only while
+    // reconstructing and reviewing the import. Persist the durable Storage
+    // reference instead so renderers re-sign it when needed.
+    const persistedTemplate = stripTransientRasterUrls(stageTemplate);
+    const persistedCdir = reportTemplateToCdir(persistedTemplate, {
+      kind: 'pdf',
+      checksum: sourceChecksum,
+      filename: file.name,
+    });
+    const persistedCdirFidelity = buildCdirFidelityReport(persistedCdir, doclingExpectations);
+
     await invokeImport({
       operation: 'stage_artifacts',
       import_id: importId,
-      schema: stageTemplate,
+      schema: persistedTemplate,
       page_count: totalPages,
       source_filename: file.name,
       source_checksum: sourceChecksum,
       ...(qualityGateSummary ? { meta: { visual_quality_gate: qualityGateSummary } } : {}),
-      cdir: stageCdir,
-      cdir_fidelity: cdirFidelity,
+      cdir: persistedCdir,
+      cdir_fidelity: persistedCdirFidelity,
       import_manifests: {
         pdf_import_job: {
           job_id: jobId,

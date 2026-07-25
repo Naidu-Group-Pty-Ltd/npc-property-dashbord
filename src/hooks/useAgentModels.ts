@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { AGENT_SURFACES, type AgentSurfaceId, findSurfaceByKey } from '@/lib/agentModels/agentKeys';
 import { formatModelDisplay, type ModelDisplay } from '@/lib/agentModels/modelDisplay';
 
@@ -67,10 +68,7 @@ let sharedChannel: ReturnType<typeof supabase.channel> | null = null;
 let subscribers = 0;
 
 async function fetchAssignments(): Promise<AgentAssignment[]> {
-
-  const { data, error } = await supabase.functions.invoke('agent-models-read', {
-    body: { action: 'list' },
-  });
+  const { data, error } = await invokeSecureFunction<any>('agent-models-read', { action: 'list' });
   if (error) throw new Error(error.message);
   if (!data?.success) throw new Error(data?.error ?? 'Failed to load model assignments');
   return (data.assignments ?? []) as AgentAssignment[];

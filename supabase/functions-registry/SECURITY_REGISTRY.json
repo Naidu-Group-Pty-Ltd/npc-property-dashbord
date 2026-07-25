@@ -2249,6 +2249,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
+    },
+    "market-updates-feed": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-updates-unified-feed"
     }
   }
 }

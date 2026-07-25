@@ -3903,6 +3903,7 @@ export type Database = {
           source_details: Json
           source_reference: string | null
           source_surface: Database["public"]["Enums"]["record_source_surface"]
+          storage_bucket: string | null
           supersedes_file_id: string | null
           sync_origin_id: string | null
           sync_origin_surface:
@@ -3936,6 +3937,7 @@ export type Database = {
           source_details?: Json
           source_reference?: string | null
           source_surface?: Database["public"]["Enums"]["record_source_surface"]
+          storage_bucket?: string | null
           supersedes_file_id?: string | null
           sync_origin_id?: string | null
           sync_origin_surface?:
@@ -3969,6 +3971,7 @@ export type Database = {
           source_details?: Json
           source_reference?: string | null
           source_surface?: Database["public"]["Enums"]["record_source_surface"]
+          storage_bucket?: string | null
           supersedes_file_id?: string | null
           sync_origin_id?: string | null
           sync_origin_surface?:
@@ -10437,6 +10440,8 @@ export type Database = {
           generated_by: string | null
           generation_payload: Json | null
           id: string
+          metadata: Json
+          pdf_hash: string | null
           pdf_storage_path: string | null
           sent_at: string | null
           sent_to: string[] | null
@@ -10466,6 +10471,8 @@ export type Database = {
           generated_by?: string | null
           generation_payload?: Json | null
           id?: string
+          metadata?: Json
+          pdf_hash?: string | null
           pdf_storage_path?: string | null
           sent_at?: string | null
           sent_to?: string[] | null
@@ -10495,6 +10502,8 @@ export type Database = {
           generated_by?: string | null
           generation_payload?: Json | null
           id?: string
+          metadata?: Json
+          pdf_hash?: string | null
           pdf_storage_path?: string | null
           sent_at?: string | null
           sent_to?: string[] | null
@@ -20595,6 +20604,10 @@ export type Database = {
         Args: { p_attempt: Json; p_job_id: string }
         Returns: undefined
       }
+      approve_agent_subscription: {
+        Args: { p_insight_id: string; p_user_id: string }
+        Returns: Json
+      }
       bootstrap_cron_vault: {
         Args: { p_internal_edge_secret: string; p_service_role_key: string }
         Returns: undefined
@@ -20965,6 +20978,10 @@ export type Database = {
         Returns: undefined
       }
       invoke_pdf_parse_recover_stuck_jobs: { Args: never; Returns: undefined }
+      is_active_aml_role_identity: {
+        Args: { _user_id: string }
+        Returns: boolean
+      }
       list_resumable_bulk_jobs: {
         Args: never
         Returns: {

@@ -3,11 +3,12 @@
  *
  *  - going_concern  : GST-free if both parties registered & supply meets ATO conditions
  *  - margin_scheme  : GST = 1/11th of MARGIN (sale price - prior acquisition cost)
+ *  - plus_gst       : GST = 10% on top of the stated purchase price
  *  - standard       : GST = 1/11th of sale price (typically claimable as input credit)
  *  - input_taxed    : Rare for CRE (residential-style treatment)
  */
 
-export type GstTreatment = 'going_concern' | 'margin_scheme' | 'standard' | 'input_taxed';
+export type GstTreatment = 'going_concern' | 'margin_scheme' | 'plus_gst' | 'standard' | 'input_taxed';
 
 export interface GstInputs {
   purchasePrice: number;
@@ -50,6 +51,13 @@ export function calculateCommercialGst(inputs: GstInputs): GstResult {
       notes = purchaserRegistered
         ? 'GST included in price; recoverable as input tax credit.'
         : 'GST included in price; not recoverable (purchaser not registered).';
+      break;
+    case 'plus_gst':
+      gst = purchasePrice * 0.1;
+      claimable = purchaserRegistered ? gst : 0;
+      notes = purchaserRegistered
+        ? 'GST payable in addition to price; recoverable as input tax credit.'
+        : 'GST payable in addition to price; not recoverable (purchaser not registered).';
       break;
     case 'input_taxed':
       gst = 0;

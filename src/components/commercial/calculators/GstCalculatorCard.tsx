@@ -165,15 +165,10 @@ const normalizeTreatment = (v: unknown): GstTreatmentInput | undefined => {
     return "going_concern";
   if (["margin_scheme", "margin"].includes(s)) return "margin_scheme";
   if (
-    [
-      "standard",
-      "gst_inclusive",
-      "plus_gst",
-      "taxable_supply",
-      "taxable",
-    ].includes(s)
+    ["plus_gst", "taxable_supply", "taxable"].includes(s)
   )
-    return "standard";
+    return "plus_gst";
+  if (["standard", "gst_inclusive"].includes(s)) return "standard";
   if (["input_taxed"].includes(s)) return "no_gst";
   if (["out_of_scope"].includes(s)) return "out_of_scope";
   if (["no_gst", "no_gst_applicable"].includes(s)) return "no_gst";
@@ -200,8 +195,8 @@ const inferTreatmentFromText = (
 ): GstTreatmentInput | undefined => {
   if (/going concern/.test(text)) return "going_concern";
   if (/margin scheme/.test(text)) return "margin_scheme";
-  if (/taxable supply|plus gst|\+\s*gst|gst inclusive/.test(text))
-    return "standard";
+  if (/gst inclusive/.test(text)) return "standard";
+  if (/taxable supply|plus gst|\+\s*gst/.test(text)) return "plus_gst";
   if (/out of scope/.test(text)) return "out_of_scope";
   if (/no gst|input taxed/.test(text)) return "no_gst";
   return undefined;
@@ -656,7 +651,7 @@ export function GstCalculatorCard() {
       /margin scheme/.test(combinedText) || inferred === "margin_scheme";
     const taxableSupplyPresent =
       /taxable supply|plus gst|\+\s*gst|gst inclusive/.test(combinedText) ||
-      inferred === "standard";
+      ["standard", "plus_gst"].includes(inferred);
     const confidence: GstExtractionPreview["confidence"] =
       hasContract && inferred !== "unknown"
         ? "High"
@@ -773,7 +768,7 @@ export function GstCalculatorCard() {
     hasPurchasePrice &&
     treatment !== "unknown" &&
     treatment !== "custom_review" &&
-    (treatment !== "standard" ||
+    (!["standard", "plus_gst"].includes(treatment) ||
       (registered !== "unknown" &&
         itcClaimability !== "unknown" &&
         settlementTiming !== "unknown")) &&
@@ -814,7 +809,8 @@ export function GstCalculatorCard() {
     itcClaimability === "unknown" ||
     (treatment === "going_concern" && goingConcernConfirmed !== "yes") ||
     (treatment === "going_concern" && registered !== "yes") ||
-    (treatment === "standard" && settlementTiming === "unknown") ||
+    (["standard", "plus_gst"].includes(treatment) &&
+      settlementTiming === "unknown") ||
     (treatment === "margin_scheme" && priorCostValue === null) ||
     !contractReviewed ||
     !professionalConfirmed ||
@@ -853,6 +849,8 @@ export function GstCalculatorCard() {
                 ? "goingConcern"
                 : treatment === "standard"
                   ? "gstInclusive"
+                  : treatment === "plus_gst"
+                    ? "plusGst"
                   : treatment === "margin_scheme"
                     ? "marginScheme"
                     : isZeroGstTreatment
@@ -1011,7 +1009,10 @@ export function GstCalculatorCard() {
         detail:
           "GST-free going concern treatment requires purchaser GST registration confirmation.",
       });
-    if (treatment === "standard" && settlementTiming === "unknown")
+    if (
+      ["standard", "plus_gst"].includes(treatment) &&
+      settlementTiming === "unknown"
+    )
       add({
         category: "Settlement Cashflow",
         severity: "Required",
@@ -1156,11 +1157,7 @@ export function GstCalculatorCard() {
     ).length,
   };
   const hasAnySaveValue = Boolean(
-    purchasePriceValue ||
-    persistedTreatment(treatment) ||
-    registered !== "unknown" ||
-    goingConcernConfirmed !== "unknown" ||
-    itcClaimability !== "unknown",
+    purchasePriceValue !== null || persistedTreatment(treatment),
   );
   const saveBackDisabled = !prefill || !hasAnySaveValue || saving;
   const calculatedOutputs = {
@@ -1243,6 +1240,7 @@ export function GstCalculatorCard() {
   ];
   const confirmSaveBack = async () => {
     if (!prefill) return;
+    setSaveNotice("");
     setSaving(true);
     try {
       const patch: Record<string, unknown> = {};
@@ -1250,7 +1248,8 @@ export function GstCalculatorCard() {
         patch.purchase_price = purchasePriceValue;
       const savedTreatment = persistedTreatment(treatment);
       if (savedTreatment) patch.gst_treatment = savedTreatment;
-      await pushBack(patch);
+      const result = await pushBack(patch);
+      if (!result.ok) return;
       updateGlobal("gstInputs", {
         purchasePrice: purchasePriceValue ?? undefined,
         treatment:
@@ -1258,6 +1257,8 @@ export function GstCalculatorCard() {
             ? "goingConcern"
             : treatment === "standard"
               ? "gstInclusive"
+              : treatment === "plus_gst"
+                ? "plusGst"
               : treatment === "margin_scheme"
                 ? "marginScheme"
                 : "unknown",
@@ -1295,7 +1296,7 @@ export function GstCalculatorCard() {
       updateGlobal("scenarioOverrides", { gst: saveSnapshot } as any);
       setSourceMode("gst", "savedPropertyLinked");
       setSaveNotice(
-        "GST assumptions saved to property profile. Downstream GST fields were refreshed for Borrowing Capacity, Funds to Complete, Report Overview, Scenario comparison and Client report outputs.",
+        "Purchase price and GST treatment saved to the property profile. Current GST assumptions were refreshed for Borrowing Capacity, Funds to Complete, Report Overview, Scenario comparison and Client report outputs.",
       );
       setSaveDialogOpen(false);
     } finally {
@@ -1367,7 +1368,7 @@ export function GstCalculatorCard() {
                 title={
                   !prefill
                     ? "Select or link a property before saving GST assumptions."
-                    : "Save GST assumptions back to the linked property profile."
+                    : "Save purchase price and GST treatment back to the linked property profile."
                 }
               >
                 {saving ? "Saving..." : "Save Back to Property"}
@@ -1609,6 +1610,7 @@ export function GstCalculatorCard() {
                   <SelectContent>
                     <SelectItem value="unknown">Unknown</SelectItem>
                     <SelectItem value="standard">Taxable Supply</SelectItem>
+                    <SelectItem value="plus_gst">Price Plus GST</SelectItem>
                     <SelectItem value="going_concern">
                       GST-Free Going Concern
                     </SelectItem>
@@ -1966,11 +1968,12 @@ export function GstCalculatorCard() {
         <AlertDialogContent className="max-w-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Save these GST assumptions back to the property profile?
+              Save property GST fields and refresh downstream assumptions?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This saves GST fields only and refreshes downstream GST sync
-              payloads without overwriting unrelated calculator assumptions.
+              Purchase price and GST treatment are saved to the property. The
+              remaining values shown below refresh downstream GST sync payloads
+              without overwriting unrelated property fields.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
@@ -1992,7 +1995,7 @@ export function GstCalculatorCard() {
               }}
               disabled={saving}
             >
-              {saving ? "Saving..." : "Save GST assumptions"}
+              {saving ? "Saving..." : "Save and refresh GST"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -2145,6 +2148,7 @@ function TreatmentHero({
   const labels: Record<GstTreatmentInput, string> = {
     unknown: "Unknown / pending confirmation",
     standard: "Taxable supply",
+    plus_gst: "Price plus GST",
     going_concern: "GST-free going concern",
     margin_scheme: "Margin scheme",
     input_taxed: "Input taxed",
@@ -2156,6 +2160,8 @@ function TreatmentHero({
     unknown: "GST treatment has not been confirmed yet.",
     standard:
       "GST-inclusive / taxable supply logic applies based on the selected assumptions.",
+    plus_gst:
+      "GST is calculated in addition to the stated purchase price and included in settlement cashflow.",
     going_concern:
       "Going concern treatment is shown separately and remains subject to confirmation.",
     margin_scheme:

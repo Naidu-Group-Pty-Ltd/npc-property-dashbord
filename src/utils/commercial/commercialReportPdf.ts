@@ -26,6 +26,7 @@ import {
   runDcf,
 } from '@/utils/commercial';
 
+
 // ─── Design tokens (parity with StrategyRationalePDF) ──────────────────────
 const GOLD = { r: 212, g: 168, b: 67 };       // matches dark-gold theme primary
 const DARK_BG = { r: 13, g: 13, b: 13 };
@@ -51,7 +52,8 @@ const fmtAud = (v: number) => {
   const s = abs.toLocaleString('en-AU', { maximumFractionDigits: 0 });
   return v < 0 ? `-$${s}` : `$${s}`;
 };
-const fmtPct = (v: number, dp = 2) => (isFinite(v) ? `${v.toFixed(dp)}%` : '—');
+export const fmtPct = (v: number | null | undefined, dp = 2) =>
+  (v != null && Number.isFinite(v) ? `${v.toFixed(dp)}%` : '—');
 const fmtRatio = (v: number) => (isFinite(v) ? `${v.toFixed(2)}x` : '—');
 const fmtNum = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en-AU'));
 const fmtDate = (d?: string | null) => (d ? format(new Date(d), 'dd MMM yyyy') : '—');
