@@ -346,6 +346,7 @@
     "permissions.ts": [
       "_shared/authz.ts",
       "airtable-proxy/index.ts",
+      "estimate-commercial-caprate/index.ts",
       "get-email-data/index.ts",
       "manage-call-logs/index.ts",
       "manage-client-data/index.ts",
@@ -394,7 +395,10 @@
     ],
     "requestSecurity.ts": [
       "agent-planner/index.ts",
+      "commercial-bc-scenario-agent/index.ts",
       "dispatch-marketing-reports/index.ts",
+      "estimate-commercial-caprate/index.ts",
+      "estimate-commercial-noi/index.ts",
       "market-qa-digest-runner/index.ts",
       "market-qa-quality-report/index.ts",
       "market-qa-quality-snapshot/index.ts",
