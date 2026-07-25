@@ -22,9 +22,7 @@ Deno.serve(async (req) => {
     });
   }
 
-  // Handshake: caller must echo the internal secret it doesn't otherwise know.
-  // This function is deployed without JWT verification for the one-shot bootstrap,
-  // so the non-public secret is its sole authorization mechanism.
+  // Handshake: caller must echo the configured internal secret.
   const handshake = req.headers.get('x-bootstrap-handshake');
   if (handshake !== INTERNAL_EDGE_SECRET) {
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
