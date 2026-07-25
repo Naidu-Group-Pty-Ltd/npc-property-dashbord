@@ -8,13 +8,7 @@
 //   by_keys { keys }  → subset lookup (small batches)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
-import { createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-portal-session-token',
-};
+import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
 
 function admin() {
   return createClient(
@@ -33,6 +27,7 @@ const SAFE_ASSIGNMENT_COLUMNS =
   'agent_key, agent_label, agent_category, agent_description, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort, is_locked, last_used_at, updated_at';
 
 Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   try {
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
@@ -51,40 +46,40 @@ Deno.serve(async (req) => {
         .order('agent_category')
         .order('agent_label');
       if (error) throw error;
-      return json({ success: true, assignments: (data ?? []).map(normalize) });
+      return json({ success: true, assignments: (data ?? []).map(normalize) }, 200, corsHeaders);
     }
 
     if (action === 'get') {
       const key = body.agent_key;
-      if (!key) return json({ success: false, error: 'agent_key required' }, 400);
+      if (!key) return json({ success: false, error: 'agent_key required' }, 400, corsHeaders);
       const { data, error } = await sb
         .from('agent_model_assignments')
         .select(SAFE_ASSIGNMENT_COLUMNS)
         .eq('agent_key', key)
         .maybeSingle();
       if (error) throw error;
-      return json({ success: true, assignment: data ? normalize(data) : null });
+      return json({ success: true, assignment: data ? normalize(data) : null }, 200, corsHeaders);
     }
 
     if (action === 'by_keys') {
       const keys: string[] = Array.isArray(body.keys) ? body.keys.filter((k: unknown) => typeof k === 'string') : [];
-      if (keys.length === 0) return json({ success: true, assignments: [] });
-      if (keys.length > 100) return json({ success: false, error: 'Max 100 keys per request' }, 400);
+      if (keys.length === 0) return json({ success: true, assignments: [] }, 200, corsHeaders);
+      if (keys.length > 100) return json({ success: false, error: 'Max 100 keys per request' }, 400, corsHeaders);
       const { data, error } = await sb
         .from('agent_model_assignments')
         .select(SAFE_ASSIGNMENT_COLUMNS)
         .in('agent_key', keys);
       if (error) throw error;
-      return json({ success: true, assignments: (data ?? []).map(normalize) });
+      return json({ success: true, assignments: (data ?? []).map(normalize) }, 200, corsHeaders);
     }
 
-    return json({ success: false, error: `Unknown action: ${action}` }, 400);
+    return json({ success: false, error: `Unknown action: ${action}` }, 400, corsHeaders);
   } catch (e: any) {
-    return json({ success: false, error: e?.message ?? 'Unknown error' }, 500);
+    return json({ success: false, error: e?.message ?? 'Unknown error' }, 500, corsHeaders);
   }
 });
 
-function json(body: any, status = 200) {
+function json(body: any, status = 200, corsHeaders: Record<string, string>) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },

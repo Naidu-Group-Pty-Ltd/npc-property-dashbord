@@ -10,13 +10,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import {
   createCorsHeaders,
   createForbiddenResponse,
-  createTokenAuthCorsHeaders,
   createUnauthorizedResponse,
   verifyAuth,
 } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
-
-const corsHeaders = createTokenAuthCorsHeaders();
 
 function admin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
@@ -63,12 +60,12 @@ Deno.serve(async (req) => {
         .order('agent_category')
         .order('agent_label');
       if (error) throw error;
-      return json({ success: true, assignments: data });
+      return json({ success: true, assignments: data }, 200, corsHeaders);
     }
 
     if (action === 'update') {
       const { agent_key, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort } = body;
-      if (!agent_key || !route || !model_id) return json({ success: false, error: 'agent_key, route, model_id required' }, 400);
+      if (!agent_key || !route || !model_id) return json({ success: false, error: 'agent_key, route, model_id required' }, 400, corsHeaders);
       const patch: any = { route, model_id, updated_at: new Date().toISOString() };
       if (fallback_chain !== undefined) patch.fallback_chain = fallback_chain;
       if (temperature !== undefined) patch.temperature = temperature;
@@ -76,7 +73,7 @@ Deno.serve(async (req) => {
       if (reasoning_effort !== undefined) patch.reasoning_effort = reasoning_effort;
       const { data, error } = await sb.from('agent_model_assignments').update(patch).eq('agent_key', agent_key).select().single();
       if (error) throw error;
-      return json({ success: true, assignment: data });
+      return json({ success: true, assignment: data }, 200, corsHeaders);
     }
 
     if (action === 'bulk_update') {
@@ -86,12 +83,12 @@ Deno.serve(async (req) => {
         const { data, error } = await sb.from('agent_model_assignments').update({ route: u.route, model_id: u.model_id, fallback_chain: u.fallback_chain ?? [] }).eq('agent_key', u.agent_key).select().single();
         results.push({ agent_key: u.agent_key, ok: !error, error: error?.message, data });
       }
-      return json({ success: true, results });
+      return json({ success: true, results }, 200, corsHeaders);
     }
 
     if (action === 'test') {
       const { agent_key } = body;
-      if (!agent_key) return json({ success: false, error: 'agent_key required' }, 400);
+      if (!agent_key) return json({ success: false, error: 'agent_key required' }, 400, corsHeaders);
       const { callLLM } = await import('../_shared/llmRouter.ts');
       const t0 = Date.now();
       try {
@@ -100,18 +97,18 @@ Deno.serve(async (req) => {
           messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
           maxTokens: 8,
         });
-        return json({ success: true, latencyMs: Date.now() - t0, modelUsed: res.modelUsed, routeUsed: res.routeUsed, sample: res.content?.slice(0, 80), attempts: res.attempts });
+        return json({ success: true, latencyMs: Date.now() - t0, modelUsed: res.modelUsed, routeUsed: res.routeUsed, sample: res.content?.slice(0, 80), attempts: res.attempts }, 200, corsHeaders);
       } catch (e: any) {
-        return json({ success: false, latencyMs: Date.now() - t0, error: e?.message, attempts: e?.attempts ?? [] }, 200);
+        return json({ success: false, latencyMs: Date.now() - t0, error: e?.message, attempts: e?.attempts ?? [] }, 200, corsHeaders);
       }
     }
 
-    return json({ success: false, error: `Unknown action: ${action}` }, 400);
+    return json({ success: false, error: `Unknown action: ${action}` }, 400, corsHeaders);
   } catch (e: any) {
-    return json({ success: false, error: e?.message ?? 'Unknown error' }, 500);
+    return json({ success: false, error: e?.message ?? 'Unknown error' }, 500, corsHeaders);
   }
 });
 
-function json(body: any, status = 200) {
+function json(body: any, status = 200, corsHeaders: Record<string, string>) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
