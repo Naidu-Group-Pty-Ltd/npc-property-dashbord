@@ -184,6 +184,40 @@ export async function fetchBillingHandoffUrl(
 }
 
 /**
+ * Display-only username for the pricing page's "Purchasing for … as <user>"
+ * chip. Read from the session cache useAuth maintains; never used for
+ * authorization — the server re-resolves the purchase scope at checkout.
+ */
+function getDisplayUsername(): string | null {
+  try {
+    const raw = sessionStorage.getItem("current_user");
+    if (!raw) return null;
+    const name = (JSON.parse(raw)?.username ?? "").toString().trim();
+    return name ? name.slice(0, 80) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The static fallback link identifies only the workspace (?uid=…), so the
+ * storefront can't show WHO is buying. Attach the signed-in username as a
+ * display-only `u` hint; attributed handoffs (?h=…) carry the user
+ * server-side and don't need it.
+ */
+function withUsernameHint(url: string): string {
+  const name = getDisplayUsername();
+  if (!name) return url;
+  try {
+    const u = new URL(url);
+    u.searchParams.set("u", name);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
  * Preferred entry point for all purchase CTAs.
  *
  * Popup-blocker note: the window is opened synchronously inside the click
@@ -211,7 +245,8 @@ export async function openMissionControlWithAttribution(
     }
   }
 
-  const url = (await fetchBillingHandoffUrl(intent, itemId)) ?? fallbackUrl;
+  const url =
+    (await fetchBillingHandoffUrl(intent, itemId)) ?? withUsernameHint(fallbackUrl);
 
   if (win && !win.closed) {
     win.location.href = url;
