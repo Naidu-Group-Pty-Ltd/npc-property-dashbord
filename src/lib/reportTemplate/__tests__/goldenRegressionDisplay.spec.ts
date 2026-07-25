@@ -40,6 +40,22 @@ describe('getGoldenRegressionDisplayState', () => {
     expect(s.actionRequired).toBe('fix');
   });
 
+  it.each(['not_reviewed', 'accepted_with_warnings'])(
+    '%s decision overrides a passing gate status and requires review',
+    (operatorDecision) => {
+      const s = getGoldenRegressionDisplayState({ qualityGateStatus: 'pass', operatorDecision });
+      expect(s).toMatchObject({ label: 'Review', tone: 'warning', actionRequired: 'review' });
+    },
+  );
+
+  it('accepted decision does not override a not-evaluated gate status', () => {
+    const s = getGoldenRegressionDisplayState({
+      qualityGateStatus: 'not_evaluated',
+      operatorDecision: 'accepted',
+    });
+    expect(s).toMatchObject({ label: 'Not evaluated', tone: 'outline', actionRequired: 'review' });
+  });
+
   it('export parity manual_required → review', () => {
     const s = getGoldenRegressionDisplayState({ qualityGateStatus: 'pass', exportParityStatus: 'manual_required' });
     expect(s).toMatchObject({ label: 'Review', actionRequired: 'review' });
