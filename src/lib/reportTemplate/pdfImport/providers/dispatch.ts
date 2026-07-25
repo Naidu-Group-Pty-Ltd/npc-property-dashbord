@@ -1,14 +1,13 @@
 /**
- * Phase 9 — Multi-service dispatcher.
+ * PDF provider dispatcher.
  *
- * Higher-level entry point that picks the right primary provider for an input,
- * runs the Phase 7 fallback chain, and persists the resulting
+ * Higher-level entry point that runs the Phase 7 PDF fallback chain and persists the resulting
  * `ProviderAttempt[]` audit trail to `template_imports.meta.provider_attempts`
  * so the Phase 8 diagnostics dashboard can render the cross-service trace.
  *
  * The dispatcher is additive — existing callers of `extractPdfViaDocling` keep
- * working unchanged. New callers (e.g. the unified `ReferenceImportDialog`)
- * can opt in by importing `dispatchImport`.
+ * working unchanged. Non-PDF sources use the reference import orchestrator,
+ * whose output contract is a reconstructed schema rather than `ImportResult`.
  */
 import type { ImportOptions, ImportResult } from '../types';
 import {
@@ -18,7 +17,6 @@ import {
   doclingProvider,
   pixelFallbackProvider,
 } from './index';
-import { renderSourceProvider } from './services';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 export interface DispatchResult {
@@ -30,7 +28,7 @@ export interface DispatchResult {
 export interface DispatchOptions extends ImportOptions {
   /** Skip the provider-attempts persistence step (useful in tests). */
   skipAuditPersist?: boolean;
-  /** Force a specific primary provider id — bypasses auto-detection. */
+  /** @deprecated `render-source` has no persisted `ImportResult` backend contract. */
   forcePrimary?: 'docling' | 'render-source';
   onAttempt?: (attempt: ProviderAttempt) => void;
 }
@@ -38,15 +36,13 @@ export interface DispatchOptions extends ImportOptions {
 /** Choose the best primary provider for the given file. */
 function pickPrimary(file: File, opts: DispatchOptions): { primary: ImportProvider; fallbacks: ImportProvider[] } {
   if (opts.forcePrimary === 'render-source') {
-    return { primary: renderSourceProvider, fallbacks: [doclingProvider, pixelFallbackProvider] };
+    throw new Error('render-source cannot be used as a PDF import provider; use the reference import orchestrator for code and document sources.');
   }
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name ?? '');
   if (!isPdf) {
-    return { primary: renderSourceProvider, fallbacks: [] };
+    throw new Error('dispatchImport only supports PDF files; use the reference import orchestrator for code and document sources.');
   }
   // PDFs → Docling primary, pixel as fallback.
-  // WeasyPrint reverse-render is disabled until the backend supports
-  // `reverse_render_then_import` in `template-import-pdf`.
   return {
     primary: doclingProvider,
     fallbacks: [pixelFallbackProvider],
