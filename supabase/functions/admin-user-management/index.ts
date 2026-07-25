@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { Resend } from "https://esm.sh/resend@2.0.0";
 import { hashPassword, verifyPassword } from "../_shared/password.ts";
 import { validatePasswordStrength } from "../_shared/passwordValidation.ts";
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createSessionCookie } from "../_shared/auth.ts";
+import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createSessionCookie, extractSessionToken } from "../_shared/auth.ts";
 import { resolveUserSessionRow } from "../_shared/sessionHash.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { rotateSession } from "../_shared/sessionRotate.ts";
@@ -536,10 +536,24 @@ Deno.serve(async (req: Request) => {
 
     // Update own credentials (username and/or password)
     if (action === 'update_own_credentials') {
-      const { error: sessionError, user: currentUser, sessionId: currentSessionId } = await verifySession(session_token);
-      if (sessionError || !currentUser) {
+      // Credential changes and the replacement cookie must be bound to the
+      // HttpOnly session presented by this browser, never a token selected in
+      // the JSON body. verifyAuth also enforces the shared active-user checks.
+      const authResult = await verifyAuth(supabase, req.headers, body);
+      const cookieSessionToken = extractSessionToken(req.headers, body);
+      const sessionResult = authResult.authMethod === 'session'
+        ? await verifySession(cookieSessionToken ?? '')
+        : { error: 'Session authentication required', user: null, sessionId: null };
+      const { error: sessionError, user: currentUser, sessionId: currentSessionId } = sessionResult;
+      if (
+        authResult.error ||
+        !authResult.userId ||
+        sessionError ||
+        !currentUser ||
+        currentUser.id !== authResult.userId
+      ) {
         return new Response(
-          JSON.stringify({ success: false, error: sessionError || 'Not authenticated' }),
+          JSON.stringify({ success: false, error: authResult.error || sessionError || 'Not authenticated' }),
           { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
@@ -634,14 +648,10 @@ Deno.serve(async (req: Request) => {
       // so the old cookie cannot be replayed. Username changes alone do not
       // cross a privilege boundary and skip rotation.
       const responseHeaders: Record<string, string> = { ...corsHeaders, 'Content-Type': 'application/json' };
-      let rotatedToken: string | undefined;
-      let rotatedExpiresAt: string | undefined;
       if (updates.password_hash && currentSessionId) {
         const rot = await rotateSession(supabase, currentSessionId, 'password_change');
         if (rot.ok && rot.newSessionToken && rot.expiresAt) {
           responseHeaders['Set-Cookie'] = createSessionCookie(rot.newSessionToken, rot.expiresAt);
-          rotatedToken = rot.newSessionToken;
-          rotatedExpiresAt = rot.expiresAt.toISOString();
         } else {
           console.warn('[admin-user-management] session rotation failed:', rot.error);
         }
@@ -652,7 +662,6 @@ Deno.serve(async (req: Request) => {
         JSON.stringify({
           success: true,
           message: `Updated: ${changedFields.join(', ')}`,
-          ...(rotatedToken ? { session_token: rotatedToken, session_expires_at: rotatedExpiresAt } : {}),
         }),
         { status: 200, headers: responseHeaders }
       );
