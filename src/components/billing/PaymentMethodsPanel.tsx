@@ -102,6 +102,7 @@ export function PaymentMethodsPanel() {
           continue;
         }
         setError(friendlyWalletError(raw));
+        break;
       }
     }
     setLoading(false);
