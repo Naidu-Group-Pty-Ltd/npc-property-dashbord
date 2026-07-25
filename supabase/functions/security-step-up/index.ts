@@ -458,7 +458,7 @@ Deno.serve(async (req) => {
         const recoveryCode = isRecoveryCode(suppliedFactor);
         if (recoveryCode) {
           const hash = await hashRecoveryCode(auth.userId, suppliedFactor);
-          const ip = getTrustedClientIp(req);
+          const ip = getTrustedClientIp(req.headers);
           const userRate = await consumeRateLimit(admin, `mfa:recovery:user:${auth.userId}`, RECOVERY_CODE_ATTEMPTS_PER_WINDOW, RECOVERY_CODE_WINDOW_SECONDS);
           const ipRate = ip ? await consumeRateLimit(admin, `mfa:recovery:ip:${ip}`, RECOVERY_CODE_ATTEMPTS_PER_WINDOW, RECOVERY_CODE_WINDOW_SECONDS) : { allowed: true };
           if (!userRate.allowed || !ipRate.allowed || !hash) return j({ success: false, error: !hash ? 'mfa_configuration_invalid' : 'rate_limited', code: 'mfa_verification_required' }, !hash ? 503 : 429);
