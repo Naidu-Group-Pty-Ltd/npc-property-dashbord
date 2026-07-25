@@ -65,7 +65,7 @@ const navigationItems = [
   { title: 'Commercial / Industrial', url: '/commercial', icon: Building2, moduleKey: '__always__' },
   { title: 'Calendar', url: '/calendar', icon: Calendar, moduleKey: 'calendar' },
   { title: 'Reports', url: '/reports', icon: BarChart3, moduleKey: 'reports' },
-  { title: 'Quantitative Reports', url: '/quantitative-reports', icon: BarChart3, moduleKey: 'reports' },
+  { title: 'Quantitative Reports', url: '/quantitative-reports', icon: BarChart3, moduleKey: 'generated_reports' },
   { title: 'Generated Reports', url: '/generated-reports', icon: FileText, moduleKey: 'generated_reports' },
   { title: 'Cash Flow Analysis', url: '/cash-flow-analysis', icon: Activity, moduleKey: 'cash_flow' },
   { title: 'Report Q&A', url: '/report-qa', icon: MessageSquareText, moduleKey: 'report_qa' },
