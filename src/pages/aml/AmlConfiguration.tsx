@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -384,7 +384,7 @@ function TerminologyPreview({ jsonText, lockedKeys }: { jsonText: string; locked
  * and posts JSON) works unchanged. Locked regulatory terms are shown but
  * disabled and cannot be added.
  */
-function StructuredTerminologyEditor({
+export function StructuredTerminologyEditor({
   value, onChange, lockedKeys, disabled,
 }: {
   value: string;
@@ -398,19 +398,32 @@ function StructuredTerminologyEditor({
   }, [value]);
   const lockedSet = useMemo(() => new Set(lockedKeys), [lockedKeys]);
 
-  const rows = useMemo(() => {
+  const parsedRows = useMemo(() => {
     if (parsed === null) return [] as { key: string; replacement: string }[];
     return Object.entries(parsed).map(([key, replacement]) => ({ key, replacement }));
   }, [parsed]);
+  const [rows, setRows] = useState(parsedRows);
+  const lastWrittenValue = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (lastWrittenValue.current === value) {
+      lastWrittenValue.current = null;
+      return;
+    }
+    setRows(parsedRows);
+  }, [parsedRows, value]);
 
   const writeRows = (next: { key: string; replacement: string }[]) => {
+    setRows(next);
     const map: Record<string, string> = {};
     for (const r of next) {
       const k = r.key.trim();
       if (!k || lockedSet.has(k)) continue;
       map[k] = r.replacement;
     }
-    onChange(JSON.stringify(map, null, 2));
+    const nextValue = JSON.stringify(map, null, 2);
+    lastWrittenValue.current = nextValue;
+    onChange(nextValue);
   };
 
   const updateRow = (idx: number, patch: Partial<{ key: string; replacement: string }>) => {
