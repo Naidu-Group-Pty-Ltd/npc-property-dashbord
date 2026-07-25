@@ -341,7 +341,7 @@ request_timeout = 300
 
 [functions.scrape-property-listing]
 verify_jwt = false
-request_timeout = 1500
+request_timeout = 120
 
 [functions.estimate-property-expenses]
 verify_jwt = true
