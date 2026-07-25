@@ -4,6 +4,9 @@
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { verifyAuth } from "../_shared/auth.ts";
+import { requireModulePermission } from "../_shared/authz.ts";
+import { verifyRequiredCronSecret, securityJsonError } from "../_shared/requestSecurity.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -216,40 +219,29 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("authorization") ?? "";
   const bearer = auth.replace(/^Bearer\s+/i, "").trim();
   const apikey = req.headers.get("apikey") ?? "";
-  let authorised =
-    (secret && req.headers.get("x-cron-secret") === secret) ||
-    (serviceRoleKey && ((bearer && bearer === serviceRoleKey) || (apikey && apikey === serviceRoleKey)));
-
-  // UI callers must present an authenticated user JWT and hold an elevated role.
-  // Public anon/publishable keys are client credentials, not authorization.
-  if (!authorised && bearer) {
-    const admin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
-    const { data: { user } } = await admin.auth.getUser(bearer);
-    if (user) {
-      const { data: roles } = await admin
-        .from("user_roles")
-        .select("role")
-        .eq("user_id", user.id)
-        .in("role", ["admin", "superadmin"]);
-      authorised = Boolean(roles?.length);
-    }
-  }
-
-  console.log("[auth]", {
-    hasAuth: Boolean(auth),
-    hasApikey: Boolean(apikey),
-    hasCronSecret: Boolean(req.headers.get("x-cron-secret")),
-    authorised,
-  });
-  if (!authorised) return json({ error: "Unauthorised market ingestion request." }, 401);
+  const automated =
+    verifyRequiredCronSecret(secret, req.headers.get("x-cron-secret")) ||
+    Boolean(serviceRoleKey && (bearer === serviceRoleKey || apikey === serviceRoleKey));
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  if (!automated) {
+    let bodyPreview: any = {};
+    try { bodyPreview = await req.clone().json(); } catch {}
+    const verified = await verifyAuth(sb, req.headers, bodyPreview);
+    if (verified.error || !verified.userId) return securityJsonError(401, "unauthorized");
+    const permission = await requireModulePermission(
+      sb,
+      { userId: verified.userId, authMethod: verified.authMethod },
+      "market_updates",
+      "can_edit",
+    );
+    if (!permission.ok) return securityJsonError(403, "market_ingest_admin_required");
+  }
+
   const { force = false, sourceIds = null } =
     await req.json().catch(() => ({} as any));
 
