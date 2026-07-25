@@ -34,6 +34,7 @@ import {
   responseErrorMessage,
   withTimeout,
 } from '@/lib/modelHubData';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 type Route = 'gateway' | 'native' | 'openrouter';
 type Status = 'available' | 'preview' | 'deprecated' | 'unavailable';
