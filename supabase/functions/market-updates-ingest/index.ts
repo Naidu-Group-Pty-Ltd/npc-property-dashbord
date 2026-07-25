@@ -4,11 +4,13 @@
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { verifyAuth } from "../_shared/auth.ts";
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-cron-secret",
+    "authorization, x-client-info, apikey, content-type, x-cron-secret, x-session-token, x-command-centre-session-token",
 };
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -20,6 +22,21 @@ const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
 const AI_MODEL = Deno.env.get("MARKET_AI_MODEL") ?? "google/gemini-3-flash-preview";
 const RELEVANCE_THRESHOLD = Number(Deno.env.get("MARKET_RELEVANCE_THRESHOLD") ?? 40);
 const AI_CONFIDENCE_THRESHOLD = Number(Deno.env.get("MARKET_AI_CONFIDENCE_THRESHOLD") ?? 55);
+
+async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
+  if (!userId || userId === "service_role") return true;
+  const { data: roleRows } = await sb
+    .from("user_roles").select("role").eq("user_id", userId);
+  const roles = (roleRows ?? []).map((row: any) => row.role);
+  if (roles.some((role: string) => ["admin", "superadmin", "super_admin"].includes(role))) return true;
+
+  const { data: customUser } = await sb
+    .from("custom_users").select("role_display, is_active").eq("id", userId).maybeSingle();
+  if (!customUser?.is_active) return false;
+  return ["admin", "superadmin", "super_admin"].includes(
+    String(customUser.role_display ?? "").toLowerCase(),
+  );
+}
 
 const SEGMENTS = [
   "finance",
@@ -211,40 +228,31 @@ ${item.excerpt ?? "(no excerpt supplied)"}`,
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
+
   const secret = Deno.env.get("MARKET_INGESTION_CRON_SECRET");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const auth = req.headers.get("authorization") ?? "";
   const bearer = auth.replace(/^Bearer\s+/i, "").trim();
   const apikey = req.headers.get("apikey") ?? "";
-  const authorised =
+  let authorised =
     (secret && req.headers.get("x-cron-secret") === secret) ||
     (serviceRoleKey && ((bearer && bearer === serviceRoleKey) || (apikey && apikey === serviceRoleKey)));
-
-  console.log("[auth]", {
-    hasAuth: Boolean(auth),
-    hasApikey: Boolean(apikey),
-    hasCronSecret: Boolean(req.headers.get("x-cron-secret")),
-    authorised,
-  });
-  if (!authorised) return json({ error: "Unauthorised market ingestion request." }, 401);
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  if (!automated) {
-    let bodyPreview: any = {};
-    try { bodyPreview = await req.clone().json(); } catch {}
-    const verified = await verifyAuth(sb, req.headers, bodyPreview);
-    if (verified.error || !verified.userId) return securityJsonError(401, "unauthorized");
-    const permission = await requireModulePermission(
-      sb,
-      { userId: verified.userId, authMethod: verified.authMethod },
-      "market_updates",
-      "can_edit",
-    );
-    if (!permission.ok) return securityJsonError(403, "market_ingest_admin_required");
+  if (!authorised) {
+    const verified = await verifyAuth(sb, req.headers, {});
+    if (verified.error || !verified.userId) {
+      return json({ error: "Unauthorised market ingestion request." }, 401);
+    }
+    authorised = await isAdminOrSuperadmin(sb, verified.userId);
+    if (!authorised) return json({ error: "Forbidden market ingestion request." }, 403);
   }
 
   const { force = false, sourceIds = null } =

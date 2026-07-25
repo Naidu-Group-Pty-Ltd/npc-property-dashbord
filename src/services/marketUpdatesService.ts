@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
@@ -109,9 +110,10 @@ export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
 
 export async function triggerMarketIngestion(options: { force?: boolean } = {}): Promise<MarketIngestionSummary> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-ingest', { body: options });
+    const { data, error } = await invokeSecureFunction<MarketIngestionSummary>('market-updates-ingest', options);
     if (error) throw error;
-    return data as MarketIngestionSummary;
+    if (!data) throw new Error('Market ingestion returned no result.');
+    return data;
   } catch (e: any) { warnMissing('Ingestion function unavailable or not authorised.', e); return { ingested:0,published:0,candidates:0,ignored:0,failed:1,skippedDuplicates:0,sourceErrors:[],message:'Market ingestion is unavailable or you are not authorised to run it.' }; }
 }
 
@@ -253,4 +255,3 @@ export async function streamMarketUpdateQuestion(
     return answerMarketUpdateQuestion(question, opts.updateIds, opts.history, opts.segment, opts.conversation_id);
   }
 }
-
