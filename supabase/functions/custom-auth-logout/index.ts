@@ -46,13 +46,23 @@ Deno.serve(async (req) => {
     // have no plaintext at rest) and the legacy plaintext column as a fallback,
     // so logout revokes regardless of which representation the row carries.
     const hash = isSessionHashConfigured() ? await hashSessionToken(sessionToken) : null;
-    const { error } = await supabase
+    const deletionErrors = [];
+    if (hash) {
+      const { error } = await supabase
+        .from('user_sessions')
+        .delete()
+        .eq('token_hash', hash);
+      if (error) deletionErrors.push(error);
+    }
+
+    const { error: plaintextDeletionError } = await supabase
       .from('user_sessions')
       .delete()
-      .or(`${hash ? `token_hash.eq.${hash},` : ''}session_token.eq.${sessionToken}`)
+      .eq('session_token', sessionToken);
+    if (plaintextDeletionError) deletionErrors.push(plaintextDeletionError);
 
-    if (error) {
-      console.error('Logout error:', error)
+    if (deletionErrors.length > 0) {
+      console.error('Logout error:', deletionErrors)
       // Still clear cookie even if database delete fails
     }
 

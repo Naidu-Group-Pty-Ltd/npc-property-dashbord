@@ -8,6 +8,7 @@
  */
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
+import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -78,18 +79,6 @@ Deno.serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  // Best-effort identity capture
-  let requestedBy: string | null = null;
-  try {
-    const auth = req.headers.get('authorization');
-    if (auth?.startsWith('Bearer ')) {
-      const u = await supabase.auth.getUser(auth.replace('Bearer ', ''));
-      requestedBy = u.data.user?.id ?? null;
-    }
-  } catch (_) {
-    requestedBy = null;
-  }
-
   let jobId: string | null = null;
   const started = Date.now();
 
@@ -108,6 +97,19 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+
+    // The gateway JWT check is intentionally disabled to support the custom
+    // session flow, so enforce a verified human identity before accepting HTML
+    // or invoking the privileged renderer/storage client.
+    const auth = await verifyAuthOrNativeUser(supabase, req, payload as { session_token?: string; command_centre_session_token?: string });
+    if (auth.error || !auth.userId || auth.userId === 'service_role') {
+      return new Response(JSON.stringify({ error: auth.error || 'Authentication required' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const requestedBy = auth.userId;
+
     const html: string = String(payload.html ?? '');
     if (!html.trim()) {
       return new Response(JSON.stringify({ error: 'html is required' }), {

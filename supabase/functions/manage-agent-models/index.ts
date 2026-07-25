@@ -21,7 +21,12 @@ function admin() {
 }
 
 Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+
   try {
     const body = await req.json().catch(() => ({}));
     const action = body.action ?? 'list';
