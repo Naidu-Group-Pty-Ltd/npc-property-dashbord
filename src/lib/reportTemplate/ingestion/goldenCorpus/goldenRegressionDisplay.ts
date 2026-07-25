@@ -63,12 +63,13 @@ export function getGoldenRegressionDisplayState(
   // Warnings / review.
   if (gate === 'warning') return state('Warning', 'warning', 'review', 'Review');
   if (warningCount > 0) return state('Warning', 'warning', 'review', 'Review');
+  if (decision === 'not_reviewed') return state('Review', 'warning', 'review', 'Review');
+  if (decision === 'accepted_with_warnings') return state('Review', 'warning', 'review', 'Review');
   if (input.exportParityStatus === 'manual_required') return state('Review', 'warning', 'review', 'Review');
   if (input.manualReviewRequired === true) return state('Review', 'warning', 'review', 'Review');
 
   // Clean.
-  if (gate === 'pass') return state('Pass', 'success', 'none', 'None');
-  if (decision === 'accepted') return state('Pass', 'success', 'none', 'None');
+  if (gate === 'pass' && decision === 'accepted') return state('Pass', 'success', 'none', 'None');
 
   // Unevaluated / missing.
   if (gate === 'not_evaluated') return state('Not evaluated', 'outline', 'review', 'Review');

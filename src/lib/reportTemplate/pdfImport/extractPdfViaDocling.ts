@@ -834,11 +834,17 @@ export async function extractPdfViaDocling(
             if (!orig) return page;
             const policy = (page.meta as any)?.pdfImport;
             if (policy) {
+              const decidedRaster = policy.outputStrategy === 'raster-only'
+                ? (page.background as any)?.imageUrl
+                : undefined;
               return applyPagePolicyToPage(
                 {
                   ...page,
                   size: orig.size,
-                  background: { ...((orig.background as any) ?? {}) },
+                  background: {
+                    ...((orig.background as any) ?? {}),
+                    ...(decidedRaster ? { imageUrl: decidedRaster } : {}),
+                  },
                   meta: { ...((orig.meta as any) ?? {}), ...((page.meta as any) ?? {}) },
                 } as typeof page,
                 policy,

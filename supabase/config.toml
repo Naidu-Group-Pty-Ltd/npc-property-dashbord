@@ -139,7 +139,7 @@ verify_jwt = false
 [api]
 enabled = true
 port = 54321
-schemas = ["public", "graphql_public"]
+schemas = ["public", "graphql_public", "aml"]
 extra_search_path = ["public", "extensions"]
 max_rows = 1000
 

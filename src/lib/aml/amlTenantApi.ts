@@ -95,6 +95,8 @@ async function invoke<T>(op: string, args: Record<string, any> = {}): Promise<T>
 
 export const amlTenantApi = {
   summary: () => invoke<AmlTenantSummary>("summary"),
+  terminology: () =>
+    invoke<{ terminology_overrides: Record<string, string> }>("terminology"),
   getSettings: () => invoke<{ settings: AmlTenantSettings | null }>("get_tenant_settings").then((r) => r.settings),
   updateSettings: (patch: Partial<AmlTenantSettings>) =>
     invoke<{ settings: AmlTenantSettings; rejected_terminology_keys?: string[] }>("update_tenant_settings", { patch }),

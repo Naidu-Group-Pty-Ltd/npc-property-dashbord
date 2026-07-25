@@ -11,6 +11,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 export type StepUpCapability =
   | 'role.change'
   | 'role.remove'
+  | 'mfa.manage'
   | 'aml.role.set'
   | 'secrets.update'
   | 'commission.payout.generate'
@@ -115,14 +116,15 @@ export async function listWebAuthnCredentials() {
   return { ok: true as const, credentials: (data.credentials ?? []) as WebAuthnCredentialRow[] };
 }
 
-export async function deleteWebAuthnCredential(credentialRowId: string) {
-  const { data, error } = await invokeSecureFunction<any>('security-step-up', { action: 'webauthn_delete', credential_id: credentialRowId });
+export async function deleteWebAuthnCredential(credentialRowId: string, stepUpToken: string) {
+  const { data, error } = await invokeSecureFunction<any>('security-step-up', { action: 'webauthn_delete', credential_id: credentialRowId, step_up_token: stepUpToken });
   if (error || !data?.success) return { ok: false as const, error: error?.message ?? data?.error ?? 'webauthn_delete_failed' };
   return { ok: true as const };
 }
 
-export async function enrollWebAuthn(password: string, deviceName?: string) {
-  const begin = await invokeSecureFunction<any>('security-step-up', { action: 'enroll_webauthn_begin', password });
+export async function enrollWebAuthn(password: string, deviceName?: string, stepUpToken?: string) {
+  const stepUp = stepUpToken ? { step_up_token: stepUpToken } : {};
+  const begin = await invokeSecureFunction<any>('security-step-up', { action: 'enroll_webauthn_begin', password, ...stepUp });
   if (begin.error || !begin.data?.success) return { ok: false as const, error: begin.error?.message ?? begin.data?.error ?? 'webauthn_begin_failed' };
   let attResp;
   try {
@@ -135,6 +137,7 @@ export async function enrollWebAuthn(password: string, deviceName?: string) {
     enrollment_token: begin.data.enrollment_token,
     credential: attResp,
     device_name: deviceName ?? null,
+    ...stepUp,
   });
   if (finish.error || !finish.data?.success) return { ok: false as const, error: finish.error?.message ?? finish.data?.error ?? 'webauthn_finish_failed' };
   return { ok: true as const };

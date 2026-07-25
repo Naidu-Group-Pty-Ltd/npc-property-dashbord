@@ -147,7 +147,7 @@ export default function Charts() {
       const backfills = transformed
         .filter((chart) => chart.analysis_text && !isUsefulAnalysis(chartsData.find((raw: any) => raw.id === chart.id)?.analysis_text || analysisMap.get(chart.id)))
         .slice(0, 12);
-      if (backfills.length > 0) {
+      if (canEditCharts && backfills.length > 0) {
         void Promise.allSettled(backfills.map((chart) => invokeSecureFunction('manage-templates', {
           operation: 'update',
           table: 'charts',
@@ -162,7 +162,7 @@ export default function Charts() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canEditCharts]);
 
   useEffect(() => { fetchCharts(); }, [fetchCharts]);
   useEffect(() => {

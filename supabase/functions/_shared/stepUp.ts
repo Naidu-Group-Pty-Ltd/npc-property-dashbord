@@ -30,6 +30,7 @@ const corsHeaders = {
 export type StepUpCapability =
   | "role.change"
   | "role.remove"
+  | "mfa.manage"
   | "aml.role.set"
   | "secrets.update"
   | "commission.payout.generate"
@@ -119,6 +120,10 @@ export async function hashStepUpToken(userId: string, capability: string, token:
 }
 
 function enforcementModeFor(capability: string): "enforce" | "audit" {
+  // Changing authentication factors must never be downgraded to audit-only:
+  // an ordinary authenticated session is not sufficient authority to add or
+  // remove a factor, even during an emergency step-up rollback.
+  if (capability === "mfa.manage") return "enforce";
   const raw = ((globalThis as any).Deno?.env?.get?.("STEP_UP_ENFORCED") ?? "").trim().toLowerCase();
   // High-risk capabilities are fail-closed by default. Audit-only mode now
   // requires an explicit emergency configuration rather than being the silent
