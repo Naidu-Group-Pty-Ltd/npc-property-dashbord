@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketSources, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion } from '@/services/marketUpdatesService';
+import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketSources, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketQAMessage, MarketSegment, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateCategory } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
@@ -39,7 +39,7 @@ const FRESHNESS: Array<{ id: MarketFreshnessTier | 'all'; label: string; icon: a
 
 const categories: Array<'all' | MarketUpdateCategory> = ['all','finance','property_market','construction','policy_regulation','rental_market','economy','political','planning_supply','other'];
 const geographies: Array<'all' | MarketGeography> = ['all','Australia','NSW','VIC','QLD','WA','SA','TAS','ACT','NT','Multi'];
-const impacts: Array<'all' | MarketImpactLevel> = ['all','high','medium','low'];
+const impacts: Array<'all' | MarketImpactLevel> = ['all','critical','high','medium','low'];
 const audiences: Array<'all' | MarketAudienceTag> = ['all','investors','owner_occupiers','first_home_buyers','smsf','developers','buyers_agents','mortgage_brokers','property_managers','builders','finance_brokers'];
 
 const titleCase = (v: string) => v.split('_').map(p => p[0].toUpperCase() + p.slice(1)).join(' ');
@@ -53,6 +53,7 @@ const FRESHNESS_STYLE: Record<MarketFreshnessTier, string> = {
   older: 'bg-muted text-muted-foreground border-border',
 };
 const IMPACT_STYLE: Record<MarketImpactLevel, string> = {
+  critical: 'bg-destructive/20 text-destructive border-destructive/50',
   high: 'bg-destructive/15 text-destructive border-destructive/30',
   medium: 'bg-warning/15 text-[hsl(var(--warning))] border-warning/30',
   low: 'bg-muted text-muted-foreground border-border',
@@ -94,7 +95,7 @@ export default function MarketUpdates() {
   const navigate = useNavigate();
   const [updates, setUpdates] = useState<MarketUpdate[]>([]);
   const [sources, setSources] = useState<MarketSource[]>([]);
-  const [sourceHealth, setSourceHealth] = useState<MarketSourceHealth>({ totalSources:0, enabledSources:0, failedSources:0 });
+  const [sourceHealth, setSourceHealth] = useState<MarketSourceHealth>({ totalSources:0, enabledSources:0, healthySources:0, degradedSources:0, failedSources:0 });
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState(false);
   const [digestLoading, setDigestLoading] = useState(false);
@@ -124,7 +125,10 @@ export default function MarketUpdates() {
   };
   const loadDigest = async (p: MarketDigestPeriod) => { setDigest(await fetchLatestMarketDigest(p)); };
 
-  useEffect(() => { void loadUpdates(); }, []);
+  useEffect(() => {
+    let cancelled=false;
+    const start=async()=>{ setLoading(true); const [u,src,h]=await Promise.all([fetchMarketUpdates({limit:200}),fetchMarketSources(),fetchMarketSourceHealth()]); if(cancelled)return; setUpdates(u);setSources(src);setSourceHealth(h);setLoading(false); const result=await ensureMarketUpdatesFresh(h,u.length); if(!cancelled&&result){setMessage(result.active?'Checking for newer market intelligence…':`Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);await loadUpdates();}}; void start(); return()=>{cancelled=true};
+  }, []);
   useEffect(() => { void loadDigest(period); }, [period]);
 
   const filteredUpdates = useMemo(() => updates.filter((u) => {
@@ -173,7 +177,7 @@ export default function MarketUpdates() {
 
   const handleIngest = async () => {
     setIngesting(true);
-    const summary = await triggerMarketIngestion({ force: true });
+    const summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' });
     setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`);
     await loadUpdates();
     setIngesting(false);
@@ -337,7 +341,7 @@ export default function MarketUpdates() {
     <main className="min-h-screen bg-background text-foreground">
       <div className="mx-auto w-full max-w-[1600px] space-y-6 px-4 py-6 md:px-8">
         {/* Hero */}
-        <section className="w-full overflow-hidden rounded-3xl border border-primary/20 bg-gradient-to-br from-card via-card to-primary/5 p-6 shadow-xl md:p-8">
+        <section className="w-full overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-br from-card via-card to-primary/5 p-5 shadow-lg">
           <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
@@ -346,9 +350,9 @@ export default function MarketUpdates() {
                 <LiveModelBadge agentKey="market_qa" size="sm" showSlot={false} />
                 <LiveModelBadge agentKey="market_digest" size="sm" showSlot={false} />
               </div>
-              <h1 className="text-3xl font-bold tracking-tight md:text-5xl">Market Updates</h1>
+              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market Updates</h1>
               <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
-                Source-backed finance, property, construction, policy, rental and economic intelligence — auto-ingested hourly, AI-classified across 8 segments, cited to origin.
+                Australian property, lending, economic and regulatory intelligence
               </p>
               <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                 <Badge variant="outline">Last ingest: {dateLabel(sourceHealth.lastSuccessAt)}</Badge>
@@ -357,8 +361,8 @@ export default function MarketUpdates() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={loadUpdates} variant="outline"><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
-              <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Run Ingest</Button>
+              <Button onClick={loadUpdates} variant="outline"><RefreshCw className="mr-2 h-4 w-4" />Refresh View</Button>
+              <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
               <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
@@ -374,16 +378,21 @@ export default function MarketUpdates() {
           </Card>
         )}
 
+        <button type="button" onClick={() => setSourcesAdminOpen(true)} className="grid w-full grid-cols-2 gap-3 rounded-xl border border-border/60 bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-4 lg:grid-cols-7" aria-label="Open market source health administration">
+          {[
+            ['Configured', sourceHealth.totalSources], ['Enabled', sourceHealth.enabledSources], ['Healthy', sourceHealth.healthySources], ['Degraded', sourceHealth.degradedSources], ['Failed', sourceHealth.failedSources],
+            ['Last successful run', dateLabel(sourceHealth.lastSuccessAt)], ['Latest duration', sourceHealth.latestRun?.duration_ms ? `${Math.round(sourceHealth.latestRun.duration_ms / 1000)}s` : 'Not available'],
+          ].map(([name,value]) => <span key={String(name)} className="min-w-0"><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{name}</span><strong className="mt-1 block truncate text-sm">{value}</strong></span>)}
+        </button>
+
         {/* KPIs */}
         <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {kpis.map(k => (
-            <Card key={k.label} className="border-border/60">
-              <CardContent className="p-4">
+            <button key={k.label} type="button" onClick={() => { if(k.label==='Breaking Now')setActiveFreshness('breaking'); else if(k.label==='Today')setActiveFreshness('today'); else if(k.label==='High Impact')setFilters(f=>({...f,impact:'high'})); else setActiveSegment(k.label==='Policy'?'policy_regulation':k.label.toLowerCase() as MarketSegment); }} className="rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Card className="h-full border-border/60 hover:border-primary/40"><CardContent className="p-4">
                 <k.icon className={cn('mb-3 h-5 w-5', k.tone)} />
                 <div className="text-2xl font-semibold tabular-nums">{k.value}</div>
                 <p className="mt-1 text-xs text-muted-foreground">{k.label}</p>
-              </CardContent>
-            </Card>
+              </CardContent></Card></button>
           ))}
         </section>
 
@@ -413,12 +422,12 @@ export default function MarketUpdates() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {!digest ? (
-                      <div className="rounded-xl border border-dashed border-border p-8 text-center">
+                      <div className="rounded-xl border border-dashed border-border p-5 text-center">
                         <FileText className="mx-auto mb-3 h-8 w-8 text-muted-foreground/60" />
-                        <p className="text-sm text-muted-foreground">No {p.label.toLowerCase()} digest generated yet.</p>
+                        <p className="text-sm text-muted-foreground">No digest has been generated for this period. The latest published updates are still available in Latest Updates.</p>
                         <Button size="sm" className="mt-4" onClick={handleGenerateDigest} disabled={digestLoading}>
                           {digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}
-                          Generate now
+                          Generate {p.label} Digest
                         </Button>
                       </div>
                     ) : (
@@ -523,7 +532,7 @@ export default function MarketUpdates() {
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
           <Tabs value={workspaceTab} onValueChange={(v) => setWorkspaceTab(v as 'updates' | 'ask-ai')} className="min-w-0 space-y-4">
             <TabsList aria-label="Market updates workspace" className="w-full justify-start sm:w-auto">
-              <TabsTrigger value="updates">Market Updates</TabsTrigger>
+              <TabsTrigger value="updates">Latest Updates</TabsTrigger>
               <TabsTrigger value="ask-ai">Ask AI</TabsTrigger>
             </TabsList>
             <TabsContent value="updates" className="mt-0 space-y-4">
@@ -542,11 +551,11 @@ export default function MarketUpdates() {
                 <Card className="border-dashed">
                   <CardContent className="p-10 text-center">
                     <Globe2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
-                    <h3 className="text-lg font-semibold">No updates match your filters</h3>
-                    <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Try clearing segment or freshness filters, or run the ingest job to fetch the latest source-backed items.</p>
+                    <h3 className="text-lg font-semibold">Filters exclude available updates</h3>
+                    <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Filters are hiding available updates. Clear all filters to restore the complete published feed.</p>
                     <div className="mt-4 flex justify-center gap-2">
                       <Button size="sm" variant="outline" onClick={() => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); }}>Clear filters</Button>
-                      <Button size="sm" onClick={handleIngest} disabled={ingesting}>{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Run Ingest</Button>
+                      <Button size="sm" onClick={handleIngest} disabled={ingesting}>{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
                     </div>
                   </CardContent>
                 </Card>
@@ -559,6 +568,9 @@ export default function MarketUpdates() {
                         {update.impact_level} impact
                       </span>
                       <Badge variant="outline" className="text-[10px]">{titleCase(update.category)}</Badge>
+                      {update.source_authority && <Badge variant="outline" className="text-[10px]">{titleCase(update.source_authority)}</Badge>}
+                      {update.source_perspective && <Badge variant="secondary" className="text-[10px]">{titleCase(update.source_perspective)}</Badge>}
+                      {update.legal_status && update.legal_status !== 'not_applicable' && <Badge variant="outline" className="text-[10px]">{titleCase(update.legal_status)}</Badge>}
                       {update.geography.slice(0, 3).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
                       <div className="ml-auto"><ConfidenceBar score={update.confidence_score} /></div>
                     </div>
@@ -586,6 +598,8 @@ export default function MarketUpdates() {
                         ))}
                       </div>
                     )}
+                    {Boolean(update.lending_criteria_tags?.length) && <div className="mt-2 flex flex-wrap gap-1" aria-label="Lending criteria topics">{update.lending_criteria_tags!.slice(0,6).map(tag=><Badge key={tag} variant="secondary" className="text-[10px]">{titleCase(tag)}</Badge>)}</div>}
+                    {update.effective_date && <p className="mt-2 text-xs text-muted-foreground">Verified effective date: <strong className="text-foreground">{dateLabel(update.effective_date)}</strong></p>}
 
                     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
                       <Button size="sm" onClick={() => setSelectedUpdate(update)}>Open Analysis</Button>
@@ -597,7 +611,7 @@ export default function MarketUpdates() {
                           </a>
                         ))}
                         <a href={update.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20">
-                          <ExternalLink className="h-2.5 w-2.5" />Source
+                          <ExternalLink className="h-2.5 w-2.5" />Open original source
                         </a>
                       </div>
                     </div>

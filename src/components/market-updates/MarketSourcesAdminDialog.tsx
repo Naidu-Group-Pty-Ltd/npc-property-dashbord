@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, Settings2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Loader2, Play, RefreshCw, Settings2, XCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -12,6 +12,7 @@ import {
   fetchMarketSourceAdminSnapshot,
   toggleMarketSource,
   updateMarketSourceConfig,
+  triggerMarketIngestion,
   type MarketSourceAlert,
 } from '@/services/marketUpdatesService';
 import type { MarketSource } from '@/types/marketUpdates';
@@ -77,6 +78,16 @@ export function MarketSourcesAdminDialog({
     onChanged?.();
   };
 
+  const runSource = async (s: MarketSource, test = false) => {
+    setBusyId(s.id);
+    await triggerMarketIngestion({ force: true, trigger_type: 'manual', sourceIds: [s.id], test });
+    await load(); setBusyId(null); onChanged?.();
+  };
+
+  const copyFeedUrl = async () => {
+    await navigator.clipboard.writeText(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-feed`);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-4xl h-[90vh] overflow-hidden flex flex-col">
@@ -103,10 +114,10 @@ export function MarketSourcesAdminDialog({
               </Badge>
             )}
           </div>
-          <Button size="sm" variant="outline" onClick={load} disabled={loading}>
+          <div className="flex gap-2"><Button size="sm" variant="outline" onClick={copyFeedUrl}><Copy className="mr-2 h-3.5 w-3.5" />Copy Unified RSS URL</Button><Button size="sm" variant="outline" onClick={load} disabled={loading}>
             {loading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-2 h-3.5 w-3.5" />}
             Refresh
-          </Button>
+          </Button></div>
         </div>
 
         {alerts.length > 0 && (
@@ -149,6 +160,11 @@ export function MarketSourcesAdminDialog({
                       <div className="mt-1 flex flex-wrap gap-3 text-[11px] text-muted-foreground">
                         <span>Last success: <strong className="text-foreground">{dateLabel(s.last_success_at)}</strong></span>
                         <span>Last fetch: <strong className="text-foreground">{dateLabel(s.last_fetched_at)}</strong></span>
+                        <span>Health: <strong className="text-foreground">{s.enabled ? s.health_status ?? 'degraded' : 'disabled'}</strong></span>
+                        <span>HTTP: <strong className="text-foreground">{s.last_http_status ?? '—'}</strong></span>
+                        <span>Latency: <strong className="text-foreground">{s.last_latency_ms ? `${s.last_latency_ms} ms` : '—'}</strong></span>
+                        <span>Items: <strong className="text-foreground">{s.last_items_discovered ?? 0} found / {s.last_items_published ?? 0} published</strong></span>
+                        <span>Failures: <strong className="text-foreground">{s.consecutive_failures ?? 0}</strong></span>
                       </div>
                       {hasError && (
                         <div className="mt-2 flex items-start gap-2 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive">
@@ -158,6 +174,8 @@ export function MarketSourcesAdminDialog({
                       )}
                     </div>
                     <div className="flex items-center gap-3">
+                      <Button size="sm" variant="outline" onClick={() => runSource(s, true)} disabled={busyId === s.id}>Test</Button>
+                      <Button size="sm" variant="outline" onClick={() => runSource(s)} disabled={busyId === s.id}><Play className="mr-1 h-3 w-3" />Run</Button>
                       <div className="flex flex-col items-end gap-1">
                         <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Refresh (h)</Label>
                         <div className="flex items-center gap-1">

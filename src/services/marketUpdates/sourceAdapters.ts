@@ -1,3 +1,3 @@
 import type { MarketSource, NormalisedMarketSourceItem } from '@/types/marketUpdates';
-import { normaliseRssItems } from './normalise';
-export async function fetchSourceItems(source: MarketSource): Promise<NormalisedMarketSourceItem[]> { if (source.source_type === 'rss') { const res = await fetch(source.url); if (!res.ok) throw new Error(`RSS fetch failed: ${res.status}`); return normaliseRssItems(source, await res.text()); } if (source.source_type === 'api') throw new Error('API source adapter requires server-side environment configuration.'); if (source.source_type === 'partner_feed') return []; return []; }
+/** Browser fetching is deliberately disabled: third-party acquisition only runs in Supabase Edge Functions. */
+export async function fetchSourceItems(_source: MarketSource): Promise<NormalisedMarketSourceItem[]> { throw new Error('Market source acquisition is server-side only.'); }
