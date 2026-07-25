@@ -337,8 +337,8 @@ const App = () => (
                 />
                 <Route path="sources" element={<ModuleGuard moduleKey="sources"><Sources /></ModuleGuard>} />
                 <Route path="reports" element={<ModuleGuard moduleKey="reports"><Reports /></ModuleGuard>} />
-                <Route path="quantitative-reports" element={<ModuleGuard moduleKey="reports"><QuantitativeReports /></ModuleGuard>} />
-                <Route path="quantitative-reports/:reportId" element={<ModuleGuard moduleKey="reports"><ReportViewer /></ModuleGuard>} />
+                <Route path="quantitative-reports" element={<ModuleGuard moduleKey="generated_reports"><QuantitativeReports /></ModuleGuard>} />
+                <Route path="quantitative-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
                 <Route path="charts" element={<ModuleGuard moduleKey="charts"><Charts /></ModuleGuard>} />
                 <Route path="generated-reports" element={<ModuleGuard moduleKey="generated_reports"><GeneratedReports /></ModuleGuard>} />
                 <Route path="generated-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
