@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
       offset = body.offset || '';
       sortField = body.sortField || null;
       sortDirection = body.sortDirection || 'desc';
-      op = body.op || null;
+      op = body.op === 'list_tables' ? 'list_tables' : null;
       tableOverride = typeof body.tableName === 'string' && body.tableName.trim() ? body.tableName.trim() : null;
     } else {
       const url = new URL(req.url);
@@ -113,7 +113,7 @@ Deno.serve(async (req) => {
       offset = url.searchParams.get('offset') || '';
       sortField = url.searchParams.get('sortField') || null;
       sortDirection = url.searchParams.get('sortDirection') || 'desc';
-      op = url.searchParams.get('op') || null;
+      op = url.searchParams.get('op') === 'list_tables' ? 'list_tables' : null;
       tableOverride = url.searchParams.get('tableName');
     }
 
