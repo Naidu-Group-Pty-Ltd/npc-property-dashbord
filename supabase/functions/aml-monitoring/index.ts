@@ -206,7 +206,20 @@ Deno.serve(async (req) => {
       requireWrite();
       const e = body.edd ?? {};
       if (!e.case_id || !e.reason) return jr({ error: "case_id and reason required" }, 400);
-      const row = { ...e, opened_by: e.id ? e.opened_by : userId };
+      const editableStatuses = new Set(["open", "in_progress", "awaiting_client", "awaiting_mlro"]);
+      if (e.status && !editableStatuses.has(String(e.status))) {
+        return jr({ error: "Terminal EDD status requires an MLRO decision" }, 403);
+      }
+      // Never pass caller-controlled decision, completion, audit, or identity fields
+      // through this generic analyst/reviewer operation.
+      const row = {
+        reason: e.reason,
+        narrative: e.narrative ?? null,
+        assigned_to: e.assigned_to ?? null,
+        metadata: e.metadata ?? {},
+        ...(e.status ? { status: String(e.status) } : {}),
+        ...(e.id ? {} : { case_id: e.case_id, opened_by: userId }),
+      };
       const q = e.id
         ? aml.from("edd_cases").update(row).eq("id", e.id).select("*").single()
         : aml.from("edd_cases").insert(row).select("*").single();
