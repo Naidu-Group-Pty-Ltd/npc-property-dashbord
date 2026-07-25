@@ -49,7 +49,7 @@ async function audit(admin: any, category: string, summary: string, payload: any
 // aml.* tables that we know are safe to dispose of.
 const SCAN_SOURCES: Record<string, { table: string; timestampCol: string; refCol?: string; caseIdCol?: string }> = {
   case:         { table: "cases",              timestampCol: "closed_at",   refCol: "reference_code" },
-  verification: { table: "verifications",      timestampCol: "completed_at", caseIdCol: "case_id" },
+  verification: { table: "identity_checks",    timestampCol: "completed_at", caseIdCol: "case_id" },
   screening:    { table: "screening_matches",  timestampCol: "resolved_at", caseIdCol: "case_id" },
   transaction:  { table: "transactions",       timestampCol: "settled_at",  refCol: "reference_code", caseIdCol: "case_id" },
   report:       { table: "reports",            timestampCol: "acknowledged_at", refCol: "reference_code", caseIdCol: "case_id" },
@@ -244,11 +244,20 @@ Deno.serve(async (req) => {
         // Collect the subject's records — bundle is a JSON manifest (no auto-file dump).
         const bundle: any = { request: pr, subject: {}, generated_at: new Date().toISOString(), generated_by: userLabel };
         if (pr.subject_client_id) {
-          const [cases, verifs, screening] = await Promise.all([
-            aml.from("cases").select("id,reference_code,status,created_at,closed_at").eq("subject_client_id", pr.subject_client_id),
-            aml.from("verifications").select("id,method,outcome,completed_at").eq("subject_client_id", pr.subject_client_id),
-            aml.from("screening_matches").select("id,list_source,match_score,status,resolved_at").eq("subject_client_id", pr.subject_client_id),
-          ]);
+          const cases = await aml.from("cases")
+            .select("id,reference_code:case_reference,status,created_at,closed_at")
+            .eq("client_id", pr.subject_client_id);
+          if (cases.error) return jr({ error: cases.error.message }, 400);
+
+          const caseIds = (cases.data ?? []).map((record: any) => record.id);
+          const [verifs, screening] = caseIds.length
+            ? await Promise.all([
+                aml.from("identity_checks").select("id,method,outcome:status,completed_at").in("case_id", caseIds),
+                aml.from("screening_matches").select("id,list_source:list_name,match_score:score,status,resolved_at:updated_at").in("case_id", caseIds),
+              ])
+            : [{ data: [], error: null }, { data: [], error: null }];
+          if (verifs.error) return jr({ error: verifs.error.message }, 400);
+          if (screening.error) return jr({ error: screening.error.message }, 400);
           bundle.subject = { cases: cases.data ?? [], verifications: verifs.data ?? [], screening: screening.data ?? [] };
         }
         const hash = await sha256Hex(JSON.stringify(bundle));
@@ -346,7 +355,8 @@ Deno.serve(async (req) => {
           if (!src) continue;
           const cutoff = new Date(Date.now() - Number(sched.retention_years) * 365.25 * 24 * 3600 * 1000).toISOString();
           const selectCols = `id, ${src.timestampCol}${src.refCol ? `, ${src.refCol}` : ""}${src.caseIdCol ? `, ${src.caseIdCol}` : ""}`;
-          const { data: rows } = await aml.from(src.table).select(selectCols).lt(src.timestampCol, cutoff).limit(500);
+          const { data: rows, error: rowsError } = await aml.from(src.table).select(selectCols).lt(src.timestampCol, cutoff).limit(500);
+          if (rowsError) return jr({ error: rowsError.message }, 400);
           for (const row of ((rows ?? []) as any[])) {
             candidates++;
             perType[sched.entity_type] = (perType[sched.entity_type] ?? 0) + 1;
