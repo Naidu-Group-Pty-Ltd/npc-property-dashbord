@@ -271,16 +271,16 @@ Deno.serve(async (req) => {
           return jsonResponse({ error: 'Human confirmation is required to open an AML case' }, 400);
         }
 
-        // Verify the client exists and is not soft-deleted.
+        // Verify the client exists and is active before creating an AML case.
         const { data: client, error: clientErr } = await admin
           .from('clients')
-          .select('id, name, status, deleted_at')
+          .select('id, is_active')
           .eq('id', clientId)
           .maybeSingle();
         if (clientErr) throw clientErr;
         if (!client) return jsonResponse({ error: 'Client not found' }, 404);
-        if ((client as any).deleted_at) {
-          return jsonResponse({ error: 'Client is archived; cannot activate for AML' }, 409);
+        if (client.is_active !== true) {
+          return jsonResponse({ error: 'Client is not active; cannot activate for AML' }, 409);
         }
 
         // Duplicate-open guard: one open case per client at a time.
