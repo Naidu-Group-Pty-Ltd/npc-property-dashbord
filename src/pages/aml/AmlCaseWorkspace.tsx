@@ -14,8 +14,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardList,
-  FileText, Loader2, Lock, MailQuestion, Minus, Network, ScanSearch, Scale,
-  User, Wallet, History,
+  FileText, Handshake, Loader2, Lock, MailQuestion, Minus, Network, ScanSearch,
+  Scale, User, Wallet, History,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,10 @@ import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import { amlCasesApi, type AmlCase, type AmlCaseEvent, type AmlCaseStatus } from "@/lib/aml/amlCasesApi";
 import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
+import {
+  amlTransactionsApi, type AmlTransaction, type AmlCounterpartyCase,
+  type AmlCounterpartyCddSummary, type AmlSettlementGateStatus,
+} from "@/lib/aml/amlTransactionsApi";
 import {
   CASE_STAGE_LABELS, caseStage, clientPortalStatus, CLIENT_PORTAL_STATUS_LABELS,
   serviceGateStatus, progressRail, type ProgressRailState,
@@ -73,7 +77,7 @@ const GATE_LABELS: Record<string, string> = {
 
 type SectionKey =
   | "overview" | "identity" | "ownership"
-  | "finance" | "documents"
+  | "counterparty" | "finance" | "documents"
   | "risk" | "requests" | "timeline";
 
 interface SectionDef {
@@ -95,6 +99,7 @@ const SECTION_GROUPS: Array<{ group: string; sections: SectionDef[] }> = [
   {
     group: "Matter",
     sections: [
+      { key: "counterparty", label: "Purchase & Counterparty", icon: Handshake, visible: (a) => a.canInvestigate },
       { key: "finance", label: "Funding & Finance", icon: Wallet, visible: (a) => a.canInvestigate },
       { key: "documents", label: "Documents & Evidence", icon: FileText, visible: () => true },
     ],
@@ -355,6 +360,9 @@ export default function AmlCaseWorkspace() {
             </div>
           )}
           {section === "ownership" && <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />}
+          {section === "counterparty" && canInvestigate && (
+            <PurchaseCounterpartySection caseRow={caseRow} canWrite={canWrite} />
+          )}
           {section === "finance" && canInvestigate && <FundingFinanceTab caseId={caseRow.id} />}
           {section === "documents" && (
             <DocumentsEvidenceSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
@@ -767,6 +775,250 @@ function DocumentsEvidenceSection({
               )}
             </CardContent>
           )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Purchase & Counterparty (Phase 9, §12.5)                            */
+/* ------------------------------------------------------------------ */
+
+function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; canWrite: boolean }) {
+  const [loading, setLoading] = useState(true);
+  const [transactions, setTransactions] = useState<AmlTransaction[]>([]);
+  const [cpCases, setCpCases] = useState<AmlCounterpartyCase[]>([]);
+  const [cpRequests, setCpRequests] = useState<any[]>([]);
+  const [obligations, setObligations] = useState<any[]>([]);
+  const [cddSummary, setCddSummary] = useState<AmlCounterpartyCddSummary | null>(null);
+  const [settlementGate, setSettlementGate] = useState<AmlSettlementGateStatus | null>(null);
+  const [busyCp, setBusyCp] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const [tx, cp, req, ob, sum] = await Promise.all([
+        amlTransactionsApi.listTransactions(caseRow.id).catch(() => ({ transactions: [] })),
+        amlTransactionsApi.listCpCases(caseRow.id).catch(() => ({ counterparty_cases: [] })),
+        amlTransactionsApi.listCpRequests({ case_id: caseRow.id }).catch(() => ({ requests: [] })),
+        amlTransactionsApi.listObligations({ case_id: caseRow.id }).catch(() => ({ obligations: [] })),
+        amlTransactionsApi.counterpartyCddSummary(caseRow.id).catch(() => ({ summary: null as any })),
+      ]);
+      setTransactions(tx.transactions ?? []);
+      setCpCases(cp.counterparty_cases ?? []);
+      setCpRequests(req.requests ?? []);
+      setObligations(ob.obligations ?? []);
+      setCddSummary(sum.summary ?? null);
+      if (caseRow.purchase_file_id) {
+        const gate = await amlTransactionsApi.settlementGateStatus(caseRow.purchase_file_id).catch(() => null);
+        setSettlementGate(gate);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [caseRow.id, caseRow.purchase_file_id]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const setDelayedCdd = async (cp: AmlCounterpartyCase) => {
+    const deadline = window.prompt("Delayed CDD deadline (YYYY-MM-DD):") ?? "";
+    if (!deadline.trim()) return;
+    const justification = window.prompt("Justification for delaying CDD (minimum 10 characters):") ?? "";
+    if (!justification.trim()) return;
+    setBusyCp(cp.id);
+    try {
+      await amlTransactionsApi.setDelayedCdd({ id: cp.id, deadline: deadline.trim(), justification: justification.trim() });
+      toast({ title: "Delayed CDD recorded" });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Could not record delayed CDD", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyCp(null);
+    }
+  };
+
+  const markUncooperative = async (cp: AmlCounterpartyCase) => {
+    const reason = window.prompt(
+      "Reason for marking this counterparty uncooperative (minimum 10 characters).\nAt least two recorded contact attempts are required first:",
+    ) ?? "";
+    if (!reason.trim()) return;
+    setBusyCp(cp.id);
+    try {
+      await amlTransactionsApi.markUncooperative({ id: cp.id, reason: reason.trim() });
+      toast({ title: "Counterparty marked uncooperative", description: "The case has been escalated for review." });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Could not mark uncooperative", description: e.message, variant: "destructive" });
+    } finally {
+      setBusyCp(null);
+    }
+  };
+
+  const openObligations = obligations.filter((o) => ["pending", "acknowledged"].includes(o.status));
+  const openCpRequests = cpRequests.filter((r) => ["pending", "sent", "awaiting_response"].includes(r.status));
+  const today = new Date().toISOString().slice(0, 10);
+
+  if (loading) {
+    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-sm">Purchase & Counterparty</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                The property transaction, its sellers and counterparties, and the due-diligence
+                record for each — scoped to this case.
+              </p>
+            </div>
+            <Button asChild size="sm" variant="ghost">
+              <Link to="/admin/aml/transactions">Full register</Link>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <Row
+            k="Purchase file"
+            v={caseRow.purchase_file_id ? "Linked" : <span className="text-muted-foreground">Not linked</span>}
+          />
+          {settlementGate && (
+            <Row
+              k="Settlement gate"
+              v={
+                !settlementGate.gate_enabled ? "Not enforced"
+                : settlementGate.blocked
+                  ? <span className="text-destructive">Blocked ({settlementGate.reasons.length} reason{settlementGate.reasons.length === 1 ? "" : "s"})</span>
+                  : <span className="text-success">Clear to settle</span>
+              }
+            />
+          )}
+          {cddSummary && (
+            <Row
+              k="Counterparty CDD"
+              v={
+                cddSummary.counterparty_cases_total === 0
+                  ? "No counterparties recorded"
+                  : cddSummary.all_cleared
+                    ? `All ${cddSummary.counterparty_cases_total} cleared`
+                    : `${cddSummary.counterparty_cases_open} open · ${cddSummary.requests_overdue} overdue request${cddSummary.requests_overdue === 1 ? "" : "s"}`
+              }
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm">Transactions</CardTitle></CardHeader>
+        <CardContent>
+          {transactions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No transaction recorded yet. Transactions capture the contract, price and
+              settlement details and drive threshold obligations.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border/60 text-sm">
+              {transactions.map((t) => (
+                <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <div className="min-w-0">
+                    <div className="truncate">{t.property_address ?? t.reference ?? t.kind}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {t.settlement_date ? `Settles ${new Date(t.settlement_date).toLocaleDateString()}` : "No settlement date"}
+                      {t.original_settlement_date && t.settlement_date !== t.original_settlement_date &&
+                        ` (moved from ${new Date(t.original_settlement_date).toLocaleDateString()})`}
+                      {t.purchase_price ? ` · ${Number(t.purchase_price).toLocaleString(undefined, { maximumFractionDigits: 0 })}` : ""}
+                    </div>
+                  </div>
+                  <Badge variant="outline" className="capitalize">{String(t.status).replace(/_/g, " ")}</Badge>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm">Seller & counterparty due diligence</CardTitle></CardHeader>
+        <CardContent>
+          {cpCases.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No counterparty records yet. Add sellers, seller entities and their
+              representatives on the full register.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border/60 text-sm">
+              {cpCases.map((cp) => (
+                <li key={cp.id} className="space-y-1 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="truncate">{cp.subject_display_name}</span>
+                      {cp.uncooperative && (
+                        <Badge variant="outline" className="h-5 border-destructive/50 px-1.5 text-[10px] text-destructive">
+                          Uncooperative
+                        </Badge>
+                      )}
+                      {cp.delayed_cdd_deadline && (
+                        <Badge
+                          variant="outline"
+                          className={`h-5 px-1.5 text-[10px] ${cp.delayed_cdd_deadline < today ? "border-destructive/50 text-destructive" : "border-warning/50 text-warning"}`}
+                        >
+                          Delayed CDD {cp.delayed_cdd_deadline < today ? "overdue" : `due ${new Date(cp.delayed_cdd_deadline).toLocaleDateString()}`}
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="capitalize">{String(cp.status).replace(/_/g, " ")}</Badge>
+                      {canWrite && !cp.delayed_cdd_deadline && (
+                        <Button size="sm" variant="ghost" disabled={busyCp === cp.id} onClick={() => setDelayedCdd(cp)}>
+                          Delay CDD
+                        </Button>
+                      )}
+                      {canWrite && !cp.uncooperative && (
+                        <Button size="sm" variant="ghost" disabled={busyCp === cp.id} onClick={() => markUncooperative(cp)}>
+                          Mark uncooperative
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                  {cp.uncooperative_reason && (
+                    <p className="text-xs text-muted-foreground">Uncooperative: {cp.uncooperative_reason}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {openCpRequests.length > 0 && (
+            <p className="mt-3 border-t border-border/60 pt-2 text-xs text-muted-foreground">
+              {openCpRequests.length} open information request{openCpRequests.length === 1 ? "" : "s"} to counterparties
+              {cddSummary && cddSummary.requests_overdue > 0 && `, ${cddSummary.requests_overdue} past due`}.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {openObligations.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning" /> Reporting obligations
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-1 text-xs">
+              {openObligations.map((o) => (
+                <li key={o.id} className="flex items-center justify-between gap-2">
+                  <span className="uppercase">{String(o.kind).replace(/_/g, " ")}</span>
+                  <Badge variant="outline" className="capitalize">{String(o.status).replace(/_/g, " ")}</Badge>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Obligations resolve on the Transactions register — reports require submission evidence.
+            </p>
+          </CardContent>
         </Card>
       )}
     </div>

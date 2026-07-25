@@ -29,7 +29,9 @@ import {
 // (IdentityCheck / ScreeningCheck also power the Phase 6 verification linking)
 import {
   amlRiskApi, type AmlRiskAssessment, type AmlCaseCondition, type AmlDecision,
+  type AmlAnalystRecommendation, type AmlServiceGateContract, type AmlRecalcStatus,
 } from "@/lib/aml/amlRiskApi";
+import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
   amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
@@ -285,20 +287,57 @@ export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; 
 
 /* -------------------- Risk & Decision -------------------- */
 
+const RECOMMENDATION_OUTCOMES: Array<{ value: AmlAnalystRecommendation["recommended_outcome"]; label: string }> = [
+  { value: "cleared", label: "Clear" },
+  { value: "cleared_with_conditions", label: "Clear with conditions" },
+  { value: "edd_required", label: "Enhanced due diligence" },
+  { value: "escalated", label: "Escalate to MLRO" },
+  { value: "blocked", label: "Block" },
+];
+
+const GATE_OPTION_LABELS: Record<string, string> = {
+  cdd_incomplete: "CDD incomplete",
+  information_outstanding: "Information outstanding",
+  under_review: "Under review",
+  conditions_outstanding: "Conditions outstanding",
+  approved_with_controls: "Approved with controls",
+  approved: "Approved",
+  locked: "Locked",
+  terminated: "Terminated",
+};
+
 export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+  const access = useAmlAccess();
+  const canReview = access.roles.has("reviewer") || access.roles.has("mlro");
+  const isMlro = access.isMlro;
   const [assessments, setAssessments] = useState<AmlRiskAssessment[] | null>(null);
   const [conditions, setConditions] = useState<AmlCaseCondition[]>([]);
   const [latestDecision, setLatestDecision] = useState<AmlDecision | null>(null);
+  const [recommendations, setRecommendations] = useState<AmlAnalystRecommendation[]>([]);
+  const [gate, setGate] = useState<AmlServiceGateContract | null>(null);
+  const [recalc, setRecalc] = useState<AmlRecalcStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [recOutcome, setRecOutcome] = useState<AmlAnalystRecommendation["recommended_outcome"]>("cleared");
+  const [recRationale, setRecRationale] = useState("");
+  const [decideOutcome, setDecideOutcome] = useState<"cleared" | "blocked" | "escalated">("cleared");
+  const [decideRationale, setDecideRationale] = useState("");
+  const [gateStatus, setGateStatus] = useState<string>("under_review");
+  const [gateReason, setGateReason] = useState("");
 
   const load = async () => {
     try {
-      const [a, c, d] = await Promise.all([
+      const [a, c, d, r, g, rc] = await Promise.all([
         amlRiskApi.listAssessments(caseId),
         amlRiskApi.listConditions(caseId),
         amlRiskApi.latestDecision(caseId),
+        amlRiskApi.listRecommendations(caseId).catch(() => ({ recommendations: [] })),
+        amlRiskApi.gateContract(caseId).catch(() => ({ gate: null as any })),
+        amlRiskApi.recalcStatus(caseId).catch(() => ({ recalc: null as any })),
       ]);
       setAssessments(a.assessments); setConditions(c.conditions); setLatestDecision(d.decision);
+      setRecommendations(r.recommendations ?? []);
+      setGate(g.gate ?? null);
+      setRecalc(rc.recalc ?? null);
     } catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
@@ -317,10 +356,62 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
     finally { setBusy(false); }
   };
 
+  const recordRecommendation = async () => {
+    setBusy(true);
+    try {
+      await amlRiskApi.recommend({ case_id: caseId, recommended_outcome: recOutcome, rationale: recRationale.trim() });
+      toast({ title: "Recommendation recorded" });
+      setRecRationale("");
+      await load();
+    } catch (e: any) { toast({ title: "Could not record recommendation", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  };
+
+  const recordDecision = async () => {
+    setBusy(true);
+    try {
+      await amlRiskApi.decide({ case_id: caseId, outcome: decideOutcome, rationale: decideRationale.trim() || undefined });
+      toast({ title: "Decision recorded" });
+      setDecideRationale("");
+      await load(); onChanged();
+    } catch (e: any) { toast({ title: "Decision failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  };
+
+  const applyGate = async () => {
+    setBusy(true);
+    try {
+      await amlRiskApi.setServiceGate({ case_id: caseId, status: gateStatus, reason: gateReason.trim() });
+      toast({ title: "Service gate updated" });
+      setGateReason("");
+      await load(); onChanged();
+    } catch (e: any) { toast({ title: "Gate change failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  };
+
   const latest = assessments?.[0];
+  const pendingRecommendation = recommendations.find((r) => r.status === "pending") ?? null;
 
   return (
     <div className="space-y-4">
+      {recalc?.stale && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden />
+            <span>
+              {recalc.reasons.includes("no_assessment")
+                ? "No risk assessment has been computed for this case yet."
+                : `Material information changed after the last assessment (${recalc.reasons.map((r) => r.replace(/_changed$/, "").replace(/_/g, " ")).join(", ")}) — the rating may be out of date.`}
+            </span>
+          </div>
+          {canWrite && (
+            <Button size="sm" variant="outline" onClick={evaluate} disabled={busy}>
+              Recompute now
+            </Button>
+          )}
+        </div>
+      )}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="flex items-center gap-2 flex-wrap">
@@ -421,18 +512,162 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
       </Card>
 
       <Card>
+        <CardHeader><CardTitle className="text-sm">Analyst recommendation</CardTitle></CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {pendingRecommendation ? (
+            <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">Awaiting review</div>
+              <div className="mt-1 font-medium capitalize">
+                {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Recorded {new Date(pendingRecommendation.created_at).toLocaleString()}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No recommendation awaiting review.
+              {recommendations.length > 0 && ` ${recommendations.length} previous recommendation${recommendations.length === 1 ? "" : "s"} on record.`}
+            </p>
+          )}
+          {canWrite && (
+            <div className="space-y-2 border-t border-border/50 pt-3">
+              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  aria-label="Recommended outcome"
+                  value={recOutcome}
+                  onChange={(e) => setRecOutcome(e.target.value as typeof recOutcome)}
+                >
+                  {RECOMMENDATION_OUTCOMES.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <Button
+                  size="sm" variant="outline" className="sm:justify-self-start"
+                  disabled={busy || recRationale.trim().length < 10}
+                  onClick={recordRecommendation}
+                >
+                  Record recommendation
+                </Button>
+              </div>
+              <textarea
+                className="min-h-[64px] w-full rounded-md border border-input bg-background p-2 text-sm"
+                aria-label="Recommendation rationale"
+                placeholder="Rationale (required, minimum 10 characters) — what the reviewer needs to know."
+                value={recRationale}
+                onChange={(e) => setRecRationale(e.target.value)}
+              />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle className="text-sm">Latest decision</CardTitle></CardHeader>
-        <CardContent className="text-sm">
+        <CardContent className="text-sm space-y-3">
           {!latestDecision ? (
             <p className="text-muted-foreground">No decision recorded.</p>
           ) : (
-            <>
+            <div>
               <Row k="Outcome" v={latestDecision.outcome} />
               <Row k="Decided" v={new Date(latestDecision.decided_at).toLocaleString()} />
+              {latestDecision.program_version && <Row k="Policy" v={latestDecision.program_version} />}
               {latestDecision.rationale && (
                 <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{latestDecision.rationale}</div>
               )}
-            </>
+            </div>
+          )}
+          {canReview && (
+            <div className="space-y-2 border-t border-border/50 pt-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">Record decision</div>
+              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  aria-label="Decision outcome"
+                  value={decideOutcome}
+                  onChange={(e) => setDecideOutcome(e.target.value as typeof decideOutcome)}
+                >
+                  <option value="cleared">Clear</option>
+                  <option value="escalated">Escalate to MLRO</option>
+                  <option value="blocked">Block</option>
+                </select>
+                <Button size="sm" className="sm:justify-self-start" disabled={busy} onClick={recordDecision}>
+                  Record decision
+                </Button>
+              </div>
+              <textarea
+                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
+                aria-label="Decision rationale"
+                placeholder="Decision rationale — frozen into the decision snapshot."
+                value={decideRationale}
+                onChange={(e) => setDecideRationale(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Clearance is refused while mandatory holds or open conditions remain.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-sm">Service gate</CardTitle></CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {gate ? (
+            <div>
+              <Row k="Status" v={GATE_OPTION_LABELS[gate.status] ?? gate.status.replace(/_/g, " ")} />
+              <Row k="Effective" v={gate.effective_at ? new Date(gate.effective_at).toLocaleString() : "—"} />
+              {gate.policy_version && <Row k="Policy" v={gate.policy_version} />}
+              {gate.reason && <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{gate.reason}</div>}
+              {gate.conditions.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-[11px] text-muted-foreground">Attached conditions</div>
+                  <ul className="mt-0.5 space-y-0.5 text-xs">
+                    {gate.conditions.map((c, i) => <li key={c.id ?? i}>• {c.label}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-muted-foreground">Gate state unavailable.</p>
+          )}
+          {canReview && (
+            <div className="space-y-2 border-t border-border/50 pt-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">Change service gate</div>
+              <p className="text-[11px] text-muted-foreground">
+                The gate controls service entitlement separately from case stage and risk.
+                Approval requires a recorded cleared decision; approval with controls requires
+                open conditions documenting those controls.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  aria-label="New service-gate status"
+                  value={gateStatus}
+                  onChange={(e) => setGateStatus(e.target.value)}
+                >
+                  {Object.entries(GATE_OPTION_LABELS)
+                    .filter(([k]) => (isMlro ? true : k !== "locked" && k !== "terminated"))
+                    .map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                <Button
+                  size="sm" variant="outline" className="sm:justify-self-start"
+                  disabled={busy || gateReason.trim().length < 10}
+                  onClick={applyGate}
+                >
+                  Apply gate change
+                </Button>
+              </div>
+              <textarea
+                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
+                aria-label="Gate change reason"
+                placeholder="Reason (required, minimum 10 characters) — recorded on the gate decision and audit trail."
+                value={gateReason}
+                onChange={(e) => setGateReason(e.target.value)}
+              />
+            </div>
           )}
         </CardContent>
       </Card>

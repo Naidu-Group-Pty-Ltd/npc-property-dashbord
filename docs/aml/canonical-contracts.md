@@ -205,3 +205,51 @@ The Command Center ↔ Finance Portal workflow runs on `aml.finance_requests`
 - **Rollback**: `DROP TABLE IF EXISTS aml.finance_requests;` (migration
   header). The comparison/discrepancy/evidence tables predate Phase 7 and are
   untouched.
+
+## 10. Service-gate decisions (Phase 8, §16 + Appendix C.4)
+
+The service gate is a separate workflow dimension and is never inferred from
+case stage or risk rating. After activation (which sets `cdd_incomplete`),
+the ONLY writer is `aml-risk` op `set_service_gate` (reviewer/MLRO;
+`locked`/`terminated` MLRO-only):
+
+- Every change requires a reason (≥10 chars) and records an
+  `aml.service_gate_decisions` row carrying the full C.4 contract:
+  {status, effective_at, conditions[], decision_id, approved_by,
+  policy_version, audit_event_id}. The audit event id comes from the
+  hash-chained case event written for the change.
+- **Approval preconditions**: `approved`/`approved_with_controls` require a
+  recorded `cleared` decision and no unresolved mandatory holds
+  (authoritative IDV/sanctions signals re-checked server-side).
+  `approved` additionally requires zero open conditions;
+  `approved_with_controls` requires ≥1 open condition documenting the
+  controls (frozen onto the gate record).
+- `gate_contract` returns the latest C.4 record (falling back to the
+  dimension columns pre-first-decision). Both tables
+  (`service_gate_decisions`, `analyst_recommendations`) are browser
+  read-only: SELECT policies for AML roles, writes via the SECURITY DEFINER
+  function only.
+
+## 11. Recommendation → decision loop and override rule (Phase 8, §12.8)
+
+- Analysts record `recommend` (outcome + rationale ≥10 chars); a new
+  recommendation supersedes the pending one; `decide` stamps pending
+  recommendations `actioned` with the decision id.
+- Rating overrides require reason AND evidence at request time
+  (`evidence_note`), a reviewer/MLRO decision-maker, the policy version
+  stamped at resolution (`program_version`), and hash-chained audit events —
+  the full §12.8 rule.
+- `recalc_status` reports assessment staleness from material-input changes
+  (screening, verification, funding, questionnaire, counterparty) so ratings
+  are recomputed rather than silently stale.
+
+## 12. Delayed CDD and uncooperative counterparties (Phase 9, §12.5)
+
+- `set_delayed_cdd` records a dated deadline (YYYY-MM-DD) plus a
+  justification (≥10 chars); overdue deadlines surface in the workspace.
+- `mark_uncooperative` requires a reason (≥10 chars) AND at least two
+  recorded contact attempts across the counterparty's information requests
+  (reasonable-steps evidence); it escalates the counterparty case.
+- Both fields are stripped from the generic `upsert_cp_case` patch — they
+  change only through the dedicated audited ops, and every action appends a
+  hash-chained case event ("Counterparty Action" in the §19 audit taxonomy).

@@ -381,6 +381,107 @@ describe("finance portal request channel is finance-safe (Phase 7, §15.1/§15.2
   });
 });
 
+describe("risk, decision and service gate (Phase 8, §12.8 + §16 + C.4)", () => {
+  const riskSource = readFileSync(
+    join(repo, "supabase/functions/aml-risk/index.ts"), "utf8");
+  const gateMigration = readFileSync(
+    join(repo, "supabase/migrations/20260726110000_aml_service_gate_and_counterparty_cdd.sql"), "utf8");
+
+  it("refuses a rating override without evidence and stamps the policy version", () => {
+    expect(riskSource).toContain("evidence is required");
+    expect(riskSource).toContain("evidence_note: evidence");
+    expect(riskSource).toContain("program_version: overridePolicyVersion");
+  });
+
+  it("records analyst recommendations behind the write gate and closes the loop on decide", () => {
+    const branch = riskSource.slice(
+      riskSource.indexOf('op === "recommend"'),
+      riskSource.indexOf('op === "list_recommendations"'));
+    expect(branch).toContain("Insufficient permissions");
+    expect(branch).toContain("rationale must be at least 10 characters");
+    expect(riskSource).toContain('status: "actioned", actioned_decision_id: dec.id');
+  });
+
+  it("only changes the service gate through an explicit reasoned decision", () => {
+    const branch = riskSource.slice(
+      riskSource.indexOf('op === "set_service_gate"'),
+      riskSource.indexOf('op === "gate_contract"'));
+    expect(branch).toContain("Reviewer/MLRO required");
+    expect(branch).toContain("reason must be at least 10 characters");
+    expect(branch).toContain("requires the MLRO");
+    // Approval preconditions — never inferred from stage or rating.
+    expect(branch).toContain("gate_requires_cleared_decision");
+    expect(branch).toContain("unresolved mandatory holds");
+    expect(branch).toContain('"no_controls"');
+  });
+
+  it("evaluate never writes the service-gate dimension (§16 separation)", () => {
+    const evalBranch = riskSource.slice(
+      riskSource.indexOf('op === "evaluate"'),
+      riskSource.indexOf('op === "list_assessments"'));
+    expect(evalBranch).not.toContain("service_gate_status");
+  });
+
+  it("returns the C.4 gate contract fields", () => {
+    const branch = riskSource.slice(
+      riskSource.indexOf('op === "gate_contract"'),
+      riskSource.indexOf('op === "recalc_status"'));
+    for (const field of ["status", "effective_at", "conditions", "decision_id", "approved_by", "policy_version", "audit_event_id"]) {
+      expect(branch).toContain(`${field}:`);
+    }
+  });
+
+  it("reports staleness from material-input changes (recalculation triggers)", () => {
+    expect(riskSource).toContain('reasons.push("screening_changed")');
+    expect(riskSource).toContain('reasons.push("funding_changed")');
+    expect(riskSource).toContain('reasons.push("questionnaire_changed")');
+  });
+
+  it("gate and recommendation tables are read-only to the browser", () => {
+    expect(gateMigration).toContain("ALTER TABLE aml.service_gate_decisions ENABLE ROW LEVEL SECURITY;");
+    expect(gateMigration).toContain("ALTER TABLE aml.analyst_recommendations ENABLE ROW LEVEL SECURITY;");
+    expect(gateMigration).not.toMatch(/CREATE POLICY .* ON aml\.service_gate_decisions[\s\S]{0,120}FOR (ALL|INSERT|UPDATE)/);
+    expect(gateMigration).not.toMatch(/CREATE POLICY .* ON aml\.analyst_recommendations[\s\S]{0,120}FOR (ALL|INSERT|UPDATE)/);
+  });
+});
+
+describe("transaction and counterparty CDD (Phase 9, §12.5)", () => {
+  const txSource = readFileSync(
+    join(repo, "supabase/functions/aml-transactions/index.ts"), "utf8");
+
+  it("marking uncooperative requires a reason and recorded reasonable steps", () => {
+    const branch = txSource.slice(
+      txSource.indexOf('op === "mark_uncooperative"'),
+      txSource.indexOf('op === "counterparty_cdd_summary"'));
+    expect(branch).toContain("reason must be at least 10 characters");
+    expect(branch).toContain("insufficient_attempts");
+    expect(branch).toContain("attemptCount < 2");
+  });
+
+  it("delayed CDD requires a dated deadline and a justification", () => {
+    const branch = txSource.slice(
+      txSource.indexOf('op === "set_delayed_cdd"'),
+      txSource.indexOf('op === "mark_uncooperative"'));
+    expect(branch).toContain("deadline must be a YYYY-MM-DD date");
+    expect(branch).toContain("justification must be at least 10 characters");
+    expect(branch).toContain("appendCpCaseEvent");
+  });
+
+  it("the generic counterparty upsert cannot set the controlled fields", () => {
+    const branch = txSource.slice(
+      txSource.indexOf('op === "upsert_cp_case"'),
+      txSource.indexOf('op === "delete_cp_case"'));
+    expect(branch).toContain("delete p.delayed_cdd_deadline;");
+    expect(branch).toContain("delete p.uncooperative;");
+    expect(branch).toContain("delete p.uncooperative_reason;");
+  });
+
+  it("counterparty actions land on the hash-chained case timeline", () => {
+    expect(txSource).toContain("Counterparty marked uncooperative:");
+    expect(txSource).toContain("Delayed CDD recorded for");
+  });
+});
+
 describe("workflow-dimension migration invariants", () => {
   it("enforces one open case per client with a partial unique index", () => {
     expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");
