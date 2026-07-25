@@ -672,15 +672,21 @@ function CalculatorSuiteContent({ domain, setDomain }: { domain: CalculatorDomai
   const readinessPercent = prefill ? Math.max(10, Math.round(((assumptionRows.length - missingCount) / Math.max(assumptionRows.length, 1)) * 100)) : 0;
   const nextBestAction = !prefill ? 'Link a property to prefill every calculator.' : missingCount > 0 ? 'Review incomplete inputs and missing assumptions.' : aiPendingCount > 0 ? 'Accept or reject pending AI estimates.' : overrideCount > 0 ? 'Review manual overrides before reporting.' : 'Generate calculations, then prepare report output.';
   const assumptionStatusAction = <Button type="button" variant="outline" size="sm" className="ci-assumption-status-button" onClick={() => setAssumptionDrawerOpen(true)}><ListChecks className="mr-2 h-4 w-4" />Assumption Status</Button>;
+  const visibleTabGroups = calculatorTabGroups.map(group => ({
+    ...group,
+    tabs: group.tabs.filter(value => domain === 'industrial' || value !== 'rent'),
+  }));
 
   useEffect(() => {
     const handler = (event: Event) => {
       const tab = (event as CustomEvent<{ tab?: string }>).detail?.tab;
-      if (calculatorTabs.some((item) => item.value === tab)) setActiveTab(tab as (typeof calculatorTabs)[number]['value']);
+      if (calculatorTabs.some((item) => item.value === tab) && (domain === 'industrial' || tab !== 'rent')) {
+        setActiveTab(tab as (typeof calculatorTabs)[number]['value']);
+      }
     };
     window.addEventListener('calculator-tab-open', handler);
     return () => window.removeEventListener('calculator-tab-open', handler);
-  }, []);
+  }, [domain]);
 
   const blockedTab = (title: string) => (
     <CalculatorTabShell title={title} subtitle="Link a saved commercial or industrial property before reviewing calculated tab outputs." chips={[domain === 'industrial' ? 'Industrial domain' : 'Commercial domain', 'Property required']}>
@@ -730,7 +736,11 @@ function CalculatorSuiteContent({ domain, setDomain }: { domain: CalculatorDomai
               <ToggleGroup
                 type="single"
                 value={domain}
-                onValueChange={(v) => v && setDomain(v as CalculatorDomain)}
+                onValueChange={(v) => {
+                  if (!v) return;
+                  if (v === 'commercial' && activeTab === 'rent') setActiveTab('overview');
+                  setDomain(v as CalculatorDomain);
+                }}
                 className="ci-domain-toggle"
               >
                 <ToggleGroupItem value="commercial" className="ci-domain-toggle-item">
@@ -778,7 +788,7 @@ function CalculatorSuiteContent({ domain, setDomain }: { domain: CalculatorDomai
               </div>
             </div>
             <div className="ci-tab-group-grid" role="tablist" aria-label="Calculator modules">
-              {calculatorTabGroups.map((group, groupIndex) => (
+              {visibleTabGroups.map((group, groupIndex) => (
                 <div key={group.group} className="ci-tab-group">
                   <div className="ci-tab-group-heading">
                     <span className="ci-tab-group-index">{String(groupIndex + 1).padStart(2, '0')}</span>
@@ -825,7 +835,7 @@ function CalculatorSuiteContent({ domain, setDomain }: { domain: CalculatorDomai
           <TabsContent value="gst" id="calculator-panel-gst" aria-labelledby="calculator-tab-gst" className="mt-4">{<CalculatorTabShell actions={assumptionStatusAction} title="Goods & Services Tax" subtitle="Transaction treatment and GST assumptions sit before payable, claimable and specialist review warnings." chips={["Inputs", "Outputs", "Warnings / assumptions"]}><GstTreatmentOverviewPanel /><GstCalculatorCard /></CalculatorTabShell>}</TabsContent>
           <TabsContent value="dcf" id="calculator-panel-dcf" aria-labelledby="calculator-tab-dcf" className="mt-4">{<CalculatorTabShell actions={assumptionStatusAction} title="Discounted Cash Flow" subtitle="Forecast assumptions are separated from cash-flow summary, NPV, IRR and terminal value outputs." chips={["Inputs", "Outputs", "Warnings / assumptions"]}><DcfOverviewPanel /><DcfCalculatorCard /></CalculatorTabShell>}</TabsContent>
           <TabsContent value="ten-year" id="calculator-panel-ten-year" aria-labelledby="calculator-tab-ten-year" className="mt-4">{<CalculatorTabShell actions={assumptionStatusAction} title="10-Year Cash Flow Report" subtitle="Projection assumptions, annual rows and export-ready report outputs are grouped for readability." chips={["Inputs", "Outputs", "Warnings / assumptions"]}><TenYearCashFlowCard /></CalculatorTabShell>}</TabsContent>
-          <TabsContent value="rent" id="calculator-panel-rent" aria-labelledby="calculator-tab-rent" className="mt-4">{<CalculatorTabShell actions={assumptionStatusAction} title="Industrial Metrics $/m² + Site Cover" subtitle="Review the overview, import or enter physical inputs, validate rent and site outputs, then save report-ready metrics." chips={["Asset profile", "Physical metrics", "Rent + value benchmarks", "Site efficiency"]}><IndustrialMetricsOverviewPanel /><IndustrialMetricsReadinessProvider><CalculatorGuidancePanel items={[{ title: 'Missing physical data', body: 'Import property areas, rent, outgoings and price first; missing values remain Pending until a source or manual entry is added.' }, { title: 'Benchmark notes', body: 'Benchmark notes are collapsed by default. Expand them only when you need the plain-English interpretation and verification context.' }, { title: 'Save-back', body: 'Use the bottom save action after warnings are validated so downstream report sync remains explicit.' }]} /><div className="grid gap-5 xl:grid-cols-2"><RentPerSqmCard /><SiteCoverCard /></div></IndustrialMetricsReadinessProvider></CalculatorTabShell>}</TabsContent>
+          {domain === 'industrial' && <TabsContent value="rent" id="calculator-panel-rent" aria-labelledby="calculator-tab-rent" className="mt-4">{<CalculatorTabShell actions={assumptionStatusAction} title="Industrial Metrics $/m² + Site Cover" subtitle="Review the overview, import or enter physical inputs, validate rent and site outputs, then save report-ready metrics." chips={["Asset profile", "Physical metrics", "Rent + value benchmarks", "Site efficiency"]}><IndustrialMetricsOverviewPanel /><IndustrialMetricsReadinessProvider><CalculatorGuidancePanel items={[{ title: 'Missing physical data', body: 'Import property areas, rent, outgoings and price first; missing values remain Pending until a source or manual entry is added.' }, { title: 'Benchmark notes', body: 'Benchmark notes are collapsed by default. Expand them only when you need the plain-English interpretation and verification context.' }, { title: 'Save-back', body: 'Use the bottom save action after warnings are validated so downstream report sync remains explicit.' }]} /><div className="grid gap-5 xl:grid-cols-2"><RentPerSqmCard /><SiteCoverCard /></div></IndustrialMetricsReadinessProvider></CalculatorTabShell>}</TabsContent>}
         </Tabs>
         </div>
       </div>
