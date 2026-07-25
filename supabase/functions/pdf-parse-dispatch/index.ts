@@ -28,6 +28,7 @@ import {
   buildCacheContractFingerprintInput,
   PDF_CACHE_CONTRACT_VERSION,
 } from '../_shared/pdfCacheContract.pure.ts';
+import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -712,7 +713,10 @@ async function callSidecarPlan(
 }
 
 function planChunks(pageCount: number, ocrHint: boolean, preferredChunkSize?: number | null): Array<{ page_start: number; page_end: number }> {
-  if (pageCount <= 0) return [];
+  // Validate before allocating ranges: every chunk currently fetches the full
+  // source PDF, so unbounded page counts would amplify one import into many
+  // downloads and parse jobs.
+  assertPdfChunkPlanLimits(pageCount);
 
   let size = preferredChunkSize && Number.isFinite(preferredChunkSize)
     ? Math.max(1, Math.min(50, Math.floor(preferredChunkSize)))
@@ -729,6 +733,7 @@ function planChunks(pageCount: number, ocrHint: boolean, preferredChunkSize?: nu
   for (let s = 1; s <= pageCount; s += size) {
     ranges.push({ page_start: s, page_end: Math.min(pageCount, s + size - 1) });
   }
+  assertPdfChunkPlanLimits(pageCount, ranges.length);
   return ranges;
 }
 
