@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createForbiddenResponse } from "../_shared/auth.ts";
+import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { normalizePhone, digitsOnly } from "../_shared/phone.ts";
 
@@ -88,6 +89,12 @@ interface RequestBody {
 
 const ALLOWED_TABLES: TableName[] = ['call_tags', 'call_alert_rules', 'call_alert_history', 'blacklisted_numbers'];
 
+function blacklistPermissionFor(operation: Operation): ModulePerm {
+  if (operation === 'delete') return 'can_delete';
+  if (operation === 'create' || operation === 'update') return 'can_edit';
+  return 'can_view';
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin') || '';
   const corsHeaders = createCorsHeaders(origin);
@@ -110,7 +117,7 @@ Deno.serve(async (req) => {
     const body: RequestBody = await req.json();
 
     // SECURITY: Verify authentication
-    const { error: authError, userId, username } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, username, authMethod } = await verifyAuth(supabase, req.headers, body);
 
     if (authError) {
       console.log('[manage-call-settings] Auth error:', authError);
@@ -135,6 +142,26 @@ Deno.serve(async (req) => {
         JSON.stringify({ success: false, error: `Invalid operation: ${operation}` }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Blacklist entries directly control automated inbound call termination.
+    // This function uses a service-role client, so enforce the Call Logs module
+    // permission here rather than relying on browser-only controls.
+    if (table === 'blacklisted_numbers') {
+      const permission = await requireModulePermission(
+        supabase,
+        { userId, authMethod },
+        'call_logs',
+        blacklistPermissionFor(operation),
+      );
+      if (!permission.ok) {
+        console.warn('[manage-call-settings] Blacklist permission denied:', {
+          userId,
+          operation,
+          reason: permission.reason_code,
+        });
+        return createForbiddenResponse(permission.error || 'Call Logs permission required', corsHeaders);
+      }
     }
 
     let result: any;
