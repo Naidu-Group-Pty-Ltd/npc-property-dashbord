@@ -95,6 +95,7 @@ import table_integrity as tinteg
 # E5 — source typography evidence + font assets (pure; no Docling init on import).
 import source_typography as stypo
 import font_assets as fassets
+from source_url_security import UnsafeSourceUrl, fetch_public_url
 
 REQUEST_ID: ContextVar[str] = ContextVar("request_id", default="-")
 
@@ -522,8 +523,11 @@ async def _resolve_pdf_bytes(url: Optional[str], pdf_base64: Optional[str]) -> b
             raise SidecarError(400, "invalid_base64", f"Invalid base64: {exc}") from exc
     else:
         try:
-            async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-                resp = await client.get(url)  # type: ignore[arg-type]
+            resp = await fetch_public_url(url)  # type: ignore[arg-type]
+        except UnsafeSourceUrl as exc:
+            raise SidecarError(400, "unsafe_source_url", str(exc)) from exc
+        except httpx.TooManyRedirects as exc:
+            raise SidecarError(400, "source_fetch_redirects", "Source URL returned too many redirects.") from exc
         except httpx.TimeoutException as exc:
             raise SidecarError(504, "source_fetch_timeout", "Timed out fetching source PDF.", retryable=True) from exc
         except httpx.RequestError as exc:
