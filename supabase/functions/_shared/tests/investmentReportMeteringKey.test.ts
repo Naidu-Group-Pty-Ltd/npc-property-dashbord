@@ -47,3 +47,21 @@ Deno.test('changed report inputs cannot reuse a reservation in the same version'
 
   assertNotEquals(original, changed);
 });
+
+Deno.test('deeply nested unused report details cannot bypass metering key generation', async () => {
+  const propertyDetails: Record<string, unknown> = {};
+  let nested = propertyDetails;
+  for (let depth = 0; depth < 4_000; depth += 1) {
+    const child: Record<string, unknown> = {};
+    nested.unused = child;
+    nested = child;
+  }
+
+  const parts = await buildInvestmentReportMeteringParts({
+    reportId: 'report-deep',
+    propertyDetails,
+  }, 1);
+
+  assertEquals(parts.length, 3);
+  assertEquals(parts[0], 'report-deep');
+});
