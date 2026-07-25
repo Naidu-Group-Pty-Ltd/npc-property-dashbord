@@ -2,14 +2,16 @@
 // Cron: hourly. Embeds up to 200 market_updates rows where embedding IS NULL
 // using openai/text-embedding-3-small (1536 dims) via Lovable AI Gateway.
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!;
+const CRON_SECRET = Deno.env.get('MARKET_INGESTION_CRON_SECRET');
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-cron-secret',
 };
 
 const BATCH_SIZE = 50;
@@ -39,6 +41,12 @@ function buildText(row: any): string {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (!verifyRequiredCronSecret(CRON_SECRET, req.headers.get('x-cron-secret'))) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
   const stats = { batches: 0, embedded: 0, failed: 0, errors: [] as string[] };

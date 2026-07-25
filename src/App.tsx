@@ -427,7 +427,7 @@ const App = () => (
                 <Route path="lenders" element={<ModuleGuard moduleKey="lenders"><Lenders /></ModuleGuard>} />
                 <Route path="commissions" element={<Commissions />} />
                 <Route path="reports/analytics" element={<ReportsAnalytics />} />
-                <Route path="model-hub" element={<ModelHub />} />
+                <Route path="model-hub" element={<ModuleGuard moduleKey="integrations" requireEdit><ModelHub /></ModuleGuard>} />
                 <Route path="billing/usage" element={<TokenUsageHistory />} />
                 <Route path="admin/token-audit" element={<TokenAuditLog />} />
                 <Route path="commercial" element={<CommercialProperties />} />

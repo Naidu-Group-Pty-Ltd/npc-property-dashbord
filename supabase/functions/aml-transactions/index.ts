@@ -242,6 +242,12 @@ Deno.serve(async (req) => {
       if (!canWrite) throw new Response(JSON.stringify({ error: "Insufficient permissions" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     };
+    const { data: isMlroRow } = await admin.rpc("has_aml_role", { _user_id: userId, _role: "mlro" });
+    const isMlro = Boolean(isMlroRow);
+    const requireMlro = () => {
+      if (!isMlro) throw new Response(JSON.stringify({ error: "MLRO role required" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    };
 
     // ── TRANSACTIONS ──
     if (op === "list_transactions") {
@@ -493,27 +499,62 @@ Deno.serve(async (req) => {
     }
 
     if (op === "waive_obligation") {
-      requireWrite();
+      requireMlro();
       const id = String(body.id ?? "");
       const reason = String(body.reason ?? "").trim();
-      if (!reason) return jr({ error: "reason required" }, 400);
+      if (!id || !reason) return jr({ error: "id and reason required" }, 400);
+      const { data: obligation } = await aml.from("transaction_obligations")
+        .select("id, status").eq("id", id).maybeSingle();
+      if (!obligation) return jr({ error: "Obligation not found" }, 404);
+      if (!["pending", "acknowledged"].includes(obligation.status)) {
+        return jr({ error: `Cannot waive an obligation with status ${obligation.status}` }, 400);
+      }
       const { data, error } = await aml.from("transaction_obligations")
         .update({ status: "waived", waived_by: userId, waived_at: new Date().toISOString(), waive_reason: reason })
-        .eq("id", id).select("*").maybeSingle();
+        .eq("id", id).in("status", ["pending", "acknowledged"]).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
+      if (!data) return jr({ error: "Obligation status changed; retry the request" }, 409);
       if (data) await appendTxEvent(aml, data.transaction_id, data.case_id, "obligation_waived",
         `Obligation ${data.kind} waived: ${reason}`, { obligation_id: data.id, reason }, userId, userLabel);
       return jr({ obligation: data });
     }
 
     if (op === "link_obligation_report") {
-      requireWrite();
+      requireMlro();
       const id = String(body.id ?? "");
-      const reportId = body.report_id ? String(body.report_id) : null;
+      const reportId = String(body.report_id ?? "");
+      if (!id || !reportId) return jr({ error: "id and report_id required" }, 400);
+      const { data: obligation } = await aml.from("transaction_obligations")
+        .select("id, case_id, kind, status").eq("id", id).maybeSingle();
+      if (!obligation) return jr({ error: "Obligation not found" }, 404);
+      if (!["pending", "acknowledged"].includes(obligation.status)) {
+        return jr({ error: `Cannot link a report to an obligation with status ${obligation.status}` }, 400);
+      }
+      const { data: report } = await aml.from("reports")
+        .select("id, case_id, kind, status").eq("id", reportId).maybeSingle();
+      if (!report) return jr({ error: "Report not found" }, 404);
+      const expectedReportKind = ["smr_candidate", "structuring_suspected"].includes(obligation.kind) ? "smr" : obligation.kind;
+      if (report.case_id !== obligation.case_id || report.kind !== expectedReportKind) {
+        return jr({ error: "Report must match the obligation case and type" }, 400);
+      }
+      if (!["submitted", "acknowledged"].includes(report.status)) {
+        return jr({ error: "Report must be submitted before it can resolve an obligation" }, 400);
+      }
+      const { data: submissions } = await aml.from("report_submissions")
+        .select("status, external_reference, export_bundle_path, response_payload")
+        .eq("report_id", report.id).in("status", ["submitted", "acknowledged"]);
+      const hasSubmissionEvidence = (submissions ?? []).some((submission: any) =>
+        submission.external_reference || submission.export_bundle_path ||
+        submission.response_payload?.evidence || submission.response_payload?.attachment_url || submission.response_payload?.lodgement_id,
+      );
+      if (!hasSubmissionEvidence) {
+        return jr({ error: "A submitted report with submission evidence is required" }, 400);
+      }
       const { data, error } = await aml.from("transaction_obligations")
         .update({ status: "report_created", linked_report_id: reportId })
-        .eq("id", id).select("*").maybeSingle();
+        .eq("id", id).in("status", ["pending", "acknowledged"]).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
+      if (!data) return jr({ error: "Obligation status changed; retry the request" }, 409);
       if (data) await appendTxEvent(aml, data.transaction_id, data.case_id, "obligation_reported",
         `Obligation ${data.kind} linked to AUSTRAC report`, { obligation_id: data.id, report_id: reportId },
         userId, userLabel);

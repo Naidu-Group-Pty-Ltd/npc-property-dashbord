@@ -5969,12 +5969,14 @@ Deno.serve(withReportMetering(async (body, req) => {
       : tier === 'snapshot' ? 'report.investment.snapshot'
       : tier === 'financial' ? 'report.investment.financial'
       : 'report.investment.compass');
-  const idempotencyKey = buildIdempotencyKey('inv-report', [
-    body?.reportId,
-    body?.propertyAddress,
-    body?.singleSection ? `sec:${body?.singleSection}` : null,
-    body?.continueFrom ? 'cont' : null,
-  ]);
+  // One reservation per REPORT, not per invocation. Chunked generation drives
+  // this function once per section (singleSection/continueFrom), and resume
+  // loops re-enter it many times — all of those calls must share the parent
+  // report's idempotency key so Mission Control charges the report exactly
+  // once. Keying on the sec/cont flags split one run across multiple charges.
+  const idempotencyKey = body?.reportId
+    ? buildIdempotencyKey('inv-report', [body.reportId])
+    : buildIdempotencyKey('inv-report', [body?.propertyAddress, scope, tier]);
   return {
     kind: kind as any,
     userId,

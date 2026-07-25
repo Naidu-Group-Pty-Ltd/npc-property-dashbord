@@ -116,12 +116,19 @@ export async function verifySession(
     }
 
 
-    // Optionally fetch username for logging
+    // A session is valid only while its owning custom user remains active and
+    // has not been soft-deleted. This prevents disabling a user from leaving
+    // existing sessions usable until their expiry.
     const { data: user } = await supabase
       .from('custom_users')
-      .select('username')
+      .select('username, is_active, deleted_at')
       .eq('id', session.user_id)
       .maybeSingle();
+
+    if (!user || user.is_active !== true || user.deleted_at !== null) {
+      console.log('[verifySession] Session user missing, inactive, or deleted');
+      return { error: 'Invalid or expired session', userId: null, username: null };
+    }
 
     console.log('[verifySession] Session authentication successful (userId 8-prefix:',
       session.user_id?.substring(0, 8) + '...',
@@ -224,14 +231,14 @@ export async function verifyAuth(
           }
 
           if (payload.sub && payload.role === 'authenticated') {
-            // Signature is valid; confirm the user exists and is active.
+            // Signature is valid; confirm the user is active and not soft-deleted.
             const { data: user, error: userError } = await supabase
               .from('custom_users')
-              .select('username, id, is_active')
+              .select('username, id, is_active, deleted_at')
               .eq('id', payload.sub)
               .maybeSingle();
 
-            if (!userError && user && user.is_active !== false) {
+            if (!userError && user && user.is_active === true && user.deleted_at === null) {
               console.log('[verifyAuth] JWT authentication successful:', { userId: payload.sub.substring(0, 8) + '...', username: user.username });
               return {
                 error: null,
@@ -258,10 +265,10 @@ export async function verifyAuth(
               if (authUser?.id) {
                 const { data: user, error: userError } = await supabase
                   .from('custom_users')
-                  .select('username, id, is_active')
+                  .select('username, id, is_active, deleted_at')
                   .eq('id', authUser.id)
                   .maybeSingle();
-                if (!userError && user && user.is_active !== false) {
+                if (!userError && user && user.is_active === true && user.deleted_at === null) {
                   console.log('[verifyAuth] Auth-server-verified JWT successful:', { userId: String(authUser.id).substring(0, 8) + '...' });
                   return {
                     error: null,

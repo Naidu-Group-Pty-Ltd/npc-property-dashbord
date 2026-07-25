@@ -3,7 +3,7 @@
 // All actions are scoped to the calling user. Superadmins may pass an
 // explicit `external_user_id` to manage another user's devices.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth } from "../_shared/auth.ts";
+import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   registerDevice,
@@ -12,22 +12,20 @@ import {
   listDevices,
 } from "../_shared/missionControlDevices.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-session-token",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { ...corsHeaders, "content-type": "application/json" },
-  });
-}
-
 Deno.serve(async (req) => {
+  // Credentialed CORS: the app invokes this function with
+  // credentials:'include' (HttpOnly session cookie), and browsers reject a
+  // wildcard Access-Control-Allow-Origin at preflight for credentialed
+  // requests — the POST never leaves the browser and the UI surfaces it as
+  // "Failed to load". createCorsHeaders echoes the exact allow-listed origin
+  // and sets Access-Control-Allow-Credentials.
+  const corsHeaders = createCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { ...corsHeaders, "content-type": "application/json" },
+    });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
   // No-op for GET/HEAD/OPTIONS and any request without the session cookie.
