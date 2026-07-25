@@ -109,8 +109,15 @@ export function PremiumPdfButton({
     const { data, error } = result;
     if (error || !data?.fileUrl) throw new Error(error?.message || "PDF generation failed");
     const blob = await fetchPdfBlob(data.fileUrl);
+    await logActivityDirect({
+      actionType: "report_pdf_downloaded",
+      entityType: "investment_report",
+      entityId: reportId,
+      entityName: propertyAddress,
+      metadata: { format: "pdf", source: "premium_weasyprint", flattened: true, designOptions },
+    });
     return { blob, fileName: data.fileName || `investment-report-${reportId}.pdf` };
-  }, [reportId, includeCharts, includeHeroImages, includeSparklines, designOptions]);
+  }, [reportId, propertyAddress, includeCharts, includeHeroImages, includeSparklines, designOptions]);
 
   return (
     <div className="inline-flex items-center gap-1">
