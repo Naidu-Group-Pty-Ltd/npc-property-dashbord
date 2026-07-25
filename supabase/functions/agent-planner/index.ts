@@ -346,29 +346,21 @@ Deno.serve(async (req) => {
 
     if (action === 'approve-subscription') {
       // Called from AgentChatWidget's approval card. Creates the subscription and
-      // marks the insight as acted-on.
+      // marks the insight as acted-on atomically with quota enforcement.
       const insightId = String(body?.insight_id ?? '');
-      const { data: insight } = await sb.from('agent_insights_feed')
-        .select('id, payload, user_id').eq('id', insightId).eq('user_id', userId).maybeSingle();
-      if (!insight) return json({ error: 'not_found' }, 404);
-      const p = insight.payload || {};
-      const nextRunAt = new Date();
-      if (p.cadence === 'daily') nextRunAt.setUTCDate(nextRunAt.getUTCDate() + 1);
-      else nextRunAt.setUTCDate(nextRunAt.getUTCDate() + 7);
-      const { data: sub, error: subErr } = await sb.from('market_qa_subscriptions').insert({
-        user_id: userId,
-        question_template: p.question_template,
-        cadence: p.cadence ?? 'weekly',
-        digest_group: p.digest_group ?? null,
-        channels: ['in_app'],
-        next_run_at: nextRunAt.toISOString(),
-      }).select().single();
-      if (subErr) return json({ error: subErr.message }, 500);
-      await sb.from('agent_insights_feed').update({
-        acted_on_at: new Date().toISOString(),
-        is_read: true,
-      }).eq('id', insightId).eq('user_id', userId);
-      return json({ subscription: sub });
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(insightId)) {
+        return json({ error: 'valid insight_id required' }, 400);
+      }
+      const { data, error } = await sb.rpc('approve_agent_subscription', {
+        p_user_id: userId,
+        p_insight_id: insightId,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (data?.error === 'subscription_limit_reached') {
+        return json({ error: 'Limit 20 active subscriptions' }, 400);
+      }
+      if (data?.error) return json({ error: data.error }, 409);
+      return json({ subscription: data.subscription });
     }
 
     return json({ error: 'unknown_action' }, 400);
