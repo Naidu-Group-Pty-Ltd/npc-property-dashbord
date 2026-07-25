@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { canAccessClient } from '../_shared/clientAccess.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { computeDtiDenominator } from '../_shared/dtiDenominator.ts';
 import type { ScenarioIncomeComponent } from '../_shared/lenderShadingProfiles.ts';
@@ -1362,7 +1363,7 @@ Deno.serve(async (req) => {
     const { clientId, overrides, saveResult = true, scenarioDeltas, acquisition, strictScenarioValidation } = body;
 
     // SECURITY: Verify authentication (enforced - TODO removed)
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log(`[calculate-borrowing-capacity] Auth failed for client ${clientId}:`, authError);
       return createUnauthorizedResponse(authError, corsHeaders);
@@ -1373,6 +1374,15 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ success: false, error: "Client ID is required" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // The service-role client bypasses RLS, so bind this request to a client
+    // the authenticated actor owns or is assigned to before reading any data.
+    if (!await canAccessClient(supabase, { userId, authMethod }, clientId)) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Client not found" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
