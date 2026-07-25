@@ -688,6 +688,7 @@ Deno.serve(async (req: Request) => {
     const ROLE_MUTATION_ACTIONS = new Set([
       'assign_role', 'remove_role', 'set_aml_roles',
       'promote_to_superadmin', 'demote_from_superadmin', 'update_permissions',
+      'create_subadmin', 'send_invite',
     ]);
     if (ROLE_MUTATION_ACTIONS.has(action)) {
       const stepUpCap = action === 'set_aml_roles' ? 'aml.role.set'
