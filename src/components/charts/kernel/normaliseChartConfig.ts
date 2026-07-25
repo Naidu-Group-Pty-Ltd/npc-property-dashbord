@@ -111,9 +111,10 @@ export function normaliseChartConfig(raw: RawChart): NormalisedChartModel | null
   //   { type, title, data: [{ label, value, color? }, ...] }
   // Convert it into the Chart.js-ish {labels, datasets} shape the rest of the
   // pipeline understands, so downstream consumers stay uniform.
-  const inlinePoints: any[] | null = Array.isArray(cfg.data) && cfg.data.length > 0 && typeof cfg.data[0] === 'object' && !Array.isArray(cfg.data[0]) && ('label' in cfg.data[0] || 'name' in cfg.data[0])
+  const isInlinePoint = (point: any): boolean => point !== null && typeof point === 'object' && !Array.isArray(point);
+  const inlinePoints: any[] | null = Array.isArray(cfg.data) && cfg.data.length > 0 && cfg.data.every(isInlinePoint) && ('label' in cfg.data[0] || 'name' in cfg.data[0])
     ? cfg.data
-    : Array.isArray(cfg.points) ? cfg.points
+    : Array.isArray(cfg.points) && cfg.points.every(isInlinePoint) ? cfg.points
     : null;
 
   const source = inlinePoints
