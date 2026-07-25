@@ -92,6 +92,10 @@ Deno.serve(async (req) => {
       if (!superadmin && !roles.has("mlro")) return jr({ error: "MLRO only" }, 403);
       return null;
     };
+    const superadminRequired = () => {
+      if (!superadmin) return jr({ error: "Superadmin only" }, 403);
+      return null;
+    };
     const CONFIG_WRITE_OPS = new Set([
       "update_tenant_settings", "upsert_plan",
       "upsert_provider", "delete_provider", "set_provider_health",
@@ -165,7 +169,7 @@ Deno.serve(async (req) => {
         return jr({ plans: data ?? [] });
       }
       case "upsert_plan": {
-        const err = mlroRequired(); if (err) return err;
+        const err = superadminRequired(); if (err) return err;
         const plan = (args as any).plan ?? {};
         if (!plan.key || !plan.label) return jr({ error: "key + label required" }, 400);
         const { data, error } = await aml.from("plan_tiers").upsert(plan, { onConflict: "key" }).select("*").maybeSingle();

@@ -58,7 +58,7 @@ export const BRAND_PROFILES: Record<string, BrandProfile> = {
 };
 
 export function getBrandProfile(id: string): BrandProfile | undefined {
-  return BRAND_PROFILES[id];
+  return Object.prototype.hasOwnProperty.call(BRAND_PROFILES, id) ? BRAND_PROFILES[id] : undefined;
 }
 
 /** Build the Simple Icons CDN URL for a colored SVG mark. */

@@ -7,6 +7,8 @@
  */
 import { verifyHuman, verifyInternal, verifyWebhookSecret, type AuthContext } from './auth_v2.ts';
 
+export { verifyHuman };
+
 const MIN_SECRET_LENGTH = 16;
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 const IPV6 = /^[0-9a-fA-F:]+$/;

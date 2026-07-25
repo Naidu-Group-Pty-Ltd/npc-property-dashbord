@@ -395,8 +395,10 @@ export async function runImportQualityGate(
     if (pageCount === 0) {
       return finalizeWithContainment(options, skippedResult(options, 'no_cdir_pages'), allPagesUnscored(options.template, false));
     }
-    // C4: no page-count skip. Large documents are scored in bounded sequential
-    // batches so every page receives a verdict or is explicitly listed unscored.
+    const maxPages = options.maxPages ?? DEFAULT_QUALITY_GATE_MAX_PAGES;
+    if (pageCount > maxPages) {
+      return finalizeWithContainment(options, skippedResult(options, 'page_count_exceeds_gate_limit'), allPagesUnscored(options.template, false));
+    }
     if (typeof document === 'undefined' && !options.runOrchestrationImpl) {
       // Real capture needs a browser; without an injected impl there is nothing to run.
       return finalizeWithContainment(options, skippedResult(options, 'no_browser_render_context'), allPagesUnscored(options.template, false));

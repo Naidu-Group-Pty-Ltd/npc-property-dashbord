@@ -500,7 +500,8 @@ Deno.serve(async (req) => {
           await admin.from('security_events').insert({ action: 'session.rotated', decision: 'allow', actor_type: 'human', actor_id: auth.userId, metadata_redacted: { reason: 'step_up', capability, old_session_id: staffSession.id, new_session_id: rot.newSessionId } });
         } catch { /* ignore */ }
       } else {
-        console.warn('[security-step-up] session rotation failed:', rot.error);
+        console.error('[security-step-up] session rotation failed:', rot.error);
+        return j({ success: false, error: 'session_rotation_failed' }, 503);
       }
     }
 

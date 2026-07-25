@@ -94,7 +94,7 @@ yet (with enforced manual regression checks); retention policy not automated yet
   to Phase 11B.
 - **deployment** — WARNING. The `template-import-pdf` function, finalize worker,
   and Cloud Run parse sidecar
-  (`https://pdf-parse-service-f23kmmm2za-ts.a.run.app`, australia-southeast1) are
+  (`https://pdf-parse-service-xxxxxxxx-uc.a.run.app`, australia-southeast1) are
   in use; engine version is recorded on jobs. Formal rollback runbooks are deferred
   to Phase 11F.
 - **operator_workflow** — PASS. The Golden Regression console loads; Evaluate Only

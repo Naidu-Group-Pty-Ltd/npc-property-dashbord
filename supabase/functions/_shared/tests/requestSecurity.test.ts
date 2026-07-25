@@ -2,6 +2,10 @@ import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.t
 import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, enforceRawBodyLimit, getTrustedClientIp, securityJsonError, verifyRequiredCronSecret, verifyRequiredWebhookSecret, verifySignedInternal } from '../requestSecurity.ts';
 import { signInternalRequest } from '../auth_v2.ts';
 
+Deno.test('shared request security exports human authentication for edge handlers', () => {
+  assertEquals(typeof verifyHuman, 'function');
+});
+
 Deno.test('request limits reject oversized JSON before parsing', async () => {
   const req = new Request('https://example.test', { method: 'POST', headers: { 'content-length': '1000' }, body: '{"ok":true}' });
   const result = await enforceJsonBodyLimit(req, 32);
