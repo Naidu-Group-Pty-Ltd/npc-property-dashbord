@@ -364,7 +364,7 @@ Deno.serve(async (req) => {
             client_id: isInternal ? (typeof bindingClientId === 'string' ? bindingClientId : null) : uploadBinding.clientId,
             owner_user_id: resolvedOwner,
             sensitivity: sensitivityAtUpload,
-            created_by: actorId,
+            created_by: isInternal ? null : actorId,
           });
           if (!bindingRes.ok) {
             // Rollback: remove the just-uploaded object so we never leave an

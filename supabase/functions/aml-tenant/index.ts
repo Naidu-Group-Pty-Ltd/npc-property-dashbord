@@ -92,6 +92,10 @@ Deno.serve(async (req) => {
       if (!superadmin && !roles.has("mlro")) return jr({ error: "MLRO only" }, 403);
       return null;
     };
+    const superadminRequired = () => {
+      if (!superadmin) return jr({ error: "Superadmin only" }, 403);
+      return null;
+    };
     const CONFIG_WRITE_OPS = new Set([
       "update_tenant_settings", "upsert_plan",
       "upsert_provider", "delete_provider", "set_provider_health",
@@ -106,6 +110,15 @@ Deno.serve(async (req) => {
     }
 
     switch (op) {
+      case "terminology": {
+        const { data: settings, error } = await aml
+          .from("tenant_settings")
+          .select("terminology_overrides")
+          .eq("tenant_id", tenantId)
+          .maybeSingle();
+        if (error) return jr({ error: error.message }, 500);
+        return jr({ terminology_overrides: settings?.terminology_overrides ?? {} });
+      }
       case "summary": {
         const [{ data: settings }, { data: plans }, { data: providers }, { data: overrides }, { data: metrics }] = await Promise.all([
           aml.from("tenant_settings").select("*").eq("tenant_id", tenantId).maybeSingle(),
@@ -165,7 +178,7 @@ Deno.serve(async (req) => {
         return jr({ plans: data ?? [] });
       }
       case "upsert_plan": {
-        const err = mlroRequired(); if (err) return err;
+        const err = superadminRequired(); if (err) return err;
         const plan = (args as any).plan ?? {};
         if (!plan.key || !plan.label) return jr({ error: "key + label required" }, 400);
         const { data, error } = await aml.from("plan_tiers").upsert(plan, { onConflict: "key" }).select("*").maybeSingle();

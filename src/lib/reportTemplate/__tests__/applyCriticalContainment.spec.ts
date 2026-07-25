@@ -94,6 +94,21 @@ describe('policy application', () => {
     expect(r.manualReviewRequired).toBe(true);
   });
 
+  it('blocks fallback and removes an existing inline or signed source raster', () => {
+    for (const imageUrl of [
+      'data:image/png;base64,SECRET-SOURCE-PAGE',
+      'https://storage.example/page.png?token=SECRET-SIGNED-URL',
+    ]) {
+      const t = template([page('docling-page-1', [ov({ type: 'image', id: 'img', src: '' })], { imageUrl })]);
+      const ctx = chartPageContext(1, { rasterRef: null, rasterDataUrl: null });
+      const r = runCriticalContainment({ template: t, contextByPageId: new Map([['docling-page-1', ctx]]) });
+
+      expect(r.summary.pagesBlockedNoRaster).toBe(1);
+      expect(r.template.pages[0].background.imageUrl).toBeUndefined();
+      expect(JSON.stringify(r.template)).not.toContain('SECRET');
+    }
+  });
+
   it('#23/#24 final render plan for a fallback → renderNativeBlocks=false, showSourceRaster=true', () => {
     const t = template([page('docling-page-1', [ov({ type: 'image', id: 'img', src: '' })])]);
     const r = runCriticalContainment({ template: t, contextByPageId: new Map([['docling-page-1', chartPageContext()]]) });
@@ -163,10 +178,11 @@ describe('ensureDurableSourceRasterForPage', () => {
     expect(res.durable).toBe(true);
     expect((res.page.meta as { sourceRasterRef?: PdfImportRasterRef }).sourceRasterRef?.path).toBe('job-1/pages/page-1.png');
   });
-  it('accepts a self-contained data: URL as a last resort', () => {
+  it('rejects a self-contained data: URL so source pixels are not persisted', () => {
     const res = ensureDurableSourceRasterForPage(p(), null, 'data:image/png;base64,AAAA');
-    expect(res.available).toBe(true);
+    expect(res.available).toBe(false);
     expect(res.durable).toBe(false);
+    expect(res.problems).toContain('inline_source_raster_not_persisted');
   });
   it('REJECTS an ephemeral signed https URL (never persisted)', () => {
     const res = ensureDurableSourceRasterForPage(p(), null, 'https://storage.example/pages/1.png?token=xyz');
@@ -175,6 +191,23 @@ describe('ensureDurableSourceRasterForPage', () => {
   });
   it('reports unavailable when nothing is provided', () => {
     expect(ensureDurableSourceRasterForPage(p(), null, null).available).toBe(false);
+  });
+  it.each([
+    'data:image/png;base64,SECRET',
+    'https://storage.example/pages/1.png?token=secret',
+  ])('strips an unsafe existing background before returning %s', (imageUrl) => {
+    const res = ensureDurableSourceRasterForPage(page('docling-page-1', [], { imageUrl }), null, null);
+    expect(res.available).toBe(false);
+    expect(res.updated).toBe(true);
+    expect(res.page.background.imageUrl).toBeUndefined();
+  });
+  it('strips a hydrated background when retaining an existing durable ref', () => {
+    const input = page('docling-page-1', [], { imageUrl: 'data:image/png;base64,SECRET' });
+    input.meta = { sourceRasterRef: rasterRef() };
+    const res = ensureDurableSourceRasterForPage(input, null, null);
+    expect(res.available).toBe(true);
+    expect(res.durable).toBe(true);
+    expect(res.page.background.imageUrl).toBeUndefined();
   });
 });
 

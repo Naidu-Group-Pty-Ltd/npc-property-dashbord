@@ -61,10 +61,7 @@ Deno.serve(async (req) => {
       .order("created_at", { ascending: false })
       .limit(limit);
     if (scope === "mine") {
-      // Reconcile personal usage to the agency-wide index: a row belongs to the
-      // caller if their id appears in EITHER user_id (legacy attribution) or
-      // billing_user_id (updated attribution written by newer metering paths).
-      q = q.or(`user_id.eq.${auth.userId},billing_user_id.eq.${auth.userId}`);
+      q = q.eq("user_id", auth.userId);
     }
 
     const { data, error } = await q;

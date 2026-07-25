@@ -6,7 +6,7 @@
  * never be logged or stored in browser storage.
  */
 const CODE_COUNT = 10;
-const CODE_BYTES = 8;
+const CODE_BYTES = 12;
 const CODE_PATTERN = /^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/;
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 

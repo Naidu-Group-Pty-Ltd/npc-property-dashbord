@@ -14,6 +14,9 @@ export interface ChartExportOptions {
   includeAnalysis?: boolean;
 }
 
+export const MAX_EXPORT_ANALYSIS_LENGTH = 10_000;
+export const MAX_EXPORT_HEIGHT = 12_000;
+
 function normalizeOptions(opts?: ChartExportOptions | boolean): Required<ChartExportOptions> {
   if (typeof opts === 'boolean') return { format: 'png', includeAnalysis: opts };
   return { format: opts?.format ?? 'png', includeAnalysis: opts?.includeAnalysis ?? true };
@@ -167,8 +170,9 @@ async function chartToSvg(chart: ChartData): Promise<string> {
 
 async function renderFullExportComposition(chart: ChartData): Promise<string> {
   const cfg = getChartTypeConfig(chart.chart_type);
+  const exportAnalysis = chart.analysis_text?.slice(0, MAX_EXPORT_ANALYSIS_LENGTH);
   const { host, cleanup } = await mountOffscreen(
-    <div style={{ width: 1800, background: '#ffffff', color: '#0f172a', fontFamily: 'Arial, Helvetica, sans-serif', padding: 72, boxSizing: 'border-box' }}>
+    <div style={{ width: 1800, maxHeight: MAX_EXPORT_HEIGHT, overflow: 'hidden', background: '#ffffff', color: '#0f172a', fontFamily: 'Arial, Helvetica, sans-serif', padding: 72, boxSizing: 'border-box' }}>
       <div style={{ borderBottom: '2px solid #e2e8f0', paddingBottom: 28, marginBottom: 36 }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', borderRadius: 999, padding: '8px 16px', fontSize: 18, fontWeight: 800, letterSpacing: 2, textTransform: 'uppercase', marginBottom: 18 }}>
           <span>{cfg.emoji}</span><span>{cfg.label}</span>
@@ -182,10 +186,10 @@ async function renderFullExportComposition(chart: ChartData): Promise<string> {
       <div style={{ height: 900, border: '1px solid #e2e8f0', borderRadius: 28, padding: 34, boxSizing: 'border-box', background: '#ffffff', boxShadow: '0 18px 44px rgba(15,23,42,0.10)' }}>
         {renderChartImage(chart, 'export')}
       </div>
-      {chart.analysis_text && (
+      {exportAnalysis && (
         <section style={{ marginTop: 40, border: '1px solid #f3d08a', borderRadius: 28, background: 'linear-gradient(135deg,#fffbeb,#ffffff)', padding: 34 }}>
           <h2 style={{ margin: '0 0 18px', fontSize: 28, lineHeight: 1.2, fontWeight: 900, letterSpacing: 2, textTransform: 'uppercase', color: '#92400e' }}>Analysis</h2>
-          <p style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 23, lineHeight: 1.62, color: '#334155' }}>{chart.analysis_text}</p>
+          <p style={{ margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 23, lineHeight: 1.62, color: '#334155' }}>{exportAnalysis}</p>
         </section>
       )}
     </div>,
@@ -197,11 +201,11 @@ async function renderFullExportComposition(chart: ChartData): Promise<string> {
     if (!target || target.offsetHeight <= 0) throw new Error('Export layout did not render');
     const canvas = await html2canvas(target, {
       backgroundColor: '#ffffff',
-      scale: target.offsetHeight > 12000 ? 1 : 1.5,
+      scale: target.offsetHeight >= MAX_EXPORT_HEIGHT ? 1 : 1.5,
       useCORS: true,
       logging: false,
       windowWidth: 1800,
-      windowHeight: target.offsetHeight,
+      windowHeight: Math.min(target.offsetHeight, MAX_EXPORT_HEIGHT),
     });
     return canvas.toDataURL('image/png');
   } finally {
