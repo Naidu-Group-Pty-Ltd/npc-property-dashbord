@@ -83,16 +83,6 @@ with latest_visual as (
   where meta->>'visual_quality_artifact_path' is not null
   order by updated_at desc
   limit 1
-),
-summary_object as (
-  select
-    lv.id,
-    lv.summary_path,
-    convert_from(o.metadata->>'eTag'::text::bytea, 'UTF8') as unused_etag
-  from latest_visual lv
-  left join storage.objects o
-    on o.bucket_id = 'template-import-artifacts'
-   and o.name = lv.summary_path
 )
 select
   id,

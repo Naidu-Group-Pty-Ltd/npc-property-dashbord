@@ -53,28 +53,30 @@ select
   result_payload->>'lane_enforcement_version' as lane_enforcement_version,
   jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) as page_raster_count,
   case
-    when status = 'succeeded' and stage <> 'parsed' then 'succeeded_not_parsed'
-    when status = 'succeeded' and pages_total is not null and pages_completed <> pages_total then 'page_progress_incomplete'
-    when status = 'succeeded' and page_count is not null and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) > 0 and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) <> page_count then 'page_raster_count_mismatch'
-    when status = 'succeeded' and result_payload->>'artifact_contract_version' <> 'raster-manifest-v1' then 'artifact_contract_missing'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'docling_page_rebase_version' <> 'chunk-page-rebase-v1' then 'docling_rebase_missing'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'chunk_merge_validation_version' <> 'chunk-merge-validation-v1' then 'merge_validation_version_missing'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->'merge_validation'->>'ok' <> 'true' then 'merge_validation_not_ok'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'terminal_state_version' <> 'terminal-state-normalizer-v1' then 'terminal_state_marker_missing'
+    when status = 'succeeded' and stage is distinct from 'parsed' then 'succeeded_not_parsed'
+    when status = 'succeeded' and pages_total is not null and pages_completed is distinct from pages_total then 'page_progress_incomplete'
+    when status = 'succeeded' and page_count is not null and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) is distinct from page_count then 'page_raster_count_mismatch'
+    when status = 'succeeded' and result_payload->>'artifact_contract_version' is distinct from 'raster-manifest-v1' then 'artifact_contract_missing'
+    when status = 'succeeded' and result_payload->>'chunked' is null then 'chunked_marker_missing'
+    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'docling_page_rebase_version' is distinct from 'chunk-page-rebase-v1' then 'docling_rebase_missing'
+    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'chunk_merge_validation_version' is distinct from 'chunk-merge-validation-v1' then 'merge_validation_version_missing'
+    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->'merge_validation'->>'ok' is distinct from 'true' then 'merge_validation_not_ok'
+    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'terminal_state_version' is distinct from 'terminal-state-normalizer-v1' then 'terminal_state_marker_missing'
     when status = 'succeeded' and result_payload->>'lane_enforcement_version' is null then 'lane_marker_missing'
     else 'unknown'
   end as failure_reason
 from public.pdf_import_jobs
 where status = 'succeeded'
   and (
-    stage <> 'parsed'
-    or (pages_total is not null and pages_completed <> pages_total)
-    or (page_count is not null and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) > 0 and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) <> page_count)
-    or result_payload->>'artifact_contract_version' <> 'raster-manifest-v1'
-    or (result_payload->>'chunked' = 'true' and result_payload->>'docling_page_rebase_version' <> 'chunk-page-rebase-v1')
-    or (result_payload->>'chunked' = 'true' and result_payload->>'chunk_merge_validation_version' <> 'chunk-merge-validation-v1')
-    or (result_payload->>'chunked' = 'true' and result_payload->'merge_validation'->>'ok' <> 'true')
-    or (result_payload->>'chunked' = 'true' and result_payload->>'terminal_state_version' <> 'terminal-state-normalizer-v1')
+    stage is distinct from 'parsed'
+    or (pages_total is not null and pages_completed is distinct from pages_total)
+    or (page_count is not null and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) is distinct from page_count)
+    or result_payload->>'artifact_contract_version' is distinct from 'raster-manifest-v1'
+    or result_payload->>'chunked' is null
+    or (result_payload->>'chunked' = 'true' and result_payload->>'docling_page_rebase_version' is distinct from 'chunk-page-rebase-v1')
+    or (result_payload->>'chunked' = 'true' and result_payload->>'chunk_merge_validation_version' is distinct from 'chunk-merge-validation-v1')
+    or (result_payload->>'chunked' = 'true' and result_payload->'merge_validation'->>'ok' is distinct from 'true')
+    or (result_payload->>'chunked' = 'true' and result_payload->>'terminal_state_version' is distinct from 'terminal-state-normalizer-v1')
     or result_payload->>'lane_enforcement_version' is null
   )
 order by updated_at desc
@@ -204,12 +206,12 @@ select
   meta->'import_manifests'->'pdf_import_job'->'artifact_guardrails'->>'ok' as artifact_guardrails_ok,
   case
     when status = 'completed' and created_template_id is null then 'completed_without_template'
-    when status = 'completed' and meta->>'artifact_contract_version' <> 'template-finalization-artifacts-v1' then 'template_artifact_contract_missing'
-    when status = 'completed' and meta->>'finalization_status' <> 'completed' then 'finalization_not_completed'
-    when status = 'completed' and meta->>'artifact_stage' <> 'staged' then 'artifact_stage_not_staged'
-    when status = 'completed' and meta->'import_manifests'->'pdf_import_job'->>'consumer_guardrail_version' <> 'template-import-consumer-guardrails-v1' then 'consumer_guardrail_missing'
-    when status = 'completed' and meta->'import_manifests'->'pdf_import_job'->'parse_guardrails'->>'ok' <> 'true' then 'parse_guardrails_not_ok'
-    when status = 'completed' and meta->'import_manifests'->'pdf_import_job'->'artifact_guardrails'->>'ok' <> 'true' then 'artifact_guardrails_not_ok'
+    when status = 'completed' and meta->>'artifact_contract_version' is distinct from 'template-finalization-artifacts-v1' then 'template_artifact_contract_missing'
+    when status = 'completed' and meta->>'finalization_status' is distinct from 'completed' then 'finalization_not_completed'
+    when status = 'completed' and meta->>'artifact_stage' is distinct from 'staged' then 'artifact_stage_not_staged'
+    when status = 'completed' and meta->'import_manifests'->'pdf_import_job'->>'consumer_guardrail_version' is distinct from 'template-import-consumer-guardrails-v1' then 'consumer_guardrail_missing'
+    when status = 'completed' and meta->'import_manifests'->'pdf_import_job'->'parse_guardrails'->>'ok' is distinct from 'true' then 'parse_guardrails_not_ok'
+    when status = 'completed' and meta->'import_manifests'->'pdf_import_job'->'artifact_guardrails'->>'ok' is distinct from 'true' then 'artifact_guardrails_not_ok'
     else 'unknown'
   end as failure_reason
 from public.template_imports
@@ -217,11 +219,11 @@ where created_at > now() - interval '2 days'
   and status = 'completed'
   and (
     created_template_id is null
-    or meta->>'artifact_contract_version' <> 'template-finalization-artifacts-v1'
-    or meta->>'finalization_status' <> 'completed'
-    or meta->>'artifact_stage' <> 'staged'
-    or meta->'import_manifests'->'pdf_import_job'->>'consumer_guardrail_version' <> 'template-import-consumer-guardrails-v1'
-    or meta->'import_manifests'->'pdf_import_job'->'parse_guardrails'->>'ok' <> 'true'
-    or meta->'import_manifests'->'pdf_import_job'->'artifact_guardrails'->>'ok' <> 'true'
+    or meta->>'artifact_contract_version' is distinct from 'template-finalization-artifacts-v1'
+    or meta->>'finalization_status' is distinct from 'completed'
+    or meta->>'artifact_stage' is distinct from 'staged'
+    or meta->'import_manifests'->'pdf_import_job'->>'consumer_guardrail_version' is distinct from 'template-import-consumer-guardrails-v1'
+    or meta->'import_manifests'->'pdf_import_job'->'parse_guardrails'->>'ok' is distinct from 'true'
+    or meta->'import_manifests'->'pdf_import_job'->'artifact_guardrails'->>'ok' is distinct from 'true'
   )
 order by updated_at desc;

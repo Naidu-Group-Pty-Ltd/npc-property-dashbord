@@ -5,6 +5,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { requireAdmin } from "../_shared/authz.ts";
 import { listPurchases, MissionControlError } from "../_shared/missionControl.ts";
 
 Deno.serve(async (req) => {
@@ -37,6 +38,13 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: auth.error ?? "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "content-type": "application/json" } },
       );
+    }
+    const authorization = await requireAdmin(supabase, auth);
+    if (!authorization.ok) {
+      return new Response(JSON.stringify({ error: "forbidden" }), {
+        status: 403,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
     }
 
     const url = new URL(req.url);
