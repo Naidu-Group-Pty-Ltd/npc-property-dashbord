@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters } from '@/types/marketUpdates';
+import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -103,18 +103,31 @@ export async function clearMarketSourceError(source_id: string): Promise<MarketS
 
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
   const sources = await fetchMarketSources();
-  const failed = sources.filter(s => Boolean(s.last_error));
+  const failed = sources.filter(s => s.health_status === 'failed' || (s.consecutive_failures ?? 0) >= 3);
+  const degraded = sources.filter(s => s.health_status === 'degraded' || ((s.consecutive_failures ?? 0) > 0 && (s.consecutive_failures ?? 0) < 3));
   const latest = (field: keyof MarketSource) => sources.map(s => s[field] as string | null | undefined).filter(Boolean).sort().pop() ?? null;
-  return { totalSources: sources.length, enabledSources: sources.filter(s => s.enabled).length, failedSources: failed.length, lastFetchedAt: latest('last_fetched_at'), lastSuccessAt: latest('last_success_at'), lastError: failed[0]?.last_error ?? null };
+  const { data } = await db.from('market_ingestion_runs').select('*').order('started_at',{ascending:false}).limit(1).maybeSingle();
+  return { totalSources: sources.length, enabledSources: sources.filter(s => s.enabled).length, healthySources:sources.filter(s=>s.health_status==='healthy').length, degradedSources:degraded.length, failedSources: failed.length, lastFetchedAt: latest('last_fetched_at'), lastSuccessAt: latest('last_success_at'), lastError: failed[0]?.last_error ?? null, latestRun:(data as MarketIngestionRun|null) ?? null };
 }
 
-export async function triggerMarketIngestion(options: { force?: boolean } = {}): Promise<MarketIngestionSummary> {
+export async function triggerMarketIngestion(options: { force?: boolean; trigger_type?:'page_open'|'manual'|'digest_prerequisite'; sourceIds?:string[]; test?:boolean } = {}): Promise<MarketIngestionSummary> {
   try {
     const { data, error } = await invokeSecureFunction<MarketIngestionSummary>('market-updates-ingest', options);
     if (error) throw error;
     if (!data) throw new Error('Market ingestion returned no result.');
     return data;
   } catch (e: any) { warnMissing('Ingestion function unavailable or not authorised.', e); return { ingested:0,published:0,candidates:0,ignored:0,failed:1,skippedDuplicates:0,sourceErrors:[],message:'Market ingestion is unavailable or you are not authorised to run it.' }; }
+}
+
+const FRESH_GUARD='market-updates-ensure-fresh';
+export async function ensureMarketUpdatesFresh(health:MarketSourceHealth,publishedCount:number):Promise<MarketIngestionSummary|null>{
+  const last=health.lastSuccessAt?Date.now()-Date.parse(health.lastSuccessAt):Infinity;
+  const staleMinutes=60; // authoritative threshold is also enforced server-side
+  if(publishedCount>0&&last<staleMinutes*60_000)return null;
+  const guarded=Number(sessionStorage.getItem(FRESH_GUARD)||0);
+  if(Date.now()-guarded<5*60_000)return null;
+  sessionStorage.setItem(FRESH_GUARD,String(Date.now()));
+  return triggerMarketIngestion({force:false,trigger_type:'page_open'});
 }
 
 export async function generateMarketDigest(period: MarketDigestPeriod = '24h'): Promise<MarketDigestGenerationResult> {

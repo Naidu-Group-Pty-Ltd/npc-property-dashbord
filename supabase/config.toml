@@ -924,3 +924,7 @@ verify_jwt = false
 [functions.security-step-up]
 verify_jwt = false
 
+
+[functions.market-updates-feed]
+verify_jwt = false
+# Auth is verified in-function to support authenticated RSS clients and ETag responses.
