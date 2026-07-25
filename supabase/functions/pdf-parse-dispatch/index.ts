@@ -18,6 +18,7 @@ import {
   verifyAuthOrNativeUser,
   createTokenAuthCorsHeaders,
   createUnauthorizedResponse,
+  createForbiddenResponse,
 } from '../_shared/auth.ts';
 import {
   normalizePlanV2,
@@ -1310,6 +1311,19 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'recover') {
+      // Recovery scans and mutates stuck jobs across all tenants, so ordinary
+      // authenticated users must never reach it through this service-role client.
+      // Verified internal callers retain the cron/operator maintenance path.
+      if (auth.userId !== 'service_role') {
+        const { data: roles, error: rolesError } = await admin
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', auth.userId);
+        const isSuperadmin = !rolesError
+          && Array.isArray(roles)
+          && roles.some((row: { role?: string }) => row.role === 'superadmin');
+        if (!isSuperadmin) return createForbiddenResponse('superadmin required', cors);
+      }
       // Stuck-job recovery — re-dispatch chunks past their last_event_at
       // cutoff, mark monolithic stalls as recoverable_failed. Returns a report.
       const result = await recoverStuckJobs(admin);
