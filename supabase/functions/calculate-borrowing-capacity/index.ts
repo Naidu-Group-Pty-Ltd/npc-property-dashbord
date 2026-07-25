@@ -1609,7 +1609,6 @@ Deno.serve(async (req) => {
       segmentReconciliation = await reconcileSegments({
         supabase,
         clientId,
-        forceEnabled: overrides?.forceSegmentEngine === true ? true : undefined,
         userId: userId && userId !== 'service_role' ? userId : null,
       });
       if (segmentReconciliation.triggered) {

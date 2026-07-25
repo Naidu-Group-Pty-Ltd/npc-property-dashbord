@@ -978,8 +978,8 @@ async function runJob(
       raster_dpi: rasterDpi,
       raster_format: 'png',
       allow_mode_override: allowModeOverride,
+      enable_picture_description: enablePictureDescription,
     };
-    if (enablePictureDescription) parseBody.enable_picture_description = true;
 
     const TRANSIENT = new Set([408, 429, 500, 502, 503, 504, 522, 524]);
     let dispatched = false;

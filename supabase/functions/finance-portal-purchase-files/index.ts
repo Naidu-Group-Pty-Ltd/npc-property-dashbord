@@ -542,6 +542,11 @@ Deno.serve(async (req) => {
             body: `${title}: ${String(statusChange.from || 'unset').replace(/_/g, ' ')} → ${prettyTo}`,
             link_path: `/finance/purchase-files/${fileId}`,
             exclude_portal_user_id: portalUser.id,
+            required_permission: {
+              key: 'purchase_files',
+              action: 'view',
+              default_allow_when_unconfigured: true,
+            },
             metadata: { purchase_file_id: fileId, from: statusChange.from, to: statusChange.to },
           });
         }
