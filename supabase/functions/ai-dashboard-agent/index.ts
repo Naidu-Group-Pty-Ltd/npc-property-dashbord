@@ -8831,11 +8831,8 @@ Deno.serve(async (req) => {
           });
         }
         const limit = Math.min(Number(body.limit) || 100, 500);
-        let q = sb.from('agent_action_log').select('id, conversation_id, tool_name, tool_arguments, tool_result, affected_table, affected_record_id, status, confidence_score, execution_time_ms, created_at, is_rolled_back').order('created_at', { ascending: false }).limit(limit);
+        let q = sb.from('agent_action_log').select('id, conversation_id, tool_name, tool_arguments, tool_result, affected_table, affected_record_id, status, confidence_score, execution_time_ms, created_at, is_rolled_back').eq('user_id', userId!).order('created_at', { ascending: false }).limit(limit);
         if (body.tool_name) q = q.eq('tool_name', body.tool_name);
-        // Trace rows can contain tool inputs and outputs. Scoped users may only
-        // inspect their own rows; superadmins retain the organization-wide view.
-        if (body.only_user || !(await actorIsSuperadmin(sb, userId!))) q = q.eq('user_id', userId!);
         const { data } = await q;
         // aggregate
         const rows = data || [];
