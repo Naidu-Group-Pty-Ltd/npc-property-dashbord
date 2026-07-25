@@ -24,6 +24,9 @@ const corsHeaders = {
 const jr = (d: unknown, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+const DRAFT_REPORT_STATUSES = new Set(["draft", "in_review", "awaiting_mlro"]);
+const TERMINAL_REPORT_STATUSES = new Set(["approved", "submitted", "acknowledged", "rejected", "withdrawn"]);
+
 async function sha256Hex(input: string) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -132,9 +135,19 @@ Deno.serve(async (req) => {
         ...r,
         drafted_by: r.id ? r.drafted_by : userId,
       };
-      // Never allow client to short-circuit MLRO fields on upsert.
+      // Never allow client to short-circuit MLRO fields or terminal lifecycle state on upsert.
       delete row.mlro_signed_by; delete row.mlro_signed_at;
       delete row.submitted_at; delete row.submitted_by; delete row.acknowledged_at;
+      if (typeof row.status === "string" && !DRAFT_REPORT_STATUSES.has(row.status)) {
+        return jr({ error: "Report status changes to approved, submitted, acknowledged, rejected, or withdrawn must use the MLRO workflow" }, 403);
+      }
+      if (r.id) {
+        const { data: existing } = await aml.from("reports").select("status").eq("id", String(r.id)).maybeSingle();
+        if (!existing) return jr({ error: "Report not found" }, 404);
+        if (!DRAFT_REPORT_STATUSES.has(existing.status)) {
+          return jr({ error: "Approved, submitted, acknowledged, rejected, or withdrawn reports cannot be changed via draft upsert" }, 403);
+        }
+      }
       const q = r.id
         ? aml.from("reports").update(row).eq("id", r.id).select("*").single()
         : aml.from("reports").insert(row).select("*").single();
@@ -149,7 +162,7 @@ Deno.serve(async (req) => {
       requireWrite();
       const { data: existing } = await aml.from("reports").select("id, status, case_id, kind, title").eq("id", String(body.id)).maybeSingle();
       if (!existing) return jr({ error: "Not found" }, 404);
-      if (["submitted", "acknowledged"].includes(existing.status)) return jr({ error: "Cannot delete a submitted or acknowledged report" }, 400);
+      if (TERMINAL_REPORT_STATUSES.has(existing.status)) return jr({ error: "Cannot delete an approved, submitted, acknowledged, rejected, or withdrawn report" }, 400);
       const { error } = await aml.from("reports").delete().eq("id", existing.id);
       if (error) return jr({ error: error.message }, 400);
       await appendCaseEvent(admin, existing.case_id, "system", `AUSTRAC ${existing.kind.toUpperCase()} draft deleted: ${existing.title}`, { report_id: existing.id }, userId, userLabel);

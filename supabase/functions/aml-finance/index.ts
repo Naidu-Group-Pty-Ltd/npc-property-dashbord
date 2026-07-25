@@ -9,7 +9,7 @@
  *   Evidence:       list_evidence, add_evidence, delete_evidence
  *   Limited view:   limited_status (returns status pill only for finance-portal panel)
  *
- * Reads: any AML role (limited_status is auth-only, no role required — scoped by purchase_file_id).
+ * Reads: any AML role (limited_status requires AML role and is scoped by purchase_file_id/client_id).
  * Writes: analyst/reviewer/mlro.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
@@ -23,6 +23,16 @@ const corsHeaders = {
 };
 const jr = (d: unknown, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+function normalizeExternalUrl(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
 
 async function sha256Hex(input: string) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -162,109 +172,6 @@ function detectDiscrepancies(current: Comparison, previous: Comparison | null, p
   return out;
 }
 
-// ─── PHASE 8 — Cross-portal RBAC helpers (finance-portal auth or token-only) ───
-async function handlePhase8Handoff(admin: any, aml: any, op: string, body: any, req: Request): Promise<Response> {
-  if (op === "create_case_handoff") {
-    const sessionToken = req.headers.get("x-finance-session-token")
-      || (body?.finance_session_token ? String(body.finance_session_token) : null);
-    if (!sessionToken) return jr({ error: "finance session token required" }, 401);
-
-    const clientId = body.client_id ? String(body.client_id) : null;
-    if (!clientId) return jr({ error: "client_id required" }, 400);
-
-    const { data: portalUser } = await admin.from("finance_portal_users")
-      .select("id, finance_contact_id, is_active, revoked_at, session_expires_at")
-      .eq("session_token", sessionToken).maybeSingle();
-    if (!portalUser || !portalUser.is_active || portalUser.revoked_at) return jr({ error: "Invalid finance session" }, 401);
-    if (!portalUser.session_expires_at || new Date(portalUser.session_expires_at) < new Date()) return jr({ error: "Finance session expired" }, 401);
-
-    const { data: assignment } = await admin.from("finance_portal_client_assignments")
-      .select("id").eq("finance_user_id", portalUser.id).eq("client_id", clientId).maybeSingle();
-    if (!assignment) return jr({ error: "Not assigned to this client" }, 403);
-
-    const { data: caseRows } = await aml.from("cases")
-      .select("id, status, updated_at, client_id").eq("client_id", clientId)
-      .order("updated_at", { ascending: false }).limit(1);
-    const c = (caseRows ?? [])[0];
-    if (!c) return jr({ error: "No AML case on file for this client" }, 404);
-
-    const token = crypto.randomUUID() + "." + crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-    const ua = req.headers.get("user-agent") ?? null;
-
-    const { error: insErr } = await aml.from("finance_case_handoff_tokens").insert({
-      token, case_id: c.id, client_id: clientId,
-      finance_user_id: portalUser.id, finance_contact_id: portalUser.finance_contact_id,
-      ip_address: ip, user_agent: ua, is_readonly: true, expires_at: expiresAt.toISOString(),
-    });
-    if (insErr) return jr({ error: insErr.message }, 400);
-
-    await appendCaseEvent(admin, c.id, "system",
-      "Finance-portal handoff token minted (read-only, 5min)",
-      { finance_user_id: portalUser.id, ip, ua }, null, "finance-portal");
-
-    return jr({ token, expires_at: expiresAt.toISOString(), readonly: true });
-  }
-
-  if (op === "redeem_case_handoff") {
-    const token = String(body.token ?? "");
-    if (!token) return jr({ error: "token required" }, 400);
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-
-    const { data: tok } = await aml.from("finance_case_handoff_tokens")
-      .select("*").eq("token", token).maybeSingle();
-    if (!tok) return jr({ error: "Invalid or expired token" }, 401);
-    if (tok.revoked_at) return jr({ error: "Token revoked" }, 401);
-    if (tok.redeemed_at) return jr({ error: "Token already used" }, 401);
-    if (new Date(tok.expires_at) < new Date()) return jr({ error: "Token expired" }, 401);
-
-    await aml.from("finance_case_handoff_tokens")
-      .update({ redeemed_at: new Date().toISOString(), redeemed_ip: ip }).eq("id", tok.id);
-
-    const caseId = tok.case_id as string;
-    const { data: c } = await aml.from("cases")
-      .select("id, status, risk_rating, updated_at, created_at, client_id, purchase_file_id")
-      .eq("id", caseId).maybeSingle();
-    if (!c) return jr({ error: "Case not found" }, 404);
-
-    const { data: discs } = await aml.from("finance_discrepancies")
-      .select("kind, severity, status, created_at")
-      .eq("case_id", caseId).in("status", ["open", "under_review", "escalated"])
-      .order("created_at", { ascending: false }).limit(50);
-
-    const { data: ev } = await aml.from("evidence_references")
-      .select("label, reference_type, created_at").eq("case_id", caseId)
-      .order("created_at", { ascending: false }).limit(50);
-
-    const { data: compList } = await aml.from("finance_comparisons")
-      .select("captured_at, source, purchase_price, loan_amount, lender, lvr")
-      .eq("case_id", caseId).order("captured_at", { ascending: false }).limit(1);
-    const comparison = (compList ?? [])[0] ?? null;
-
-    await appendCaseEvent(admin, caseId, "system",
-      "Finance-portal handoff snapshot viewed",
-      { finance_user_id: tok.finance_user_id, ip }, null, "finance-portal");
-
-    return jr({
-      snapshot: {
-        status: c.status,
-        risk_rating: c.risk_rating,
-        updated_at: c.updated_at,
-        created_at: c.created_at,
-        open_discrepancies: (discs ?? []).map((d: any) => ({ kind: d.kind, severity: d.severity, status: d.status })),
-        evidence_summary: (ev ?? []).map((e: any) => ({ label: e.label, reference_type: e.reference_type })),
-        finance_comparison: comparison,
-        readonly: true,
-        tipping_off_notice:
-          "This snapshot is strictly limited to non-restricted fields. Do not discuss with, or disclose to, the customer.",
-      },
-    });
-  }
-
-  return jr({ error: `Unknown op: ${op}` }, 400);
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -282,9 +189,10 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const opPre = String(body?.op ?? "");
 
-    // ─── PHASE 8 pre-auth ops (finance-portal session or token-only) ───
+    // AML case snapshots are restricted to the Command Centre. Do not mint or
+    // redeem finance-portal bearer tokens from this service-role function.
     if (opPre === "create_case_handoff" || opPre === "redeem_case_handoff") {
-      return await handlePhase8Handoff(admin, aml, opPre, body, req);
+      return jr({ error: "AML case snapshots are not available in the finance portal" }, 403);
     }
 
     const auth = await verifyAuth(admin, req.headers, body);
@@ -293,9 +201,12 @@ Deno.serve(async (req) => {
     const userLabel = auth.username ?? null;
     const op = opPre;
 
-    // Limited status endpoint — auth only, does NOT require AML role.
+    // Limited status endpoint — AML role required because status/risk are AML case data.
     // Returns just enough for the Finance Portal to show a status pill.
     if (op === "limited_status") {
+      const { data: hasAmlRole } = await admin.rpc("has_any_aml_role", { _user_id: userId });
+      if (!hasAmlRole) return jr({ error: "AML role required" }, 403);
+
       const pfId = body.purchase_file_id ? String(body.purchase_file_id) : null;
       const clientId = body.client_id ? String(body.client_id) : null;
       if (!pfId && !clientId) return jr({ error: "purchase_file_id or client_id required" }, 400);
@@ -514,10 +425,21 @@ Deno.serve(async (req) => {
       const pfId = String(body.purchase_file_id ?? "");
       if (!caseId || !pfId) return jr({ error: "case_id and purchase_file_id required" }, 400);
 
+      const { data: caseRow, error: caseErr } = await aml.from("cases")
+        .select("id, client_id, purchase_file_id")
+        .eq("id", caseId).maybeSingle();
+      if (caseErr || !caseRow) return jr({ error: "case not found" }, 404);
+
       const { data: pf, error: pfErr } = await admin.from("purchase_files")
-        .select("id, purchase_price, lender, finance_status, title, max_approved_budget")
+        .select("id, client_id, purchase_price, lender, finance_status, title, max_approved_budget")
         .eq("id", pfId).maybeSingle();
       if (pfErr || !pf) return jr({ error: "purchase file not found" }, 404);
+      if (String(caseRow.client_id) !== String(pf.client_id)) {
+        return jr({ error: "purchase file is not linked to this AML case client" }, 403);
+      }
+      if (caseRow.purchase_file_id && String(caseRow.purchase_file_id) !== pfId) {
+        return jr({ error: "purchase file is not linked to this AML case" }, 403);
+      }
 
       // Latest lender submission for loan amount / LVR.
       const { data: subs } = await admin.from("lender_submissions")
@@ -658,8 +580,14 @@ Deno.serve(async (req) => {
       if (!ev.case_id || !ev.reference_type || !ev.label) {
         return jr({ error: "case_id, reference_type, label required" }, 400);
       }
+      const externalUrl = ev.external_url == null || ev.external_url === ""
+        ? null
+        : normalizeExternalUrl(ev.external_url);
+      if (ev.external_url != null && ev.external_url !== "" && !externalUrl) {
+        return jr({ error: "external_url must be an absolute HTTP(S) URL" }, 400);
+      }
       const { data, error } = await aml.from("evidence_references")
-        .insert({ ...ev, added_by: userId }).select("*").maybeSingle();
+        .insert({ ...ev, external_url: externalUrl, added_by: userId }).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       await appendCaseEvent(admin, ev.case_id, "document_added",
         `Finance evidence attached: ${ev.label}`, { reference_type: ev.reference_type }, userId, userLabel);

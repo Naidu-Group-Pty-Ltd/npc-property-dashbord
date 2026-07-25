@@ -42,6 +42,15 @@ async function vapiGetCall(
 const asMetadataObject = (value: unknown): Record<string, unknown> =>
   (value && typeof value === 'object' && !Array.isArray(value)) ? value as Record<string, unknown> : {};
 
+// Vapi monitor URLs are bearer capabilities. Do not persist them, and remove
+// values written by older versions whenever a call-log row is updated.
+const withoutVapiMonitorCapabilities = (value: unknown): Record<string, unknown> => {
+  const metadata = { ...asMetadataObject(value) };
+  delete metadata.vapi_monitor_control_url;
+  delete metadata.vapi_monitor_listen_url;
+  return metadata;
+};
+
 /**
  * Auto-kill an inbound call from a blacklisted number via Live Call Control.
  * Runs entirely inside EdgeRuntime.waitUntil after the webhook has responded,
@@ -50,9 +59,9 @@ const asMetadataObject = (value: unknown): Record<string, unknown> =>
  */
 async function handleBlacklistAutoKill(
   supabase: any,
-  params: { vapiCallId: string; callerNumber: string; controlUrlFromPayload: string | null },
+  params: { vapiCallId: string; callerNumber: string },
 ): Promise<void> {
-  const { vapiCallId, callerNumber, controlUrlFromPayload } = params;
+  const { vapiCallId, callerNumber } = params;
   try {
     const { data: entries, error: entriesError } = await supabase
       .from('blacklisted_numbers')
@@ -108,11 +117,11 @@ async function handleBlacklistAutoKill(
       await sleep(BLACKLIST_KILL_DELAY_MS);
     }
 
-    // Resolve the Live Call Control URL: payload -> stored metadata -> fresh GET
+    // Resolve the Live Call Control URL from Vapi's authenticated API only.
+    // Payload and persisted metadata must not be used as URL authorities.
     const apiKey = Deno.env.get('VAPI_API_KEY') || null;
-    let controlUrl: string | null = controlUrlFromPayload
-      || (typeof baseMetadata.vapi_monitor_control_url === 'string' ? baseMetadata.vapi_monitor_control_url : null);
-    if (!controlUrl && apiKey) {
+    let controlUrl: string | null = null;
+    if (apiKey) {
       const fetched = await vapiGetCall(vapiCallId, apiKey);
       controlUrl = fetched.call?.monitor?.controlUrl || null;
     }
@@ -1036,25 +1045,14 @@ Deno.serve(async (req) => {
         const squadName = isInbound ? INBOUND_SQUAD_NAME : (call.squad?.name || null);
         const agentName = isInbound ? PRIMARY_INBOUND_AGENT : (call.assistant?.name || null);
 
-        // Capture the Live Call Control URL so kill requests can still
-        // terminate the call if a fresh GET /call/{id} fails. Upsert replaces
-        // columns wholesale, so merge over the existing metadata.
-        let liveMetadata: Record<string, unknown> | undefined;
-        if (call.monitor?.controlUrl) {
-          const { data: existingRow } = await supabase
-            .from('vapi_call_logs')
-            .select('metadata')
-            .eq('vapi_call_id', call.id)
-            .maybeSingle();
-          const existingMetadata = (existingRow?.metadata && typeof existingRow.metadata === 'object' && !Array.isArray(existingRow.metadata))
-            ? existingRow.metadata as Record<string, unknown>
-            : {};
-          liveMetadata = {
-            ...existingMetadata,
-            vapi_monitor_control_url: call.monitor.controlUrl,
-            vapi_monitor_listen_url: call.monitor.listenUrl || null,
-          };
-        }
+        // Upsert replaces columns wholesale, so preserve non-sensitive metadata
+        // while removing monitor capability URLs stored by older versions.
+        const { data: existingRow } = await supabase
+          .from('vapi_call_logs')
+          .select('metadata')
+          .eq('vapi_call_id', call.id)
+          .maybeSingle();
+        const liveMetadata = withoutVapiMonitorCapabilities(existingRow?.metadata);
 
         // Upsert minimal call record for live tracking
         const { error: upsertError } = await supabase
@@ -1090,7 +1088,6 @@ Deno.serve(async (req) => {
           EdgeRuntime.waitUntil(handleBlacklistAutoKill(supabase, {
             vapiCallId: call.id,
             callerNumber: call.customer.number,
-            controlUrlFromPayload: call.monitor?.controlUrl ?? null,
           }));
         }
 
@@ -1491,9 +1488,7 @@ Deno.serve(async (req) => {
       .select('metadata')
       .eq('vapi_call_id', call.id)
       .maybeSingle();
-    const existingLogMetadata = (existingLogRow?.metadata && typeof existingLogRow.metadata === 'object' && !Array.isArray(existingLogRow.metadata))
-      ? existingLogRow.metadata as Record<string, unknown>
-      : {};
+    const existingLogMetadata = withoutVapiMonitorCapabilities(existingLogRow?.metadata);
 
     const callLogData = {
       vapi_call_id: call.id,

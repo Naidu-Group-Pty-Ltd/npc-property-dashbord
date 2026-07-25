@@ -3,7 +3,7 @@ import { createCorsHeaders, verifyAuth, createUnauthorizedResponse } from "../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { verifyInternal } from "../_shared/auth_v2.ts";
 import { authorizeAgentTool, AgentToolAuthzError, type AgentToolAuthzContext } from "../_shared/agentToolAuthz.ts";
-import { requireModulePermission } from "../_shared/authz.ts";
+import { actorIsSuperadmin, requireModulePermission } from "../_shared/authz.ts";
 import { logApiUsage, estimateCost, extractOpenAIUsage } from "../_shared/logApiUsage.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
 
@@ -8492,7 +8492,8 @@ Deno.serve(async (req) => {
     // valid HMAC-signed envelope (verifyInternal) with a receiver-side caller
     // allowlist — never the legacy static-secret/service-role trust and never a
     // body-supplied caller identity. The impersonated user is validated against
-    // the scheduled-task's authoritative owner.
+    // the scheduled-task's authoritative owner. Transport authentication does
+    // not elevate the task owner's tool permissions or satisfy step-up.
     if (body.action === 'execute-tool') {
       const internalAuth = await verifyInternal(sb, req, rawBody, { allowedCallers: ['agent-task-runner'] });
       if (!internalAuth.ok) {
@@ -8500,8 +8501,6 @@ Deno.serve(async (req) => {
           status: 403, headers: { ...cors, 'Content-Type': 'application/json' },
         });
       }
-      // Caller identity is the VERIFIED HMAC caller, never body.internal_caller.
-      const internalCaller = internalAuth.actorId || 'agent-task-runner';
       const targetUserId = typeof body.user_id === 'string' ? body.user_id : null;
       if (!targetUserId) {
         return new Response(JSON.stringify({ error: 'user_id required' }), { status: 400, headers: { ...cors, 'Content-Type': 'application/json' } });
@@ -8515,9 +8514,11 @@ Deno.serve(async (req) => {
         }
       }
       const toolResult = await executeTool(sb, body.tool_name, body.tool_args || {}, targetUserId, {
-        actorType: 'internal',
-        stepUpVerified: true,
-        internalCaller,
+        // Scheduled task definitions contain user-supplied tool arguments.
+        // Run them with the owner's normal authorization context so resource
+        // ownership, module permissions, and step-up checks still apply.
+        actorType: 'human',
+        stepUpVerified: false,
       });
       return new Response(JSON.stringify({ success: true, result: toolResult }), { headers: { ...cors, 'Content-Type': 'application/json' } });
     }
@@ -8548,6 +8549,27 @@ Deno.serve(async (req) => {
           status: 403,
           headers: { ...cors, 'Content-Type': 'application/json' },
         });
+      }
+
+      // Evaluation definitions and cross-user traces are operational audit data,
+      // not ordinary agent workspace data. Keep these actions aligned with the
+      // activity-logs route guard even when callers bypass the dashboard UI.
+      if (/^(list-evals|upsert-eval|delete-eval|run-eval|get-eval-runs|get-trace-log)$/.test(String(body.action || ''))) {
+        const auditActionPermission = String(body.action || '') === 'delete-eval'
+          ? 'can_delete'
+          : /^(upsert-eval|run-eval)$/.test(String(body.action || '')) ? 'can_edit' : 'can_view';
+        const auditPermission = await requireModulePermission(
+          sb,
+          { userId, authMethod: 'human' },
+          'activity_logs',
+          auditActionPermission,
+        );
+        if (!auditPermission.ok) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403,
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
       }
     }
 
@@ -8795,6 +8817,19 @@ Deno.serve(async (req) => {
         return new Response(JSON.stringify({ success: true, runs: data || [] }), { headers: { ...cors, 'Content-Type': 'application/json' } });
       }
       case 'get-trace-log': {
+        const { data: superadminRole, error: roleError } = await sb
+          .from('user_roles')
+          .select('role')
+          .eq('user_id', userId!)
+          .eq('role', 'superadmin')
+          .maybeSingle();
+        if (roleError || !superadminRole) {
+          if (roleError) console.error('[ai-dashboard-agent] Trace-log role check failed:', roleError);
+          return new Response(JSON.stringify({ error: 'Superadmin access required' }), {
+            status: 403,
+            headers: { ...cors, 'Content-Type': 'application/json' },
+          });
+        }
         const limit = Math.min(Number(body.limit) || 100, 500);
         let q = sb.from('agent_action_log').select('id, conversation_id, tool_name, tool_arguments, tool_result, affected_table, affected_record_id, status, confidence_score, execution_time_ms, created_at, is_rolled_back').eq('user_id', userId!).order('created_at', { ascending: false }).limit(limit);
         if (body.tool_name) q = q.eq('tool_name', body.tool_name);

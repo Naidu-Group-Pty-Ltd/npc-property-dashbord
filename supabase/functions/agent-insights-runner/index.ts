@@ -4,6 +4,8 @@
 // rows into public.agent_insights_feed so the UI can surface them and
 // pushes matching entries into public.notifications for the bell.
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -131,9 +133,34 @@ Deno.serve(async (req) => {
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
   try {
     const body = await req.json().catch(() => ({}));
-    // Optional per-user run; otherwise sweep all active users
+    const { error: authError, userId, authMethod } = await verifyAuth(sb, req.headers, body);
+    if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+    const permission = await requireModulePermission(
+      sb,
+      { userId, authMethod },
+      'agent',
+      'can_view',
+    );
+    if (!permission.ok) {
+      return new Response(JSON.stringify({ error: 'Forbidden' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Human callers may refresh only their own feed. Verified service callers
+    // retain the scheduled all-user sweep used by cron jobs.
     let userIds: string[] = [];
-    if (body.user_id) userIds = [body.user_id];
+    if (authMethod !== 'service_role') {
+      if (body.user_id && body.user_id !== userId) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      userIds = [userId!];
+    } else if (body.user_id) userIds = [body.user_id];
     else {
       const { data: users } = await sb.from('custom_users').select('id').eq('is_active', true);
       userIds = (users || []).map((u: any) => u.id);

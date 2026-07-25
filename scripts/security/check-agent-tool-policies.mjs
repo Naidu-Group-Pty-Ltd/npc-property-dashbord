@@ -24,11 +24,17 @@ for (const name of toolNames) {
 for (const expected of [
   "get_client_details: { moduleKey: 'client_management', permission: 'can_view' }",
   "get_income_sources: { moduleKey: 'client_management', permission: 'can_view' }",
+  "get_proactive_insights: { moduleKey: 'agent', permission: 'can_view', requiresSuperadmin: true }",
+  "get_top_clients: { moduleKey: 'client_management', permission: 'can_view', requiresSuperadmin: true }",
   "send_email: { moduleKey: 'email_copilot', permission: 'can_edit' }",
   "get_commission_actuals: { moduleKey: 'cash_flow', permission: 'can_view' }",
   "send_agreement_docusign: { moduleKey: 'agreements', permission: 'can_edit' }",
   "get_user_list: { moduleKey: 'user_management', permission: 'can_view', requiresSuperadmin: true }",
 ]) if (!policy.includes(expected)) failures.push(`missing real-module override: ${expected}`);
+
+if (!handler.includes("if (body.only_user || !(await actorIsSuperadmin(sb, userId!))) q = q.eq('user_id', userId!);")) {
+  failures.push('trace log does not scope non-superadmin reads to the requesting user');
+}
 
 // Guard: REAL_MODULE_OVERRIDES must only reference registered module keys (or the
 // generic ai_dashboard shell for the un-remapped set). Keep this list in sync

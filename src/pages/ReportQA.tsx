@@ -264,6 +264,7 @@ export default function ReportQA() {
   const { user } = useAuth();
   const { toast } = useToast();
   const { canEdit: canEditQA, canDelete: canDeleteQA } = useModulePermissions('report_qa');
+  const { canEdit: canManageAgentModels } = useModulePermissions('integrations');
   const [uploadedReports, setUploadedReports] = useState<UploadedReport[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -2676,7 +2677,7 @@ export default function ReportQA() {
                 <div className="hidden min-w-0 items-center gap-2 md:flex" aria-label="Live model assignments for Report Q&A">
                   <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Live</span>
                   <LiveModelChipGroup surfaceId="reportQa" size="sm" />
-                  <ModelUpgradeButton surfaceId="reportQa" />
+                  {canManageAgentModels && <ModelUpgradeButton surfaceId="reportQa" />}
                 </div>
                 <Separator orientation="vertical" className="mx-1 hidden h-7 bg-primary/20 md:block" />
                 {conversationId && (
