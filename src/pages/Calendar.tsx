@@ -839,7 +839,7 @@ export default function Calendar() {
       />
 
       {/* Header */}
-      <DashboardThemeFrame as="section" variant="hero" className="rounded-2xl p-4 md:p-6">
+      <DashboardThemeFrame as="section" variant="hero" className="overflow-visible rounded-2xl p-4 md:p-6">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
             <div className="flex min-w-0 items-start gap-3">
