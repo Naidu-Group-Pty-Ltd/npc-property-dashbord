@@ -10,6 +10,18 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const PROVIDER_TIMEOUT_MS = 12_000;
+
+async function fetchWithTimeout(input: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 type Route = 'gateway' | 'native' | 'openrouter';
 type Status = 'available' | 'preview' | 'deprecated' | 'unavailable';
 type ProbedModel = {
@@ -55,7 +67,7 @@ async function probeLovableGateway(): Promise<{ result: ProviderResult; models: 
   if (!apiKey) return { result: { provider: 'lovable_gateway', route: 'gateway', ok: false, keyConfigured: false, modelCount: 0, error: 'LOVABLE_API_KEY missing', probedAt }, models: [] };
 
   try {
-    const r = await fetch('https://ai.gateway.lovable.dev/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
+    const r = await fetchWithTimeout('https://ai.gateway.lovable.dev/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
     if (!r.ok) {
       // Fallback to known-good static list — gateway sometimes 404s on /models
       return { result: { provider: 'lovable_gateway', route: 'gateway', ok: true, keyConfigured: true, modelCount: KNOWN_GATEWAY.length, probedAt }, models: KNOWN_GATEWAY };
@@ -70,7 +82,13 @@ async function probeLovableGateway(): Promise<{ result: ProviderResult; models: 
     const merged = mergeWithKnown(models, KNOWN_GATEWAY);
     return { result: { provider: 'lovable_gateway', route: 'gateway', ok: true, keyConfigured: true, modelCount: merged.length, probedAt }, models: merged };
   } catch (e: any) {
-    return { result: { provider: 'lovable_gateway', route: 'gateway', ok: false, keyConfigured: true, modelCount: 0, error: e.message, probedAt }, models: [] };
+    // Keep the gateway catalogue usable when its optional listing endpoint
+    // times out. Calls still route through the gateway and are validated when
+    // an assigned model is used.
+    return {
+      result: { provider: 'lovable_gateway', route: 'gateway', ok: true, keyConfigured: true, modelCount: KNOWN_GATEWAY.length, error: e.message, probedAt },
+      models: KNOWN_GATEWAY,
+    };
   }
 }
 
@@ -79,7 +97,7 @@ async function probeOpenAI(): Promise<{ result: ProviderResult; models: ProbedMo
   const apiKey = Deno.env.get('OPENAI_API_KEY');
   if (!apiKey) return { result: { provider: 'openai', route: 'native', ok: false, keyConfigured: false, modelCount: 0, probedAt }, models: [] };
   try {
-    const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
+    const r = await fetchWithTimeout('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
     if (!r.ok) return { result: { provider: 'openai', route: 'native', ok: false, keyConfigured: true, modelCount: 0, error: `${r.status}`, probedAt }, models: [] };
     const data = await r.json();
     const list: any[] = (data?.data ?? []).filter((m: any) => /^(gpt|o\d|chatgpt|text-embedding|whisper|tts|dall-e)/i.test(m.id));
@@ -95,7 +113,7 @@ async function probeAnthropic(): Promise<{ result: ProviderResult; models: Probe
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: false, modelCount: 0, probedAt }, models: [] };
   try {
-    const r = await fetch('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
+    const r = await fetchWithTimeout('https://api.anthropic.com/v1/models', { headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' } });
     if (!r.ok) return { result: { provider: 'anthropic', route: 'native', ok: false, keyConfigured: true, modelCount: 0, error: `${r.status}`, probedAt }, models: [] };
     const data = await r.json();
     const list: any[] = data?.data ?? [];
@@ -111,7 +129,7 @@ async function probeGemini(): Promise<{ result: ProviderResult; models: ProbedMo
   const apiKey = Deno.env.get('GEMINI_API_KEY') ?? Deno.env.get('GOOGLE_API_KEY');
   if (!apiKey) return { result: { provider: 'gemini', route: 'native', ok: false, keyConfigured: false, modelCount: 0, probedAt }, models: [] };
   try {
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+    const r = await fetchWithTimeout(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
     if (!r.ok) return { result: { provider: 'gemini', route: 'native', ok: false, keyConfigured: true, modelCount: 0, error: `${r.status}`, probedAt }, models: [] };
     const data = await r.json();
     const list: any[] = (data?.models ?? []).filter((m: any) => /generateContent/i.test((m.supportedGenerationMethods ?? []).join(',')));
@@ -131,7 +149,7 @@ async function probePerplexity(): Promise<{ result: ProviderResult; models: Prob
   if (!apiKey) return { result: { provider: 'perplexity', route: 'native', ok: false, keyConfigured: false, modelCount: 0, probedAt }, models: [] };
   // Perplexity has no /models endpoint — verify auth with a tiny call & return curated list.
   try {
-    const r = await fetch('https://api.perplexity.ai/chat/completions', {
+    const r = await fetchWithTimeout('https://api.perplexity.ai/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'sonar', messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 }),
@@ -149,7 +167,7 @@ async function probeOpenRouter(): Promise<{ result: ProviderResult; models: Prob
   const apiKey = Deno.env.get('OPENROUTER_API_KEY');
   if (!apiKey) return { result: { provider: 'openrouter', route: 'openrouter', ok: false, keyConfigured: false, modelCount: 0, probedAt }, models: [] };
   try {
-    const r = await fetch('https://openrouter.ai/api/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
+    const r = await fetchWithTimeout('https://openrouter.ai/api/v1/models', { headers: { Authorization: `Bearer ${apiKey}` } });
     if (!r.ok) return { result: { provider: 'openrouter', route: 'openrouter', ok: false, keyConfigured: true, modelCount: 0, error: `${r.status}`, probedAt }, models: [] };
     const data = await r.json();
     const list: any[] = data?.data ?? [];
@@ -269,6 +287,7 @@ Deno.serve(async (req) => {
             // Legacy compat
             nativeKeys: legacyNativeKeys(cached as any[]),
             gatewayKey: cached.some((m: any) => m.route === 'gateway'),
+            openrouterKey: cached.some((m: any) => m.route === 'openrouter'),
           }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
