@@ -103,10 +103,10 @@ function normaliseTemplatePayload(table: TableName, payload: any): any {
   return Array.isArray(payload) ? payload.map(fix) : fix(payload);
 }
 
-function containsReservedChecklistCronMetadata(table: TableName, payload: any): boolean {
+function containsReservedChecklistGenerationMetadata(table: TableName, payload: any): boolean {
   if (table !== 'checklist_instances' || !payload) return false;
   const rows = Array.isArray(payload) ? payload : [payload];
-  return rows.some((row) => row?.generated_by === 'cron' || String(row?.recurrence_key ?? '').startsWith('cron:'));
+  return rows.some((row) => row?.generated_by === 'cron' || Object.prototype.hasOwnProperty.call(row ?? {}, 'recurrence_key'));
 }
 
 function jsonResponse(body: unknown, status: number, corsHeaders: Record<string, string>): Response {
@@ -505,11 +505,11 @@ Deno.serve(async (req) => {
     const permissionError = await assertTemplatePermission(supabase, userId, authMethod, table, operation, corsHeaders);
     if (permissionError) return permissionError;
 
-    // The cron namespace is an idempotency boundary owned exclusively by the
-    // scheduled runner. This broker uses service-role access, so never allow a
-    // caller to reserve or impersonate a cron-generated checklist occurrence.
-    if (['insert', 'update', 'upsert'].includes(operation) && containsReservedChecklistCronMetadata(table, data)) {
-      return jsonResponse({ error: 'Cron checklist metadata is managed by the scheduled runner.' }, 400, corsHeaders);
+    // Recurrence keys are an idempotency boundary owned exclusively by trusted
+    // generation flows. This broker uses service-role access, so never allow a
+    // caller to reserve an occurrence or impersonate the scheduled runner.
+    if (['insert', 'update', 'upsert'].includes(operation) && containsReservedChecklistGenerationMetadata(table, data)) {
+      return jsonResponse({ error: 'Checklist generation metadata is managed by trusted generation flows.' }, 400, corsHeaders);
     }
 
     // Comparison analysis templates are personal configurations. The function
