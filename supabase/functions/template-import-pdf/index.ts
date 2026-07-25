@@ -378,7 +378,11 @@ function collectSourceSceneV3PathsToSign(
   req: { pageNumbers?: unknown; regionIds?: unknown; kinds?: unknown },
 ): { paths: string[]; state: string; contractVersion: string | null } {
   const validation = validatePageArtifactContractV3(manifest, jobId ? { jobId } : {});
-  if (!validation.manifest || (validation.state !== 'valid_v3' && validation.state !== 'invalid_v3')) {
+  // Signing is an authorization boundary: an owned job and a valid V3
+  // manifest are required. Validator warnings such as an outside-job-prefix
+  // path must prevent every private artifact from being signed, rather than
+  // merely being reported to the caller.
+  if (!jobId || !validation.manifest || validation.state !== 'valid_v3') {
     return { paths: [], state: validation.state, contractVersion: null };
   }
   const wantPages = Array.isArray(req.pageNumbers)
@@ -1202,17 +1206,25 @@ Deno.serve(async (req) => {
           : null;
 
       let pdfJobResultPayload: any = null;
+      let trustedPdfJobId: string | null = null;
       if (pdfJobId) {
-        const { data: pdfJob, error: pdfJobErr } = await admin
+        let pdfJobQuery = admin
           .from('pdf_import_jobs')
           .select('id,result_payload,diagnostics_path,engine_version')
-          .eq('id', pdfJobId)
-          .maybeSingle();
+          .eq('id', pdfJobId);
+        // The service-role client bypasses RLS, so bind the metadata-provided
+        // job id to the authenticated import owner before it becomes a trust
+        // root for private artifact signing.
+        if (authedUserId) pdfJobQuery = pdfJobQuery.eq('user_id', authedUserId);
+        const { data: pdfJob, error: pdfJobErr } = await pdfJobQuery.maybeSingle();
 
         if (pdfJobErr) {
           logDbError('get_artifacts.pdf_import_jobs.lookup', pdfJobErr);
-        } else if (pdfJob?.result_payload && typeof pdfJob.result_payload === 'object') {
-          pdfJobResultPayload = pdfJob.result_payload;
+        } else if (pdfJob) {
+          trustedPdfJobId = pdfJob.id;
+          if (pdfJob.result_payload && typeof pdfJob.result_payload === 'object') {
+            pdfJobResultPayload = pdfJob.result_payload;
+          }
         }
       }
 
@@ -1278,7 +1290,7 @@ Deno.serve(async (req) => {
       // E1 — additionally sign Source Scene Graph V2 artifacts, lazily and only
       // for the requested pages/regions/kinds, derived solely from the trusted V3
       // manifest. Legacy V2 imports return an empty map + a `legacy` state.
-      const sourceSceneV3 = collectSourceSceneV3PathsToSign(pdfJobId ?? null, pdfPageManifest, body);
+      const sourceSceneV3 = collectSourceSceneV3PathsToSign(trustedPdfJobId, pdfPageManifest, body);
       const sourceSceneSignedByPath = sourceSceneV3.paths.length
         ? await signPdfDiagnosticsArtifactPaths(admin, sourceSceneV3.paths)
         : {};
