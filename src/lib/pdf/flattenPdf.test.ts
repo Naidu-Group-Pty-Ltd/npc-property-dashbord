@@ -1,7 +1,33 @@
 import { describe, expect, it } from 'vitest';
-import { PDF_FLATTEN_LIMITS, validateFlattenPage } from './flattenPdf';
+import {
+  PDF_FLATTEN_LIMITS,
+  flattenPdfBlob,
+  validateFlattenOptions,
+  validateFlattenPage,
+} from './flattenPdf';
 
 describe('PDF flattening resource limits', () => {
+  it('stops before loading an already-cancelled document', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(flattenPdfBlob(new Blob(), { signal: controller.signal }))
+      .rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('accepts the default rendering options', () => {
+    expect(validateFlattenOptions({})).toEqual({ dpi: 150, quality: 0.85 });
+  });
+
+  it.each([0, Number.NaN, Number.POSITIVE_INFINITY, PDF_FLATTEN_LIMITS.maxDpi + 1])(
+    'rejects unsafe DPI %s',
+    (dpi) => expect(() => validateFlattenOptions({ dpi })).toThrow(/DPI must be between/),
+  );
+
+  it.each([-0.1, 1.1, Number.NaN])('rejects invalid JPEG quality %s', (jpegQuality) => {
+    expect(() => validateFlattenOptions({ jpegQuality })).toThrow(/quality must be between/);
+  });
+
   it('accepts ordinary rendered page dimensions', () => {
     expect(validateFlattenPage(1275, 1650, 0)).toBe(2_103_750);
   });
