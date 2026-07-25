@@ -9,6 +9,7 @@ import {
   listWebAuthnCredentials,
   deleteWebAuthnCredential,
   enrollWebAuthn,
+  requestStepUpWithWebAuthn,
   webauthnSupported,
   type WebAuthnCredentialRow,
 } from '@/lib/security/stepUp';
@@ -40,7 +41,12 @@ export function WebAuthnSettings({ disabled }: { disabled?: boolean }) {
 
   const doEnroll = async () => {
     setBusy(true); setError(null); setStatus(null);
-    const r = await enrollWebAuthn(password, deviceName.trim() || undefined);
+    const proof = creds.length > 0 ? await requestStepUpWithWebAuthn('mfa.manage', password) : null;
+    if (proof && !proof.ok) {
+      setBusy(false);
+      return setError(proof.error);
+    }
+    const r = await enrollWebAuthn(password, deviceName.trim() || undefined, proof?.token);
     setBusy(false);
     if (!r.ok) return setError(r.error);
     setPassword(''); setDeviceName(''); setShowEnroll(false);
@@ -50,8 +56,15 @@ export function WebAuthnSettings({ disabled }: { disabled?: boolean }) {
 
   const doDelete = async (id: string) => {
     if (!confirm('Remove this security key? You will not be able to use it for step-up until re-enrolled.')) return;
+    const currentPassword = prompt('Confirm your password to remove this security key:');
+    if (!currentPassword) return;
     setBusy(true); setError(null);
-    const r = await deleteWebAuthnCredential(id);
+    const proof = await requestStepUpWithWebAuthn('mfa.manage', currentPassword);
+    if (!proof.ok) {
+      setBusy(false);
+      return setError(proof.error);
+    }
+    const r = await deleteWebAuthnCredential(id, proof.token);
     setBusy(false);
     if (!r.ok) return setError(r.error);
     refresh();
