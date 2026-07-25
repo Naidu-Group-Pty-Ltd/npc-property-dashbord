@@ -775,6 +775,12 @@ verify_jwt = false
 [functions.mission-control-purchases]
 verify_jwt = false
 
+[functions.mission-control-invoices]
+verify_jwt = false
+
+[functions.mission-control-payment-methods]
+verify_jwt = false
+
 [functions.finance-portal-bulk-actions]
 verify_jwt = false
 request_timeout = 120

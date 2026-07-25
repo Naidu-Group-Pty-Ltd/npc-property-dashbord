@@ -1692,6 +1692,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "mission-control-invoices": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true
+    },
     "mission-control-key-info": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
@@ -1705,6 +1711,12 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "mission-control-payment-methods": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true
     },
     "mission-control-purchases": {
       "verify_jwt": false,
