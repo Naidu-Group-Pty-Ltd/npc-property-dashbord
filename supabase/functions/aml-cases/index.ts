@@ -263,12 +263,49 @@ Deno.serve(async (req) => {
       }
 
       case 'create': {
-        if (!canCreate) return jsonResponse({ error: 'Analyst or MLRO role required' }, 403);
+        // Phase 3 (directive §10.4) — manual, unlinked case creation is no
+        // longer an ordinary production pathway. The only supported route is
+        // activate_client (human-confirmed, linked to an active client).
+        // `create` remains solely as an authorised exception channel: MLRO
+        // only, with a recorded exception category, authority and reason.
+        if (!isMlro) {
+          return jsonResponse({
+            error: 'Manual case creation is restricted. Activate the client from their client record instead; an MLRO can record an authorised exception if this is a migration or remediation case.',
+            code: 'manual_creation_restricted',
+          }, 403);
+        }
+        const EXCEPTION_CATEGORIES = [
+          'data_migration', 'legacy_remediation', 'regulator_directed', 'approved_testing',
+        ];
+        const exception = body.exception ?? {};
+        const exceptionCategory = String(exception.category ?? '').trim();
+        const exceptionReason = String(exception.reason ?? '').trim();
+        const exceptionAuthority = String(exception.authority ?? '').trim();
+        if (!EXCEPTION_CATEGORIES.includes(exceptionCategory)) {
+          return jsonResponse({
+            error: 'exception.category is required (data_migration, legacy_remediation, regulator_directed or approved_testing)',
+          }, 400);
+        }
+        if (exceptionReason.length < 10) {
+          return jsonResponse({ error: 'exception.reason must be at least 10 characters' }, 400);
+        }
+        if (!exceptionAuthority) {
+          return jsonResponse({ error: 'exception.authority is required (who approved this exception)' }, 400);
+        }
         const subject = String(body.subject_display_name ?? '').trim();
         if (!subject) return jsonResponse({ error: 'subject_display_name is required' }, 400);
         const subjectType = ['individual', 'entity', 'trust'].includes(body.subject_type)
           ? body.subject_type : 'individual';
         const risk = RISK_RATINGS.includes(body.risk_rating) ? body.risk_rating : null;
+        const exceptionRecord = {
+          category: exceptionCategory,
+          reason: exceptionReason,
+          authority: exceptionAuthority,
+          intended_client_id: body.client_id ?? null,
+          recorded_by: userId,
+          recorded_by_email: userEmail,
+          recorded_at: new Date().toISOString(),
+        };
 
         const ref = await generateCaseReference(admin);
         const baseCreate = {
@@ -280,7 +317,7 @@ Deno.serve(async (req) => {
           risk_rating: risk,
           assigned_analyst_id: userId,
           created_by: userId,
-          metadata: body.metadata ?? {},
+          metadata: { ...(body.metadata ?? {}), creation_exception: exceptionRecord },
         };
         const createDimensions = {
           case_stage: 'draft',
@@ -303,8 +340,11 @@ Deno.serve(async (req) => {
         }
 
         await appendEvent(admin, created.id, 'case_created',
-          `Case ${ref} opened for ${subject}`,
-          { subject_type: subjectType, initial_risk: risk, notes: body.notes ?? null },
+          `Case ${ref} opened by authorised exception (${exceptionCategory}) for ${subject}`,
+          {
+            subject_type: subjectType, initial_risk: risk, notes: body.notes ?? null,
+            creation_exception: exceptionRecord,
+          },
           userId, userEmail);
 
         return jsonResponse({ case: created });

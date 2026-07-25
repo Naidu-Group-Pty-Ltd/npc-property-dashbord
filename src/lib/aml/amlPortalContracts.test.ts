@@ -19,7 +19,7 @@ const migrationSource = readFileSync(
 
 describe("finance-safe limited_status contract (Phase 1)", () => {
   const limitedStatusBranch = financeSource.match(
-    /if \(op === "limited_status"\) \{([\s\S]*?)\n    \}/,
+    /if \(op === "limited_status"\) \{([\s\S]*?)\n {4}\}/,
   )?.[1];
 
   it("has a limited_status branch", () => {
@@ -83,7 +83,7 @@ describe("client-portal safe payload contract (Phase 1)", () => {
 
 describe("activation contract (Phase 1, directive §17)", () => {
   const activateBranch = casesSource.match(
-    /case 'activate_client': \{([\s\S]*?)\n      \}/,
+    /case 'activate_client': \{([\s\S]*?)\n {6}\}/,
   )?.[1];
 
   it("still requires human confirmation, an active client and a reason", () => {
@@ -113,6 +113,29 @@ describe("activation contract (Phase 1, directive §17)", () => {
   it("maps unique-index duplicate violations to the 409 contract", () => {
     expect(activateBranch).toContain("'23505'");
     expect(activateBranch).toContain("An open AML case already exists for this client");
+  });
+});
+
+describe("manual case creation is a restricted exception (Phase 3, §10.4)", () => {
+  const createBranch = casesSource.match(
+    /case 'create': \{([\s\S]*?)\n {6}\}/,
+  )?.[1];
+
+  it("requires the MLRO role, not just any write role", () => {
+    expect(createBranch).toContain("if (!isMlro)");
+    expect(createBranch).toContain("manual_creation_restricted");
+  });
+
+  it("requires a recorded exception category, authority and reason", () => {
+    expect(createBranch).toContain("EXCEPTION_CATEGORIES");
+    expect(createBranch).toContain("'data_migration'");
+    expect(createBranch).toContain("exception.reason must be at least 10 characters");
+    expect(createBranch).toContain("exception.authority is required");
+  });
+
+  it("persists the exception on the case and in the audit event", () => {
+    expect(createBranch).toContain("creation_exception: exceptionRecord");
+    expect(createBranch).toContain("authorised exception");
   });
 });
 

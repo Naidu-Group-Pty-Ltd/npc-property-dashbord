@@ -110,6 +110,36 @@ describe("activation contract", () => {
   });
 });
 
+describe("progress rail derivation", () => {
+  it("renders 14 stages for every case", async () => {
+    const { progressRail, PROGRESS_RAIL_STEPS } = await import("./caseDimensions");
+    expect(PROGRESS_RAIL_STEPS).toHaveLength(14);
+    for (const s of LEGACY_STATUSES) {
+      expect(progressRail({ status: s })).toHaveLength(14);
+    }
+  });
+
+  it("marks the service gate complete only when explicitly approved", async () => {
+    const { progressRail } = await import("./caseDimensions");
+    const approved = progressRail({ status: "kyc_in_progress", service_gate_status: "approved" });
+    expect(approved.find((s) => s.key === "service_gate")?.state).toBe("complete");
+    const locked = progressRail({ status: "kyc_in_progress", service_gate_status: "locked" });
+    expect(locked.find((s) => s.key === "service_gate")?.state).toBe("blocked");
+    const cleared = progressRail({ status: "cleared" });
+    expect(cleared.find((s) => s.key === "service_gate")?.state).toBe("complete");
+    const inProgress = progressRail({ status: "under_review" });
+    expect(inProgress.find((s) => s.key === "service_gate")?.state).not.toBe("complete");
+  });
+
+  it("surfaces blocked and attention states on the active step", async () => {
+    const { progressRail } = await import("./caseDimensions");
+    const blocked = progressRail({ status: "blocked" });
+    expect(blocked.some((s) => s.state === "blocked")).toBe(true);
+    const edd = progressRail({ status: "edd_required" });
+    expect(edd.some((s) => s.state === "attention_required")).toBe(true);
+  });
+});
+
 describe("finance-safe contract shape", () => {
   it("finance dimension values never include risk vocabulary", () => {
     for (const v of FINANCE_PORTAL_STATUSES) {

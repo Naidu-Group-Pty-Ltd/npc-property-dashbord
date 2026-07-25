@@ -228,6 +228,82 @@ export const FINANCE_PORTAL_STATUS_LABELS: Record<AmlFinancePortalStatus, string
   no_further_action: "No further action",
 };
 
+/* ------------------------------------------------------------------ */
+/* Case progress rail (directive §11.3)                                */
+/* ------------------------------------------------------------------ */
+
+export const PROGRESS_RAIL_STEPS = [
+  { key: "activated", label: "Activated" },
+  { key: "client_invited", label: "Client invited" },
+  { key: "information_collection", label: "Information collection" },
+  { key: "identity_verification", label: "Identity verification" },
+  { key: "screening", label: "Screening" },
+  { key: "ownership_control", label: "Ownership & control" },
+  { key: "funding_finance", label: "Funding & finance" },
+  { key: "risk_assessment", label: "Risk assessment" },
+  { key: "review_decision", label: "Review & decision" },
+  { key: "service_gate", label: "Service gate" },
+  { key: "monitoring", label: "Monitoring" },
+  { key: "ongoing_cdd", label: "Ongoing CDD" },
+  { key: "relationship_ended", label: "Relationship ended" },
+  { key: "retention", label: "Retention" },
+] as const;
+export type ProgressRailKey = (typeof PROGRESS_RAIL_STEPS)[number]["key"];
+
+export type ProgressRailState =
+  | "not_started" | "in_progress" | "complete"
+  | "attention_required" | "blocked" | "not_applicable";
+
+/**
+ * Derive a coarse rail position from the case stage. Until later phases wire
+ * per-step data sources (identity checks, screening runs, funding
+ * reconciliation), steps before the current position render complete, the
+ * current step in progress, later steps not started. Blocked and
+ * enhanced-CDD stages surface as blocked / attention on the active step.
+ */
+const STAGE_TO_RAIL_INDEX: Record<AmlCaseStage, number> = {
+  draft: 0,
+  activated: 1,
+  awaiting_client: 2,
+  client_in_progress: 2,
+  client_submitted: 3,
+  checks_in_progress: 4,
+  staff_review: 8,
+  additional_info_required: 2,
+  enhanced_cdd: 7,
+  decision_pending: 8,
+  cleared: 10,
+  cleared_with_conditions: 10,
+  blocked: 9,
+  closed: 12,
+};
+
+export function progressRail(row: CaseDimensionSource & { closed_at?: string | null }): Array<{
+  key: ProgressRailKey; label: string; state: ProgressRailState;
+}> {
+  const stage = caseStage(row);
+  const current = STAGE_TO_RAIL_INDEX[stage] ?? 0;
+  const gate = serviceGateStatus(row);
+  return PROGRESS_RAIL_STEPS.map((step, i) => {
+    let state: ProgressRailState =
+      i < current ? "complete" : i === current ? "in_progress" : "not_started";
+    if (i === current && stage === "blocked") state = "blocked";
+    if (i === current && (stage === "enhanced_cdd" || stage === "additional_info_required")) {
+      state = "attention_required";
+    }
+    if (step.key === "service_gate") {
+      if (gate === "approved" || gate === "approved_with_controls") state = "complete";
+      else if (gate === "locked") state = "blocked";
+      else if (i < current) state = "in_progress";
+    }
+    if (step.key === "relationship_ended" && stage !== "closed") state = "not_started";
+    if (step.key === "retention") {
+      state = stage === "closed" ? "in_progress" : "not_started";
+    }
+    return { key: step.key, label: step.label, state };
+  });
+}
+
 /** Explicit activation fields written at activation time (Phase 1 contract). */
 export interface ActivationContract {
   activation_timing: AmlActivationTiming;

@@ -164,7 +164,7 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 
 /* -------------------- Verification -------------------- */
 
-function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+export function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
   const [items, setItems] = useState<IdentityCheck[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -222,7 +222,7 @@ function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canW
 
 /* -------------------- Screening -------------------- */
 
-function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
   const [items, setItems] = useState<ScreeningCheck[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -280,7 +280,7 @@ function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrit
 
 /* -------------------- Risk & Decision -------------------- */
 
-function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
   const [assessments, setAssessments] = useState<AmlRiskAssessment[] | null>(null);
   const [conditions, setConditions] = useState<AmlCaseCondition[]>([]);
   const [latestDecision, setLatestDecision] = useState<AmlDecision | null>(null);
@@ -437,7 +437,7 @@ function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: bo
 
 /* -------------------- Audit -------------------- */
 
-function AuditTab({ events }: { events: AmlCaseEvent[] }) {
+export function AuditTab({ events }: { events: AmlCaseEvent[] }) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-sm">Audit trail (hash-chained)</CardTitle></CardHeader>
@@ -480,7 +480,7 @@ function AuditTab({ events }: { events: AmlCaseEvent[] }) {
  * write actions here — mutations remain on the dedicated page so
  * capability + step-up rules are enforced by that surface.
  */
-function OwnershipControlTab({ caseRow }: { caseRow: AmlCase }) {
+export function OwnershipControlTab({ caseRow }: { caseRow: AmlCase }) {
   const isEntity = caseRow.subject_type !== "individual";
   return (
     <Card>
@@ -526,7 +526,7 @@ function OwnershipControlTab({ caseRow }: { caseRow: AmlCase }) {
  * discrepancy engine as the standalone page. Read-only here — the
  * page owns entitlement gate + write actions.
  */
-function FundingFinanceTab({ caseId }: { caseId: string }) {
+export function FundingFinanceTab({ caseId }: { caseId: string }) {
   const [loading, setLoading] = useState(true);
   const [comparisons, setComparisons] = useState<AmlFinanceComparison[]>([]);
   const [discrepancies, setDiscrepancies] = useState<AmlFinanceDiscrepancy[]>([]);
@@ -640,7 +640,7 @@ const CATEGORY_META: Record<TimelineCategory, { label: string; icon: React.Compo
  *     (tipping-off protection preserved).
  *   - No SMR / regulatory records; those remain gated on the AUSTRAC hub.
  */
-function TimelineTab({
+export function TimelineTab({
   caseId,
   events,
   canInvestigate,
