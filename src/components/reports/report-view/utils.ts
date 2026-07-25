@@ -30,12 +30,16 @@ export function getInvestmentScoreSummary(report: InvestmentReport | null) {
   const numericScore = typeof score === 'number' ? score : typeof score === 'string' && /^\d+(\.\d+)?$/.test(score) ? Number(score) : null;
   const insufficient = !investmentScore || investmentScore.coverage?.dataInsufficient || numericScore == null;
 
+  const grade = typeof investmentScore?.grade === 'string' ? investmentScore.grade : null;
+  const recommendation = typeof investmentScore?.recommendation === 'string' ? investmentScore.recommendation : null;
+  const partialLabel = typeof investmentScore?.coverage?.partialLabel === 'string' ? investmentScore.coverage.partialLabel : null;
+
   return {
-    grade: investmentScore?.grade || null,
-    recommendation: investmentScore?.recommendation || null,
+    grade: grade || null,
+    recommendation: recommendation || null,
     score: numericScore,
     insufficient,
-    partialLabel: investmentScore?.coverage?.partialLabel || (insufficient ? 'Qualitative review only' : null),
+    partialLabel: partialLabel || (insufficient ? 'Qualitative review only' : null),
   };
 }
 
@@ -94,7 +98,7 @@ export function resolveInvestmentGrade(reports: readonly GradeReport[]): Resolve
 }
 
 export function getInvestmentGradeTone(grade?: string | null) {
-  const normalizedGrade = grade?.toUpperCase();
+  const normalizedGrade = typeof grade === 'string' ? grade.toUpperCase() : null;
   if (normalizedGrade === 'A+' || normalizedGrade === 'A') return 'bg-emerald-500 text-foreground dark:text-white';
   if (normalizedGrade === 'B+' || normalizedGrade === 'B') return 'bg-yellow-500 text-black';
   if (normalizedGrade === 'C+' || normalizedGrade === 'C') return 'bg-orange-500 text-foreground dark:text-white';
