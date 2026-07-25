@@ -1,6 +1,7 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, enforceRawBodyLimit, getTrustedClientIp, securityJsonError, verifyRequiredCronSecret, verifyRequiredWebhookSecret, verifySignedInternal } from '../requestSecurity.ts';
 import { signInternalRequest } from '../auth_v2.ts';
+import { getClientIp } from '../publicAbuseControls.ts';
 
 Deno.test('shared request security exports human authentication for edge handlers', () => {
   assertEquals(typeof verifyHuman, 'function');
@@ -40,6 +41,12 @@ Deno.test('trusted client IP ignores caller-controlled forwarded chains', () => 
   assertEquals(getTrustedClientIp(new Headers({ 'x-forwarded-for': '198.51.100.10' })), null);
   assertEquals(getTrustedClientIp(new Headers({ 'cf-connecting-ip': '203.0.113.7', 'x-forwarded-for': '1.2.3.4' })), '203.0.113.7');
   assertEquals(getTrustedClientIp(new Headers({ 'cf-connecting-ip': '203.0.113.7, 1.2.3.4' })), null);
+});
+
+Deno.test('public abuse controls use only validated trusted client IP headers', () => {
+  assertEquals(getClientIp(new Request('https://example.test', { headers: { 'x-forwarded-for': '198.51.100.10' } })), null);
+  assertEquals(getClientIp(new Request('https://example.test', { headers: { 'cf-connecting-ip': 'not-an-ip' } })), null);
+  assertEquals(getClientIp(new Request('https://example.test', { headers: { 'x-real-ip': '2001:DB8::1' } })), '2001:db8::1');
 });
 
 Deno.test('webhook and cron secrets fail closed when weak or missing', () => {

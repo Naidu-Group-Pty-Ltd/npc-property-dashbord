@@ -19,6 +19,8 @@
  * the ceiling. Circuit-breaker migration remains a separate provider task.
  */
 
+import { getTrustedClientIp } from './requestSecurity.ts';
+
 async function consumeQuota(supabase: any, key: string, opts: { limit: number; windowMs: number }): Promise<{ ok: boolean; retryAfterMs: number }> {
   const { data, error } = await supabase.rpc('security_consume_rate_limit', { p_key: key, p_max: opts.limit, p_window_seconds: Math.max(1, Math.ceil(opts.windowMs / 1000)) });
   if (error || !data?.[0]) return { ok: false, retryAfterMs: 1000 };
@@ -50,11 +52,7 @@ export function killSwitchActive(name: string): boolean {
 
 // ---------------------------------------------------------------- Request helpers
 export function getClientIp(req: Request): string | null {
-  const cf = req.headers.get('cf-connecting-ip');
-  if (cf) return cf.trim();
-  const xff = req.headers.get('x-forwarded-for');
-  if (xff) return xff.split(',')[0]?.trim() || null;
-  return req.headers.get('x-real-ip') || null;
+  return getTrustedClientIp(req.headers);
 }
 
 // eslint-disable-next-line no-control-regex
