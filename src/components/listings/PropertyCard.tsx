@@ -1,6 +1,6 @@
 import { PropertyListing } from '@/lib/airtable';
 import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { badgeVariants } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ConfidenceBadge } from '@/components/dashboard/ConfidenceBadge';
@@ -72,10 +72,10 @@ export function PropertyCard({
           />
           
           <button type="button" className="min-w-0 flex-1 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2" onClick={onOpenDetails}>
-            <h3 className="font-medium text-sm leading-tight truncate">
+            <span role="heading" aria-level={3} className="block font-medium text-sm leading-tight truncate">
               {listing.address || 'Unknown Address'}
-            </h3>
-            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
+            </span>
+            <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
               <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />
               <span className="text-xs text-muted-foreground truncate">
                 {listing.suburb || 'Unknown Suburb'}
@@ -83,11 +83,11 @@ export function PropertyCard({
                 {listing.zipCode && ` ${listing.zipCode}`}
               </span>
               {listing.propertyType && (
-                <Badge variant="outline" className={cn(LISTING_CARD_BADGE_BASE, LISTING_CARD_PROPERTY_TYPE_BADGE, "shrink-0")}>
+                <span className={cn(badgeVariants({ variant: 'outline' }), LISTING_CARD_BADGE_BASE, LISTING_CARD_PROPERTY_TYPE_BADGE, "shrink-0")}>
                   {listing.propertyType}
-                </Badge>
+                </span>
               )}
-            </div>
+            </span>
           </button>
 
           <DropdownMenu>

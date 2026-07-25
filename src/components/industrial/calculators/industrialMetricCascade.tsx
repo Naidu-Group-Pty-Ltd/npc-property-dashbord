@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { CalculatorPrefill } from '@/contexts/CalculatorPrefillContext';
@@ -94,14 +94,25 @@ export function useCascadedIndustrialField(
 ) {
   const selectedSource = useMemo(() => pickFirstSource(candidates), [candidates]);
   const [field, setField] = useState<CascadedFieldState>({ value: '', source: 'Blank', history: [] });
+  const propertyIdRef = useRef(prefill?.propertyId);
 
   useEffect(() => {
     if (!prefill) {
+      propertyIdRef.current = undefined;
       setField({ value: '', source: 'Blank', history: [] });
       return;
     }
 
+    const propertyChanged = propertyIdRef.current !== undefined && propertyIdRef.current !== prefill.propertyId;
+    propertyIdRef.current = prefill.propertyId;
+
     setField((current) => {
+      if (propertyChanged) {
+        return selectedSource
+          ? { value: selectedSource.value, source: selectedSource.source, originalValue: selectedSource.value, originalSource: selectedSource.source, history: [] }
+          : { value: '', source: 'Blank', history: [] };
+      }
+
       if (!selectedSource) {
         return current.source === 'User Override' || current.source === 'Verified' ? { ...current, pendingSource: undefined } : { ...current, value: '', source: 'Blank', pendingSource: undefined };
       }

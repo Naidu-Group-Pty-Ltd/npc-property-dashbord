@@ -120,10 +120,6 @@ export async function registerDevice(input: DeviceRegisterInput): Promise<Device
   if (!res.ok || body?.ok === false) {
     console.warn("[missionControlDevices] register upstream failure", {
       status: res.status,
-      error: body?.error,
-      message: body?.message,
-      hasApiKey: !!API_KEY,
-      baseUrl: BASE_URL,
     });
     return {
       ok: false,

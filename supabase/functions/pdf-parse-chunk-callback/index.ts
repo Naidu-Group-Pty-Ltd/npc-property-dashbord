@@ -497,9 +497,12 @@ function validateMergedArtifacts(
     problems.push(`raster_manifest_entries_count_mismatch: expected ${finalPageCount}, got ${parentRasterManifestPages.length}`);
   }
 
-  const duplicateRasterPaths = [...numberHistogram(
-    pageRasterPaths.map((_, idx) => idx + 1),
-  ).entries()].filter(([, count]) => count > 1);
+  const duplicateRasterPaths = pageRasterPaths.filter(
+    (path, index) => pageRasterPaths.indexOf(path) !== index,
+  );
+  if (duplicateRasterPaths.length > 0) {
+    problems.push('page_raster_paths_not_unique');
+  }
 
   return {
     version: MERGE_VALIDATION_VERSION,

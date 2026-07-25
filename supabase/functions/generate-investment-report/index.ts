@@ -1540,7 +1540,7 @@ Generate the ${sectionDef.name} sections now:`;
     sectionPrompt = limitPromptContext(sectionPrompt, PERPLEXITY_SAFE_USER_MESSAGE_BYTES, `Final section prompt for ${sectionDef.name}`, 'tail');
   }
   const safeSystemMessage = limitPromptContext(systemMessage, PERPLEXITY_SAFE_SYSTEM_MESSAGE_BYTES, 'System prompt', 'head');
-  const emergencySectionPrompt = `Generate ONLY this investment report section for ${propertyAddress}: ${sectionDef.name}.
+  const emergencySectionPromptUnbounded = `Generate ONLY this investment report section for ${propertyAddress}: ${sectionDef.name}.
 
 Required headings:
 ${sectionDef.sections.map(s => `## ${s}`).join('\n')}
@@ -1553,6 +1553,9 @@ Previous-section consistency hints:
 ${previousSections ? sliceTailByBytes(previousSections, 4_000) : 'None'}
 
 Start now with the first heading.`;
+  const emergencySectionPrompt = byteLength(emergencySectionPromptUnbounded) > PERPLEXITY_SAFE_USER_MESSAGE_BYTES
+    ? limitPromptContext(emergencySectionPromptUnbounded, PERPLEXITY_SAFE_USER_MESSAGE_BYTES, `Emergency section prompt for ${sectionDef.name}`, 'head-tail')
+    : emergencySectionPromptUnbounded;
   console.log(`📏 Prompt size for ${sectionDef.name}: user=${byteLength(sectionPrompt)} bytes, system=${byteLength(safeSystemMessage)} bytes`);
 
   // Retry loop with improved backoff and jitter
@@ -4798,9 +4801,9 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
       const rawTier = propertyDetails?.reportTier || 'compass';
       const requestedEngine = propertyDetails?.generationEngine;
       const isCompassTier = rawTier === 'compass' || rawTier === 'compass-40';
-      const generationEngine = isCompassTier
-        ? 'compass-40'
-        : requestedEngine === 'compass-40'
+      const generationEngine = requestedEngine === 'legacy'
+        ? 'legacy'
+        : isCompassTier || requestedEngine === 'compass-40'
           ? 'compass-40'
           : 'legacy';
       // Respect explicit frontend engine selection.

@@ -13,6 +13,7 @@ import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedR
 import { validatePageArtifactContractV3 } from '../_shared/pageArtifactContractV3.pure.ts';
 import { isSafeArtifactPath } from '../_shared/sourceSceneGraphV2.pure.ts';
 import { isPdfDiagnosticsPathOwnedByJob } from '../_shared/pdfDiagnosticsAuthorization.pure.ts';
+import { authorizeTemplateResync } from '../_shared/templateResyncAuthorization.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -969,6 +970,11 @@ Deno.serve(async (req) => {
       if (mode === 'resync' && !templateId) {
         return json({ error: 'template_id required for resync finalization' }, 400);
       }
+      if (mode === 'resync' && templateId) {
+        const authorization = await authorizeTemplateResync(admin, authedUserId ?? 'service_role', templateId);
+        if (!authorization.exists) return json({ error: 'Template not found' }, 404);
+        if (!authorization.allowed) return json({ error: 'forbidden' }, 403);
+      }
 
       const finalizationRequest = {
         mode,
@@ -1162,6 +1168,10 @@ Deno.serve(async (req) => {
       if (!templateId || !schema) return json({ error: 'template_id and schema required' }, 400);
       const validationError = schemaValidationErrorResponse(json, schema);
       if (validationError) return validationError;
+
+      const authorization = await authorizeTemplateResync(admin, authedUserId ?? 'service_role', templateId);
+      if (!authorization.exists) return json({ error: 'Template not found' }, 404);
+      if (!authorization.allowed) return json({ error: 'forbidden' }, 403);
 
       // v2 RPC returns only id/name/version. See finalize note above — the
       // legacy version returned the full row (including the multi-MB schema)

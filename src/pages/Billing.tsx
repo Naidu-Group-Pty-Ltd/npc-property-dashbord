@@ -8,6 +8,7 @@ import { TransactionsPanel } from "@/components/billing/TransactionsPanel";
 import { PaymentMethodsPanel } from "@/components/billing/PaymentMethodsPanel";
 import { InvoicesPanel } from "@/components/billing/InvoicesPanel";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { usePermissions } from "@/hooks/usePermissions";
 import {
   AURIXA_PRICING_URL,
   openMissionControlWithAttribution,
@@ -36,9 +37,13 @@ function isTabValue(v: string | null): v is TabValue {
  * everything money-related in this workspace.
  */
 export default function Billing() {
+  const { isAdmin, isSuperadmin } = usePermissions();
+  const canViewBillingDetails = isAdmin || isSuperadmin;
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab");
-  const tab: TabValue = isTabValue(tabParam) ? tabParam : "usage";
+  const requestedTab: TabValue = isTabValue(tabParam) ? tabParam : "usage";
+  const tab: TabValue = canViewBillingDetails ? requestedTab : "usage";
+  const visibleTabs = canViewBillingDetails ? TABS : TABS.slice(0, 1);
   const { balance, loading, lowBalance, criticalBalance } = useTokenBalance();
 
   const setTab = (next: string) => {
@@ -163,8 +168,11 @@ export default function Billing() {
 
       <Tabs value={tab} onValueChange={setTab} className="min-w-0">
         <div className="min-w-0 overflow-x-auto pb-1">
-          <TabsList className="grid h-auto w-full min-w-[560px] grid-cols-4 rounded-2xl border border-border/60 bg-background/70 p-1 shadow-inner sm:w-auto sm:min-w-0">
-            {TABS.map(({ value, label, icon: Icon }) => (
+          <TabsList className={cn(
+            "grid h-auto w-full rounded-2xl border border-border/60 bg-background/70 p-1 shadow-inner sm:w-auto sm:min-w-0",
+            canViewBillingDetails ? "min-w-[560px] grid-cols-4" : "grid-cols-1",
+          )}>
+            {visibleTabs.map(({ value, label, icon: Icon }) => (
               <TabsTrigger
                 key={value}
                 value={value}

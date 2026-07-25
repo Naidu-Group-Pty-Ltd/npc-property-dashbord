@@ -2,11 +2,12 @@
 // Lists / manages this install's wallet in Mission Control: display
 // references only (brand / last4 / expiry) — card data itself lives at
 // Stripe and is captured on the Aurixa storefront via a Stripe-hosted page.
-// Reads are open to any authenticated staff user; mutations (reorder /
-// make-primary / remove) are admin-only.
+// Reads and mutations (reorder / make-primary / remove) are restricted to
+// admins because even display-only card metadata is sensitive billing data.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { requireAdmin } from "../_shared/authz.ts";
 import {
   listPaymentMethods,
   managePaymentMethod,
@@ -42,22 +43,15 @@ Deno.serve(async (req) => {
       return json({ error: auth.error ?? "Unauthorized" }, 401);
     }
 
+    const authorization = await requireAdmin(supabase, auth);
+    if (!authorization.ok) return json({ error: "forbidden" }, 403);
+
     const action = String(body?.action ?? "list");
 
     if (action === "list") {
       const result = await listPaymentMethods();
       return json(result);
     }
-
-    // Mutations manage real money instruments — admin/superadmin only.
-    const { data: roles } = await supabase
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", auth.userId);
-    const isAdmin = (roles ?? []).some((r: any) =>
-      ["superadmin", "admin"].includes(String(r.role)),
-    );
-    if (!isAdmin) return json({ error: "forbidden" }, 403);
 
     let mcAction: PaymentMethodAction;
     if (action === "make_primary" && typeof body?.paymentMethodId === "string") {
