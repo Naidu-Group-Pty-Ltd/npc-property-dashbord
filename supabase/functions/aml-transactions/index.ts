@@ -10,11 +10,15 @@
  *                     counterparty_cdd_summary
  *   Obligations:      list_obligations, evaluate_obligations,
  *                     acknowledge_obligation, waive_obligation, link_obligation_report
- *   Gate:             settlement_gate_status (returns { gate_enabled, blocked, reasons[] } — auth only)
+ *   Gate:             settlement_gate_status (returns { gate_enabled, blocked, reasons[] })
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+import {
+  getCounterpartyRequestScope,
+  hasAmlInvestigateCapability,
+} from "../_shared/amlTransactionsAuth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
@@ -225,7 +229,16 @@ Deno.serve(async (req) => {
     const userLabel = auth.username ?? null;
     const op = String(body?.op ?? "");
 
-    // Settlement gate — auth only, no AML role needed (used by finance portal).
+    const [{ data: canWriteRow }, { data: isSuperadminRow }] = await Promise.all([
+      admin.rpc("has_aml_write_role", { _user_id: userId }),
+      aml.rpc("is_superadmin", { _user_id: userId }),
+    ]);
+    const canWrite = Boolean(canWriteRow);
+    const isSuperadmin = Boolean(isSuperadminRow);
+    if (!hasAmlInvestigateCapability(canWrite, isSuperadmin)) {
+      return jr({ error: "aml.investigate capability required" }, 403);
+    }
+
     if (op === "settlement_gate_status") {
       const pfId = String(body.purchase_file_id ?? "");
       if (!pfId) return jr({ error: "purchase_file_id required" }, 400);
@@ -233,17 +246,12 @@ Deno.serve(async (req) => {
       return jr(result);
     }
 
-    const { data: hasAny } = await admin.rpc("has_any_aml_role", { _user_id: userId });
-    if (!hasAny) return jr({ error: "AML role required" }, 403);
-
-    const { data: canWriteRow } = await admin.rpc("has_aml_write_role", { _user_id: userId });
-    const canWrite = Boolean(canWriteRow);
     const requireWrite = () => {
-      if (!canWrite) throw new Response(JSON.stringify({ error: "Insufficient permissions" }),
+      if (!canWrite && !isSuperadmin) throw new Response(JSON.stringify({ error: "Insufficient permissions" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     };
     const { data: isMlroRow } = await admin.rpc("has_aml_role", { _user_id: userId, _role: "mlro" });
-    const isMlro = Boolean(isMlroRow);
+    const isMlro = Boolean(isMlroRow) || isSuperadmin;
     const requireMlro = () => {
       if (!isMlro) throw new Response(JSON.stringify({ error: "MLRO role required" }),
         { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -408,11 +416,10 @@ Deno.serve(async (req) => {
 
     // ── COUNTERPARTY REQUESTS ──
     if (op === "list_cp_requests") {
-      const cpcId = body.counterparty_case_id ? String(body.counterparty_case_id) : null;
-      const caseId = body.case_id ? String(body.case_id) : null;
-      let q = aml.from("counterparty_requests").select("*").order("created_at", { ascending: false });
-      if (cpcId) q = q.eq("counterparty_case_id", cpcId);
-      else if (caseId) q = q.eq("case_id", caseId);
+      const scope = getCounterpartyRequestScope(body);
+      if (!scope) return jr({ error: "counterparty_case_id or case_id required" }, 400);
+      const q = aml.from("counterparty_requests").select("*")
+        .eq(scope.column, scope.value).order("created_at", { ascending: false });
       const { data, error } = await q;
       if (error) return jr({ error: error.message }, 400);
       return jr({ requests: data ?? [] });
