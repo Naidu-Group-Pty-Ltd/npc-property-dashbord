@@ -608,7 +608,7 @@ registerTool({
 registerTool({
   name: 'scrape_property_listing',
   description:
-    'Scrape a public property listing URL (realestate.com.au, domain.com.au, etc.) and extract address, price, bed/bath/car, land/floor size, features, and agent details. Use when the user pastes a listing URL.',
+    'Queue an asynchronous scrape of a public property listing URL (realestate.com.au, domain.com.au, etc.). Returns a job ID and queued status without waiting for the scrape to finish. Use when the user pastes a listing URL.',
   parameters: {
     type: 'object',
     properties: {
@@ -621,24 +621,11 @@ registerTool({
     if (!args.url) throw new Error('url is required');
     const queued = await invokeService(ctx, 'scrape-property-listing', { url: args.url });
     if (!queued?.jobId) throw new Error('scrape-property-listing did not return a job id');
-
-    const pollIntervalMs = 5000;
-    const maxWaitMs = 1500 * 1000;
-    const startedAt = Date.now();
-
-    while (Date.now() - startedAt <= maxWaitMs) {
-      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-      const { data, error } = await ctx.supabase.functions.invoke('scrape-property-listing', {
-        body: { jobId: queued.jobId },
-      });
-      if (error) throw new Error(`scrape-property-listing status check failed: ${error.message}`);
-      if (data?.success === false || data?.status === 'failed') {
-        throw new Error(`scrape-property-listing error: ${data?.error || 'unknown'}`);
-      }
-      if (data?.status === 'succeeded') return data.data;
-    }
-
-    throw new Error('scrape-property-listing timed out before completion');
+    return {
+      jobId: queued.jobId,
+      status: queued.status || 'queued',
+      message: 'The property scrape was queued and will continue asynchronously.',
+    };
   },
 });
 
