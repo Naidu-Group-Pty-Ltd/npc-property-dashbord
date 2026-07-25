@@ -31,6 +31,20 @@ describe('ingestion fidelity metrics', () => {
     expect(textAccuracy('', 'Hello world')).toBe(0);
   });
 
+  it('bounds edit-distance work for oversized extracted text', () => {
+    const sharedPrefix = 'a'.repeat(1_024);
+    const sharedMiddle = 'm'.repeat(100_000);
+    const actual = `${sharedPrefix}${sharedMiddle}${'x'.repeat(1_024)}`;
+    const expected = `${sharedPrefix}${sharedMiddle}${'y'.repeat(1_024)}`;
+
+    // Oversized inputs are represented by fixed-size head/tail samples.
+    expect(textAccuracy(actual, expected)).toBe(textAccuracy(
+      `${sharedPrefix}${'x'.repeat(1_024)}`,
+      `${sharedPrefix}${'y'.repeat(1_024)}`,
+    ));
+    expect(textAccuracy(actual, expected)).toBe(0.5);
+  });
+
   it('reports native coverage, fallback raster coverage, text accuracy, and drift warnings', () => {
     const report = buildCdirFidelityReport(doc([
       { id: 'text_1', kind: 'text', text: 'Exact heading', bounds: { x: 0, y: 0, width: 50, height: 10 }, fontSize: 10 },
