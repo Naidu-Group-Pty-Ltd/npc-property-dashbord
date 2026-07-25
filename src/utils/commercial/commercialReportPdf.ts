@@ -51,7 +51,7 @@ const fmtAud = (v: number) => {
   const s = abs.toLocaleString('en-AU', { maximumFractionDigits: 0 });
   return v < 0 ? `-$${s}` : `$${s}`;
 };
-const fmtPct = (v: number | null | undefined, dp = 2) =>
+export const fmtPct = (v: number | null | undefined, dp = 2) =>
   (v != null && Number.isFinite(v) ? `${v.toFixed(dp)}%` : '—');
 const fmtRatio = (v: number) => (isFinite(v) ? `${v.toFixed(2)}x` : '—');
 const fmtNum = (v: number | null | undefined) => (v == null ? '—' : v.toLocaleString('en-AU'));
