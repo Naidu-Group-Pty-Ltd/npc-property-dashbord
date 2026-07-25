@@ -3,7 +3,7 @@ import { createCorsHeaders, verifyAuth, createUnauthorizedResponse } from "../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { verifyInternal } from "../_shared/auth_v2.ts";
 import { authorizeAgentTool, AgentToolAuthzError, type AgentToolAuthzContext } from "../_shared/agentToolAuthz.ts";
-import { requireModulePermission } from "../_shared/authz.ts";
+import { actorIsSuperadmin, requireModulePermission } from "../_shared/authz.ts";
 import { logApiUsage, estimateCost, extractOpenAIUsage } from "../_shared/logApiUsage.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
 
@@ -8798,7 +8798,9 @@ Deno.serve(async (req) => {
         const limit = Math.min(Number(body.limit) || 100, 500);
         let q = sb.from('agent_action_log').select('id, conversation_id, tool_name, tool_arguments, tool_result, affected_table, affected_record_id, status, confidence_score, execution_time_ms, created_at, is_rolled_back').order('created_at', { ascending: false }).limit(limit);
         if (body.tool_name) q = q.eq('tool_name', body.tool_name);
-        if (body.only_user) q = q.eq('user_id', userId!);
+        // Trace rows can contain tool inputs and outputs. Scoped users may only
+        // inspect their own rows; superadmins retain the organization-wide view.
+        if (body.only_user || !(await actorIsSuperadmin(sb, userId!))) q = q.eq('user_id', userId!);
         const { data } = await q;
         // aggregate
         const rows = data || [];
