@@ -14,6 +14,8 @@
  *      confer service identity (Criticals 5/6, second-round audit).
  *  R5: getPublicUrl() on the sensitive email-attachments bucket — persisting a
  *      permanent public URL for private content (EC-5). Use signed URLs.
+ *  R7: global PDF recovery exposed without an internal-service or superadmin
+ *      authorization gate.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
@@ -93,6 +95,17 @@ for (const file of files) {
       && /Bearer\s*\$\{[^}]*(serviceRoleKey|SERVICE_ROLE_KEY|supabaseServiceKey|serviceKey|SUPABASE_SERVICE)[^}]*\}/.test(src)
       && !R6_SERVICE_KEY_CALLER_ALLOWLIST.has(rel)) {
     errors.push(`[R6] ${rel}: inter-function call authenticates with the service-role key. Use the dedicated INTERNAL_EDGE_SECRET (callInternalFunction / x-internal-edge-secret) so a leak can't grant full DB access.`);
+  }
+
+  if (rel === 'pdf-parse-dispatch/index.ts') {
+    const recoveryBranch = src.match(/if \(operation === 'recover'\) \{([\s\S]*?)recoverStuckJobs\(admin\)/)?.[1] ?? '';
+    const hasPrivilegedGate = /auth\.userId !== 'service_role'/.test(recoveryBranch)
+      && /\.from\('user_roles'\)/.test(recoveryBranch)
+      && /row\.role === 'superadmin'/.test(recoveryBranch)
+      && /createForbiddenResponse/.test(recoveryBranch);
+    if (!hasPrivilegedGate) {
+      errors.push('[R7] pdf-parse-dispatch/index.ts: global stuck-job recovery must require a verified internal service caller or a superadmin role before using the service-role client.');
+    }
   }
 }
 
