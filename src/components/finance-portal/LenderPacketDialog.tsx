@@ -167,7 +167,7 @@ export function LenderPacketDialog({ open, onOpenChange, fileId }: Props) {
       y += 13;
     }
 
-    return doc.output('arraybuffer');
+    return new Uint8Array(doc.output('arraybuffer') as ArrayBuffer);
   };
 
   const build = async (flatten: boolean = false) => {
