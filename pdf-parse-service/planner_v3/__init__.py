@@ -19,7 +19,8 @@ Python sidecar and the TypeScript edge/runtime, byte-for-byte for ASCII inputs.
 IMPORT-SAFETY: importing this package (or any module in it) initializes no
 Docling / Torch / OCR model / Google SDK, opens no file, reads no secret, and
 performs no network I/O. Every identity is a pure function of structural inputs
-(FNV-1a-32 over sorted-key compact JSON — no timestamps, signed URLs,
+(sorted-key compact JSON, with SHA-256 for cache fingerprints and legacy
+FNV-1a-32 for non-security identifiers — no timestamps, signed URLs,
 credentials, temp paths, job ids or retry counters).
 
 BACKWARD COMPATIBILITY: nothing here is wired into the live parse path. Planner

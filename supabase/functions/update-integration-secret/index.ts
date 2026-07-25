@@ -65,15 +65,7 @@ Deno.serve(async (req) => {
     const sbMgmt = Deno.env.get('SB_MANAGEMENT_ACCESS_TOKEN');
     const legacyMgmt = Deno.env.get('SUPABASE_ACCESS_TOKEN');
     const supabaseAccessToken = sbMgmt ?? legacyMgmt;
-    const tokenSource = sbMgmt ? 'SB_MANAGEMENT_ACCESS_TOKEN' : (legacyMgmt ? 'SUPABASE_ACCESS_TOKEN' : 'none');
     const projectRef = Deno.env.get('SUPABASE_URL')?.match(/https:\/\/([^.]+)/)?.[1];
-
-    console.log('[update-integration-secret] Boot check', {
-      tokenSource,
-      tokenLen: supabaseAccessToken?.length ?? 0,
-      tokenPrefix: supabaseAccessToken ? supabaseAccessToken.substring(0, 4) : null,
-      projectRef,
-    });
 
     if (!supabaseAccessToken) {
       console.error('Management access token not configured');
@@ -182,6 +174,7 @@ Deno.serve(async (req) => {
       );
     }
 
+    const tokenSource = sbMgmt ? 'SB_MANAGEMENT_ACCESS_TOKEN' : 'SUPABASE_ACCESS_TOKEN';
     console.log(`[update-integration-secret] Calling Management API`, {
       projectRef,
       names: validSecrets.map(s => s.name),

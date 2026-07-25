@@ -9,7 +9,7 @@ import { parseTemplate, type ReportTemplate, type Page } from './templateSchema'
 import {
   resolveBindable, resolveBindableNumber, resolveBindableColor, type ResolveContext,
 } from './bindingResolver';
-import { resolvePageOutputPolicy, resolvePageRenderPlan } from './rendering/pdfImportPagePolicy';
+import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
 
 interface PptxOptions {
   data?: Record<string, any>;
@@ -37,12 +37,13 @@ export async function exportTemplateAsPptxBlob(
 
   for (const page of tpl.pages) {
     const slide = pptx.addSlide();
+    const pageRenderPlan = resolvePageRenderPlan(resolvePageOutputPolicy(page as unknown as Page));
     if (page.background?.color) {
       slide.background = { color: hex(resolveBindableColor(page.background.color, ctx, '#FFFFFF')) };
     }
     // Skip PDF-import reference underlays — they are editor-only alignment
     // aids; exporting them would double-render the page content.
-    if (page.background?.imageUrl && !(page.background as any)?.underlay) {
+    if (page.background?.imageUrl && shouldRenderPageBackgroundImage(page, pageRenderPlan)) {
       try {
         slide.addImage({
           data: String(page.background.imageUrl),
@@ -52,7 +53,7 @@ export async function exportTemplateAsPptxBlob(
     }
     // C5: raster-only pages export the source raster as the slide and must NOT
     // also add native overlays (no double render).
-    const pptxRenderNative = resolvePageRenderPlan(resolvePageOutputPolicy(page as unknown as Page)).renderNativeBlocks;
+    const pptxRenderNative = pageRenderPlan.renderNativeBlocks;
     for (const block of (pptxRenderNative ? (page.blocks ?? []) : [])) {
       for (const ov of block.overlays ?? []) {
         const x = ov.x * PT_TO_IN;

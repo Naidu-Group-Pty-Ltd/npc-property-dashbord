@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,7 +53,7 @@ function relTime(iso?: string | null) {
 }
 
 async function invoke(action: string, payload: Record<string, any> = {}) {
-  const { data, error } = await supabase.functions.invoke('agent-planner', { body: { action, ...payload } });
+  const { data, error } = await invokeSecureFunction('agent-planner', { action, ...payload });
   if (error) throw new Error(error.message);
   if ((data as any)?.error) throw new Error((data as any).error);
   return data as any;
@@ -417,7 +417,7 @@ export default function AgentPlans() {
                   </ol>
                 </div>
 
-                <PlanScheduleCard plan={activePlan} onChanged={() => { loadPlan(activePlan.id); refreshPlans(); }} />
+                <PlanScheduleCard key={activePlan.id} plan={activePlan} onChanged={() => { loadPlan(activePlan.id); refreshPlans(); }} />
                 <PlanRunsCard planId={activePlan.id} />
               </>
             )}
@@ -438,7 +438,7 @@ function DraftPlanDialog({ onCreated }: { onCreated: (planId: string) => void })
 
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.functions.invoke('ai-dashboard-agent', { body: { action: 'list-skills' } });
+      const { data } = await invokeSecureFunction('ai-dashboard-agent', { action: 'list-skills' });
       const list = (data as any)?.skills ?? [];
       setSkills(list.map((s: any) => ({ slug: s.slug, name: s.name })));
     })();

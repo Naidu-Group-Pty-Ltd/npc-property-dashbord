@@ -1156,10 +1156,14 @@ def _do_parse(
         vprofile = resolve_vnext_converter_profile(
             policy.as_dict(), runtime.capabilities(), build_vnext_options_from_env())
         conv_result = runtime.convert(stream, vprofile)
-        if conv_result.raw_document is None or conv_result.status == "failure":
+        # Only a complete conversion may enter the normal success pipeline.
+        # Partial and timed-out documents retain useful provider artifacts, but
+        # must remain contained for retry/manual review rather than being
+        # reported to sync or async callers as successfully parsed.
+        if conv_result.raw_document is None or not conv_result.ok:
             raise SidecarError(
                 500, "docling_vnext_convert_failed",
-                f"vNext conversion failed: {'; '.join(conv_result.errors)[:200] or conv_result.status}",
+                f"vNext conversion {conv_result.status}: {'; '.join(conv_result.errors)[:200] or 'no details'}",
                 retryable=True,
             )
         doc = conv_result.raw_document
@@ -2006,7 +2010,7 @@ async def _build_table_arbitration(
             profile = {"runtimeProfile": os.environ.get("DOCLING_RUNTIME_PROFILE", "legacy"),
                        "tableMode": None, "cellMatching": None}
             primary = tcand.candidate_from_source_topology(region=treg, provider="docling-primary", profile=profile)
-            cands = [c for c in [primary] if c is not None]
+            cands = [c for c in [primary] if c is not None and tcand.candidate_json_within_budget(c)]
             # Budget: never exceed the per-table candidate cap.
             if len(cands) > tcand.MAX_TABLE_CANDIDATES_PER_TABLE:
                 cands = cands[:tcand.MAX_TABLE_CANDIDATES_PER_TABLE]

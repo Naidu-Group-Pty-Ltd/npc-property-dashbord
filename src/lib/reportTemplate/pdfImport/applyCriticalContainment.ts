@@ -166,9 +166,11 @@ export function runCriticalContainment(args: RunCriticalContainmentArgs): RunCri
     });
 
     let action = assessment.action;
+    let pageForPersistence = page;
 
     if (action === 'force_hybrid_fallback' || action === 'force_pixel_fallback') {
       const ensured = ensureDurableSourceRasterForPage(page, ctx?.rasterRef ?? null, ctx?.rasterDataUrl ?? null);
+      pageForPersistence = ensured.page;
       if (!ensured.available) {
         // Raster turned out to be unusable for persistence → block instead of a
         // false fallback claim (never a blank raster-only page).
@@ -188,7 +190,7 @@ export function runCriticalContainment(args: RunCriticalContainmentArgs): RunCri
       // Keep native output (nothing better is possible) but persist the decision
       // so the import is flagged for manual review — never a silent healthy-native claim.
       return applyPagePolicyToPage(
-        page,
+        pageForPersistence,
         decoratePolicy(nativePolicy('semantic'), { ...assessment, action: 'block_manual_review' }, decidedAt),
       );
     }

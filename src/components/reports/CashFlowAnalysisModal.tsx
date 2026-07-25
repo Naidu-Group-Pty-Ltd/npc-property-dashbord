@@ -4157,7 +4157,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                           <span className="font-medium">
                                             ${Number(entry.value).toLocaleString()}
                                             {yoyVal !== null && yoyVal !== 0 && (
-                                              <span className={`ml-1.5 ${yoyVal > 0 ? 'text-success-foreground0' : 'text-destructive-foreground0'}`}>
+                                              <span className={`ml-1.5 ${yoyVal > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
                                                 {yoyVal > 0 ? '↑' : '↓'}{Math.abs(yoyVal).toFixed(1)}%
                                               </span>
                                             )}
@@ -4334,7 +4334,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                   <div className="flex items-end justify-between">
                                     <div>
                                       <p className="text-xs font-bold">{kpi.yr10}</p>
-                                      <p className={`text-[10px] font-semibold ${kpi.positive ? 'text-success-foreground0' : 'text-destructive-foreground0'}`}>
+                                      <p className={`text-[10px] font-semibold ${kpi.positive ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
                                         {kpi.change}
                                       </p>
                                     </div>
@@ -4484,7 +4484,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(gross.value).toFixed(2)}%
                                           {yoyGross !== 0 && (
-                                            <span className={`ml-1.5 ${yoyGross > 0 ? 'text-success-foreground0' : 'text-destructive-foreground0'}`}>
+                                            <span className={`ml-1.5 ${yoyGross > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
                                               {yoyGross > 0 ? '↑' : '↓'}{Math.abs(yoyGross).toFixed(2)}pp
                                             </span>
                                           )}
@@ -4500,7 +4500,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                                         <span className="font-medium">
                                           {Number(net.value).toFixed(2)}%
                                           {yoyNet !== 0 && (
-                                            <span className={`ml-1.5 ${yoyNet > 0 ? 'text-success-foreground0' : 'text-destructive-foreground0'}`}>
+                                            <span className={`ml-1.5 ${yoyNet > 0 ? 'text-success-foreground' : 'text-destructive-foreground'}`}>
                                               {yoyNet > 0 ? '↑' : '↓'}{Math.abs(yoyNet).toFixed(2)}pp
                                             </span>
                                           )}
@@ -4751,7 +4751,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                             <div key={cat.label} className="bg-muted/40 rounded-lg p-2.5 text-center space-y-1">
                               <p className="text-[10px] text-muted-foreground font-medium">{cat.icon} {cat.label}</p>
                               <p className="text-xs font-bold truncate" style={{ color: winner.color }}>{winner.name}</p>
-                              <p className="text-[10px] font-semibold text-success-foreground0">{cat.format(cat.getValue(winner))}</p>
+                              <p className="text-[10px] font-semibold text-success-foreground">{cat.format(cat.getValue(winner))}</p>
                             </div>
                           );
                         })}
@@ -4881,19 +4881,19 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <SelectContent>
                         <SelectItem value="growth">
                           <div className="flex items-center gap-2">
-                            <TrendingUp className="h-3 w-3 text-info-foreground0" />
+                            <TrendingUp className="h-3 w-3 text-info-foreground" />
                             Growth Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="income">
                           <div className="flex items-center gap-2">
-                            <DollarSign className="h-3 w-3 text-success-foreground0" />
+                            <DollarSign className="h-3 w-3 text-success-foreground" />
                             Income Focused
                           </div>
                         </SelectItem>
                         <SelectItem value="balanced">
                           <div className="flex items-center gap-2">
-                            <Zap className="h-3 w-3 text-accent-foreground0" />
+                            <Zap className="h-3 w-3 text-accent-foreground" />
                             Balanced
                           </div>
                         </SelectItem>
@@ -4964,7 +4964,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                           <ul className="text-xs space-y-1">
                             {propertyRecommendation.insights.map((insight, i) => (
                               <li key={i} className="flex items-start gap-1">
-                                <span className="text-success-foreground0 mt-0.5">✓</span>
+                                <span className="text-success-foreground mt-0.5">✓</span>
                                 <span>{insight}</span>
                               </li>
                             ))}
@@ -5109,7 +5109,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                   {isGeneratingAiAnalysis && (
                     <div className="flex items-center justify-center py-8">
                       <div className="text-center">
-                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info-foreground0" />
+                        <RotateCcw className="h-8 w-8 animate-spin mx-auto mb-2 text-info-foreground" />
                         <p className="text-sm text-muted-foreground">Analyzing cash flow projections...</p>
                       </div>
                     </div>
@@ -5867,7 +5867,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground0' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPA.toLocaleString()}
                           </TableCell>
                         ))}
@@ -5876,7 +5876,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Pre-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground0' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`text-center ${p.preTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.preTaxCashFlowPW.toLocaleString()}
                           </TableCell>
                         ))}
@@ -5915,7 +5915,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="transition-colors hover:bg-primary/5">
                         <TableCell className="sticky left-0 z-10 bg-background font-medium shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">Net Profit/Loss $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center ${p.netProfitLoss < 0 ? 'text-destructive-foreground0' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`text-center ${p.netProfitLoss < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.netProfitLoss.toLocaleString()}
                           </TableCell>
                         ))}
@@ -5931,7 +5931,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="bg-primary/10">
                         <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/a $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground0' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPA < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPA.toLocaleString()}
                           </TableCell>
                         ))}
@@ -5940,7 +5940,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                       <TableRow className="bg-primary/10">
                         <TableCell className="sticky left-0 z-10 bg-primary/10 font-bold shadow-[6px_0_12px_-12px_rgba(15,23,42,0.45)]">After-Tax Cash Flow p/w $</TableCell>
                         {projections.map(p => (
-                          <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground0' : 'text-success'}`}>
+                          <TableCell key={p.year} className={`text-center font-bold ${p.afterTaxCashFlowPW < 0 ? 'text-destructive-foreground' : 'text-success'}`}>
                             {p.year === 0 ? '' : p.afterTaxCashFlowPW.toLocaleString()}
                           </TableCell>
                         ))}

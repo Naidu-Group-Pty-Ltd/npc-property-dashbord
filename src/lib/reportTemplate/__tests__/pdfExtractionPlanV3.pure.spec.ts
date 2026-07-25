@@ -17,6 +17,7 @@ import {
   PDF_CACHE_FINGERPRINT_V3_VERSION,
   SERVICE_CLASSES,
   fnv1a32,
+  sha256Hex,
   defaultServiceClassRegistry,
   defaultRoutingPolicy,
   routePages,
@@ -115,16 +116,20 @@ describe('cross-runtime identity parity (matches the Python planner_v3 producer)
   it('fnv1a32 matches the shared algorithm', () => {
     expect(fnv1a32('abc')).toBe('1a47e90b');
   });
+  it('sha256 matches the standard UTF-8 test vector', () => {
+    expect(sha256Hex('abc')).toBe('ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  });
   it('registry + policy ids are byte-identical to Python', () => {
     expect(defaultServiceClassRegistry().registry_id).toBe('svcreg-52451c5f');
     expect(defaultRoutingPolicy().policy_id).toBe('svcpol-f3fd6a52');
   });
   it('plan id/hash + cache fingerprint + audit id are byte-identical to Python', () => {
     const plan = mixedPlan();
-    expect(plan.plan_id).toBe('plan3-99e3a652');
-    expect(plan.plan_hash).toBe('99e3a652');
-    expect(plan.cache_fingerprint).toBe('pf3-f8d3a191');
-    expect(buildRoutingAudit(plan).audit_id).toBe('raud-336d5709');
+    expect(plan.plan_id).toBe('plan3-a8ce0afb');
+    expect(plan.plan_hash).toBe('a8ce0afb');
+    expect(plan.cache_fingerprint).toBe('pf3-aab8d89ced1d9f08a7250086264be2968872c18c6fdf76c0dbee39ab28aa067b');
+    expect(plan.cache_fingerprint).toMatch(/^pf3-[0-9a-f]{64}$/);
+    expect(buildRoutingAudit(plan).audit_id).toBe('raud-ee8cfe89');
   });
 });
 
@@ -138,6 +143,17 @@ describe('immutable plan: determinism, retry invariance, reroute-new-plan', () =
     expect(b.plan_hash).toBe(a.plan_hash);
     expect(b.cache_fingerprint).toBe(a.cache_fingerprint);
     expect(b.route_decisions.map((r) => r.resolved_class)).toEqual(a.route_decisions.map((r) => r.resolved_class));
+  });
+  it('does not reuse the known FNV-colliding source identities', () => {
+    const planFor = (source_sha256: string) => buildPlanV3(
+      buildPreflight({ ...MIXED_SOURCE, source_sha256 }),
+      defaultServiceClassRegistry(),
+      defaultRoutingPolicy(),
+      defaultOptions(),
+    );
+    const entry = planFor('147255048da408b63dc6fc8234108ea5021990625213c27e56d70bff706c1ec3');
+    const request = planFor('9caaeb566c2b80604cc159af7cb1ef56db95eff5926c7d6a430b404a3779fe52');
+    expect(entry.cache_fingerprint).not.toBe(request.cache_fingerprint);
   });
   it('any planner-input change yields a NEW plan id (reroute != mutation)', () => {
     const base = mixedPlan();

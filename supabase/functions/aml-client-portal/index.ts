@@ -211,8 +211,19 @@ Deno.serve(async (req) => {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
         if (!body.storage_path || !body.filename) return jsonResponse({ error: 'storage_path + filename required' }, 400);
-        // Sanity: file must actually exist in the bucket under the case prefix.
-        if (!String(body.storage_path).startsWith(`${c.id}/`)) return jsonResponse({ error: 'Invalid path' }, 400);
+        const storagePath = String(body.storage_path);
+        const pathParts = storagePath.split('/');
+        if (pathParts.length !== 2 || pathParts[0] !== c.id || !pathParts[1]) {
+          return jsonResponse({ error: 'Invalid path' }, 400);
+        }
+        const objectName = pathParts[1];
+        const { data: storedObjects, error: storageError } = await admin.storage
+          .from('aml-documents')
+          .list(c.id, { search: objectName, limit: 100 });
+        if (storageError) throw storageError;
+        if (!(storedObjects ?? []).some((object) => object.name === objectName && object.id)) {
+          return jsonResponse({ error: 'Uploaded file not found' }, 400);
+        }
         let reqId: string | null = body.requirement_id ?? null;
         if (reqId) {
           const { data: rr } = await admin.schema('aml').from('document_requirements')
@@ -222,7 +233,7 @@ Deno.serve(async (req) => {
         const { data: doc, error } = await admin.schema('aml').from('documents').insert({
           case_id: c.id, requirement_id: reqId,
           filename: sanitiseFilename(body.filename),
-          storage_path: body.storage_path,
+          storage_path: storagePath,
           mime_type: body.mime_type ?? null, size_bytes: body.size_bytes ?? null,
           checksum: body.checksum ?? null,
           uploaded_by_type: 'client', uploaded_by: portalUserId,

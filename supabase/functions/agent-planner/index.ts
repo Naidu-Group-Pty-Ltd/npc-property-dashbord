@@ -4,6 +4,7 @@
 // delete-plan.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth } from '../_shared/auth.ts';
+import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -105,7 +106,7 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch {}
   const action = body?.action ?? 'list-plans';
 
-  // Public cron path — no user auth required. Runs due scheduled plans.
+  // Cron path authenticates with the configured secret instead of user credentials.
   if (action === 'run-scheduled') {
     const secret = req.headers.get('x-cron-secret');
     if (!CRON_SECRET || secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);

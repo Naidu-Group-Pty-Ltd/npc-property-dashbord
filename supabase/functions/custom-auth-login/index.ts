@@ -5,9 +5,6 @@ import { generateSupabaseJWT } from "../_shared/jwt.ts"
 import { hashSessionToken, isSessionHashConfigured, computeIdleExpiry } from "../_shared/sessionHash.ts"
 
 
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_MINUTES = 15;
-
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -89,28 +86,11 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Lockout check (ABUSE-001 / F-05: parity with the finance portal)
-    if (user.locked_until && new Date(user.locked_until) > new Date()) {
-      return new Response(
-        JSON.stringify({ error: 'Too many failed attempts. Please try again later.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
     // Validate password using bcrypt (with legacy plaintext fallback)
     const isValid = await verifyPassword(password, user.password_hash);
     
     if (!isValid) {
       console.log(`Login failed for user ${username}: incorrect password`);
-      const newAttempts = (user.failed_login_attempts || 0) + 1;
-      const updates: Record<string, unknown> = { failed_login_attempts: newAttempts };
-      if (newAttempts >= MAX_FAILED_ATTEMPTS) {
-        const lockUntil = new Date();
-        lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
-        updates.locked_until = lockUntil.toISOString();
-        updates.failed_login_attempts = 0;
-      }
-      await supabase.from('custom_users').update(updates).eq('id', user.id);
       return new Response(
         JSON.stringify({ error: 'Invalid username or password' }), 
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
