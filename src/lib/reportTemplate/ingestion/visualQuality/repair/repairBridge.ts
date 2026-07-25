@@ -94,7 +94,7 @@ function finiteRect(rect: CdirRect | undefined | null): CdirRect | null {
 function layerText(layer: CdirLayer): string {
   if (layer.kind === 'text') {
     const runText = (layer.runs ?? []).map((run) => run.text).filter(Boolean).join(' ');
-    return [layer.text, runText].filter(Boolean).join(' ').trim();
+    return (runText || layer.text || '').trim();
   }
 
   if (layer.kind === 'table') {
