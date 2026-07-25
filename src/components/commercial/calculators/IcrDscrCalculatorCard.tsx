@@ -235,10 +235,10 @@ export function IcrDscrCalculatorCard() {
   const activeCoverage = coverage ?? preliminaryCoverage;
   const icrStatus = coverage && parsedInputs.targetIcr != null ? coverage.icr >= parsedInputs.targetIcr ? 'pass' : 'fail' : 'pending';
   const dscrStatus = coverage && parsedInputs.targetDscr != null ? coverage.dscr >= parsedInputs.targetDscr ? 'pass' : 'fail' : 'pending';
-  const supportableCaps = coverage ? [coverage.maxLoanByIcr, coverage.maxLoanByDscr, coverage.maxLoanByDebtYield].filter(value => Number.isFinite(value)) : [];
+  const supportableCandidates = coverage ? [{ label: 'ICR', value: coverage.maxLoanByIcr }, { label: 'DSCR', value: coverage.maxLoanByDscr }, { label: 'Debt Yield', value: coverage.maxLoanByDebtYield }].filter(candidate => Number.isFinite(candidate.value)) : [];
+  const supportableCaps = supportableCandidates.map(candidate => candidate.value);
   const lowestSupportableLoan = supportableCaps.length ? Math.min(...supportableCaps) : null;
-  const bindingCandidates = coverage ? [{ label: 'ICR', value: coverage.maxLoanByIcr }, { label: 'DSCR', value: coverage.maxLoanByDscr }, { label: 'Debt Yield', value: coverage.maxLoanByDebtYield }].filter(candidate => Number.isFinite(candidate.value)) : [];
-  const bindingConstraint = bindingCandidates.length ? bindingCandidates.reduce((lowest, candidate) => candidate.value < lowest.value ? candidate : lowest).label : PENDING;
+  const bindingConstraint = supportableCandidates.length ? supportableCandidates.reduce((lowest, candidate) => candidate.value < lowest.value ? candidate : lowest).label : PENDING;
   const debtYieldPass = coverage && parsedInputs.minDebtYieldPct != null ? coverage.debtYield >= parsedInputs.minDebtYieldPct / 100 : false;
   const lowHeadroom = Boolean(coverage && coverage.icrHeadroom >= 0 && coverage.dscrHeadroom >= 0 && (coverage.icrHeadroom < 0.15 || coverage.dscrHeadroom < 0.1 || coverage.debtYieldHeadroom < 0.005));
   const hasUserOverrides = Object.values(fields).some(field => field.source === 'User Override');
