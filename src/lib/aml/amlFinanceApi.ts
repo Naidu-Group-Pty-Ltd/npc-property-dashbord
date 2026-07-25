@@ -61,9 +61,14 @@ export interface AmlEvidenceReference {
   created_at: string;
 }
 
+/**
+ * Phase 1 finance-safe contract (directive Appendix C.2). The server no
+ * longer returns raw case status or risk_rating on this op — only the
+ * finance-portal dimension and gate-derived readiness.
+ */
 export interface AmlLimitedStatus {
-  status: string;
-  risk_rating: string | null;
+  finance_status: string;
+  service_readiness: "service_ready" | "service_not_ready";
   updated_at: string | null;
   open_finance_discrepancies?: number;
 }

@@ -29,6 +29,20 @@ export interface AmlCase {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // Phase 1 canonical workflow dimensions (nullable until the
+  // workflow-dimension migration has been applied and rows backfilled).
+  // Derive effective values via src/lib/aml/caseDimensions.ts helpers.
+  case_stage?: string | null;
+  client_portal_status?: string | null;
+  finance_portal_status?: string | null;
+  service_gate_status?: string | null;
+  service_gate_effective_at?: string | null;
+  service_gate_policy_version?: string | null;
+  activation_timing?: string | null;
+  agreement_state?: string | null;
+  activation_policy_version?: string | null;
+  legacy_activation_model?: "A" | "B" | null;
+  migration_classification?: string | null;
 }
 
 export interface AmlCaseEvent {

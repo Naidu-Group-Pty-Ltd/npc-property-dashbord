@@ -32,7 +32,10 @@ export type AmlSection = 'purchasing_structure' | 'personal_details' | 'purchase
 export interface AmlPortalOverview {
   case: {
     id: string; reference: string; subject: string;
-    opened_at: string; status: string; status_label: string;
+    opened_at: string;
+    /** Portal-safe status token (Phase 1 contract) — never the internal case state. */
+    status: string; portal_status?: string;
+    status_label: string;
     status_tone: 'neutral'|'progress'|'positive'|'caution';
   } | null;
   message?: string;

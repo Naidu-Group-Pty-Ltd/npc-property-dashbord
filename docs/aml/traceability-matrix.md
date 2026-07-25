@@ -18,5 +18,6 @@ Maps requirements → build artifacts → tests. Kept in sync with `acceptance-s
 | Step-up + AI guardrail | 13 | `aml.step_up_challenges`, `aml.step_up_sessions`, `aml.ai_action_approvals`, `aml.release_gates`, `aml.resilience_drills` | `aml-step-up`, `aml-ai-guardrail`, `aml-release-gate`, `aml-resilience` | Governance | AS-11 |
 | Rollout + acceptance + risk | 14 | `aml.rollout_stage_history`, `aml.acceptance_scenarios`, `aml.risk_register` | `aml-launch-ops` | Launch Ops | AS-12 |
 | Non-AML regression | X | n/a | n/a | Command Centre / Client Portal / Finance Portal | AS-13 |
+| Canonical workflow dimensions + activation contract + provenance (V2 directive Phase 1) | V2-1 | `aml.cases` (dimension/activation columns), `aml.workflow_dimension_migrations`, `aml.field_provenance` | `aml-cases`, `aml-finance` (`limited_status` finance-safe), `aml-client-portal` (portal-safe status) | Finance portal `LimitedAmlStatusCard`; contracts in `src/lib/aml/caseDimensions.ts` | `caseDimensions.test.ts`; docs/aml/canonical-contracts.md §7 |
 
 Update this table whenever an AML surface adds or removes a table, edge function, or scenario.

@@ -30,17 +30,46 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const CLIENT_SAFE_STATUSES: Record<string, { label: string; tone: 'neutral'|'progress'|'positive'|'caution' }> = {
-  draft:              { label: 'Not started',               tone: 'neutral'  },
-  kyc_in_progress:    { label: 'In progress',               tone: 'progress' },
-  kyc_complete:       { label: 'Received — under review',   tone: 'progress' },
-  edd_required:       { label: 'Additional information required', tone: 'caution' },
-  under_review:       { label: 'Under review',              tone: 'progress' },
-  escalated_mlro:     { label: 'Under review',              tone: 'progress' },
-  cleared:            { label: 'Cleared',                   tone: 'positive' },
-  blocked:            { label: 'On hold — please contact us', tone: 'caution' },
-  closed:             { label: 'Closed',                    tone: 'neutral'  },
+// Phase 1 portal-safe contract (directive Appendix C.1). Internal case state
+// never reaches the wire: the case is presented through the client-portal
+// dimension only. Legacy statuses map onto that dimension for rows created
+// before the workflow-dimension migration (mirror of
+// src/lib/aml/caseDimensions.ts — keep in sync).
+const PORTAL_STATUSES = [
+  'not_started', 'action_required', 'in_progress', 'submitted', 'under_review',
+  'additional_info_required', 'complete', 'contact_adviser',
+] as const;
+
+const LEGACY_TO_PORTAL_STATUS: Record<string, string> = {
+  draft: 'not_started',
+  kyc_in_progress: 'in_progress',
+  kyc_complete: 'submitted',
+  edd_required: 'additional_info_required',
+  under_review: 'under_review',
+  escalated_mlro: 'under_review',
+  cleared: 'complete',
+  blocked: 'contact_adviser',
+  closed: 'complete',
 };
+
+const PORTAL_STATUS_PRESENTATION: Record<string, { label: string; tone: 'neutral'|'progress'|'positive'|'caution' }> = {
+  not_started:              { label: 'Not started',                     tone: 'neutral'  },
+  action_required:          { label: 'Action required',                 tone: 'caution'  },
+  in_progress:              { label: 'In progress',                     tone: 'progress' },
+  submitted:                { label: 'Received — under review',         tone: 'progress' },
+  under_review:             { label: 'Under review',                    tone: 'progress' },
+  additional_info_required: { label: 'Additional information required', tone: 'caution'  },
+  complete:                 { label: 'Complete',                        tone: 'positive' },
+  contact_adviser:          { label: 'Please contact your adviser',     tone: 'caution'  },
+};
+
+function portalStatusFor(caseRow: any): string {
+  const explicit = caseRow?.client_portal_status;
+  if (typeof explicit === 'string' && (PORTAL_STATUSES as readonly string[]).includes(explicit)) {
+    return explicit;
+  }
+  return LEGACY_TO_PORTAL_STATUS[caseRow?.status] ?? 'in_progress';
+}
 
 const SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
@@ -110,18 +139,22 @@ Deno.serve(async (req) => {
             .select('*').eq('case_id', c.id).in('status', ['open','responded'])
             .order('created_at', { ascending: false }),
           admin.schema('aml').from('submission_versions')
-            .select('version_number,status,submitted_at,reviewer_notes,reviewed_at')
+            .select('version_number,status,submitted_at,reviewed_at')
             .eq('case_id', c.id).order('version_number', { ascending: false }).limit(3),
         ]);
         const reqs = requirements ?? [];
         const totalReq = reqs.filter((r: any) => r.required).length;
         const completedReq = reqs.filter((r: any) => r.required && ['uploaded','accepted'].includes(r.status)).length;
         const sectionMap = new Map((sections ?? []).map((s: any) => [s.section, s]));
-        const status = CLIENT_SAFE_STATUSES[c.status] ?? { label: 'In progress', tone: 'progress' as const };
+        const portalStatus = portalStatusFor(c);
+        const presentation = PORTAL_STATUS_PRESENTATION[portalStatus] ?? { label: 'In progress', tone: 'progress' as const };
         return jsonResponse({
           case: {
             id: c.id, reference: c.case_reference, subject: c.subject_display_name,
-            opened_at: c.opened_at, status: c.status, status_label: status.label, status_tone: status.tone,
+            opened_at: c.opened_at,
+            // Portal-safe dimension token — internal case state is not shipped.
+            status: portalStatus, portal_status: portalStatus,
+            status_label: presentation.label, status_tone: presentation.tone,
           },
           sections: SECTIONS.map((s) => ({
             section: s, status: sectionMap.get(s)?.status ?? 'not_started',

@@ -201,8 +201,11 @@ Deno.serve(async (req) => {
     const userLabel = auth.username ?? null;
     const op = opPre;
 
-    // Limited status endpoint — AML role required because status/risk are AML case data.
-    // Returns just enough for the Finance Portal to show a status pill.
+    // Limited status endpoint — AML role required because case state is AML data.
+    // Phase 1 finance-safe contract (directive Appendix C.2): returns only the
+    // finance-portal dimension and gate-derived readiness. Raw risk_rating,
+    // screening and internal case state are excluded from the server response —
+    // removed at the contract, not hidden in the UI.
     if (op === "limited_status") {
       const { data: hasAmlRole } = await admin.rpc("has_any_aml_role", { _user_id: userId });
       if (!hasAmlRole) return jr({ error: "AML role required" }, 403);
@@ -211,23 +214,45 @@ Deno.serve(async (req) => {
       const clientId = body.client_id ? String(body.client_id) : null;
       if (!pfId && !clientId) return jr({ error: "purchase_file_id or client_id required" }, 400);
 
-      let q = aml.from("cases").select("id, status, risk_rating, updated_at, purchase_file_id, client_id");
+      // select('*') tolerates environments where the Phase 1 dimension
+      // migration has not been applied yet; fallbacks below cover both shapes.
+      let q = aml.from("cases").select("*");
       if (pfId) q = q.eq("purchase_file_id", pfId);
       else if (clientId) q = q.eq("client_id", clientId);
       const { data: rows } = await q.order("updated_at", { ascending: false }).limit(1);
       const c = (rows ?? [])[0] ?? null;
-      if (!c) return jr({ status: "not_started", risk_rating: null, updated_at: null });
+      if (!c) {
+        return jr({
+          finance_status: "not_requested",
+          service_readiness: "service_not_ready",
+          open_finance_discrepancies: 0,
+          updated_at: null,
+        });
+      }
 
       // Count open discrepancies without leaking detail.
       const { count } = await aml.from("finance_discrepancies")
         .select("id", { count: "exact", head: true })
         .eq("case_id", c.id).in("status", ["open", "under_review", "escalated"]);
 
+      const FINANCE_STATUSES = [
+        "not_requested", "information_required", "submitted", "clarification_required",
+        "under_review", "accepted", "no_further_action",
+      ];
+      const GATE_READY = new Set(["approved", "approved_with_controls"]);
+      // Legacy fallback: only a cleared case reads as an approved gate.
+      const gate = typeof c.service_gate_status === "string" && c.service_gate_status
+        ? c.service_gate_status
+        : (c.status === "cleared" ? "approved" : "not_activated");
+      const financeStatus = FINANCE_STATUSES.includes(c.finance_portal_status)
+        ? c.finance_portal_status
+        : "not_requested";
+
       return jr({
-        status: c.status,
-        risk_rating: c.risk_rating,
-        updated_at: c.updated_at,
+        finance_status: financeStatus,
+        service_readiness: GATE_READY.has(gate) ? "service_ready" : "service_not_ready",
         open_finance_discrepancies: count ?? 0,
+        updated_at: c.updated_at ?? null,
       });
     }
 

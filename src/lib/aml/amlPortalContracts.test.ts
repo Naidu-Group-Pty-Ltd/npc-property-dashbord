@@ -1,0 +1,140 @@
+/**
+ * Phase 1 portal-safe contract tests. These read the edge-function and
+ * migration sources and assert the tri-portal disclosure contracts hold at
+ * the server boundary (directive Appendix B/C) — they fail if restricted
+ * fields creep back into portal payloads or activation loses its guardrails.
+ */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+// Vitest runs from the repo root; jsdom rewrites import.meta.url to an http
+// scheme, so resolve the sources from the working directory instead.
+const repo = process.cwd();
+const financeSource = readFileSync(join(repo, "supabase/functions/aml-finance/index.ts"), "utf8");
+const portalSource = readFileSync(join(repo, "supabase/functions/aml-client-portal/index.ts"), "utf8");
+const casesSource = readFileSync(join(repo, "supabase/functions/aml-cases/index.ts"), "utf8");
+const migrationSource = readFileSync(
+  join(repo, "supabase/migrations/20260725153000_aml_case_workflow_dimensions.sql"), "utf8");
+
+describe("finance-safe limited_status contract (Phase 1)", () => {
+  const limitedStatusBranch = financeSource.match(
+    /if \(op === "limited_status"\) \{([\s\S]*?)\n    \}/,
+  )?.[1];
+
+  it("has a limited_status branch", () => {
+    expect(limitedStatusBranch).toBeDefined();
+  });
+
+  it("returns only finance-safe fields", () => {
+    expect(limitedStatusBranch).toContain("finance_status:");
+    expect(limitedStatusBranch).toContain("service_readiness:");
+    expect(limitedStatusBranch).toContain("open_finance_discrepancies:");
+  });
+
+  it("never returns raw risk or internal case state", () => {
+    expect(limitedStatusBranch).not.toContain("risk_rating:");
+    expect(limitedStatusBranch).not.toContain("risk_score");
+    expect(limitedStatusBranch).not.toMatch(/status:\s*c\.status/);
+  });
+
+  it("derives readiness only from an explicit approved gate", () => {
+    expect(limitedStatusBranch).toContain('"approved"');
+    expect(limitedStatusBranch).toContain('"approved_with_controls"');
+  });
+
+  it("keeps case handoff ops blocked pre-auth", () => {
+    expect(financeSource).toContain(
+      'if (opPre === "create_case_handoff" || opPre === "redeem_case_handoff")',
+    );
+    expect(financeSource).toContain(
+      "AML case snapshots are not available in the finance portal",
+    );
+  });
+});
+
+describe("client-portal safe payload contract (Phase 1)", () => {
+  it("ships the portal-safe status token, not the internal case enum", () => {
+    expect(portalSource).toContain("portalStatusFor(");
+    expect(portalSource).not.toMatch(/status:\s*c\.status/);
+  });
+
+  it("collapses internal escalation states behind safe labels", () => {
+    expect(portalSource).toContain("escalated_mlro: 'under_review'");
+    expect(portalSource).toContain("blocked: 'contact_adviser'");
+  });
+
+  it("does not return staff-authored reviewer notes to the client", () => {
+    expect(portalSource).not.toContain("reviewer_notes");
+  });
+
+  it("never selects risk or screening fields for the portal payload", () => {
+    const codeOnly = portalSource
+      .split("\n")
+      .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+      .join("\n");
+    expect(codeOnly).not.toMatch(/risk_rating|risk_score|screening|pep|sanction/i);
+  });
+
+  it("still scopes every case lookup to the authenticated portal client", () => {
+    expect(portalSource).toContain(".eq('client_id', clientId)");
+  });
+});
+
+describe("activation contract (Phase 1, directive §17)", () => {
+  const activateBranch = casesSource.match(
+    /case 'activate_client': \{([\s\S]*?)\n      \}/,
+  )?.[1];
+
+  it("still requires human confirmation, an active client and a reason", () => {
+    expect(activateBranch).toContain("Human confirmation is required");
+    expect(activateBranch).toContain("Client is not active");
+    expect(activateBranch).toContain("reason must be at least 10 characters");
+  });
+
+  it("writes explicit activation fields and preserves the legacy model label", () => {
+    expect(activateBranch).toContain("activation_timing:");
+    expect(activateBranch).toContain("agreement_state:");
+    expect(activateBranch).toContain("legacy_activation_model: model");
+    expect(activateBranch).toContain("'post_agreement_trigger'");
+    expect(activateBranch).toContain("'conditional_agreement'");
+  });
+
+  it("starts the service gate at cdd_incomplete, never approved", () => {
+    expect(activateBranch).toContain("service_gate_status: 'cdd_incomplete'");
+    expect(activateBranch).not.toContain("service_gate_status: 'approved'");
+  });
+
+  it("keeps the Model B legal-approval guardrail and surfaces settings read errors", () => {
+    expect(activateBranch).toContain("model_b_not_approved");
+    expect(activateBranch).toContain("if (settingsErr) throw settingsErr;");
+  });
+
+  it("maps unique-index duplicate violations to the 409 contract", () => {
+    expect(activateBranch).toContain("'23505'");
+    expect(activateBranch).toContain("An open AML case already exists for this client");
+  });
+});
+
+describe("workflow-dimension migration invariants", () => {
+  it("enforces one open case per client with a partial unique index", () => {
+    expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");
+    expect(migrationSource).toMatch(/WHERE client_id IS NOT NULL\s*\n\s*AND status NOT IN/);
+  });
+
+  it("records backfill provenance outside the hash chain", () => {
+    expect(migrationSource).toContain("aml.workflow_dimension_migrations");
+    expect(migrationSource).not.toContain("INSERT INTO aml.case_events");
+  });
+
+  it("marks unclassifiable activations for human review instead of guessing", () => {
+    expect(migrationSource).toContain("'ambiguous_pending_review'");
+    expect(migrationSource).toContain("'legacy_unclassified'");
+  });
+
+  it("provenance table is deny-by-default with service-role-only access", () => {
+    expect(migrationSource).toContain("ALTER TABLE aml.field_provenance ENABLE ROW LEVEL SECURITY;");
+    expect(migrationSource).toContain("GRANT ALL ON aml.field_provenance TO service_role;");
+    expect(migrationSource).not.toMatch(/GRANT .* ON aml\.field_provenance TO authenticated/);
+  });
+});
