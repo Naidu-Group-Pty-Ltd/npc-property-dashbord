@@ -1250,7 +1250,8 @@ export function GstCalculatorCard() {
         patch.purchase_price = purchasePriceValue;
       const savedTreatment = persistedTreatment(treatment);
       if (savedTreatment) patch.gst_treatment = savedTreatment;
-      await pushBack(patch);
+      const result = await pushBack(patch);
+      if (!result.ok) return;
       updateGlobal("gstInputs", {
         purchasePrice: purchasePriceValue ?? undefined,
         treatment:
