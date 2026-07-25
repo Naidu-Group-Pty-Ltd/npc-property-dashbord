@@ -61,7 +61,7 @@ export default function Checklists() {
     () => visibleInstances.map(instance => instance.id).filter(id => selectedChecklistIds.has(id)),
     [visibleInstances, selectedChecklistIds],
   );
-  const hasSelectableVisibleItems = visibleInstances.length > 0 && activeTab !== 'templates';
+  const hasSelectableVisibleItems = (canEdit || canDelete) && visibleInstances.length > 0 && activeTab !== 'templates';
   const allVisibleSelected = hasSelectableVisibleItems && selectedVisibleIds.length === visibleInstances.length;
   const someVisibleSelected = selectedVisibleIds.length > 0 && !allVisibleSelected;
 
@@ -91,6 +91,7 @@ export default function Checklists() {
   };
 
   const completeChecklists = async (ids: string[], message: string) => {
+    if (!canEdit) return;
     try {
       await mutations.bulkUpdateInstances.mutateAsync({ ids, data: { status: 'completed', completed_at: new Date().toISOString(), updated_at: new Date().toISOString() } });
       setSelectedChecklistIds(new Set());
@@ -102,6 +103,7 @@ export default function Checklists() {
   };
 
   const deleteSelectedChecklists = async () => {
+    if (!canDelete) return;
     const count = selectedVisibleIds.length;
     try {
       await mutations.bulkDeleteInstances.mutateAsync(selectedVisibleIds);
@@ -151,7 +153,7 @@ export default function Checklists() {
           </div>
         </DashboardThemeFrame>
         <div className="min-h-0 flex-1 overflow-y-auto pr-1 overscroll-contain [scrollbar-color:hsl(var(--primary)/0.35)_hsl(var(--muted)/0.72)]">
-          <ChecklistInstanceView instance={selectedInstance} onBack={() => setSelectedInstance(null)} />
+          <ChecklistInstanceView instance={selectedInstance} onBack={() => setSelectedInstance(null)} canEdit={canEdit} canDelete={canDelete} />
         </div>
       </DashboardThemeFrame>
     );
@@ -247,12 +249,12 @@ export default function Checklists() {
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-start gap-3.5">
               <div className="flex shrink-0 items-center gap-2" onClick={e => e.stopPropagation()}>
-                <Checkbox
+                {(canEdit || canDelete) && <Checkbox
                   checked={isSelected}
                   onCheckedChange={() => toggleChecklistSelection(instance.id)}
                   aria-label={`Select ${actionLabel}`}
                   className="mt-2 border-brand-300/45 bg-black/40 data-[state=checked]:border-cyan-300 data-[state=checked]:bg-cyan-400 data-[state=checked]:text-black"
-                />
+                />}
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-brand-300/20 bg-background/35 dark:bg-black/35 text-xl shadow-inner shadow-brand-950/20">{instance.icon}</span>
               </div>
               <div className="min-w-0">
@@ -268,7 +270,7 @@ export default function Checklists() {
                 {instance.status === 'completed' && <CheckCircle2 className="mr-1 h-3 w-3" />}
                 {instance.status}
               </Badge>
-              {instance.status === 'in_progress' && (
+              {canEdit && instance.status === 'in_progress' && (
                 <Button size="icon" variant="ghost" className="h-8 w-8 rounded-full border border-success/20 bg-success/5 text-success hover:bg-success/10 focus-visible:ring-2 focus-visible:ring-success/45" aria-label={`Mark ${actionLabel} as completed`} disabled={mutations.bulkUpdateInstances.isPending} onClick={() => completeChecklists([instance.id], 'Checklist marked as completed.')}>
                   <Check className="h-3.5 w-3.5" />
                 </Button>
@@ -311,12 +313,12 @@ export default function Checklists() {
         </div>
         {selectedCount > 0 && (
           <div className="flex flex-wrap items-center gap-2">
-            {activeTab === 'active' && (
+            {canEdit && activeTab === 'active' && (
               <Button size="sm" className="gap-1 bg-success text-success-foreground hover:bg-success/90" disabled={mutations.bulkUpdateInstances.isPending} onClick={() => completeChecklists(selectedVisibleIds, `${selectedCount} ${selectedCount === 1 ? 'checklist' : 'checklists'} marked as completed.`)}>
                 <Check className="h-3.5 w-3.5" /> Complete selected
               </Button>
             )}
-            <AlertDialog>
+            {canDelete && <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button size="sm" variant="outline" className="gap-1 border-destructive/35 bg-destructive/5 text-destructive hover:bg-destructive/10" disabled={mutations.bulkDeleteInstances.isPending}>
                   <Trash2 className="h-3.5 w-3.5" /> Delete selected
@@ -334,7 +336,7 @@ export default function Checklists() {
                   <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={deleteSelectedChecklists}>Delete selected</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
-            </AlertDialog>
+            </AlertDialog>}
             <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground hover:bg-white/5 hover:text-foreground" onClick={() => setSelectedChecklistIds(new Set())}>
               <X className="h-3.5 w-3.5" /> Clear
             </Button>
