@@ -383,7 +383,7 @@ Deno.serve(async (req) => {
         cloudRunMs += Number(r.cloud_run_ms) || 0;
         bytesIn += Number(r.bytes_in) || 0;
         bytesOut += Number(r.bytes_out) || 0;
-        const s = r.result_payload?.summary;
+        const s = r.summary;
         if (s && typeof s === 'object') {
           summary.text_chars += Number(s.text_chars) || 0;
           summary.table_count += Number(s.table_count) || 0;
