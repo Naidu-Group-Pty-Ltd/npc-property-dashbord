@@ -23,6 +23,7 @@ import {
   type AmlProviderCapability, type AmlProviderHealth, type AmlEntitlementOverride,
 } from "@/lib/aml/amlTenantApi";
 import { refreshAmlTerminology } from "@/lib/aml/useAmlTerminology";
+import { parseTerminologyOverrides } from "@/lib/aml/parseTerminologyOverrides";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 
@@ -330,10 +331,7 @@ const PREVIEW_SAMPLES = [
 ];
 
 function TerminologyPreview({ jsonText, lockedKeys }: { jsonText: string; lockedKeys: string[] }) {
-  const parsed = useMemo(() => {
-    try { return jsonText.trim() ? JSON.parse(jsonText) as Record<string, string> : {}; }
-    catch { return null; }
-  }, [jsonText]);
+  const parsed = useMemo(() => parseTerminologyOverrides(jsonText), [jsonText]);
   const lockedSet = useMemo(() => new Set(lockedKeys), [lockedKeys]);
   if (parsed === null) {
     return (
