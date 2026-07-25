@@ -219,6 +219,7 @@ export function ClientConversationsTab({ clientId, clientName, clientEmail, ghlC
           subject: subject || `Message from ${brandSettings.companyName || 'Dashboard'}`,
           body: message,
           mailboxSource: selectedMailbox,
+          senderMailboxId: selectedMailbox === 'personal' ? user?.id : undefined,
           ghlConversationId: selectedConversation?.id || undefined,
         });
         if (error) throw new Error(error.message);

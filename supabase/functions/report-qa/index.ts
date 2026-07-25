@@ -1149,61 +1149,56 @@ Deno.serve(async (req) => {
     // audit outcome without ever logging the raw token.
     if (body?.action === "get-shared-answer-public") {
       const shareToken = body?.shareToken;
-      if (!shareToken || typeof shareToken !== 'string' || shareToken.length < 16) {
+      if (typeof shareToken !== 'string' || shareToken.length < 16 || shareToken.length > 128) {
         return new Response(JSON.stringify({ error: "shareToken required" }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       const sbPub = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
-      const ipHeader = req.headers.get('cf-connecting-ip')
-        || req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-        || req.headers.get('x-real-ip')
-        || 'unknown';
+      // Use only platform-provided, single-address headers. The quota key must
+      // not contain any token material an unauthenticated caller can vary.
+      const requesterIp = getTrustedClientIp(req.headers) ?? 'unknown';
       const ua = (req.headers.get('user-agent') || '').slice(0, 240);
       const prefix = shareToken.slice(0, 8);
 
-      // Rate limit: 60 lookups per IP+prefix per hour. Block once the prior
-      // window count has reached the limit (>=), not only after it is exceeded
-      // (SEC-MED off-by-one — `>60` let a 61st request through).
-      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-      const { count: recent } = await sbPub
-        .from('report_qa_share_access_log')
-        .select('*', { count: 'exact', head: true })
-        .eq('share_token_prefix', prefix)
-        .eq('requester_ip', ipHeader)
-        .gte('created_at', oneHourAgo);
-      if ((recent ?? 0) >= 60) {
-        await sbPub.from('report_qa_share_access_log').insert({
-          share_token_prefix: prefix, outcome: 'rate_limited', requester_ip: ipHeader, requester_ua: ua,
-        });
-        return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      // Atomic public quotas run before the lookup. The global ceiling limits
+      // aggregate abuse, while the trusted client identity prevents attackers
+      // bypassing the per-client limit by rotating token prefixes.
+      try {
+        const globalQuota = await consumeRateLimit(sbPub, 'report-qa:public-share:global', 10_000, 60 * 60);
+        const clientQuota = await consumeRateLimit(sbPub, `report-qa:public-share:client:${requesterIp}`, 60, 60 * 60);
+        if (!globalQuota.allowed || !clientQuota.allowed) {
+          return new Response(JSON.stringify({ error: "Rate limit exceeded" }), {
+            status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      } catch (error) {
+        console.error('[report-qa] public share rate limit unavailable:', error);
+        return new Response(JSON.stringify({ error: "Service unavailable" }), {
+          status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
       const { data, error } = await sbPub.rpc("get_shared_qa_answer", { _share_token: shareToken });
       if (error) {
         console.error('[report-qa] get-shared-answer-public error:', error);
-        await sbPub.from('report_qa_share_access_log').insert({
-          share_token_prefix: prefix, outcome: 'not_found', requester_ip: ipHeader, requester_ua: ua,
-        });
+        // Do not persist unauthenticated misses/errors: random tokens must not
+        // amplify into an unbounded access-log table.
         return new Response(JSON.stringify({ error: "Lookup failed" }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       const row = Array.isArray(data) ? data[0] : data;
       if (!row) {
-        await sbPub.from('report_qa_share_access_log').insert({
-          share_token_prefix: prefix, outcome: 'not_found', requester_ip: ipHeader, requester_ua: ua,
-        });
+        // Successful accesses remain auditable; attacker-controlled misses do not.
         return new Response(JSON.stringify({ error: "Not found or revoked" }), {
           status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       await sbPub.from('report_qa_share_access_log').insert({
         share_token_prefix: prefix, message_id: row.message_id, outcome: 'ok',
-        requester_ip: ipHeader, requester_ua: ua,
+        requester_ip: requesterIp, requester_ua: ua,
       });
       return new Response(JSON.stringify({ answer: row }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -2994,6 +2989,20 @@ Be thorough and include ALL specific numbers, percentages, and data points menti
       if (clientId !== undefined) {
         if (!isAdminOfConv) return denyResponse('Only the owner can re-link the client');
         updateData.client_id = clientId || null;
+      }
+
+      const reportSetChanged = reportNames !== undefined || reportContents !== undefined;
+      if (reportSetChanged) {
+        // Chunks and the structural summary are derived from the complete report
+        // set. Remove the chunks before publishing the new set, then clear the
+        // summary in the same update so removed report data cannot remain in RAG.
+        const { error: chunkDeleteError } = await supabase
+          .from("document_chunks")
+          .delete()
+          .eq("conversation_id", conversationId);
+
+        if (chunkDeleteError) throw chunkDeleteError;
+        updateData.structured_report = null;
       }
 
       updateData.updated_at = new Date().toISOString();

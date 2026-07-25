@@ -143,7 +143,6 @@ with metrics as (
           from public.pdf_import_golden_runs
           where quality_gate_status in ('fail', 'blocked')
              or operator_decision in ('rejected', 'needs_rerun')
-             or baseline_comparison->>'outcome' = 'degraded'
         )
         or exists (
           select 1
@@ -281,7 +280,6 @@ with metrics as (
           from public.pdf_import_golden_runs
           where quality_gate_status in ('fail', 'blocked')
              or operator_decision in ('rejected', 'needs_rerun')
-             or baseline_comparison->>'outcome' = 'degraded'
         )
         or exists (
           select 1

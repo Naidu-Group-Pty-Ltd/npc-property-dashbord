@@ -8,6 +8,33 @@
 --
 -- This SQL is read-only. It does not mutate data, create objects, or run DDL.
 
+-- Stop the script with the documented rollout-blocked status before PostgreSQL
+-- plans any later relation-dependent statement when Phase 9 is not deployed.
+do $preflight$
+declare
+  missing_objects text[];
+begin
+  select array_agg(object_name order by object_name)
+  into missing_objects
+  from (
+    values
+      ('public.template_imports', to_regclass('public.template_imports')),
+      ('public.report_templates', to_regclass('public.report_templates')),
+      ('public.pdf_import_jobs', to_regclass('public.pdf_import_jobs')),
+      ('public.pdf_import_golden_runs', to_regclass('public.pdf_import_golden_runs'))
+  ) as required_objects(object_name, object_oid)
+  where object_oid is null;
+
+  if missing_objects is not null then
+    raise exception using
+      errcode = 'P0001',
+      message = 'production_blocked_missing_database_objects',
+      detail = 'Missing required objects: ' || array_to_string(missing_objects, ', '),
+      hint = 'Deploy the required Phase 9 database objects before running the rollout snapshot.';
+  end if;
+end
+$preflight$;
+
 -- ---------------------------------------------------------------------------
 -- 1. Latest imports with Phase 9 metadata
 -- ---------------------------------------------------------------------------

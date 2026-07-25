@@ -395,8 +395,10 @@ export async function runImportQualityGate(
     if (pageCount === 0) {
       return finalizeWithContainment(options, skippedResult(options, 'no_cdir_pages'), allPagesUnscored(options.template, false));
     }
-    // C4: no page-count skip. Large documents are scored in bounded sequential
-    // batches so every page receives a verdict or is explicitly listed unscored.
+    const maxPages = options.maxPages ?? DEFAULT_QUALITY_GATE_MAX_PAGES;
+    if (pageCount > maxPages) {
+      return finalizeWithContainment(options, skippedResult(options, 'page_count_exceeds_gate_limit'), allPagesUnscored(options.template, false));
+    }
     if (typeof document === 'undefined' && !options.runOrchestrationImpl) {
       // Real capture needs a browser; without an injected impl there is nothing to run.
       return finalizeWithContainment(options, skippedResult(options, 'no_browser_render_context'), allPagesUnscored(options.template, false));
@@ -525,6 +527,7 @@ export async function runImportQualityGate(
     // scored page receives a truthful, applied output policy (not merely a
     // recommendation); document-level recommendedFinalMode stays summary-only.
     const decidedByPageId = new Map<string, PdfImportPagePolicy>();
+    const sourceRasterByPageId = new Map<string, string>();
     const pageDecisions: Record<string, PdfImportPagePolicy> = {};
     let pagesNative = 0;
     let pagesHybridFallback = 0;
@@ -541,13 +544,19 @@ export async function runImportQualityGate(
       });
       pageDecisions[pageId] = decision.policy;
       decidedByPageId.set(pageId, decision.policy);
+      const sourceRaster = rastersByPage[report.pageNumber]?.dataUrl;
+      if (sourceRaster) sourceRasterByPageId.set(pageId, sourceRaster);
       decisionManualReview = decisionManualReview || decision.manualReviewRequired;
       if (decision.action === 'hybrid_fallback') pagesHybridFallback += 1;
       else if (decision.action === 'pixel_fallback' || decision.action === 'pixel_requested') pagesPixelFallback += 1;
       else if (decision.action === 'fallback_unavailable') pagesFallbackUnavailable += 1;
       else pagesNative += 1;
     }
-    const decided = applyPageDecisionsToTemplate(batched.template, decidedByPageId);
+    const decided = applyPageDecisionsToTemplate(
+      batched.template,
+      decidedByPageId,
+      sourceRasterByPageId,
+    );
     const templateChanged = decided.changed || batched.template !== options.template;
 
     const manualReviewRequired = batched.manualReviewRequired

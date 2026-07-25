@@ -266,7 +266,7 @@ Deno.serve(async (req) => {
           ? `Client uploaded ${linkedDriIds.length} requested document${linkedDriIds.length === 1 ? '' : 's'}`
           : 'Client uploaded a document',
         body: file.name,
-        link_path: `/clients?clientId=${clientId}&tab=documents`,
+        link_path: `/finance/clients/${clientId}?tab=documents`,
         metadata: {
           client_files_id: fileRecord.id,
           file_name: file.name,

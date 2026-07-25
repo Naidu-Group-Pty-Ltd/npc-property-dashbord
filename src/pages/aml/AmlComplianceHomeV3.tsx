@@ -21,7 +21,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlMonitoringApi, type AmlMonitoringSummary } from "@/lib/aml/amlMonitoringApi";
-import { amlReportingApi, type AmlReportingSummary } from "@/lib/aml/amlReportingApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { suggestAmlLanding } from "@/lib/aml/defaultLanding";
@@ -130,9 +129,6 @@ export default function AmlComplianceHomeV3() {
   const [monitoring, setMonitoring] = useState<AmlMonitoringSummary | null>(null);
   const [loadingMonitoring, setLoadingMonitoring] = useState(false);
 
-  const [reporting, setReporting] = useState<AmlReportingSummary | null>(null);
-  const [loadingReporting, setLoadingReporting] = useState(false);
-
   useEffect(() => {
     if (!canView) return;
     let alive = true;
@@ -168,23 +164,6 @@ export default function AmlComplianceHomeV3() {
     })();
     return () => { alive = false; };
   }, [canInvestigate]);
-
-  useEffect(() => {
-    if (!canReport) return;
-    let alive = true;
-    (async () => {
-      try {
-        setLoadingReporting(true);
-        const s = await amlReportingApi.summary();
-        if (alive) setReporting(s);
-      } catch {
-        if (alive) setReporting(null);
-      } finally {
-        if (alive) setLoadingReporting(false);
-      }
-    })();
-    return () => { alive = false; };
-  }, [canReport]);
 
   const openCount = useMemo(
     () => cases.filter((c) => !["cleared", "closed", "blocked"].includes(c.status)).length,
@@ -315,40 +294,6 @@ export default function AmlComplianceHomeV3() {
             value={monitoring?.pending_reviews ?? "—"}
             hint={monitoring ? `${monitoring.overdue_reviews} overdue` : "Awaiting first data refresh."}
             to="/admin/aml/monitoring"
-          />
-        </div>
-      )}
-
-      {/* Reporting tiles — never render for non-reporters. */}
-      {canReport && (
-        <div className="grid gap-4 md:grid-cols-3">
-          <MetricTile
-            title="Awaiting MLRO"
-            icon={FileSignature}
-            loading={loadingReporting}
-            value={reporting?.awaiting_mlro ?? "—"}
-            hint="Draft reports queued for your approval."
-            to="/admin/aml/austrac"
-          />
-          <MetricTile
-            title="Approved, not submitted"
-            icon={FileSignature}
-            loading={loadingReporting}
-            value={reporting?.approved ?? "—"}
-            hint="Lodge to AUSTRAC when ready."
-            to="/admin/aml/austrac"
-          />
-          <MetricTile
-            title="Submitted (recent)"
-            icon={ShieldCheck}
-            loading={loadingReporting}
-            value={reporting?.submitted ?? "—"}
-            hint={
-              reporting
-                ? `${reporting.acknowledged} acknowledged · ${reporting.rejected} rejected`
-                : "Awaiting first data refresh."
-            }
-            to="/admin/aml/austrac"
           />
         </div>
       )}

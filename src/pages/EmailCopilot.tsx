@@ -1442,7 +1442,8 @@ export default function EmailCopilot() {
         cc: ccList.length > 0 ? ccList : undefined,
         bcc: bccList.length > 0 ? bccList : undefined,
         attachments: attachmentsData.length > 0 ? attachmentsData : undefined,
-        mailboxSource: selectedMailbox
+        mailboxSource: selectedMailbox,
+        senderMailboxId: selectedMailbox === 'personal' ? user?.id : undefined,
       });
 
       if (error) throw error;
@@ -1523,7 +1524,8 @@ export default function EmailCopilot() {
         bcc: bccList.length > 0 ? bccList : undefined,
         originalEmailId: selectedEmail.id,
         attachments: attachmentsData.length > 0 ? attachmentsData : undefined,
-        mailboxSource: selectedMailbox
+        mailboxSource: selectedMailbox,
+        senderMailboxId: selectedMailbox === 'personal' ? user?.id : undefined,
       });
 
       if (error) throw error;
@@ -1625,7 +1627,8 @@ export default function EmailCopilot() {
         cc: ccList.length > 0 ? ccList : undefined,
         bcc: bccList.length > 0 ? bccList : undefined,
         attachments: attachmentsData.length > 0 ? attachmentsData : undefined,
-        mailboxSource: selectedMailbox
+        mailboxSource: selectedMailbox,
+        senderMailboxId: selectedMailbox === 'personal' ? user?.id : undefined,
       });
 
       if (error) throw error;

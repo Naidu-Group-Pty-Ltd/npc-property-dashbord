@@ -274,7 +274,7 @@ Deno.serve(async (req) => {
         }
         const audit = Array.isArray(doc.audit) ? doc.audit : [];
         audit.push({ ts: new Date().toISOString(), user_id: auth.userId, event: 'sent', envelope_id: dsData.envelopeId, pdf_hash: pdfHash, recipients: recipients.length });
-        await supabase.from('generated_documents').update({
+        const { error: persistError } = await supabase.from('generated_documents').update({
           status: 'sent',
           docusign_envelope_id: dsData.envelopeId,
           docusign_status: dsData.status,
@@ -287,6 +287,15 @@ Deno.serve(async (req) => {
           audit,
           metadata: { ...(doc.metadata || {}), last_idempotency_key: idem },
         }).eq('id', body.id!);
+        if (persistError) {
+          console.error('[generated-docs freeform] failed to persist sent envelope:', persistError.message);
+          return j({
+            success: false,
+            error: 'Envelope was sent but its status could not be recorded; contact support before retrying',
+            code: 'envelope_persistence_failed',
+            envelope_id: dsData.envelopeId,
+          }, 500);
+        }
         return j({ success: true, envelope_id: dsData.envelopeId, status: dsData.status, pdf_hash: pdfHash });
       }
 

@@ -28,6 +28,8 @@ interface SendEmailRequest {
   mailboxSource?: 'admin' | 'personal';
   /** Authoritative custom_users ID for a personal mailbox send. */
   senderMailboxId?: string;
+  /** User on whose behalf a trusted internal worker is sending. */
+  effectiveUserId?: string;
   source?: 'agent' | 'user'; // 'agent' triggers branded HTML template
   ghlConversationId?: string; // Internal conversation ID for persisting in thread
 }
@@ -303,7 +305,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { to, subject, body: emailBody, cc, bcc, originalEmailId, attachments, mailboxSource, senderMailboxId, source, ghlConversationId }: SendEmailRequest = body;
+    const { to, subject, body: emailBody, cc, bcc, originalEmailId, attachments, mailboxSource, senderMailboxId, effectiveUserId, source, ghlConversationId }: SendEmailRequest = body;
     
     // SECURITY: Verify authentication
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -354,8 +356,9 @@ Deno.serve(async (req) => {
     // email string. This also prevents one staff member impersonating another
     // by changing the Select value in DevTools.
     let resolvedMailbox = mailboxEmail;
+    const effectiveSenderId = userId === 'service_role' ? effectiveUserId : userId;
     if (mailboxSource === 'personal') {
-      if (!senderMailboxId || senderMailboxId !== userId) {
+      if (!senderMailboxId || senderMailboxId !== effectiveSenderId) {
         return new Response(JSON.stringify({ success: false, error: 'The selected sender mailbox is not authorised for this user' }), {
           status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -363,7 +366,7 @@ Deno.serve(async (req) => {
       const { data: sender } = await supabase
         .from('custom_users')
         .select('personal_mailbox')
-        .eq('id', userId)
+        .eq('id', effectiveSenderId)
         .maybeSingle();
       if (!sender?.personal_mailbox?.trim()) {
         return new Response(JSON.stringify({ success: false, error: 'No connected sender mailbox is available. Connect a mailbox in Settings and try again.' }), {
@@ -596,9 +599,9 @@ Deno.serve(async (req) => {
         attachments: attachmentMetadata,
         sent_at: new Date().toISOString(),
         mailbox_source: mailboxSource || 'admin',
-        created_by: userId !== 'service_role' ? userId : null,
+        created_by: effectiveSenderId || null,
         // Bind personal-mailbox sends to the sending user (MAIL-003)
-        owner_user_id: (mailboxSource === 'personal' && userId !== 'service_role') ? userId : null
+        owner_user_id: mailboxSource === 'personal' ? effectiveSenderId : null
       })
       .select('id')
       .single();

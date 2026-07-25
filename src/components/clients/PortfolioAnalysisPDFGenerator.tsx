@@ -234,20 +234,13 @@ let NPC_GOLD_LIGHT = rgb(...NPC_RGB.goldLight); // Light gold for accents
 let NPC_GOLD_DARK = rgb(...NPC_RGB.goldDark);   // Dark gold
 let NPC_GOLD_TINT = rgb(...NPC_RGB.goldTint);   // Very light gold tint
 
-function applyBrandRgb(brandColorHsl?: string | null) {
-  NPC_RGB = getBrandPdfRgb(brandColorHsl);
-  NPC_GOLD = rgb(...NPC_RGB.gold);
-  NPC_GOLD_LIGHT = rgb(...NPC_RGB.goldLight);
-  NPC_GOLD_DARK = rgb(...NPC_RGB.goldDark);
-  NPC_GOLD_TINT = rgb(...NPC_RGB.goldTint);
-}
 const NPC_NAVY = rgb(0.05, 0.15, 0.30);        // #0d264d - Dark navy
 const NPC_DARK_BLUE = rgb(0.07, 0.20, 0.38);   // #113361 - Dark blue
 const NPC_BLACK = rgb(0.04, 0.04, 0.04);       // #0a0a0a - Near black
 const NPC_WHITE = rgb(1, 1, 1);                 // White
 
 // Semantic Colors
-const PRIMARY_COLOR = NPC_GOLD;
+let PRIMARY_COLOR = NPC_GOLD;
 const SECONDARY_COLOR = NPC_NAVY;
 const MUTED_COLOR = rgb(0.5, 0.5, 0.5);
 const SUCCESS_COLOR = rgb(0.09, 0.64, 0.29);   // #16a34a
@@ -255,7 +248,17 @@ const DANGER_COLOR = rgb(0.94, 0.27, 0.27);    // #ef4444
 const WARNING_COLOR = rgb(0.96, 0.62, 0.04);   // #f59e0b
 const HEADER_BG_COLOR = NPC_NAVY;
 const HEADER_TEXT_COLOR = NPC_WHITE;
-const ACCENT_COLOR = NPC_GOLD_LIGHT;
+let ACCENT_COLOR = NPC_GOLD_LIGHT;
+
+function applyBrandRgb(brandColorHsl?: string | null) {
+  NPC_RGB = getBrandPdfRgb(brandColorHsl);
+  NPC_GOLD = rgb(...NPC_RGB.gold);
+  NPC_GOLD_LIGHT = rgb(...NPC_RGB.goldLight);
+  NPC_GOLD_DARK = rgb(...NPC_RGB.goldDark);
+  NPC_GOLD_TINT = rgb(...NPC_RGB.goldTint);
+  PRIMARY_COLOR = NPC_GOLD;
+  ACCENT_COLOR = NPC_GOLD_LIGHT;
+}
 
 // ============= PHASE 6: SAFE FORMATTING UTILITIES =============
 const formatCurrency = (value: number | null | undefined): string => {

@@ -1211,9 +1211,8 @@ Deno.serve(async (req) => {
 
       let authorizedPdfJobId: string | null = null;
       let pdfJobResultPayload: any = null;
-      let pdfJobAuthorized = false;
       if (pdfJobId) {
-        let pdfJobQuery = admin
+        const { data: pdfJob, error: pdfJobErr } = await admin
           .from('pdf_import_jobs')
           .select('id,result_payload,diagnostics_path,engine_version')
           .eq('id', pdfJobId)
@@ -1224,7 +1223,7 @@ Deno.serve(async (req) => {
         if (pdfJobErr) {
           logDbError('get_artifacts.pdf_import_jobs.lookup', pdfJobErr);
         } else if (pdfJob) {
-          pdfJobAuthorized = true;
+          authorizedPdfJobId = pdfJob.id;
           if (pdfJob.result_payload && typeof pdfJob.result_payload === 'object') {
             pdfJobResultPayload = pdfJob.result_payload;
           }
@@ -1247,7 +1246,6 @@ Deno.serve(async (req) => {
         ? `${authorizedPdfJobId}/pages-manifest.json`
         : null;
 
-      const authorizedPdfJobId = pdfJobAuthorized ? pdfJobId : null;
       const manifestCandidates = [
         ['per_page_docling_manifest_path', explicitPdfPageManifestPath],
         ['meta_import_manifests_summary_path', metaSummaryPdfPageManifestPath],
@@ -1404,7 +1402,8 @@ Deno.serve(async (req) => {
       if (!authedUserId) return json({ error: 'unauthorized' }, 401);
       const templateId = body.template_id as string;
       if (!templateId) return json({ error: 'template_id required' }, 400);
-      const { data, error } = await admin
+      const isAdmin = await userHasAdminRole(admin, authedUserId);
+      let query = admin
         .from('template_imports')
         .select('id,source_filename,updated_at,created_at')
         .eq('created_template_id', templateId)
@@ -1412,8 +1411,9 @@ Deno.serve(async (req) => {
         .not('meta->>cdir_artifact_path', 'is', null)
         .order('updated_at', { ascending: false })
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+      if (!isAdmin) query = query.eq('user_id', authedUserId);
+      const { data, error } = await query.maybeSingle();
       if (error) return json({ error: error.message }, 400);
       return json({ record: data ?? null });
     }

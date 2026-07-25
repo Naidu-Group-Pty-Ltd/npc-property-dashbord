@@ -5,6 +5,7 @@ import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 import { hasAmlCapability, AML_STEP_UP_CAPABILITIES, type AmlCapability } from "@/lib/aml/permissions";
+import { getStepUpToken, setStepUpToken } from "@/lib/aml/stepUpTokenStore";
 import { StepUpAuthDialog } from "./StepUpAuthDialog";
 
 interface AmlGuardProps {
@@ -24,22 +25,12 @@ export function AmlGuard({ capability = "aml.view", children }: AmlGuardProps) {
   const { loading, flagEnabled, roles, hasAnyRole } = useAmlAccess();
   const location = useLocation();
   const requiresStepUp = AML_STEP_UP_CAPABILITIES.includes(capability);
-  // Phase 13: single canonical store key read by both this guard and
-  // `getStepUpToken()` in `stepUpTokenStore.ts` so privileged edge-fn calls
-  // can attach the same session token the server issued.
   const stepUpKey = `aml_step_up_session:${capability}`;
 
   const [stepUpOpen, setStepUpOpen] = useState(false);
   const [stepUpOk, setStepUpOk] = useState<boolean>(() => {
     if (!requiresStepUp) return true;
-    try {
-      const raw = sessionStorage.getItem(stepUpKey);
-      if (!raw) return false;
-      const parsed = JSON.parse(raw) as { expires_at: string; session_token?: string };
-      return !!parsed?.expires_at && !!parsed?.session_token && new Date(parsed.expires_at).getTime() > Date.now();
-    } catch {
-      return false;
-    }
+    return getStepUpToken(capability) !== null;
   });
 
   useEffect(() => {
@@ -124,8 +115,9 @@ export function AmlGuard({ capability = "aml.view", children }: AmlGuardProps) {
             setStepUpOpen(false);
           }}
           onConfirm={(payload) => {
+            setStepUpToken(capability, payload);
             try {
-              sessionStorage.setItem(stepUpKey, JSON.stringify(payload));
+              sessionStorage.setItem(stepUpKey, JSON.stringify({ expires_at: payload.expires_at }));
             } catch { /* ignore */ }
             setStepUpOk(true);
             setStepUpOpen(false);

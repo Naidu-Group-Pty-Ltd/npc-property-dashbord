@@ -14,7 +14,7 @@
  *   3. `docs/security/live-verification.sql` must exist.
  *   4. `docs/security/WP15_DEPLOYMENT_CHECKLIST.md` must exist.
  *   5. `docs/security/WP15_NEGATIVE_TEST_MATRIX.md` must exist.
- *   6. Remediation tracker must have a WP-15 entry.
+ *   6. Remediation tracker must be valid JSON and have a WP-15 entry.
  *
  * Fails CI on any violation. Read-only.
  */
@@ -53,8 +53,12 @@ must('docs/security/WP15_NEGATIVE_TEST_MATRIX.md',    'WP-15 negative-test matri
 
 // 6. Tracker entry.
 try {
-  const tracker = readFileSync(join(root, 'docs/security/CODEX_SECURITY_REMEDIATION_TRACKER.md'), 'utf8');
-  if (!/WP-15-DEPLOY-VERIFICATION/.test(tracker)) {
+  const trackerPath = process.env.SECURITY_TRACKER_PATH || join(root, 'docs/security/CODEX_SECURITY_REMEDIATION_TRACKER.md');
+  const tracker = JSON.parse(readFileSync(trackerPath, 'utf8'));
+  if (!Array.isArray(tracker?.findings)) {
+    throw new Error('remediation tracker findings must be an array.');
+  }
+  if (!tracker.findings.some((finding) => finding?.finding_id === 'WP-15-DEPLOY-VERIFICATION')) {
     errors.push('CODEX_SECURITY_REMEDIATION_TRACKER.md is missing the WP-15-DEPLOY-VERIFICATION entry.');
   }
 } catch (e) {

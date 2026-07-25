@@ -30,4 +30,11 @@ describe('client finance action regression guards', () => {
     expect(portfolio).not.toContain('Flattened PDF');
     expect(workspace).toContain('<PortfolioAnalysisPDFGenerator');
   });
+
+  it('base64-encodes inline PDF attachments for the email API contract', () => {
+    const compose = source('ClientEmailCompose.tsx');
+
+    expect(compose).toContain('await fileToBase64(inlineAttachment.blob)');
+    expect(compose).not.toContain('Array.from(new Uint8Array(await inlineAttachment.blob.arrayBuffer()))');
+  });
 });

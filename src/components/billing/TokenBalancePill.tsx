@@ -175,10 +175,10 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
             variant="ghost"
             size="sm"
             className="justify-start"
-            onClick={() => navigate("/billing/usage")}
+            onClick={() => navigate("/billing")}
           >
             <TrendingUp className="mr-2 h-4 w-4" />
-            View usage history
+            Billing &amp; usage
           </Button>
           <Button
             variant="ghost"

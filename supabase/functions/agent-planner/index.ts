@@ -4,6 +4,7 @@
 // delete-plan.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth } from '../_shared/auth.ts';
+import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -26,11 +27,20 @@ function nextFromCron(expr: string, from = new Date()): Date | null {
   const [mn, hr, dom, mon, dow] = parts;
   const anyStar = (v: string) => v === '*';
   // Support forms: "* * * * *", "M * * * *", "M H * * *", "M H * * D", "*/N * * * *"
-  const stepMin = mn.startsWith('*/') ? Number(mn.slice(2)) : null;
-  const fixedMin = anyStar(mn) ? null : (Number.isInteger(Number(mn)) ? Number(mn) : null);
-  const fixedHr = anyStar(hr) ? null : (Number.isInteger(Number(hr)) ? Number(hr) : null);
-  const fixedDow = anyStar(dow) ? null : (Number.isInteger(Number(dow)) ? Number(dow) : null);
   if (!anyStar(dom) || !anyStar(mon)) return null; // keep it simple
+  const stepMatch = /^\*\/(\d+)$/.exec(mn);
+  const stepMin = stepMatch ? Number(stepMatch[1]) : null;
+  const parseFixed = (value: string, max: number): number | null | undefined => {
+    if (anyStar(value)) return null;
+    if (!/^\d+$/.test(value)) return undefined;
+    const parsed = Number(value);
+    return parsed <= max ? parsed : undefined;
+  };
+  const fixedMin = stepMatch ? null : parseFixed(mn, 59);
+  const fixedHr = parseFixed(hr, 23);
+  const fixedDow = parseFixed(dow, 6);
+  if (stepMin !== null && (stepMin < 1 || stepMin > 59)) return null;
+  if (fixedMin === undefined || fixedHr === undefined || fixedDow === undefined) return null;
   const d = new Date(from.getTime() + 60_000);
   d.setUTCSeconds(0, 0);
   for (let i = 0; i < 60 * 24 * 8; i++) {
@@ -105,10 +115,10 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch {}
   const action = body?.action ?? 'list-plans';
 
-  // Public cron path — no user auth required. Runs due scheduled plans.
+  // Cron path authenticates with the configured secret instead of user credentials.
   if (action === 'run-scheduled') {
     const secret = req.headers.get('x-cron-secret');
-    if (CRON_SECRET && secret && secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
+    if (!CRON_SECRET || secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
     return await runScheduled(sb);
   }
 
@@ -336,29 +346,21 @@ Deno.serve(async (req) => {
 
     if (action === 'approve-subscription') {
       // Called from AgentChatWidget's approval card. Creates the subscription and
-      // marks the insight as acted-on.
+      // marks the insight as acted-on atomically with quota enforcement.
       const insightId = String(body?.insight_id ?? '');
-      const { data: insight } = await sb.from('agent_insights_feed')
-        .select('id, payload, user_id').eq('id', insightId).eq('user_id', userId).maybeSingle();
-      if (!insight) return json({ error: 'not_found' }, 404);
-      const p = insight.payload || {};
-      const nextRunAt = new Date();
-      if (p.cadence === 'daily') nextRunAt.setUTCDate(nextRunAt.getUTCDate() + 1);
-      else nextRunAt.setUTCDate(nextRunAt.getUTCDate() + 7);
-      const { data: sub, error: subErr } = await sb.from('market_qa_subscriptions').insert({
-        user_id: userId,
-        question_template: p.question_template,
-        cadence: p.cadence ?? 'weekly',
-        digest_group: p.digest_group ?? null,
-        channels: ['in_app'],
-        next_run_at: nextRunAt.toISOString(),
-      }).select().single();
-      if (subErr) return json({ error: subErr.message }, 500);
-      await sb.from('agent_insights_feed').update({
-        acted_on_at: new Date().toISOString(),
-        is_read: true,
-      }).eq('id', insightId).eq('user_id', userId);
-      return json({ subscription: sub });
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(insightId)) {
+        return json({ error: 'valid insight_id required' }, 400);
+      }
+      const { data, error } = await sb.rpc('approve_agent_subscription', {
+        p_user_id: userId,
+        p_insight_id: insightId,
+      });
+      if (error) return json({ error: error.message }, 500);
+      if (data?.error === 'subscription_limit_reached') {
+        return json({ error: 'Limit 20 active subscriptions' }, 400);
+      }
+      if (data?.error) return json({ error: data.error }, 409);
+      return json({ subscription: data.subscription });
     }
 
     return json({ error: 'unknown_action' }, 400);
