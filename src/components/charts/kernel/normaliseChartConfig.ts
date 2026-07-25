@@ -8,6 +8,10 @@
 
 import { colorAt, resolvePalette } from './palettes';
 
+export const MAX_CHART_POINTS = 500;
+export const MAX_CHART_SERIES = 20;
+export const MAX_CHART_LABEL_LENGTH = 200;
+
 export type NormalisedChartKind =
   | 'bar'
   | 'bar-horizontal'
@@ -57,7 +61,7 @@ interface RawChart {
 }
 
 function coerceKind(cfg: any, chartType: string, seriesCount: number, stacked: boolean, horizontal: boolean): NormalisedChartKind {
-  const t = String(cfg?.type || chartType || '').toLowerCase();
+  const t = String(cfg?.type || chartType || '').slice(0, MAX_CHART_LABEL_LENGTH).toLowerCase();
   const semantic = `${t} ${chartType || ''}`.toLowerCase();
 
   if (semantic.includes('donut') || semantic.includes('doughnut')) return 'donut';
@@ -73,14 +77,21 @@ function coerceKind(cfg: any, chartType: string, seriesCount: number, stacked: b
 }
 
 function toStringLabel(v: any, i: number): string {
+  let label: string;
   if (v === null || v === undefined) return `#${i + 1}`;
   if (typeof v === 'object') {
-    if ('x' in v) return String(v.x);
-    if ('label' in v) return String(v.label);
-    if ('name' in v) return String(v.name);
-    return JSON.stringify(v);
+    if ('x' in v) label = String(v.x);
+    else if ('label' in v) label = String(v.label);
+    else if ('name' in v) label = String(v.name);
+    else label = `#${i + 1}`;
+  } else {
+    label = String(v);
   }
-  return String(v);
+  return label.slice(0, MAX_CHART_LABEL_LENGTH);
+}
+
+function toDisplayText(v: unknown, fallback = ''): string {
+  return String(v || fallback).slice(0, MAX_CHART_LABEL_LENGTH);
 }
 
 function toNumber(v: any): number {
@@ -112,8 +123,8 @@ export function normaliseChartConfig(raw: RawChart): NormalisedChartModel | null
   // Convert it into the Chart.js-ish {labels, datasets} shape the rest of the
   // pipeline understands, so downstream consumers stay uniform.
   const inlinePoints: any[] | null = Array.isArray(cfg.data) && cfg.data.length > 0 && typeof cfg.data[0] === 'object' && !Array.isArray(cfg.data[0]) && ('label' in cfg.data[0] || 'name' in cfg.data[0])
-    ? cfg.data
-    : Array.isArray(cfg.points) ? cfg.points
+    ? cfg.data.slice(0, MAX_CHART_POINTS)
+    : Array.isArray(cfg.points) ? cfg.points.slice(0, MAX_CHART_POINTS)
     : null;
 
   const source = inlinePoints
@@ -127,24 +138,24 @@ export function normaliseChartConfig(raw: RawChart): NormalisedChartModel | null
       }
     : (cfg.data || (Array.isArray(dataset?.data) ? dataset : dataset?.chart_config) || dataset || cfg);
 
-  const labels: any[] = Array.isArray(source.labels)
+  const labels: any[] = (Array.isArray(source.labels)
     ? source.labels
     : Array.isArray(cfg.labels)
       ? cfg.labels
-      : [];
+      : []).slice(0, MAX_CHART_POINTS);
 
-  const rawDatasets: any[] = Array.isArray(source.datasets)
+  const rawDatasets: any[] = (Array.isArray(source.datasets)
     ? source.datasets
     : Array.isArray(cfg.datasets)
       ? cfg.datasets
       : Array.isArray(source.values) || Array.isArray(cfg.values)
         ? [{ data: source.values || cfg.values, label: cfg.datasetLabel || raw?.title || 'Value' }]
-        : [];
+        : []).slice(0, MAX_CHART_SERIES);
 
   if (!labels.length || !rawDatasets.length) return null;
 
   const palette = resolvePalette(cfg.palette || cfg.options?.palette);
-  const chartType = String(raw?.chart_type || '').toLowerCase();
+  const chartType = toDisplayText(raw?.chart_type).toLowerCase();
 
   const stacked = Boolean(
     cfg.stacked ||
@@ -158,7 +169,7 @@ export function normaliseChartConfig(raw: RawChart): NormalisedChartModel | null
     || (rawDatasets.length === 1 && labels.length > 5 && longLabelCount / labels.length > 0.35);
 
   const series: NormalisedSeries[] = rawDatasets.map((ds, i) => {
-    const label = String(ds?.label || `Series ${i + 1}`);
+    const label = toDisplayText(ds?.label, `Series ${i + 1}`);
     const inlineColor = Array.isArray(ds?.backgroundColor)
       ? undefined
       : (ds?.backgroundColor || ds?.borderColor);
@@ -196,13 +207,19 @@ export function normaliseChartConfig(raw: RawChart): NormalisedChartModel | null
 
   return {
     kind,
-    title: cfg.options?.plugins?.title?.text || cfg.title || raw?.title || 'Untitled chart',
-    subtitle: cfg.options?.plugins?.subtitle?.text || cfg.subtitle,
+    title: toDisplayText(cfg.options?.plugins?.title?.text || cfg.title || raw?.title, 'Untitled chart'),
+    subtitle: cfg.options?.plugins?.subtitle?.text || cfg.subtitle
+      ? toDisplayText(cfg.options?.plugins?.subtitle?.text || cfg.subtitle)
+      : undefined,
     data,
     series,
     palette,
-    xLabel: cfg.options?.scales?.x?.title?.text || cfg.x_axis_label || cfg.xLabel,
-    yLabel: cfg.options?.scales?.y?.title?.text || cfg.y_axis_label || cfg.yLabel,
+    xLabel: cfg.options?.scales?.x?.title?.text || cfg.x_axis_label || cfg.xLabel
+      ? toDisplayText(cfg.options?.scales?.x?.title?.text || cfg.x_axis_label || cfg.xLabel)
+      : undefined,
+    yLabel: cfg.options?.scales?.y?.title?.text || cfg.y_axis_label || cfg.yLabel
+      ? toDisplayText(cfg.options?.scales?.y?.title?.text || cfg.y_axis_label || cfg.yLabel)
+      : undefined,
     stacked,
     horizontal,
     pieSlices,
