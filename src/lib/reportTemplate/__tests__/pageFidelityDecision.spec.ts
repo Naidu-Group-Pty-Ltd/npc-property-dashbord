@@ -178,4 +178,29 @@ describe('applyPageDecisionsToTemplate', () => {
       underlay: false,
     });
   });
+
+  it('never persists a signed raster URL and stores its durable reference instead', () => {
+    const t = template();
+    t.pages[1].background = {};
+    const sourceRasterRef = {
+      kind: 'pdf_import_raster_ref' as const,
+      jobId: 'job-1',
+      manifestPath: 'job-1/manifest.json',
+      pageNo: 2,
+      path: 'job-1/pages/page-2.png',
+      width: 1190,
+      height: 1684,
+      mime: 'image/png',
+      dpi: 144,
+    };
+    const res = applyPageDecisionsToTemplate(
+      t,
+      new Map([['docling-page-2', decide(0.3, true).policy]]),
+      new Map([['docling-page-2', 'https://example.test/storage/sign/page-2.png?token=secret']]),
+      new Map([['docling-page-2', sourceRasterRef]]),
+    );
+
+    expect(res.template.pages[1].background?.imageUrl).toBeUndefined();
+    expect((res.template.pages[1].meta as any).sourceRasterRef).toEqual(sourceRasterRef);
+  });
 });

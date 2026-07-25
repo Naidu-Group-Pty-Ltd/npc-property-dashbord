@@ -837,12 +837,15 @@ export async function extractPdfViaDocling(
               const decidedRaster = policy.outputStrategy === 'raster-only'
                 ? (page.background as any)?.imageUrl
                 : undefined;
+              const hasDurableRasterRef = policy.outputStrategy === 'raster-only'
+                && Boolean((page.meta as any)?.sourceRasterRef);
               return applyPagePolicyToPage(
                 {
                   ...page,
                   size: orig.size,
                   background: {
                     ...((orig.background as any) ?? {}),
+                    ...(hasDurableRasterRef ? { imageUrl: undefined } : {}),
                     ...(decidedRaster ? { imageUrl: decidedRaster } : {}),
                   },
                   meta: { ...((orig.meta as any) ?? {}), ...((page.meta as any) ?? {}) },

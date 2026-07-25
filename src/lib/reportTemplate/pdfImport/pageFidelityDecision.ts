@@ -14,6 +14,7 @@
  * review instead. Pure, deterministic.
  */
 import type { ReportTemplate, Page } from '../templateSchema';
+import type { PdfImportRasterRef } from './docling/doclingTypes';
 import {
   applyPagePolicyToPage,
   hybridFallbackPolicy,
@@ -117,6 +118,7 @@ export function applyPageDecisionsToTemplate(
   template: ReportTemplate,
   decisionsByPageId: Map<string, PdfImportPagePolicy>,
   sourceRasterByPageId: Map<string, string> = new Map(),
+  sourceRasterRefByPageId: Map<string, PdfImportRasterRef> = new Map(),
 ): AppliedPageDecisions {
   if (decisionsByPageId.size === 0) return { template, changed: false };
   let changed = false;
@@ -124,11 +126,22 @@ export function applyPageDecisionsToTemplate(
     const policy = decisionsByPageId.get(page.id);
     if (!policy) return page;
     changed = true;
+    // Only self-contained rasters may be embedded in persisted template JSON.
+    // Manifest downloads are short-lived signed URLs and must remain durable
+    // storage references that renderers resolve in memory.
     const sourceRaster = sourceRasterByPageId.get(page.id);
-    const pageWithRaster = policy.outputStrategy === 'raster-only' && sourceRaster
+    const embeddedRaster = sourceRaster?.startsWith('data:') ? sourceRaster : undefined;
+    const sourceRasterRef = sourceRasterRefByPageId.get(page.id);
+    const pageWithRaster = policy.outputStrategy === 'raster-only'
       ? {
           ...page,
-          background: { ...(page.background ?? {}), imageUrl: sourceRaster },
+          background: {
+            ...(page.background ?? {}),
+            imageUrl: embeddedRaster,
+          },
+          ...(sourceRasterRef
+            ? { meta: { ...(page.meta ?? {}), sourceRasterRef } }
+            : {}),
         }
       : page;
     return applyPagePolicyToPage(pageWithRaster as Page, policy);

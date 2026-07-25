@@ -528,6 +528,7 @@ export async function runImportQualityGate(
     // recommendation); document-level recommendedFinalMode stays summary-only.
     const decidedByPageId = new Map<string, PdfImportPagePolicy>();
     const sourceRasterByPageId = new Map<string, string>();
+    const sourceRasterRefByPageId = new Map<string, PdfImportRasterRef>();
     const pageDecisions: Record<string, PdfImportPagePolicy> = {};
     let pagesNative = 0;
     let pagesHybridFallback = 0;
@@ -546,6 +547,8 @@ export async function runImportQualityGate(
       decidedByPageId.set(pageId, decision.policy);
       const sourceRaster = rastersByPage[report.pageNumber]?.dataUrl;
       if (sourceRaster) sourceRasterByPageId.set(pageId, sourceRaster);
+      const sourceRasterRef = options.sourceRasterRefByPage?.[report.pageNumber];
+      if (sourceRasterRef) sourceRasterRefByPageId.set(pageId, sourceRasterRef);
       decisionManualReview = decisionManualReview || decision.manualReviewRequired;
       if (decision.action === 'hybrid_fallback') pagesHybridFallback += 1;
       else if (decision.action === 'pixel_fallback' || decision.action === 'pixel_requested') pagesPixelFallback += 1;
@@ -556,6 +559,7 @@ export async function runImportQualityGate(
       batched.template,
       decidedByPageId,
       sourceRasterByPageId,
+      sourceRasterRefByPageId,
     );
     const templateChanged = decided.changed || batched.template !== options.template;
 
