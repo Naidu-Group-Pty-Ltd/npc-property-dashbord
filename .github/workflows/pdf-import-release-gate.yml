@@ -30,7 +30,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history so the gate can diff staged/changed files.
+          # Full history so the gate can diff the checked-out commit from the
+          # PR base or pre-push commit.
           fetch-depth: 0
 
       - name: Set up Node
@@ -46,6 +47,8 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Run PDF import release gate (static)
+        env:
+          PDF_IMPORT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: npm run pdf-import:release-gate:static
 
       - name: Upload release gate report
