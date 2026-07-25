@@ -4,22 +4,17 @@
 //   agent-eval-baselines-list
 //   agent-eval-baseline-promote (from a set of recent eval runs)
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { verifyAuth } from '../_shared/auth.ts';
+import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-portal-session-token',
-};
-
-function json(payload: any, status = 200) {
-  return new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-}
-
 Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
+  const json = (payload: any, status = 200) =>
+    new Response(JSON.stringify(payload), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
