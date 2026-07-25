@@ -202,7 +202,7 @@ function validateProductionRendererSchema(schema: any, corsHeaders: Record<strin
   }, 422, corsHeaders);
 }
 
-async function getTemplatePermissionContext(supabase: any, userId: string) {
+async function getModulePermissionContext(supabase: any, userId: string, moduleKey: string) {
   if (userId === 'service_role') {
     return { isSuperadmin: true, canView: true, canEdit: true, canDelete: true };
   }
@@ -219,15 +219,18 @@ async function getTemplatePermissionContext(supabase: any, userId: string) {
   const roleNames = (roles ?? []).map((r: any) => String(r.role));
   const userRole = String(user?.role ?? '');
   const isSuperadmin = roleNames.includes('superadmin') || userRole === 'super_admin' || userRole === 'superadmin';
-  const templatePerm = (perms ?? []).find((p: any) => (p.dashboard_modules as any)?.module_key === 'templates') ?? null;
+  const modulePerm = (perms ?? []).find((p: any) => (p.dashboard_modules as any)?.module_key === moduleKey) ?? null;
 
   return {
     isSuperadmin,
-    canView: isSuperadmin || !!templatePerm?.can_view,
-    canEdit: isSuperadmin || !!templatePerm?.can_edit,
-    canDelete: isSuperadmin || !!templatePerm?.can_delete,
+    canView: isSuperadmin || !!modulePerm?.can_view,
+    canEdit: isSuperadmin || !!modulePerm?.can_edit,
+    canDelete: isSuperadmin || !!modulePerm?.can_delete,
   };
 }
+
+const getTemplatePermissionContext = (supabase: any, userId: string) =>
+  getModulePermissionContext(supabase, userId, 'templates');
 
 async function assertTemplatePermission(
   supabase: any,
@@ -237,9 +240,14 @@ async function assertTemplatePermission(
   corsHeaders: Record<string, string>,
 ): Promise<Response | null> {
   if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
-  if (table !== 'report_templates' && table !== 'report_template_versions') return null;
+  const moduleKey = table.startsWith('checklist_')
+    ? 'checklists'
+    : table === 'report_templates' || table === 'report_template_versions'
+      ? 'templates'
+      : null;
+  if (!moduleKey) return null;
 
-  const permissions = await getTemplatePermissionContext(supabase, userId);
+  const permissions = await getModulePermissionContext(supabase, userId, moduleKey);
   const required = operation === 'delete'
     ? 'delete'
     : ['insert', 'update', 'upsert', 'rpc'].includes(operation)
@@ -253,7 +261,7 @@ async function assertTemplatePermission(
       : permissions.canView;
 
   if (!allowed) {
-    return createForbiddenResponse(`templates:${required} permission required`, corsHeaders);
+    return createForbiddenResponse(`${moduleKey}:${required} permission required`, corsHeaders);
   }
   return null;
 }
