@@ -116,6 +116,7 @@ export interface AppliedPageDecisions {
 export function applyPageDecisionsToTemplate(
   template: ReportTemplate,
   decisionsByPageId: Map<string, PdfImportPagePolicy>,
+  sourceRasterByPageId: Map<string, string> = new Map(),
 ): AppliedPageDecisions {
   if (decisionsByPageId.size === 0) return { template, changed: false };
   let changed = false;
@@ -123,7 +124,14 @@ export function applyPageDecisionsToTemplate(
     const policy = decisionsByPageId.get(page.id);
     if (!policy) return page;
     changed = true;
-    return applyPagePolicyToPage(page, policy);
+    const sourceRaster = sourceRasterByPageId.get(page.id);
+    const pageWithRaster = policy.outputStrategy === 'raster-only' && sourceRaster
+      ? {
+          ...page,
+          background: { ...(page.background ?? {}), imageUrl: sourceRaster },
+        }
+      : page;
+    return applyPagePolicyToPage(pageWithRaster as Page, policy);
   });
   return { template: changed ? ({ ...template, pages } as ReportTemplate) : template, changed };
 }

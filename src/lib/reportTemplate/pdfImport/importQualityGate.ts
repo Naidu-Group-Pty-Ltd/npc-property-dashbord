@@ -527,6 +527,7 @@ export async function runImportQualityGate(
     // scored page receives a truthful, applied output policy (not merely a
     // recommendation); document-level recommendedFinalMode stays summary-only.
     const decidedByPageId = new Map<string, PdfImportPagePolicy>();
+    const sourceRasterByPageId = new Map<string, string>();
     const pageDecisions: Record<string, PdfImportPagePolicy> = {};
     let pagesNative = 0;
     let pagesHybridFallback = 0;
@@ -543,13 +544,19 @@ export async function runImportQualityGate(
       });
       pageDecisions[pageId] = decision.policy;
       decidedByPageId.set(pageId, decision.policy);
+      const sourceRaster = rastersByPage[report.pageNumber]?.dataUrl;
+      if (sourceRaster) sourceRasterByPageId.set(pageId, sourceRaster);
       decisionManualReview = decisionManualReview || decision.manualReviewRequired;
       if (decision.action === 'hybrid_fallback') pagesHybridFallback += 1;
       else if (decision.action === 'pixel_fallback' || decision.action === 'pixel_requested') pagesPixelFallback += 1;
       else if (decision.action === 'fallback_unavailable') pagesFallbackUnavailable += 1;
       else pagesNative += 1;
     }
-    const decided = applyPageDecisionsToTemplate(batched.template, decidedByPageId);
+    const decided = applyPageDecisionsToTemplate(
+      batched.template,
+      decidedByPageId,
+      sourceRasterByPageId,
+    );
     const templateChanged = decided.changed || batched.template !== options.template;
 
     const manualReviewRequired = batched.manualReviewRequired

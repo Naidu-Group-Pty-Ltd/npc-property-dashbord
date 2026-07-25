@@ -161,4 +161,21 @@ describe('applyPageDecisionsToTemplate', () => {
     applyPageDecisionsToTemplate(t, new Map([['docling-page-1', decide(0.3, true).policy]]));
     expect((t.pages[0].meta as any)?.pdfImport).toBeUndefined();
   });
+
+  it('attaches the available source raster before applying a raster-only policy', () => {
+    const t = template();
+    t.pages[1].background = { imageUrl: '' };
+    const res = applyPageDecisionsToTemplate(
+      t,
+      new Map([['docling-page-2', decide(0.3, true).policy]]),
+      new Map([['docling-page-2', 'data:image/png;base64,SOURCE']]),
+    );
+
+    expect(res.template.pages[1].background).toMatchObject({
+      imageUrl: 'data:image/png;base64,SOURCE',
+      opacity: 1,
+      imageFit: 'fill',
+      underlay: false,
+    });
+  });
 });
