@@ -1208,6 +1208,7 @@ Deno.serve(async (req) => {
 
       let authorizedPdfJobId: string | null = null;
       let pdfJobResultPayload: any = null;
+      let trustedPdfJobId: string | null = null;
       if (pdfJobId) {
         let pdfJobQuery = admin
           .from('pdf_import_jobs')

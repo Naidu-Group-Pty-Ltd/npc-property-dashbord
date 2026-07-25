@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/integrations/supabase/client';
+import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -50,6 +50,7 @@ const AVAILABLE_FIELDS = [
 ];
 
 function useGammaTemplates() {
+  const { supabase } = useAuthenticatedSupabase();
   return useQuery({
     queryKey: ['gamma-templates'],
     queryFn: async () => {
@@ -66,6 +67,8 @@ function useGammaTemplates() {
 
 export default function GammaTemplateManager() {
   const queryClient = useQueryClient();
+  // Staff-JWT client so gamma_agreement_templates can drop its anon grants (RLS-W2).
+  const { supabase } = useAuthenticatedSupabase();
   const { data: templates = [], isLoading, isError, error, refetch } = useGammaTemplates();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<GammaTemplate | null>(null);

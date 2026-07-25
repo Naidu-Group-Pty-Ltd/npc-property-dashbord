@@ -33,7 +33,7 @@ export function MetricsReviewStep({ properties, portfolioTotals }: MetricsReview
   return (
     <div className="space-y-6">
       {/* Portfolio Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Card>
           <CardContent className="pt-4">
             <div className="flex items-center gap-2">
@@ -115,8 +115,8 @@ export function MetricsReviewStep({ properties, portfolioTotals }: MetricsReview
           <CardTitle className="text-lg">Property Metrics</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="max-w-full overflow-x-auto rounded-md border" data-testid="property-metrics-table">
+            <table className="w-full min-w-[760px] text-sm">
               <thead>
                 <tr className="border-b">
                   <th className="text-left py-2 font-medium">Property</th>
@@ -131,7 +131,7 @@ export function MetricsReviewStep({ properties, portfolioTotals }: MetricsReview
               <tbody>
                 {properties.map((prop) => (
                   <tr key={prop.propertyId} className="border-b last:border-0">
-                    <td className="py-3 max-w-[200px] truncate">{prop.address}</td>
+                    <td className="max-w-[280px] py-3 pr-4 whitespace-normal break-words" title={prop.address}>{prop.address}</td>
                     <td className="py-3 text-right">{formatCurrency(prop.value)}</td>
                     <td className="py-3 text-right">{formatCurrency(prop.loanRemaining)}</td>
                     <td className="py-3 text-right">

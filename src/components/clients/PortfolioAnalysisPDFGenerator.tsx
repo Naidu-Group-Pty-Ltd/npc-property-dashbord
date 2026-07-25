@@ -457,9 +457,8 @@ export function PortfolioAnalysisPDFGenerator({
   };
 
   // ============= PDF GENERATION ENGINE (Phase 1) =============
-  const downloadPDF = async (opts?: { flattenOnly?: boolean }) => {
-    if (!analysisData) return;
-    const flattenOnly = opts?.flattenOnly === true;
+  const downloadPDF = async () => {
+    if (!analysisData || isDownloading) return;
     setIsDownloading(true);
     
     
@@ -3068,9 +3067,9 @@ export function PortfolioAnalysisPDFGenerator({
       const fileName = `Portfolio_Analysis_${clientName.replace(/\s+/g, '_')}_${generatedStamp}.pdf`;
       const storagePath = `portfolio-reports/${clientId}/${fileName}`;
       
-      // Upload PDF to Supabase Storage via secure function (skip when flatten-only)
+      // Upload PDF to Supabase Storage via the authenticated storage proxy.
       let uploadedFilePath: string | null = null;
-      if (!flattenOnly) {
+      {
         console.log('📤 Uploading PDF to storage...');
         try {
           const uploadResult = await secureStorageUpload(
@@ -3092,11 +3091,8 @@ export function PortfolioAnalysisPDFGenerator({
         }
       }
       
-      // Download the PDF locally (flattened if requested)
-      if (flattenOnly) {
-        const { flattenAndDownloadPdf } = await import('@/lib/pdf/downloadPdf');
-        await flattenAndDownloadPdf(blob, fileName);
-      } else {
+      // Download the PDF locally and release the object URL after the click.
+      {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
@@ -3104,12 +3100,12 @@ export function PortfolioAnalysisPDFGenerator({
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
       }
       
-      // Save report metadata to database via secure function (skip when flatten-only)
+      // Save report metadata to database via the canonical secure function.
       let reportPersisted = false;
-      if (!flattenOnly) {
+      {
         console.log('📊 Saving report metadata to database...');
         try {
           const { error: insertError } = await invokeSecureFunction('manage-client-data', {
@@ -3171,7 +3167,7 @@ export function PortfolioAnalysisPDFGenerator({
       }
 
       console.log('✅ PDF generation complete!');
-      toast.success(flattenOnly ? 'Flattened PDF downloaded' : (reportPersisted ? 'PDF downloaded and report saved' : 'PDF downloaded locally'));
+      toast.success(reportPersisted ? 'PDF downloaded and report saved' : 'PDF downloaded locally');
       logActivityDirect({
         actionType: 'portfolio_report_generated',
         entityType: 'portfolio_report',
@@ -3237,16 +3233,6 @@ export function PortfolioAnalysisPDFGenerator({
                     <Download className="h-4 w-4 mr-2" />
                   )}
                   Download & Save PDF
-                </Button>
-                <Button
-                  onClick={() => downloadPDF({ flattenOnly: true })}
-                  disabled={isDownloading}
-                  variant="outline"
-                  size="sm"
-                  title="Download a flattened (image-only) copy without saving to Reports"
-                >
-                  <Download className="h-4 w-4 mr-2" />
-                  Flattened PDF
                 </Button>
               </div>
             </DialogTitle>

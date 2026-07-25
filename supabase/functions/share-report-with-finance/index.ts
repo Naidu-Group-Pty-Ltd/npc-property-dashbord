@@ -7,6 +7,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
+import { checkPermission } from "../_shared/permissions.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -17,6 +18,38 @@ function json(data: unknown, status: number, headers: Record<string, string>) {
     status,
     headers: { ...headers, 'Content-Type': 'application/json' },
   });
+}
+
+async function canShareForClient(
+  supabase: any,
+  userId: string,
+  clientId: string,
+  authMethod?: string,
+) {
+  // This service-role function writes documents, notifications, and activity
+  // records on the caller's behalf. Require the same clients-module edit
+  // authority as other internal client mutations before using that privilege.
+  const permission = await checkPermission(supabase, userId, 'clients', 'create', authMethod);
+  if (!permission.allowed) return false;
+
+  // Internal calls and superadmins retain their established bypasses. Other
+  // staff may only share reports for clients they own or are assigned to.
+  if (authMethod === 'service_role' || userId === 'service_role') return true;
+  const { data: superadminRole } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', userId)
+    .eq('role', 'superadmin')
+    .maybeSingle();
+  if (superadminRole) return true;
+
+  const { data: scopedClient } = await supabase
+    .from('clients')
+    .select('id')
+    .eq('id', clientId)
+    .or(`created_by.eq.${userId},assigned_team_user_id.eq.${userId}`)
+    .maybeSingle();
+  return !!scopedClient;
 }
 
 Deno.serve(async (req) => {
@@ -40,6 +73,11 @@ Deno.serve(async (req) => {
     const { client_id, finance_contact_id, filename, content_base64, mime_type = 'application/pdf' } = body;
     if (!client_id || !finance_contact_id || !filename || !content_base64) {
       return json({ error: 'client_id, finance_contact_id, filename and content_base64 are required' }, 400, corsHeaders);
+    }
+
+    const canShare = await canShareForClient(supabase, auth.userId, client_id, auth.authMethod);
+    if (!canShare) {
+      return json({ error: 'You are not authorised to share reports for this client' }, 403, corsHeaders);
     }
 
     const bytes = Uint8Array.from(atob(content_base64), (char) => char.charCodeAt(0));

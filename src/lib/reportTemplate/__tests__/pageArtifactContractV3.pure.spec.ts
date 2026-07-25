@@ -108,6 +108,7 @@ describe('pdf-page-artifact-contract-v3 manifest validation', () => {
     const r = validatePageArtifactContractV3(v3Manifest([
       v3Page(1, { region_crop_paths: { 'src-p0001-chrt-0001-abcd1234': 'other-job/pages/page-001/regions/x.png' } }),
     ]), { jobId: 'job' });
+    expect(r.state).toBe('invalid_v3');
     expect(r.problems.some((p) => p.includes('outside_job_prefix'))).toBe(true);
   });
 

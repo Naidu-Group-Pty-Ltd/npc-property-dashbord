@@ -7,7 +7,7 @@ type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'in
 
 interface RequestBody {
   // Operation type
-  operation: 'list' | 'get' | 'insert' | 'update' | 'upsert' | 'delete' | 'rpc';
+  operation: 'list' | 'get' | 'insert' | 'update' | 'upsert' | 'delete';
   
   // Target table
   table: TableName;
@@ -32,10 +32,6 @@ interface RequestBody {
   
   // For upsert operations
   onConflict?: string;
-  
-  // For RPC calls
-  rpcName?: string;
-  rpcParams?: Record<string, any>;
   
   session_token?: string;
 }
@@ -470,7 +466,7 @@ Deno.serve(async (req) => {
 
     console.log(`[manage-templates] Authenticated user ${userId}, operation: ${body.operation}, table: ${body.table}`);
 
-    const { operation, table, recordId, listOptions = {}, onConflict, rpcName, rpcParams } = body;
+    const { operation, table, recordId, listOptions = {}, onConflict } = body;
     let data: any;
     try {
       data = normaliseTemplatePayload(table, body.data);
@@ -506,24 +502,6 @@ Deno.serve(async (req) => {
     }
     if (isComparisonTemplate && operation === 'insert' && data && !Array.isArray(data)) {
       data = { ...data, created_by: userId };
-    }
-
-    // Handle RPC calls
-    if (operation === 'rpc' && rpcName) {
-      const { data: rpcData, error: rpcError } = await supabase.rpc(rpcName, rpcParams || {});
-      
-      if (rpcError) {
-        console.error(`[manage-templates] RPC error:`, rpcError);
-        return new Response(
-          JSON.stringify({ error: rpcError.message }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-      
-      return new Response(
-        JSON.stringify({ success: true, data: rpcData }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
     }
 
     // Handle list operation

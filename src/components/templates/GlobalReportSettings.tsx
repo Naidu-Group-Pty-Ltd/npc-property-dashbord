@@ -8,7 +8,6 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, Phone, Mail, Globe, MapPin, FileText, Save, Loader2, Type } from 'lucide-react';
-import { supabase } from '@/integrations/supabase/client';
 import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { toast } from 'sonner';
 
@@ -54,7 +53,9 @@ export function GlobalReportSettings() {
 
   const fetchSettings = async () => {
     try {
-      const { data, error } = await supabase
+      // Read with the staff JWT so the settings table can drop its anon SELECT
+      // grant (RLS-W2) without breaking this load.
+      const { data, error } = await authedSupabase
         .from('global_report_settings')
         .select('*');
 
