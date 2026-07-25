@@ -112,6 +112,49 @@ function evaluateTriggers(triggers: Trigger[], inputs: Record<string, any>) {
   return holds;
 }
 
+async function authoritativeMandatoryInputs(admin: any, caseId: string): Promise<Record<string, any>> {
+  const [{ data: failedIdv }, { data: confirmedSanctions }] = await Promise.all([
+    admin.schema("aml").from("identity_checks")
+      .select("id, status, completed_at, updated_at")
+      .eq("case_id", caseId)
+      .eq("status", "failed")
+      .limit(1),
+    admin.schema("aml").from("screening_matches")
+      .select("id, match_type, status, updated_at")
+      .eq("case_id", caseId)
+      .eq("match_type", "sanctions")
+      .eq("status", "confirmed")
+      .limit(1),
+  ]);
+
+  const inputs: Record<string, any> = {};
+  if ((failedIdv ?? []).length > 0) inputs.idv = "failed";
+  if ((confirmedSanctions ?? []).length > 0) inputs.screening = { confirmed_match: true };
+  return inputs;
+}
+
+function blockingHolds(assessment: any): any[] {
+  return ((assessment?.triggered_holds ?? []) as any[]).filter((h) => h?.severity === "block");
+}
+
+async function clearanceBlockReasons(admin: any, caseId: string, assessment: any, openConditions: any[] = []): Promise<string[]> {
+  const authoritativeInputs = await authoritativeMandatoryInputs(admin, caseId);
+  const { data: triggers } = await admin.schema("aml").from("mandatory_triggers").select("*").eq("active", true);
+  const authoritativeHolds = evaluateTriggers((triggers ?? []) as Trigger[], authoritativeInputs);
+  const reasons: string[] = [];
+
+  if (!assessment) reasons.push("no_assessment");
+  if (openConditions.length > 0) reasons.push(`${openConditions.length}_open_conditions`);
+
+  const assessmentBlocks = blockingHolds(assessment);
+  if (assessmentBlocks.length > 0) reasons.push(`${assessmentBlocks.length}_blocking_holds`);
+
+  const authoritativeBlocks = authoritativeHolds.filter((h) => h.severity === "block");
+  for (const hold of authoritativeBlocks) reasons.push(`authoritative_${hold.key}`);
+
+  return Array.from(new Set(reasons));
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -190,8 +233,10 @@ Deno.serve(async (req) => {
         admin.schema("aml").from("mandatory_triggers").select("*").eq("active", true),
       ]);
 
-      const scored = evaluateFactors((fs ?? []) as Factor[], inputs);
-      const holds = evaluateTriggers((ts ?? []) as Trigger[], inputs);
+      const authoritativeInputs = await authoritativeMandatoryInputs(admin, caseId);
+      const effectiveInputs = { ...inputs, ...authoritativeInputs };
+      const scored = evaluateFactors((fs ?? []) as Factor[], effectiveInputs);
+      const holds = evaluateTriggers((ts ?? []) as Trigger[], effectiveInputs);
       const blocking = holds.some((h) => h.severity === "block");
       const rating = blocking ? "prohibited" : ratingFor(scored.mltf_score);
 
@@ -229,7 +274,7 @@ Deno.serve(async (req) => {
         risk_rating: rating,
         triggered_holds: holds,
         factor_breakdown: scored.factor_breakdown,
-        inputs,
+        inputs: effectiveInputs,
         computed_by: userId,
         program_version: programVersion,
         policy_snapshot_hash: policySnapshotHash,
@@ -349,6 +394,13 @@ Deno.serve(async (req) => {
       const { data: tenant } = await admin.schema("aml").from("tenant_settings")
         .select("risk_program_version").eq("tenant_id", tenantId).maybeSingle();
       const programVersion = (tenant?.risk_program_version as string) || (ass?.program_version as string) || "v1";
+
+      const clearanceReasons = outcome === "cleared"
+        ? await clearanceBlockReasons(admin, case_id, ass, conds ?? [])
+        : [];
+      if (clearanceReasons.length > 0) {
+        return jr({ error: "Cannot clear AML case with unresolved mandatory holds", reasons: clearanceReasons }, 409);
+      }
 
       const snapshot = {
         version: 1, decided_at: new Date().toISOString(), decided_by: userId,
@@ -505,9 +557,7 @@ Deno.serve(async (req) => {
       const reasons: string[] = [];
       if (!dec) reasons.push("no_decision");
       else if (dec.outcome !== "cleared") reasons.push(`decision_${dec.outcome}`);
-      if ((cond ?? []).length > 0) reasons.push(`${cond!.length}_open_conditions`);
-      const holds = ((ass?.triggered_holds ?? []) as any[]).filter((h) => h?.severity === "block");
-      if (holds.length > 0) reasons.push(`${holds.length}_blocking_holds`);
+      reasons.push(...await clearanceBlockReasons(admin, effectiveCaseId, ass, cond ?? []));
 
       const purchase_ready = reasons.length === 0;
       // If gate flag disabled we still return the diagnostic but purchase_ready defaults to true.
