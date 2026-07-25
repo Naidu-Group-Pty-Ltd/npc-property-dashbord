@@ -259,12 +259,13 @@ Deno.serve(async (req) => {
 
       // Straight-through eligibility
       const stEnabled = Boolean(stConfig?.enabled);
-      const stEligible = stEnabled
+      const stEligible = canReview
+        && stEnabled
         && rating === "low"
         && holds.length === 0
         && scored.mltf_score <= (Number(stConfig?.max_mltf_score) || 25)
-        && scored.completion_score >= (Number(stConfig?.require_completion_score) || 70)
-        && scored.verification_score >= (Number(stConfig?.require_verification_score) || 70);
+        && scored.completion_score <= (Number(stConfig?.require_completion_score) || 70)
+        && scored.verification_score <= (Number(stConfig?.require_verification_score) || 70);
 
       const { data: ass, error } = await admin.schema("aml").from("risk_assessments").insert({
         case_id: caseId,
