@@ -854,6 +854,7 @@ async function runJob(
 ) {
   const startedAt = Date.now();
   let bytesIn: number | null = null;
+  let chunkedRan = false;
   try {
     // ---- Phase C: hash + policy-safe cache lookup --------------------------
     await setStage(admin, jobId, 'hashing');
@@ -951,6 +952,7 @@ async function runJob(
         requires_picture_description: plan.requires_picture_description,
       });
       await runChunkedDispatch(admin, jobId, signedUrl, effectiveMode, selectedLane, plan.page_count, plan.ocr_hint, requestPayload, selectedChunkSize);
+      chunkedRan = true;
       await updateJob(admin, jobId, { bytes_in: bytesIn });
       return;
     }
@@ -1034,7 +1036,9 @@ async function runJob(
       error_text: String((err as Error)?.message ?? err).slice(0, 2000),
     });
   } finally {
-    if (cleanup) await cleanup().catch(() => undefined);
+    // Chunk workers fetch the signed source after dispatch returns, so the
+    // temporary inline source must remain available for their background work.
+    if (cleanup && !chunkedRan) await cleanup().catch(() => undefined);
   }
 }
 
