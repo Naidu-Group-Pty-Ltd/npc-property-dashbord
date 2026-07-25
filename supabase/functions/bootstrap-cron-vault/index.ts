@@ -7,9 +7,10 @@
 //   (idempotent, single-use). Subsequent calls no-op with 409.
 // - Never returns the secret values themselves.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
+import { createCorsHeaders } from '../_shared/auth.ts';
 
 Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
