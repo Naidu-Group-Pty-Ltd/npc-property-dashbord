@@ -14,7 +14,7 @@ import { DashboardThemeFrame } from "@/components/layout/DashboardThemeFrame";
 import { cn } from "@/lib/utils";
 import {
   RefreshCw, Search, Coins, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, Activity, Clock3, ShieldCheck, FileKey2, UserRound, Building2, AlertTriangle,
+  ChevronsLeft, ChevronsRight, Activity, Clock3, ShieldCheck, UserRound, Building2, AlertTriangle,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { TokenEventDetailsDrawer } from "@/components/billing/TokenEventDetailsDrawer";
@@ -78,7 +78,12 @@ function fmtMs(ms: number) {
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 const PREMIUM_SCROLLBAR = "[scrollbar-color:hsl(var(--primary)/0.35)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-primary/35 [&::-webkit-scrollbar-track]:bg-transparent";
 
-export default function TokenUsageHistory() {
+/**
+ * Token usage history — the metering audit view, embeddable as a tab of the
+ * consolidated Billing & Usage page (formerly the standalone /billing/usage
+ * page; behaviour is unchanged).
+ */
+export function TokenUsagePanel() {
   const [scope, setScope] = useState<"mine" | "agency">("mine");
   const [rows, setRows] = useState<UsageRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -166,40 +171,7 @@ export default function TokenUsageHistory() {
   ];
 
   return (
-    <DashboardThemeFrame variant="page" className="min-h-[calc(100vh-5rem)] min-w-0 overflow-x-hidden space-y-7 p-3 sm:p-5 lg:p-6">
-      <DashboardThemeFrame as="header" variant="hero" className="flex min-w-0 flex-col gap-5 border-primary/20 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.16),transparent_34%),linear-gradient(135deg,hsl(var(--card)),hsl(var(--background))_55%,hsl(var(--primary)/0.10))] p-5 sm:p-6 lg:flex-row lg:items-center lg:justify-between lg:p-7">
-        <div className="flex min-w-0 items-start gap-4">
-          <div className="relative shrink-0 rounded-2xl border border-primary/25 bg-primary/10 p-3 text-primary shadow-[0_14px_35px_hsl(var(--primary)/0.16)]">
-            <FileKey2 className="h-7 w-7" />
-            <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full border-2 border-card bg-success" aria-hidden="true" />
-          </div>
-          <div className="min-w-0 space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Metering audit
-            </div>
-            <div className="min-w-0">
-              <h1 className="min-w-0 truncate text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-                Token Usage History
-              </h1>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">
-                Every metered report generation, with estimated vs actual tokens and duration.
-              </p>
-            </div>
-          </div>
-        </div>
-        <Button
-          onClick={load}
-          variant="outline"
-          size="sm"
-          disabled={loading}
-          className="min-h-10 w-full shrink-0 rounded-xl border-primary/25 bg-background/85 px-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/10 hover:text-primary hover:shadow-[0_12px_28px_hsl(var(--primary)/0.14)] focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 sm:w-auto"
-        >
-          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
-      </DashboardThemeFrame>
-
+    <div className="min-w-0 space-y-5">
       <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
         {kpis.map(({ label, value, icon: Icon, helper, accent, iconClass, valueClass }) => (
           <DashboardThemeFrame key={label} variant="premiumCard" className={cn("group p-0 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-[0_20px_55px_rgba(15,23,42,0.12)] dark:hover:shadow-[0_20px_55px_rgba(0,0,0,0.34)]", `bg-gradient-to-br ${accent}`)}>
@@ -241,6 +213,16 @@ export default function TokenUsageHistory() {
                 Click an idempotency key to see the full reserve / commit / cancel trail.
               </CardDescription>
             </div>
+            <Button
+              onClick={load}
+              variant="outline"
+              size="sm"
+              disabled={loading}
+              className="min-h-10 w-full shrink-0 rounded-xl border-primary/25 bg-background/85 px-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/50 hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 sm:w-auto"
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
           </div>
         </CardHeader>
         <CardContent className="min-w-0 space-y-5 p-4 sm:p-6">
@@ -476,6 +458,6 @@ export default function TokenUsageHistory() {
         onOpenChange={(o) => !o && setActiveKey(null)}
         premiumTimeline
       />
-    </DashboardThemeFrame>
+    </div>
   );
 }
