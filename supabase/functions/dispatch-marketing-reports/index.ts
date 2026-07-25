@@ -360,6 +360,8 @@ async function processScheduleDispatch(
         body: bodyContent,
         source: 'agent', // Triggers NPC branded HTML template with banner, signature, disclaimer
         mailboxSource: schedule.mailbox_source || 'admin',
+        senderMailboxId: schedule.mailbox_source === 'personal' ? schedule.created_by : undefined,
+        effectiveUserId: schedule.created_by,
         attachments: [{
           name: `Market_Intelligence_Report_${reportPeriod.replace(/\s+/g, '_')}.pdf`,
           contentType: 'application/pdf',
