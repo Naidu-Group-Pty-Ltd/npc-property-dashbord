@@ -99,7 +99,13 @@ export async function verifyTurnstile(token: string | null | undefined, ip: stri
     if (required) return { ok: false, failClosed: true, reason: 'turnstile_unavailable' };
     return { ok: true, failClosed: false };
   }
-  if (!token) return { ok: false, failClosed: required, reason: 'turnstile_missing' };
+  // A configured secret makes verification available; it does not make the
+  // challenge mandatory. Public clients that do not render Turnstile must
+  // continue to work unless the explicit requirement flag is enabled.
+  if (!token) {
+    if (required) return { ok: false, failClosed: true, reason: 'turnstile_missing' };
+    return { ok: true, failClosed: false };
+  }
 
   try {
     const body = new URLSearchParams({ secret, response: token });

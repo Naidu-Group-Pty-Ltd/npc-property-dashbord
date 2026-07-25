@@ -149,7 +149,20 @@ export interface OverlapPair {
   code: 'severe_overlap' | 'material_occlusion' | 'crop_and_native_both_visible';
 }
 
-export interface OverlapOptions { maxPairs?: number; overlapThreshold?: number; occlusionThreshold?: number }
+export interface OverlapOptions {
+  maxPairs?: number; overlapThreshold?: number; occlusionThreshold?: number;
+  /** Bounds untrusted evidence before it reaches the spatial index. */
+  surfaceRect?: RenderedRectV1;
+  maxBucketsPerElement?: number;
+}
+
+/** Clamp a finite, positive-area evidence rectangle to the captured page. */
+export function clampRectToSurface(rect: RenderedRectV1, surface: RenderedRectV1): RenderedRectV1 | null {
+  if (![rect.x, rect.y, rect.width, rect.height, surface.x, surface.y, surface.width, surface.height].every(Number.isFinite)) return null;
+  if (rect.width <= 0 || rect.height <= 0 || surface.width <= 0 || surface.height <= 0) return null;
+  const clamped = intersectRect(rect, surface);
+  return clamped.width > 0 && clamped.height > 0 ? clamped : null;
+}
 
 /**
  * Detect material collisions with a bounded uniform-grid spatial index (no
@@ -163,12 +176,16 @@ export function detectOverlaps(elements: OverlapCandidate[], options: OverlapOpt
   const occlusionThreshold = options.occlusionThreshold ?? 0.6;
   const out: OverlapPair[] = [];
   const cell = 64;
+  const maxBucketsPerElement = Math.max(1, Math.floor(options.maxBucketsPerElement ?? 4096));
   const buckets = new Map<string, number[]>();
   const key = (cx: number, cy: number) => `${cx}:${cy}`;
   elements.forEach((el, i) => {
-    const r = el.bboxPx;
+    const r = options.surfaceRect ? clampRectToSurface(el.bboxPx, options.surfaceRect) : el.bboxPx;
+    if (!r || ![r.x, r.y, r.width, r.height].every(Number.isFinite) || r.width <= 0 || r.height <= 0) return;
     const x0 = Math.floor(r.x / cell), y0 = Math.floor(r.y / cell);
     const x1 = Math.floor((r.x + r.width) / cell), y1 = Math.floor((r.y + r.height) / cell);
+    const columns = x1 - x0 + 1; const rows = y1 - y0 + 1;
+    if (columns <= 0 || rows <= 0 || columns > maxBucketsPerElement || rows > Math.floor(maxBucketsPerElement / columns)) return;
     for (let cx = x0; cx <= x1; cx += 1) for (let cy = y0; cy <= y1; cy += 1) {
       const k = key(cx, cy); const arr = buckets.get(k) ?? []; arr.push(i); buckets.set(k, arr);
     }

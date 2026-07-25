@@ -20,7 +20,7 @@ import {
 } from './bindingResolver';
 import { getBlockRenderer, type BlockRenderContext } from './blocks';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
-import { resolvePageOutputPolicy, resolvePageRenderPlan } from './rendering/pdfImportPagePolicy';
+import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
 
 export interface RenderOptions {
   /** Sample / live data the template binds against. */
@@ -94,6 +94,9 @@ function mergeTokens(
 }
 
 function drawPage(doc: jsPDF, page: Page, ctxBase: ResolveContext) {
+  const pdfPagePolicy = resolvePageOutputPolicy(page as unknown as Page);
+  const pdfPageRenderPlan = resolvePageRenderPlan(pdfPagePolicy);
+
   // Background colour
   if (page.background?.color) {
     const hex = resolveBindableColor(page.background.color, ctxBase, '#FFFFFF');
@@ -104,7 +107,7 @@ function drawPage(doc: jsPDF, page: Page, ctxBase: ResolveContext) {
   // Background image (preloaded to data URL by imagePreloader).
   // PDF-import reference underlays are editor-only alignment aids — printing
   // them would duplicate every element behind the reconstructed overlays.
-  if (page.background?.imageUrl && !(page.background as any)?.underlay) {
+  if (page.background?.imageUrl && shouldRenderPageBackgroundImage(page, pdfPageRenderPlan)) {
     const url = String(page.background.imageUrl);
     if (url.startsWith('data:') || url.startsWith('http')) {
       try {
@@ -125,8 +128,7 @@ function drawPage(doc: jsPDF, page: Page, ctxBase: ResolveContext) {
 
   // C5: raster-only pages export the source raster as their final output and
   // must NOT also draw native blocks/overlays (no double render).
-  const pdfPagePolicy = resolvePageOutputPolicy(page as unknown as Page);
-  const pdfRenderNativeBlocks = resolvePageRenderPlan(pdfPagePolicy).renderNativeBlocks;
+  const pdfRenderNativeBlocks = pdfPageRenderPlan.renderNativeBlocks;
   // Blocks
   if (pdfRenderNativeBlocks) {
     for (const block of sortBlocksForPaint(page.blocks)) {

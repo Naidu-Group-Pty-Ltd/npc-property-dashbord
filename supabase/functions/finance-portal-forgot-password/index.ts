@@ -32,15 +32,15 @@ Deno.serve(async (req) => {
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
-    // ABUSE-003: throttle reset REQUESTS per source IP and per account (atomic
-    // DB check). On limit return the same generic success and send nothing.
+    // ABUSE-003: consume the source-IP limit before doing any account-keyed
+    // write. This ordering prevents a caller that is already IP-limited from
+    // creating persistent limiter rows with arbitrary email addresses.
     const clientIp = (req.headers.get('x-forwarded-for')?.split(',')[0]
       || req.headers.get('cf-connecting-ip') || 'unknown').trim();
-    const [{ data: ipOk }, { data: acctOk }] = await Promise.all([
-      supabase.rpc('check_and_bump_rate_limit', { p_key: `fpfp_ip:${clientIp}`, p_max: 5, p_window_seconds: 900 }),
-      supabase.rpc('check_and_bump_rate_limit', { p_key: `fpfp_email:${normalizedEmail}`, p_max: 5, p_window_seconds: 3600 }),
-    ]);
-    if (ipOk === false || acctOk === false) {
+    const { data: ipOk, error: ipLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `fpfp_ip:${clientIp}`, p_max: 5, p_window_seconds: 900,
+    });
+    if (ipLimitError || ipOk !== true) {
       console.warn('[finance-portal-forgot-password] rate limited', { ip: clientIp });
       return genericSuccess();
     }
@@ -54,10 +54,16 @@ Deno.serve(async (req) => {
     // Always return success to prevent email enumeration
     if (!portalUser || !portalUser.is_active || portalUser.revoked_at) {
       console.log(`[finance-portal-forgot-password] Reset requested for unknown/inactive email: ${normalizedEmail}`)
-      return new Response(
-        JSON.stringify({ success: true, message: 'If an account exists with this email, a reset code has been sent.' }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return genericSuccess()
+    }
+
+    // Only validated, active accounts receive a persistent account bucket.
+    const { data: acctOk, error: acctLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `fpfp_email:${normalizedEmail}`, p_max: 5, p_window_seconds: 3600,
+    });
+    if (acctLimitError || acctOk !== true) {
+      console.warn('[finance-portal-forgot-password] account rate limited', { ip: clientIp });
+      return genericSuccess();
     }
 
     // Generate 6-digit OTP

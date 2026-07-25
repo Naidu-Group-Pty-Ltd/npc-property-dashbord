@@ -21,6 +21,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyInternal } from '../_shared/auth_v2.ts';
 import { callInternalFunction } from '../_shared/internalCall.ts';
+import { enforceRawBodyLimit } from '../_shared/requestSecurity.ts';
 
 const WORKER_MAP: Record<string, string> = {
   contacts: 'ghl-migrate-contacts-worker',
@@ -42,6 +43,9 @@ const CLAIM_LIMIT = 4;
 // Lease length — must exceed the worker's MAX_RUNTIME_MS plus buffer.
 // Worker budget is 90s; 180s lease leaves safe margin.
 const LEASE_SECONDS = 180;
+// Dispatcher triggers contain only a small JSON envelope. Bound reads because
+// verify_jwt=false allows unauthenticated requests to reach this handler.
+const MAX_TRIGGER_BODY_BYTES = 64 * 1024;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,7 +69,9 @@ Deno.serve(async (req) => {
   // so the signed-envelope body hash matches. Passing '' here caused every
   // signed cron tick to fail with `invalid_internal_signature` under
   // INTERNAL_STRICT_SIGNED=true.
-  const rawBody = await req.text();
+  const boundedBody = await enforceRawBodyLimit(req, MAX_TRIGGER_BODY_BYTES);
+  if (!boundedBody.ok) return boundedBody.error;
+  const rawBody = boundedBody.raw;
   const gate = await verifyInternal(supabase, req, rawBody);
   if (!gate.ok) {
     console.warn('[dispatcher] verifyInternal denied', { errorCode: (gate as any).errorCode });

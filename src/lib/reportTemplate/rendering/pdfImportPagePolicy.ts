@@ -148,6 +148,22 @@ export function resolvePageRenderPlan(
 }
 
 /**
+ * Apply the PDF-import render plan to the page background without changing the
+ * historical behaviour of ordinary decorative background images.
+ */
+export function shouldRenderPageBackgroundImage(
+  page: Page | null | undefined,
+  plan: { showSourceRaster: boolean },
+): boolean {
+  const meta = (page?.meta ?? {}) as Record<string, unknown>;
+  const background = (page?.background ?? {}) as Record<string, unknown>;
+  const isPdfImportBackground = isPolicyObject(meta.pdfImport)
+    || Boolean(meta.sourceRasterRef)
+    || background.underlay === true;
+  return isPdfImportBackground ? plan.showSourceRaster : true;
+}
+
+/**
  * Apply a policy to a page: writes the typed `meta.pdfImport` policy AND keeps
  * the legacy `background` flags consistent so every renderer (typed-aware or
  * legacy) agrees. Returns a new page; never mutates the input.

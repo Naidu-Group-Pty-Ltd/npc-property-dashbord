@@ -4,7 +4,7 @@
  * shows regression deltas (pass_rate) against the previous baseline.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -26,7 +26,7 @@ interface Baseline {
 }
 
 async function invoke(action: string, body: Record<string, any> = {}) {
-  const { data, error } = await supabase.functions.invoke('phase6-quality-ops', { body: { action, ...body } });
+  const { data, error } = await invokeSecureFunction('phase6-quality-ops', { action, ...body });
   if (error) throw new Error(error.message);
   if ((data as any)?.error) throw new Error((data as any).error);
   return data as any;

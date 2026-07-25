@@ -16,6 +16,7 @@ Proves the E10 core invariants on the Python side:
 """
 from __future__ import annotations
 
+import re
 import sys
 
 import pytest
@@ -105,10 +106,11 @@ def test_parity_anchors():
     assert default_service_class_registry().registry_id == "svcreg-52451c5f"
     assert default_routing_policy().policy_id == "svcpol-f3fd6a52"
     plan = _mixed_plan()
-    assert plan.plan_id == "plan3-99e3a652"
-    assert plan.plan_hash == "99e3a652"
-    assert plan.cache_fingerprint == "pf3-f8d3a191"
-    assert build_routing_audit(plan)["audit_id"] == "raud-336d5709"
+    assert plan.plan_id == "plan3-a8ce0afb"
+    assert plan.plan_hash == "a8ce0afb"
+    assert plan.cache_fingerprint == "pf3-aab8d89ced1d9f08a7250086264be2968872c18c6fdf76c0dbee39ab28aa067b"
+    assert re.fullmatch(r"pf3-[0-9a-f]{64}", plan.cache_fingerprint)
+    assert build_routing_audit(plan)["audit_id"] == "raud-ee8cfe89"
 
 
 # ── Determinism / retry / reroute ────────────────────────────────────────────
@@ -124,6 +126,21 @@ def test_determinism_and_retry_invariance():
     # A retry (new attempt index) does not change plan identity.
     _att = ExecutionAttemptV1(PDF_EXECUTION_ATTEMPT_VERSION, a.plan_id, SERVICE_CLASS_FAST_CPU, 3, "failed", "provider_timeout")
     assert _mixed_plan().plan_id == a.plan_id
+
+
+def test_cache_fingerprint_uses_collision_resistant_source_identity():
+    def plan_for(source_sha256: str):
+        source = {**MIXED_SOURCE_SIGNALS, "source_sha256": source_sha256}
+        return build_plan_v3(
+            build_preflight(source),
+            default_service_class_registry(),
+            default_routing_policy(),
+            default_request_options(),
+        )
+
+    entry = plan_for("147255048da408b63dc6fc8234108ea5021990625213c27e56d70bff706c1ec3")
+    request = plan_for("9caaeb566c2b80604cc159af7cb1ef56db95eff5926c7d6a430b404a3779fe52")
+    assert entry.cache_fingerprint != request.cache_fingerprint
 
 
 def test_reroute_creates_new_plan():

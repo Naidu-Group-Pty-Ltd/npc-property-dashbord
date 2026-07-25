@@ -5,7 +5,7 @@
 -- directly from Postgres catalogs. Any surprising row in these outputs is a
 -- launch blocker per WP-15 §22.5.
 --
--- Ordering mirrors §22.3 of NPC_Property_Dashboard_Codex_Security_Implementation_Plan.md.
+-- Ordering mirrors the restricted security program's approved verification plan.
 
 ------------------------------------------------------------------------------
 -- 1. RLS + FORCE RLS coverage on every table in public / storage / aml.

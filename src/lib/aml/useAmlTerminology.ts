@@ -35,8 +35,7 @@ function writeCache(next: OverrideMap) {
 
 export async function refreshAmlTerminology(): Promise<OverrideMap> {
   try {
-    const s = await amlTenantApi.summary();
-    const next = (s.settings?.terminology_overrides ?? {}) as OverrideMap;
+    const { terminology_overrides: next } = await amlTenantApi.terminology();
     writeCache(next);
     return next;
   } catch {
