@@ -232,7 +232,13 @@ Deno.serve(async (req) => {
         .select('id', { count: 'exact', head: true })
         .eq('user_id', auth.userId);
       if ((count ?? 0) === 0) {
+        // A passkey-only account must not remain marked as MFA-enrolled after
+        // its final credential is removed. Preserve TOTP enrollment, if any.
         await admin.from('custom_users').update({ webauthn_enrolled_at: null }).eq('id', auth.userId);
+        await admin.from('custom_users')
+          .update({ mfa_enrolled_at: null, mfa_method: null, mfa_required: false })
+          .eq('id', auth.userId)
+          .eq('mfa_method', 'webauthn');
       }
       try { await admin.from('security_events').insert({ action: 'mfa.webauthn_removed', decision: 'allow', actor_type: 'human', actor_id: auth.userId, metadata_redacted: { staff_session_id: staffSession.id, credential_row_id: credentialRowId } }); } catch { /* ignore */ }
       return j({ success: true });
@@ -306,7 +312,20 @@ Deno.serve(async (req) => {
         device_name: deviceName,
       });
       if (credErr) return j({ success: false, error: 'credential_persist_failed', detail: credErr.message }, 500);
-      await admin.from('custom_users').update({ webauthn_enrolled_at: new Date().toISOString() }).eq('id', auth.userId);
+      const enrolledAt = new Date().toISOString();
+      // Keep the separate timestamp for credential lifecycle UI, and make a
+      // passkey the active MFA method when no other MFA method is enrolled.
+      // Do not replace an existing TOTP enrollment: both factors may be used
+      // for step-up, while TOTP remains the account's recovery configuration.
+      const { error: webauthnStateError } = await admin.from('custom_users')
+        .update({ webauthn_enrolled_at: enrolledAt })
+        .eq('id', auth.userId);
+      if (webauthnStateError) return j({ success: false, error: 'mfa_state_unavailable' }, 503);
+      const { error: mfaActivationError } = await admin.from('custom_users')
+        .update({ mfa_enrolled_at: enrolledAt, mfa_method: 'webauthn', mfa_required: true })
+        .eq('id', auth.userId)
+        .is('mfa_enrolled_at', null);
+      if (mfaActivationError) return j({ success: false, error: 'mfa_state_unavailable' }, 503);
       try { await admin.from('security_events').insert({ action: 'mfa.webauthn_enrolled', decision: 'allow', actor_type: 'human', actor_id: auth.userId, metadata_redacted: { staff_session_id: staffSession.id, device_type: verified.deviceType } }); } catch { /* ignore */ }
       return j({ success: true, method: 'webauthn' });
     }
