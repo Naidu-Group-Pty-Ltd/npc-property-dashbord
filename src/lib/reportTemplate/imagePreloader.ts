@@ -3,7 +3,10 @@
  * URLs so the synchronous jsPDF renderer can embed them.
  */
 import type { ReportTemplate } from './templateSchema';
-import { resolveRasterRefUrl } from './pdfImport/rasterArtifactRefs';
+import {
+  invalidateArtifactSignedUrl,
+  resolveRasterRefUrl,
+} from './pdfImport/rasterArtifactRefs';
 import type { PdfImportRasterRef } from './pdfImport/docling/doclingTypes';
 
 const cache = new Map<string, string>();
@@ -36,7 +39,9 @@ async function fetchAsDataUrl(url: string): Promise<string | null> {
 async function resolveRasterRefDataUrl(ref: PdfImportRasterRef): Promise<string | null> {
   try {
     const signed = await resolveRasterRefUrl(ref);
-    return await fetchAsDataUrl(signed);
+    const dataUrl = await fetchAsDataUrl(signed);
+    if (!dataUrl) invalidateArtifactSignedUrl(ref.path);
+    return dataUrl;
   } catch (e) {
     console.warn('[imagePreloader] sourceRasterRef resolution failed', {
       path: ref?.path,
