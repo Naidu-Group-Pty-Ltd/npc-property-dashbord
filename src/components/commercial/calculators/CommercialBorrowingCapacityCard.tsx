@@ -206,7 +206,7 @@ function ClientProfileCombobox({ value, options, loading, onChange }: { value: s
               <button key={o.clientId} type="button" onClick={() => { onChange(o.clientId); setOpen(false); setQuery(''); }} className={cn('w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors text-left', value === o.clientId && 'bg-accent')}>
                 <Check className={cn('h-3.5 w-3.5 shrink-0', value === o.clientId ? 'opacity-100 text-primary' : 'opacity-0')} />
                 <span className="truncate flex-1">{o.clientName}</span>
-                {o.source === 'sample' && <span className="text-[10px] text-muted-foreground shrink-0">sample</span>}
+                {(o.source as string) === 'sample' && <span className="text-[10px] text-muted-foreground shrink-0">sample</span>}
               </button>
             ))}
           </div>

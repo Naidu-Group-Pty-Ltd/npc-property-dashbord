@@ -8,7 +8,7 @@ const db = supabase as any;
 function warnMissing(context: string, error: any) { if (import.meta.env.DEV) console.warn(`[Market Updates] ${context}`, error?.message ?? error); }
 
 export class MarketUpdatesOperationalError extends Error {
-  constructor(public readonly issue: MarketUpdatesOperationalIssue, options?: ErrorOptions) { super(issue.message, options); this.name = 'MarketUpdatesOperationalError'; }
+  constructor(public readonly issue: MarketUpdatesOperationalIssue, options?: { cause?: unknown }) { super(issue.message); this.name = 'MarketUpdatesOperationalError'; if (options?.cause !== undefined) (this as any).cause = options.cause; }
 }
 
 function operationalError(stage: MarketUpdatesOperationalIssue['stage'], error: any, functionName?: string): MarketUpdatesOperationalError {
