@@ -1953,7 +1953,7 @@
     },
     "render-template-pdf": {
       "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
+      "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
