@@ -8,11 +8,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import {
+  createCorsHeaders,
   createForbiddenResponse,
   createTokenAuthCorsHeaders,
   createUnauthorizedResponse,
   verifyAuth,
 } from '../_shared/auth.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
 const corsHeaders = createTokenAuthCorsHeaders();
 
