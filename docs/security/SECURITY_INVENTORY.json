@@ -326,6 +326,8 @@
       "analytics-query/index.ts",
       "generate-chart-analysis/index.ts",
       "generate-commission-payout/index.ts",
+      "get-client-data/index.ts",
+      "manage-bc-scenarios/index.ts",
       "manage-call-settings/index.ts",
       "manage-commission-ledger/index.ts",
       "manage-compliance-records/index.ts",
