@@ -49,7 +49,7 @@ jobs:
           node-version: 20
       - run: npm install --no-audit --no-fund
       - name: Private-artifact scan
-        run: node scripts/regression/pdf-extraction-v3/artifact-scan.mjs --staged
+        run: node scripts/regression/pdf-extraction-v3/artifact-scan.mjs
       - name: Static gate
         run: node scripts/regression/pdf-extraction-v3/run-release-gate.mjs --tier=static
       - name: Generated-fast gate (real browser + export)
@@ -81,7 +81,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npx playwright install chromium
       - name: Private-artifact scan
-        run: node scripts/regression/pdf-extraction-v3/artifact-scan.mjs --staged
+        run: node scripts/regression/pdf-extraction-v3/artifact-scan.mjs
       - name: Generated-full gate
         run: node scripts/regression/pdf-extraction-v3/run-release-gate.mjs --tier=full
       - name: Upload sanitized report
@@ -112,7 +112,7 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npx playwright install chromium
       - name: Private-artifact scan (pre)
-        run: node scripts/regression/pdf-extraction-v3/artifact-scan.mjs --staged
+        run: node scripts/regression/pdf-extraction-v3/artifact-scan.mjs
       - name: Private controlled gate
         env:
           PDF_V3_PRIVATE: '1'
