@@ -9,25 +9,7 @@
  * - Very large docs (100+ pages): strategic sampling with aggressive compression
  */
 
-// NOTE: We intentionally load PDF.js from a CDN at runtime.
-// Reason: PDF.js includes an optional native dependency (canvas) that can
-// cause bun installs in CI to timeout, preventing preview/publish.
-
-const PDFJS_VERSION = '4.4.168';
-const PDFJS_CDN_BASE = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VERSION}`;
-
-let pdfjsPromise: Promise<any> | null = null;
-
-async function getPdfJs() {
-  if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
-      const mod = await import(/* @vite-ignore */ `${PDFJS_CDN_BASE}/pdf.min.mjs`);
-      mod.GlobalWorkerOptions.workerSrc = `${PDFJS_CDN_BASE}/pdf.worker.min.mjs`;
-      return mod;
-    })();
-  }
-  return pdfjsPromise;
-}
+import { loadPdfjs as getPdfJs } from '@/lib/pdf/pdfjs';
 
 export interface PdfPageImage {
   pageNumber: number;
