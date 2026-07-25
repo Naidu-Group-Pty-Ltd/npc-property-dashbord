@@ -237,7 +237,8 @@ export function IcrDscrCalculatorCard() {
   const dscrStatus = coverage && parsedInputs.targetDscr != null ? coverage.dscr >= parsedInputs.targetDscr ? 'pass' : 'fail' : 'pending';
   const supportableCaps = coverage ? [coverage.maxLoanByIcr, coverage.maxLoanByDscr, coverage.maxLoanByDebtYield].filter(value => Number.isFinite(value)) : [];
   const lowestSupportableLoan = supportableCaps.length ? Math.min(...supportableCaps) : null;
-  const bindingConstraint = coverage ? [{ label: 'ICR', value: coverage.maxLoanByIcr }, { label: 'DSCR', value: coverage.maxLoanByDscr }, { label: 'Debt Yield', value: coverage.maxLoanByDebtYield }].filter(candidate => Number.isFinite(candidate.value)).reduce((lowest, candidate) => candidate.value < lowest.value ? candidate : lowest).label : PENDING;
+  const bindingCandidates = coverage ? [{ label: 'ICR', value: coverage.maxLoanByIcr }, { label: 'DSCR', value: coverage.maxLoanByDscr }, { label: 'Debt Yield', value: coverage.maxLoanByDebtYield }].filter(candidate => Number.isFinite(candidate.value)) : [];
+  const bindingConstraint = bindingCandidates.length ? bindingCandidates.reduce((lowest, candidate) => candidate.value < lowest.value ? candidate : lowest).label : PENDING;
   const debtYieldPass = coverage && parsedInputs.minDebtYieldPct != null ? coverage.debtYield >= parsedInputs.minDebtYieldPct / 100 : false;
   const lowHeadroom = Boolean(coverage && coverage.icrHeadroom >= 0 && coverage.dscrHeadroom >= 0 && (coverage.icrHeadroom < 0.15 || coverage.dscrHeadroom < 0.1 || coverage.debtYieldHeadroom < 0.005));
   const hasUserOverrides = Object.values(fields).some(field => field.source === 'User Override');
@@ -420,7 +421,8 @@ export function IcrDscrCalculatorCard() {
         minimumDscr: overrides.minimumDscr ?? baseDscr,
         minimumDebtYield: overrides.minimumDebtYield ?? baseDebtYield,
       });
-      const constraint = [{ label: 'ICR', value: result.maxLoanByIcr }, { label: 'DSCR', value: result.maxLoanByDscr }, { label: 'Debt Yield', value: result.maxLoanByDebtYield }].filter(item => Number.isFinite(item.value)).reduce((lowest, item) => item.value < lowest.value ? item : lowest).label;
+      const constraintCandidates = [{ label: 'ICR', value: result.maxLoanByIcr }, { label: 'DSCR', value: result.maxLoanByDscr }, { label: 'Debt Yield', value: result.maxLoanByDebtYield }].filter(item => Number.isFinite(item.value));
+      const constraint = constraintCandidates.length ? constraintCandidates.reduce((lowest, item) => item.value < lowest.value ? item : lowest).label : PENDING;
       const pass = result.icr >= (overrides.minimumIcr ?? baseIcr) && result.dscr >= (overrides.minimumDscr ?? baseDscr) && result.debtYield >= (overrides.minimumDebtYield ?? baseDebtYield);
       const marginal = pass && (result.icr - (overrides.minimumIcr ?? baseIcr) < 0.15 || result.dscr - (overrides.minimumDscr ?? baseDscr) < 0.1 || result.debtYield - (overrides.minimumDebtYield ?? baseDebtYield) < 0.005);
       return { label, result, constraint, status: pass ? marginal ? 'Marginal' : 'Pass' : 'Fail', noi: overrides.noi ?? baseNoi, loanAmount: overrides.loanAmount ?? baseLoan };
