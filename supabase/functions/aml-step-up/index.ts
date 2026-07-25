@@ -5,7 +5,7 @@
  * (aml.report, aml.configure). Replaces the Phase 2 "type CONFIRM" placeholder.
  *
  * POST { op, ...args }
- *   op: 'issue'   { capability } -> { challenge_id, code, expires_at }   (code delivered in-app for now)
+ *   op: 'issue'   { capability } -> { challenge_id, expires_at, delivery } (code delivered out-of-band)
  *   op: 'verify'  { challenge_id, code } -> { session_token, capability, expires_at }
  *   op: 'check'   { capability, session_token } -> { valid: boolean, expires_at }
  *   op: 'revoke'  { session_id } -> { ok }
@@ -13,6 +13,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+import { getBrandConfig } from "../_shared/brand-config.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
@@ -38,6 +39,32 @@ function genNumericCode(digits = 6) {
 function genToken(bytes = 32) {
   const b = new Uint8Array(bytes); crypto.getRandomValues(b);
   return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+function maskEmail(email: string) {
+  const [local, domain] = email.split("@");
+  return `${local.slice(0, 2)}${"*".repeat(Math.max(1, local.length - 2))}@${domain}`;
+}
+
+async function deliverCode(admin: any, recipient: string, code: string, capability: string) {
+  const resendApiKey = Deno.env.get("RESEND_API_KEY");
+  if (!resendApiKey) return { ok: false, error: "Step-up email delivery is not configured" };
+  const brand = await getBrandConfig(admin);
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${resendApiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: brand.fromHeaderAdmin,
+      to: [recipient],
+      subject: `${brand.companyName} AML verification code`,
+      html: `<p>Your verification code for <strong>${capability}</strong> is:</p><p style="font-size:24px;font-weight:700;letter-spacing:4px">${code}</p><p>This code expires in 5 minutes. If you did not request it, contact your administrator.</p>`,
+    }),
+  });
+  if (!response.ok) {
+    console.error("[aml-step-up] Resend delivery failed", response.status);
+    return { ok: false, error: "Could not deliver the step-up code" };
+  }
+  return { ok: true };
 }
 
 Deno.serve(async (req) => {
@@ -72,6 +99,12 @@ Deno.serve(async (req) => {
       case "issue": {
         const capability = String(body.capability ?? "");
         if (!STEP_UP_CAPABILITIES.has(capability)) return jr({ error: "Unknown capability" }, 400);
+        const { data: user, error: userError } = await admin.from("custom_users")
+          .select("email, username").eq("id", userId).maybeSingle();
+        const recipient = String(user?.email ?? user?.username ?? "").trim();
+        if (userError || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+          return jr({ error: "A verified staff email is required for step-up authentication" }, 409);
+        }
         const code = genNumericCode(6);
         const codeHash = await sha256(`${userId}:${capability}:${code}`);
         const expires_at = new Date(Date.now() + CODE_TTL_SECONDS * 1000).toISOString();
@@ -79,9 +112,17 @@ Deno.serve(async (req) => {
           user_id: userId, capability, code_hash: codeHash, expires_at, ip, user_agent: ua,
         }).select("id, expires_at").single();
         if (error) return jr({ error: error.message }, 500);
-        // In production: dispatch code via authenticator app / email / SMS.
-        // For in-app step-up we return the code so the operator can re-enter it (creates provable challenge/response trail).
-        return jr({ challenge_id: data.id, code, expires_at: data.expires_at, delivery: "in_app" });
+        const delivery = await deliverCode(admin, recipient, code, capability);
+        if (!delivery.ok) {
+          await aml.from("step_up_challenges").delete().eq("id", data.id);
+          return jr({ error: delivery.error }, 503);
+        }
+        return jr({
+          challenge_id: data.id,
+          expires_at: data.expires_at,
+          delivery: "email",
+          destination_hint: maskEmail(recipient),
+        });
       }
 
       case "verify": {
