@@ -417,7 +417,7 @@ export default function AmlTransactions() {
                             {new Date(o.created_at).toLocaleString()}
                           </span>
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">Reason: {o.reason.replace(/_/g, " ")}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">Reason: {o.trigger_reason.replace(/_/g, " ")}</p>
                         {o.waive_reason && <p className="mt-1 text-xs text-muted-foreground">Waived: {o.waive_reason}</p>}
                         {canWrite && o.status === "pending" && (
                           <div className="mt-2 flex flex-wrap gap-2">

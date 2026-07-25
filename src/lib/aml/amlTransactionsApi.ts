@@ -119,7 +119,7 @@ export interface AmlTransactionObligation {
   transaction_id: string;
   kind: AmlObligationKind;
   status: AmlObligationStatus;
-  reason: string;
+  trigger_reason: string;
   observed_amount: number | null;
   threshold_amount: number | null;
   detail: Record<string, any>;
