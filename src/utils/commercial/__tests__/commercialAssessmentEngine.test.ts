@@ -188,6 +188,18 @@ describe('Commercial / Industrial Assessment Engine', () => {
     expect(r.fundsToComplete.acquisitionCostLineItems?.transferRegistrationFee).toBe(180);
   });
 
+  it('Borrowing NOI includes strata and owners corporation expenses', () => {
+    const strataOwnersCorp = 50_000;
+    const withoutStrata = calculateCommercialIndustrialBorrowing(borrowingBase());
+    const withStrata = calculateCommercialIndustrialBorrowing(borrowingBase({
+      income: { ...borrowingBase().income, strataOwnersCorp },
+    }));
+
+    expect(withStrata.noi.totalOperatingExpenses).toBe(withoutStrata.noi.totalOperatingExpenses + strataOwnersCorp);
+    expect(withStrata.noi.actualNoi).toBe(withoutStrata.noi.actualNoi - strataOwnersCorp);
+    expect(withStrata.noi.selectedNoi).toBe(withoutStrata.noi.selectedNoi - strataOwnersCorp);
+  });
+
   it('Borrowing scenarios explain changed or unchanged values', () => {
     const r = calculateCommercialIndustrialBorrowing(borrowingBase({ dealProfile: { ...borrowingBase().dealProfile, proposedLoan: 1_000_000 } }));
     expect(r.scenarios.length).toBeGreaterThan(0);
