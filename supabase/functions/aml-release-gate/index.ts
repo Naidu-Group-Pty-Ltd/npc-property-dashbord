@@ -39,7 +39,7 @@ async function runChecks(admin: any): Promise<CheckResult[]> {
 
   // 2. Required AML tables reachable
   const requiredTables = [
-    "cases","verifications","screening_matches","transactions","reports","report_versions",
+    "cases","identity_checks","screening_checks","screening_matches","transactions","reports","report_versions",
     "alerts","edd_cases","source_of_funds","retention_schedules","legal_holds","privacy_requests",
     "tipping_off_rules","records_audit_events","tenant_settings","provider_configs",
     "step_up_challenges","step_up_sessions","ai_action_approvals","release_gates","resilience_drills",
@@ -52,7 +52,8 @@ async function runChecks(admin: any): Promise<CheckResult[]> {
   // 3. Provider health — anything with >20% failure over last day is a warn.
   try {
     const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
-    const { data: metrics } = await aml.from("provider_metrics_daily").select("*").gte("day", since);
+    const { data: metrics, error } = await aml.from("provider_metrics_daily").select("*").gte("metric_date", since);
+    if (error) throw error;
     let bad = 0;
     for (const m of metrics ?? []) {
       const calls = Number(m.call_count ?? 0), fails = Number(m.failure_count ?? 0);
