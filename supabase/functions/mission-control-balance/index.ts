@@ -45,6 +45,30 @@ Deno.serve(async (req) => {
     });
   } catch (e) {
     const isMc = e instanceof MissionControlError;
+    // Mission Control returns 404 when the tenant has not been provisioned
+    // yet on this clone. That's not a user-facing failure — return a safe
+    // zero-balance placeholder so the header pill and Billing UI can render
+    // instead of blank-screening on a 404. Same for the "unconfigured" case
+    // (MC secrets missing in a preview environment).
+    if (isMc && (e.status === 404 || e.code === "unconfigured" || e.code === "mc_error")) {
+      const empty = {
+        available: 0,
+        allowance: 0,
+        used: 0,
+        reserved: 0,
+        lifetimeGranted: 0,
+        lifetimeSpent: 0,
+        planName: null,
+        overagePolicy: null,
+        currentPeriodEnd: null,
+        exempt: true,
+        unprovisioned: true,
+      };
+      return new Response(JSON.stringify(empty), {
+        status: 200,
+        headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
     const status = isMc ? e.status : 500;
     const payload = isMc
       ? { error: e.code, message: e.message }
