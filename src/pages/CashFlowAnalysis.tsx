@@ -21,6 +21,7 @@ export default function CashFlowAnalysis() {
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [backendOffset, setBackendOffset] = useState(0);
   const [openingReportId, setOpeningReportId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [buildTypeFilter, setBuildTypeFilter] = useState<BuildTypeFilter>('all');
@@ -118,6 +119,7 @@ export default function CashFlowAnalysis() {
       const fetched: InvestmentReport[] = data?.reports || [];
       const reportsWithCashFlowData = fetched.filter(hasRequiredData);
       setReports(prev => append ? [...prev, ...reportsWithCashFlowData] : reportsWithCashFlowData);
+      setBackendOffset(currentOffset + fetched.length);
       setHasMore(fetched.length === PAGE_SIZE);
     } catch (error: any) {
       console.error('Error fetching reports:', error);
@@ -133,7 +135,7 @@ export default function CashFlowAnalysis() {
   };
 
   const handleLoadMore = () => {
-    fetchReports(true, reports.length);
+    fetchReports(true, backendOffset);
   };
 
   const filteredReports = reports.filter(report => {
@@ -239,7 +241,7 @@ export default function CashFlowAnalysis() {
         />
       )}
 
-      {!loading && reports.length > 0 && (
+      {!loading && (reports.length > 0 || hasMore) && (
         <CashFlowPaginationFooter
           filteredCount={filteredReports.length}
           loadedCount={reports.length}
