@@ -8,6 +8,7 @@
 //   by_keys { keys }  → subset lookup (small batches)
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,6 +29,9 @@ function normalize(row: any) {
   return { ...row, fallback_chain: chain };
 }
 
+const SAFE_ASSIGNMENT_COLUMNS =
+  'agent_key, agent_label, agent_category, agent_description, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort, is_locked, last_used_at, updated_at';
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   try {
@@ -35,12 +39,15 @@ Deno.serve(async (req) => {
     const action = body.action ?? 'list';
     const sb = admin();
 
+    const auth = await verifyAuth(sb, req.headers, body);
+    if (auth.error || !auth.userId) {
+      return createUnauthorizedResponse(auth.error ?? 'Authentication required', corsHeaders);
+    }
+
     if (action === 'list') {
       const { data, error } = await sb
         .from('agent_model_assignments')
-        .select(
-          'agent_key, agent_label, agent_category, agent_description, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort, is_locked, last_used_at, last_error, updated_at',
-        )
+        .select(SAFE_ASSIGNMENT_COLUMNS)
         .order('agent_category')
         .order('agent_label');
       if (error) throw error;
@@ -52,7 +59,7 @@ Deno.serve(async (req) => {
       if (!key) return json({ success: false, error: 'agent_key required' }, 400);
       const { data, error } = await sb
         .from('agent_model_assignments')
-        .select('*')
+        .select(SAFE_ASSIGNMENT_COLUMNS)
         .eq('agent_key', key)
         .maybeSingle();
       if (error) throw error;
@@ -65,7 +72,7 @@ Deno.serve(async (req) => {
       if (keys.length > 100) return json({ success: false, error: 'Max 100 keys per request' }, 400);
       const { data, error } = await sb
         .from('agent_model_assignments')
-        .select('*')
+        .select(SAFE_ASSIGNMENT_COLUMNS)
         .in('agent_key', keys);
       if (error) throw error;
       return json({ success: true, assignments: (data ?? []).map(normalize) });

@@ -35,7 +35,7 @@ import { cn } from '@/lib/utils';
 
 // Pipeline stage colors
 const getPipelineStageColor = (status: string | null | undefined) => {
-  if (!status) return 'bg-muted0';
+  if (!status) return 'bg-muted';
   if (status.includes('No Show') || status.includes('No Response')) return 'bg-destructive/60';
   if (status.includes('Discovery')) return 'bg-accent';
   if (status.includes('Strategy')) return 'bg-accent';
@@ -251,7 +251,7 @@ export function ClientCard({ client, ghlLocationId, onView, onDelete, onSyncComp
           <MetricTile icon={DollarSign} label="Portfolio" value={formatCurrency(Number(client.total_portfolio_value))} compact />
         </div>
 
-        <div className={cn('mt-3 flex items-center justify-between gap-3 rounded-2xl border px-3 py-3 shadow-inner', isPositiveCashFlow ? 'border-success/30 bg-success/10 text-success dark:border-success/15 dark:bg-success/60/[0.07] dark:text-success' : 'border-destructive/30 bg-destructive/10 text-destructive dark:border-destructive/15 dark:bg-destructive/[0.07] dark:text-destructive')}>
+        <div className={cn('mt-3 flex items-center justify-between gap-3 rounded-2xl border px-3 py-3 shadow-inner', isPositiveCashFlow ? 'border-success/30 bg-success/10 text-success dark:border-success/15 dark:bg-success/[0.07] dark:text-success' : 'border-destructive/30 bg-destructive/10 text-destructive dark:border-destructive/15 dark:bg-destructive/[0.07] dark:text-destructive')}>
           <div className="flex min-w-0 items-center gap-2">
             {isPositiveCashFlow ? <TrendingUp className="h-4 w-4 shrink-0" /> : <TrendingDown className="h-4 w-4 shrink-0" />}
             <span className="truncate text-sm font-semibold">Monthly Cash Flow</span>

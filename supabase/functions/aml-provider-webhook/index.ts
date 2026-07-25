@@ -3,8 +3,8 @@
  *
  * - HMAC-SHA256 signature via header `x-aml-signature`.
  * - Idempotent via UNIQUE (provider, dedup_key).
- * - Never accepts unsigned or replayed payloads. Failed verification is stored
- *   with signature_ok=false for audit but never applied to case state.
+ * - Never accepts unsigned or replayed payloads. Failed verification is
+ *   rejected before any service-role database access.
  *
  * Providers are opt-in per secret: AML_WEBHOOK_SECRET_<PROVIDER_UPPER>.
  * If the secret is missing, we reject the request rather than accept in the clear.
@@ -36,6 +36,7 @@ Deno.serve(async (req) => {
 
   const raw = await req.text();
   const ok = await verifyWebhookSignature(raw, signature, secret);
+  if (!ok) return jr({ ok: false, reason: "invalid_signature" }, 401);
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
@@ -63,8 +64,6 @@ Deno.serve(async (req) => {
     screening_check_id: screeningCheckId,
   }).select().single();
   if (insertErr) return jr({ error: insertErr.message }, 500);
-
-  if (!ok) return jr({ ok: false, stored: true, reason: "invalid_signature" }, 401);
 
   // Apply state transitions here for real providers. Simulator has no callbacks.
   try {

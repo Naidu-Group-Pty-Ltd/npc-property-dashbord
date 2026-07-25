@@ -427,13 +427,13 @@ export default function Agreements() {
   const getDocuSignTrackingTone = (status?: string | null) => {
     const key = status?.toLowerCase();
     if (["completed", "signed"].includes(key || "")) {
-      return "border-success/60 bg-success/[0.08] shadow-success/5 dark:border-success/30 dark:bg-success/60/[0.10]";
+      return "border-success/60 bg-success/[0.08] shadow-success/5 dark:border-success/30 dark:bg-success/[0.10]";
     }
     if (["sent", "delivered", "viewed"].includes(key || "")) {
       return "border-brand-300/70 bg-brand-500/[0.10] shadow-brand-900/5 ring-1 ring-brand-300/20 dark:border-brand-200/35 dark:bg-brand-300/[0.10] dark:ring-brand-200/10";
     }
     if (["declined", "voided", "expired", "failed"].includes(key || "")) {
-      return "border-destructive/55 bg-destructive/[0.07] shadow-destructive/5 dark:border-destructive/30 dark:bg-destructive/60/[0.08]";
+      return "border-destructive/55 bg-destructive/[0.07] shadow-destructive/5 dark:border-destructive/30 dark:bg-destructive/[0.08]";
     }
     return "border-border/70 bg-card/90 shadow-slate-900/5 ring-1 ring-border dark:ring-white/60 dark:bg-background/30 dark:ring-white/5";
   };

@@ -76,7 +76,7 @@ export interface ScreeningProvider {
 }
 
 export type ProviderMode = "simulator" | "live";
-export type ProviderCapability = "idv" | "screening" | "adverse_media";
+export type ProviderCapability = "idv" | "pep_sanctions" | "adverse_media";
 
 // ---------- deterministic simulators ----------
 

@@ -35,6 +35,17 @@ export function isAuthExhausted(): boolean {
 // is the sole carrier, so only the access-token (RLS/realtime JWT) key remains.
 const ACCESS_TOKEN_KEY = 'supabase_access_token';
 
+// These endpoints deliberately use wildcard, token-auth CORS responses. Sending
+// cookies would make browsers reject those responses because credentialed CORS
+// requests cannot be combined with `Access-Control-Allow-Origin: *`.
+const TOKEN_AUTH_FUNCTIONS = new Set([
+  'template-import-pdf',
+  'template-design-agent',
+  'render-source',
+  'import-from-url',
+  'pdf-parse-dispatch',
+]);
+
 /** Human-readable guidance for auth failures from secured edge functions. */
 export function describeAuthError(message: string | undefined | null): string | null {
   const m = String(message ?? '').toLowerCase();
@@ -155,7 +166,7 @@ export async function invokeSecureFunction<T = any>(
         'Authorization': `Bearer ${bearerToken}`,
         ...(stepUpToken ? { 'x-step-up-token': stepUpToken } : {}),
       },
-      credentials: 'include',
+      credentials: TOKEN_AUTH_FUNCTIONS.has(functionName) ? 'omit' : 'include',
       body: JSON.stringify(requestBody),
       signal: controller.signal,
     });

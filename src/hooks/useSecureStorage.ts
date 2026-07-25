@@ -53,7 +53,7 @@ interface PublicUrlResult {
 /**
  * Convert a File or Blob to base64 string
  */
-async function fileToBase64(file: File | Blob): Promise<string> {
+export async function fileToBase64(file: File | Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {

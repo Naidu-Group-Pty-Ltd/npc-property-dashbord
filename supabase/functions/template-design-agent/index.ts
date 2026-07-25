@@ -33,7 +33,7 @@ const CLAUDE_MODEL = Deno.env.get('ANTHROPIC_MODEL') || 'claude-opus-4-8';
 // added text overlays, capped. Page add/delete/reorder is unrepresentable.
 const VISUAL_DIFF_REPAIR_ALLOWLIST_VERSION = 'visual-diff-repair-patch-v1';
 const VISUAL_DIFF_REPAIR_ALLOWED_OPS = new Set(['updatePageBackground', 'updateOverlay', 'addOverlay', 'removeOverlay']);
-const VISUAL_DIFF_REPAIR_FORBIDDEN_FIELDS = ['content', 'text'];
+const VISUAL_DIFF_REPAIR_FORBIDDEN_FIELDS = ['content', 'text', 'runs', 'rich'];
 const VISUAL_DIFF_REPAIR_TEXT_TYPES = new Set(['text', 'textOnPath']);
 
 function sanitizeVisualDiffRepairPatches(

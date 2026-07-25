@@ -18,9 +18,6 @@ function smartCapitalizeStr(name: string): string {
 }
 
 
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCKOUT_MINUTES = 15;
-
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -94,26 +91,9 @@ Deno.serve(async (req) => {
       )
     }
 
-    // Lockout check (ABUSE-001 / F-05: parity with the finance portal)
-    if (portalUser.locked_until && new Date(portalUser.locked_until) > new Date()) {
-      return new Response(
-        JSON.stringify({ error: 'Too many failed attempts. Please try again later.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
     // Verify password
     const isValid = await verifyPassword(password, portalUser.password_hash)
     if (!isValid) {
-      const newAttempts = (portalUser.failed_login_attempts || 0) + 1;
-      const updates: Record<string, unknown> = { failed_login_attempts: newAttempts };
-      if (newAttempts >= MAX_FAILED_ATTEMPTS) {
-        const lockUntil = new Date();
-        lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
-        updates.locked_until = lockUntil.toISOString();
-        updates.failed_login_attempts = 0;
-      }
-      await supabase.from('client_portal_users').update(updates).eq('id', portalUser.id);
       return new Response(
         JSON.stringify({ error: 'Invalid email or password' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

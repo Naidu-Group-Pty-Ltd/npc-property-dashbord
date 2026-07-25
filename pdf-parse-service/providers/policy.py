@@ -121,6 +121,12 @@ def gate_provider(
     if is_remote:
         if policy.require_explicit_remote_approval and not remote_approved:
             return PolicyGateResult(False, "provider_remote_not_approved")
+        # Request classifications describe the document being processed and must
+        # never be weakened by a more permissive global policy.
+        if privacy_class != "internal":
+            return PolicyGateResult(False, "provider_policy_blocked")
+        if residency_class not in ("australia-approved", "approved-regions-only"):
+            return PolicyGateResult(False, "provider_residency_not_approved")
         if policy.residency_class == "remote-prohibited":
             return PolicyGateResult(False, "provider_residency_not_approved")
         if not trusted_location or trusted_location not in policy.approved_remote_locations:

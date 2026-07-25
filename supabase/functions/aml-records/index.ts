@@ -47,20 +47,27 @@ async function audit(admin: any, category: string, summary: string, payload: any
 // Dry-run scan: enumerates candidate records per entity_type based on retention_schedules.
 // Kept intentionally conservative — records only enumerated from a small allow-list of
 // aml.* tables that we know are safe to dispose of.
-const SCAN_SOURCES: Record<string, { table: string; timestampCol: string; refCol?: string }> = {
+const SCAN_SOURCES: Record<string, { table: string; timestampCol: string; refCol?: string; caseIdCol?: string }> = {
   case:         { table: "cases",              timestampCol: "closed_at",   refCol: "reference_code" },
-  verification: { table: "verifications",      timestampCol: "completed_at" },
-  screening:    { table: "screening_matches",  timestampCol: "resolved_at" },
-  transaction:  { table: "transactions",       timestampCol: "settled_at",  refCol: "reference_code" },
-  report:       { table: "reports",            timestampCol: "acknowledged_at", refCol: "reference_code" },
-  alert:        { table: "alerts",             timestampCol: "resolved_at" },
-  edd:          { table: "edd_cases",          timestampCol: "closed_at" },
+  verification: { table: "verifications",      timestampCol: "completed_at", caseIdCol: "case_id" },
+  screening:    { table: "screening_matches",  timestampCol: "resolved_at", caseIdCol: "case_id" },
+  transaction:  { table: "transactions",       timestampCol: "settled_at",  refCol: "reference_code", caseIdCol: "case_id" },
+  report:       { table: "reports",            timestampCol: "acknowledged_at", refCol: "reference_code", caseIdCol: "case_id" },
+  alert:        { table: "alerts",             timestampCol: "resolved_at", caseIdCol: "case_id" },
+  edd:          { table: "edd_cases",          timestampCol: "closed_at", caseIdCol: "case_id" },
 };
 
-async function activeHoldFor(admin: any, entityType: string, entityId: string) {
-  const { data } = await admin.schema("aml").from("legal_holds")
+async function activeHoldFor(admin: any, entityType: string, entityId: string, caseId: string | null) {
+  const { data, error } = await admin.schema("aml").from("legal_holds")
     .select("id").eq("entity_type", entityType).eq("entity_id", entityId).is("released_at", null).limit(1);
-  return data && data.length > 0 ? data[0].id as string : null;
+  if (error) throw error;
+  if (data && data.length > 0) return data[0].id as string;
+  if (!caseId) return null;
+
+  const { data: caseHolds, error: caseHoldError } = await admin.schema("aml").from("legal_holds")
+    .select("id").eq("case_id", caseId).is("released_at", null).limit(1);
+  if (caseHoldError) throw caseHoldError;
+  return caseHolds && caseHolds.length > 0 ? caseHolds[0].id as string : null;
 }
 
 Deno.serve(async (req) => {
@@ -338,12 +345,13 @@ Deno.serve(async (req) => {
           const src = SCAN_SOURCES[sched.entity_type];
           if (!src) continue;
           const cutoff = new Date(Date.now() - Number(sched.retention_years) * 365.25 * 24 * 3600 * 1000).toISOString();
-          const selectCols = `id, ${src.timestampCol}${src.refCol ? `, ${src.refCol}` : ""}`;
+          const selectCols = `id, ${src.timestampCol}${src.refCol ? `, ${src.refCol}` : ""}${src.caseIdCol ? `, ${src.caseIdCol}` : ""}`;
           const { data: rows } = await aml.from(src.table).select(selectCols).lt(src.timestampCol, cutoff).limit(500);
           for (const row of ((rows ?? []) as any[])) {
             candidates++;
             perType[sched.entity_type] = (perType[sched.entity_type] ?? 0) + 1;
-            const holdId = await activeHoldFor(admin, sched.entity_type, row.id);
+            const caseId = sched.entity_type === "case" ? row.id : (src.caseIdCol ? row[src.caseIdCol] : null);
+            const holdId = await activeHoldFor(admin, sched.entity_type, row.id, caseId);
             const disposition = holdId ? "held" : "pending";
             if (holdId) held++;
             items.push({
@@ -415,14 +423,21 @@ Deno.serve(async (req) => {
         let disposed = 0, skipped = 0;
         for (const it of (items ?? [])) {
           // Re-check hold at execution time
-          const holdId = await activeHoldFor(admin, it.entity_type, it.entity_id);
+          const src = SCAN_SOURCES[it.entity_type];
+          let caseId = it.entity_type === "case" ? it.entity_id : null;
+          if (!caseId && src?.caseIdCol) {
+            const { data: sourceRecord, error: sourceRecordError } = await aml.from(src.table)
+              .select(src.caseIdCol).eq("id", it.entity_id).maybeSingle();
+            if (sourceRecordError) throw sourceRecordError;
+            caseId = sourceRecord?.[src.caseIdCol] ?? null;
+          }
+          const holdId = await activeHoldFor(admin, it.entity_type, it.entity_id, caseId);
           if (holdId) {
             await aml.from("retention_scan_items").update({ disposition: "held", hold_id: holdId, processed_at: new Date().toISOString(), note: "Held at execution" }).eq("id", it.id);
             skipped++;
             continue;
           }
           if (!dryRun) {
-            const src = SCAN_SOURCES[it.entity_type];
             if (src) {
               // Non-destructive by default: mark a `retention_disposed_at` metadata event via records_audit,
               // then null-out large PII columns if present. We deliberately do NOT hard-delete without a

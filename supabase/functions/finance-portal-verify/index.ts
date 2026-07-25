@@ -1,15 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
-
-function extractFinanceSessionToken(headers: Headers, body?: any): string | null {
-  const headerToken = headers.get('x-finance-session-token');
-  if (headerToken) return headerToken;
-  if (body?.finance_session_token) return body.finance_session_token;
-  const sessionHeader = headers.get('x-session-token');
-  if (sessionHeader) return sessionHeader;
-  if (body?.session_token) return body.session_token;
-  return null;
-}
+import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');

@@ -658,7 +658,12 @@ export const PageSchema = z.object({
         hiddenSemanticRegionIds: z.array(z.string()),
         finalRegionCrops: z.array(z.object({
           regionId: z.string(),
-          bbox: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
+          bbox: z.object({
+            x: z.number().finite().min(0).max(20_000),
+            y: z.number().finite().min(0).max(20_000),
+            width: z.number().finite().positive().max(20_000),
+            height: z.number().finite().positive().max(20_000),
+          }),
           artifactPath: z.string(),
           assetId: z.string().nullable(),
           sha256: z.string().nullable(),
@@ -667,6 +672,17 @@ export const PageSchema = z.object({
       }).optional(),
     }).optional(),
   }).passthrough().optional(),
+}).superRefine((page, ctx) => {
+  const crops = page.meta?.pdfImportRegionOutput?.renderPlan?.finalRegionCrops ?? [];
+  crops.forEach((crop, index) => {
+    if (crop.bbox.x + crop.bbox.width > page.size.width || crop.bbox.y + crop.bbox.height > page.size.height) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['meta', 'pdfImportRegionOutput', 'renderPlan', 'finalRegionCrops', index, 'bbox'],
+        message: 'Final region crop must be contained within the page bounds',
+      });
+    }
+  });
 });
 
 

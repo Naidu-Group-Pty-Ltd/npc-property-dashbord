@@ -16,6 +16,7 @@ version, page classifications digest, route digest). Two hard safety rules:
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, List, Optional, Tuple
 
 from .contracts import (
@@ -26,6 +27,7 @@ from .contracts import (
     ServiceRouteDecisionV1,
     stable_hash,
     stable_json,
+    strip_urls,
 )
 
 
@@ -146,11 +148,12 @@ def route_digest(route_decisions: Tuple[ServiceRouteDecisionV1, ...]) -> str:
 
 
 def compute_cache_fingerprint(inp: CacheFingerprintV3Input) -> str:
-    """The canonical V3 fingerprint string: ``pf3-<fnv1a32(...)>``.
+    """The canonical V3 fingerprint string: ``pf3-<sha256(...)>``.
 
     Deterministic and cross-runtime stable (matches the TS producer for ASCII).
     """
-    return stable_hash("pf3", inp.to_dict())
+    canonical = strip_urls(stable_json(inp.to_dict())).encode("utf-8")
+    return f"pf3-{hashlib.sha256(canonical).hexdigest()}"
 
 
 def is_reusable_contract(contract_version: Any) -> bool:
