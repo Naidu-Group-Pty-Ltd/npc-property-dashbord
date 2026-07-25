@@ -143,20 +143,6 @@ export async function resolveGeneratedDocumentAccess(
   return { ok: false, reason: 'resource_denied' };
 }
 
-// ─── Step-up (best-effort) ────────────────────────────────────────────────
-/**
- * Recent step-up marker. Frontend sets `x-step-up-token` after MFA confirm.
- * Server-side validation is a placeholder here: a signed short-lived token is
- * the goal; until then we accept a non-empty header AND require the caller to
- * be superadmin OR the recent-actor test to pass in the auth layer.
- * Callers should treat this as *defense-in-depth* — mainline authz is still
- * `requireModulePermission`.
- */
-export function hasRecentStepUp(req: Request): boolean {
-  const t = req.headers.get('x-step-up-token');
-  return !!t && t.length >= 8 && t.length <= 512;
-}
-
 // ─── PDF hashing ──────────────────────────────────────────────────────────
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-256', bytes);

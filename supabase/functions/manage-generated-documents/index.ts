@@ -14,11 +14,12 @@ import { logSecurityEvent } from '../_shared/auth_v2.ts';
 import { getDocuSignAccessToken, getDocuSignRestBaseUrl } from '../_shared/docusign-auth.ts';
 import { buildFreeformEnvelope, pdfBytesToBase64, type FreeformRecipient, type FreeformTab } from '../_shared/docusign-freeform.ts';
 import { isSuperadmin } from '../_shared/wp08Guards.ts';
+import { requireStepUp } from '../_shared/stepUp.ts';
 import {
   GENERATED_DOC_BUCKET_ALLOWLIST, resolveDocumentBucket,
   isValidDocTransition, type DocStatus,
   DOC_SERVICE_ONLY_FIELDS, DOC_UPDATE_ALLOWED_FIELDS,
-  resolveGeneratedDocumentAccess, hasRecentStepUp,
+  resolveGeneratedDocumentAccess,
   pickAllowed, sha256Hex, normalizeIdempotencyKey,
   MAX_FREEFORM_RECIPIENTS, MAX_FREEFORM_TABS, validateEmail,
 } from '../_shared/wp09Guards.ts';
@@ -203,8 +204,14 @@ Deno.serve(async (req) => {
         const r = await loadAndAuthorize(); if ('err' in r) return r.err;
         const doc = r.doc;
         // Step-up gate for money/legally-binding actions
-        if (!isSuper && !hasRecentStepUp(req)) {
-          return j({ success: false, error: 'Step-up verification required', code: 'step_up_required' }, 401);
+        if (!isSuper) {
+          const gate = await requireStepUp(supabase, {
+            userId: auth.userId,
+            capability: 'docusign.send',
+            req,
+            body,
+          });
+          if (gate) return gate;
         }
         if (['sent', 'signed', 'voided'].includes(doc.status) && !body.idempotency_key) {
           return j({ success: false, error: 'Document already sent; provide idempotency_key to retry' }, 409);
