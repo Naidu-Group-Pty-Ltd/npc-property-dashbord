@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { buildNoiPromptSnapshot } from "./promptSnapshot.ts";
 interface Snapshot {
   propertyId?: string;
   address?: string;
@@ -141,7 +142,8 @@ Deno.serve(async (req) => {
     }
 
     const snap = body.snapshot ?? {};
-    const userContext = `Estimate NOI inputs for this specific property:\n\n${JSON.stringify(snap, null, 2)}\n\nReturn a single JSON object via the tool call. Be precise to this property's location, asset sub-type and area. Do not return generic averages.`;
+    const promptSnapshot = buildNoiPromptSnapshot(snap);
+    const userContext = `Estimate NOI inputs for this specific property:\n\n${JSON.stringify(promptSnapshot, null, 2)}\n\nReturn a single JSON object via the tool call. Be precise to this property's location, asset sub-type and area. Do not return generic averages.`;
 
     const tools = [{
       type: 'function',
