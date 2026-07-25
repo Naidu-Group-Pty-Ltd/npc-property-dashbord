@@ -8,20 +8,20 @@
 
 /** Maps database table names to their governing module key */
 const TABLE_TO_MODULE_MAP: Record<string, string> = {
-  // Client-related tables → clients module
-  clients: 'clients',
-  client_properties: 'clients',
-  client_income: 'clients',
-  client_expenses: 'clients',
-  client_assets: 'clients',
-  client_liabilities: 'clients',
-  client_employment: 'clients',
-  client_notes: 'clients',
-  client_files: 'clients',
-  client_activities: 'clients',
-  client_additional_contacts: 'clients',
-  client_scores: 'clients',
-  client_income_sources: 'clients',
+  // Client-related tables → existing client_management module
+  clients: 'client_management',
+  client_properties: 'client_management',
+  client_income: 'client_management',
+  client_expenses: 'client_management',
+  client_assets: 'client_management',
+  client_liabilities: 'client_management',
+  client_employment: 'client_management',
+  client_notes: 'client_management',
+  client_files: 'client_management',
+  client_activities: 'client_management',
+  client_additional_contacts: 'client_management',
+  client_scores: 'client_management',
+  client_income_sources: 'client_management',
 
   // Deal-related tables → deal_pipeline module
   client_deals: 'deal_pipeline',

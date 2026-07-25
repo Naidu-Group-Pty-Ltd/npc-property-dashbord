@@ -232,6 +232,21 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  if (!automated) {
+    let bodyPreview: any = {};
+    try { bodyPreview = await req.clone().json(); } catch {}
+    const verified = await verifyAuth(sb, req.headers, bodyPreview);
+    if (verified.error || !verified.userId) return securityJsonError(401, "unauthorized");
+    const permission = await requireModulePermission(
+      sb,
+      { userId: verified.userId, authMethod: verified.authMethod },
+      "market_updates",
+      "can_edit",
+    );
+    if (!permission.ok) return securityJsonError(403, "market_ingest_admin_required");
+  }
+
   const { force = false, sourceIds = null } =
     await req.json().catch(() => ({} as any));
 

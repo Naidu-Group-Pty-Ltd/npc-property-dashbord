@@ -66,3 +66,7 @@ export const INLINE_GLYPHS: Record<string, (p: GlyphProps) => JSX.Element> = {
   // OpenRouter family aliases
   'x-ai': XAIGlyph,
 };
+
+export function getInlineGlyph(id: string): ((p: GlyphProps) => JSX.Element) | undefined {
+  return Object.prototype.hasOwnProperty.call(INLINE_GLYPHS, id) ? INLINE_GLYPHS[id] : undefined;
+}

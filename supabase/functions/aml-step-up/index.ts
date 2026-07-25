@@ -5,7 +5,7 @@
  * (aml.report, aml.configure). Replaces the Phase 2 "type CONFIRM" placeholder.
  *
  * POST { op, ...args }
- *   op: 'issue'   { capability } -> { challenge_id, code, expires_at }   (code delivered in-app for now)
+ *   op: 'issue'   { capability } -> { challenge_id, expires_at, delivery }
  *   op: 'verify'  { challenge_id, code } -> { session_token, capability, expires_at }
  *   op: 'check'   { capability, session_token } -> { valid: boolean, expires_at }
  *   op: 'revoke'  { session_id } -> { ok }
@@ -13,6 +13,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+import { canUseAmlCapability, STEP_UP_CAPABILITIES } from "./policy.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
@@ -23,7 +24,6 @@ const corsHeaders = {
 const jr = (d: unknown, s = 200) =>
   new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-const STEP_UP_CAPABILITIES = new Set(["aml.report", "aml.configure", "aml.investigate", "aml.view"]);
 const CODE_TTL_SECONDS = 5 * 60;
 const SESSION_TTL_SECONDS = 15 * 60;
 
@@ -38,6 +38,27 @@ function genNumericCode(digits = 6) {
 function genToken(bytes = 32) {
   const b = new Uint8Array(bytes); crypto.getRandomValues(b);
   return Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+async function deliverCode(email: string, code: string, capability: string) {
+  const apiKey = Deno.env.get("RESEND_API_KEY");
+  if (!apiKey) return { error: "Step-up email delivery is not configured" };
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      from: "Property Consulting Security <notifications@npcservices.com.au>",
+      to: [email],
+      subject: "Your AML verification code",
+      text: `Your verification code for ${capability} is ${code}. It expires in 5 minutes. If you did not request this code, contact your administrator.`,
+    }),
+  });
+  if (!response.ok) {
+    console.error("[aml-step-up] code delivery failed", response.status);
+    return { error: "Unable to deliver verification code" };
+  }
+  return { error: null };
 }
 
 Deno.serve(async (req) => {
@@ -59,9 +80,19 @@ Deno.serve(async (req) => {
     const userId = auth.userId;
     const userLabel = auth.username ?? null;
 
-    // Confirm user has some AML role at all.
-    const { data: hasRole } = await admin.rpc("has_any_aml_role", { _user_id: userId });
-    if (!hasRole) return jr({ error: "No AML role" }, 403);
+    const [{ data: roleRows, error: roleError }, { data: superadminRow, error: superadminError }] = await Promise.all([
+      admin.rpc("get_aml_roles_for_user", { _user_id: userId }),
+      admin.from("user_roles").select("user_id").eq("user_id", userId).eq("role", "superadmin").maybeSingle(),
+    ]);
+    if (roleError || superadminError) return jr({ error: "Unable to resolve AML permissions" }, 500);
+    const roles = (roleRows ?? []).map((row: { role?: string }) => String(row.role ?? ""));
+    const isSuperadmin = Boolean(superadminRow);
+    if (roles.length === 0 && !isSuperadmin) return jr({ error: "No AML role" }, 403);
+
+    const authorizeCapability = (capability: string) =>
+      canUseAmlCapability(roles, capability, isSuperadmin)
+        ? null
+        : jr({ error: "Capability not permitted" }, 403);
 
     const ip = req.headers.get("x-forwarded-for") ?? req.headers.get("cf-connecting-ip") ?? null;
     const ua = req.headers.get("user-agent") ?? null;
@@ -72,6 +103,8 @@ Deno.serve(async (req) => {
       case "issue": {
         const capability = String(body.capability ?? "");
         if (!STEP_UP_CAPABILITIES.has(capability)) return jr({ error: "Unknown capability" }, 400);
+        const denied = authorizeCapability(capability);
+        if (denied) return denied;
         const code = genNumericCode(6);
         const codeHash = await sha256(`${userId}:${capability}:${code}`);
         const expires_at = new Date(Date.now() + CODE_TTL_SECONDS * 1000).toISOString();
@@ -79,9 +112,11 @@ Deno.serve(async (req) => {
           user_id: userId, capability, code_hash: codeHash, expires_at, ip, user_agent: ua,
         }).select("id, expires_at").single();
         if (error) return jr({ error: error.message }, 500);
-        // In production: dispatch code via authenticator app / email / SMS.
-        // For in-app step-up we return the code so the operator can re-enter it (creates provable challenge/response trail).
-        return jr({ challenge_id: data.id, code, expires_at: data.expires_at, delivery: "in_app" });
+        const { data: userData, error: userError } = await admin.auth.admin.getUserById(userId);
+        if (userError || !userData.user?.email) return jr({ error: "No verified delivery address is available" }, 503);
+        const delivery = await deliverCode(userData.user.email, code, capability);
+        if (delivery.error) return jr({ error: delivery.error }, 503);
+        return jr({ challenge_id: data.id, expires_at: data.expires_at, delivery: "email" });
       }
 
       case "verify": {
@@ -91,6 +126,8 @@ Deno.serve(async (req) => {
         const { data: ch, error } = await aml.from("step_up_challenges").select("*").eq("id", challenge_id).maybeSingle();
         if (error || !ch) return jr({ error: "Challenge not found" }, 404);
         if (ch.user_id !== userId) return jr({ error: "Challenge does not belong to caller" }, 403);
+        const denied = authorizeCapability(String(ch.capability));
+        if (denied) return denied;
         if (ch.verified_at) return jr({ error: "Challenge already used" }, 409);
         if (new Date(ch.expires_at).getTime() < Date.now()) return jr({ error: "Challenge expired" }, 410);
         if (ch.attempts >= ch.max_attempts) return jr({ error: "Too many attempts" }, 429);
@@ -114,6 +151,7 @@ Deno.serve(async (req) => {
         const capability = String(body.capability ?? "");
         const session_token = String(body.session_token ?? "");
         if (!capability || !session_token) return jr({ valid: false });
+        if (authorizeCapability(capability)) return jr({ valid: false });
         const tokenHash = await sha256(`${userId}:${capability}:${session_token}`);
         const { data, error } = await aml.from("step_up_sessions")
           .select("id, expires_at, revoked_at")

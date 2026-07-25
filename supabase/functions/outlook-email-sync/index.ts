@@ -607,7 +607,7 @@ Deno.serve(async (req) => {
             owner_user_id: mailboxSource === 'personal' && userId !== 'service_role' ? userId : null,
             created_by: userId !== 'service_role' ? userId : null
           })
-          .select('id')
+          .select('id, client_id, owner_user_id, created_by')
           .single();
 
         if (insertError) {

@@ -1,6 +1,6 @@
 # WP-15 — Runtime Negative-Test Matrix
 
-Source: `NPC_Property_Dashboard_Codex_Security_Implementation_Plan.md` §22.4.
+Source: the restricted security program's approved negative-test work package.
 
 Every row below must be executed against the **deployed** environment (not
 localhost, not staging-of-staging). Each test produces one JSON line:

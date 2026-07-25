@@ -123,7 +123,7 @@ describe('runImportQualityGate', () => {
     expect(res.manualReviewRequired).toBe(false);
   });
 
-  it('scores a large document in bounded batches instead of skipping (C4)', async () => {
+  it('skips a document above the default page-count ceiling', async () => {
     const pageCount = DEFAULT_QUALITY_GATE_MAX_PAGES + 5; // 45
     const runOrchestrationImpl = vi.fn(async (opts: any) => {
       const batchPages: number[] = opts.captureOptions?.pageNumbers ?? [];
@@ -146,8 +146,37 @@ describe('runImportQualityGate', () => {
       runOrchestrationImpl,
       ...baseInjectables,
     });
+    expect(res.summary.ran).toBe(false);
+    expect(res.summary.skippedReason).toBe('page_count_exceeds_gate_limit');
+    expect(res.summary.pageCount).toBe(pageCount);
+    expect(runOrchestrationImpl).not.toHaveBeenCalled();
+  });
+
+  it('honors a configured ceiling while retaining bounded batching within it', async () => {
+    const pageCount = DEFAULT_QUALITY_GATE_MAX_PAGES + 5; // 45
+    const runOrchestrationImpl = vi.fn(async (opts: any) => {
+      const batchPages: number[] = opts.captureOptions?.pageNumbers ?? [];
+      return makeOrchestrationResult({
+        template: opts.loaded.draft.template,
+        visualQaScore: 0.9,
+        finalScore: 0.9,
+        totalApplied: 0,
+        passesAttempted: 1,
+        pages: batchPages.map((n) => ({ pageNumber: n, overallScore: 0.9, recommendedAction: 'accept', warnings: [] })),
+      });
+    });
+    const res = await runImportQualityGate({
+      importId: 'imp-big-configured',
+      template: makeTemplate(pageCount),
+      cdir: makeCdir(pageCount),
+      requestedMode: 'hybrid',
+      rastersByPage: makeRasters(pageCount),
+      maxPages: pageCount,
+      batchSize: 10,
+      runOrchestrationImpl,
+      ...baseInjectables,
+    });
     expect(res.summary.ran).toBe(true);
-    expect(res.summary.skippedReason).toBeUndefined();
     expect(res.summary.coverage).toBe('complete');
     expect(res.summary.pagesScored).toBe(pageCount);
     expect(res.summary.pagesUnscored).toEqual([]);
@@ -218,6 +247,14 @@ describe('runImportQualityGate', () => {
     expect(res.recommendedFinalMode).toBe('pixel-perfect');
     expect(res.summary.pagesNeedingReview).toBe(1);
     expect(res.summary.warningCount).toBe(1);
+    expect(res.summary.pagesPixelFallback).toBe(1);
+    expect((res.template.pages[0].meta as any)?.pdfImport?.outputStrategy).toBe('raster-only');
+    expect(res.template.pages[0].background).toMatchObject({
+      imageUrl: 'data:image/png;base64,PAGE1',
+      opacity: 1,
+      imageFit: 'fill',
+      underlay: false,
+    });
   });
 
   it('is fail-open: a failing batch keeps the original template and requires review (C4)', async () => {

@@ -63,19 +63,21 @@ Deno.serve(async (req) => {
 
     const { data: hasAml } = await admin.rpc("has_any_aml_role", { _user_id: userId });
     if (!hasAml) return jr({ error: "No AML role" }, 403);
+    const { data: canWrite } = await admin.rpc("has_aml_write_role", { _user_id: userId });
     const { data: isMlro } = await admin.rpc("has_aml_role", { _user_id: userId, _role: "mlro" });
 
     const op = body?.op as string;
 
     switch (op) {
       case "propose": {
+        if (!canWrite) return jr({ error: "Write role required" }, 403);
         const tool_name = String(body.tool_name ?? "").trim();
         const action_summary = String(body.action_summary ?? "").trim();
         const args = body.arguments ?? {};
         if (!tool_name || !action_summary) return jr({ error: "tool_name and action_summary required" }, 400);
         const { data, error } = await aml.from("ai_action_approvals").insert({
           tool_name, action_summary, arguments: args,
-          proposer: body.proposer ?? "aurixa_agent",
+          proposer: userLabel ?? userId,
           proposer_context: body.proposer_context ?? null,
         }).select("id, expires_at").single();
         if (error) return jr({ error: error.message }, 500);

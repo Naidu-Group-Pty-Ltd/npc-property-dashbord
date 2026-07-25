@@ -274,7 +274,9 @@ Deno.serve(async (req) => {
 
     const compositeId = body.composite_report_id || body.compositeReportId || body.reportId;
     const requestedVariants = Array.isArray(body.variants) && body.variants.length > 0 ? body.variants : ['financial', 'strategic'];
-    const variants = requestedVariants.filter((variant: unknown): variant is PersistedVariant => variant === 'financial' || variant === 'strategic');
+    const variants = [...new Set(requestedVariants.filter(
+      (variant: unknown): variant is PersistedVariant => variant === 'financial' || variant === 'strategic',
+    ))];
     if (!variants.length) throw new Error('At least one valid client report pathway is required');
     if (!compositeId) {
       return new Response(JSON.stringify({ error: 'composite_report_id is required' }), {
