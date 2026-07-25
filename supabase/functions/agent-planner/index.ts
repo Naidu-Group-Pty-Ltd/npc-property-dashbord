@@ -108,7 +108,7 @@ Deno.serve(async (req) => {
   // Public cron path — no user auth required. Runs due scheduled plans.
   if (action === 'run-scheduled') {
     const secret = req.headers.get('x-cron-secret');
-    if (CRON_SECRET && secret && secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
+    if (!CRON_SECRET || secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
     return await runScheduled(sb);
   }
 
