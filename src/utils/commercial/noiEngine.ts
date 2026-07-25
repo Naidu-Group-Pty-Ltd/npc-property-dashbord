@@ -75,7 +75,7 @@ export function calculateNoiEngine(inputs: NoiEngineInputs, selectedBasis: NoiBa
   const potentialGrossIncome = calculationReady ? grossPassingRent + otherIncome : 0;
   const vacancyLoss = potentialGrossIncome * pct(vacancyAllowancePct ?? 0);
   const outgoings = inputs.outgoings ?? [];
-  const simpleTotalOperatingExpenses = optional(inputs.simpleTotalOperatingExpenses, calculationReady);
+  const simpleTotalOperatingExpenses = parseNumeric(inputs.simpleTotalOperatingExpenses);
   const itemisedOperatingExpenses = calculationReady ? sum(outgoings.map(o => optional(o.amount, true) ?? 0)) : 0;
   const totalOperatingExpenses = simpleTotalOperatingExpenses ?? itemisedOperatingExpenses;
   const matrixRecovered = calculationReady ? sum(outgoings.map(o => (optional(o.amount, true) ?? 0) * Math.min(1, Math.max(0, (optional(o.recoverablePct, true) ?? 0) / 100)))) : 0;

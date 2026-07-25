@@ -22,7 +22,7 @@ export function calculateNoi(inputs: BorrowingInputs, overlay?: Pick<RiskOverlay
   const vacancyLoss = potentialGrossIncome * pct(vacancyAllowancePct ?? 0);
   const effectiveGrossIncome = potentialGrossIncome - vacancyLoss + recoveredOutgoings;
   const simpleTotalOperatingExpenses = optional(i.nonRecoverableExpenses, ready);
-  const itemisedOperatingExpenses = ready ? sum([i.councilRates, i.water, i.landTax, i.insurance, i.managementFees, i.repairsMaintenance, i.utilities, i.cleaning, i.security, i.otherExpenses].map(v => optional(v, true) ?? 0)) : 0;
+  const itemisedOperatingExpenses = ready ? sum([i.councilRates, i.water, i.landTax, i.insurance, i.strataOwnersCorp, i.managementFees, i.repairsMaintenance, i.utilities, i.cleaning, i.security, i.otherExpenses].map(v => optional(v, true) ?? 0)) : 0;
   const totalOperatingExpenses = simpleTotalOperatingExpenses && itemisedOperatingExpenses === 0 ? simpleTotalOperatingExpenses : itemisedOperatingExpenses;
   const actualNoi = effectiveGrossIncome - totalOperatingExpenses;
   const stabilisedNoi = ((marketRent + otherIncome) * (1 - pct(vacancyAllowancePct ?? 0))) + recoveredOutgoings - totalOperatingExpenses;
