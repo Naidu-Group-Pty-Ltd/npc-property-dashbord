@@ -524,14 +524,17 @@ function DocumentsEvidenceSection({
     duplicates: Array<{ reference_id: string; reference_type: string; label: string; case_count: number; client_count: number }>;
     discrepancies_created: number;
   } | null>(null);
+  const [evidence, setEvidence] = useState<any[]>([]);
 
   const refresh = useCallback(async () => {
-    const [reqs, docs] = await Promise.all([
+    const [reqs, docs, ev] = await Promise.all([
       amlCasesApi.listRequirements(caseId).catch(() => ({ requirements: [] })),
       amlCasesApi.listDocuments(caseId).catch(() => ({ documents: [] })),
+      amlFinanceApi.listEvidence(caseId).catch(() => ({ evidence: [] })),
     ]);
     setRequirements(reqs.requirements ?? []);
     setDocuments(docs.documents ?? []);
+    setEvidence(ev.evidence ?? []);
   }, [caseId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -669,6 +672,47 @@ function DocumentsEvidenceSection({
                         </Button>
                       </>
                     )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-sm">Evidence references</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Documents and records cited as evidence for this case — stored once,
+                referenced wherever they support a finding.
+              </p>
+            </div>
+            <Button asChild size="sm" variant="ghost">
+              <Link to="/admin/aml/finance">Manage</Link>
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {evidence.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No evidence references recorded yet.</p>
+          ) : (
+            <ul className="divide-y divide-border/60 text-sm">
+              {evidence.map((e) => (
+                <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate">{e.label}</div>
+                    {e.detail && <div className="truncate text-xs text-muted-foreground">{e.detail}</div>}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="capitalize">
+                      {String(e.reference_type ?? "reference").replace(/_/g, " ")}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(e.created_at).toLocaleDateString()}
+                    </span>
                   </div>
                 </li>
               ))}

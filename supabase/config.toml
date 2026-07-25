@@ -618,6 +618,10 @@ request_timeout = 60
 verify_jwt = false
 request_timeout = 60
 
+[functions.finance-portal-aml-requests]
+verify_jwt = false
+request_timeout = 60
+
 [functions.finance-portal-purchase-files]
 verify_jwt = false
 request_timeout = 60

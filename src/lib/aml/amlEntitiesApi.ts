@@ -148,4 +148,8 @@ export const amlEntitiesApi = {
     invoke<{ report: AmlQuestionnaireImportReport }>({ op: "import_from_questionnaire", case_id }),
   listProvenance: (case_id: string) =>
     invoke<{ provenance: AmlProvenanceRow[] }>({ op: "list_provenance", case_id }),
+  linkVerification: (params: {
+    case_id: string; target: "owner" | "rep"; party_id: string;
+    identity_check_id?: string; screening_check_id?: string;
+  }) => invoke<{ owner?: AmlBeneficialOwner; rep?: AmlAuthorisedRep }>({ op: "link_verification", ...params }),
 };

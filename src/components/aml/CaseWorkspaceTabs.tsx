@@ -26,10 +26,11 @@ import { toast } from "@/hooks/use-toast";
 import {
   amlVerificationApi, type IdentityCheck, type ScreeningCheck,
 } from "@/lib/aml/amlVerificationApi";
+// (IdentityCheck / ScreeningCheck also power the Phase 6 verification linking)
 import {
   amlRiskApi, type AmlRiskAssessment, type AmlCaseCondition, type AmlDecision,
 } from "@/lib/aml/amlRiskApi";
-import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy } from "@/lib/aml/amlFinanceApi";
+import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
 import {
   amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
   type AmlOwnershipSummary, type AmlProvenanceRow, type AmlQuestionnaireImportReport,
@@ -508,17 +509,24 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
   const [reps, setReps] = useState<AmlAuthorisedRep[]>([]);
   const [summary, setSummary] = useState<AmlOwnershipSummary | null>(null);
   const [provenance, setProvenance] = useState<AmlProvenanceRow[]>([]);
+  const [idChecks, setIdChecks] = useState<IdentityCheck[]>([]);
+  const [scrChecks, setScrChecks] = useState<ScreeningCheck[]>([]);
   const [importing, setImporting] = useState(false);
+  const [linkingParty, setLinkingParty] = useState<string | null>(null);
   const [lastReport, setLastReport] = useState<AmlQuestionnaireImportReport | null>(null);
 
   const load = React.useCallback(async () => {
     try {
       setLoading(true);
-      const [linksRes, provRes] = await Promise.all([
+      const [linksRes, provRes, idRes, scrRes] = await Promise.all([
         amlEntitiesApi.listEntitiesForCase(caseRow.id),
         amlEntitiesApi.listProvenance(caseRow.id).catch(() => ({ provenance: [] })),
+        amlVerificationApi.listIdv(caseRow.id).catch(() => ({ identity_checks: [] })),
+        amlVerificationApi.listScreening(caseRow.id).catch(() => ({ screening_checks: [] })),
       ]);
       setProvenance(provRes.provenance ?? []);
+      setIdChecks(idRes.identity_checks ?? []);
+      setScrChecks(scrRes.screening_checks ?? []);
       const links = linksRes.links ?? [];
       const subject = links.find((l) => l.link_role === "subject") ?? links[0];
       if (!subject?.entity_id) {
@@ -541,6 +549,26 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
   }, [caseRow.id]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const linkCheck = async (
+    target: "owner" | "rep", partyId: string,
+    kind: "identity" | "screening", checkId: string,
+  ) => {
+    if (!checkId) return;
+    setLinkingParty(partyId);
+    try {
+      await amlEntitiesApi.linkVerification({
+        case_id: caseRow.id, target, party_id: partyId,
+        ...(kind === "identity" ? { identity_check_id: checkId } : { screening_check_id: checkId }),
+      });
+      toast({ title: "Verification linked" });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Could not link verification", description: e.message, variant: "destructive" });
+    } finally {
+      setLinkingParty(null);
+    }
+  };
 
   const runImport = async () => {
     setImporting(true);
@@ -699,18 +727,58 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
                         <td className="py-2 pr-3">{CONTROL_LABELS[o.control_type] ?? o.control_type}</td>
                         <td className="py-2 pr-3">{Number(o.ownership_percent) > 0 ? `${o.ownership_percent}%` : "—"}</td>
                         <td className="py-2 pr-3">
-                          <Badge
-                            variant="outline"
-                            className={
-                              o.verification_state === "verified" || o.verification_state === "waived"
-                                ? "border-success/40 text-success"
-                                : o.verification_state === "failed"
-                                  ? "border-destructive/40 text-destructive"
-                                  : "border-muted-foreground/30 text-muted-foreground"
-                            }
-                          >
-                            {VERIFICATION_LABELS[o.verification_state] ?? o.verification_state}
-                          </Badge>
+                          <div className="space-y-1">
+                            <Badge
+                              variant="outline"
+                              className={
+                                o.verification_state === "verified" || o.verification_state === "waived"
+                                  ? "border-success/40 text-success"
+                                  : o.verification_state === "failed"
+                                    ? "border-destructive/40 text-destructive"
+                                    : "border-muted-foreground/30 text-muted-foreground"
+                              }
+                            >
+                              {VERIFICATION_LABELS[o.verification_state] ?? o.verification_state}
+                            </Badge>
+                            {canWrite && !o.identity_check_id && idChecks.length > 0 && (
+                              <select
+                                className="block h-7 w-full max-w-[190px] rounded-md border border-input bg-background px-1.5 text-xs"
+                                aria-label={`Link identity check for ${o.full_name}`}
+                                value=""
+                                disabled={linkingParty === o.id}
+                                onChange={(e) => linkCheck("owner", o.id, "identity", e.target.value)}
+                              >
+                                <option value="">Link identity check…</option>
+                                {idChecks.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.subject_label} · {String(c.status).replace(/_/g, " ")}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {canWrite && !o.screening_check_id && scrChecks.length > 0 && (
+                              <select
+                                className="block h-7 w-full max-w-[190px] rounded-md border border-input bg-background px-1.5 text-xs"
+                                aria-label={`Link screening check for ${o.full_name}`}
+                                value=""
+                                disabled={linkingParty === o.id}
+                                onChange={(e) => linkCheck("owner", o.id, "screening", e.target.value)}
+                              >
+                                <option value="">Link screening…</option>
+                                {scrChecks.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.subject_label} · {String(c.status).replace(/_/g, " ")}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {o.identity_check_id && (
+                              <div className="text-[10px] text-muted-foreground">Identity check linked</div>
+                            )}
+                            {o.screening_check_id && (
+                              <div className="text-[10px] text-muted-foreground">Screening linked</div>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -718,6 +786,18 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
                 </table>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {entity && (owners.length > 0 || reps.length > 0) && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Structure diagram</CardTitle></CardHeader>
+          <CardContent>
+            <OwnershipGraph entity={entity} owners={owners} reps={reps} />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              The tables above are the accessible equivalent of this diagram.
+            </p>
           </CardContent>
         </Card>
       )}
@@ -742,9 +822,39 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
                       <td className="py-2 pr-3">{r.full_name}</td>
                       <td className="py-2 pr-3">{r.role_title}</td>
                       <td className="py-2 pr-3">
-                        <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
-                          {VERIFICATION_LABELS[r.verification_state] ?? r.verification_state}
-                        </Badge>
+                        <div className="space-y-1">
+                          <Badge
+                            variant="outline"
+                            className={
+                              r.verification_state === "verified" || r.verification_state === "waived"
+                                ? "border-success/40 text-success"
+                                : r.verification_state === "failed"
+                                  ? "border-destructive/40 text-destructive"
+                                  : "border-muted-foreground/30 text-muted-foreground"
+                            }
+                          >
+                            {VERIFICATION_LABELS[r.verification_state] ?? r.verification_state}
+                          </Badge>
+                          {canWrite && !r.identity_check_id && idChecks.length > 0 && (
+                            <select
+                              className="block h-7 w-full max-w-[190px] rounded-md border border-input bg-background px-1.5 text-xs"
+                              aria-label={`Link identity check for ${r.full_name}`}
+                              value=""
+                              disabled={linkingParty === r.id}
+                              onChange={(e) => linkCheck("rep", r.id, "identity", e.target.value)}
+                            >
+                              <option value="">Link identity check…</option>
+                              {idChecks.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.subject_label} · {String(c.status).replace(/_/g, " ")}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {r.identity_check_id && (
+                            <div className="text-[10px] text-muted-foreground">Identity check linked</div>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -807,6 +917,79 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
   );
 }
 
+/**
+ * Phase 6 — visual ownership graph (§12.4). Pure SVG hub-and-spoke: the
+ * entity at the hub, owners/controllers with solid edges (labelled with
+ * ownership %), representatives with dashed edges. currentColor only — the
+ * surrounding text classes supply the semantic palette. The owners/reps
+ * tables are the accessible equivalent; the SVG is decorative structure.
+ */
+function OwnershipGraph({ entity, owners, reps }: {
+  entity: AmlEntity; owners: AmlBeneficialOwner[]; reps: AmlAuthorisedRep[];
+}) {
+  const nodes = [
+    ...owners.map((o) => ({
+      id: o.id,
+      name: o.full_name,
+      sub: [
+        CONTROL_LABELS[o.control_type] ?? o.control_type,
+        Number(o.ownership_percent) > 0 ? `${o.ownership_percent}%` : null,
+        o.is_ubo ? "UBO" : null,
+      ].filter(Boolean).join(" · "),
+      dashed: false,
+    })),
+    ...reps.map((r) => ({
+      id: r.id, name: r.full_name, sub: r.role_title, dashed: true,
+    })),
+  ];
+  const rowH = 46;
+  const height = Math.max(nodes.length * rowH + 16, 96);
+  const hubY = height / 2;
+  const width = 640;
+  const label = `Ownership structure for ${entity.legal_name}: ${owners.length} owner${owners.length === 1 ? "" : "s"} or controllers and ${reps.length} authorised representative${reps.length === 1 ? "" : "s"}.`;
+
+  return (
+    <div className="overflow-x-auto text-muted-foreground">
+      <svg
+        role="img"
+        aria-label={label}
+        viewBox={`0 0 ${width} ${height}`}
+        className="min-w-[560px] max-w-full"
+        style={{ height }}
+      >
+        {/* hub */}
+        <rect x={8} y={hubY - 24} width={196} height={48} rx={8}
+          fill="none" stroke="currentColor" strokeOpacity={0.6} />
+        <text x={106} y={hubY - 4} textAnchor="middle" fontSize={12} fontWeight={600} fill="currentColor">
+          {entity.legal_name.length > 26 ? `${entity.legal_name.slice(0, 25)}…` : entity.legal_name}
+        </text>
+        <text x={106} y={hubY + 13} textAnchor="middle" fontSize={10} fill="currentColor" fillOpacity={0.7}>
+          {ENTITY_TYPE_LABELS[entity.entity_type] ?? entity.entity_type}
+        </text>
+        {nodes.map((n, i) => {
+          const y = 8 + i * rowH + rowH / 2;
+          return (
+            <g key={n.id}>
+              <path
+                d={`M 204 ${hubY} C 280 ${hubY}, 300 ${y}, 356 ${y}`}
+                fill="none" stroke="currentColor" strokeOpacity={0.45}
+                strokeDasharray={n.dashed ? "4 4" : undefined}
+              />
+              <circle cx={362} cy={y} r={3.5} fill="currentColor" fillOpacity={0.6} />
+              <text x={374} y={y - 2} fontSize={11.5} fontWeight={500} fill="currentColor">
+                {n.name.length > 32 ? `${n.name.slice(0, 31)}…` : n.name}
+              </text>
+              <text x={374} y={y + 12} fontSize={10} fill="currentColor" fillOpacity={0.7}>
+                {n.sub}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 /* -------------------- Funding & Finance (V3) -------------------- */
 
 /**
@@ -819,16 +1002,19 @@ export function FundingFinanceTab({ caseId }: { caseId: string }) {
   const [loading, setLoading] = useState(true);
   const [comparisons, setComparisons] = useState<AmlFinanceComparison[]>([]);
   const [discrepancies, setDiscrepancies] = useState<AmlFinanceDiscrepancy[]>([]);
+  const [financeRequests, setFinanceRequests] = useState<AmlFinanceRequest[]>([]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
-        const [c, d] = await Promise.all([
+        const [c, d, fr] = await Promise.all([
           amlFinanceApi.listComparisons(caseId),
           amlFinanceApi.listDiscrepancies({ case_id: caseId }),
+          amlFinanceApi.listFinanceRequests(caseId).catch(() => ({ requests: [] })),
         ]);
+        if (alive) setFinanceRequests((fr as any)?.requests ?? []);
         if (!alive) return;
         setComparisons((c as any)?.comparisons ?? (Array.isArray(c) ? c : []));
         setDiscrepancies((d as any)?.discrepancies ?? (Array.isArray(d) ? d : []));
@@ -874,6 +1060,17 @@ export function FundingFinanceTab({ caseId }: { caseId: string }) {
             <div className="grid gap-2 sm:grid-cols-2">
               <Row k="Latest comparison" v={latest ? new Date(latest.created_at ?? "").toLocaleDateString() : "—"} />
               <Row k="Open discrepancies" v={String(openDiscrepancies.length)} />
+              <Row
+                k="Finance requests"
+                v={
+                  financeRequests.length === 0
+                    ? "None sent"
+                    : `${financeRequests.filter((r) => ["open", "clarification_required"].includes(r.status)).length} awaiting partner · ${financeRequests.filter((r) => r.status === "submitted").length} to review`
+                }
+              />
+              {latest && (
+                <Row k="Latest source" v={String(latest.source ?? "").replace(/_/g, " ") || "—"} />
+              )}
             </div>
             {openDiscrepancies.length > 0 ? (
               <div className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-warning flex items-start gap-2">

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "source": "repository-static-analysis",
-  "edge_function_count": 325,
-  "config_declared_function_count": 253,
-  "registry_function_count": 325,
-  "verify_jwt_false_count": 181,
+  "edge_function_count": 326,
+  "config_declared_function_count": 254,
+  "registry_function_count": 326,
+  "verify_jwt_false_count": 182,
   "exposure_class_counts": {
     "authenticated-or-service": 1,
     "authenticated-staff": 5,
@@ -12,7 +12,7 @@
     "human-authenticated": 177,
     "internal-service": 12,
     "module-gated": 9,
-    "portal-authenticated": 46,
+    "portal-authenticated": 47,
     "public": 9,
     "public-auth": 18,
     "superadmin-only": 1,

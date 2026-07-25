@@ -174,3 +174,34 @@ case's submitted `purchasing_structure`, `entity_details` and
   Client Portal or Finance Portal — `aml-client-portal` and the finance-safe
   `limited_status` contract have no path to these tables (enforced by the
   Phase 6 contract tests).
+
+## 9. Finance request loop (Phase 7, directive §15)
+
+The Command Center ↔ Finance Portal workflow runs on `aml.finance_requests`
+(RLS deny-by-default; service-role only):
+
+- **Staff side (`aml-finance`, AML write roles)**: `create_finance_request`
+  (kinds: funding_information · financial_evidence · clarification; message is
+  staff-authored finance-safe wording — a linked discrepancy id stays
+  server-side and its detail never travels with the request),
+  `review_finance_request`, `resolve_finance_request` (outcome + optional
+  gate to `under_review`/`accepted`/`no_further_action`). Each step advances
+  `aml.cases.finance_portal_status` (§15.3) and appends a hash-chained case
+  event.
+- **Partner side (`finance-portal-aml-requests`, finance-portal session
+  auth)**: scoped strictly by `finance_portal_client_assignments` via the
+  denormalised `client_id` on the request row — the function never reads
+  `aml.cases` for scoping. The response projection is the §15.1 whitelist
+  (id, kind, subject, message, status, purchase_file_id, timestamps): no case
+  identifiers, no risk/screening data, no discrepancy internals.
+- **Canonical submissions**: a funding submission becomes an
+  `aml.finance_comparisons` row (`source='finance_portal'`) and runs through
+  the shared `_shared/amlFinanceEngine.ts` discrepancy engine — the same
+  implementation the staff function uses. Detected differences are recorded
+  as `aml.finance_discrepancies` (`detected_by='finance_submission'`) and are
+  NOT echoed to the partner; they reach the partner only as later
+  staff-authored clarification wording. Evidence descriptions become
+  `aml.evidence_references` rows.
+- **Rollback**: `DROP TABLE IF EXISTS aml.finance_requests;` (migration
+  header). The comparison/discrepancy/evidence tables predate Phase 7 and are
+  untouched.

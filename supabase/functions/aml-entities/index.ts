@@ -555,6 +555,66 @@ Deno.serve(async (req) => {
       return jr({ report });
     }
 
+    // ── VERIFICATION RELATIONSHIPS (Phase 6) ─────────────────
+    // Ties a beneficial owner or authorised representative to a concrete
+    // identity/screening check on the case. The party's verification_state is
+    // derived from the linked check's actual status — never set directly, so
+    // "verified" always traces to a real check record.
+    if (op === "link_verification") {
+      requireWrite();
+      const caseId = String(body.case_id ?? "");
+      const target = String(body.target ?? "");
+      const partyId = String(body.party_id ?? "");
+      const identityCheckId = body.identity_check_id ? String(body.identity_check_id) : null;
+      const screeningCheckId = body.screening_check_id ? String(body.screening_check_id) : null;
+      if (!caseId || !partyId) return jr({ error: "case_id + party_id required" }, 400);
+      if (target !== "owner" && target !== "rep") return jr({ error: "target must be owner or rep" }, 400);
+      if (!identityCheckId && !screeningCheckId) return jr({ error: "identity_check_id or screening_check_id required" }, 400);
+      if (target === "rep" && screeningCheckId) return jr({ error: "representatives carry identity checks only" }, 400);
+
+      const table = target === "owner" ? "beneficial_owners" : "authorised_representatives";
+      const { data: party } = await aml.from(table)
+        .select("id, entity_id, full_name, verification_state").eq("id", partyId).maybeSingle();
+      if (!party) return jr({ error: "Party not found" }, 404);
+      const { data: link } = await aml.from("entity_case_links")
+        .select("id").eq("case_id", caseId).eq("entity_id", party.entity_id).limit(1).maybeSingle();
+      if (!link) return jr({ error: "Party's entity is not linked to this case" }, 400);
+
+      const patch: Record<string, unknown> = {};
+      let derivedState: string | null = null;
+      if (identityCheckId) {
+        const { data: check } = await aml.from("identity_checks")
+          .select("id, case_id, status").eq("id", identityCheckId).maybeSingle();
+        if (!check) return jr({ error: "Identity check not found" }, 404);
+        if (check.case_id !== caseId) return jr({ error: "Identity check belongs to a different case" }, 400);
+        patch.identity_check_id = identityCheckId;
+        derivedState = String(check.status) === "verified"
+          ? "verified"
+          : String(check.status) === "failed" ? "failed" : "pending";
+      }
+      if (screeningCheckId) {
+        const { data: check } = await aml.from("screening_checks")
+          .select("id, case_id, status").eq("id", screeningCheckId).maybeSingle();
+        if (!check) return jr({ error: "Screening check not found" }, 404);
+        if (check.case_id !== caseId) return jr({ error: "Screening check belongs to a different case" }, 400);
+        patch.screening_check_id = screeningCheckId;
+      }
+      if (derivedState) patch.verification_state = derivedState;
+
+      const { data: updated, error: updErr } = await aml.from(table)
+        .update(patch).eq("id", partyId).select("*").maybeSingle();
+      if (updErr) return jr({ error: updErr.message }, 400);
+
+      await appendCaseEvent(admin, caseId, "system",
+        `Verification linked for ${party.full_name}`,
+        {
+          target, party_id: partyId, entity_id: party.entity_id,
+          identity_check_id: identityCheckId, screening_check_id: screeningCheckId,
+          verification_state: derivedState ?? party.verification_state,
+        }, userId, userLabel);
+      return jr({ [target === "owner" ? "owner" : "rep"]: updated });
+    }
+
     // Case-scoped provenance read for the Command Centre workspace (any AML
     // role). Never exposed to the client or finance portals — this function
     // is not reachable from those surfaces.

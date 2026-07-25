@@ -273,6 +273,114 @@ describe("questionnaire reconciliation into canonical parties (Phase 6)", () => 
   });
 });
 
+describe("verification relationships (Phase 6, §12.4)", () => {
+  const entitiesSource = readFileSync(
+    join(repo, "supabase/functions/aml-entities/index.ts"), "utf8");
+  const start = entitiesSource.indexOf('op === "link_verification"');
+  const end = entitiesSource.indexOf('op === "list_provenance"');
+  const branch = start >= 0 && end > start ? entitiesSource.slice(start, end) : undefined;
+
+  it("exists and requires a write role", () => {
+    expect(branch).toBeDefined();
+    expect(branch).toContain("requireWrite();");
+  });
+
+  it("derives the party's verification state from the linked check, never from input", () => {
+    expect(branch).toContain('String(check.status) === "verified"');
+    expect(branch).not.toContain("body.verification_state");
+  });
+
+  it("rejects checks that belong to a different case", () => {
+    expect(branch).toContain("belongs to a different case");
+  });
+
+  it("audits every link into the hash chain", () => {
+    expect(branch).toContain("appendCaseEvent(");
+    expect(branch).toContain("Verification linked for");
+  });
+});
+
+describe("finance request loop — staff side (Phase 7, §15.4)", () => {
+  const requestMigration = readFileSync(
+    join(repo, "supabase/migrations/20260726093000_aml_finance_requests.sql"), "utf8");
+
+  it("creates requests behind the write gate with a validated kind", () => {
+    const branch = financeSource.slice(
+      financeSource.indexOf('op === "create_finance_request"'),
+      financeSource.indexOf('op === "review_finance_request"'));
+    expect(branch).toContain("requireWrite();");
+    expect(branch).toContain("FINANCE_REQUEST_KINDS.has(kind)");
+  });
+
+  it("advances the finance-portal dimension per §15.3 at each step", () => {
+    expect(financeSource).toContain('"clarification_required" : "information_required"');
+    expect(financeSource).toContain('setFinancePortalStatus(reqRow.case_id, "under_review")');
+    expect(financeSource).toContain('["under_review", "accepted", "no_further_action"].includes(financeStatusAfter)');
+  });
+
+  it("audits request lifecycle into the hash chain", () => {
+    expect(financeSource).toContain("Finance request sent:");
+    expect(financeSource).toContain("Finance request ${outcome}:");
+  });
+
+  it("uses the shared reconciliation engine, not a local copy", () => {
+    expect(financeSource).toContain('from "../_shared/amlFinanceEngine.ts"');
+    expect(financeSource).not.toContain("function detectDiscrepancies");
+  });
+
+  it("request table is deny-by-default and reversible", () => {
+    expect(requestMigration).toContain("ALTER TABLE aml.finance_requests ENABLE ROW LEVEL SECURITY;");
+    expect(requestMigration).toContain("GRANT ALL ON aml.finance_requests TO service_role;");
+    expect(requestMigration).not.toMatch(/GRANT .* ON aml\.finance_requests TO authenticated/);
+    expect(requestMigration).toContain("DROP TABLE IF EXISTS aml.finance_requests;");
+  });
+});
+
+describe("finance portal request channel is finance-safe (Phase 7, §15.1/§15.2)", () => {
+  const fpSource = readFileSync(
+    join(repo, "supabase/functions/finance-portal-aml-requests/index.ts"), "utf8");
+  const codeOnly = fpSource
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n");
+
+  it("authenticates with the finance-portal session, not staff auth", () => {
+    expect(fpSource).toContain("resolveFinancePartner(");
+    expect(fpSource).not.toContain("verifyAuth(");
+  });
+
+  it("scopes every read to the partner's client assignments", () => {
+    expect(fpSource).toContain("finance_portal_client_assignments");
+    expect(fpSource).toContain('allowedClients.has(String(r.client_id))');
+    expect(fpSource).toContain('.in("client_id", Array.from(allowedClients))');
+  });
+
+  it("never projects case identifiers or internal fields to the partner", () => {
+    const projStart = fpSource.indexOf("function safeRequestProjection");
+    const projEnd = fpSource.indexOf("function num(");
+    const projection = fpSource.slice(projStart, projEnd);
+    expect(projection).not.toContain("case_id");
+    expect(projection).not.toContain("discrepancy_id");
+    expect(projection).not.toContain("resolution_note");
+    expect(fpSource).toContain("requests: (data ?? []).map(safeRequestProjection)");
+  });
+
+  it("returns no risk, screening or discrepancy detail in any response", () => {
+    expect(codeOnly).not.toMatch(/risk_rating|risk_score|pep|sanction|screening/i);
+    // Submissions acknowledge without echoing what the engine detected.
+    expect(fpSource).toContain('return jr({ ok: true, status: "submitted" });');
+    expect(fpSource).not.toContain("detected.length");
+    expect(fpSource).not.toMatch(/jr\(\{[^}]*discrepanc/i);
+  });
+
+  it("creates canonical records through the shared engine (§15.4 steps 4-6)", () => {
+    expect(fpSource).toContain('from "../_shared/amlFinanceEngine.ts"');
+    expect(fpSource).toContain('source: "finance_portal"');
+    expect(fpSource).toContain('detected_by: "finance_submission"');
+    expect(fpSource).toContain("appendCaseEvent(");
+  });
+});
+
 describe("workflow-dimension migration invariants", () => {
   it("enforces one open case per client with a partial unique index", () => {
     expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");
