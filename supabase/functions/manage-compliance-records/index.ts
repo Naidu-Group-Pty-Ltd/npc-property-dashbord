@@ -83,14 +83,10 @@ Deno.serve(async (req) => {
         const type = payload.type as string | undefined;
         if (!client_id || !type) return j({ success: false, error: 'client_id and type required' }, 400);
         const { data: latest } = await supabase
-          .from('compliance_records').select('id, version')
+          .from('compliance_records').select('version')
           .eq('client_id', client_id).eq('type', type)
           .order('version', { ascending: false }).limit(1).maybeSingle();
         const nextVersion = (latest?.version || 0) + 1;
-        // Mark prior current row as historical
-        if (latest?.id) {
-          await supabase.from('compliance_records').update({ is_current: false }).eq('id', latest.id);
-        }
         const insertRow = { ...payload, version: nextVersion, is_current: true, generated_by: auth.userId, status: 'draft' };
         const { data, error } = await supabase.from('compliance_records').insert(insertRow).select().single();
         if (error) return j({ success: false, error: error.message }, 500);
