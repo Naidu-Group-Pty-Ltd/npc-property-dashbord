@@ -1,12 +1,8 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { ShieldCheck, Eye, Loader2 } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { ShieldCheck, Loader2 } from "lucide-react";
 import { amlFinanceApi, type AmlLimitedStatus } from "@/lib/aml/amlFinanceApi";
-import { useFinancePortalAuth } from "@/hooks/useFinancePortalAuth";
-import { toast } from "sonner";
 
 const STATUS_TONE: Record<string, string> = {
   not_started: "bg-muted text-muted-foreground",
@@ -39,12 +35,9 @@ interface Props {
 }
 
 export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
-  const navigate = useNavigate();
-  const { invokeFinanceFunction } = useFinancePortalAuth();
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState<AmlLimitedStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [minting, setMinting] = useState(false);
 
   useEffect(() => {
     if (!purchaseFileId && !clientId) return;
@@ -63,26 +56,6 @@ export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
     return () => { cancelled = true; };
   }, [purchaseFileId, clientId]);
 
-  async function openSnapshot() {
-    if (!clientId) {
-      toast.error("Client context required to request an AML snapshot");
-      return;
-    }
-    setMinting(true);
-    try {
-      const { data, error: err } = await invokeFinanceFunction("aml-finance", {
-        op: "create_case_handoff",
-        client_id: clientId,
-      });
-      if (err || !data?.token) throw new Error(err?.message || data?.error || "Failed to mint handoff token");
-      navigate(`/finance/aml-snapshot/${encodeURIComponent(data.token)}`);
-    } catch (e: any) {
-      toast.error(e?.message ?? "Unable to open AML snapshot");
-    } finally {
-      setMinting(false);
-    }
-  }
-
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -96,9 +69,6 @@ export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
               <CardDescription className="text-xs">Limited view — compliance team owns the case</CardDescription>
             </div>
           </div>
-          <Button size="sm" variant="ghost" onClick={openSnapshot} disabled={minting || !clientId}>
-            {minting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Eye className="h-3.5 w-3.5" />}
-          </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
