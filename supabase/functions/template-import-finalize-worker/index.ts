@@ -4,6 +4,7 @@
 // or template_resync_v2 outside the frontend request path.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { authorizeTemplateResync } from '../_shared/templateResyncAuthorization.ts';
 import { createTokenAuthCorsHeaders } from '../_shared/auth.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -91,7 +92,7 @@ async function finalizeImport(importId: string): Promise<void> {
 
   const { data: record, error: getErr } = await admin
     .from('template_imports')
-    .select('id,status,page_count,source_filename,meta,created_template_id')
+    .select('id,user_id,status,page_count,source_filename,meta,created_template_id')
     .eq('id', importId)
     .maybeSingle();
 
@@ -153,6 +154,22 @@ async function finalizeImport(importId: string): Promise<void> {
       if (!templateId) {
         await markFailed(admin, importId, 'template_id required for resync finalization', meta, {
           failure_code: 'template_id_missing',
+        });
+        return;
+      }
+
+      const requestedBy = typeof request.requested_by === 'string' ? request.requested_by : '';
+      if (!requestedBy || (requestedBy !== 'service_role' && requestedBy !== (record as any).user_id)) {
+        await markFailed(admin, importId, 'resync requester does not own the import', meta, {
+          failure_code: 'resync_requester_mismatch',
+        });
+        return;
+      }
+
+      const authorization = await authorizeTemplateResync(admin, requestedBy, templateId);
+      if (!authorization.allowed) {
+        await markFailed(admin, importId, 'requester is not authorized to resync the target template', meta, {
+          failure_code: authorization.exists ? 'template_resync_forbidden' : 'template_not_found',
         });
         return;
       }
