@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts';
+import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 /**
@@ -42,15 +43,16 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const body: RequestBody = await req.json();
 
-    // Check if this is an internal cron call
-    const authHeader = req.headers.get('Authorization') || '';
-    const bearerToken = authHeader.replace('Bearer ', '').trim();
-    const isCronCall = body.operation === 'dispatch' && bearerToken === supabaseAnonKey?.trim();
+    // Cron dispatches must prove knowledge of a non-public server secret. The
+    // anon key is intentionally public and must never bypass staff auth.
+    const isCronCall = body.operation === 'dispatch' && verifyRequiredCronSecret(
+      Deno.env.get('INTERNAL_EDGE_SECRET'),
+      req.headers.get('x-internal-edge-secret'),
+    );
 
     if (!isCronCall) {
       // Verify authentication
