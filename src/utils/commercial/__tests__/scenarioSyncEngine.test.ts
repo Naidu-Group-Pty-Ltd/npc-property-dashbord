@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createAiEstimate } from '../aiEstimateEngine';
-import { sampleClientProfiles } from '../clientPortfolioEngine';
 import { buildClientScenario } from '../scenarioModellingEngine';
 import { buildScenarioReportPayload } from '../scenarioReportBuilder';
 import { acceptAiEstimateForScenario, importClientProfileField, saveBackToPropertyRecord, saveScenarioToClientProfile } from '../scenarioSyncEngine';
+import { testClientProfiles } from './fixtures/clientProfile';
 
-const client = () => structuredClone(sampleClientProfiles[0]);
+const client = () => structuredClone(testClientProfiles[0]);
 const scenario = (status: any = 'Draft') => buildClientScenario(client(), { scenarioName: 'Acquire warehouse', scenarioType: 'Acquire Industrial Asset', status, purchasePrice: 1_000_000, proposedDebt: 650_000, requiredEquity: 350_000, annualNoi: 85_000, annualDebtService: 55_000, selectedProperty: 'Warehouse A', borrowingResult: { finalRiskAdjustedLoan: 650_000, proposedLoan: 650_000, creditAssessmentStatus: 'supportable', purchaseAbilityStatus: 'supportable', requiredNextAction: 'Collect loan statements', fundsToComplete: { requiredEquity: 350_000 } } as any } as any);
 
 describe('scenarioSyncEngine safeguards', () => {
