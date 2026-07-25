@@ -8,6 +8,7 @@ import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { adapterFor } from "./adapters/index.ts";
 import type { SourceConfig } from "./adapters/types.ts";
+import { MARKET_AUDIENCES, MARKET_SEGMENTS, normaliseClassification } from "./classification.ts";
 
 const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -35,16 +36,7 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
   );
 }
 
-const SEGMENTS = [
-  "finance",
-  "property",
-  "construction",
-  "political",
-  "economic",
-  "social",
-  "policy_regulation",
-  "rental",
-] as const;
+const SEGMENTS = MARKET_SEGMENTS;
 
 async function sha256(value: string) {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -90,7 +82,7 @@ function heuristicClassify(item: any) {
     segments.push("policy_regulation");
   if (/(rent|vacancy|tenancy|tenant|landlord|yield)/.test(t)) segments.push("rental");
   if (!segments.length) segments.push("property");
-  return { category: segments[0], segments };
+  return normaliseClassification({ category: segments[0], segments, audience_tags: [], confidence_score: 40 });
 }
 
 function sourceConfig(source: any): SourceConfig { return { id:source.id, source_key:source.source_key, name:source.name, adapter_type:source.adapter_type || source.source_type, primary_url:source.primary_url || source.url, feed_urls:Array.isArray(source.feed_urls)?source.feed_urls:[], listing_urls:Array.isArray(source.listing_urls)?source.listing_urls:[], adapter_config:source.adapter_config || {}, source_authority:source.source_authority, perspective:source.perspective, copyright_mode:source.copyright_mode, next_cursor:source.next_cursor }; }
@@ -128,7 +120,7 @@ async function classifyWithAI(item: any, source: any) {
             type: "array",
             items: {
               type: "string",
-              enum: ["buyers", "investors", "owner_occupiers", "brokers", "advisers", "developers", "policy"],
+              enum: MARKET_AUDIENCES as unknown as string[],
             },
           },
           ai_summary: { type: "string" },
@@ -197,7 +189,7 @@ ${item.excerpt ?? "(no excerpt supplied)"}`,
     }
     parsed.segments = parsed.segments.filter((s: string) => SEGMENTS.includes(s as any));
     if (!parsed.segments.length) parsed.segments = ["property"];
-    return parsed;
+    return normaliseClassification(parsed);
   } catch {
     return null;
   }
@@ -256,7 +248,18 @@ Deno.serve(async (req) => {
   let query = sb.from("market_sources").select("*").eq("enabled", true);
   if (Array.isArray(sourceIds) && sourceIds.length) query = query.in("id", sourceIds);
   const { data: sources, error } = await query;
-  if (error) return json({ error: error.message }, 500, cors);
+  if (error) {
+    await sb.from("market_ingestion_runs").update({ status: "failed", completed_at: new Date().toISOString(), error_summary: "Unable to read the source registry." }).eq("id", run.id);
+    return json({ error: "Unable to read the Market Updates source registry." }, 500, cors);
+  }
+  if (!sources?.length) {
+    const { count } = await sb.from("market_sources").select("id", { count: "exact", head: true });
+    const message = count === 0
+      ? "The Market Updates source registry has not been seeded in this environment."
+      : "No enabled market sources are configured in the connected database.";
+    await sb.from("market_ingestion_runs").update({ status: "failed", completed_at: new Date().toISOString(), error_summary: message }).eq("id", run.id);
+    return json({ runId: run.id, status: "failed", error: message }, 422, cors);
+  }
 
   const summary = {
     runId: run.id,
@@ -275,12 +278,18 @@ Deno.serve(async (req) => {
   };
 
   for (const source of sources ?? []) {
+    let fetchRunId: string | null = null;
     try {
       const last = source.last_fetched_at
         ? Date.now() - new Date(source.last_fetched_at).getTime()
         : Infinity;
       if (!force && last < (source.refresh_frequency_minutes ?? source.refresh_frequency_hours * 60) * 60_000) continue;
       summary.sourcesProcessed++;
+
+      const { data: fetchRun } = await sb.from("market_source_fetch_runs").insert({
+        ingestion_run_id: run.id, source_id: source.id, status: "running",
+      }).select("id").single();
+      fetchRunId = fetchRun?.id ?? null;
 
       await sb
         .from("market_sources")
@@ -289,7 +298,13 @@ Deno.serve(async (req) => {
 
       const batch = await fetchSource(source);
       const items = batch.items;
-      if (test) { summary.ingested += items.length; continue; }
+      if (test) {
+        summary.ingested += items.length;
+        if (fetchRunId) await sb.from("market_source_fetch_runs").update({ status: "completed", completed_at: new Date().toISOString(), http_status: batch.validation.httpStatus, adapter_used: batch.validation.format, feed_url_used: batch.validation.endpoint, latency_ms: batch.validation.latencyMs, items_discovered: items.length }).eq("id", fetchRunId);
+        continue;
+      }
+
+      let sourcePublished = 0;
 
       for (const item of items) {
         const dedupe_hash = await sha256(
@@ -407,23 +422,30 @@ Deno.serve(async (req) => {
 
         summary.ingested++;
         if (status === "published") summary.published++;
+        if (status === "published") sourcePublished++;
         else summary.candidates++;
       }
 
+      if (fetchRunId) await sb.from("market_source_fetch_runs").update({ status: batch.validation.fallbackUsed ? "degraded" : "completed", completed_at: new Date().toISOString(), http_status: batch.validation.httpStatus, adapter_used: batch.validation.format, feed_url_used: batch.validation.endpoint, latency_ms: batch.validation.latencyMs, items_discovered: items.length, items_published: sourcePublished, safe_error_message: batch.validation.fallbackUsed ? batch.validation.safeError : null }).eq("id", fetchRunId);
+
       await sb
         .from("market_sources")
-        .update({ last_success_at: new Date().toISOString(), last_error: null, consecutive_failures:0, health_status:batch.validation.fallbackUsed?'degraded':'healthy', last_http_status:batch.validation.httpStatus, last_latency_ms:batch.validation.latencyMs, last_items_discovered:items.length, last_items_published:summary.published })
+        .update({ last_success_at: new Date().toISOString(), last_error: batch.validation.fallbackUsed ? batch.validation.safeError : null, consecutive_failures:0, health_status:batch.validation.fallbackUsed?'degraded':'healthy', last_http_status:batch.validation.httpStatus, last_latency_ms:batch.validation.latencyMs, last_items_discovered:items.length, last_items_published:sourcePublished })
         .eq("id", source.id);
     } catch (e) {
       summary.failed++;
       const message = String(e?.message ?? e);
       summary.sourceErrors.push({ sourceId: source.id, message });
+      if (fetchRunId) await sb.from("market_source_fetch_runs").update({ status: "failed", completed_at: new Date().toISOString(), safe_error_message: message.slice(0, 240), consecutive_failure_count: (source.consecutive_failures ?? 0) + 1 }).eq("id", fetchRunId);
       await sb.from("market_sources").update({ last_error: message.slice(0,240), consecutive_failures:(source.consecutive_failures??0)+1, health_status:(source.consecutive_failures??0)+1>=3?'failed':'degraded' }).eq("id", source.id);
     }
   }
 
   const finalStatus = summary.failed ? (summary.sourcesProcessed > summary.failed ? 'partial' : 'failed') : 'completed';
   await sb.from('market_ingestion_runs').update({status:finalStatus,completed_at:new Date().toISOString(),sources_considered:summary.sourcesConsidered,sources_processed:summary.sourcesProcessed,sources_succeeded:Math.max(0,summary.sourcesProcessed-summary.failed),sources_failed:summary.failed,items_discovered:summary.ingested+summary.skippedDuplicates,items_deduplicated:summary.skippedDuplicates,items_classified:summary.aiClassified,items_published:summary.published,items_candidate:summary.candidates,items_ignored:summary.ignored}).eq('id',run.id);
-  if(summary.published>0&&!test){ fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/market-updates-digest`,{method:'POST',headers:{authorization:`Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,'content-type':'application/json'},body:JSON.stringify({period:'24h',internal_action:'post_ingestion'})}).catch(()=>undefined); }
+  if(summary.published>0&&!test){
+    const cronSecret = Deno.env.get('MARKET_INGESTION_CRON_SECRET');
+    if (cronSecret) fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/market-updates-digest`,{method:'POST',headers:{'x-cron-secret':cronSecret,'content-type':'application/json'},body:JSON.stringify({period:'24h',internal_action:'post_ingestion'})}).catch(()=>undefined);
+  }
   return json({...summary,status:finalStatus}, 200, cors);
 });

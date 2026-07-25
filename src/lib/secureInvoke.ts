@@ -62,7 +62,7 @@ export function describeAuthError(message: string | undefined | null): string | 
 
 export interface InvokeResult<T = any> {
   data: T | null;
-  error: { message: string } | null;
+  error: { message: string; status?: number; functionName?: string; network?: boolean } | null;
 }
 
 function getStoredToken(key: string): string | null {
@@ -185,7 +185,7 @@ export async function invokeSecureFunction<T = any>(
         });
         return {
           data: data as T,
-          error: { message: data.error.message || 'Insufficient tokens' },
+          error: { message: data.error.message || 'Insufficient tokens', status: response.status, functionName },
         };
       }
 
@@ -231,7 +231,7 @@ export async function invokeSecureFunction<T = any>(
 
       return { 
         data: data as T, 
-        error: { message: String(errorMessage) }
+        error: { message: String(errorMessage), status: response.status, functionName }
       };
     }
     
@@ -272,7 +272,7 @@ export async function invokeSecureFunction<T = any>(
     });
     return {
       data: null,
-      error: { message },
+      error: { message, functionName, network: true },
     };
   }
 }

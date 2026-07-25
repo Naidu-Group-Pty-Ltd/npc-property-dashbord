@@ -11,8 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketSources, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh } from '@/services/marketUpdatesService';
-import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketQAMessage, MarketSegment, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateCategory } from '@/types/marketUpdates';
+import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketSources, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
+import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketQAMessage, MarketSegment, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
@@ -102,6 +102,7 @@ export default function MarketUpdates() {
   const [period, setPeriod] = useState<MarketDigestPeriod>('24h');
   const [digest, setDigest] = useState<MarketDigest24h | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [operationalIssue, setOperationalIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
   const [selectedUpdate, setSelectedUpdate] = useState<MarketUpdate | null>(null);
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
   const [question, setQuestion] = useState('');
@@ -119,15 +120,19 @@ export default function MarketUpdates() {
 
   const loadUpdates = async () => {
     setLoading(true);
-    const [u, s, h] = await Promise.all([fetchMarketUpdates({ limit: 200 }), fetchMarketSources(), fetchMarketSourceHealth()]);
-    setUpdates(u); setSources(s); setSourceHealth(h);
-    setLoading(false);
+    try {
+      const [u, s, h] = await Promise.all([fetchMarketUpdates({ limit: 200 }), fetchMarketSources(), fetchMarketSourceHealth()]);
+      setUpdates(u); setSources(s); setSourceHealth(h); setOperationalIssue(null);
+    } catch (error) {
+      if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue);
+      else setOperationalIssue({ stage:'database', code:'unknown', message:'Market Updates data could not be loaded.', remediation:'Retry; if it persists, ask an administrator to review the connected environment.', retryable:true });
+    } finally { setLoading(false); }
   };
-  const loadDigest = async (p: MarketDigestPeriod) => { setDigest(await fetchLatestMarketDigest(p)); };
+  const loadDigest = async (p: MarketDigestPeriod) => { try { setDigest(await fetchLatestMarketDigest(p)); } catch (error) { if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue); } };
 
   useEffect(() => {
     let cancelled=false;
-    const start=async()=>{ setLoading(true); const [u,src,h]=await Promise.all([fetchMarketUpdates({limit:200}),fetchMarketSources(),fetchMarketSourceHealth()]); if(cancelled)return; setUpdates(u);setSources(src);setSourceHealth(h);setLoading(false); const result=await ensureMarketUpdatesFresh(h,u.length); if(!cancelled&&result){setMessage(result.active?'Checking for newer market intelligence…':`Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);await loadUpdates();}}; void start(); return()=>{cancelled=true};
+    const start=async()=>{ setLoading(true); try { const [u,src,h]=await Promise.all([fetchMarketUpdates({limit:200}),fetchMarketSources(),fetchMarketSourceHealth()]); if(cancelled)return; setUpdates(u);setSources(src);setSourceHealth(h);setOperationalIssue(null); const result=await ensureMarketUpdatesFresh(h,u.length); if(!cancelled&&result){setMessage(result.active?'Checking for newer market intelligence…':`Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);await loadUpdates();} } catch(error){if(!cancelled&&error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue);} finally {if(!cancelled)setLoading(false);}}; void start(); return()=>{cancelled=true};
   }, []);
   useEffect(() => { void loadDigest(period); }, [period]);
 
@@ -169,18 +174,16 @@ export default function MarketUpdates() {
 
   const handleGenerateDigest = async () => {
     setDigestLoading(true);
-    const result = await generateMarketDigest(period);
-    setMessage(result.message || null);
-    setDigest(result.digest);
-    setDigestLoading(false);
+    try { const result = await generateMarketDigest(period); setMessage(result.message || null); setDigest(result.digest); }
+    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    finally { setDigestLoading(false); }
   };
 
   const handleIngest = async () => {
     setIngesting(true);
-    const summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' });
-    setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`);
-    await loadUpdates();
-    setIngesting(false);
+    try { const summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' }); setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`); await loadUpdates(); }
+    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    finally { setIngesting(false); }
   };
 
   const handleAsk = async (overrideQuestion?: string) => {
@@ -374,6 +377,20 @@ export default function MarketUpdates() {
             <CardContent className="flex items-start justify-between gap-4 p-4">
               <p className="text-sm text-foreground">{message}</p>
               <Button size="sm" variant="ghost" onClick={() => setMessage(null)}>Dismiss</Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {operationalIssue && (
+          <Card role="alert" className="border-destructive/30 bg-destructive/5">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <p className="font-semibold text-destructive">Market Updates requires attention</p>
+                <p className="text-sm text-foreground">{operationalIssue.message}</p>
+                <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}</p>
+                <p className="text-sm text-muted-foreground">{operationalIssue.remediation}</p>
+              </div>
+              <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={loadUpdates}>Retry</Button><Button size="sm" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button></div>
             </CardContent>
           </Card>
         )}

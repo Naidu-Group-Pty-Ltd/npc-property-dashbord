@@ -1,11 +1,38 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters } from '@/types/marketUpdates';
+import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
 const db = supabase as any;
 function warnMissing(context: string, error: any) { if (import.meta.env.DEV) console.warn(`[Market Updates] ${context}`, error?.message ?? error); }
+
+export class MarketUpdatesOperationalError extends Error {
+  constructor(public readonly issue: MarketUpdatesOperationalIssue, options?: ErrorOptions) { super(issue.message, options); this.name = 'MarketUpdatesOperationalError'; }
+}
+
+function operationalError(stage: MarketUpdatesOperationalIssue['stage'], error: any, functionName?: string): MarketUpdatesOperationalError {
+  if (error instanceof MarketUpdatesOperationalError) return error;
+  const status = Number(error?.status || error?.statusCode) || undefined;
+  const raw = String(error?.message ?? error ?? '').toLowerCase();
+  const code = error?.network ? 'network_error'
+    : status === 401 ? 'unauthorised'
+    : status === 403 || raw.includes('permission denied') || raw.includes('row-level security') ? 'rls_denied'
+    : status === 404 ? 'function_missing'
+    : raw.includes('does not exist') || raw.includes('schema cache') || raw.includes('pgrst205') || raw.includes('42p01') ? 'migration_missing'
+    : status && status >= 500 ? 'server_error' : 'unknown';
+  const messages: Record<string, string> = {
+    network_error: 'The Market Updates service could not be reached.', unauthorised: 'Your sign-in session is missing or expired.',
+    rls_denied: 'Your account is not authorised to access this Market Updates operation.', function_missing: `The ${functionName ?? 'required'} Edge Function is not deployed.`,
+    migration_missing: 'The Market Updates database migration has not been applied in this environment.', server_error: 'The Market Updates service returned an internal error.', unknown: 'Market Updates could not complete this operation.',
+  };
+  const remediation: Record<string, string> = {
+    network_error: 'Check connectivity and retry.', unauthorised: 'Sign in again, then retry.', rls_denied: 'Ask an administrator to verify your role and Market Updates policies.',
+    function_missing: 'Deploy the Market Updates Edge Functions to the frontend project.', migration_missing: 'Apply the pending Market Updates migrations and seed migration.',
+    server_error: 'Review the function log and latest ingestion run, then retry.', unknown: 'Retry; if it persists, review the connected project and function logs.',
+  };
+  return new MarketUpdatesOperationalError({ stage, code: code as MarketUpdatesOperationalIssue['code'], message: messages[code], remediation: remediation[code], httpStatus: status, functionName, retryable: !['rls_denied'].includes(code) }, { cause: error });
+}
 
 const mapUpdate = (r: any): MarketUpdate => ({
   ...r,
@@ -54,7 +81,7 @@ export async function fetchMarketUpdates(filters: MarketUpdateFilters = {}): Pro
     const { data, error } = await q;
     if (error) throw error;
     return (data ?? []).map(mapUpdate);
-  } catch (error) { warnMissing('Unable to fetch market_updates; returning empty feed.', error); return []; }
+  } catch (error) { throw operationalError('database', error); }
 }
 
 export async function fetchLatestMarketDigest(period: MarketDigestPeriod = '24h'): Promise<MarketDigest24h | null> {
@@ -62,10 +89,10 @@ export async function fetchLatestMarketDigest(period: MarketDigestPeriod = '24h'
     const { data, error } = await db.from('market_digests').select('*').eq('status','published').eq('period', period).order('generated_at',{ ascending:false }).limit(1).maybeSingle();
     if (error) throw error;
     return data ? mapDigest(data) : null;
-  } catch (e) { warnMissing('Unable to fetch latest market_digests.', e); return null; }
+  } catch (e) { throw operationalError('database', e); }
 }
 
-export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').order('name'); if (error) throw error; return data ?? []; } catch (e) { warnMissing('Unable to fetch market_sources.', e); return []; } }
+export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').order('name'); if (error) throw error; return data ?? []; } catch (e) { throw operationalError('database', e); } }
 
 export interface MarketSourceAlert { source_id: string; name: string; severity: 'error' | 'warning' | 'info'; message: string; }
 
@@ -74,7 +101,7 @@ export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: Marke
     const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'list' } });
     if (error) throw error;
     return { sources: safeArray<MarketSource>(data?.sources), alerts: safeArray<MarketSourceAlert>(data?.alerts) };
-  } catch (e) { warnMissing('Admin source snapshot unavailable (admin role required).', e); return { sources: [], alerts: [] }; }
+  } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function toggleMarketSource(source_id: string, enabled: boolean): Promise<MarketSource | null> {
@@ -82,7 +109,7 @@ export async function toggleMarketSource(source_id: string, enabled: boolean): P
     const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'toggle', source_id, enabled } });
     if (error) throw error;
     return data?.source ?? null;
-  } catch (e) { warnMissing('Toggle source failed.', e); return null; }
+  } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function updateMarketSourceConfig(source_id: string, patch: Partial<Pick<MarketSource, 'refresh_frequency_hours' | 'reliability_tier' | 'description'>>): Promise<MarketSource | null> {
@@ -90,7 +117,7 @@ export async function updateMarketSourceConfig(source_id: string, patch: Partial
     const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'update', source_id, ...patch } });
     if (error) throw error;
     return data?.source ?? null;
-  } catch (e) { warnMissing('Update source failed.', e); return null; }
+  } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function clearMarketSourceError(source_id: string): Promise<MarketSource | null> {
@@ -98,7 +125,7 @@ export async function clearMarketSourceError(source_id: string): Promise<MarketS
     const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'clear_error', source_id } });
     if (error) throw error;
     return data?.source ?? null;
-  } catch (e) { warnMissing('Clear source error failed.', e); return null; }
+  } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
@@ -106,7 +133,8 @@ export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
   const failed = sources.filter(s => s.health_status === 'failed' || (s.consecutive_failures ?? 0) >= 3);
   const degraded = sources.filter(s => s.health_status === 'degraded' || ((s.consecutive_failures ?? 0) > 0 && (s.consecutive_failures ?? 0) < 3));
   const latest = (field: keyof MarketSource) => sources.map(s => s[field] as string | null | undefined).filter(Boolean).sort().pop() ?? null;
-  const { data } = await db.from('market_ingestion_runs').select('*').order('started_at',{ascending:false}).limit(1).maybeSingle();
+  const { data, error } = await db.from('market_ingestion_runs').select('*').order('started_at',{ascending:false}).limit(1).maybeSingle();
+  if (error) throw operationalError('database', error);
   return { totalSources: sources.length, enabledSources: sources.filter(s => s.enabled).length, healthySources:sources.filter(s=>s.health_status==='healthy').length, degradedSources:degraded.length, failedSources: failed.length, lastFetchedAt: latest('last_fetched_at'), lastSuccessAt: latest('last_success_at'), lastError: failed[0]?.last_error ?? null, latestRun:(data as MarketIngestionRun|null) ?? null };
 }
 
@@ -116,7 +144,22 @@ export async function triggerMarketIngestion(options: { force?: boolean; trigger
     if (error) throw error;
     if (!data) throw new Error('Market ingestion returned no result.');
     return data;
-  } catch (e: any) { warnMissing('Ingestion function unavailable or not authorised.', e); return { ingested:0,published:0,candidates:0,ignored:0,failed:1,skippedDuplicates:0,sourceErrors:[],message:'Market ingestion is unavailable or you are not authorised to run it.' }; }
+  } catch (e: any) { throw operationalError('ingestion', e, 'market-updates-ingest'); }
+}
+
+export async function followMarketIngestionRun(runId: string, timeoutMs = 190_000): Promise<MarketIngestionSummary> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const { data, error } = await db.from('market_ingestion_runs').select('*').eq('id', runId).single();
+    if (error) throw operationalError('database', error);
+    const run = data as MarketIngestionRun;
+    if (!['queued', 'running'].includes(run.status)) {
+      if (run.status === 'failed') throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'source_failed', message:run.error_summary || 'The Market Updates ingestion run failed.', remediation:'Open Sources to review source health, then retry.', functionName:'market-updates-ingest', retryable:true });
+      return { runId:run.id, status:run.status, active:false, sourcesConsidered:run.sources_considered, sourcesProcessed:run.sources_processed, sourcesSucceeded:run.sources_succeeded, sourcesFailed:run.sources_failed, ingested:run.items_discovered, published:run.items_published, candidates:(run as any).items_candidate ?? 0, ignored:(run as any).items_ignored ?? 0, failed:run.sources_failed, skippedDuplicates:(run as any).items_deduplicated ?? 0, sourceErrors:[], message:`Market ingestion ${run.status}.` };
+    }
+    await new Promise(resolve => setTimeout(resolve, 2_000));
+  }
+  throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'server_error', message:'The active Market Updates ingestion did not finish before the polling timeout.', remediation:'Refresh the view to inspect the latest run before retrying.', functionName:'market-updates-ingest', retryable:true });
 }
 
 const FRESH_GUARD='market-updates-ensure-fresh';
@@ -127,7 +170,8 @@ export async function ensureMarketUpdatesFresh(health:MarketSourceHealth,publish
   const guarded=Number(sessionStorage.getItem(FRESH_GUARD)||0);
   if(Date.now()-guarded<5*60_000)return null;
   sessionStorage.setItem(FRESH_GUARD,String(Date.now()));
-  return triggerMarketIngestion({force:false,trigger_type:'page_open'});
+  const result = await triggerMarketIngestion({force:false,trigger_type:'page_open'});
+  return result.active && result.runId ? followMarketIngestionRun(result.runId) : result;
 }
 
 export async function generateMarketDigest(period: MarketDigestPeriod = '24h'): Promise<MarketDigestGenerationResult> {
@@ -136,10 +180,7 @@ export async function generateMarketDigest(period: MarketDigestPeriod = '24h'): 
     if (error) throw error;
     const digest = data?.digest ? mapDigest(data.digest) : (await fetchLatestMarketDigest(period));
     return { digest, message: data?.message ?? '', noData: Boolean(data?.noData) };
-  } catch (e) {
-    warnMissing('Digest function unavailable.', e);
-    return { digest: null, noData: true, message: 'No source-backed market updates were found for this period.' };
-  }
+  } catch (e) { throw operationalError('digest', e, 'market-updates-digest'); }
 }
 
 // Back-compat alias
