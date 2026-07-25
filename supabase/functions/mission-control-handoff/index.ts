@@ -9,20 +9,20 @@
 // back to the static storefront pricing URL (AURIXA_PRICING_URL) — a purchase
 // CTA must never hard-fail because attribution was unavailable.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth } from "../_shared/auth.ts";
+import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { createBillingHandoff } from "../_shared/missionControl.ts";
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-session-token",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-};
 
 const MODES = new Set(["topup", "seat_plan", "setup_package"]);
 
 Deno.serve(async (req) => {
+  // Credentialed CORS: the app invokes this function with
+  // credentials:'include' (HttpOnly session cookie), and browsers reject a
+  // wildcard Access-Control-Allow-Origin at preflight for credentialed
+  // requests — the POST never leaves the browser and the UI surfaces it as
+  // "Failed to load". createCorsHeaders echoes the exact allow-listed origin
+  // and sets Access-Control-Allow-Credentials.
+  const corsHeaders = createCorsHeaders(req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
