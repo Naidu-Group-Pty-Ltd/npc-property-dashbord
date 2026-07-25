@@ -5,6 +5,7 @@ import { calculateCoverage, maxLoanByIcr, annualPI } from '../icrDscrCalculator'
 import { calculateWale } from '../waleCalculator';
 import { calculateCommercialGst } from '../gstCommercial';
 import { runDcf } from '../dcfEngine';
+import { fmtPct } from '../commercialReportPdf';
 
 describe('NOI calculator', () => {
   it('computes NOI with vacancy and full recovery', () => {
@@ -29,14 +30,22 @@ describe('Cap rate', () => {
   it('value from cap', () => {
     expect(valueFromCap(70_000, 7)).toBeCloseTo(1_000_000, 2);
   });
-  it('returns 0 for zero price', () => {
-    expect(capRate({ noi: 10_000, price: 0 })).toBe(0);
+  it('returns null for zero price', () => {
+    expect(capRate({ noi: 10_000, price: 0 })).toBeNull();
   });
   it('yields set', () => {
     const y = calculateYields({ passingNoi: 70_000, marketNoi: 80_000, price: 1_000_000 });
     expect(y.passingYield).toBe(7);
     expect(y.reversionaryYield).toBe(8);
     expect(y.equivalentYield).toBe(7.5);
+  });
+});
+
+describe('Commercial report formatting', () => {
+  it('renders unavailable yields without throwing', () => {
+    expect(fmtPct(null)).toBe('—');
+    expect(fmtPct(undefined)).toBe('—');
+    expect(fmtPct(7.125)).toBe('7.13%');
   });
 });
 
