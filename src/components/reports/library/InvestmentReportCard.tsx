@@ -82,6 +82,7 @@ export function InvestmentReportCard({
     : null;
   const ScopeIcon = scope?.icon;
   const resolvedGrade = resolveInvestmentGrade([report as any]);
+  const hasAreaPlaceholder = !report.investment_score && ['suburb', 'zipcode', 'state'].includes(report.report_scope || '');
   const reportType = resolveInvestmentReportType(report);
   const comparableType = normalizeComparableReportType(report);
   const typeLabel = comparableType ? REPORT_TYPE_CONFIG[comparableType].label : 'This';
@@ -185,7 +186,21 @@ export function InvestmentReportCard({
       </CardHeader>
 
       <CardContent className="relative space-y-4 px-4 pb-4">
-        <InvestmentGradeSummary grade={resolvedGrade} />
+        {report.investment_score ? (
+          <InvestmentGradeSummary grade={resolvedGrade} />
+        ) : hasAreaPlaceholder ? (
+          <div className="rounded-2xl border border-dashed border-border/70 bg-muted/25 p-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
+                <Map className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="text-sm font-semibold text-foreground">Area Score Pending</div>
+                <p className="text-xs text-muted-foreground">Generate a new report to calculate area score</p>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </CardContent>
 
       <CardFooter className="relative flex flex-col gap-2 border-t border-border/60 bg-muted/20 p-4">

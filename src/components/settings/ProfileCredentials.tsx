@@ -85,6 +85,15 @@ export function ProfileCredentials() {
       return;
     }
 
+    if (newUsername.length > 100) {
+      toast({
+        title: "Invalid Username",
+        description: "Username must be no more than 100 characters.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setUpdatingUsername(true);
     try {
       const { data } = await invokeSecureFunction("admin-user-management", {
@@ -246,12 +255,13 @@ export function ProfileCredentials() {
               id="new-username"
               value={newUsername}
               onChange={(e) => setNewUsername(e.target.value)}
+              maxLength={100}
               placeholder="Enter new username"
               disabled={updatingUsername}
               className={settingsInputClass}
             />
             <p className="text-xs leading-5 text-muted-foreground">
-              Username must be at least 3 characters.
+              Username must be between 3 and 100 characters.
             </p>
           </div>
           <Button

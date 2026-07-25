@@ -563,7 +563,15 @@ Deno.serve(async (req: Request) => {
 
       // Handle username update
       if (new_username && new_username !== currentUser.username) {
-        if (new_username.trim().length < 3) {
+        if (typeof new_username !== 'string' || new_username.length > 100) {
+          return new Response(
+            JSON.stringify({ success: false, error: 'Username must be no more than 100 characters' }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const normalizedUsername = new_username.trim();
+        if (normalizedUsername.length < 3) {
           return new Response(
             JSON.stringify({ success: false, error: 'Username must be at least 3 characters' }),
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -574,7 +582,7 @@ Deno.serve(async (req: Request) => {
         const { data: existingUser } = await supabase
           .from('custom_users')
           .select('id')
-          .eq('username', new_username.trim())
+          .eq('username', normalizedUsername)
           .neq('id', currentUser.id)
           .single();
 
@@ -585,7 +593,7 @@ Deno.serve(async (req: Request) => {
           );
         }
 
-        updates.username = new_username.trim();
+        updates.username = normalizedUsername;
       }
 
       // Handle password update

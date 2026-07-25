@@ -30,6 +30,7 @@ for (const expected of [
   "get_commission_actuals: { moduleKey: 'cash_flow', permission: 'can_view' }",
   "send_agreement_docusign: { moduleKey: 'agreements', permission: 'can_edit' }",
   "get_user_list: { moduleKey: 'user_management', permission: 'can_view', requiresSuperadmin: true }",
+  "get_recent_activity: { moduleKey: 'activity_logs', permission: 'can_view', requiresSuperadmin: true }",
 ]) if (!policy.includes(expected)) failures.push(`missing real-module override: ${expected}`);
 
 if (!handler.includes("if (body.only_user || !(await actorIsSuperadmin(sb, userId!))) q = q.eq('user_id', userId!);")) {

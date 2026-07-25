@@ -156,10 +156,9 @@ Deno.serve(async (req) => {
 
   // AUTH (Critical 2): this cron drives Microsoft Graph + the service role and
   // creates notifications/attachments. It must fail closed to anonymous callers.
-  // pg_cron invokes it with the service-role key (the standard vault/pg_net
-  // pattern); internal callers may instead sign the request (HMAC). Both are
-  // accepted by verifyInternal — a public anon key or a "source=scheduled" body
-  // field is NOT. rawBody is read for signature verification.
+  // pg_cron invokes it through cron_invoke_signed_function, which adds the
+  // required HMAC envelope. A bearer key or a "source=scheduled" body field is
+  // NOT sufficient. rawBody is read for signature verification.
   const authClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
   const rawBody = await req.text().catch(() => '');
   const internal = await verifyInternal(authClient, req, rawBody, { strict: true, allowedCallers: ['pg_cron'] });
