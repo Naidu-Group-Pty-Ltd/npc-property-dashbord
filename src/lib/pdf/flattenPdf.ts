@@ -19,6 +19,48 @@ export interface FlattenPdfOptions {
   onProgress?: (page: number, totalPages: number) => void;
 }
 
+export const PDF_FLATTEN_LIMITS = {
+  maxInputBytes: 50 * 1024 * 1024,
+  maxPages: 200,
+  maxCanvasDimension: 10_000,
+  maxPagePixels: 40_000_000,
+  maxTotalPixels: 200_000_000,
+  maxEncodedImageBytes: 80 * 1024 * 1024,
+  maxOutputBytes: 100 * 1024 * 1024,
+} as const;
+
+function limitError(detail: string): Error {
+  return new Error(`PDF is too large to flatten safely (${detail})`);
+}
+
+export function validateFlattenPage(
+  width: number,
+  height: number,
+  renderedPixelsSoFar: number,
+): number {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw limitError('invalid page dimensions');
+  }
+
+  const canvasWidth = Math.max(1, Math.floor(width));
+  const canvasHeight = Math.max(1, Math.floor(height));
+  if (
+    canvasWidth > PDF_FLATTEN_LIMITS.maxCanvasDimension
+    || canvasHeight > PDF_FLATTEN_LIMITS.maxCanvasDimension
+  ) {
+    throw limitError(`page dimensions exceed ${PDF_FLATTEN_LIMITS.maxCanvasDimension}px`);
+  }
+
+  const pagePixels = canvasWidth * canvasHeight;
+  if (pagePixels > PDF_FLATTEN_LIMITS.maxPagePixels) {
+    throw limitError('page pixel area is excessive');
+  }
+  if (renderedPixelsSoFar + pagePixels > PDF_FLATTEN_LIMITS.maxTotalPixels) {
+    throw limitError('total rendered pixel area is excessive');
+  }
+  return pagePixels;
+}
+
 async function blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
   if (typeof (blob as any).arrayBuffer === 'function') return blob.arrayBuffer();
   return new Promise((resolve, reject) => {
@@ -46,6 +88,10 @@ export async function flattenPdfBlob(
   input: Blob,
   options: FlattenPdfOptions = {},
 ): Promise<Blob> {
+  if (input.size > PDF_FLATTEN_LIMITS.maxInputBytes) {
+    throw limitError(`input exceeds ${PDF_FLATTEN_LIMITS.maxInputBytes / 1024 / 1024} MB`);
+  }
+
   const dpi = options.dpi ?? 150;
   const quality = options.jpegQuality ?? 0.85;
   const scale = dpi / 72;
@@ -57,9 +103,17 @@ export async function flattenPdfBlob(
   const out = await PDFDocument.create();
 
   try {
+    if (srcDoc.numPages > PDF_FLATTEN_LIMITS.maxPages) {
+      throw limitError(`document exceeds ${PDF_FLATTEN_LIMITS.maxPages} pages`);
+    }
+
+    let renderedPixels = 0;
+    let encodedImageBytes = 0;
     for (let i = 1; i <= srcDoc.numPages; i++) {
       const page = await srcDoc.getPage(i);
       const viewport = page.getViewport({ scale });
+
+      renderedPixels += validateFlattenPage(viewport.width, viewport.height, renderedPixels);
 
       const canvas = document.createElement('canvas');
       canvas.width = Math.max(1, Math.floor(viewport.width));
@@ -77,6 +131,10 @@ export async function flattenPdfBlob(
       } as any).promise;
 
       const jpegBytes = await canvasToJpegBytes(canvas, quality);
+      encodedImageBytes += jpegBytes.byteLength;
+      if (encodedImageBytes > PDF_FLATTEN_LIMITS.maxEncodedImageBytes) {
+        throw limitError('encoded page images are excessive');
+      }
       const jpeg = await out.embedJpg(jpegBytes);
 
       // Physical page size in PDF points (1pt = 1/72in). Preserves the original
@@ -98,6 +156,9 @@ export async function flattenPdfBlob(
   }
 
   const bytes = await out.save();
+  if (bytes.byteLength > PDF_FLATTEN_LIMITS.maxOutputBytes) {
+    throw limitError(`output exceeds ${PDF_FLATTEN_LIMITS.maxOutputBytes / 1024 / 1024} MB`);
+  }
   // Copy into a fresh ArrayBuffer so the Blob constructor is happy across browsers.
   return new Blob([bytes.slice().buffer], { type: 'application/pdf' });
 }
