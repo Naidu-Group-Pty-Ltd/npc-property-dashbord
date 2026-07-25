@@ -141,6 +141,19 @@ describe('Commercial / Industrial Assessment Engine', () => {
     expect(calculateCommercialGstEngine({ purchasePrice: 1_000_000, treatment: 'unknown' }).warnings.join(' ')).toContain('Unknown GST');
   });
 
+  it('GST honours an explicit ITC denial for a registered purchaser', () => {
+    const r = calculateCommercialGstEngine({
+      purchasePrice: 1_100_000,
+      treatment: 'gstInclusive',
+      purchaserGstRegistered: 'yes',
+      gstClaimableAsInputTaxCredit: 'no',
+    });
+
+    expect(r.gstClaimableAmount).toBe(0);
+    expect(r.gstEconomicCost).toBeCloseTo(100_000, 0);
+    expect(r.netAcquisitionCost).toBeCloseTo(1_200_000, 0);
+  });
+
   it('DCF includes growth, vacancy, capex, debt service, terminal value, sale proceeds, IRR, NPV and equity multiple', () => {
     const r = runDcfAssessment({ purchasePrice: 5_000_000, acquisitionCosts: 250_000, initialNoi: 400_000, holdPeriodYears: 10, rentalGrowthPct: 3, vacancyAllowancePct: 5, annualCapex: 10_000, terminalCapRatePct: 6.5, sellingCostsPct: 1.5, discountRatePct: 8, loanAmount: 3_000_000, interestRatePct: 6, loanTermYears: 25 });
     expect(r.rows[1].grossNoi).toBeGreaterThan(r.rows[0].grossNoi);

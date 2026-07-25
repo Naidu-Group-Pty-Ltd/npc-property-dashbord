@@ -8,7 +8,9 @@ export function calculateCommercialGstEngine(i: CommercialGstEngineInputs): Comm
   const warnings: string[] = [];
   let gstAmount = 0, cashflow = 0, claimable = 0, economicCost = 0;
   let status: CommercialGstEngineResult['gstVerificationStatus'] = 'Unknown';
-  const claimableYes = i.gstClaimableAsInputTaxCredit === 'yes' || i.purchaserGstRegistered === 'yes';
+  const claimableYes = i.gstClaimableAsInputTaxCredit === undefined
+    ? i.purchaserGstRegistered === 'yes'
+    : i.gstClaimableAsInputTaxCredit === 'yes';
   if (i.treatment === 'plusGst') {
     gstAmount = i.purchasePrice * 0.1;
     cashflow = i.manualSettlementCashflowOverride ?? gstAmount;
