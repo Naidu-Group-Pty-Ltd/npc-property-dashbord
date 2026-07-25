@@ -292,7 +292,7 @@ function AgentBindings({ catalog, onRefresh }: { catalog: CatalogModel[]; onRefr
   const updateAssignment = async (agent_key: string, route: Route, model_id: string) => {
     setSavingKey(agent_key);
     try {
-      const { error } = await supabase.functions.invoke('manage-agent-models', { body: { action: 'update', agent_key, route, model_id } });
+      const { error } = await invokeSecureFunction('manage-agent-models', { action: 'update', agent_key, route, model_id });
       if (error) throw error;
       toast.success(`Updated ${agent_key} → ${model_id}`);
       await load();
