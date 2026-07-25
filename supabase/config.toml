@@ -911,6 +911,8 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.agent-models-read]
+# Custom Command Centre sessions are verified in-function; the gateway must
+# preserve their session headers. Anonymous requests are rejected by verifyAuth.
 verify_jwt = false
 
 [functions.quantitative-report-pipeline]
