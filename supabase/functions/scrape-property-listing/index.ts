@@ -450,7 +450,7 @@ async function scrapeWithFirecrawl(url: string): Promise<{ markdown: string; tit
 
 async function scrapeWithReaderMode(url: string): Promise<{ markdown: string; title?: string; description?: string } | null> {
   try {
-    const target = `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, '')}`;
+    const target = `https://r.jina.ai/${url}`;
     const resp = await fetch(target, {
       method: 'GET',
       headers: { Accept: 'text/markdown,text/plain,*/*' },
