@@ -21,9 +21,7 @@ export function BrandMark({ integrationId, fallback, size = 24, className }: Bra
   const profile = getBrandProfile(integrationId);
   const [errored, setErrored] = useState(false);
 
-  const Inline = Object.prototype.hasOwnProperty.call(INLINE_GLYPHS, integrationId)
-    ? INLINE_GLYPHS[integrationId]
-    : undefined;
+  const Inline = getInlineGlyph(integrationId);
   if (Inline) {
     return <Inline size={size} color={profile ? `#${profile.color}` : undefined} className={className} />;
   }

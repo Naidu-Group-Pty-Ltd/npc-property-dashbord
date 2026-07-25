@@ -969,7 +969,7 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => setUseCustomWeights(!useCustomWeights)}
+                            onClick={() => setUseCustomWeights()}
                           >
                             {useCustomWeights ? 'Use Default' : 'Customize'}
                           </Button>

@@ -123,7 +123,7 @@ export function buildChartRenderPlanForRegions(
   let suppressionOk = 0;
 
   for (const chart of charts) {
-    const crop = chart.sourceCrop ?? {};
+    const crop: { path?: string; sha256?: string; sourceDpi?: number } = (chart.sourceCrop ?? {}) as any;
     const hasCrop = Boolean(crop.path) && Boolean(crop.sha256);
     const blank = (chart.problems ?? []).includes('crop_appears_blank');
     const renderable = hasCrop && !blank;

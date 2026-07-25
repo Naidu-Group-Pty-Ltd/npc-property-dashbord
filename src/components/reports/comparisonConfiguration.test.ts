@@ -12,7 +12,7 @@ describe('comparison scoring configuration', () => {
     expect(validateComparisonWeights({ growth: NaN, location: 25, yield: 20, demand: 15, risk: 10 }).isValid).toBe(false);
   });
   it('keeps editable and applied clones independent and detects defaults', () => {
-    const draft = cloneComparisonWeights(); const applied = cloneComparisonWeights();
+    const draft: { growth: number; location: number; yield: number; demand: number; risk: number } = cloneComparisonWeights(); const applied = cloneComparisonWeights();
     draft.growth = 25;
     expect(applied.growth).toBe(30); expect(DEFAULT_COMPARISON_WEIGHTS.growth).toBe(30);
     expect(comparisonWeightsEqual(applied, DEFAULT_COMPARISON_WEIGHTS)).toBe(true);
