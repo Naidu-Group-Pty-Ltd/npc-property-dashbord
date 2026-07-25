@@ -576,6 +576,7 @@ export default function Conversations() {
   const formatConversationDate = (dateStr: string | null) => {
     if (!dateStr) return "";
     const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return "";
     if (isToday(d)) return format(d, "h:mm a");
     if (isYesterday(d)) return "Yesterday";
     return format(d, "dd/MM/yy");
