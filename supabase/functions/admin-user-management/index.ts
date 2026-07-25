@@ -3,7 +3,7 @@ import { Resend } from "https://esm.sh/resend@2.0.0";
 import { hashPassword, verifyPassword } from "../_shared/password.ts";
 import { validatePasswordStrength } from "../_shared/passwordValidation.ts";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createSessionCookie, extractSessionToken } from "../_shared/auth.ts";
-import { resolveUserSessionRow } from "../_shared/sessionHash.ts";
+import { isSessionUsable, resolveUserSessionRow } from "../_shared/sessionHash.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { rotateSession } from "../_shared/sessionRotate.ts";
 import { requireStepUp } from "../_shared/stepUp.ts";
@@ -292,11 +292,11 @@ Deno.serve(async (req: Request) => {
       const session = await resolveUserSessionRow(
         supabase,
         sessionToken,
-        'id, user_id, expires_at, revoked_at',
+        'id, user_id, expires_at, revoked_at, idle_expires_at',
         (q: any) => q.gt('expires_at', new Date().toISOString()).is('revoked_at', null),
       );
 
-      if (!session) {
+      if (!session || !isSessionUsable(session).ok) {
         return { error: 'Invalid or expired session', user: null, sessionId: null };
       }
 
