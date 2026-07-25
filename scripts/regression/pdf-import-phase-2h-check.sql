@@ -57,11 +57,10 @@ select
     when status = 'succeeded' and pages_total is not null and pages_completed is distinct from pages_total then 'page_progress_incomplete'
     when status = 'succeeded' and page_count is not null and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) is distinct from page_count then 'page_raster_count_mismatch'
     when status = 'succeeded' and result_payload->>'artifact_contract_version' is distinct from 'raster-manifest-v1' then 'artifact_contract_missing'
-    when status = 'succeeded' and result_payload->>'chunked' is null then 'chunked_marker_missing'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'docling_page_rebase_version' is distinct from 'chunk-page-rebase-v1' then 'docling_rebase_missing'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'chunk_merge_validation_version' is distinct from 'chunk-merge-validation-v1' then 'merge_validation_version_missing'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->'merge_validation'->>'ok' is distinct from 'true' then 'merge_validation_not_ok'
-    when status = 'succeeded' and result_payload->>'chunked' = 'true' and result_payload->>'terminal_state_version' is distinct from 'terminal-state-normalizer-v1' then 'terminal_state_marker_missing'
+    when status = 'succeeded' and chunked and result_payload->>'docling_page_rebase_version' is distinct from 'chunk-page-rebase-v1' then 'docling_rebase_missing'
+    when status = 'succeeded' and chunked and result_payload->>'chunk_merge_validation_version' is distinct from 'chunk-merge-validation-v1' then 'merge_validation_version_missing'
+    when status = 'succeeded' and chunked and result_payload->'merge_validation'->>'ok' is distinct from 'true' then 'merge_validation_not_ok'
+    when status = 'succeeded' and chunked and result_payload->>'terminal_state_version' is distinct from 'terminal-state-normalizer-v1' then 'terminal_state_marker_missing'
     when status = 'succeeded' and result_payload->>'lane_enforcement_version' is null then 'lane_marker_missing'
     else 'unknown'
   end as failure_reason
@@ -72,11 +71,10 @@ where status = 'succeeded'
     or (pages_total is not null and pages_completed is distinct from pages_total)
     or (page_count is not null and jsonb_array_length(coalesce(result_payload->'page_raster_paths', '[]'::jsonb)) is distinct from page_count)
     or result_payload->>'artifact_contract_version' is distinct from 'raster-manifest-v1'
-    or result_payload->>'chunked' is null
-    or (result_payload->>'chunked' = 'true' and result_payload->>'docling_page_rebase_version' is distinct from 'chunk-page-rebase-v1')
-    or (result_payload->>'chunked' = 'true' and result_payload->>'chunk_merge_validation_version' is distinct from 'chunk-merge-validation-v1')
-    or (result_payload->>'chunked' = 'true' and result_payload->'merge_validation'->>'ok' is distinct from 'true')
-    or (result_payload->>'chunked' = 'true' and result_payload->>'terminal_state_version' is distinct from 'terminal-state-normalizer-v1')
+    or (chunked and result_payload->>'docling_page_rebase_version' is distinct from 'chunk-page-rebase-v1')
+    or (chunked and result_payload->>'chunk_merge_validation_version' is distinct from 'chunk-merge-validation-v1')
+    or (chunked and result_payload->'merge_validation'->>'ok' is distinct from 'true')
+    or (chunked and result_payload->>'terminal_state_version' is distinct from 'terminal-state-normalizer-v1')
     or result_payload->>'lane_enforcement_version' is null
   )
 order by updated_at desc
