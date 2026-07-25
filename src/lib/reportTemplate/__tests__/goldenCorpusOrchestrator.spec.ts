@@ -19,7 +19,10 @@ import { saveRepairPatternAnalysis } from '@/lib/reportTemplate/ingestion/repair
 import { saveAdaptiveReconciliationPolicy } from '@/lib/reportTemplate/ingestion/reconciliation';
 import { saveSelfHealingRetryAudit } from '@/lib/reportTemplate/ingestion/selfHealing';
 import { savePdfImportPerformanceAudit } from '@/lib/reportTemplate/ingestion/performance';
-import { saveProductionOperatorControlAudit } from '@/lib/reportTemplate/ingestion/operatorControls';
+import {
+  loadProductionOperatorControlAudit,
+  saveProductionOperatorControlAudit,
+} from '@/lib/reportTemplate/ingestion/operatorControls';
 
 vi.mock('@/lib/reportTemplate/ingestion/goldenCorpus/goldenCorpusImportSnapshot', async (orig) => {
   const actual = await orig<typeof import('@/lib/reportTemplate/ingestion/goldenCorpus/goldenCorpusImportSnapshot')>();
@@ -66,7 +69,11 @@ vi.mock('@/lib/reportTemplate/ingestion/performance', async (orig) => {
 // Phase 10G — keep the real deterministic control builder; only mock persistence.
 vi.mock('@/lib/reportTemplate/ingestion/operatorControls', async (orig) => {
   const actual = await orig<typeof import('@/lib/reportTemplate/ingestion/operatorControls')>();
-  return { ...actual, saveProductionOperatorControlAudit: vi.fn() };
+  return {
+    ...actual,
+    loadProductionOperatorControlAudit: vi.fn(),
+    saveProductionOperatorControlAudit: vi.fn(),
+  };
 });
 
 const NOW = () => new Date('2026-07-04T00:00:00.000Z');
@@ -1091,9 +1098,11 @@ describe('orchestrateGoldenCorpusRun (Phase 10G production operator controls)', 
   beforeEach(() => {
     vi.mocked(loadGoldenCorpusImportQualitySnapshot).mockReset();
     vi.mocked(saveGoldenRegressionSummary).mockReset();
+    vi.mocked(loadProductionOperatorControlAudit).mockReset();
     vi.mocked(saveProductionOperatorControlAudit).mockReset();
     vi.mocked(loadGoldenCorpusImportQualitySnapshot).mockResolvedValue({ kind: 'ok', snapshot: snap() });
     vi.mocked(saveGoldenRegressionSummary).mockResolvedValue({ kind: 'ok' });
+    vi.mocked(loadProductionOperatorControlAudit).mockResolvedValue({ kind: 'missing' });
     vi.mocked(saveProductionOperatorControlAudit).mockResolvedValue({ kind: 'ok' });
   });
 
@@ -1128,6 +1137,48 @@ describe('orchestrateGoldenCorpusRun (Phase 10G production operator controls)', 
     expect(saveProductionOperatorControlAudit).toHaveBeenCalledTimes(1);
     expect(result.productionOperatorControlAuditPersistenceResult?.kind).toBe('ok');
     expect(stepOf(result, 'persist_operator_control_audit')?.status).toBe('pass');
+  });
+
+  it('preserves the previously persisted operator decision and history', async () => {
+    const previous = (await orchestrateGoldenCorpusRun({
+      request: req({ buildOperatorControls: true }),
+      now: NOW,
+    })).productionOperatorControlAudit!;
+    previous.operatorState.decision = 'accepted';
+    previous.operatorState.acceptedAt = '2026-07-03T00:00:00.000Z';
+    previous.notes = ['Approved after manual review'];
+    previous.executedActions = [{
+      controlId: 'mark_accepted',
+      status: 'completed',
+      executedAt: '2026-07-03T00:00:00.000Z',
+      message: 'Accepted',
+    }];
+    vi.mocked(loadProductionOperatorControlAudit).mockResolvedValue({ kind: 'ok', audit: previous });
+
+    const result = await orchestrateGoldenCorpusRun({
+      request: req({ buildOperatorControls: true, persistOperatorControlAudit: true }),
+      now: NOW,
+    });
+
+    expect(result.productionOperatorControlAudit?.operatorState.decision).toBe('accepted');
+    expect(result.productionOperatorControlAudit?.operatorState.acceptedAt).toBe('2026-07-03T00:00:00.000Z');
+    expect(result.productionOperatorControlAudit?.notes).toEqual(['Approved after manual review']);
+    expect(result.productionOperatorControlAudit?.executedActions).toEqual(previous.executedActions);
+    expect(saveProductionOperatorControlAudit).toHaveBeenCalledWith('import-1', result.productionOperatorControlAudit);
+  });
+
+  it('does not overwrite the audit when the existing audit cannot be loaded', async () => {
+    vi.mocked(loadProductionOperatorControlAudit).mockResolvedValue({ kind: 'error', message: 'db down' });
+
+    const result = await orchestrateGoldenCorpusRun({
+      request: req({ buildOperatorControls: true, persistOperatorControlAudit: true }),
+      now: NOW,
+    });
+
+    expect(saveProductionOperatorControlAudit).not.toHaveBeenCalled();
+    expect(result.productionOperatorControlAuditPersistenceResult).toEqual({ kind: 'error', message: 'db down' });
+    expect(result.warnings).toContain('operator_control_audit_persistence_failed');
+    expect(stepOf(result, 'persist_operator_control_audit')?.status).toBe('fail');
   });
 
   // 7
