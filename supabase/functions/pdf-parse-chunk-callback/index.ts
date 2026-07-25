@@ -35,6 +35,8 @@ const PARSE_URL = (Deno.env.get('PDF_PARSE_SERVICE_URL') ?? '').replace(/\/$/, '
 const DIAGNOSTICS_BUCKET = 'pdf-import-diagnostics';
 const DOCLING_PAGE_REBASE_VERSION = 'chunk-page-rebase-v1';
 const EDGE_FUNCTION_VERSION = Deno.env.get('SUPABASE_FUNCTION_VERSION') ?? null;
+const MAX_MERGED_FONTS = 48;
+const MAX_MERGED_FONT_BASE64_CHARS = 4 * Math.ceil((4 * 1024 * 1024) / 3);
 
 // deno-lint-ignore no-explicit-any
 type Admin = ReturnType<typeof createClient>;
@@ -854,6 +856,7 @@ async function finalizeJob(admin: Admin, jobId: string): Promise<void> {
     pages: {},
   };
   const mergedFontNames = new Set<string>();
+  let mergedFontBase64Chars = 0;
   const mergedOutline: any[] = [];
   const pageLanguages: Record<string, string> = {};
   const markdownParts: string[] = [];
@@ -920,9 +923,16 @@ async function finalizeJob(admin: Admin, jobId: string): Promise<void> {
         // Phase 3: carry document fonts through, deduped by family name.
         for (const fnt of dd.fonts ?? []) {
           const key = String(fnt?.basename ?? fnt?.psName ?? '').toLowerCase();
-          if (!key || mergedFontNames.has(key)) continue;
+          if (!key || mergedFontNames.has(key) || mergedDoc.fonts.length >= MAX_MERGED_FONTS) continue;
+          const font = { ...fnt };
+          const base64Chars = typeof font.base64 === 'string' ? font.base64.length : 0;
+          if (base64Chars > MAX_MERGED_FONT_BASE64_CHARS - mergedFontBase64Chars) {
+            delete font.base64;
+          } else {
+            mergedFontBase64Chars += base64Chars;
+          }
           mergedFontNames.add(key);
-          mergedDoc.fonts.push(fnt);
+          mergedDoc.fonts.push(font);
         }
         const pages = dd.pages ?? {};
         for (const [k, v] of Object.entries(pages)) {

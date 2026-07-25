@@ -148,6 +148,7 @@ MIN_VECTOR_SIZE_PT = float(os.environ.get("DOCLING_MIN_VECTOR_SIZE_PT", "1.0"))
 # Phase 3: font metadata extraction (names + embeddable programs).
 MAX_FONTS = int(os.environ.get("DOCLING_MAX_FONTS", "48"))
 MAX_FONT_BYTES = int(os.environ.get("DOCLING_MAX_FONT_BYTES", str(512 * 1024)))
+MAX_EMBEDDED_FONT_BYTES = int(os.environ.get("DOCLING_MAX_EMBEDDED_FONT_BYTES", str(4 * 1024 * 1024)))
 
 # Wave F-Option-3 storage upload config.
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
@@ -1037,6 +1038,7 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
     try:
         seen_xref: set[int] = set()
         seen_name: set[str] = set()
+        embedded_font_bytes = 0
         for pno in range(doc.page_count):
             if len(out) >= MAX_FONTS:
                 break
@@ -1081,8 +1083,15 @@ def _extract_fitz_fonts(pdf_bytes: bytes) -> list[dict]:
                             entry["hasUnicodeCmap"] = hits >= 6
                             # Embed only full (non-subset) fonts with a real cmap,
                             # within the size cap, so reconstructed text renders.
-                            if (not entry["subset"]) and entry["hasUnicodeCmap"] and len(buf) <= MAX_FONT_BYTES:
+                            can_embed = (
+                                (not entry["subset"])
+                                and entry["hasUnicodeCmap"]
+                                and len(buf) <= MAX_FONT_BYTES
+                                and embedded_font_bytes + len(buf) <= MAX_EMBEDDED_FONT_BYTES
+                            )
+                            if can_embed:
                                 entry["base64"] = base64.b64encode(buf).decode("ascii")
+                                embedded_font_bytes += len(buf)
                     except Exception as exc:  # pragma: no cover
                         LOG.warning("fitz extract_font xref=%s failed: %s", xref, exc)
                 out.append(entry)
