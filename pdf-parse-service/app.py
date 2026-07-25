@@ -128,6 +128,10 @@ SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
 ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
 MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "75")) * 1024 * 1024
+# Each page currently produces seven objects plus one job manifest.  Bound the
+# page namespace as well as the input bytes so small, high-page-count PDFs
+# cannot amplify into an unbounded number of service-role Storage writes.
+MAX_PER_PAGE_ARTIFACT_PAGES = int(os.environ.get("DOCLING_MAX_PER_PAGE_ARTIFACT_PAGES", "500"))
 # Phase 3 raster artifact config.
 RASTER_ARTIFACT_MODE = os.environ.get("DOCLING_RASTER_ARTIFACT_MODE", "manifest").lower()
 WRITE_LEGACY_RASTERS_JSON = os.environ.get("DOCLING_WRITE_LEGACY_RASTERS_JSON", "false").lower() == "true"
@@ -163,6 +167,17 @@ class SidecarError(Exception):
         self.message = message
         self.retryable = retryable
         super().__init__(message)
+
+
+def _enforce_per_page_artifact_quota(page_numbers: list[int]) -> None:
+    """Reject a per-job artifact set before serialization or Storage writes."""
+    highest_page = max(page_numbers, default=0)
+    if len(page_numbers) > MAX_PER_PAGE_ARTIFACT_PAGES or highest_page > MAX_PER_PAGE_ARTIFACT_PAGES:
+        raise SidecarError(
+            413,
+            "per_page_artifact_limit_exceeded",
+            f"Per-page artifacts are limited to {MAX_PER_PAGE_ARTIFACT_PAGES} pages per job.",
+        )
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -1460,6 +1475,14 @@ def _build_per_page_docling_artifacts(
         }
 
     raw_pages = docling_doc.get("pages") or {}
+    artifact_page_numbers = []
+    for key in raw_pages:
+        try:
+            artifact_page_numbers.append(global_page_offset + int(key))
+        except (TypeError, ValueError):
+            continue
+    _enforce_per_page_artifact_quota(artifact_page_numbers)
+
     texts_all = docling_doc.get("texts") if isinstance(docling_doc.get("texts"), list) else []
     tables_all = docling_doc.get("tables") if isinstance(docling_doc.get("tables"), list) else []
     pictures_all = docling_doc.get("pictures") if isinstance(docling_doc.get("pictures"), list) else []
@@ -1801,6 +1824,14 @@ async def _upload_per_page_docling_artifacts(
     artifacts_by_page = per_page_payload.get("artifacts_by_page") or {}
     pages = per_page_payload.get("pages") or []
     validation = per_page_payload.get("validation") or {"ok": False, "problems": ["missing_validation"]}
+
+    artifact_page_numbers = []
+    for page in pages:
+        try:
+            artifact_page_numbers.append(int(page.get("page_no") or 0))
+        except (AttributeError, TypeError, ValueError):
+            continue
+    _enforce_per_page_artifact_quota(artifact_page_numbers)
 
     for page in pages:
         try:
