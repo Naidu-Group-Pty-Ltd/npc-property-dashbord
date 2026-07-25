@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import os
 
-os.environ.setdefault("DOCLING_RUNTIME_PROFILE", "vnext")
+os.environ["DOCLING_RUNTIME_PROFILE"] = "vnext"
 
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 
 # Reuse the production shared surface (auth middleware, request models, storage +
 # callback + per-page-artifact + metrics helpers). Importing `app` pulls docling,
@@ -121,7 +121,7 @@ async def raster(req: "shared.RasterRequest") -> Any:  # type: ignore[name-defin
 
 
 @app.post("/parse")
-async def parse(req: shared.ParseRequest, background_tasks: Any = None) -> Any:  # type: ignore[name-defined]
+async def parse(req: shared.ParseRequest, background_tasks: BackgroundTasks) -> Any:  # type: ignore[name-defined]
     # The vNext parse path reuses the production request model, async-callback
     # contract, storage + per-page-artifact helpers and Operational Metrics V1;
     # only the converter/document extraction is provided by the vNext runtime.
@@ -134,7 +134,7 @@ async def parse(req: shared.ParseRequest, background_tasks: Any = None) -> Any: 
 
 
 @app.post("/parse-chunk")
-async def parse_chunk(req: "shared.ChunkRequest", background_tasks: Any = None) -> Any:  # type: ignore[name-defined]
+async def parse_chunk(req: "shared.ChunkRequest", background_tasks: BackgroundTasks) -> Any:  # type: ignore[name-defined]
     return await shared.parse_chunk(req, background_tasks)
 
 
