@@ -267,9 +267,11 @@ Deno.serve(async (req) => {
   if (!error && !updateIds.length && terms.length) {
     try {
       const tsQuery = terms.slice(0, 8).join(' | ');
-      const { data: lex } = await sb.from('market_updates')
+      let lexicalQuery = sb.from('market_updates')
         .select('id,title,source_name,source_url,source_published_at,category,segments,geography,impact_level,ai_summary,why_it_matters,key_points,citation_urls')
-        .eq('status', 'published')
+        .eq('status', 'published');
+      if (segment) lexicalQuery = lexicalQuery.contains('segments', [segment]);
+      const { data: lex } = await lexicalQuery
         .textSearch('search_tsv', tsQuery, { type: 'websearch', config: 'english' })
         .order('source_published_at', { ascending: false, nullsFirst: false })
         .limit(60);
