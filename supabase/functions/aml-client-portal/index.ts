@@ -71,7 +71,43 @@ function portalStatusFor(caseRow: any): string {
   return LEGACY_TO_PORTAL_STATUS[caseRow?.status] ?? 'in_progress';
 }
 
-const SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
+// Phase 5 — versioned conditional questionnaire engine (directive §14.2).
+// The section list is SERVER-DRIVEN: `overview` computes the applicable
+// sections for this case from the declared purchasing structure and funding
+// sources, and the portal renders whatever the server returns. Existing
+// version-1 submissions (the four base sections) remain valid unchanged.
+const QUESTIONNAIRE_VERSION = '2';
+
+const BASE_SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
+const CONDITIONAL_SECTIONS = ['entity_details', 'related_parties'] as const;
+const ALL_SECTIONS: readonly string[] = [...BASE_SECTIONS, ...CONDITIONAL_SECTIONS];
+
+const ENTITY_STRUCTURES = new Set(['Company', 'Trust', 'SMSF', 'Partnership']);
+const MULTI_PARTY_STRUCTURES = new Set(['Joint', 'Company', 'Trust', 'SMSF', 'Partnership']);
+
+/**
+ * Compute the ordered applicable sections for a case from its questionnaire
+ * payloads. Sections already answered but no longer applicable (e.g. the
+ * client switches structure from Company to Individual) are retained in
+ * storage — never deleted — but drop out of the active checklist.
+ */
+function applicableSections(
+  structurePayload: Record<string, unknown> | null,
+  fundingPayload: Record<string, unknown> | null,
+): string[] {
+  const entityType = String(structurePayload?.entity_type ?? '');
+  const fundingSources = Array.isArray(fundingPayload?.sources)
+    ? (fundingPayload!.sources as unknown[]).map((s) => String(s))
+    : [];
+  const giftFunded = fundingSources.includes('Gift');
+
+  const out: string[] = ['purchasing_structure', 'personal_details'];
+  if (ENTITY_STRUCTURES.has(entityType)) out.push('entity_details');
+  if (MULTI_PARTY_STRUCTURES.has(entityType) || giftFunded) out.push('related_parties');
+  out.push('purchase_profile', 'funding');
+  return out;
+}
+
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
 function jsonResponse(data: any, status = 200) {
@@ -132,7 +168,7 @@ Deno.serve(async (req) => {
         if (!c) return jsonResponse({ case: null, message: 'No AML onboarding case yet.' });
         const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
-            .select('section,status,updated_at').eq('case_id', c.id),
+            .select('section,status,updated_at,payload').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements')
             .select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
           admin.schema('aml').from('client_requests')
@@ -146,6 +182,10 @@ Deno.serve(async (req) => {
         const totalReq = reqs.filter((r: any) => r.required).length;
         const completedReq = reqs.filter((r: any) => r.required && ['uploaded','accepted'].includes(r.status)).length;
         const sectionMap = new Map((sections ?? []).map((s: any) => [s.section, s]));
+        const active = applicableSections(
+          sectionMap.get('purchasing_structure')?.payload ?? null,
+          sectionMap.get('funding')?.payload ?? null,
+        );
         const portalStatus = portalStatusFor(c);
         const presentation = PORTAL_STATUS_PRESENTATION[portalStatus] ?? { label: 'In progress', tone: 'progress' as const };
         return jsonResponse({
@@ -156,7 +196,9 @@ Deno.serve(async (req) => {
             status: portalStatus, portal_status: portalStatus,
             status_label: presentation.label, status_tone: presentation.tone,
           },
-          sections: SECTIONS.map((s) => ({
+          questionnaire_version: QUESTIONNAIRE_VERSION,
+          structure_type: String(sectionMap.get('purchasing_structure')?.payload?.entity_type ?? '') || null,
+          sections: active.map((s) => ({
             section: s, status: sectionMap.get(s)?.status ?? 'not_started',
             updated_at: sectionMap.get(s)?.updated_at ?? null,
           })),
@@ -176,7 +218,7 @@ Deno.serve(async (req) => {
       case 'get_questionnaire': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
+        if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
         const { data } = await admin.schema('aml').from('questionnaire_responses')
           .select('*').eq('case_id', c.id).eq('section', body.section).maybeSingle();
         return jsonResponse({ response: data ?? null });
@@ -185,7 +227,10 @@ Deno.serve(async (req) => {
       case 'save_questionnaire': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
+        // Validated against the full catalogue (not the currently-applicable
+        // subset) so an in-flight save is never rejected by a concurrent
+        // structure change; superseded answers are retained, never deleted.
+        if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
         const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
         const row: Record<string, any> = {
           case_id: c.id, section: body.section, payload,
@@ -327,11 +372,28 @@ Deno.serve(async (req) => {
             missing: missingRequired.map((r: any) => ({ code: r.code, label: r.label })),
           }, 400);
         }
+        // Phase 5: every currently-applicable section must be submitted before
+        // the client can finalise (the checklist itself is conditional).
+        const bySection = new Map((sections ?? []).map((s: any) => [s.section, s]));
+        const active = applicableSections(
+          bySection.get('purchasing_structure')?.payload ?? null,
+          bySection.get('funding')?.payload ?? null,
+        );
+        const missingSections = active.filter((s) =>
+          !['submitted', 'accepted', 'complete'].includes(bySection.get(s)?.status ?? ''));
+        if (missingSections.length > 0) {
+          return jsonResponse({
+            error: 'Cannot submit — some sections are incomplete',
+            missing_sections: missingSections,
+          }, 400);
+        }
         const { data: lastSub } = await admin.schema('aml').from('submission_versions')
           .select('version_number').eq('case_id', c.id).order('version_number', { ascending: false }).limit(1);
         const nextVersion = ((lastSub ?? [])[0]?.version_number ?? 0) + 1;
         const snapshot = {
           case: { id: c.id, reference: c.case_reference, subject: c.subject_display_name },
+          questionnaire_version: QUESTIONNAIRE_VERSION,
+          applicable_sections: active,
           sections: sections ?? [], requirements: reqs ?? [], documents: docs ?? [], consents: consents ?? [],
           submitted_by: { id: portalUserId, label: actorLabel },
         };

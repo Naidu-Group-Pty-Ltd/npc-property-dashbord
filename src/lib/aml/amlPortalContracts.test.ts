@@ -182,6 +182,41 @@ describe("activation dialog has no raw-UUID entry (Phase 4, §13.4)", () => {
   });
 });
 
+describe("conditional questionnaire engine (Phase 5, §14.2–14.4)", () => {
+  it("is versioned and server-driven", () => {
+    expect(portalSource).toContain("QUESTIONNAIRE_VERSION = '2'");
+    expect(portalSource).toContain("questionnaire_version: QUESTIONNAIRE_VERSION");
+    expect(portalSource).toContain("function applicableSections(");
+  });
+
+  it("adds entity and related-party sections for the right structures", () => {
+    expect(portalSource).toContain("'entity_details'");
+    expect(portalSource).toContain("'related_parties'");
+    expect(portalSource).toContain("ENTITY_STRUCTURES = new Set(['Company', 'Trust', 'SMSF', 'Partnership'])");
+    expect(portalSource).toContain("MULTI_PARTY_STRUCTURES = new Set(['Joint', 'Company', 'Trust', 'SMSF', 'Partnership'])");
+  });
+
+  it("keeps base sections applicable for every structure", () => {
+    expect(portalSource).toMatch(/out: string\[\] = \['purchasing_structure', 'personal_details'\]/);
+    expect(portalSource).toContain("out.push('purchase_profile', 'funding')");
+  });
+
+  it("validates saves against the full catalogue and retains superseded answers", () => {
+    expect(portalSource).toContain("ALL_SECTIONS.includes(body.section)");
+    // The pre-Phase-5 fixed-list check must not survive anywhere.
+    expect(portalSource).not.toMatch(/(?<!ALL_)SECTIONS\.includes\(body\.section\)/);
+  });
+
+  it("blocks final submission until every applicable section is submitted", () => {
+    expect(portalSource).toContain("Cannot submit — some sections are incomplete");
+    expect(portalSource).toContain("missing_sections");
+  });
+
+  it("freezes the engine version and applicable list into the submission snapshot", () => {
+    expect(portalSource).toContain("applicable_sections: active");
+  });
+});
+
 describe("workflow-dimension migration invariants", () => {
   it("enforces one open case per client with a partial unique index", () => {
     expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");
