@@ -18,6 +18,7 @@ import { escapeHtml } from '@/utils/commercial/escapeHtml';
 import { INSUFFICIENT_CASH_FLOW_AI_CONTEXT_MESSAGE, cashFlowAiEstimateActions, createCashFlowAiEstimatePreview, type CashFlowAiEstimateAction, type CashFlowAiEstimatePreview } from '@/utils/commercial/cashFlowAiEstimateEngine';
 import { buildTenYearInputsFromGlobal, calculateTenYearCashFlow } from '@/utils/commercial/tenYearCashFlowEngine';
 import type { TenYearAnnualOverrideCell, TenYearAnnualOverrideField, TenYearAnnualOverrides, TenYearCashFlowInputs, TenYearCashFlowMode, TenYearCashFlowResult, TenYearCashFlowYear } from '@/utils/commercial/tenYearCashFlowTypes';
+import { escapeHtml } from '@/utils/escapeHtml';
 
 const PENDING = 'Pending';
 const fmt = (n?: number | null) => n == null || !Number.isFinite(n) ? PENDING : new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 }).format(n);
