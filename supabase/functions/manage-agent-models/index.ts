@@ -8,12 +8,13 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import {
-  createCorsHeaders,
   createForbiddenResponse,
+  createTokenAuthCorsHeaders,
   createUnauthorizedResponse,
   verifyAuth,
 } from '../_shared/auth.ts';
-import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
+
+const corsHeaders = createTokenAuthCorsHeaders();
 
 function admin() {
   return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!, { auth: { persistSession: false } });
@@ -36,14 +37,21 @@ Deno.serve(async (req) => {
       return createUnauthorizedResponse(auth.error ?? 'Authentication required', corsHeaders);
     }
 
-    const { data: roles, error: roleError } = await sb
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', auth.userId)
-      .in('role', ['superadmin', 'admin']);
-    if (roleError || !roles?.length) {
-      console.warn(`[manage-agent-models] Non-admin access denied for user ${auth.userId}`);
-      return createForbiddenResponse('Admin access required', corsHeaders);
+    if (auth.userId !== 'service_role') {
+      const [{ data: roles }, { data: integrationPermission }] = await Promise.all([
+        sb.from('user_roles').select('role').eq('user_id', auth.userId),
+        sb
+          .from('user_permissions')
+          .select('can_edit, dashboard_modules!inner(module_key)')
+          .eq('user_id', auth.userId)
+          .eq('dashboard_modules.module_key', 'integrations')
+          .eq('can_edit', true)
+          .maybeSingle(),
+      ]);
+      const isAdmin = roles?.some(({ role }: { role: string }) => role === 'admin' || role === 'superadmin');
+      if (!isAdmin && !integrationPermission) {
+        return createForbiddenResponse('Integrations edit permission required', corsHeaders);
+      }
     }
 
     if (action === 'list') {
