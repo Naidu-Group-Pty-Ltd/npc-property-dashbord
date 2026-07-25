@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
+import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts"
 import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
 
 Deno.serve(async (req) => {
@@ -23,6 +24,11 @@ Deno.serve(async (req) => {
       action = body?.action || null;
     } catch {
       sessionToken = extractFinanceSessionToken(req.headers);
+    }
+
+    if (action === 'accept_terms' || action === 'complete_onboarding') {
+      const csrf = enforceCsrf(req);
+      if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
     }
 
     if (!sessionToken) {
@@ -100,7 +106,6 @@ Deno.serve(async (req) => {
           has_accepted_terms: portalUser.has_accepted_terms,
           has_completed_onboarding: portalUser.has_completed_onboarding,
         },
-        session_token: sessionToken,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
