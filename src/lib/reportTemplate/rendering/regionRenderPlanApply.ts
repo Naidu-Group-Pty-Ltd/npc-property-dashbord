@@ -34,12 +34,25 @@ export interface RegionRenderPlanProjection {
   }>;
 }
 
+const MAX_CROP_COORDINATE_PT = 20_000;
+
+function isSafeCropBBox(bbox: RegionRenderPlanProjection['finalRegionCrops'][number]['bbox'], page?: Page): boolean {
+  const { x, y, width, height } = bbox;
+  if (![x, y, width, height].every(Number.isFinite) || x < 0 || y < 0 || width <= 0 || height <= 0) return false;
+  if ([x, y, width, height].some((value) => value > MAX_CROP_COORDINATE_PT)) return false;
+  if (!page) return true;
+  const pageWidth = page.size?.width; const pageHeight = page.size?.height;
+  return Number.isFinite(pageWidth) && Number.isFinite(pageHeight)
+    && x + width <= pageWidth && y + height <= pageHeight;
+}
+
 /** Read the compact E6 render-plan projection off a page, if present + valid. */
 export function resolveRegionRenderPlanProjection(page: Page | null | undefined): RegionRenderPlanProjection | null {
   const meta = (page?.meta as { pdfImportRegionOutput?: { renderPlan?: unknown } } | undefined)?.pdfImportRegionOutput;
   const plan = meta?.renderPlan as RegionRenderPlanProjection | undefined;
   if (!plan || typeof plan !== 'object') return null;
   if (typeof plan.renderPlanHash !== 'string' || !Array.isArray(plan.finalRegionCrops)) return null;
+  if (plan.finalRegionCrops.some((crop) => !crop?.bbox || !isSafeCropBBox(crop.bbox, page))) return null;
   return plan;
 }
 
@@ -78,6 +91,7 @@ export function buildFinalCropElementsHtml(plan: RegionRenderPlanProjection | nu
   const parts: string[] = [];
   for (const crop of plan.finalRegionCrops) {
     if (crop.cropRole !== 'final-output') continue;
+    if (!isSafeCropBBox(crop.bbox)) continue;
     const { x, y, width, height } = crop.bbox;
     const pos = `position:absolute;left:${x}pt;top:${y}pt;width:${width}pt;height:${height}pt;`;
     const attrs = [
