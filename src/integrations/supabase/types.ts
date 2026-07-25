@@ -10437,8 +10437,6 @@ export type Database = {
           generated_by: string | null
           generation_payload: Json | null
           id: string
-          metadata: Json
-          pdf_hash: string | null
           pdf_storage_path: string | null
           sent_at: string | null
           sent_to: string[] | null
@@ -10468,8 +10466,6 @@ export type Database = {
           generated_by?: string | null
           generation_payload?: Json | null
           id?: string
-          metadata?: Json
-          pdf_hash?: string | null
           pdf_storage_path?: string | null
           sent_at?: string | null
           sent_to?: string[] | null
@@ -10499,8 +10495,6 @@ export type Database = {
           generated_by?: string | null
           generation_payload?: Json | null
           id?: string
-          metadata?: Json
-          pdf_hash?: string | null
           pdf_storage_path?: string | null
           sent_at?: string | null
           sent_to?: string[] | null
