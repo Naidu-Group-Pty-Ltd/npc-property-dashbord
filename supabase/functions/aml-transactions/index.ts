@@ -47,10 +47,11 @@ async function appendTxEvent(
     transaction_id: txId, case_id: caseId, category, summary, payload,
     actor_id: actorId, actor_label: actorLabel, prev_hash: prevHash, created_at: now,
   }));
-  await aml.from("transaction_events").insert({
+  const { error } = await aml.from("transaction_events").insert({
     transaction_id: txId, case_id: caseId, category, summary, payload,
     actor_id: actorId, actor_label: actorLabel, prev_hash: prevHash, row_hash: rowHash, created_at: now,
   });
+  if (error) throw new Error(`Unable to append transaction audit event: ${error.message}`);
 }
 
 async function evaluateSettlementGate(admin: any, aml: any, pfId: string) {
@@ -262,7 +263,8 @@ Deno.serve(async (req) => {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const { data, error } = await aml.from("transactions")
-        .select("*").eq("case_id", caseId).order("created_at", { ascending: false });
+        .select("*").eq("case_id", caseId).is("archived_at", null)
+        .order("created_at", { ascending: false });
       if (error) return jr({ error: error.message }, 400);
       return jr({ transactions: data ?? [] });
     }
@@ -276,6 +278,9 @@ Deno.serve(async (req) => {
       requireWrite();
       const p = body.transaction ?? {};
       if (!p.case_id) return jr({ error: "case_id required" }, 400);
+      const transactionInput = { ...p };
+      delete transactionInput.archived_at;
+      delete transactionInput.archived_by;
 
       let originalSettlement = p.original_settlement_date ?? null;
       let settlementChanged = false;
@@ -284,6 +289,7 @@ Deno.serve(async (req) => {
         const { data: ex } = await aml.from("transactions").select("*").eq("id", p.id).maybeSingle();
         existing = ex;
         if (ex) {
+          if (ex.archived_at) return jr({ error: "archived transactions cannot be changed" }, 409);
           if (!originalSettlement && ex.original_settlement_date) originalSettlement = ex.original_settlement_date;
           if (!originalSettlement && ex.settlement_date && ex.settlement_date !== p.settlement_date) {
             originalSettlement = ex.settlement_date;
@@ -296,7 +302,7 @@ Deno.serve(async (req) => {
         originalSettlement = originalSettlement ?? p.settlement_date;
       }
 
-      const row = { ...p, created_by: userId, original_settlement_date: originalSettlement };
+      const row = { ...transactionInput, created_by: userId, original_settlement_date: originalSettlement };
       const resp = p.id
         ? await aml.from("transactions").update(row).eq("id", p.id).select("*").maybeSingle()
         : await aml.from("transactions").insert(row).select("*").maybeSingle();
@@ -306,7 +312,7 @@ Deno.serve(async (req) => {
       await appendTxEvent(aml, tx.id, tx.case_id,
         p.id ? "updated" : "created",
         p.id ? "Transaction updated" : "Transaction captured",
-        { fields: Object.keys(p), settlement_changed: settlementChanged },
+        { fields: Object.keys(transactionInput), settlement_changed: settlementChanged },
         userId, userLabel);
       if (settlementChanged) {
         await appendTxEvent(aml, tx.id, tx.case_id, "settlement_rescheduled",
@@ -332,9 +338,21 @@ Deno.serve(async (req) => {
       return jr({ transaction: tx, obligations_created: obligationResult.created });
     }
     if (op === "delete_transaction") {
-      requireWrite();
+      requireMlro();
       const id = String(body.id ?? "");
-      const { error } = await aml.from("transactions").delete().eq("id", id);
+      if (!id) return jr({ error: "id required" }, 400);
+      const { data: tx, error: findError } = await aml.from("transactions")
+        .select("id, case_id, archived_at").eq("id", id).maybeSingle();
+      if (findError) return jr({ error: findError.message }, 400);
+      if (!tx) return jr({ error: "transaction not found" }, 404);
+      if (tx.archived_at) return jr({ ok: true });
+
+      await appendTxEvent(aml, tx.id, tx.case_id, "archived",
+        "Transaction archived by MLRO",
+        { archived_by: userId }, userId, userLabel);
+      const { error } = await aml.from("transactions").update({
+        archived_at: new Date().toISOString(), archived_by: userId,
+      }).eq("id", id).is("archived_at", null);
       if (error) return jr({ error: error.message }, 400);
       return jr({ ok: true });
     }
