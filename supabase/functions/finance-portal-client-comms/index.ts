@@ -288,7 +288,7 @@ async function sendMessage(supabase: any, partner: any, body: any) {
       title: subject || `New ${channel} from your broker`,
       message: preview,
       type: 'info',
-      category: 'finance_message',
+      category: 'message',
       action_url: '/client/finance',
       dedupe_key: providerMessageId || logIns.data?.id || undefined,
       dedupe_window_minutes: 10,

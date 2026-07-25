@@ -19,7 +19,7 @@ export type ClientPortalNotificationType =
 
 export type ClientPortalNotificationCategory =
   | 'general'
-  | 'finance_message'
+  | 'message'
   | 'document_request'
   | 'status_update'
   | 'appointment'
