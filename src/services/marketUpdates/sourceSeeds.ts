@@ -617,11 +617,12 @@ export const marketSourceSeeds: MarketSourceSeed[] = [
       "Australia"
     ],
     "refresh_frequency_minutes": 120,
-    "enabled": true,
+    "enabled": false,
     "copyright_mode": "public_sector_metadata_and_summary",
     "extraction_policy": {
       "metadata_only": true,
-      "full_article": false
+      "full_article": false,
+      "disabled_reason": "Documented Federal Register API resource configuration is required before automated ingestion."
     },
     "source_weight": 1,
     "relevant_keywords": [
