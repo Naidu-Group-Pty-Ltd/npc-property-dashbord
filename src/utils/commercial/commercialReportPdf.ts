@@ -25,6 +25,7 @@ import {
   calculateCommercialBc,
   runDcf,
 } from '@/utils/commercial';
+import { fmtPct } from './commercialReportFormatters';
 
 // ─── Design tokens (parity with StrategyRationalePDF) ──────────────────────
 const GOLD = { r: 212, g: 168, b: 67 };       // matches dark-gold theme primary
