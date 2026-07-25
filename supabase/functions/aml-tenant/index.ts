@@ -2,7 +2,7 @@
  * Phase 12 — AML White-Label & Multi-Tenant Commercialisation.
  *
  * POST { op, ...args }
- * Auth: any AML role reads; only MLRO can write tenant/plan/provider config.
+ * Auth: tenant-scoped AML roles read; tenant MLROs write tenant config.
  *
  * Ops:
  *   summary
@@ -36,13 +36,17 @@ const LOCKED_TERMINOLOGY_KEYS = new Set<string>([
   "Beneficial Owner", "Tipping-Off", "Threshold Transaction",
 ]);
 
-async function loadRoles(admin: any, userId: string): Promise<Set<string>> {
+async function loadRoles(admin: any, userId: string, tenantId: string): Promise<Set<string>> {
   const { data } = await admin.schema("aml").from("role_assignments")
-    .select("role").eq("user_id", userId).is("revoked_at", null);
+    .select("role").eq("user_id", userId).eq("tenant_id", tenantId).is("revoked_at", null);
   return new Set((data ?? []).map((r: any) => String(r.role)));
 }
-const isMlro = (roles: Set<string>) => roles.has("mlro");
-const hasAny = (roles: Set<string>) => roles.size > 0;
+
+async function isSuperadmin(admin: any, userId: string): Promise<boolean> {
+  const { data } = await admin.from("user_roles").select("role")
+    .eq("user_id", userId).eq("role", "superadmin").maybeSingle();
+  return Boolean(data);
+}
 
 function sanitizeTerminology(input: Record<string, unknown>): { clean: Record<string, string>; rejected: string[] } {
   const clean: Record<string, string> = {};
@@ -74,15 +78,18 @@ Deno.serve(async (req) => {
     if (auth.error || !auth.userId || auth.userId === "service_role") return jr({ error: auth.error || "Authentication required" }, 401);
     const userId = auth.userId;
 
-    const roles = await loadRoles(admin, userId);
-    if (!hasAny(roles)) return jr({ error: "No AML role" }, 403);
-
     const { op, ...args } = body;
     if (!op) return jr({ error: "op required" }, 400);
 
     const tenantId: string = String((args as any).tenant_id ?? DEFAULT_TENANT);
+    const [roles, superadmin] = await Promise.all([
+      loadRoles(admin, userId, tenantId),
+      isSuperadmin(admin, userId),
+    ]);
+    if (!superadmin && roles.size === 0) return jr({ error: "No AML role for tenant" }, 403);
+
     const mlroRequired = () => {
-      if (!isMlro(roles)) return jr({ error: "MLRO only" }, 403);
+      if (!superadmin && !roles.has("mlro")) return jr({ error: "MLRO only" }, 403);
       return null;
     };
     const CONFIG_WRITE_OPS = new Set([
@@ -184,7 +191,8 @@ Deno.serve(async (req) => {
         const err = mlroRequired(); if (err) return err;
         const id = (args as any).id;
         if (!id) return jr({ error: "id required" }, 400);
-        const { error } = await aml.from("tenant_entitlement_overrides").delete().eq("id", id);
+        const { error } = await aml.from("tenant_entitlement_overrides").delete()
+          .eq("id", id).eq("tenant_id", tenantId);
         if (error) return jr({ error: error.message }, 400);
         return jr({ ok: true });
       }
@@ -224,7 +232,8 @@ Deno.serve(async (req) => {
         const err = mlroRequired(); if (err) return err;
         const id = (args as any).id;
         if (!id) return jr({ error: "id required" }, 400);
-        const { error } = await aml.from("provider_configs").delete().eq("id", id);
+        const { error } = await aml.from("provider_configs").delete()
+          .eq("id", id).eq("tenant_id", tenantId);
         if (error) return jr({ error: error.message }, 400);
         return jr({ ok: true });
       }
@@ -236,7 +245,7 @@ Deno.serve(async (req) => {
           last_health_at: new Date().toISOString(),
           last_health_status: status ?? "unknown",
           last_health_message: message ?? null,
-        }).eq("id", id).select("*").maybeSingle();
+        }).eq("id", id).eq("tenant_id", tenantId).select("*").maybeSingle();
         if (error) return jr({ error: error.message }, 400);
         return jr({ provider: data });
       }
@@ -256,7 +265,7 @@ Deno.serve(async (req) => {
             failure_count: (existing.failure_count ?? 0) + Number(failures),
             latency_ms_sum: Number(existing.latency_ms_sum ?? 0) + Number(latency_ms),
             cost_cents_sum: Number(existing.cost_cents_sum ?? 0) + Number(cost_cents),
-          }).eq("id", existing.id).select("*").maybeSingle();
+          }).eq("id", existing.id).eq("tenant_id", tenantId).select("*").maybeSingle();
           if (error) return jr({ error: error.message }, 400);
           return jr({ metric: data });
         }
