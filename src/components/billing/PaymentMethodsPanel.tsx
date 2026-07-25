@@ -29,6 +29,24 @@ import { toast } from "sonner";
 
 const ROLE_LABEL: Record<number, string> = { 1: "Primary", 2: "Secondary", 3: "Backup" };
 
+/**
+ * Backend hiccups that resolve on their own — Mission Control mid-deploy, a
+ * PostgREST schema-cache reload, a rate-limit window — get one silent retry
+ * and friendly copy instead of raw internals like
+ * "payment_methods_list_failed: Could not find the table … in the schema cache".
+ */
+function isTransientWalletError(message: string): boolean {
+  return /schema cache|payment_methods_list_failed|internal_error|mission_control_unreachable|rate.?limit|\b50[234]\b/i.test(
+    message,
+  );
+}
+
+function friendlyWalletError(message: string): string {
+  return isTransientWalletError(message)
+    ? "Payment methods are temporarily unavailable — the billing service is catching up. Try again in a moment."
+    : message;
+}
+
 function roleBadgeClass(priority: number): string {
   return priority === 1
     ? "border-primary/25 bg-primary/10 text-primary"
@@ -68,15 +86,25 @@ export function PaymentMethodsPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try {
-      const result = await fetchPaymentMethods();
-      setMethods(result.paymentMethods);
-      setMaxCards(result.maxPaymentMethods);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load payment methods.");
-    } finally {
-      setLoading(false);
+    // One silent retry for transient backend errors before surfacing anything.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = await fetchPaymentMethods();
+        setMethods(result.paymentMethods);
+        setMaxCards(result.maxPaymentMethods);
+        setError(null);
+        break;
+      } catch (e) {
+        const raw = e instanceof Error ? e.message : "Failed to load payment methods.";
+        console.error("[wallet] load failed:", raw);
+        if (attempt === 0 && isTransientWalletError(raw)) {
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          continue;
+        }
+        setError(friendlyWalletError(raw));
+      }
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -106,7 +134,12 @@ export function PaymentMethodsPanel() {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Update failed";
-      toast.error(/forbidden/i.test(msg) ? "Admin permission required to manage cards." : msg);
+      console.error("[wallet] update failed:", msg);
+      toast.error(
+        /forbidden/i.test(msg)
+          ? "Admin permission required to manage cards."
+          : friendlyWalletError(msg),
+      );
     } finally {
       setBusyId(null);
     }
