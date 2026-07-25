@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { checkPermission } from "../_shared/permissions.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const VAPI_BASE_URL = 'https://api.vapi.ai';
@@ -47,7 +48,7 @@ Deno.serve(async (req) => {
     const body = await req.json();
 
     // Validate authentication (JWT first, then session token)
-    const { error: authError, userId, username } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, username, authMethod } = await verifyAuth(supabase, req.headers, body);
 
     if (authError) {
       console.log('[manage-call-logs] Auth error:', authError);
@@ -132,6 +133,15 @@ Deno.serve(async (req) => {
           JSON.stringify({ success: false, error: 'callId is required for killLiveCall' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
+      }
+
+      // This operation terminates a live customer call and updates a call-log
+      // record with service-role privileges, so enforce the same server-side
+      // call_logs edit permission used by the UI before performing either action.
+      const permission = await checkPermission(supabase, userId!, 'vapi_call_logs', 'update', authMethod);
+      if (!permission.allowed) {
+        console.warn(`[manage-call-logs] Kill live call denied for user ${userId}: ${permission.reason}`);
+        return createForbiddenResponse(permission.reason || 'Call logs edit permission required', corsHeaders);
       }
 
       const { data: callRow, error: callFetchError } = await supabase
