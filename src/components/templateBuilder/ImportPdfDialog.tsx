@@ -58,6 +58,19 @@ function progressCopy(progress: ImportProgress | null): { label: string; eta: st
   return { label, eta };
 }
 
+export function importProgressPercent(progress: ImportProgress | null): number {
+  if (!progress) return 0;
+  if (progress.phase === 'done') return 100;
+  const total = progress.pagesTotal ?? progress.totalPages ?? 0;
+  const done = progress.pagesCompleted ?? progress.page ?? 0;
+  if (total > 0) return Math.min(99, Math.round((done / total) * 95));
+  if (progress.phase === 'finalizing') return 90;
+  if (progress.phase === 'rasterizing') return 55;
+  if (progress.phase === 'extracting') return 30;
+  if (progress.phase === 'uploading') return 15;
+  return 5;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -654,18 +667,7 @@ export function ImportPdfDialog({ open, onOpenChange }: Props) {
     }
   }, [persistedReview, result?.importId, result?.importAsset, result?.template?.name, reconciliationPolicyDecision, visualQaSummary, repairSummary]);
 
-  const percent = (() => {
-    if (!progress) return 0;
-    const total = progress.pagesTotal ?? progress.totalPages ?? 0;
-    const done = progress.pagesCompleted ?? progress.page ?? 0;
-    if (total > 0) return Math.min(99, Math.round((done / total) * 95));
-    if (progress.phase === 'done') return 100;
-    if (progress.phase === 'finalizing') return 90;
-    if (progress.phase === 'rasterizing') return 55;
-    if (progress.phase === 'extracting') return 30;
-    if (progress.phase === 'uploading') return 15;
-    return 5;
-  })();
+  const percent = importProgressPercent(progress);
 
   const progressDetails = progressCopy(progress);
 
