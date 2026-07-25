@@ -538,12 +538,12 @@ Deno.serve(async (req: Request) => {
     if (action === 'update_own_credentials') {
       // Credential changes and the replacement cookie must be bound to the
       // HttpOnly session presented by this browser, never a token selected in
-      // the JSON body. verifyAuth also enforces the shared active-user checks.
+      // the JSON body. Verify it independently because verifyAuth prefers a
+      // valid Bearer JWT when the browser sends both credentials; the identity
+      // match below binds that JWT to the cookie session.
       const authResult = await verifyAuth(supabase, req.headers, body);
       const cookieSessionToken = extractSessionToken(req.headers, body);
-      const sessionResult = authResult.authMethod === 'session'
-        ? await verifySession(cookieSessionToken ?? '')
-        : { error: 'Session authentication required', user: null, sessionId: null };
+      const sessionResult = await verifySession(cookieSessionToken ?? '');
       const { error: sessionError, user: currentUser, sessionId: currentSessionId } = sessionResult;
       if (
         authResult.error ||
