@@ -1,5 +1,5 @@
 import { assert, assertEquals } from 'https://deno.land/std@0.224.0/assert/mod.ts';
-import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, getTrustedClientIp, securityJsonError, verifyHuman, verifyRequiredCronSecret, verifyRequiredWebhookSecret, verifySignedInternal } from '../requestSecurity.ts';
+import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, enforceRawBodyLimit, getTrustedClientIp, securityJsonError, verifyRequiredCronSecret, verifyRequiredWebhookSecret, verifySignedInternal } from '../requestSecurity.ts';
 import { signInternalRequest } from '../auth_v2.ts';
 
 Deno.test('shared request security exports human authentication for edge handlers', () => {
@@ -10,6 +10,23 @@ Deno.test('request limits reject oversized JSON before parsing', async () => {
   const req = new Request('https://example.test', { method: 'POST', headers: { 'content-length': '1000' }, body: '{"ok":true}' });
   const result = await enforceJsonBodyLimit(req, 32);
   assert(!result.ok); assertEquals(result.error.status, 413);
+});
+
+Deno.test('raw request limits stop streaming bodies without a content length', async () => {
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    pull(controller) { controller.enqueue(new Uint8Array(20)); },
+    cancel() { cancelled = true; },
+  });
+  const req = new Request('https://example.test', { method: 'POST', body });
+  const result = await enforceRawBodyLimit(req, 32);
+  assert(!result.ok); assertEquals(result.error.status, 413); assert(cancelled);
+});
+
+Deno.test('raw request limits preserve accepted UTF-8 bodies for signature checks', async () => {
+  const raw = JSON.stringify({ source: 'crøn' });
+  const req = new Request('https://example.test', { method: 'POST', body: raw });
+  assertEquals(await enforceRawBodyLimit(req, 64), { ok: true, raw });
 });
 
 Deno.test('base64 limits reject malformed and decoded oversize data', () => {

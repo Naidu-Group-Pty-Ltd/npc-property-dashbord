@@ -39,14 +39,37 @@ export function getTrustedClientIp(headers: Headers): string | null {
   return IPV4.test(candidate) || (candidate.includes(':') && IPV6.test(candidate)) ? candidate.toLowerCase() : null;
 }
 
-/** Reads a bounded JSON body before parsing, preventing unbounded allocation. */
-export async function enforceJsonBodyLimit<T = unknown>(req: Request, maxBytes: number): Promise<{ ok: true; value: T; raw: string } | { ok: false; error: Response }> {
+/** Reads a body incrementally and stops before buffering more than maxBytes. */
+export async function enforceRawBodyLimit(req: Request, maxBytes: number): Promise<{ ok: true; raw: string } | { ok: false; error: Response }> {
   const contentLength = Number(req.headers.get('content-length'));
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || (Number.isFinite(contentLength) && contentLength > maxBytes)) {
     return { ok: false, error: securityJsonError(413, 'request_too_large') };
   }
-  const raw = await req.text();
-  if (new TextEncoder().encode(raw).byteLength > maxBytes) return { ok: false, error: securityJsonError(413, 'request_too_large') };
+  if (!req.body) return { ok: true, raw: '' };
+
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let raw = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytesRead += value.byteLength;
+    if (bytesRead > maxBytes) {
+      await reader.cancel('request_too_large');
+      return { ok: false, error: securityJsonError(413, 'request_too_large') };
+    }
+    raw += decoder.decode(value, { stream: true });
+  }
+  raw += decoder.decode();
+  return { ok: true, raw };
+}
+
+/** Reads a bounded JSON body before parsing, preventing unbounded allocation. */
+export async function enforceJsonBodyLimit<T = unknown>(req: Request, maxBytes: number): Promise<{ ok: true; value: T; raw: string } | { ok: false; error: Response }> {
+  const bounded = await enforceRawBodyLimit(req, maxBytes);
+  if (!bounded.ok) return bounded;
+  const { raw } = bounded;
   try { return { ok: true, value: JSON.parse(raw) as T, raw }; }
   catch { return { ok: false, error: securityJsonError(400, 'invalid_request') }; }
 }
