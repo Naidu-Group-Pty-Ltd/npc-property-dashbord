@@ -26,8 +26,18 @@ describe("AML transaction audit-history protections", () => {
   });
 
   it("denies direct deletes and prevents event cascades", () => {
-    expect(migrationSource).toContain("REVOKE DELETE ON aml.transactions FROM authenticated");
+    expect(migrationSource).toContain("REVOKE DELETE, UPDATE ON aml.transactions FROM authenticated");
     expect(migrationSource).toContain("REFERENCES aml.transactions(id) ON DELETE RESTRICT");
     expect(migrationSource).not.toContain('CREATE POLICY "aml_tx_write"');
+  });
+
+  it("does not grant authenticated clients direct access to archive markers", () => {
+    const authenticatedUpdateGrant = migrationSource.match(
+      /GRANT UPDATE \(([\s\S]*?)\) ON aml\.transactions TO authenticated;/,
+    )?.[1];
+
+    expect(authenticatedUpdateGrant).toBeDefined();
+    expect(authenticatedUpdateGrant).not.toContain("archived_at");
+    expect(authenticatedUpdateGrant).not.toContain("archived_by");
   });
 });
