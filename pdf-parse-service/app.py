@@ -199,8 +199,15 @@ ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", True)
 # Wave A: force-OCR is now ON by default so scanned PDFs and outline-rendered text are captured.
 ENABLE_OCR_FALLBACK = _env_bool("ENABLE_OCR_FALLBACK", True)
 FORCE_FULL_PAGE_OCR = _env_bool("DOCLING_FORCE_FULL_PAGE_OCR", True)
-# Multi-language OCR — order matters; first match wins per region.
-OCR_LANGS = [s.strip() for s in os.environ.get("DOCLING_OCR_LANGS", "en,fr,de,es,zh,ja,ko,ar").split(",") if s.strip()]
+# EasyOCR can load these Latin-script languages together. Operators may provide
+# another engine-compatible group explicitly, but mixed CJK/Arabic defaults can
+# make the reader fail during initialization.
+DEFAULT_OCR_LANGS = "en,fr,de,es"
+OCR_LANGS = [
+    language.strip()
+    for language in os.environ.get("DOCLING_OCR_LANGS", DEFAULT_OCR_LANGS).split(",")
+    if language.strip()
+]
 # Lower bitmap threshold = OCR runs even on lightly-bitmapped regions.
 BITMAP_AREA_THRESHOLD = float(os.environ.get("DOCLING_BITMAP_AREA_THRESHOLD", "0.05"))
 IMAGES_SCALE = float(os.environ.get("DOCLING_IMAGES_SCALE", "2.0"))
