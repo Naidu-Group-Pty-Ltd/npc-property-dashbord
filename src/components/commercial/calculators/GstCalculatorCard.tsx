@@ -1156,11 +1156,7 @@ export function GstCalculatorCard() {
     ).length,
   };
   const hasAnySaveValue = Boolean(
-    purchasePriceValue ||
-    persistedTreatment(treatment) ||
-    registered !== "unknown" ||
-    goingConcernConfirmed !== "unknown" ||
-    itcClaimability !== "unknown",
+    purchasePriceValue !== null || persistedTreatment(treatment),
   );
   const saveBackDisabled = !prefill || !hasAnySaveValue || saving;
   const calculatedOutputs = {
@@ -1243,6 +1239,7 @@ export function GstCalculatorCard() {
   ];
   const confirmSaveBack = async () => {
     if (!prefill) return;
+    setSaveNotice("");
     setSaving(true);
     try {
       const patch: Record<string, unknown> = {};
@@ -1250,7 +1247,8 @@ export function GstCalculatorCard() {
         patch.purchase_price = purchasePriceValue;
       const savedTreatment = persistedTreatment(treatment);
       if (savedTreatment) patch.gst_treatment = savedTreatment;
-      await pushBack(patch);
+      const result = await pushBack(patch);
+      if (!result.ok) return;
       updateGlobal("gstInputs", {
         purchasePrice: purchasePriceValue ?? undefined,
         treatment:
@@ -1295,7 +1293,7 @@ export function GstCalculatorCard() {
       updateGlobal("scenarioOverrides", { gst: saveSnapshot } as any);
       setSourceMode("gst", "savedPropertyLinked");
       setSaveNotice(
-        "GST assumptions saved to property profile. Downstream GST fields were refreshed for Borrowing Capacity, Funds to Complete, Report Overview, Scenario comparison and Client report outputs.",
+        "Purchase price and GST treatment saved to the property profile. Current GST assumptions were refreshed for Borrowing Capacity, Funds to Complete, Report Overview, Scenario comparison and Client report outputs.",
       );
       setSaveDialogOpen(false);
     } finally {
@@ -1367,7 +1365,7 @@ export function GstCalculatorCard() {
                 title={
                   !prefill
                     ? "Select or link a property before saving GST assumptions."
-                    : "Save GST assumptions back to the linked property profile."
+                    : "Save purchase price and GST treatment back to the linked property profile."
                 }
               >
                 {saving ? "Saving..." : "Save Back to Property"}
@@ -1966,11 +1964,12 @@ export function GstCalculatorCard() {
         <AlertDialogContent className="max-w-2xl">
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Save these GST assumptions back to the property profile?
+              Save property GST fields and refresh downstream assumptions?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This saves GST fields only and refreshes downstream GST sync
-              payloads without overwriting unrelated calculator assumptions.
+              Purchase price and GST treatment are saved to the property. The
+              remaining values shown below refresh downstream GST sync payloads
+              without overwriting unrelated property fields.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="max-h-[55vh] overflow-y-auto rounded-lg border border-border/70 bg-muted/20 p-3 text-sm">
@@ -1992,7 +1991,7 @@ export function GstCalculatorCard() {
               }}
               disabled={saving}
             >
-              {saving ? "Saving..." : "Save GST assumptions"}
+              {saving ? "Saving..." : "Save and refresh GST"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
