@@ -38,10 +38,11 @@ async function appendCaseEvent(
   const rowHash = await sha256Hex(JSON.stringify({
     case_id: caseId, category, summary, payload, actor_id: actorId, actor_label: actorLabel, prev_hash: prevHash, created_at: now,
   }));
-  await admin.schema("aml").from("case_events").insert({
+  const { error } = await admin.schema("aml").from("case_events").insert({
     case_id: caseId, category, summary, payload, actor_id: actorId, actor_label: actorLabel,
     prev_hash: prevHash, row_hash: rowHash, created_at: now,
   });
+  if (error) throw new Error(`Failed to append case event: ${error.message}`);
 }
 
 Deno.serve(async (req) => {
@@ -118,9 +119,28 @@ Deno.serve(async (req) => {
       requireWrite();
       const id = String(body.entity_id ?? "");
       if (!id) return jr({ error: "entity_id required" }, 400);
+      const [{ data: entity }, { data: owners }, { data: reps }, { data: links }] = await Promise.all([
+        aml.from("entities").select("id, legal_name, trading_name, entity_type").eq("id", id).maybeSingle(),
+        aml.from("beneficial_owners").select("id").eq("entity_id", id),
+        aml.from("authorised_representatives").select("id").eq("entity_id", id),
+        aml.from("entity_case_links").select("id, case_id, link_role").eq("entity_id", id),
+      ]);
+      if (!entity) return jr({ error: "Not found" }, 404);
+      const affectedLinks = links ?? [];
+      for (const link of affectedLinks) {
+        await appendCaseEvent(admin, link.case_id, "system", `Entity deletion requested: ${entity.legal_name ?? entity.trading_name ?? id}`,
+          {
+            entity_id: id,
+            link_id: link.id,
+            link_role: link.link_role,
+            entity_type: entity.entity_type,
+            beneficial_owner_count: owners?.length ?? 0,
+            authorised_representative_count: reps?.length ?? 0,
+          }, userId, userLabel);
+      }
       const { error } = await aml.from("entities").delete().eq("id", id);
       if (error) return jr({ error: error.message }, 400);
-      return jr({ ok: true });
+      return jr({ ok: true, audited_case_count: affectedLinks.length });
     }
 
     // ── OWNERS ───────────────────────────────────────────────
@@ -146,9 +166,17 @@ Deno.serve(async (req) => {
       requireWrite();
       const id = String(body.owner_id ?? "");
       if (!id) return jr({ error: "owner_id required" }, 400);
+      const { data: existing } = await aml.from("beneficial_owners")
+        .select("id, entity_id, full_name, ownership_percent, is_ubo, verification_state").eq("id", id).maybeSingle();
+      if (!existing) return jr({ error: "Not found" }, 404);
+      const { data: links } = await aml.from("entity_case_links").select("id, case_id, link_role").eq("entity_id", existing.entity_id);
+      for (const link of links ?? []) {
+        await appendCaseEvent(admin, link.case_id, "system", `Beneficial owner deletion requested: ${existing.full_name ?? id}`,
+          { owner_id: id, entity_id: existing.entity_id, link_id: link.id, link_role: link.link_role, ownership_percent: existing.ownership_percent, is_ubo: existing.is_ubo, verification_state: existing.verification_state }, userId, userLabel);
+      }
       const { error } = await aml.from("beneficial_owners").delete().eq("id", id);
       if (error) return jr({ error: error.message }, 400);
-      return jr({ ok: true });
+      return jr({ ok: true, audited_case_count: links?.length ?? 0 });
     }
 
     // ── REPS ─────────────────────────────────────────────────
@@ -173,9 +201,17 @@ Deno.serve(async (req) => {
       requireWrite();
       const id = String(body.rep_id ?? "");
       if (!id) return jr({ error: "rep_id required" }, 400);
+      const { data: existing } = await aml.from("authorised_representatives")
+        .select("id, entity_id, full_name, role_title, verification_state").eq("id", id).maybeSingle();
+      if (!existing) return jr({ error: "Not found" }, 404);
+      const { data: links } = await aml.from("entity_case_links").select("id, case_id, link_role").eq("entity_id", existing.entity_id);
+      for (const link of links ?? []) {
+        await appendCaseEvent(admin, link.case_id, "system", `Authorised representative deletion requested: ${existing.full_name ?? id}`,
+          { rep_id: id, entity_id: existing.entity_id, link_id: link.id, link_role: link.link_role, role_title: existing.role_title, verification_state: existing.verification_state }, userId, userLabel);
+      }
       const { error } = await aml.from("authorised_representatives").delete().eq("id", id);
       if (error) return jr({ error: error.message }, 400);
-      return jr({ ok: true });
+      return jr({ ok: true, audited_case_count: links?.length ?? 0 });
     }
 
     // ── CASE LINKS ───────────────────────────────────────────
