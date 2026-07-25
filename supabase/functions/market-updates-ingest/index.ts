@@ -4,9 +4,6 @@
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth } from "../_shared/auth.ts";
-import { requireModulePermission } from "../_shared/authz.ts";
-import { verifyRequiredCronSecret, securityJsonError } from "../_shared/requestSecurity.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -219,9 +216,17 @@ Deno.serve(async (req) => {
   const auth = req.headers.get("authorization") ?? "";
   const bearer = auth.replace(/^Bearer\s+/i, "").trim();
   const apikey = req.headers.get("apikey") ?? "";
-  const automated =
-    verifyRequiredCronSecret(secret, req.headers.get("x-cron-secret")) ||
-    Boolean(serviceRoleKey && (bearer === serviceRoleKey || apikey === serviceRoleKey));
+  const authorised =
+    (secret && req.headers.get("x-cron-secret") === secret) ||
+    (serviceRoleKey && ((bearer && bearer === serviceRoleKey) || (apikey && apikey === serviceRoleKey)));
+
+  console.log("[auth]", {
+    hasAuth: Boolean(auth),
+    hasApikey: Boolean(apikey),
+    hasCronSecret: Boolean(req.headers.get("x-cron-secret")),
+    authorised,
+  });
+  if (!authorised) return json({ error: "Unauthorised market ingestion request." }, 401);
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
