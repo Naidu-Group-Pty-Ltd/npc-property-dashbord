@@ -21440,6 +21440,7 @@ export type Database = {
       commercial_gst_treatment:
         | "going_concern"
         | "margin_scheme"
+        | "plus_gst"
         | "standard"
         | "input_taxed"
       commercial_lease_status:
@@ -22012,6 +22013,7 @@ export const Constants = {
       commercial_gst_treatment: [
         "going_concern",
         "margin_scheme",
+        "plus_gst",
         "standard",
         "input_taxed",
       ],
