@@ -4,7 +4,6 @@
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifySupabaseJWT } from "../_shared/jwt.ts";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -214,29 +213,30 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   const secret = Deno.env.get("MARKET_INGESTION_CRON_SECRET");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const auth = req.headers.get("authorization") ?? "";
   const bearer = auth.replace(/^Bearer\s+/i, "").trim();
   const apikey = req.headers.get("apikey") ?? "";
-  const publishableKey = Deno.env.get("SUPABASE_PUBLISHABLE_DEFAULT_KEY") ?? "";
   let authorised =
     (secret && req.headers.get("x-cron-secret") === secret) ||
-    (serviceRoleKey && ((bearer && bearer === serviceRoleKey) || (apikey && apikey === serviceRoleKey))) ||
-    (anonKey && bearer && bearer === anonKey) ||
-    (publishableKey && bearer && bearer === publishableKey) ||
-    (anonKey && apikey && apikey === anonKey) ||
-    (publishableKey && apikey && apikey === publishableKey);
+    (serviceRoleKey && ((bearer && bearer === serviceRoleKey) || (apikey && apikey === serviceRoleKey)));
 
-  // Fallback: accept a bearer/apikey JWT only after cryptographic signature
-  // verification against the project secret. Decoded-but-unverified claims
-  // are forgeable and must never authorise a request.
-  const isVerifiedSupabaseJwt = async (tok: string): Promise<boolean> => {
-    if (!tok.includes(".")) return false;
-    const payload = await verifySupabaseJWT(tok);
-    return typeof payload?.role === "string" && ["anon", "authenticated", "service_role"].includes(payload.role);
-  };
-  if (!authorised && bearer && (await isVerifiedSupabaseJwt(bearer))) authorised = true;
-  if (!authorised && apikey && (await isVerifiedSupabaseJwt(apikey))) authorised = true;
+  // UI callers must present an authenticated user JWT and hold an elevated role.
+  // Public anon/publishable keys are client credentials, not authorization.
+  if (!authorised && bearer) {
+    const admin = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const { data: { user } } = await admin.auth.getUser(bearer);
+    if (user) {
+      const { data: roles } = await admin
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
+        .in("role", ["admin", "superadmin"]);
+      authorised = Boolean(roles?.length);
+    }
+  }
 
   console.log("[auth]", {
     hasAuth: Boolean(auth),
