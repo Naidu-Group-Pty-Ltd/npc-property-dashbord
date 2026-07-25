@@ -80,6 +80,27 @@ def test_vnext_routes_to_runtime_not_legacy():
     # (poisoned legacy never raised its AssertionError → legacy path not reached)
 
 
+@pytest.mark.parametrize("status", ["partial_success", "timeout"])
+def test_vnext_non_success_with_document_is_contained(status):
+    """Usable partial output must not reach either caller's success path."""
+    spy = _SpyVNextRuntime(RuntimeConversionResult(
+        status=status,
+        document={"pages": {1: {}}, "texts": [], "tables": [], "pictures": []},
+        pages_processed=1,
+        pages_failed=1,
+        errors=("page conversion incomplete",),
+        raw_document=object(),
+    ))
+    app._RUNTIME_OVERRIDE = spy
+
+    with pytest.raises(app.SidecarError) as exc:
+        app._do_parse(b"%PDF-1.4 fake", policy=_policy(), redact_pii=False)
+
+    assert exc.value.error_code == "docling_vnext_convert_failed"
+    assert status in exc.value.message
+    assert spy.calls == 1
+
+
 def test_poisoned_legacy_not_reached_on_vnext_success_shape():
     # A vNext result with a raw_document proceeds past the runtime call; the legacy
     # converter must never be constructed regardless.

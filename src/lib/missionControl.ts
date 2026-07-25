@@ -152,13 +152,28 @@ export const AURIXA_PRICING_URL = AURIXA_BILLING_UID
   ? `https://www.aurixasystems.com.au/pricing?uid=${encodeURIComponent(AURIXA_BILLING_UID)}`
   : "https://www.aurixasystems.com.au/pricing";
 
+/**
+ * Fallback for the "Add card" CTA when the handoff mint is unavailable: the
+ * pricing page recognises `action=save-card` (plus the uid credential) and
+ * auto-launches the Stripe-hosted card-save flow.
+ */
+export const AURIXA_SAVE_CARD_URL = `${AURIXA_PRICING_URL}${
+  AURIXA_PRICING_URL.includes("?") ? "&" : "?"
+}action=save-card`;
+
 export function openMissionControl(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
 // ── Attributed handoff (user-attributed pricing workflow) ───────────────────
 
-export type HandoffIntent = "topup" | "seat_plan" | "setup_package" | "pricing" | "catalog";
+export type HandoffIntent =
+  | "topup"
+  | "seat_plan"
+  | "setup_package"
+  | "save_card"
+  | "pricing"
+  | "catalog";
 
 /**
  * Asks the `mission-control-handoff` edge function for a single-use attributed
@@ -180,6 +195,40 @@ export async function fetchBillingHandoffUrl(
     return data.url;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Display-only username for the pricing page's "Purchasing for … as <user>"
+ * chip. Read from the session cache useAuth maintains; never used for
+ * authorization — the server re-resolves the purchase scope at checkout.
+ */
+function getDisplayUsername(): string | null {
+  try {
+    const raw = sessionStorage.getItem("current_user");
+    if (!raw) return null;
+    const name = (JSON.parse(raw)?.username ?? "").toString().trim();
+    return name ? name.slice(0, 80) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The static fallback link identifies only the workspace (?uid=…), so the
+ * storefront can't show WHO is buying. Attach the signed-in username as a
+ * display-only `u` hint; attributed handoffs (?h=…) carry the user
+ * server-side and don't need it.
+ */
+function withUsernameHint(url: string): string {
+  const name = getDisplayUsername();
+  if (!name) return url;
+  try {
+    const u = new URL(url);
+    u.searchParams.set("u", name);
+    return u.toString();
+  } catch {
+    return url;
   }
 }
 
@@ -211,7 +260,8 @@ export async function openMissionControlWithAttribution(
     }
   }
 
-  const url = (await fetchBillingHandoffUrl(intent, itemId)) ?? fallbackUrl;
+  const url =
+    (await fetchBillingHandoffUrl(intent, itemId)) ?? withUsernameHint(fallbackUrl);
 
   if (win && !win.closed) {
     win.location.href = url;
@@ -230,12 +280,16 @@ export interface PurchaseRecord {
   status: string;
   mode: string;
   itemSlug: string | null;
+  itemName: string | null;
   quantity: number;
   amountCents: number | null;
   currency: string | null;
+  paymentStatus: string | null;
   originUserId: string | null;
   originUsername: string | null;
   originSource: string;
+  stripeCheckoutSessionId: string | null;
+  stripePaymentIntentId: string | null;
 }
 
 export interface PurchaseHistoryResult {
@@ -264,4 +318,122 @@ export async function fetchPurchaseHistory(
       pagination: { limit: 25, offset: 0, total: 0, hasMore: false, nextOffset: null },
     }
   );
+}
+
+// ── Saved payment methods (billing & usage page) ────────────────────────────
+// Display references only (brand / last4 / expiry). The cards live at Stripe;
+// adding one goes through the Aurixa storefront's Stripe-hosted capture page.
+
+export interface PaymentMethodRecord {
+  id: string;
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+  funding: string | null;
+  /** 1 = primary, 2 = secondary, 3 = backup. */
+  priority: number;
+  role: string;
+  originUsername: string | null;
+  createdAt: string;
+}
+
+export interface PaymentMethodsResult {
+  paymentMethods: PaymentMethodRecord[];
+  maxPaymentMethods: number;
+}
+
+export async function fetchPaymentMethods(): Promise<PaymentMethodsResult> {
+  const { invokeSecureFunction } = await import("@/lib/secureInvoke");
+  const { data, error } = await invokeSecureFunction<PaymentMethodsResult>(
+    "mission-control-payment-methods",
+    { action: "list" },
+  );
+  if (error) throw new Error(error.message ?? "Failed to fetch payment methods");
+  return data ?? { paymentMethods: [], maxPaymentMethods: 3 };
+}
+
+export type PaymentMethodUpdate =
+  | { action: "make_primary"; paymentMethodId: string }
+  | { action: "reorder"; orderedIds: string[] }
+  | { action: "remove"; paymentMethodId: string };
+
+/** Admin-only server-side; throws with the server's error message otherwise. */
+export async function updatePaymentMethods(
+  update: PaymentMethodUpdate,
+): Promise<PaymentMethodsResult> {
+  const { invokeSecureFunction } = await import("@/lib/secureInvoke");
+  const { data, error } = await invokeSecureFunction<PaymentMethodsResult>(
+    "mission-control-payment-methods",
+    update as unknown as Record<string, unknown>,
+  );
+  if (error) throw new Error(error.message ?? "Failed to update payment methods");
+  return data ?? { paymentMethods: [], maxPaymentMethods: 3 };
+}
+
+// ── Invoices (billing & usage page) ─────────────────────────────────────────
+
+export interface InvoiceRecord {
+  id: string;
+  createdAt: string;
+  issuedAt: string | null;
+  paidAt: string | null;
+  number: string | null;
+  status: string | null;
+  description: string | null;
+  mode: string | null;
+  itemSlug: string | null;
+  itemName: string | null;
+  amountDueCents: number | null;
+  amountPaidCents: number | null;
+  subtotalCents: number | null;
+  taxCents: number | null;
+  totalCents: number | null;
+  currency: string | null;
+  hostedInvoiceUrl: string | null;
+  invoicePdfUrl: string | null;
+  originUsername: string | null;
+  periodStart: string | null;
+  periodEnd: string | null;
+}
+
+export interface InvoiceHistoryResult {
+  invoices: InvoiceRecord[];
+  pagination: {
+    limit: number;
+    offset: number;
+    total: number;
+    hasMore: boolean;
+    nextOffset: number | null;
+  };
+}
+
+export async function fetchInvoices(
+  opts: { limit?: number; offset?: number; status?: string } = {},
+): Promise<InvoiceHistoryResult> {
+  const { invokeSecureFunction } = await import("@/lib/secureInvoke");
+  const { data, error } = await invokeSecureFunction<InvoiceHistoryResult>(
+    "mission-control-invoices",
+    opts,
+  );
+  if (error) throw new Error(error.message ?? "Failed to fetch invoices");
+  return (
+    data ?? {
+      invoices: [],
+      pagination: { limit: 25, offset: 0, total: 0, hasMore: false, nextOffset: null },
+    }
+  );
+}
+
+/** Formats integer cents as localised currency (defaults to AUD). */
+export function formatMoney(cents: number | null | undefined, currency?: string | null): string {
+  if (cents == null || !Number.isFinite(cents)) return "—";
+  try {
+    return new Intl.NumberFormat("en-AU", {
+      style: "currency",
+      currency: (currency ?? "AUD").toUpperCase(),
+    }).format(cents / 100);
+  } catch {
+    return `${(cents / 100).toFixed(2)} ${currency ?? ""}`.trim();
+  }
 }

@@ -4,6 +4,7 @@
 // delete-plan.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth } from '../_shared/auth.ts';
+import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -26,11 +27,20 @@ function nextFromCron(expr: string, from = new Date()): Date | null {
   const [mn, hr, dom, mon, dow] = parts;
   const anyStar = (v: string) => v === '*';
   // Support forms: "* * * * *", "M * * * *", "M H * * *", "M H * * D", "*/N * * * *"
-  const stepMin = mn.startsWith('*/') ? Number(mn.slice(2)) : null;
-  const fixedMin = anyStar(mn) ? null : (Number.isInteger(Number(mn)) ? Number(mn) : null);
-  const fixedHr = anyStar(hr) ? null : (Number.isInteger(Number(hr)) ? Number(hr) : null);
-  const fixedDow = anyStar(dow) ? null : (Number.isInteger(Number(dow)) ? Number(dow) : null);
   if (!anyStar(dom) || !anyStar(mon)) return null; // keep it simple
+  const stepMatch = /^\*\/(\d+)$/.exec(mn);
+  const stepMin = stepMatch ? Number(stepMatch[1]) : null;
+  const parseFixed = (value: string, max: number): number | null | undefined => {
+    if (anyStar(value)) return null;
+    if (!/^\d+$/.test(value)) return undefined;
+    const parsed = Number(value);
+    return parsed <= max ? parsed : undefined;
+  };
+  const fixedMin = stepMatch ? null : parseFixed(mn, 59);
+  const fixedHr = parseFixed(hr, 23);
+  const fixedDow = parseFixed(dow, 6);
+  if (stepMin !== null && (stepMin < 1 || stepMin > 59)) return null;
+  if (fixedMin === undefined || fixedHr === undefined || fixedDow === undefined) return null;
   const d = new Date(from.getTime() + 60_000);
   d.setUTCSeconds(0, 0);
   for (let i = 0; i < 60 * 24 * 8; i++) {
@@ -105,10 +115,10 @@ Deno.serve(async (req) => {
   try { body = await req.json(); } catch {}
   const action = body?.action ?? 'list-plans';
 
-  // Public cron path — no user auth required. Runs due scheduled plans.
+  // Cron path authenticates with the configured secret instead of user credentials.
   if (action === 'run-scheduled') {
     const secret = req.headers.get('x-cron-secret');
-    if (CRON_SECRET && secret && secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
+    if (!CRON_SECRET || secret !== CRON_SECRET) return json({ error: 'unauthorized' }, 401);
     return await runScheduled(sb);
   }
 

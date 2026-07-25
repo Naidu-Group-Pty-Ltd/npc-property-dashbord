@@ -72,6 +72,19 @@ describe("resolveBrandTokens", () => {
     expect(tokens.dark["--primary"]).toBe("210 80% 50%");
   });
 
+  it("falls back safely when persisted brand colors are not strings", () => {
+    const malformedConfig = {
+      ...defaultBrandConfig,
+      brandColor: { attacker: true },
+    } as unknown as BrandConfig;
+
+    expect(() => resolveBrandTokens(malformedConfig)).not.toThrow();
+
+    const tokens = resolveBrandTokens(malformedConfig);
+    expect(tokens.light["--brand"]).toBe(defaultLightTokenMap["--brand"]);
+    expect(tokens.dark["--brand"]).toBe(defaultDarkTokenMap["--brand"]);
+  });
+
   it("derives a chart palette of 10 entries", () => {
     const tokens = resolveBrandTokens(defaultBrandConfig);
     for (let i = 1; i <= 10; i++) {

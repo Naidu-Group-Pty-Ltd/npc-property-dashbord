@@ -112,7 +112,14 @@ Deno.serve(async (req) => {
         clientState: clientStateSecret,
       };
 
-      console.log('Creating subscription:', subscription);
+      // clientState authenticates calls to the public receiver. Never expose it
+      // through function logs; operational metadata is sufficient here.
+      console.log('Creating subscription:', {
+        changeType: subscription.changeType,
+        notificationUrl: subscription.notificationUrl,
+        resource: subscription.resource,
+        expirationDateTime: subscription.expirationDateTime,
+      });
 
       const response = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
         method: 'POST',
@@ -124,22 +131,26 @@ Deno.serve(async (req) => {
       });
 
       const result = await response.json();
+      // Graph may echo clientState in success or error responses. Strip it
+      // before the response crosses any logging or API boundary.
+      const safeResult = { ...(result ?? {}) };
+      delete safeResult.clientState;
       
       if (!response.ok) {
-        console.error('Subscription creation failed:', result);
+        console.error('Subscription creation failed:', safeResult);
         return new Response(JSON.stringify({ 
           error: 'Failed to create subscription', 
-          details: result 
+          details: safeResult
         }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
-      console.log('Subscription created:', result);
+      console.log('Subscription created:', safeResult);
       return new Response(JSON.stringify({ 
         success: true, 
-        subscription: result,
+        subscription: safeResult,
         message: 'Webhook subscription created successfully. Expires in 3 days.'
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }

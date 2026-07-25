@@ -12,9 +12,11 @@ import { logActivityDirect } from '@/hooks/useActivityLogger';
 interface ChecklistInstanceViewProps {
   instance: ChecklistInstance;
   onBack: () => void;
+  canEdit: boolean;
+  canDelete: boolean;
 }
 
-export function ChecklistInstanceView({ instance, onBack }: ChecklistInstanceViewProps) {
+export function ChecklistInstanceView({ instance, onBack, canEdit, canDelete }: ChecklistInstanceViewProps) {
   const { data: items = [], isLoading } = useChecklistInstanceItems(instance.id);
   const mutations = useChecklistMutations();
 
@@ -119,7 +121,7 @@ export function ChecklistInstanceView({ instance, onBack }: ChecklistInstanceVie
             </div>
           </div>
           <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-center lg:justify-end">
-            <AlertDialog>
+            {canDelete && <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="outline" size="sm" className="min-h-10 justify-center gap-1 border-destructive/35 bg-destructive/5 text-destructive transition-all duration-200 hover:-translate-y-0.5 hover:border-destructive/70 hover:bg-destructive/10 hover:text-destructive hover:shadow-[0_10px_24px_rgba(239,68,68,0.12)] focus-visible:ring-2 focus-visible:ring-destructive/45 motion-reduce:transition-none">
                   <Trash2 className="h-3 w-3" /> Delete
@@ -137,7 +139,7 @@ export function ChecklistInstanceView({ instance, onBack }: ChecklistInstanceVie
                   <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={handleDelete} disabled={mutations.deleteInstance.isPending}>Delete Instance</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
-            </AlertDialog>
+            </AlertDialog>}
           </div>
         </div>
       </div>
@@ -217,21 +219,22 @@ export function ChecklistInstanceView({ instance, onBack }: ChecklistInstanceVie
                 {section.items.map(item => (
                   <div
                     key={item.id}
-                    className={`group/task flex min-h-12 min-w-0 cursor-pointer flex-wrap items-start gap-3 sm:flex-nowrap rounded-xl border px-3 py-3 leading-relaxed outline-none transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-300/30 hover:bg-brand-500/10 hover:shadow-[0_10px_24px_rgba(245,158,11,0.08)] motion-reduce:transition-none focus-visible:border-brand-300/45 focus-visible:bg-brand-500/10 focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-black ${item.is_checked ? 'border-success/15 bg-success/10' : 'border-border dark:border-white/5 bg-background dark:bg-black/20'}`}
-                    onClick={() => handleToggleItem(item.id, item.is_checked)}
-                    onKeyDown={(event) => {
+                    className={`group/task flex min-h-12 min-w-0 flex-wrap items-start gap-3 sm:flex-nowrap rounded-xl border px-3 py-3 leading-relaxed outline-none transition-all duration-200 motion-reduce:transition-none ${canEdit ? 'cursor-pointer hover:-translate-y-0.5 hover:border-brand-300/30 hover:bg-brand-500/10 hover:shadow-[0_10px_24px_rgba(245,158,11,0.08)] focus-visible:border-brand-300/45 focus-visible:bg-brand-500/10 focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-black' : ''} ${item.is_checked ? 'border-success/15 bg-success/10' : 'border-border dark:border-white/5 bg-background dark:bg-black/20'}`}
+                    onClick={canEdit ? () => handleToggleItem(item.id, item.is_checked) : undefined}
+                    onKeyDown={canEdit ? (event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
                         handleToggleItem(item.id, item.is_checked);
                       }
-                    }}
-                    role="checkbox"
-                    aria-checked={item.is_checked}
-                    tabIndex={0}
+                    } : undefined}
+                    role={canEdit ? 'checkbox' : undefined}
+                    aria-checked={canEdit ? item.is_checked : undefined}
+                    tabIndex={canEdit ? 0 : undefined}
                   >
                     <Checkbox
                       checked={item.is_checked}
-                      onCheckedChange={() => handleToggleItem(item.id, item.is_checked)}
+                      onCheckedChange={canEdit ? () => handleToggleItem(item.id, item.is_checked) : undefined}
+                      disabled={!canEdit}
                       className="pointer-events-none mt-0.5 h-5 w-5 rounded-full border-brand-300/55 bg-background dark:bg-black/40 shadow-inner shadow-sm dark:shadow-black/30 transition-all duration-200 data-[state=checked]:border-success/30 data-[state=checked]:bg-success/60 data-[state=checked]:text-black group-hover/task:border-brand-200"
                     />
                     <span className={`min-w-0 flex-1 basis-[calc(100%-2rem)] whitespace-normal break-words sm:basis-auto text-sm leading-6 ${item.is_checked ? 'text-muted-foreground dark:text-foreground line-through decoration-success/70 decoration-2 underline-offset-4' : 'text-foreground dark:text-foreground'}`}>

@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
-import { secureStorageDownload } from '@/hooks/useSecureStorage';
+import { fileToBase64, secureStorageDownload } from '@/hooks/useSecureStorage';
 
 interface SenderMailbox {
   id: string;
@@ -200,7 +200,7 @@ export function ClientEmailCompose({
 
       const validAttachments = attachmentData.filter(Boolean);
       if (inlineAttachment) {
-        const contentBytes = Array.from(new Uint8Array(await inlineAttachment.blob.arrayBuffer()));
+        const contentBytes = await fileToBase64(inlineAttachment.blob);
         validAttachments.push({
           name: inlineAttachment.fileName,
           contentType: 'application/pdf',

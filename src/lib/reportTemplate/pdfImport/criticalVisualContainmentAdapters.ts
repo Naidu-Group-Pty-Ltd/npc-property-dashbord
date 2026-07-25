@@ -347,7 +347,7 @@ export function buildContainmentPageInput(args: BuildContainmentPageInputArgs): 
 export interface EnsureDurableSourceRasterResult {
   page: Page;
   available: boolean;
-  /** true when the raster is backed by a durable storage reference (not a data URL). */
+  /** true when the raster is backed by a durable storage reference. */
   durable: boolean;
   updated: boolean;
   problems: string[];
@@ -357,8 +357,9 @@ export interface EnsureDurableSourceRasterResult {
  * Guarantee a page can render a source raster BEFORE a raster-only policy is
  * applied — otherwise a raster-only page with an empty background is a blank
  * page. Prefers a durable `meta.sourceRasterRef` (storage path resolved to a
- * signed URL at render time). A self-contained `data:` URL is accepted as a
- * last resort; an ephemeral `https://` signed URL is NEVER persisted.
+ * signed URL at render time). Inline data and HTTP(S) URLs are removed because
+ * template schemas are persisted and must not contain source-page pixels or
+ * ephemeral signed URLs.
  * Never mutates the input page.
  */
 export function ensureDurableSourceRasterForPage(
@@ -370,37 +371,33 @@ export function ensureDurableSourceRasterForPage(
   const background = (page.background ?? {}) as Record<string, unknown>;
   const existingImage = typeof background.imageUrl === 'string' ? background.imageUrl : '';
   const existingRef = meta.sourceRasterRef as PdfImportRasterRef | undefined;
+  const unsafeExistingImage = existingImage.startsWith('data:') || /^https?:\/\//i.test(existingImage);
+  const sanitizedPage = unsafeExistingImage
+    ? { ...page, background: { ...background, imageUrl: undefined } } as Page
+    : page;
 
-  // Already renderable (durable ref, or a self-contained data:/https URL).
+  // Only a durable private reference is safe to persist. Strip any previously
+  // hydrated or legacy inline raster even when the durable ref already exists.
   if (existingRef?.path) {
-    return { page, available: true, durable: true, updated: false, problems: [] };
-  }
-  if (existingImage && (existingImage.startsWith('data:') || /^https?:\/\//i.test(existingImage))) {
-    return { page, available: true, durable: false, updated: false, problems: [] };
+    return { page: sanitizedPage, available: true, durable: true, updated: unsafeExistingImage, problems: [] };
   }
 
   // Attach a durable reference when available.
   if (ref?.path) {
     return {
-      page: { ...page, meta: { ...meta, sourceRasterRef: ref } } as Page,
+      page: { ...sanitizedPage, meta: { ...meta, sourceRasterRef: ref } } as Page,
       available: true, durable: true, updated: true, problems: [],
     };
   }
 
-  // Last resort: a self-contained data: URL (persistable, non-durable). A signed
-  // https URL is rejected — it would expire in the persisted template.
-  if (typeof rasterDataUrl === 'string' && rasterDataUrl.startsWith('data:')) {
-    return {
-      page: { ...page, background: { ...background, imageUrl: rasterDataUrl } } as Page,
-      available: true, durable: false, updated: true, problems: [],
-    };
-  }
-
   const problems = ['no_durable_source_raster'];
-  if (typeof rasterDataUrl === 'string' && /^https?:\/\//i.test(rasterDataUrl)) {
+  if (unsafeExistingImage || (typeof rasterDataUrl === 'string' && /^https?:\/\//i.test(rasterDataUrl))) {
     problems.push('only_ephemeral_signed_url_available_not_persisted');
   }
-  return { page, available: false, durable: false, updated: false, problems };
+  if (typeof rasterDataUrl === 'string' && rasterDataUrl.startsWith('data:')) {
+    problems.push('inline_source_raster_not_persisted');
+  }
+  return { page: sanitizedPage, available: false, durable: false, updated: unsafeExistingImage, problems };
 }
 
 /** Build a durable PdfImportRasterRef map from a raster manifest (page → ref). */

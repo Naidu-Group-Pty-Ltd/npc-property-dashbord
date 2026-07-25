@@ -111,6 +111,7 @@ def test_remote_enabled_still_needs_every_condition():
     p = default_local_policy()
     p.enabled_providers = list(p.enabled_providers) + ["google-document-ai-layout"]
     p.remote_providers_enabled = True
+    p.privacy_class = "internal"
     p.residency_class = "australia-approved"
     p.approved_remote_locations = ["australia-southeast1"]
     p.approved_purposes = {"google-document-ai-layout": ["layout-recovery"]}
@@ -131,6 +132,35 @@ def test_remote_enabled_still_needs_every_condition():
     # all conditions met → permitted
     assert gate_provider(p, "google-document-ai-layout", purpose="layout-recovery", privacy_class="internal",
                          residency_class="australia-approved", trusted_location="australia-southeast1", remote_approved=True, pages=1, regions=0, byte_size=100, estimated_cost=None).permitted
+
+
+def test_remote_enabled_rejects_request_level_privacy_and_residency_restrictions():
+    p = default_local_policy()
+    p.enabled_providers = list(p.enabled_providers) + ["google-document-ai-layout"]
+    p.remote_providers_enabled = True
+    p.privacy_class = "internal"
+    p.residency_class = "australia-approved"
+    p.approved_remote_locations = ["australia-southeast1"]
+    p.approved_purposes = {"google-document-ai-layout": ["layout-recovery"]}
+    p.max_remote_pages_per_job = 5
+    p.max_remote_bytes_per_job = 1 << 20
+    gate_args = dict(
+        purpose="layout-recovery", trusted_location="australia-southeast1", remote_approved=True,
+        pages=1, regions=0, byte_size=100, estimated_cost=None,
+    )
+
+    restricted = gate_provider(
+        p, "google-document-ai-layout", privacy_class="restricted",
+        residency_class="australia-approved", **gate_args,
+    )
+    assert restricted.permitted is False and restricted.reason == "provider_policy_blocked"
+
+    remote_prohibited = gate_provider(
+        p, "google-document-ai-layout", privacy_class="internal",
+        residency_class="remote-prohibited", **gate_args,
+    )
+    assert remote_prohibited.permitted is False
+    assert remote_prohibited.reason == "provider_residency_not_approved"
 
 
 # ── E. Capability truth ──────────────────────────────────────────────────────
@@ -274,13 +304,14 @@ def test_google_layout_with_remote_policy_injected_client_only():
     p = default_local_policy()
     p.enabled_providers = list(p.enabled_providers) + ["google-document-ai-layout"]
     p.remote_providers_enabled = True
+    p.privacy_class = "internal"
     p.residency_class = "australia-approved"
     p.approved_remote_locations = ["australia-southeast1"]
     p.approved_purposes = {"google-document-ai-layout": ["layout-recovery"]}
     p.max_remote_pages_per_job = 5
     p.max_remote_bytes_per_job = 1 << 20
     client = FakeGoogleClient(google_layout_normalized_payload())
-    req = make_request(provider_id="google-document-ai-layout", purpose="layout-recovery", remote_approved=True, byte_size=1000)
+    req = make_request(provider_id="google-document-ai-layout", purpose="layout-recovery", remote_approved=True, byte_size=1000, policy=p)
     res = run_attempt(registry=reg, request=req, policy=p,
                       runtime=ProviderRuntimeContext(injected_client=client), normalization_context=_nctx(), trusted_location="australia-southeast1")
     assert res.result.status == "success"
@@ -302,6 +333,7 @@ def test_google_error_mapped_to_safe_code_no_leak():
     p = default_local_policy()
     p.enabled_providers = list(p.enabled_providers) + ["google-document-ai-layout"]
     p.remote_providers_enabled = True
+    p.privacy_class = "internal"
     p.residency_class = "australia-approved"
     p.approved_remote_locations = ["australia-southeast1"]
     p.approved_purposes = {"google-document-ai-layout": ["layout-recovery"]}
@@ -312,7 +344,7 @@ def test_google_error_mapped_to_safe_code_no_leak():
         pass
 
     client = FakeGoogleClient({}, raise_exc=QuotaError("secret-token-abc123 leaked"))
-    req = make_request(provider_id="google-document-ai-layout", purpose="layout-recovery", remote_approved=True, byte_size=1000)
+    req = make_request(provider_id="google-document-ai-layout", purpose="layout-recovery", remote_approved=True, byte_size=1000, policy=p)
     res = run_attempt(registry=reg, request=req, policy=p,
                       runtime=ProviderRuntimeContext(injected_client=client), normalization_context=_nctx(), trusted_location="australia-southeast1")
     assert res.result.status == "failure"

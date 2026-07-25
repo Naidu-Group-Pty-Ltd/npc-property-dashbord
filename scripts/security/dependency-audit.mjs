@@ -43,24 +43,40 @@ const accepted = new Set(
 );
 
 function runAudit() {
+  let report;
   try {
     const out = execSync('npm audit --json', { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    return JSON.parse(out);
+    report = JSON.parse(out);
   } catch (e) {
     // npm audit exits 1 when vulnerabilities exist; the JSON is still on stdout.
     if (e.stdout) {
-      try { return JSON.parse(e.stdout); } catch { /* fall through */ }
+      try { report = JSON.parse(e.stdout); } catch { /* fall through */ }
     }
-    console.error('dependency-audit: could not run/parse `npm audit --json`.');
-    console.error(e.message);
-    process.exit(2);
+    if (!report) failAudit(e);
   }
+
+  // Operational failures can also produce parseable JSON. Only accept the
+  // documented npm v7+ report shape so registry/audit errors fail closed.
+  if (!isRecord(report?.vulnerabilities) || !isRecord(report?.metadata?.vulnerabilities)) {
+    failAudit(new Error('`npm audit --json` returned an invalid audit report.'));
+  }
+  return report;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function failAudit(error) {
+  console.error('dependency-audit: could not run/parse `npm audit --json`.');
+  console.error(error.message);
+  process.exit(2);
 }
 
 const report = runAudit();
 
 // npm v7+ schema: report.vulnerabilities is keyed by package name.
-const vulns = report.vulnerabilities || {};
+const vulns = report.vulnerabilities;
 const blocking = [];
 const belowThreshold = [];
 

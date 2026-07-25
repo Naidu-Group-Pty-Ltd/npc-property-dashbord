@@ -39,6 +39,7 @@ const SEMANTIC = {
   'indigo|violet|purple|fuchsia|pink': 'accent',
 };
 const NEUTRAL = 'slate|gray|zinc|neutral|stone';
+const OPACITY = '(\\/(?:\\d{1,3}|\\[[^\\]\\s]+\\]))?';
 // bg opacity by shade for collapsed (single-hue) tokens
 const BG_OPACITY = { 50: '/10', 100: '/15', 200: '/20', 300: '/30', 400: '/60' };
 
@@ -46,45 +47,45 @@ function migrate(src) {
   let s = src;
 
   // ── Brand gold: preserve shade + opacity, swap family only ──────────────
-  s = s.replace(/\b(bg|text|border|ring-offset|ring|from|to|via|divide|fill|stroke|outline|decoration|placeholder|caret|shadow)-(?:amber|yellow)-(\d{2,3})(\/\d{1,3})?/g,
+  s = s.replace(new RegExp(`\\b(bg|text|border|ring-offset|ring|from|to|via|divide|fill|stroke|outline|decoration|placeholder|caret|shadow)-(?:amber|yellow)-(\\d{2,3})(?!\\d)${OPACITY}`, 'g'),
     (_m, u, shade, op) => `${u}-brand-${shade}${op || ''}`);
 
   // ── Semantic families: collapse by role to preserve contrast ────────────
   for (const [families, token] of Object.entries(SEMANTIC)) {
     // text: light on-solid text → foreground; else → token colour
-    s = s.replace(new RegExp(`\\btext-(?:${families})-(?:50|100)(\\/\\d{1,3})?`, 'g'),
+    s = s.replace(new RegExp(`\\btext-(?:${families})-(?:50|100)(?!\\d)${OPACITY}`, 'g'),
       (_m, op) => `text-${token}-foreground${op || ''}`);
-    s = s.replace(new RegExp(`\\btext-(?:${families})-\\d{2,3}(\\/\\d{1,3})?`, 'g'),
+    s = s.replace(new RegExp(`\\btext-(?:${families})-\\d{2,3}(?!\\d)${OPACITY}`, 'g'),
       (_m, op) => `text-${token}${op || ''}`);
     // bg: keep explicit opacity if present; otherwise derive from shade
-    s = s.replace(new RegExp(`\\bbg-(?:${families})-(\\d{2,3})(\\/\\d{1,3})?`, 'g'),
+    s = s.replace(new RegExp(`\\bbg-(?:${families})-(\\d{2,3})(?!\\d)${OPACITY}`, 'g'),
       (_m, shade, op) => `bg-${token}${op || BG_OPACITY[shade] || ''}`);
     // gradients / rings / borders / fills: token, keep opacity
-    s = s.replace(new RegExp(`\\b(border|ring|ring-offset|divide|from|to|via|fill|stroke|outline|shadow|decoration|caret)-(?:${families})-\\d{2,3}(\\/\\d{1,3})?`, 'g'),
+    s = s.replace(new RegExp(`\\b(border|ring|ring-offset|divide|from|to|via|fill|stroke|outline|shadow|decoration|caret)-(?:${families})-\\d{2,3}(?!\\d)${OPACITY}`, 'g'),
       (_m, u, op) => `${u}-${token}${op || (u === 'border' ? '/30' : '')}`);
   }
 
   // ── Neutrals: only the unambiguous cases ────────────────────────────────
-  s = s.replace(new RegExp(`\\btext-(?:${NEUTRAL})-(?:400|500|600)(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\btext-(?:${NEUTRAL})-(?:400|500|600)(?!\\d)${OPACITY}`, 'g'),
     (_m, op) => `text-muted-foreground${op || ''}`);
-  s = s.replace(new RegExp(`\\btext-(?:${NEUTRAL})-(?:700|800|900|950)(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\btext-(?:${NEUTRAL})-(?:700|800|900|950)(?!\\d)${OPACITY}`, 'g'),
     (_m, op) => `text-foreground${op || ''}`);
-  s = s.replace(new RegExp(`\\b(border|ring|divide)-(?:${NEUTRAL})-\\d{2,3}(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\b(border|ring|divide)-(?:${NEUTRAL})-\\d{2,3}(?!\\d)${OPACITY}`, 'g'),
     (_m, u, op) => `${u}-border${op || ''}`);
   // ring-offset colour follows the surface it sits on
-  s = s.replace(new RegExp(`\\bring-offset-(?:${NEUTRAL})-\\d{2,3}(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\bring-offset-(?:${NEUTRAL})-\\d{2,3}(?!\\d)${OPACITY}`, 'g'),
     (_m, op) => `ring-offset-background${op || ''}`);
-  s = s.replace(new RegExp(`\\bbg-(?:${NEUTRAL})-(?:50|100|200|300)(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\bbg-(?:${NEUTRAL})-(?:50|100|200|300)(?!\\d)${OPACITY}`, 'g'),
     (_m, op) => `bg-muted${op || ''}`);
-  s = s.replace(new RegExp(`\\bbg-(?:${NEUTRAL})-(?:800|900|950)(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\bbg-(?:${NEUTRAL})-(?:800|900|950)(?!\\d)${OPACITY}`, 'g'),
     (_m, op) => `bg-background${op || ''}`);
   // neutral gradient stops → flatten to a surface token (keeps opacity)
-  s = s.replace(new RegExp(`\\b(from|to|via)-(?:${NEUTRAL})-(?:700|800|900|950)(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\b(from|to|via)-(?:${NEUTRAL})-(?:700|800|900|950)(?!\\d)${OPACITY}`, 'g'),
     (_m, u, op) => `${u}-background${op || ''}`);
-  s = s.replace(new RegExp(`\\b(from|to|via)-(?:${NEUTRAL})-(?:50|100|200|300|400|500|600)(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\b(from|to|via)-(?:${NEUTRAL})-(?:50|100|200|300|400|500|600)(?!\\d)${OPACITY}`, 'g'),
     (_m, u, op) => `${u}-muted${op || ''}`);
   // dark-mode-only light neutral text → foreground (safe: only the dark: variant)
-  s = s.replace(new RegExp(`\\bdark:text-(?:${NEUTRAL})-(?:50|100|200|300)(\\/\\d{1,3})?`, 'g'),
+  s = s.replace(new RegExp(`\\bdark:text-(?:${NEUTRAL})-(?:50|100|200|300)(?!\\d)${OPACITY}`, 'g'),
     (_m, op) => `dark:text-foreground${op || ''}`);
 
   return s;

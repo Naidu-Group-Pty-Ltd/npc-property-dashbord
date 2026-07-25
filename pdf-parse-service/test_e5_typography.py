@@ -165,6 +165,32 @@ def test_no_guessed_unicode_for_unmapped():
     assert r["glyphs"][0]["unicode"] is None and r["glyphs"][0]["codePoint"] is None
 
 
+def test_page_glyph_evidence_has_aggregate_budget():
+    text = "A" * st.MAX_GLYPHS_PER_RUN
+    spans = [span(text, y=i, sid=f"s{i}") for i in range(100)]
+
+    runs, problems = st.build_page_typography(
+        global_page=1, page_id="p", spans=spans,
+    )
+
+    assert sum(len(item["glyphs"]) for item in runs) == st.MAX_GLYPH_EVIDENCE_PER_PAGE
+    assert "typography_glyph_budget_exceeded" in problems
+    assert len(runs) < len(spans)
+
+
+def test_page_text_codepoints_have_aggregate_budget():
+    text = "A" * st.MAX_RUN_TEXT_LEN
+    spans = [span(text, y=i, sid=f"s{i}") for i in range(10)]
+
+    runs, problems = st.build_page_typography(
+        global_page=1, page_id="p", spans=spans,
+    )
+
+    assert sum(len(item["codePoints"]) for item in runs) == st.MAX_TEXT_CODEPOINTS_PER_PAGE
+    assert "typography_text_budget_exceeded" in problems
+    assert len(runs) < len(spans)
+
+
 # ── D. Font identity ────────────────────────────────────────────────────────
 
 def test_subset_prefix_retained_and_normalized():

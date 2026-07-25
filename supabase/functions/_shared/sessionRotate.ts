@@ -82,8 +82,7 @@ export async function rotateSession(
       idle_expires_at: idleExpiresAt.toISOString(),
       ip_address: old.ip_address,
       user_agent: old.user_agent,
-      rotated_from: oldSessionId,
-      rotation_reason: reason,
+      rotated_from_session_id: oldSessionId,
     };
     // WP-11A: store only the peppered hash when available; write plaintext solely
     // as a fallback when the pepper is unconfigured (hash-first readers resolve both).
@@ -113,8 +112,8 @@ export async function rotateSession(
       .eq('id', oldSessionId);
 
     if (revErr) {
-      // Non-fatal: new session exists; log so ops can reconcile.
-      console.warn('[rotateSession] revoke of old session failed:', revErr.message);
+      console.error('[rotateSession] revoke of old session failed:', revErr.message);
+      return { ok: false, error: 'revoke_failed' };
     }
 
     return {

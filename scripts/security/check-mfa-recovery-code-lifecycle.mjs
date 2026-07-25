@@ -19,5 +19,7 @@ for (const [contents, needle] of [
   [client, 'recoveryCodes: data.recovery_codes'],
   [settings, 'Save your recovery codes now.'],
 ]) if (!contents.includes(needle)) throw new Error(`MFA recovery-code lifecycle invariant is missing: ${needle}`);
+if (!helper.includes('const CODE_BYTES = 12;')) throw new Error('Recovery-code generation must allocate one random byte per code character.');
+if (!handler.includes('const ip = getTrustedClientIp(req.headers);')) throw new Error('Recovery-code rate limiting must read the trusted client IP from request headers.');
 if (settings.includes('localStorage') || settings.includes('sessionStorage')) throw new Error('Recovery codes must not be persisted in browser storage.');
 console.log('MFA recovery codes are peppered, one-time, atomically consumed, rate-limited, and displayed only once.');

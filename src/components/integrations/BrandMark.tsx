@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { brandLogoUrl, getBrandProfile } from '@/lib/integrations/brandProfiles';
-import { INLINE_GLYPHS } from './brandGlyphs';
+import { getInlineGlyph } from './brandGlyphs';
 
 interface BrandMarkProps {
   integrationId: string;

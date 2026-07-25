@@ -1,6 +1,6 @@
 # WP-15 — Deployment, Verification & Launch Gate
 
-Source: `NPC_Property_Dashboard_Codex_Security_Implementation_Plan.md` §22.
+Source: the restricted security program's approved launch-gate work package.
 
 This document is the **operator runbook** for the final go/no-go review. Every
 box must be ticked, and every artefact produced under

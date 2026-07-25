@@ -86,6 +86,16 @@ describe('C5 — hybrid native page shows content, not the raster (in export)', 
     expect(html).toContain(NATIVE_MARKER);
     expect(html).toContain(RASTER_URL);
   });
+
+  it('honours the typed policy when a stale legacy flag marks the reference raster as output', () => {
+    const inconsistentTemplate = templateWithPolicy(
+      { pdfImport: nativePolicy('hybrid') },
+      { imageUrl: RASTER_URL, underlay: false, opacity: 1, imageFit: 'fill' },
+    );
+    const { html } = renderTemplateToHtml(inconsistentTemplate, { data: {}, editorMode: false });
+    expect(html).toContain(NATIVE_MARKER);
+    expect(html).not.toContain(RASTER_URL);
+  });
 });
 
 describe('C5 — legacy normalization without a typed policy', () => {
@@ -122,6 +132,13 @@ describe('C5 — legacy normalization without a typed policy', () => {
   it('an ordinary native page (no raster) renders its content unchanged', () => {
     const template = templateWithPolicy({}, { color: '#ffffff' });
     const { html } = renderTemplateToHtml(template, { data: {}, editorMode: false });
+    expect(html).toContain(NATIVE_MARKER);
+  });
+
+  it('keeps an ordinary decorative background image unchanged', () => {
+    const template = templateWithPolicy({}, { imageUrl: RASTER_URL, imageFit: 'cover' });
+    const { html } = renderTemplateToHtml(template, { data: {}, editorMode: false });
+    expect(html).toContain(RASTER_URL);
     expect(html).toContain(NATIVE_MARKER);
   });
 });
