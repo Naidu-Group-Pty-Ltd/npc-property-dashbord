@@ -4,15 +4,10 @@
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth } from "../_shared/auth.ts";
+import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-cron-secret, x-session-token, x-command-centre-session-token",
-};
-const json = (body: unknown, status = 200) =>
+const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { ...cors, "content-type": "application/json" },
@@ -227,7 +222,15 @@ ${item.excerpt ?? "(no excerpt supplied)"}`,
 }
 
 Deno.serve(async (req) => {
+  const cors = createCorsHeaders(req.headers.get("origin"));
+  cors["Access-Control-Allow-Headers"] += ", x-cron-secret";
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "method_not_allowed" }), {
+      status: 405,
+      headers: { ...cors, Allow: "POST", "content-type": "application/json" },
+    });
+  }
 
   const csrf = enforceCsrf(req);
   if (!csrf.ok) return csrfDenied(cors, csrf);
@@ -249,10 +252,10 @@ Deno.serve(async (req) => {
   if (!authorised) {
     const verified = await verifyAuth(sb, req.headers, {});
     if (verified.error || !verified.userId) {
-      return json({ error: "Unauthorised market ingestion request." }, 401);
+      return json({ error: "Unauthorised market ingestion request." }, 401, cors);
     }
     authorised = await isAdminOrSuperadmin(sb, verified.userId);
-    if (!authorised) return json({ error: "Forbidden market ingestion request." }, 403);
+    if (!authorised) return json({ error: "Forbidden market ingestion request." }, 403, cors);
   }
 
   const { force = false, sourceIds = null } =
@@ -261,7 +264,7 @@ Deno.serve(async (req) => {
   let query = sb.from("market_sources").select("*").eq("enabled", true);
   if (Array.isArray(sourceIds) && sourceIds.length) query = query.in("id", sourceIds);
   const { data: sources, error } = await query;
-  if (error) return json({ error: error.message }, 500);
+  if (error) return json({ error: error.message }, 500, cors);
 
   const summary = {
     sourcesConsidered: sources?.length ?? 0,
@@ -415,5 +418,5 @@ Deno.serve(async (req) => {
     }
   }
 
-  return json(summary);
+  return json(summary, 200, cors);
 });
