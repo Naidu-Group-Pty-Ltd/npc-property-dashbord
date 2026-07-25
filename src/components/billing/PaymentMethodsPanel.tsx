@@ -26,26 +26,13 @@ import {
   AlertTriangle, ArrowUp, CreditCard, Plus, RefreshCw, ShieldCheck, Star, Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  classifyWalletError,
+  friendlyWalletError,
+  type WalletErrorKind,
+} from "./walletErrors";
 
 const ROLE_LABEL: Record<number, string> = { 1: "Primary", 2: "Secondary", 3: "Backup" };
-
-/**
- * Backend hiccups that resolve on their own — Mission Control mid-deploy, a
- * PostgREST schema-cache reload, a rate-limit window — get one silent retry
- * and friendly copy instead of raw internals like
- * "payment_methods_list_failed: Could not find the table … in the schema cache".
- */
-function isTransientWalletError(message: string): boolean {
-  return /schema cache|payment_methods_list_failed|internal_error|mission_control_unreachable|rate.?limit|\b50[234]\b/i.test(
-    message,
-  );
-}
-
-function friendlyWalletError(message: string): string {
-  return isTransientWalletError(message)
-    ? "Payment methods are temporarily unavailable — the billing service is catching up. Try again in a moment."
-    : message;
-}
 
 function roleBadgeClass(priority: number): string {
   return priority === 1
@@ -81,28 +68,34 @@ export function PaymentMethodsPanel() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorKind, setErrorKind] = useState<WalletErrorKind | null>(null);
   const [removeTarget, setRemoveTarget] = useState<PaymentMethodRecord | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setErrorKind(null);
     // One silent retry for transient backend errors before surfacing anything.
+    // Permanent failures (wallet tables not provisioned in Mission Control)
+    // are surfaced immediately — retrying cannot fix those.
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const result = await fetchPaymentMethods();
         setMethods(result.paymentMethods);
         setMaxCards(result.maxPaymentMethods);
         setError(null);
+        setErrorKind(null);
         break;
       } catch (e) {
         const raw = e instanceof Error ? e.message : "Failed to load payment methods.";
         console.error("[wallet] load failed:", raw);
-        if (attempt === 0 && isTransientWalletError(raw)) {
+        const kind = classifyWalletError(raw);
+        if (attempt === 0 && kind === "transient") {
           await new Promise((resolve) => setTimeout(resolve, 2500));
           continue;
         }
         setError(friendlyWalletError(raw));
-        break;
+        setErrorKind(kind);
       }
     }
     setLoading(false);
@@ -155,7 +148,9 @@ export function PaymentMethodsPanel() {
   }
 
   const sorted = [...methods].sort((a, b) => a.priority - b.priority);
-  const canAdd = methods.length < maxCards;
+  // While the wallet backend is unprovisioned, a card vaulted on Stripe's
+  // page would never land in the wallet — block the entry point entirely.
+  const canAdd = methods.length < maxCards && errorKind !== "not_provisioned";
 
   return (
     <Card className="min-w-0 overflow-hidden rounded-[1.75rem] border-border/70 bg-card/95 ring-1 ring-black/5 dark:border-white/10 dark:bg-background/75 dark:ring-white/5">

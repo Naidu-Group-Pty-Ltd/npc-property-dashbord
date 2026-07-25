@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import {
   AlertTriangle, ChevronLeft, ChevronRight, ExternalLink, FileText, ReceiptText, RefreshCw,
 } from "lucide-react";
+import { friendlyWalletError } from "./walletErrors";
 
 const PAGE_SIZE = 25;
 
@@ -67,7 +68,9 @@ export function InvoicesPanel() {
       setRows(result.invoices);
       setTotal(result.pagination.total);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load invoices.");
+      const raw = e instanceof Error ? e.message : "Failed to load invoices.";
+      console.error("[invoices] load failed:", raw);
+      setError(friendlyWalletError(raw));
     } finally {
       setLoading(false);
     }
