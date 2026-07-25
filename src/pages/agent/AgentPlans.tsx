@@ -417,7 +417,7 @@ export default function AgentPlans() {
                   </ol>
                 </div>
 
-                <PlanScheduleCard plan={activePlan} onChanged={() => { loadPlan(activePlan.id); refreshPlans(); }} />
+                <PlanScheduleCard key={activePlan.id} plan={activePlan} onChanged={() => { loadPlan(activePlan.id); refreshPlans(); }} />
                 <PlanRunsCard planId={activePlan.id} />
               </>
             )}
