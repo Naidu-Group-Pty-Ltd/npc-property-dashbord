@@ -1548,11 +1548,11 @@
 
   .reports-severity-high::before,
   .reports-insight-alert-negative {
-    @apply border-warning/30 bg-warning-light/70;
+    @apply border-destructive/30 bg-destructive-light/70;
   }
 
   .reports-severity-badge.reports-severity-high {
-    @apply border-warning/30 bg-warning-light/70 text-warning;
+    @apply border-destructive/30 bg-destructive-light/70 text-destructive;
   }
 
   .reports-investment-panel-header,
