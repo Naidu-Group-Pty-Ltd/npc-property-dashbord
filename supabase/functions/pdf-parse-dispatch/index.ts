@@ -285,7 +285,7 @@ async function computeCacheFingerprint(
     redactionPolicyVersion: REDACTION_POLICY_VERSION,
     descriptionTier: typeof requestPayload?.description_tier === 'string'
       ? (requestPayload.description_tier as string)
-      : 'on',
+      : 'auto',
     includeMarkdown: requestPayload?.include_markdown !== false,
     includeDoctags: true,
     rasterFormat: 'png',
@@ -763,7 +763,8 @@ async function dispatchChunkToSidecar(
     extractor_lane: extractorLane,
     callback_url: `${SUPABASE_URL}/functions/v1/pdf-parse-chunk-callback`,
     callback_token: PARSE_TOKEN,
-    enable_picture_description: requestPayload?.description_tier !== 'off',
+    enable_picture_description: requestPayload?.description_tier === 'on'
+      || requestPayload?.description_tier === 'premium',
     include_doctags: true,
     include_markdown: requestPayload?.include_markdown !== false,
     redact_pii: Boolean(requestPayload?.redact_pii),
@@ -956,9 +957,10 @@ async function runJob(
 
     // ---- Wave F-Option-3: monolithic callback dispatch (small docs) -------
     await setStage(admin, jobId, 'parsing');
-    const descriptionTier = (requestPayload?.description_tier as string) ?? 'on';
+    const descriptionTier = (requestPayload?.description_tier as string) ?? 'auto';
     const includeMarkdown = requestPayload?.include_markdown === false ? false : true;
-    const enablePictureDescription = descriptionTier !== 'off' && (!plan || plan.requires_picture_description === true);
+    const enablePictureDescription = (descriptionTier === 'on' || descriptionTier === 'premium')
+      && (!plan || plan.requires_picture_description === true);
     const rasterDpi = (effectiveMode === 'pixel_perfect' || effectiveMode === 'pixel-perfect') ? 200 : 144;
 
     const parseBody: Record<string, unknown> = {
@@ -1221,7 +1223,7 @@ Deno.serve(async (req) => {
       // NON-redacted job (or vice versa).
       const idempotencyPolicy = [
         `redact=${Boolean(body.redact_pii) ? 1 : 0}`,
-        `desc=${typeof body.description_tier === 'string' ? body.description_tier : 'on'}`,
+        `desc=${typeof body.description_tier === 'string' ? body.description_tier : 'auto'}`,
         `md=${body.include_markdown === false ? 0 : 1}`,
         `override=${body.allow_mode_override !== false ? 1 : 0}`,
       ].join(':');
@@ -1269,7 +1271,7 @@ Deno.serve(async (req) => {
             has_source_path: Boolean(body.source_path),
             has_source_base64: Boolean(body.source_base64),
             // Phase D passthroughs (consumed by runJob).
-            description_tier: typeof body.description_tier === 'string' ? body.description_tier : 'on',
+            description_tier: typeof body.description_tier === 'string' ? body.description_tier : 'auto',
             include_markdown: body.include_markdown === false ? false : true,
             redact_pii: Boolean(body.redact_pii),
             pii_redaction_reason: typeof body.pii_redaction_reason === 'string' ? body.pii_redaction_reason.slice(0, 120) : null,
