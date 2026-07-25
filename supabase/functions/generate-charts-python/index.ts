@@ -17,6 +17,58 @@ interface ChartData {
   height?: number;
 }
 
+const CHART_TYPES = new Set<ChartData['type']>(['bar', 'pie', 'line', 'scatter', 'area', 'radar', 'doughnut', 'donut']);
+const SAFE_HEX_COLOR = /^#[0-9a-fA-F]{3,4}([0-9a-fA-F]{2})?$/;
+const SVG_TEXT_ESCAPES: Record<string, string> = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&apos;',
+};
+
+function escapeSvgText(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => SVG_TEXT_ESCAPES[character]);
+}
+
+function validateChart(rawChart: unknown): ChartData {
+  if (!rawChart || typeof rawChart !== 'object') {
+    throw new Error('Invalid chart data');
+  }
+
+  const chart = rawChart as Record<string, unknown>;
+  if (typeof chart.type !== 'string' || !CHART_TYPES.has(chart.type as ChartData['type']) ||
+      typeof chart.title !== 'string' || !Array.isArray(chart.data)) {
+    throw new Error('Invalid chart data');
+  }
+
+  const validateDimension = (value: unknown, name: string): number | undefined => {
+    if (value === undefined) return undefined;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 4096) {
+      throw new Error(`Invalid chart ${name}`);
+    }
+    return value;
+  };
+
+  return {
+    type: chart.type as ChartData['type'],
+    title: chart.title,
+    data: chart.data.map((rawItem) => {
+      if (!rawItem || typeof rawItem !== 'object') throw new Error('Invalid chart data point');
+      const item = rawItem as Record<string, unknown>;
+      if (typeof item.label !== 'string' || typeof item.value !== 'number' || !Number.isFinite(item.value)) {
+        throw new Error('Invalid chart data point');
+      }
+      if (item.color !== undefined && (typeof item.color !== 'string' || !SAFE_HEX_COLOR.test(item.color))) {
+        throw new Error('Invalid chart color');
+      }
+      return { label: item.label, value: item.value, color: item.color as string | undefined };
+    }),
+    width: validateDimension(chart.width, 'width'),
+    height: validateDimension(chart.height, 'height'),
+  };
+}
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -40,7 +92,7 @@ Deno.serve(async (req) => {
     console.log('=== CHART GENERATION FUNCTION START ===');
     
     const body = await req.json();
-    const { charts }: { charts: ChartData[] } = body;
+    const { charts } = body;
     
     const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
@@ -52,13 +104,14 @@ Deno.serve(async (req) => {
     if (!charts || !Array.isArray(charts)) {
       throw new Error('Invalid charts data: charts must be an array');
     }
+    const validatedCharts = charts.map(validateChart);
     
     console.log(`Generating ${charts.length} charts using pure SVG`);
 
     const chartImages: Record<string, string> = {};
 
     // Generate each chart as optimized SVG
-    for (const chart of charts) {
+    for (const chart of validatedCharts) {
       console.log(`Generating chart: ${chart.title}`);
       
       try {
@@ -141,7 +194,7 @@ function generateOptimizedSVGChart(chart: ChartData): string {
     
     <!-- Title -->
     <text x="${width/2}" y="40" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#1f2937">
-      ${title}
+      ${escapeSvgText(title)}
     </text>
     
     <!-- Chart content -->
@@ -207,11 +260,11 @@ function generateEnhancedBarChart(data: Array<{ label: string; value: number; co
     
     if (labelLength > 8) {
       labels += `<text x="${labelX}" y="${labelY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#6b7280" transform="rotate(-45, ${labelX}, ${labelY})">
-        ${displayLabel}
+        ${escapeSvgText(displayLabel)}
       </text>`;
     } else {
       labels += `<text x="${labelX}" y="${labelY}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">
-        ${displayLabel}
+        ${escapeSvgText(displayLabel)}
       </text>`;
     }
   });
@@ -280,7 +333,7 @@ function generateEnhancedPieChart(data: Array<{ label: string; value: number; co
     const legendX = centerX + radius + 40;
     legends += `<rect x="${legendX}" y="${legendY - 8}" width="16" height="16" fill="${color}" rx="2"/>`;
     legends += `<text x="${legendX + 25}" y="${legendY + 4}" font-family="Arial, sans-serif" font-size="12" fill="#374151">
-      ${item.label} (${item.value})
+      ${escapeSvgText(item.label)} (${item.value})
     </text>`;
     
     currentAngle += sliceAngle;
@@ -336,7 +389,7 @@ function generateEnhancedLineChart(data: Array<{ label: string; value: number; c
     // X-axis label
     const displayLabel = item.label.length > 10 ? item.label.substring(0, 10) + '...' : item.label;
     labels += `<text x="${x}" y="${padding + height + 80}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">
-      ${displayLabel}
+      ${escapeSvgText(displayLabel)}
     </text>`;
   });
   
@@ -371,7 +424,7 @@ function generateScatterChart(data: Array<{ label: string; value: number; color?
     dots += `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="0.65" stroke="${color}" stroke-width="2"/>`;
     dots += `<text x="${cx}" y="${cy - r - 6}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#374151">${item.value}</text>`;
     const displayLabel = item.label.length > 12 ? item.label.substring(0, 12) + '…' : item.label;
-    labels += `<text x="${cx}" y="${padding + 60 + height + 20}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#6b7280" transform="rotate(-25, ${cx}, ${padding + 60 + height + 20})">${displayLabel}</text>`;
+    labels += `<text x="${cx}" y="${padding + 60 + height + 20}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#6b7280" transform="rotate(-25, ${cx}, ${padding + 60 + height + 20})">${escapeSvgText(displayLabel)}</text>`;
   });
   return gridLines + dots + labels;
 }
@@ -403,7 +456,7 @@ function generateRadarChart(data: Array<{ label: string; value: number; color?: 
     shapePts.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`);
     const lx = cx + (radius + 18) * Math.cos(a);
     const ly = cy + (radius + 18) * Math.sin(a);
-    labels += `<text x="${lx}" y="${ly}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">${item.label}</text>`;
+    labels += `<text x="${lx}" y="${ly}" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">${escapeSvgText(item.label)}</text>`;
   });
   const shape = `<polygon points="${shapePts.join(' ')}" fill="#3b82f6" fill-opacity="0.35" stroke="#3b82f6" stroke-width="2"/>`;
   return rings + shape + labels;
@@ -413,7 +466,7 @@ function createFallbackChart(chart: ChartData): string {
   return `<svg width="600" height="400" xmlns="http://www.w3.org/2000/svg" style="background: white;">
     <rect width="600" height="400" fill="#f8f9fa" stroke="#e9ecef" stroke-width="1"/>
     <text x="300" y="180" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" fill="#333">
-      Chart: ${chart.title}
+      Chart: ${escapeSvgText(chart.title)}
     </text>
     <text x="300" y="210" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#666">
       ${chart.data.length} data points (${chart.type} chart)
