@@ -7577,6 +7577,7 @@ async function handleGetMessages(sb: any, userId: string, convId: string, cors: 
   if (allIds.size > 0) {
     const { data: memRows } = await sb.from('agent_semantic_memories')
       .select('id, content, tags, importance, feedback_score, kind')
+      .eq('user_id', userId)
       .in('id', Array.from(allIds));
     for (const r of (memRows || [])) memoryMap[r.id] = r;
   }
