@@ -397,6 +397,7 @@ export default function Conversations() {
             `Message from ${brandSettings.companyName || "Dashboard"}`,
           body: message,
           mailboxSource: selectedMailbox,
+          senderMailboxId: selectedMailbox === "personal" ? user?.id : undefined,
         });
         if (error) throw new Error(error.message);
         if (data?.error) throw new Error(data.error);

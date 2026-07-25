@@ -53,6 +53,7 @@ Deno.serve(async (req) => {
             originalEmailId: row.original_email_id || undefined,
             attachments: Array.isArray(row.attachments) && row.attachments.length ? row.attachments : undefined,
             mailboxSource: row.mailbox_source || 'admin',
+            senderMailboxId: row.mailbox_source === 'personal' ? row.user_id : undefined,
             effectiveUserId: row.user_id,
           }),
         });
