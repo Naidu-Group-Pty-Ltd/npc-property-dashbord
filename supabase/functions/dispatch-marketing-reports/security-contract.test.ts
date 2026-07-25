@@ -7,3 +7,8 @@ Deno.test('marketing report cron dispatch requires the internal edge secret', ()
   assertStringIncludes(source, "req.headers.get('x-internal-edge-secret')");
   assert(!source.includes("bearerToken === supabaseAnonKey"));
 });
+
+Deno.test('marketing report dispatch initializes its downstream anon credential', () => {
+  assertStringIncludes(source, "const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!");
+  assertStringIncludes(source, 'processScheduleDispatch(supabase, supabaseUrl, supabaseServiceKey, supabaseAnonKey,');
+});
