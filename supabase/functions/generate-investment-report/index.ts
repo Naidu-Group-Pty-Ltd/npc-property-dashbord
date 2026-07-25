@@ -2412,7 +2412,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-                'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
+                // The gateway requires a JWT; verifyAuth uses the separate internal credential.
+                'Authorization': `Bearer ${supabaseAnonKey}`,
+                'x-internal-edge-secret': INTERNAL_EDGE_SECRET,
                 ...(supabaseAnonKey ? { 'apikey': supabaseAnonKey } : {})
             },
             body: JSON.stringify({
@@ -2555,7 +2557,9 @@ const __investmentReportHandler = async (req: Request): Promise<Response> => {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${INTERNAL_EDGE_SECRET}`,
+                  // The gateway requires a JWT; verifyAuth uses the separate internal credential.
+                  'Authorization': `Bearer ${supabaseAnonKey}`,
+                  'x-internal-edge-secret': INTERNAL_EDGE_SECRET,
                   ...(supabaseAnonKey ? { 'apikey': supabaseAnonKey } : {})
                 },
                 body: JSON.stringify({
