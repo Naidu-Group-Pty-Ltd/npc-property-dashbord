@@ -5,7 +5,7 @@ import { checkPermission } from '../_shared/permissions.ts';
 import { buildProvenance, logClientActivity } from '../_shared/client-data-provenance.ts';
 import { buildDocumentDedupeKey, buildNoteDedupeKey, createSyncEvent, resolveSyncConflict, sha256Text, SYNC_CONFLICT_WINDOW_MS } from '../_shared/client-sync.ts';
 import { resolvePortfolioReportDeletionTarget } from './portfolioReportDeletion.ts';
-import { canPublishPortfolioForClient } from './portfolioPublicationAuthorization.ts';
+import { canManageClient, canPublishPortfolioForClient } from './portfolioPublicationAuthorization.ts';
 
 type TableName = 'clients' | 'client_properties' | 'client_income' | 'client_expenses' |
                  'client_assets' | 'client_liabilities' | 'client_employment' |
@@ -26,6 +26,21 @@ interface RequestBody {
   reportId?: string;
   data?: Record<string, any> | Record<string, any>[]; // Allow array for batch inserts
   session_token?: string;
+}
+
+async function isAuthorizedForClient(
+  supabase: any,
+  userId: string,
+  clientId: string,
+  authMethod?: string,
+): Promise<boolean> {
+  if (authMethod === 'service_role' || userId === 'service_role') return true;
+
+  const [{ data: client }, { data: superadminRole }] = await Promise.all([
+    supabase.from('clients').select('id, created_by, assigned_team_user_id').eq('id', clientId).maybeSingle(),
+    supabase.from('user_roles').select('role').eq('user_id', userId).eq('role', 'superadmin').maybeSingle(),
+  ]);
+  return canManageClient(userId, client, Boolean(superadminRole), false);
 }
 
 const ALLOWED_TABLES: TableName[] = [
@@ -59,6 +74,44 @@ const ALLOWED_TABLES: TableName[] = [
   'ghl_conversations',
   'ghl_conversation_messages',
 ];
+
+const DEAL_CHILD_TABLES: TableName[] = ['deal_stages', 'build_progress_payments', 'builder_invoices'];
+
+async function dealBelongsToClient(supabase: any, dealId: string, clientId: string): Promise<boolean> {
+  const { data: deal } = await supabase
+    .from('client_deals')
+    .select('id')
+    .eq('id', dealId)
+    .eq('client_id', clientId)
+    .maybeSingle();
+  return Boolean(deal);
+}
+
+async function dealChildMutationMatchesClient(
+  supabase: any,
+  table: TableName,
+  operation: Operation,
+  clientId: string,
+  recordId: string | undefined,
+  data: Record<string, any> | Record<string, any>[] | undefined,
+): Promise<boolean> {
+  const suppliedRows = data ? (Array.isArray(data) ? data : [data]) : [];
+  const suppliedDealIds = suppliedRows.flatMap((row) => typeof row.deal_id === 'string' ? [row.deal_id] : []);
+
+  if (operation === 'create' || operation === 'upsert') {
+    if (suppliedDealIds.length !== suppliedRows.length) return false;
+  }
+
+  if ((operation === 'update' || operation === 'delete') && recordId) {
+    const { data: existing } = await supabase.from(table).select('deal_id').eq('id', recordId).maybeSingle();
+    if (!existing?.deal_id) return false;
+    suppliedDealIds.push(existing.deal_id);
+  }
+
+  const uniqueDealIds = [...new Set(suppliedDealIds)];
+  return uniqueDealIds.length > 0
+    && (await Promise.all(uniqueDealIds.map((dealId) => dealBelongsToClient(supabase, dealId, clientId)))).every(Boolean);
+}
 
 
 function normalizeAddressPayload(payload: Record<string, any>) {
@@ -440,10 +493,42 @@ Deno.serve(async (req) => {
     
     // Validate clientId for client-related tables only
     const isPortfolioReportDelete = table === 'portfolio_analysis_reports' && operation === 'delete';
+    if (table === 'clients' && operation !== 'create' && !clientId) {
+      return new Response(
+        JSON.stringify({ error: 'clientId is required for client mutations' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
     if (!STANDALONE_TABLES.includes(table) && !isPortfolioReportDelete && !clientId) {
       return new Response(
         JSON.stringify({ error: 'clientId is required for related tables' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+    if (DEAL_CHILD_TABLES.includes(table) && !clientId) {
+      return new Response(
+        JSON.stringify({ error: 'clientId is required for deal mutations' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    // The service-role client bypasses RLS, so module permission alone is not
+    // sufficient. Bind every client-scoped mutation to a client the actor owns
+    // or is assigned to. New client creation has no existing object to check.
+    const authorizationClientId = table === 'clients'
+      ? (operation === 'create' ? undefined : clientId)
+      : ((!STANDALONE_TABLES.includes(table) || DEAL_CHILD_TABLES.includes(table)) && !isPortfolioReportDelete ? clientId : undefined);
+    if (authorizationClientId && !await isAuthorizedForClient(supabase, userId!, authorizationClientId, authMethod)) {
+      return new Response(
+        JSON.stringify({ error: 'You are not authorized to manage this client', permissionDenied: true }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+    if (clientId && DEAL_CHILD_TABLES.includes(table)
+      && !await dealChildMutationMatchesClient(supabase, table, operation, clientId, recordId, data)) {
+      return new Response(
+        JSON.stringify({ error: 'The deal record does not belong to this client', permissionDenied: true }),
+        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
@@ -562,8 +647,8 @@ Deno.serve(async (req) => {
 
         if (table === 'clients') {
           insertData = Array.isArray(insertData)
-            ? insertData.map((item) => normalizeAddressPayload(item))
-            : normalizeAddressPayload(insertData);
+            ? insertData.map((item) => normalizeAddressPayload({ ...item, created_by: userId }))
+            : normalizeAddressPayload({ ...insertData, created_by: userId });
         }
 
         const syncPlans = table === 'client_files' || table === 'client_notes'
@@ -712,6 +797,8 @@ Deno.serve(async (req) => {
         const idToUpdate = table === 'clients' ? clientId : recordId;
 
         let updatePayload = { ...data } as Record<string, any>;
+        delete updatePayload.id;
+        if (!STANDALONE_TABLES.includes(table) && clientId) updatePayload.client_id = clientId;
         if (table === 'client_address_history' || (table === 'clients' && hasAddressFields(updatePayload))) {
           updatePayload = normalizeAddressPayload(updatePayload);
         }
@@ -746,8 +833,8 @@ Deno.serve(async (req) => {
           .from(table)
           .update(updatePayload)
           .eq('id', idToUpdate);
-        // Address and employment records are client-owned: never mutate them by ID alone.
-        if ((table === 'client_address_history' || table === 'client_employment') && clientId) {
+        // Never let a valid record ID escape the authorized client boundary.
+        if (!STANDALONE_TABLES.includes(table) && clientId) {
           updateQuery = updateQuery.eq('client_id', clientId);
         }
         const { data: updated, error: updateError } = await updateQuery
@@ -867,6 +954,12 @@ Deno.serve(async (req) => {
             );
           }
           resolvedClientId = deletionTarget.clientId || undefined;
+          if (resolvedClientId && !await isAuthorizedForClient(supabase, userId!, resolvedClientId, authMethod)) {
+            return new Response(
+              JSON.stringify({ error: 'You are not authorized to manage this client', permissionDenied: true }),
+              { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+            );
+          }
           let deleteQuery = supabase
             .from('portfolio_analysis_reports')
             .delete()
@@ -900,8 +993,8 @@ Deno.serve(async (req) => {
           .from(table)
           .delete()
           .eq('id', idToDelete);
-        // Address and employment records are client-owned: never delete them by ID alone.
-        if ((table === 'client_address_history' || table === 'client_employment') && clientId) {
+        // Never let a valid record ID escape the authorized client boundary.
+        if (!STANDALONE_TABLES.includes(table) && clientId) {
           deleteQuery = deleteQuery.eq('client_id', clientId);
         }
         const { error: deleteError } = await deleteQuery;
@@ -926,6 +1019,7 @@ Deno.serve(async (req) => {
         const upsertData = STANDALONE_TABLES.includes(table)
           ? { ...data as Record<string, any> }
           : { ...data as Record<string, any>, client_id: clientId };
+        if (table === 'clients') upsertData.id = clientId;
 
         // Use appropriate conflict target
         const conflictTarget = STANDALONE_TABLES.includes(table) ? 'id' : 'client_id';
