@@ -81,15 +81,15 @@ interface NegativeCallAnalysisProps {
 
 const ROOT_CAUSE_LABELS: Record<string, { label: string; icon: React.ElementType; color: string }> = {
   pricing_objection: { label: 'Pricing Objection', icon: TrendingDown, color: 'text-brand-500' },
-  service_complaint: { label: 'Service Complaint', icon: AlertCircle, color: 'text-destructive-foreground0' },
-  agent_confusion: { label: 'Agent Confusion', icon: Users, color: 'text-warning-foreground0' },
+  service_complaint: { label: 'Service Complaint', icon: AlertCircle, color: 'text-destructive' },
+  agent_confusion: { label: 'Agent Confusion', icon: Users, color: 'text-warning' },
   long_hold_time: { label: 'Long Hold Time', icon: Clock, color: 'text-brand-500' },
-  unresolved_query: { label: 'Unresolved Query', icon: MessageSquare, color: 'text-accent-foreground0' },
-  technical_issue: { label: 'Technical Issue', icon: Zap, color: 'text-info-foreground0' },
-  miscommunication: { label: 'Miscommunication', icon: Phone, color: 'text-accent-foreground0' },
+  unresolved_query: { label: 'Unresolved Query', icon: MessageSquare, color: 'text-accent' },
+  technical_issue: { label: 'Technical Issue', icon: Zap, color: 'text-info' },
+  miscommunication: { label: 'Miscommunication', icon: Phone, color: 'text-accent' },
   customer_frustration: { label: 'Customer Frustration', icon: AlertTriangle, color: 'text-destructive' },
-  wrong_transfer: { label: 'Wrong Transfer', icon: ArrowUpRight, color: 'text-accent-foreground0' },
-  information_gap: { label: 'Information Gap', icon: FileText, color: 'text-info-foreground0' },
+  wrong_transfer: { label: 'Wrong Transfer', icon: ArrowUpRight, color: 'text-accent' },
+  information_gap: { label: 'Information Gap', icon: FileText, color: 'text-info' },
 };
 
 const RESOLUTION_STATUS_CONFIG: Record<string, { label: string; color: string; bgColor: string }> = {
@@ -100,7 +100,7 @@ const RESOLUTION_STATUS_CONFIG: Record<string, { label: string; color: string; b
 };
 
 const getSeverityColor = (severity: number | null) => {
-  if (!severity) return 'border-border/30 bg-muted0/15 text-muted-foreground dark:text-foreground';
+  if (!severity) return 'border-border/30 bg-muted/15 text-muted-foreground dark:text-foreground';
   if (severity <= 2) return 'border-brand-300/30 bg-brand-500/15 text-brand-300';
   if (severity <= 3) return 'border-warning/30 bg-warning/15 text-warning';
   if (severity <= 4) return 'border-destructive/35 bg-destructive/15 text-destructive';
