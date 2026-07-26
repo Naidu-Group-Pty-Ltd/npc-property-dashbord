@@ -15,7 +15,13 @@ GET /healthz -> 200 "ok"
 
 import os
 import logging
+import ipaddress
+import socket
+import ssl
+import zlib
 from importlib import metadata
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from flask import Flask, request, Response, jsonify
 from weasyprint import HTML
 
@@ -26,6 +32,65 @@ app = Flask(__name__)
 
 EXPECTED_TOKEN = (os.environ.get("WEASYPRINT_SERVICE_TOKEN") or os.environ.get("WEASYPRINT_API_KEY") or "").strip().strip('"')
 MAX_HTML_BYTES = int(os.environ.get("MAX_HTML_BYTES", str(25 * 1024 * 1024)))  # 25 MB
+
+
+def _validate_remote_url(url: str) -> None:
+    """Allow only public HTTPS resources to be fetched by WeasyPrint."""
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        raise ValueError("PDF resources must use an absolute HTTPS URL")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("PDF resource URLs must not contain credentials")
+    if parsed.port not in (None, 443):
+        raise ValueError("PDF resource URLs must use the standard HTTPS port")
+
+    try:
+        addresses = {
+            item[4][0]
+            for item in socket.getaddrinfo(parsed.hostname, 443, type=socket.SOCK_STREAM)
+        }
+    except socket.gaierror as exc:
+        raise ValueError("PDF resource hostname could not be resolved") from exc
+
+    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+        raise ValueError("PDF resources must not target a private or reserved address")
+
+
+class _RestrictedRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_remote_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def restricted_url_fetcher(url: str, timeout=10, ssl_context=None):
+    """Fetch public HTTPS resources while validating redirect destinations."""
+    _validate_remote_url(url)
+    context = ssl_context or ssl.create_default_context()
+    opener = build_opener(HTTPSHandler(context=context), _RestrictedRedirectHandler())
+    response = opener.open(
+        Request(url, headers={"User-Agent": "WeasyPrint restricted fetcher"}),
+        timeout=timeout,
+    )
+    try:
+        info = response.info()
+        body = response.read()
+        redirected_url = response.geturl()
+    finally:
+        response.close()
+    if info.get("Content-Encoding") == "gzip":
+        body = zlib.decompress(body, 16 + zlib.MAX_WBITS)
+    elif info.get("Content-Encoding") == "deflate":
+        try:
+            body = zlib.decompress(body)
+        except zlib.error:
+            body = zlib.decompress(body, -15)
+    return {
+        "string": body,
+        "redirected_url": redirected_url,
+        "mime_type": info.get_content_type(),
+        "encoding": info.get_param("charset"),
+        "filename": info.get_filename(),
+    }
 
 
 def _package_version(name: str) -> str:
@@ -100,7 +165,7 @@ def render():
             write_kwargs["pdf_variant"] = pdf_variant
         # `pdf_forms`/`uncompressed_pdf` skipped; we want tagged + compressed.
         try:
-            pdf_bytes = HTML(string=html, base_url=base_url).write_pdf(
+            pdf_bytes = HTML(string=html, base_url=base_url, url_fetcher=restricted_url_fetcher).write_pdf(
                 **write_kwargs,
                 optimize_images=optimize_images,
                 presentational_hints=False,
@@ -108,7 +173,7 @@ def render():
         except TypeError:
             # Fallback for very old WeasyPrint builds that don't accept these kwargs.
             log.warning("write_pdf kwargs unsupported, falling back to defaults")
-            pdf_bytes = HTML(string=html, base_url=base_url).write_pdf()
+            pdf_bytes = HTML(string=html, base_url=base_url, url_fetcher=restricted_url_fetcher).write_pdf()
     except Exception as exc:  # noqa: BLE001
         log.exception("weasyprint render failed")
         return jsonify({"error": f"render_failed: {exc}"}), 500
