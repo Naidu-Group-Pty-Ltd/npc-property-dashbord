@@ -15,6 +15,9 @@ const CHUNK_OVERLAP = 300; // Overlap between chunks
 
 // Parallel processing configuration
 const EMBEDDING_BATCH_SIZE = 20; // Process 20 embeddings at once
+const MAX_TEMPLATE_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_EXTRACTED_TEXT_LENGTH = 1_000_000;
+const MAX_TEMPLATE_CHUNKS = 400;
 
 interface TemplateParseRequest {
   templateId: string;
@@ -371,6 +374,10 @@ Deno.serve(async (req) => {
     if (downloadError) {
       throw new Error(`Failed to download template: ${downloadError.message}`);
     }
+
+    if (!fileData || fileData.size > MAX_TEMPLATE_FILE_BYTES) {
+      throw new Error(`Template files must be no larger than ${MAX_TEMPLATE_FILE_BYTES / 1024 / 1024} MB.`);
+    }
     
     let extractedText = '';
     const fileName = filePath.toLowerCase();
@@ -393,6 +400,10 @@ Deno.serve(async (req) => {
      // Use a smaller minimum and measure non-whitespace characters to avoid false failures.
      const trimmedExtracted = (extractedText || '').trim();
      extractedText = trimmedExtracted;
+
+     if (extractedText.length > MAX_EXTRACTED_TEXT_LENGTH) {
+       throw new Error(`Extracted template text exceeds the ${MAX_EXTRACTED_TEXT_LENGTH} character limit.`);
+     }
 
      const isPdf = fileName.endsWith('.pdf');
      const meaningfulChars = trimmedExtracted.replace(/\s+/g, '').length;
@@ -423,6 +434,9 @@ Deno.serve(async (req) => {
     
     // Chunk the text for RAG (chunking now includes sanitization)
     const chunks = chunkText(extractedText);
+    if (chunks.length > MAX_TEMPLATE_CHUNKS) {
+      throw new Error(`Template content exceeds the ${MAX_TEMPLATE_CHUNKS} chunk embedding limit.`);
+    }
     console.log(`🔪 Split into ${chunks.length} sanitized chunks for embedding (chunk size: ${CHUNK_SIZE})`);
     console.log(`🧹 Content sanitized: company names, contact details, and irrelevant content filtered`);
     
