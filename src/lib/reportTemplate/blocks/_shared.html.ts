@@ -284,7 +284,7 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       if (overlay.shape === 'line') {
         return withCascadeWrapper(`<div style="${base}border-top:${sw}pt solid ${stroke};"></div>`, overlay as any, ctx);
       }
-      return withCascadeWrapper(`<div style="${base}background:${fill};border:${sw}pt solid ${stroke};border-radius:${radius};"></div>`, overlay as any, ctx);
+      return withCascadeWrapper(`<div style="${base}background:${esc(fill)};border:${sw}pt solid ${stroke};border-radius:${radius};"></div>`, overlay as any, ctx);
     }
     case 'vector': {
       // R0 — editable vector geometry (icons/logos captured as SVG paths).
