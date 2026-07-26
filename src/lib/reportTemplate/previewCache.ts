@@ -92,6 +92,14 @@ export function makePreviewKey(
 
 const pageBackgroundKeyByIdentity = new WeakMap<object, string>();
 
+/** Remove canvas overlays from the iframe input; React renders them separately. */
+export function pageWithoutOverlays(page: Page): Page {
+  return {
+    ...page,
+    blocks: page.blocks.map((block) => ({ ...block, overlays: [] })),
+  };
+}
+
 /**
  * Content key for a page's *background* — the page with all overlays stripped.
  * Memoized per page object: an overlay commit creates a new page object and
@@ -101,10 +109,7 @@ const pageBackgroundKeyByIdentity = new WeakMap<object, string>();
 function pageBackgroundKey(page: Page): string {
   const hit = pageBackgroundKeyByIdentity.get(page);
   if (hit !== undefined) return hit;
-  const out = JSON.stringify({
-    ...page,
-    blocks: page.blocks.map((b) => ({ ...b, overlays: [] })),
-  });
+  const out = JSON.stringify(pageWithoutOverlays(page));
   pageBackgroundKeyByIdentity.set(page, out);
   return out;
 }

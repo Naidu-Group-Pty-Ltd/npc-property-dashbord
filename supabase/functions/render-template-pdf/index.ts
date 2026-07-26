@@ -9,6 +9,7 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
+import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -117,6 +118,10 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
+    // WeasyPrint resolves image, stylesheet, and font URLs from its own network.
+    // Enforce the resource boundary here even if an earlier importer or caller
+    // failed to normalize an asset.
+    assertSafeRenderResources(html, Deno.env.get('SUPABASE_URL') || '');
     const fileName: string = String(payload.fileName || 'template-preview.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
     const templateId: string | null = payload.templateId ? String(payload.templateId) : null;
     const templateName: string | null = payload.templateName ? String(payload.templateName).slice(0, 200) : null;
