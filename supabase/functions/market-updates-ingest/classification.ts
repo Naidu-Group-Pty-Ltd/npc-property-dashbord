@@ -42,12 +42,16 @@ export function normaliseClassification<T extends Record<string, unknown>>(value
       typeof item === "string" && MARKET_AUDIENCES.includes(item as typeof MARKET_AUDIENCES[number])
     ))]
     : [];
-  const confidence = Number(value.confidence_score);
+  let confidence = Number(value.confidence_score);
+  if (!Number.isFinite(confidence)) confidence = 0;
+  // Some models return 0-1 fractions instead of the requested 0-100 scale.
+  if (confidence > 0 && confidence <= 1) confidence = confidence * 100;
+  confidence = Math.max(0, Math.min(100, confidence));
   return {
     ...value,
     category: categoryForSegment(segments[0]),
     segments,
     audience_tags: audienceTags,
-    confidence_score: Number.isFinite(confidence) ? Math.max(0, Math.min(100, confidence)) : 0,
+    confidence_score: confidence,
   };
 }

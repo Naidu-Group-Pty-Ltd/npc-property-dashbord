@@ -1,5 +1,20 @@
 # Market Updates Phase 2
 
+## Canonical registry reconciliation (2026-07-26)
+
+Apply `20260726150000_market_source_registry_reconciliation.sql` after the Phase 1
+recovery migration. It marks the approved 20 stable `source_key` rows as
+canonical, deterministically matches legacy records by key, normalised URL or
+normalised name, reassigns update and fetch-run references, and archives matched
+legacy records without deleting history. Ambiguous or unmatched rows are retained,
+disabled and marked `unresolved_legacy` for manual review.
+
+The migration is additive and repeatable. Its single audit record reports starting,
+canonical, matched, merged, archived and unresolved counts plus reassigned reference
+counts. Source Admin displays canonical sources by default and provides separate
+Needs review and Archived views; ordinary source operations remain restricted to
+canonical rows.
+
 ## Purpose
 Market Updates is a source-backed Australian property market intelligence workspace for finance, property market, construction/supply, rental, policy/regulation and economic updates. It never displays fake news: cards, KPIs, digests and Q&A are derived from persisted Supabase records.
 
