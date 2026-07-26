@@ -33,12 +33,8 @@ jobs:
           node-version: 20
           cache: npm
 
-      # `npm ci` is intentionally NOT used: the committed package-lock.json is
-      # out of sync with package.json on main (missing rolldown/emnapi platform
-      # binaries etc.), which makes `npm ci` abort. `npm install` reconciles the
-      # lockfile and installs. Swap back to `npm ci` once the lockfile is regenerated.
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # Golden-render isolation guard, run as its own step so a renderer
       # regression (anything that changes the WeasyPrint/jsPDF output, incl. the
@@ -158,10 +154,8 @@ jobs:
           node-version: 20
           cache: npm
 
-      # `npm install` (not `npm ci`) to match the verify job — the committed
-      # lockfile is intentionally out of sync on main (see verify job note).
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: npm ci --no-audit --no-fund
 
       # Production-bound builds block on unaccepted `high` and `critical`
       # advisories. Tune only through the reviewed allowlist.

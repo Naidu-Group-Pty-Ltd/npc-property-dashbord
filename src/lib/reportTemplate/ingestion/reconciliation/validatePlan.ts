@@ -1,4 +1,4 @@
-import { OverlaySchema } from '../../templateSchema';
+import { OverlaySchema, type Overlay } from '../../templateSchema';
 import type { ImportWarning, PlanValidationResult, TemplateImportPlan } from './types';
 
 function isFinitePositive(n: unknown): n is number {
@@ -11,6 +11,14 @@ function isFiniteNumber(n: unknown): n is number {
 
 function warning(code: string, message: string, pageId?: string): ImportWarning {
   return { code, message, severity: 'warning', pageId };
+}
+
+/** Reconciliation input is untrusted and must not enable the raw-HTML renderer. */
+export function validateReconciliationOverlay(overlay: unknown): Overlay | null {
+  const parsed = OverlaySchema.safeParse(overlay);
+  if (!parsed.success) return null;
+  if (parsed.data.type === 'text' && parsed.data.rich === true) return null;
+  return parsed.data;
 }
 
 export function validateTemplateImportPlan(plan: TemplateImportPlan): PlanValidationResult {
@@ -35,12 +43,11 @@ export function validateTemplateImportPlan(plan: TemplateImportPlan): PlanValida
       errors.push(`Page ${page.id || '(missing id)'} background opacity must be between 0 and 1.`);
     }
     for (const overlay of page.overlays ?? []) {
-      const parsed = OverlaySchema.safeParse(overlay);
-      if (!parsed.success) {
+      const o = validateReconciliationOverlay(overlay);
+      if (!o) {
         errors.push(`Overlay ${(overlay as any)?.id || '(missing id)'} on page ${page.id} is not schema-valid.`);
         continue;
       }
-      const o = parsed.data;
       if (!isFiniteNumber(o.x) || !isFiniteNumber(o.y) || !isFinitePositive(o.width) || !isFinitePositive(o.height)) {
         errors.push(`Overlay ${o.id} on page ${page.id} has invalid bounds.`);
       }
