@@ -16,6 +16,31 @@ function safeKey(k: string): string {
   return k.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
+function escapeCssString(value: unknown): string {
+  return String(value).replace(/[\\'\n\r\f<>]/g, (character) => `\\${character.charCodeAt(0).toString(16)} `);
+}
+
+function isRemoteFontUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isFontSource(value: string): boolean {
+  return isRemoteFontUrl(value)
+    || /^data:font\/(?:woff2?|ttf|otf|opentype);base64,[a-z0-9+/]+={0,2}$/i.test(value);
+}
+
+function safeFontWeight(value: unknown): string {
+  const weight = String(value ?? 'normal');
+  return /^(?:normal|bold|bolder|lighter|[1-9]\d{0,2}|1000)(?: (?:[1-9]\d{0,2}|1000))?$/.test(weight)
+    ? weight
+    : 'normal';
+}
+
 export function tokensToCssVariables(tokens: Tokens): string {
   const lines: string[] = [':root {'];
   for (const [k, v] of Object.entries(tokens.colors || {})) {
@@ -54,21 +79,23 @@ export function tokensToFontFaceCss(tokens: Tokens): string {
   const declarations: string[] = [];
   for (const f of faces) {
     if (f?.cssUrl) {
-      imports.push(`@import url('${f.cssUrl}');`);
+      const cssUrl = String(f.cssUrl);
+      if (isRemoteFontUrl(cssUrl)) imports.push(`@import url('${escapeCssString(cssUrl)}');`);
       continue;
     }
     if (f?.src && f?.family) {
       // Match both file extensions (.woff2) and data: MIME types (data:font/woff2)
       // so embedded/captured fonts (R0, data: src) get the right format() hint.
       const src = String(f.src);
+      if (!isFontSource(src)) continue;
       const fmt = /woff2/i.test(src) ? 'woff2'
         : /woff/i.test(src) ? 'woff'
         : /(otf|opentype)/i.test(src) ? 'opentype'
         : /(ttf|truetype)/i.test(src) ? 'truetype' : '';
       declarations.push(`@font-face {
-  font-family: '${f.family}';
-  src: url('${f.src}')${fmt ? ` format('${fmt}')` : ''};
-  font-weight: ${f.weight ?? 'normal'};
+  font-family: '${escapeCssString(f.family)}';
+  src: url('${escapeCssString(src)}')${fmt ? ` format('${fmt}')` : ''};
+  font-weight: ${safeFontWeight(f.weight)};
   font-style: ${f.style ?? 'normal'};
   font-display: ${f.display ?? 'swap'};
 }`);

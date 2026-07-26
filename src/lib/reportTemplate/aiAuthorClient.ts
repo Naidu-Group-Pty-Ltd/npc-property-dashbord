@@ -1,12 +1,14 @@
 /**
  * Phase 15 — Client wrapper for the template-ai-author edge function.
  */
-import { supabase } from '@/integrations/supabase/client';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 async function call<T = any>(action: string, payload: Record<string, unknown>): Promise<T> {
-  const { data, error } = await supabase.functions.invoke('template-ai-author', {
-    body: { action, ...payload },
-  });
+  const { data, error } = await invokeSecureFunction<T>(
+    'template-ai-author',
+    { action, ...payload },
+    { timeoutMs: 60_000 },
+  );
   if (error) throw new Error(error.message);
   if ((data as any)?.error) throw new Error((data as any).error);
   return data as T;

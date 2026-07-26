@@ -2256,6 +2256,13 @@
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
     },
+    "market-updates-status": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-updates-phase-3-authoritative-read-contract"
+    },
     "market-updates-feed": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",

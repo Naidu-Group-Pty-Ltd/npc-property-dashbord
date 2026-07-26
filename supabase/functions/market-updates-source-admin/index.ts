@@ -3,15 +3,11 @@
 // Roles allowed: 'admin' | 'superadmin'. Bypass via x-cron-secret for ops.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth } from "../_shared/auth.ts";
+import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-cron-secret, x-session-token, x-command-centre-session-token",
-};
-const json = (b: unknown, status = 200) =>
+import { classifyMarketError, logMarketEvent, marketCorrelationId } from "../_shared/marketUpdatesObservability.ts";
+const jsonWithCors = (cors: Record<string, string>) => (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), {
     status,
     headers: { ...cors, "content-type": "application/json" },
@@ -35,6 +31,10 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
 }
 
 Deno.serve(async (req) => {
+  const cors = createCorsHeaders(req.headers.get("origin"));
+  const correlationId=marketCorrelationId(req.headers);
+  cors['x-correlation-id']=correlationId;
+  const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -62,30 +62,41 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = req.method === "GET" ? {} : await req.json(); } catch { /* noop */ }
   const action = (body.action ?? new URL(req.url).searchParams.get("action") ?? "list") as string;
+  logMarketEvent('info',{function:'market-updates-source-admin',stage:'request',correlation_id:correlationId,status:'started',action});
 
   try {
     if (action === "list") {
       const { data, error } = await sb
         .from("market_sources")
         .select("*")
+        .order("registry_status")
         .order("enabled", { ascending: false })
         .order("name");
       if (error) throw error;
+      const { data: reconciliation, error: reconciliationError } = await sb
+        .from("market_source_reconciliation_audits")
+        .select("*")
+        .eq("reconciliation_key", "approved-australian-registry-v2")
+        .maybeSingle();
+      if (reconciliationError) throw reconciliationError;
+      const canonical = (data ?? []).filter((s: any) => s.registry_status === "canonical");
+      const legacy = (data ?? []).filter((s: any) => s.registry_status !== "canonical");
       const now = Date.now();
-      const alerts = (data ?? [])
+      const alerts = canonical
         .filter((s: any) => s.enabled)
         .map((s: any) => {
           const staleHours = s.last_success_at
             ? (now - new Date(s.last_success_at).getTime()) / 3_600_000
             : Infinity;
-          const overdue = staleHours > Math.max(24, (s.refresh_frequency_hours ?? 24) * 3);
+          const cadenceMinutes = Math.max(15, Number(s.refresh_frequency_minutes ?? 60));
+          const overdue = staleHours * 60 > Math.max(180, cadenceMinutes * 3);
           if (s.last_error) {
             return { source_id: s.id, name: s.name, severity: "error", message: s.last_error };
           }
           if (overdue && Number.isFinite(staleHours)) {
             return {
               source_id: s.id, name: s.name, severity: "warning",
-              message: `No successful fetch for ${Math.round(staleHours)}h (target ${s.refresh_frequency_hours}h).`,
+              message: `No successful fetch for ${Math.round(staleHours)}h (target ${cadenceMinutes} minutes).`,
             };
           }
           if (!Number.isFinite(staleHours)) {
@@ -94,7 +105,24 @@ Deno.serve(async (req) => {
           return null;
         })
         .filter(Boolean);
-      return json({ sources: data ?? [], alerts });
+      return json({
+        sources: canonical.map((s: any) => ({ ...s, next_eligible_fetch_at: s.last_fetched_at ? new Date(new Date(s.last_fetched_at).getTime() + Math.max(15, Number(s.refresh_frequency_minutes ?? 60)) * 60_000).toISOString() : new Date().toISOString() })),
+        legacy_sources: legacy,
+        alerts,
+        registry: {
+          canonical: canonical.length,
+          enabledCanonical: canonical.filter((s: any) => s.enabled).length,
+          disabledCanonical: canonical.filter((s: any) => !s.enabled).length,
+          archivedLegacy: legacy.filter((s: any) => s.registry_status === "archived_legacy").length,
+          unresolvedLegacy: legacy.filter((s: any) => s.registry_status === "unresolved_legacy").length,
+          totalRecords: (data ?? []).length,
+          matchedLegacy: reconciliation?.matched_legacy_rows ?? 0,
+          mergedRows: reconciliation?.merged_rows ?? 0,
+          updateReferencesReassigned: reconciliation?.update_references_reassigned ?? 0,
+          fetchRunReferencesReassigned: reconciliation?.fetch_run_references_reassigned ?? 0,
+          reconciledAt: reconciliation?.completed_at ?? null,
+        },
+      });
     }
 
     if (action === "toggle") {
@@ -105,6 +133,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update({ enabled, updated_at: new Date().toISOString() })
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
@@ -114,9 +143,13 @@ Deno.serve(async (req) => {
     if (action === "update") {
       const id = body.source_id as string;
       if (!id) return json({ error: "source_id required" }, 400);
+      if (body.refresh_frequency_hours !== undefined) return json({ error: "refresh_frequency_hours is deprecated; use refresh_frequency_minutes" }, 400);
       const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
-      if (typeof body.refresh_frequency_hours === "number") {
-        patch.refresh_frequency_hours = Math.max(1, Math.min(168, Math.round(body.refresh_frequency_hours)));
+      if (body.refresh_frequency_minutes !== undefined) {
+        if (typeof body.refresh_frequency_minutes !== "number" || !Number.isFinite(body.refresh_frequency_minutes) || body.refresh_frequency_minutes < 15 || body.refresh_frequency_minutes > 10080) {
+          return json({ error: "refresh_frequency_minutes must be between 15 and 10080" }, 400);
+        }
+        patch.refresh_frequency_minutes = Math.round(body.refresh_frequency_minutes);
       }
       if (typeof body.reliability_tier === "string") patch.reliability_tier = body.reliability_tier;
       if (typeof body.description === "string") patch.description = body.description;
@@ -124,6 +157,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update(patch)
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
@@ -137,6 +171,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update({ last_error: null, updated_at: new Date().toISOString() })
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
@@ -145,6 +180,8 @@ Deno.serve(async (req) => {
 
     return json({ error: `unknown action: ${action}` }, 400);
   } catch (e: any) {
-    return json({ error: String(e?.message ?? e) }, 500);
+    const errorClass=classifyMarketError(e);
+    logMarketEvent('error',{function:'market-updates-source-admin',stage:'database',correlation_id:correlationId,status:'failed',error_class:errorClass});
+    return json({ error:'Market source administration could not complete the operation.', code:errorClass, stage:'database', correlation_id:correlationId, retryable:true }, 500);
   }
 });

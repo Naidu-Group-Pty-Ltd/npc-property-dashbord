@@ -88,7 +88,10 @@ export async function preloadImages(template: ReportTemplate): Promise<ReportTem
       // QR blocks: derive a remote PNG URL from `data` and stash on qrUrl
       if (block.type === 'qr') {
         const data = (block.props as any)?.data;
-        if (typeof data === 'string' && data.length > 0) {
+        // Bindable payloads require report data that is only available to the
+        // renderer. Preloading them here would encode the binding expression
+        // itself and make qrUrl override the correctly resolved payload.
+        if (typeof data === 'string' && data.length > 0 && !data.includes('{{')) {
           const size = Number((block.props as any)?.size ?? 120) * 3; // 3x resolution
           const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}`;
           tasks.push(fetchAsDataUrl(qrUrl).then((d) => { if (d) (block.props as any).qrUrl = d; }));
