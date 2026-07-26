@@ -31,6 +31,12 @@ export interface TokenBalance {
   /** Mission Control marked this tenant billing-exempt (no plan, never
    * funds-gated). Per-tenant flag in MC — clones are unaffected. */
   exempt?: boolean;
+  /** Provenance supplied by the balance proxy. Cached values remain
+   * display-only; report reservations always re-check Mission Control. */
+  source?: "live" | "cache" | "unprovisioned";
+  stale?: boolean;
+  updatedAt?: string | null;
+  unprovisioned?: boolean;
 }
 
 export interface TopupPack {
