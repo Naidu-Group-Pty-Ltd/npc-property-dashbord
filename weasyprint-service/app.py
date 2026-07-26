@@ -15,9 +15,14 @@ GET /healthz -> 200 "ok"
 
 import os
 import logging
+import ipaddress
+import socket
 from importlib import metadata
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from flask import Flask, request, Response, jsonify
-from weasyprint import HTML
+from weasyprint import HTML, default_url_fetcher
+from weasyprint.urls import HTTP_HEADERS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("weasyprint-service")
@@ -26,6 +31,51 @@ app = Flask(__name__)
 
 EXPECTED_TOKEN = (os.environ.get("WEASYPRINT_SERVICE_TOKEN") or os.environ.get("WEASYPRINT_API_KEY") or "").strip().strip('"')
 MAX_HTML_BYTES = int(os.environ.get("MAX_HTML_BYTES", str(25 * 1024 * 1024)))  # 25 MB
+
+
+def _validate_resource_url(url: str) -> None:
+    """Allow embedded data or public HTTP(S) resources, never local networks."""
+    parsed = urlsplit(url)
+    if parsed.scheme == "data":
+        return
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("resource URL scheme is not allowed")
+    if parsed.username or parsed.password:
+        raise ValueError("resource URL credentials are not allowed")
+
+    try:
+        addresses = {
+            info[4][0]
+            for info in socket.getaddrinfo(parsed.hostname, parsed.port, type=socket.SOCK_STREAM)
+        }
+    except socket.gaierror as exc:
+        raise ValueError("resource URL host could not be resolved") from exc
+    if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+        raise ValueError("resource URL host is not public")
+
+
+class SafeRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_resource_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def safe_url_fetcher(url: str, timeout: int = 10, ssl_context=None):
+    """Apply the network policy before WeasyPrint fetches a resource."""
+    _validate_resource_url(url)
+    if urlsplit(url).scheme == "data":
+        return default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
+
+    opener = build_opener(SafeRedirectHandler(), HTTPSHandler(context=ssl_context))
+    response = opener.open(Request(url, headers=HTTP_HEADERS), timeout=timeout)
+    info = response.info()
+    return {
+        "file_obj": response,
+        "redirected_url": response.geturl(),
+        "mime_type": info.get_content_type(),
+        "encoding": info.get_param("charset"),
+        "filename": info.get_filename(),
+    }
 
 
 def _package_version(name: str) -> str:
@@ -100,7 +150,7 @@ def render():
             write_kwargs["pdf_variant"] = pdf_variant
         # `pdf_forms`/`uncompressed_pdf` skipped; we want tagged + compressed.
         try:
-            pdf_bytes = HTML(string=html, base_url=base_url).write_pdf(
+            pdf_bytes = HTML(string=html, base_url=base_url, url_fetcher=safe_url_fetcher).write_pdf(
                 **write_kwargs,
                 optimize_images=optimize_images,
                 presentational_hints=False,
@@ -108,7 +158,7 @@ def render():
         except TypeError:
             # Fallback for very old WeasyPrint builds that don't accept these kwargs.
             log.warning("write_pdf kwargs unsupported, falling back to defaults")
-            pdf_bytes = HTML(string=html, base_url=base_url).write_pdf()
+            pdf_bytes = HTML(string=html, base_url=base_url, url_fetcher=safe_url_fetcher).write_pdf()
     except Exception as exc:  # noqa: BLE001
         log.exception("weasyprint render failed")
         return jsonify({"error": f"render_failed: {exc}"}), 500

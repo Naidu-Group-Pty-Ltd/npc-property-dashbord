@@ -15,6 +15,9 @@ const CHUNK_OVERLAP = 300; // Overlap between chunks
 
 // Parallel processing configuration
 const EMBEDDING_BATCH_SIZE = 20; // Process 20 embeddings at once
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_EXTRACTED_TEXT_LENGTH = 600_000;
+const MAX_CHUNKS = 250;
 
 interface TemplateParseRequest {
   templateId: string;
@@ -371,6 +374,13 @@ Deno.serve(async (req) => {
     if (downloadError) {
       throw new Error(`Failed to download template: ${downloadError.message}`);
     }
+
+    if (!fileData || fileData.size > MAX_FILE_SIZE_BYTES) {
+      return new Response(
+        JSON.stringify({ error: 'Template file exceeds the 10 MB processing limit' }),
+        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
     
     let extractedText = '';
     const fileName = filePath.toLowerCase();
@@ -393,6 +403,13 @@ Deno.serve(async (req) => {
      // Use a smaller minimum and measure non-whitespace characters to avoid false failures.
      const trimmedExtracted = (extractedText || '').trim();
      extractedText = trimmedExtracted;
+
+     if (extractedText.length > MAX_EXTRACTED_TEXT_LENGTH) {
+       return new Response(
+         JSON.stringify({ error: 'Extracted template text exceeds the processing limit' }),
+         { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+       );
+     }
 
      const isPdf = fileName.endsWith('.pdf');
      const meaningfulChars = trimmedExtracted.replace(/\s+/g, '').length;
@@ -423,6 +440,12 @@ Deno.serve(async (req) => {
     
     // Chunk the text for RAG (chunking now includes sanitization)
     const chunks = chunkText(extractedText);
+    if (chunks.length > MAX_CHUNKS) {
+      return new Response(
+        JSON.stringify({ error: 'Template produces too many chunks to process safely' }),
+        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
     console.log(`🔪 Split into ${chunks.length} sanitized chunks for embedding (chunk size: ${CHUNK_SIZE})`);
     console.log(`🧹 Content sanitized: company names, contact details, and irrelevant content filtered`);
     

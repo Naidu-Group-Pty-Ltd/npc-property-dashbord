@@ -15,13 +15,14 @@
  *  - get_activity_log:          Paged activity feed
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
-import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts";
+import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shared/auth.ts";
+import { requireModulePermission } from "../_shared/authz.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const PERMISSION_TABLES = [
   'properties', 'income', 'expenses', 'assets',
   'liabilities', 'employment', 'address_history', 'notes', 'contacts',
-  'documents', 'borrowing_capacity', 'messages'
+  'documents', 'borrowing_capacity', 'messages', 'purchase_files'
 ] as const;
 
 const EMPTY_PERMISSIONS = PERMISSION_TABLES.reduce((acc, t) => {
@@ -135,6 +136,23 @@ Deno.serve(async (req) => {
 
     // ── list_clients: minimal list for assignment picker ──
     if (operation === 'list_clients') {
+      // This service-role query exposes client contact details. Keep it available
+      // to the original Finance Portal admin picker and to staff who can already
+      // view Client Management, but never to an arbitrary authenticated user.
+      const actor = { userId: auth.userId, authMethod: auth.authMethod };
+      const financeAccess = await requireModulePermission(
+        supabase,
+        actor,
+        'finance_portal_admin',
+        'can_view',
+      );
+      const clientAccess = financeAccess.ok
+        ? financeAccess
+        : await requireModulePermission(supabase, actor, 'client_management', 'can_view');
+      if (!clientAccess.ok) {
+        return createForbiddenResponse('Client list access denied', corsHeaders);
+      }
+
       const search = (body.search || '').toString().trim();
       let query = supabase
         .from('clients')
