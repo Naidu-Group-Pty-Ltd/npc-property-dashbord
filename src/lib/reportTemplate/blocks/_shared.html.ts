@@ -169,7 +169,10 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       const o: any = { ...ps, ...Object.fromEntries(Object.entries(raw).filter(([, v]) => v !== undefined && v !== null && v !== '')) };
       // Always restore base fields the editor sets even when ps had a value
       for (const k of ['type','id','x','y','width','height','rotation','opacity','content']) o[k] = raw[k];
-      const text = resolveBindable(o.content, ctx);
+      // Rich markup is template-authored, but resolved report values are not.
+      // Escape substitutions before inserting them into the trusted markup so
+      // bound data cannot introduce active HTML or renderer fetches.
+      const text = resolveBindable(o.content, ctx, o.rich ? esc : undefined);
       if (!text && !o.rich && !(Array.isArray(o.runs) && o.runs.length)) return '';
       const size = resolveBindableNumber(o.fontSize, ctx, 12);
       const color = resolveBindableColor(o.color, ctx, '#000000');
@@ -251,6 +254,8 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
           return `<span style="${rdecls}">${esc(String(run.text ?? '')).replace(/\n/g, '<br/>')}</span>`;
         }).join('');
       } else if (o.rich) {
+        // Literal rich markup remains available; bound values were escaped at
+        // resolution time above.
         inner = String(text ?? '');
       } else {
         const paras = String(text).split(/\n{2,}/);
