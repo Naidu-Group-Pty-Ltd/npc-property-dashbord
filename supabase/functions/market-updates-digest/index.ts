@@ -5,16 +5,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { consumeRateLimit, verifyRequiredCronSecret, securityJsonError } from "../_shared/requestSecurity.ts";
-import { verifyAuth } from "../_shared/auth.ts";
+import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireModulePermission } from '../_shared/authz.ts';
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-cron-secret",
-};
-const json = (body: unknown, status = 200) =>
+const jsonWithCors = (cors: Record<string, string>) => (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { ...cors, "content-type": "application/json" },
