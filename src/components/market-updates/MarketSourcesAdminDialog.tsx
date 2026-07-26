@@ -36,6 +36,8 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
   const [legacySources, setLegacySources] = useState<MarketSource[]>([]);
   const [registry, setRegistry] = useState<MarketSourceRegistrySummary>(EMPTY_REGISTRY);
   const [view, setView] = useState<RegistryView>('canonical');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all'|'enabled'|'disabled'|'failed'>('all');
   const [alerts, setAlerts] = useState<MarketSourceAlert[]>([]);
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -102,9 +104,12 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
   };
   const copyFeedUrl = () => navigator.clipboard.writeText(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-feed`);
 
-  const displayedSources = useMemo(() => view === 'canonical'
+  const displayedSources = useMemo(() => (view === 'canonical'
     ? sources
-    : legacySources.filter((source) => source.registry_status === view), [legacySources, sources, view]);
+    : legacySources.filter((source) => source.registry_status === view))
+    .filter(source => !search.trim() || `${source.name} ${source.url} ${source.source_key ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()))
+    .filter(source => statusFilter === 'all' || (statusFilter === 'enabled' ? source.enabled : statusFilter === 'disabled' ? !source.enabled : source.health_status === 'failed')),
+  [legacySources, search, sources, statusFilter, view]);
 
   const viewButton = (target:RegistryView, label:string, count:number) => (
     <Button size="sm" variant={view === target ? 'default' : 'outline'} onClick={() => setView(target)} aria-pressed={view === target}>
@@ -139,6 +144,10 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
             <Badge variant="outline">{registry.disabledCanonical} disabled canonical</Badge>
             <Badge variant="outline">{registry.totalRecords} total records</Badge>
             {alerts.length ? <Badge variant="outline" className="text-destructive"><AlertTriangle className="mr-1 h-3 w-3" />{alerts.length} canonical alert{alerts.length === 1 ? '' : 's'}</Badge> : <Badge variant="outline" className="text-success"><CheckCircle2 className="mr-1 h-3 w-3" />Canonical sources healthy</Badge>}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search sources by name, key or URL…" aria-label="Search market sources" />
+            <select value={statusFilter} onChange={event => setStatusFilter(event.target.value as typeof statusFilter)} className="h-10 rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label="Filter market sources by status"><option value="all">All statuses</option><option value="enabled">Enabled</option><option value="disabled">Disabled</option><option value="failed">Failed</option></select>
           </div>
           {registry.reconciledAt && <p className="text-[11px] text-muted-foreground">Last reconciliation: {dateLabel(registry.reconciledAt)} · {registry.mergedRows} legacy matches · {registry.updateReferencesReassigned} update and {registry.fetchRunReferencesReassigned} fetch-run references reassigned.</p>}
         </div>

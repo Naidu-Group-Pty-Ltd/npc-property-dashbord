@@ -167,7 +167,7 @@ export async function followMarketIngestionRun(runId: string, timeoutMs = 190_00
     const run = payload.run;
     if (!['queued', 'running'].includes(run.status)) {
       if (run.status === 'failed') throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'source_failed', message:run.error_summary || 'The Market Updates ingestion run failed.', remediation:'Open Sources to review source health, then retry.', functionName:'market-updates-ingest', retryable:true });
-      return { runId:run.id, status:run.status, active:false, sourcesConsidered:run.sources_considered, sourcesProcessed:run.sources_processed, sourcesSucceeded:run.sources_succeeded, sourcesFailed:run.sources_failed, ingested:run.items_discovered, published:run.items_published, candidates:(run as any).items_candidate ?? 0, ignored:(run as any).items_ignored ?? 0, failed:run.sources_failed, skippedDuplicates:(run as any).items_deduplicated ?? 0, sourceErrors:[], message:`Market ingestion ${run.status}.` };
+      return { runId:run.id, status:run.status, active:false, sourcesConsidered:run.sources_considered, sourcesProcessed:run.sources_processed, sourcesSucceeded:run.sources_succeeded, sourcesFailed:run.sources_failed, discovered:run.items_discovered, classified:run.items_classified ?? 0, ingested:run.items_discovered, published:run.items_published, candidates:run.items_candidate ?? 0, ignored:run.items_ignored ?? 0, rejected:run.items_rejected ?? 0, persistenceFailed:run.items_failed ?? 0, failed:run.sources_failed, skippedDuplicates:run.items_deduplicated ?? 0, sourceErrors:[], message:`Market ingestion ${run.status}.` };
     }
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }

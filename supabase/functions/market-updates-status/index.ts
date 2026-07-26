@@ -113,10 +113,14 @@ Deno.serve(async (req) => {
     if (unresolvedLegacy === null) warnings.push('unresolved_legacy_count_unavailable');
     const latestRun = latestRunResult.error ? null : latestRunResult.data;
     const health = sourceHealth(sourcesResult.data ?? [], latestRun);
+    const nextScheduledFetch = (sourcesResult.data ?? []).filter((source:any) => source.enabled).map((source:any) => source.last_fetched_at
+      ? new Date(new Date(source.last_fetched_at).getTime() + Math.max(15, Number(source.refresh_frequency_minutes ?? 60)) * 60_000).toISOString()
+      : new Date().toISOString()).sort()[0] ?? null;
     const assignments = assignmentsResult.error ? [] : assignmentsResult.data ?? [];
     return json({
       status:{
         ...health,
+        nextScheduledFetch,
         archivedLegacy, unresolvedLegacy,
         publishedUpdates:counts.published, candidates:counts.candidate, ignored:counts.ignored,
         latestSourceFetch:latestFetchResult.error ? null : latestFetchResult.data ?? null,
