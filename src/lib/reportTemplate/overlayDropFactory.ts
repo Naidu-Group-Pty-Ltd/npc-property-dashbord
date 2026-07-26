@@ -6,7 +6,7 @@
  * overlay of the matching kind at the drop point. Pure + unit-tested; the
  * defaults mirror the palette in `PagesPanel.tsx`.
  */
-import { type Block, type Overlay } from './templateSchema';
+import { BlockSchema, OverlaySchema, type Block, type Overlay } from './templateSchema';
 
 export interface DropPoint {
   x: number;
@@ -64,15 +64,29 @@ export const PALETTE_DRAG_MIME = 'application/x-tpl-palette';
 /** The shape a palette item's `build()` returns — an overlay wrapper or a block. */
 export type BuiltPaletteItem = Block | { kind: 'overlay'; overlay: Overlay };
 
+// Kept only in this module's closure: external drag sources can copy the MIME
+// type, but cannot mint a payload accepted by this page instance.
+const paletteDragToken = crypto.randomUUID();
+
 export function serializePaletteDrag(built: BuiltPaletteItem): string {
-  return JSON.stringify(built);
+  return JSON.stringify({ token: paletteDragToken, item: built });
 }
 
 export function parsePaletteDrag(raw: string): BuiltPaletteItem | null {
   if (!raw) return null;
   try {
-    const v = JSON.parse(raw);
-    return v && typeof v === 'object' ? (v as BuiltPaletteItem) : null;
+    const payload: unknown = JSON.parse(raw);
+    if (!payload || typeof payload !== 'object' ||
+        (payload as { token?: unknown }).token !== paletteDragToken) return null;
+
+    const item = (payload as { item?: unknown }).item;
+    if (item && typeof item === 'object' && (item as { kind?: unknown }).kind === 'overlay') {
+      const overlay = OverlaySchema.safeParse((item as { overlay?: unknown }).overlay);
+      return overlay.success ? { kind: 'overlay', overlay: overlay.data } : null;
+    }
+
+    const block = BlockSchema.safeParse(item);
+    return block.success ? block.data : null;
   } catch {
     return null;
   }
