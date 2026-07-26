@@ -585,7 +585,7 @@ function EditorialCanvasImpl({
             <iframe
               title="Editor preview"
               srcDoc={html}
-              sandbox="allow-same-origin allow-scripts"
+              sandbox="allow-same-origin"
               className="absolute inset-0 w-full h-full border-0 pointer-events-none"
             />
 
