@@ -457,13 +457,16 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'Primary first name and surname are required' }, 400);
       }
 
-      // Owner-created clients: grant the creating partner full edit/delete on every
-      // permission key, regardless of org-wide defaults. They originated the file,
-      // so they need to be able to add secondary contacts, properties, etc.
-      const assignmentPermissions = CREATE_CLIENT_PERMISSION_TABLES.reduce((acc, key) => {
-        acc[key] = { view: true, edit: true, delete: true };
-        return acc;
-      }, {} as Record<string, { view: boolean; edit: boolean; delete: boolean }>);
+      // Apply the administrator-controlled template rather than elevating the
+      // creating partner merely because they originated the client record.
+      const { data: defaultPermissions, error: defaultPermissionsError } = await supabase
+        .from('finance_portal_default_permissions')
+        .select('permissions')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (defaultPermissionsError) throw defaultPermissionsError;
+      const assignmentPermissions = normalizeAssignmentPermissions(defaultPermissions?.permissions);
       const provenance = buildProvenance({
         sourceSurface: 'finance_portal',
         sourceActorType: 'finance_user',
