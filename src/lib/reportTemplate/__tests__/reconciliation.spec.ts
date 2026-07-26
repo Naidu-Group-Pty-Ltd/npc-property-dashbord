@@ -224,6 +224,17 @@ describe('Template Import Reconciliation Engine foundation', () => {
     expect(() => parseTemplateImportPlanResponse('{"version":1,"pages":[],"warnings":[],"confidenceScore":1,"importSummary":{"visualFidelityMode":"hybrid","editableElementsCreated":0,"manualReviewRequired":false,"repairPassesApplied":0}}')).toThrow(/at least one page/i);
   });
 
+  it('rejects rich HTML text overlays from AI reconciliation plans', () => {
+    const asset = createImageImportAsset({ dataUrl: DATA_URL, imageWidth: 800, imageHeight: 600, fileId: 'asset_untrusted_html' });
+    const plan = buildBackgroundFirstImportPlan(asset);
+    plan.pages[0].overlays.push({
+      id: 'malicious_html', type: 'text', x: 10, y: 10, width: 100, height: 20,
+      content: '<img src=x onerror="globalThis.__NPC_XSS=true">', rich: true,
+    } as any);
+
+    expect(() => parseTemplateImportPlanResponse(JSON.stringify(plan))).toThrow(/not schema-valid/i);
+  });
+
   it('invokes the design-agent reconciliation provider and parses its TemplateImportPlan response', async () => {
     const asset = createImageImportAsset({ dataUrl: DATA_URL, imageWidth: 800, imageHeight: 600, fileId: 'asset_provider' });
     const plan = buildBackgroundFirstImportPlan(asset);
@@ -410,6 +421,31 @@ describe('Template Import Reconciliation Engine foundation', () => {
     expect(overlay.y).toBe(96);
     expect(overlay.color).toBe('#d6a84f');
     expect(result.template.pages[0].background.imageUrl).toBe(DATA_URL);
+  });
+
+  it('rejects repair patches that add or enable rich HTML text overlays', () => {
+    const asset = createImageImportAsset({ dataUrl: DATA_URL, imageWidth: 800, imageHeight: 600, fileId: 'asset_patch_html' });
+    const plan = buildBackgroundFirstImportPlan(asset);
+    plan.pages[0].overlays.push({
+      id: 'plain_text', type: 'text', x: 10, y: 10, width: 100, height: 20, content: 'Safe text',
+    } as any);
+    const template = applyTemplateImportPlan(plan);
+    const pageId = template.pages[0].id;
+    const blockId = template.pages[0].blocks[0].id;
+    const payload = '<img src=x onerror="globalThis.__NPC_XSS=true">';
+
+    const result = applyTemplateImportPatches(template, [
+      { operation: 'addOverlay', pageId, blockId, overlay: {
+        id: 'malicious_html', type: 'text', x: 10, y: 40, width: 100, height: 20,
+        content: payload, rich: true,
+      } as any },
+      { operation: 'updateOverlay', pageId, blockId, overlayId: 'plain_text', changes: { content: payload, rich: true } as any },
+    ]);
+
+    expect(result.applied).toBe(0);
+    expect(result.rejected).toHaveLength(2);
+    expect(result.template.pages[0].blocks[0].overlays).toHaveLength(1);
+    expect((result.template.pages[0].blocks[0].overlays[0] as any).content).toBe('Safe text');
   });
 
 });
