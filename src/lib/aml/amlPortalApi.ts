@@ -27,15 +27,24 @@ async function call<T = any>(op: string, payload: Record<string, any> = {}): Pro
   return json as T;
 }
 
-export type AmlSection = 'purchasing_structure' | 'personal_details' | 'purchase_profile' | 'funding';
+export type AmlSection =
+  | 'purchasing_structure' | 'personal_details' | 'purchase_profile' | 'funding'
+  // Phase 5 — conditional sections; the server decides which apply per case.
+  | 'entity_details' | 'related_parties';
 
 export interface AmlPortalOverview {
   case: {
     id: string; reference: string; subject: string;
-    opened_at: string; status: string; status_label: string;
+    opened_at: string;
+    /** Portal-safe status token (Phase 1 contract) — never the internal case state. */
+    status: string; portal_status?: string;
+    status_label: string;
     status_tone: 'neutral'|'progress'|'positive'|'caution';
   } | null;
   message?: string;
+  /** Phase 5 — versioned conditional engine metadata (server-driven). */
+  questionnaire_version?: string;
+  structure_type?: string | null;
   sections?: { section: AmlSection; status: string; updated_at: string | null }[];
   requirements?: any[];
   requirement_progress?: { completed: number; total: number };

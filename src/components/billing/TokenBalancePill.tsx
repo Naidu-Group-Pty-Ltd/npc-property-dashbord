@@ -100,6 +100,8 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
               <p className="text-xs text-muted-foreground">
                 {!balance
                   ? "Balance unavailable"
+                  : balance.stale
+                  ? `Last confirmed${balance.updatedAt ? ` ${new Date(balance.updatedAt).toLocaleString()}` : " balance"}`
                   : balance.exempt
                   ? "Unmetered · billing exempt"
                   : allowance > 0
@@ -147,6 +149,13 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
             <p className="font-semibold tabular-nums">{reserved.toLocaleString()}</p>
           </div>
         </div>
+
+        {balance?.stale && (
+          <div className="border-t border-border bg-warning/10 px-4 py-2 text-xs text-warning">
+            Mission Control is temporarily unreachable. Showing the last confirmed balance; usage
+            checks still run securely when you generate a report.
+          </div>
+        )}
 
         {error && (
           <div className="border-t border-border bg-destructive/10 px-4 py-2 text-xs text-destructive">

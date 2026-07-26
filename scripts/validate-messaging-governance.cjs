@@ -82,6 +82,8 @@ assertContains(financeMessages, 'Clients cannot create finance threads; reply to
 assertContains(financeMessages, ".eq('thread_type', requestedThreadType)", 'Thread lookup includes governed thread type');
 assertContains(financeMessages, "messageQuery = messageQuery.in('visibility_scope', messageAllowedScopes)", 'Finance message reads filter by message visibility scope');
 assertContains(financeMessages, 'Thread visibility and type are immutable', 'Finance thread send path rejects scope/type mutation');
+assertContains(financeMessages, 'isAttachmentPathForThread(attachment.path, thread.client_id, thread_id)', 'Finance message writes reject attachment paths outside the governed client/thread prefix');
+assertContains(financeMessages, 'isAttachmentPathForThread(msg.attachment_path, msg.client_id, msg.thread_id)', 'Finance attachment signing rejects stored paths outside the governed client/thread prefix');
 assertContains(financeMessages, "!permittedScopesForActor('client')!.includes(msg.visibility_scope)", 'Attachment access checks client message visibility');
 assertContains(financeMessages, "['finance_client_with_command_visibility', 'command_client_with_finance_allocated'].includes(requestedScope)", 'Finance replies notify clients on direct and allocated client-visible threads');
 assertContains(financeMessages, "event_type: 'notification_failed'", 'Finance message notification failures are captured in governance log');

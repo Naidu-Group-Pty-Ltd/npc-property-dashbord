@@ -26,23 +26,89 @@ import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-portal-session-token, x-session-token',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-portal-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const CLIENT_SAFE_STATUSES: Record<string, { label: string; tone: 'neutral'|'progress'|'positive'|'caution' }> = {
-  draft:              { label: 'Not started',               tone: 'neutral'  },
-  kyc_in_progress:    { label: 'In progress',               tone: 'progress' },
-  kyc_complete:       { label: 'Received — under review',   tone: 'progress' },
-  edd_required:       { label: 'Additional information required', tone: 'caution' },
-  under_review:       { label: 'Under review',              tone: 'progress' },
-  escalated_mlro:     { label: 'Under review',              tone: 'progress' },
-  cleared:            { label: 'Cleared',                   tone: 'positive' },
-  blocked:            { label: 'On hold — please contact us', tone: 'caution' },
-  closed:             { label: 'Closed',                    tone: 'neutral'  },
+// Phase 1 portal-safe contract (directive Appendix C.1). Internal case state
+// never reaches the wire: the case is presented through the client-portal
+// dimension only. Legacy statuses map onto that dimension for rows created
+// before the workflow-dimension migration (mirror of
+// src/lib/aml/caseDimensions.ts — keep in sync).
+const PORTAL_STATUSES = [
+  'not_started', 'action_required', 'in_progress', 'submitted', 'under_review',
+  'additional_info_required', 'complete', 'contact_adviser',
+] as const;
+
+const LEGACY_TO_PORTAL_STATUS: Record<string, string> = {
+  draft: 'not_started',
+  kyc_in_progress: 'in_progress',
+  kyc_complete: 'submitted',
+  edd_required: 'additional_info_required',
+  under_review: 'under_review',
+  escalated_mlro: 'under_review',
+  cleared: 'complete',
+  blocked: 'contact_adviser',
+  closed: 'complete',
 };
 
-const SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
+const PORTAL_STATUS_PRESENTATION: Record<string, { label: string; tone: 'neutral'|'progress'|'positive'|'caution' }> = {
+  not_started:              { label: 'Not started',                     tone: 'neutral'  },
+  action_required:          { label: 'Action required',                 tone: 'caution'  },
+  in_progress:              { label: 'In progress',                     tone: 'progress' },
+  submitted:                { label: 'Received — under review',         tone: 'progress' },
+  under_review:             { label: 'Under review',                    tone: 'progress' },
+  additional_info_required: { label: 'Additional information required', tone: 'caution'  },
+  complete:                 { label: 'Complete',                        tone: 'positive' },
+  contact_adviser:          { label: 'Please contact your adviser',     tone: 'caution'  },
+};
+
+function portalStatusFor(caseRow: any): string {
+  const explicit = caseRow?.client_portal_status;
+  if (typeof explicit === 'string' && (PORTAL_STATUSES as readonly string[]).includes(explicit)) {
+    return explicit;
+  }
+  return LEGACY_TO_PORTAL_STATUS[caseRow?.status] ?? 'in_progress';
+}
+
+// Phase 5 — versioned conditional questionnaire engine (directive §14.2).
+// The section list is SERVER-DRIVEN: `overview` computes the applicable
+// sections for this case from the declared purchasing structure and funding
+// sources, and the portal renders whatever the server returns. Existing
+// version-1 submissions (the four base sections) remain valid unchanged.
+const QUESTIONNAIRE_VERSION = '2';
+
+const BASE_SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
+const CONDITIONAL_SECTIONS = ['entity_details', 'related_parties'] as const;
+const ALL_SECTIONS: readonly string[] = [...BASE_SECTIONS, ...CONDITIONAL_SECTIONS];
+
+const ENTITY_STRUCTURES = new Set(['Company', 'Trust', 'SMSF', 'Partnership']);
+const MULTI_PARTY_STRUCTURES = new Set(['Joint', 'Company', 'Trust', 'SMSF', 'Partnership']);
+
+/**
+ * Compute the ordered applicable sections for a case from its questionnaire
+ * payloads. Sections already answered but no longer applicable (e.g. the
+ * client switches structure from Company to Individual) are retained in
+ * storage — never deleted — but drop out of the active checklist.
+ */
+function applicableSections(
+  structurePayload: Record<string, unknown> | null,
+  fundingPayload: Record<string, unknown> | null,
+): string[] {
+  const entityType = String(structurePayload?.entity_type ?? '');
+  const fundingSources = Array.isArray(fundingPayload?.sources)
+    ? (fundingPayload!.sources as unknown[]).map((s) => String(s))
+    : [];
+  const giftFunded = fundingSources.includes('Gift');
+
+  const out: string[] = ['purchasing_structure', 'personal_details'];
+  if (ENTITY_STRUCTURES.has(entityType)) out.push('entity_details');
+  if (MULTI_PARTY_STRUCTURES.has(entityType) || giftFunded) out.push('related_parties');
+  out.push('purchase_profile', 'funding');
+  return out;
+}
+
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
 function jsonResponse(data: any, status = 200) {
@@ -103,27 +169,37 @@ Deno.serve(async (req) => {
         if (!c) return jsonResponse({ case: null, message: 'No AML onboarding case yet.' });
         const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
-            .select('section,status,updated_at').eq('case_id', c.id),
+            .select('section,status,updated_at,payload').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements')
             .select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
           admin.schema('aml').from('client_requests')
             .select('*').eq('case_id', c.id).in('status', ['open','responded'])
             .order('created_at', { ascending: false }),
           admin.schema('aml').from('submission_versions')
-            .select('version_number,status,submitted_at,reviewer_notes,reviewed_at')
+            .select('version_number,status,submitted_at,reviewed_at')
             .eq('case_id', c.id).order('version_number', { ascending: false }).limit(3),
         ]);
         const reqs = requirements ?? [];
         const totalReq = reqs.filter((r: any) => r.required).length;
         const completedReq = reqs.filter((r: any) => r.required && ['uploaded','accepted'].includes(r.status)).length;
         const sectionMap = new Map((sections ?? []).map((s: any) => [s.section, s]));
-        const status = CLIENT_SAFE_STATUSES[c.status] ?? { label: 'In progress', tone: 'progress' as const };
+        const active = applicableSections(
+          sectionMap.get('purchasing_structure')?.payload ?? null,
+          sectionMap.get('funding')?.payload ?? null,
+        );
+        const portalStatus = portalStatusFor(c);
+        const presentation = PORTAL_STATUS_PRESENTATION[portalStatus] ?? { label: 'In progress', tone: 'progress' as const };
         return jsonResponse({
           case: {
             id: c.id, reference: c.case_reference, subject: c.subject_display_name,
-            opened_at: c.opened_at, status: c.status, status_label: status.label, status_tone: status.tone,
+            opened_at: c.opened_at,
+            // Portal-safe dimension token — internal case state is not shipped.
+            status: portalStatus, portal_status: portalStatus,
+            status_label: presentation.label, status_tone: presentation.tone,
           },
-          sections: SECTIONS.map((s) => ({
+          questionnaire_version: QUESTIONNAIRE_VERSION,
+          structure_type: String(sectionMap.get('purchasing_structure')?.payload?.entity_type ?? '') || null,
+          sections: active.map((s) => ({
             section: s, status: sectionMap.get(s)?.status ?? 'not_started',
             updated_at: sectionMap.get(s)?.updated_at ?? null,
           })),
@@ -143,7 +219,7 @@ Deno.serve(async (req) => {
       case 'get_questionnaire': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
+        if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
         const { data } = await admin.schema('aml').from('questionnaire_responses')
           .select('*').eq('case_id', c.id).eq('section', body.section).maybeSingle();
         return jsonResponse({ response: data ?? null });
@@ -152,7 +228,10 @@ Deno.serve(async (req) => {
       case 'save_questionnaire': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
+        // Validated against the full catalogue (not the currently-applicable
+        // subset) so an in-flight save is never rejected by a concurrent
+        // structure change; superseded answers are retained, never deleted.
+        if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
         const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
         const row: Record<string, any> = {
           case_id: c.id, section: body.section, payload,
@@ -294,11 +373,28 @@ Deno.serve(async (req) => {
             missing: missingRequired.map((r: any) => ({ code: r.code, label: r.label })),
           }, 400);
         }
+        // Phase 5: every currently-applicable section must be submitted before
+        // the client can finalise (the checklist itself is conditional).
+        const bySection = new Map((sections ?? []).map((s: any) => [s.section, s]));
+        const active = applicableSections(
+          bySection.get('purchasing_structure')?.payload ?? null,
+          bySection.get('funding')?.payload ?? null,
+        );
+        const missingSections = active.filter((s) =>
+          !['submitted', 'accepted', 'complete'].includes(bySection.get(s)?.status ?? ''));
+        if (missingSections.length > 0) {
+          return jsonResponse({
+            error: 'Cannot submit — some sections are incomplete',
+            missing_sections: missingSections,
+          }, 400);
+        }
         const { data: lastSub } = await admin.schema('aml').from('submission_versions')
           .select('version_number').eq('case_id', c.id).order('version_number', { ascending: false }).limit(1);
         const nextVersion = ((lastSub ?? [])[0]?.version_number ?? 0) + 1;
         const snapshot = {
           case: { id: c.id, reference: c.case_reference, subject: c.subject_display_name },
+          questionnaire_version: QUESTIONNAIRE_VERSION,
+          applicable_sections: active,
           sections: sections ?? [], requirements: reqs ?? [], documents: docs ?? [], consents: consents ?? [],
           submitted_by: { id: portalUserId, label: actorLabel },
         };
@@ -307,9 +403,16 @@ Deno.serve(async (req) => {
           submitted_by_type: 'client', submitted_by: portalUserId,
         }).select('*').single();
         if (error) throw error;
-        // Push case status forward (draft → kyc_in_progress → kyc_complete for review).
+        // Push case status forward (draft → kyc_in_progress → kyc_complete for
+        // review) and keep the Phase 1 dimension columns coherent; retry
+        // without them when the workflow-dimension migration is not applied.
         if (['draft','kyc_in_progress'].includes(c.status)) {
-          await admin.schema('aml').from('cases').update({ status: 'kyc_complete' }).eq('id', c.id);
+          const { error: upErr } = await admin.schema('aml').from('cases')
+            .update({ status: 'kyc_complete', case_stage: 'client_submitted', client_portal_status: 'submitted' })
+            .eq('id', c.id);
+          if (upErr) {
+            await admin.schema('aml').from('cases').update({ status: 'kyc_complete' }).eq('id', c.id);
+          }
         }
         return jsonResponse({ submission: sub, next_version: nextVersion });
       }

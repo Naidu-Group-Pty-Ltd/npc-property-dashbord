@@ -6,7 +6,8 @@ import { logApiUsage } from '../_shared/logApiUsage.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 interface RetrievalRequest {
@@ -17,6 +18,9 @@ interface RetrievalRequest {
   maxChunks?: number;
   similarityThreshold?: number;
 }
+
+const MAX_QUERY_LENGTH = 8_000;
+const MAX_CHUNKS = 20;
 
 // Generate query embedding
 async function generateQueryEmbedding(query: string, openAIKey: string): Promise<number[]> {
@@ -86,7 +90,7 @@ Deno.serve(async (req) => {
       maxChunks = 5,
       similarityThreshold = 0.7,
     }: RetrievalRequest = body;
-    
+
     // SECURITY: Verify authentication
     const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
@@ -94,6 +98,25 @@ Deno.serve(async (req) => {
       return createUnauthorizedResponse(authError, corsHeaders);
     }
     console.log(`[retrieve-template-context] Authenticated user: ${userId}`);
+
+    if (typeof query !== 'string' || query.trim().length === 0 || query.length > MAX_QUERY_LENGTH) {
+      return new Response(
+        JSON.stringify({ error: 'query must be a non-empty string of at most 8000 characters' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+    if (!Number.isInteger(maxChunks) || maxChunks < 1 || maxChunks > MAX_CHUNKS) {
+      return new Response(
+        JSON.stringify({ error: `maxChunks must be an integer between 1 and ${MAX_CHUNKS}` }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+    if (typeof similarityThreshold !== 'number' || !Number.isFinite(similarityThreshold) || similarityThreshold < 0 || similarityThreshold > 1) {
+      return new Response(
+        JSON.stringify({ error: 'similarityThreshold must be a number between 0 and 1' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
     
     console.log(`🔍 Retrieving context for query: "${query.substring(0, 100)}..."`);
     console.log(`   Filters: tier=${reportTier}, category=${reportCategory}, type=${templateType}`);

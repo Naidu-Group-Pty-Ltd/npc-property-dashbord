@@ -14,7 +14,8 @@ import { verifyWebhookSignature } from "../_shared/aml/providers/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "content-type, x-aml-signature, x-aml-provider, x-aml-dedup-key",
+  "Access-Control-Allow-Headers": "content-type, x-correlation-id, x-step-up-token, x-aml-signature, x-aml-provider, x-aml-dedup-key",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 

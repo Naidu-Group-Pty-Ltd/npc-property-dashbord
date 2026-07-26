@@ -3,7 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 
 interface ReportLibraryHeroProps {
-  investmentCount: number;
+  investmentCount: number | null;
   comparisonCount: number;
   visibleCount: number;
   activeFiltersCount: number;
@@ -19,7 +19,7 @@ export function ReportLibraryHero({
   showArchived,
   selectedComparisonCount,
 }: ReportLibraryHeroProps) {
-  const totalReports = investmentCount + comparisonCount;
+  const totalReports = investmentCount === null ? null : investmentCount + comparisonCount;
   const metrics = [
     { label: 'Total reports', value: totalReports, icon: Layers3 },
     { label: 'Investment reports', value: investmentCount, icon: TrendingUp },
@@ -69,7 +69,7 @@ export function ReportLibraryHero({
                 <span className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">{label}</span>
                 <Icon className="h-4 w-4 text-brand-600/80 dark:text-brand-300/80" />
               </div>
-              <div className="mt-3 text-2xl font-semibold tracking-tight text-foreground">{value}</div>
+              <div className="mt-3 text-2xl font-semibold tracking-tight text-foreground">{value ?? 'Unavailable'}</div>
             </div>
           ))}
         </div>

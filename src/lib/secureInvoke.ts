@@ -62,7 +62,7 @@ export function describeAuthError(message: string | undefined | null): string | 
 
 export interface InvokeResult<T = any> {
   data: T | null;
-  error: { message: string; status?: number; functionName?: string; network?: boolean } | null;
+  error: { message: string; status?: number; functionName?: string; network?: boolean; code?:string; stage?:string; correlationId?:string; retryable?:boolean } | null;
 }
 
 function getStoredToken(key: string): string | null {
@@ -122,8 +122,9 @@ async function tryRefreshAccessToken(): Promise<string | null> {
 export async function invokeSecureFunction<T = any>(
   functionName: string,
   body?: Record<string, any>,
-  options?: { timeoutMs?: number; _isRetry?: boolean; stepUpCapability?: string }
+  options?: { timeoutMs?: number; _isRetry?: boolean; stepUpCapability?: string; correlationId?:string }
 ): Promise<InvokeResult<T>> {
+  const correlationId = options?.correlationId ?? crypto.randomUUID();
   try {
     let accessToken = getAccessToken();
     // Native Supabase Auth fallback: users signed in through supabase-js keep
@@ -149,7 +150,19 @@ export async function invokeSecureFunction<T = any>(
     // WP-11B/C cookie-only: the staff session travels solely in the HttpOnly
     // `__Host-session_token` cookie (`credentials: 'include'`). No raw session
     // token is read from storage or attached to the body/headers.
+    //
+    // CORS-SAFE CARRIERS — do not move these into request headers.
+    // The frontend deploys as one bundle; the ~300 edge functions each carry
+    // their own bundled copy of `_shared/auth.ts` and are redeployed
+    // individually. A custom request header therefore only works once EVERY
+    // function it can reach has been redeployed with that header in its
+    // `Access-Control-Allow-Headers`. Until then the browser fails the
+    // preflight and `fetch()` throws `Failed to fetch` — the whole app goes
+    // dark. Body fields have no preflight requirement, so they stay correct
+    // no matter how far the client runs ahead of the backend.
+    // See scripts/security/check-cors-contract.mjs.
     const requestBody = {
+      correlation_id: correlationId,
       ...(body ?? {}),
       ...(stepUpToken ? { step_up_token: stepUpToken } : {}),
     };
@@ -160,11 +173,14 @@ export async function invokeSecureFunction<T = any>(
 
     const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
       method: 'POST',
+      // Only CORS-safelisted headers plus the two Supabase auth headers every
+      // deployed function already allow-lists. `correlation_id` and
+      // `step_up_token` ride in the body (see the note above) — adding either
+      // as a header here breaks every page until all functions are redeployed.
       headers: {
         'Content-Type': 'application/json',
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${bearerToken}`,
-        ...(stepUpToken ? { 'x-step-up-token': stepUpToken } : {}),
       },
       credentials: TOKEN_AUTH_FUNCTIONS.has(functionName) ? 'omit' : 'include',
       body: JSON.stringify(requestBody),
@@ -173,7 +189,8 @@ export async function invokeSecureFunction<T = any>(
 
     clearTimeout(timeoutId);
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
+    const responseCorrelationId = response.headers.get('x-correlation-id') || data?.correlation_id || correlationId;
     
     if (!response.ok) {
       // Mission Control insufficient_funds → surface global banner.
@@ -185,7 +202,7 @@ export async function invokeSecureFunction<T = any>(
         });
         return {
           data: data as T,
-          error: { message: data.error.message || 'Insufficient tokens', status: response.status, functionName },
+          error: { message: data.error.message || 'Insufficient tokens', status: response.status, functionName, code:data.error.code, correlationId:responseCorrelationId, retryable:false },
         };
       }
 
@@ -194,7 +211,7 @@ export async function invokeSecureFunction<T = any>(
       log('[invokeSecureFunction] Request failed', {
         functionName,
         status: response.status,
-        data,
+        ...(functionName.startsWith('market-updates-') ? { code:data?.code ?? 'unknown', stage:data?.stage ?? 'function', correlationId:responseCorrelationId } : { data }),
         hasAccessToken: Boolean(accessToken),
       });
 
@@ -213,7 +230,7 @@ export async function invokeSecureFunction<T = any>(
         const refreshed = await tryRefreshAccessToken();
         if (refreshed) {
           console.log('[invokeSecureFunction] Access token refreshed, retrying', functionName);
-          return invokeSecureFunction<T>(functionName, body, { ...options, _isRetry: true });
+          return invokeSecureFunction<T>(functionName, body, { ...options, _isRetry: true, correlationId });
         }
       }
 
@@ -231,7 +248,7 @@ export async function invokeSecureFunction<T = any>(
 
       return { 
         data: data as T, 
-        error: { message: String(errorMessage), status: response.status, functionName }
+        error: { message: String(errorMessage), status: response.status, functionName, code:data?.code, stage:data?.stage, correlationId:responseCorrelationId, retryable:data?.retryable }
       };
     }
     
@@ -269,10 +286,11 @@ export async function invokeSecureFunction<T = any>(
       functionName,
       message: rawMessage,
       isTimeout,
+      correlationId,
     });
     return {
       data: null,
-      error: { message, functionName, network: true },
+      error: { message, functionName, network: true, code:isTimeout?'provider_timeout':'network_error', stage:'network', correlationId, retryable:true },
     };
   }
 }

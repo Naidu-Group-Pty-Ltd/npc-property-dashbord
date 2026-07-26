@@ -23,7 +23,8 @@ import {
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const jr = (d: unknown, s = 200) =>
@@ -415,7 +416,14 @@ Deno.serve(async (req) => {
     }
     if (op === "upsert_cp_case") {
       requireWrite();
-      const p = body.counterparty_case ?? {};
+      const p = { ...(body.counterparty_case ?? {}) };
+      // §12.5 controlled fields change only through their dedicated, audited
+      // ops (set_delayed_cdd / mark_uncooperative) — never via generic upsert.
+      delete p.delayed_cdd_deadline;
+      delete p.delayed_cdd_justification;
+      delete p.uncooperative;
+      delete p.uncooperative_marked_at;
+      delete p.uncooperative_reason;
       if (!p.case_id || !p.subject_display_name) return jr({ error: "case_id and subject_display_name required" }, 400);
       const row = { ...p, created_by: userId };
       const resp = p.id
@@ -584,6 +592,89 @@ Deno.serve(async (req) => {
         `Obligation ${data.kind} linked to AUSTRAC report`, { obligation_id: data.id, report_id: reportId },
         userId, userLabel);
       return jr({ obligation: data });
+    }
+
+    // ── DELAYED CDD + UNCOOPERATIVE COUNTERPARTY (Phase 9, §12.5) ──
+    // Case-timeline audit for counterparty actions (hash-chained, same
+    // pattern as the other aml-* functions' case events).
+    async function appendCpCaseEvent(caseId: string, summary: string, payload: any) {
+      const { data: prev } = await aml.from("case_events")
+        .select("row_hash").eq("case_id", caseId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const prevHash = prev?.row_hash ?? null;
+      const now = new Date().toISOString();
+      const rowHash = await sha256Hex(JSON.stringify({
+        case_id: caseId, category: "system", summary, payload,
+        actor_id: userId, actor_label: userLabel, prev_hash: prevHash, created_at: now,
+      }));
+      await aml.from("case_events").insert({
+        case_id: caseId, category: "system", summary, payload,
+        actor_id: userId, actor_label: userLabel, prev_hash: prevHash, row_hash: rowHash, created_at: now,
+      });
+    }
+
+    if (op === "set_delayed_cdd") {
+      requireWrite();
+      const id = String(body.id ?? "");
+      const deadline = String(body.deadline ?? "").trim();
+      const justification = String(body.justification ?? "").trim();
+      if (!id || !deadline) return jr({ error: "id and deadline required" }, 400);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline)) return jr({ error: "deadline must be a YYYY-MM-DD date" }, 400);
+      if (justification.length < 10) return jr({ error: "justification must be at least 10 characters" }, 400);
+      const { data: cp } = await aml.from("counterparty_cases")
+        .select("id, case_id, subject_display_name").eq("id", id).maybeSingle();
+      if (!cp) return jr({ error: "Counterparty case not found" }, 404);
+      const { data, error } = await aml.from("counterparty_cases")
+        .update({ delayed_cdd_deadline: deadline, delayed_cdd_justification: justification })
+        .eq("id", id).select("*").maybeSingle();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCpCaseEvent(cp.case_id,
+        `Delayed CDD recorded for ${cp.subject_display_name} — deadline ${deadline}`,
+        { counterparty_case_id: id, deadline, justification });
+      return jr({ counterparty_case: data });
+    }
+
+    if (op === "mark_uncooperative") {
+      requireWrite();
+      const id = String(body.id ?? "");
+      const reason = String(body.reason ?? "").trim();
+      if (!id) return jr({ error: "id required" }, 400);
+      if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
+      const { data: cp } = await aml.from("counterparty_cases")
+        .select("id, case_id, subject_display_name, uncooperative").eq("id", id).maybeSingle();
+      if (!cp) return jr({ error: "Counterparty case not found" }, 404);
+      if (cp.uncooperative) return jr({ error: "Already marked uncooperative" }, 400);
+
+      // Reasonable-steps evidence (§12.5): at least two recorded contact
+      // attempts across this counterparty's information requests.
+      const { data: reqRows } = await aml.from("counterparty_requests")
+        .select("id").eq("counterparty_case_id", id);
+      const requestIds = (reqRows ?? []).map((r: any) => r.id);
+      let attemptCount = 0;
+      if (requestIds.length > 0) {
+        const { count } = await aml.from("counterparty_attempts")
+          .select("id", { count: "exact", head: true }).in("request_id", requestIds);
+        attemptCount = count ?? 0;
+      }
+      if (attemptCount < 2) {
+        return jr({
+          error: "Record at least two contact attempts (reasonable steps) before marking a counterparty uncooperative",
+          code: "insufficient_attempts", attempts_recorded: attemptCount,
+        }, 409);
+      }
+
+      const { data, error } = await aml.from("counterparty_cases")
+        .update({
+          uncooperative: true,
+          uncooperative_marked_at: new Date().toISOString(),
+          uncooperative_reason: reason,
+          status: "escalated",
+        })
+        .eq("id", id).select("*").maybeSingle();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCpCaseEvent(cp.case_id,
+        `Counterparty marked uncooperative: ${cp.subject_display_name}`,
+        { counterparty_case_id: id, reason, attempts_recorded: attemptCount });
+      return jr({ counterparty_case: data });
     }
 
     // Counterparty CDD roll-up summary (per case).

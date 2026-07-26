@@ -18,16 +18,40 @@ import {
   amlPortalApi, uploadAmlDocument, type AmlPortalOverview, type AmlSection,
 } from '@/lib/aml/amlPortalApi';
 
-type StepKey = 'consent' | 'personal_details' | 'purchasing_structure' | 'purchase_profile' | 'funding' | 'documents' | 'review';
-const STEPS: { key: StepKey; label: string; section?: AmlSection }[] = [
-  { key: 'consent', label: 'Consent' },
-  { key: 'personal_details', label: 'Personal details', section: 'personal_details' },
-  { key: 'purchasing_structure', label: 'Purchasing structure', section: 'purchasing_structure' },
-  { key: 'purchase_profile', label: 'Purchase profile', section: 'purchase_profile' },
-  { key: 'funding', label: 'Source of funds', section: 'funding' },
-  { key: 'documents', label: 'Documents' },
-  { key: 'review', label: 'Review & submit' },
+type PortalStep = { key: string; label: string; section?: AmlSection };
+
+/**
+ * Phase 5 — the questionnaire step list is SERVER-DRIVEN: `overview.sections`
+ * carries the sections applicable to this case (conditional on the declared
+ * purchasing structure and funding sources). Labels here are presentation
+ * only; unknown future sections fall back to a humanised key.
+ */
+const SECTION_LABELS: Record<string, string> = {
+  purchasing_structure: 'Purchasing structure',
+  personal_details: 'Personal details',
+  entity_details: 'Entity details',
+  related_parties: 'Related parties',
+  purchase_profile: 'Purchase profile',
+  funding: 'Source of funds',
+};
+
+const DEFAULT_SECTION_ORDER: AmlSection[] = [
+  'purchasing_structure', 'personal_details', 'purchase_profile', 'funding',
 ];
+
+function buildSteps(sections: { section: AmlSection }[] | undefined): PortalStep[] {
+  const sectionList = (sections?.length ? sections.map(s => s.section) : DEFAULT_SECTION_ORDER);
+  return [
+    { key: 'consent', label: 'Consent' },
+    ...sectionList.map((s): PortalStep => ({
+      key: s,
+      label: SECTION_LABELS[s] ?? s.replace(/_/g, ' '),
+      section: s,
+    })),
+    { key: 'documents', label: 'Documents' },
+    { key: 'review', label: 'Review & submit' },
+  ];
+}
 
 const CONSENT_VERSION = '1.0';
 
@@ -71,6 +95,11 @@ export default function PortalAml() {
     return (data?.sections ?? []).some(s => s.status && s.status !== 'not_started');
   }, [caseObj, consentedCaseId, data?.sections]);
 
+  // Phase 5: the step list is derived from the server's applicable-section
+  // list, so it can grow/shrink when the client changes purchasing structure
+  // or funding sources. The current index is clamped against the live array.
+  const steps = useMemo(() => buildSteps(data?.sections), [data?.sections]);
+
   // Resume: on first load, jump to the last section the user was on, or the first incomplete step.
   useEffect(() => {
     if (!caseObj || resumedRef.current || loading) return;
@@ -81,10 +110,10 @@ export default function PortalAml() {
       const saved = localStorage.getItem(resumeKey(caseObj.id));
       if (saved != null) {
         const n = Number(saved);
-        if (Number.isFinite(n) && n >= 0 && n < STEPS.length) target = n;
+        if (Number.isFinite(n) && n >= 0 && n < steps.length) target = n;
       } else {
         const sections = data?.sections ?? [];
-        const firstIncompleteIdx = STEPS.findIndex(s => {
+        const firstIncompleteIdx = steps.findIndex(s => {
           if (!s.section) return false;
           const st = sections.find(x => x.section === s.section)?.status;
           return !['submitted', 'accepted', 'complete'].includes(st ?? '');
@@ -93,7 +122,7 @@ export default function PortalAml() {
       }
     } catch { /* ignore */ }
     setStepIdx(target);
-  }, [caseObj, consented, data?.sections, loading]);
+  }, [caseObj, consented, data?.sections, loading, steps]);
 
   // Persist current step for resume
   useEffect(() => {
@@ -109,7 +138,7 @@ export default function PortalAml() {
     setStepIdx(i);
   }, [consented]);
 
-  const step = STEPS[stepIdx];
+  const step = steps[Math.min(stepIdx, steps.length - 1)];
 
   const progressPct = useMemo(() => {
     if (!data?.sections) return 0;
@@ -181,8 +210,8 @@ export default function PortalAml() {
           )}
 
           <Stepper
-            steps={STEPS}
-            currentIdx={stepIdx}
+            steps={steps}
+            currentIdx={Math.min(stepIdx, steps.length - 1)}
             onSelect={safeSetStep}
             sections={data?.sections ?? []}
             consented={consented}
@@ -205,8 +234,9 @@ export default function PortalAml() {
                 caseId={caseObj.id}
                 section={step.section}
                 title={step.label}
+                structureType={data?.structure_type ?? null}
                 onSaved={load}
-                onNext={() => setStepIdx(i => Math.min(STEPS.length - 1, i + 1))}
+                onNext={() => setStepIdx(i => Math.min(steps.length - 1, i + 1))}
                 onBack={() => setStepIdx(i => Math.max(0, i - 1))}
               />
             )}
@@ -243,7 +273,7 @@ export default function PortalAml() {
 function Stepper({
   steps, currentIdx, onSelect, sections, consented,
 }: {
-  steps: typeof STEPS; currentIdx: number; onSelect: (i: number) => void;
+  steps: PortalStep[]; currentIdx: number; onSelect: (i: number) => void;
   sections: { section: AmlSection; status: string }[];
   consented: boolean;
 }) {
@@ -347,9 +377,10 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void })
 /* ─────────────────────  Questionnaire  ────────────────────── */
 
 function QuestionnaireStep({
-  caseId, section, title, onSaved, onNext, onBack,
+  caseId, section, title, structureType, onSaved, onNext, onBack,
 }: {
   caseId: string; section: AmlSection; title: string;
+  structureType?: string | null;
   onSaved: () => void; onNext: () => void; onBack: () => void;
 }) {
   const [loading, setLoading] = useState(true);
@@ -461,6 +492,8 @@ function QuestionnaireStep({
           <>
             {section === 'personal_details' && <PersonalDetailsForm value={form} set={set} />}
             {section === 'purchasing_structure' && <PurchasingStructureForm value={form} set={set} />}
+            {section === 'entity_details' && <EntityDetailsForm value={form} set={set} structureType={structureType} />}
+            {section === 'related_parties' && <RelatedPartiesForm value={form} set={set} structureType={structureType} />}
             {section === 'purchase_profile' && <PurchaseProfileForm value={form} set={set} />}
             {section === 'funding' && <FundingForm value={form} set={set} />}
 
@@ -548,6 +581,14 @@ function PurchasingStructureForm({ value, set }: { value: any; set: (k: string, 
             </label>
           ))}
         </RadioGroup>
+        {value.entity_type && value.entity_type !== 'Individual' && (
+          <p className="text-xs text-muted-foreground mt-2" role="status">
+            Based on this choice, extra steps will appear in your checklist
+            {value.entity_type === 'Joint'
+              ? ' to add your co-purchaser(s).'
+              : ' for entity details and the people connected to it.'}
+          </p>
+        )}
       </Field>
       <Field label="Entity legal name (if not individual)">
         <Input value={value.entity_name ?? ''} onChange={e => set('entity_name', e.target.value)} />
@@ -564,6 +605,158 @@ function PurchasingStructureForm({ value, set }: { value: any; set: (k: string, 
       <Field label="Registered address">
         <Textarea rows={2} value={value.registered_address ?? ''} onChange={e => set('registered_address', e.target.value)} />
       </Field>
+    </div>
+  );
+}
+
+/**
+ * Phase 5 — entity specifics for company / trust / SMSF / partnership
+ * purchasers (directive §14.2). Which field groups show depends on the
+ * declared structure; everything is saved into the one section payload.
+ */
+function EntityDetailsForm({ value, set, structureType }: {
+  value: any; set: (k: string, v: any) => void; structureType?: string | null;
+}) {
+  const isTrustLike = structureType === 'Trust' || structureType === 'SMSF';
+  const isSmsf = structureType === 'SMSF';
+  return (
+    <div className="space-y-6">
+      <fieldset className="grid md:grid-cols-2 gap-4">
+        <legend className="text-sm font-medium mb-2">Registration</legend>
+        <Field label="Entity legal name" required>
+          <Input value={value.entity_name ?? ''} onChange={e => set('entity_name', e.target.value)} />
+        </Field>
+        <Field label="ABN / ACN" required>
+          <Input value={value.abn_acn ?? ''} onChange={e => set('abn_acn', e.target.value)} />
+        </Field>
+        <Field label="Country and state of registration" required>
+          <Input value={value.registration_place ?? ''} onChange={e => set('registration_place', e.target.value)} placeholder="e.g. Australia — NSW" />
+        </Field>
+        <Field label="Registered address" required>
+          <Textarea rows={2} value={value.registered_address ?? ''} onChange={e => set('registered_address', e.target.value)} />
+        </Field>
+        <Field label="Nature of business / purpose">
+          <Textarea rows={2} value={value.business_nature ?? ''} onChange={e => set('business_nature', e.target.value)} />
+        </Field>
+      </fieldset>
+
+      {isTrustLike && (
+        <fieldset className="grid md:grid-cols-2 gap-4">
+          <legend className="text-sm font-medium mb-2">{isSmsf ? 'Fund' : 'Trust'} specifics</legend>
+          <Field label={isSmsf ? 'Fund establishment date' : 'Trust deed date'} required>
+            <Input type="date" value={value.deed_date ?? ''} onChange={e => set('deed_date', e.target.value)} />
+          </Field>
+          <Field label="Trustee type" required>
+            <RadioGroup value={value.trustee_type ?? ''} onValueChange={v => set('trustee_type', v)} className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="individual" /> Individual(s)</label>
+              <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="corporate" /> Corporate</label>
+            </RadioGroup>
+          </Field>
+          {value.trustee_type === 'corporate' && (
+            <Field label="Corporate trustee name and ACN" required>
+              <Input value={value.corporate_trustee ?? ''} onChange={e => set('corporate_trustee', e.target.value)} />
+            </Field>
+          )}
+          {!isSmsf && (
+            <Field label="Appointor / protector (if any)">
+              <Input value={value.appointor ?? ''} onChange={e => set('appointor', e.target.value)} />
+            </Field>
+          )}
+          {isSmsf && (
+            <Field label="Is the purchase using a limited recourse borrowing arrangement (LRBA)?" required>
+              <RadioGroup value={value.lrba ?? ''} onValueChange={v => set('lrba', v)} className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="no" /> No</label>
+                <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="yes" /> Yes</label>
+              </RadioGroup>
+            </Field>
+          )}
+        </fieldset>
+      )}
+    </div>
+  );
+}
+
+const PARTY_ROLES = [
+  'Co-purchaser', 'Director', 'Trustee', 'Beneficial owner', 'Beneficiary',
+  'Authorised representative', 'Donor (gift)', 'Private lender', 'Other',
+] as const;
+
+type PartyRow = {
+  role?: string; full_name?: string; dob?: string; email?: string; relationship?: string;
+};
+
+/**
+ * Phase 5 — structured related-party collection (directive §14.3): joint
+ * applicants, directors, trustees, beneficial owners, representatives, donors
+ * and private lenders, captured as repeatable rows the reviewing analyst can
+ * reconcile into canonical party records.
+ */
+function RelatedPartiesForm({ value, set, structureType }: {
+  value: any; set: (k: string, v: any) => void; structureType?: string | null;
+}) {
+  const parties: PartyRow[] = Array.isArray(value.parties) ? value.parties : [];
+  const update = (idx: number, patch: Partial<PartyRow>) => {
+    const next = parties.map((p, i) => (i === idx ? { ...p, ...patch } : p));
+    set('parties', next);
+  };
+  const add = () => set('parties', [...parties, {}]);
+  const remove = (idx: number) => set('parties', parties.filter((_, i) => i !== idx));
+
+  const hint =
+    structureType === 'Joint' ? 'Add each co-purchaser. Everyone named on the contract needs to be listed.'
+    : structureType && structureType !== 'Individual'
+      ? 'Add every director, trustee, beneficiary and anyone who owns or controls 25% or more, plus any authorised representatives.'
+      : 'Add anyone else connected to this purchase — for example the person giving a gift or providing a private loan.';
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{hint}</p>
+
+      {parties.length === 0 && (
+        <p className="text-sm text-muted-foreground border border-dashed rounded-md p-4 text-center">
+          No people added yet. Use “Add person” below.
+        </p>
+      )}
+
+      {parties.map((p, i) => (
+        <fieldset key={i} className="rounded-md border p-4 space-y-4">
+          <legend className="text-sm font-medium px-1">Person {i + 1}</legend>
+          <div className="grid md:grid-cols-2 gap-4">
+            <Field label="Role" required>
+              <select
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                value={p.role ?? ''}
+                onChange={e => update(i, { role: e.target.value })}
+                aria-label={`Role for person ${i + 1}`}
+              >
+                <option value="" disabled>Select a role…</option>
+                {PARTY_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label="Legal full name" required>
+              <Input value={p.full_name ?? ''} onChange={e => update(i, { full_name: e.target.value })} />
+            </Field>
+            <Field label="Date of birth">
+              <Input type="date" value={p.dob ?? ''} onChange={e => update(i, { dob: e.target.value })} />
+            </Field>
+            <Field label="Email (for identity verification)">
+              <Input type="email" value={p.email ?? ''} onChange={e => update(i, { email: e.target.value })} />
+            </Field>
+            <Field label="Relationship to you / ownership %">
+              <Input value={p.relationship ?? ''} onChange={e => update(i, { relationship: e.target.value })} placeholder="e.g. Spouse · 50% shareholder" />
+            </Field>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" onClick={() => remove(i)}>
+              Remove person {i + 1}
+            </Button>
+          </div>
+        </fieldset>
+      ))}
+
+      <Button type="button" variant="outline" size="sm" onClick={add}>
+        Add person
+      </Button>
     </div>
   );
 }
@@ -670,7 +863,7 @@ function DocumentsStep({
     <Card>
       <CardHeader>
         <CardTitle>Documents</CardTitle>
-        <CardDescription>Upload the items your advisor has requested. Accepted formats: PDF, JPG, PNG (≤ 20 MB).</CardDescription>
+        <CardDescription>Upload the items your advisor has requested. Accepted formats: PDF, JPG, PNG (≤ 25 MB).</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {requirements.length === 0 ? (

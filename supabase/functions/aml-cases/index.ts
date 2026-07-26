@@ -22,7 +22,8 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -53,6 +54,60 @@ const TRANSITIONS: Record<string, string[]> = {
   blocked: ['under_review', 'closed'],
   closed: [],
 };
+
+// Phase 1 canonical workflow dimensions. The legacy `status` column remains the
+// compatibility source of truth; these deterministic maps keep the new
+// dimension columns coherent while V2 surfaces still drive `status` only.
+// Must stay in sync with src/lib/aml/caseDimensions.ts and the backfill in
+// supabase/migrations/20260725153000_aml_case_workflow_dimensions.sql.
+const STATUS_TO_STAGE: Record<string, string> = {
+  draft: 'draft',
+  kyc_in_progress: 'client_in_progress',
+  kyc_complete: 'client_submitted',
+  edd_required: 'enhanced_cdd',
+  under_review: 'staff_review',
+  escalated_mlro: 'decision_pending',
+  cleared: 'cleared',
+  blocked: 'blocked',
+  closed: 'closed',
+};
+const STATUS_TO_CLIENT_PORTAL: Record<string, string> = {
+  draft: 'not_started',
+  kyc_in_progress: 'in_progress',
+  kyc_complete: 'submitted',
+  edd_required: 'additional_info_required',
+  under_review: 'under_review',
+  escalated_mlro: 'under_review',
+  cleared: 'complete',
+  blocked: 'contact_adviser',
+  closed: 'complete',
+};
+// Conservative gate sync for legacy-driven transitions. Explicit gate
+// decisions (Phase 8) will supersede this; only `cleared` reads as approved.
+const STATUS_TO_SERVICE_GATE: Record<string, string> = {
+  draft: 'not_activated',
+  kyc_in_progress: 'cdd_incomplete',
+  kyc_complete: 'under_review',
+  edd_required: 'information_outstanding',
+  under_review: 'under_review',
+  escalated_mlro: 'under_review',
+  cleared: 'approved',
+  blocked: 'locked',
+  closed: 'terminated',
+};
+
+/**
+ * True when a write failed only because the Phase 1 dimension columns have not
+ * been migrated in this environment yet (edge functions deploy independently
+ * of migrations). Callers retry without the new columns so the legacy contract
+ * keeps working — fail-open on columns, never on authorization.
+ */
+function isMissingColumnError(error: any): boolean {
+  const msg = String(error?.message ?? '');
+  return error?.code === 'PGRST204'
+    || /column .* does not exist/i.test(msg)
+    || /Could not find the '.*' column/i.test(msg);
+}
 
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -209,31 +264,88 @@ Deno.serve(async (req) => {
       }
 
       case 'create': {
-        if (!canCreate) return jsonResponse({ error: 'Analyst or MLRO role required' }, 403);
+        // Phase 3 (directive §10.4) — manual, unlinked case creation is no
+        // longer an ordinary production pathway. The only supported route is
+        // activate_client (human-confirmed, linked to an active client).
+        // `create` remains solely as an authorised exception channel: MLRO
+        // only, with a recorded exception category, authority and reason.
+        if (!isMlro) {
+          return jsonResponse({
+            error: 'Manual case creation is restricted. Activate the client from their client record instead; an MLRO can record an authorised exception if this is a migration or remediation case.',
+            code: 'manual_creation_restricted',
+          }, 403);
+        }
+        const EXCEPTION_CATEGORIES = [
+          'data_migration', 'legacy_remediation', 'regulator_directed', 'approved_testing',
+        ];
+        const exception = body.exception ?? {};
+        const exceptionCategory = String(exception.category ?? '').trim();
+        const exceptionReason = String(exception.reason ?? '').trim();
+        const exceptionAuthority = String(exception.authority ?? '').trim();
+        if (!EXCEPTION_CATEGORIES.includes(exceptionCategory)) {
+          return jsonResponse({
+            error: 'exception.category is required (data_migration, legacy_remediation, regulator_directed or approved_testing)',
+          }, 400);
+        }
+        if (exceptionReason.length < 10) {
+          return jsonResponse({ error: 'exception.reason must be at least 10 characters' }, 400);
+        }
+        if (!exceptionAuthority) {
+          return jsonResponse({ error: 'exception.authority is required (who approved this exception)' }, 400);
+        }
         const subject = String(body.subject_display_name ?? '').trim();
         if (!subject) return jsonResponse({ error: 'subject_display_name is required' }, 400);
         const subjectType = ['individual', 'entity', 'trust'].includes(body.subject_type)
           ? body.subject_type : 'individual';
         const risk = RISK_RATINGS.includes(body.risk_rating) ? body.risk_rating : null;
+        const exceptionRecord = {
+          category: exceptionCategory,
+          reason: exceptionReason,
+          authority: exceptionAuthority,
+          intended_client_id: body.client_id ?? null,
+          recorded_by: userId,
+          recorded_by_email: userEmail,
+          recorded_at: new Date().toISOString(),
+        };
 
         const ref = await generateCaseReference(admin);
-        const { data: created, error } = await admin
-          .schema('aml').from('cases').insert({
-            case_reference: ref,
-            subject_display_name: subject,
-            subject_type: subjectType,
-            client_id: body.client_id ?? null,
-            purchase_file_id: body.purchase_file_id ?? null,
-            risk_rating: risk,
-            assigned_analyst_id: userId,
-            created_by: userId,
-            metadata: body.metadata ?? {},
-          }).select('*').single();
-        if (error) throw error;
+        const baseCreate = {
+          case_reference: ref,
+          subject_display_name: subject,
+          subject_type: subjectType,
+          client_id: body.client_id ?? null,
+          purchase_file_id: body.purchase_file_id ?? null,
+          risk_rating: risk,
+          assigned_analyst_id: userId,
+          created_by: userId,
+          metadata: { ...(body.metadata ?? {}), creation_exception: exceptionRecord },
+        };
+        const createDimensions = {
+          case_stage: 'draft',
+          client_portal_status: 'not_started',
+          finance_portal_status: 'not_requested',
+          service_gate_status: 'not_activated',
+        };
+        let { data: created, error } = await admin
+          .schema('aml').from('cases')
+          .insert({ ...baseCreate, ...createDimensions }).select('*').single();
+        if (error && isMissingColumnError(error)) {
+          ({ data: created, error } = await admin
+            .schema('aml').from('cases').insert(baseCreate).select('*').single());
+        }
+        if (error) {
+          if (error.code === '23505') {
+            return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+          }
+          throw error;
+        }
 
         await appendEvent(admin, created.id, 'case_created',
-          `Case ${ref} opened for ${subject}`,
-          { subject_type: subjectType, initial_risk: risk, notes: body.notes ?? null },
+          `Case ${ref} opened by authorised exception (${exceptionCategory}) for ${subject}`,
+          {
+            subject_type: subjectType, initial_risk: risk, notes: body.notes ?? null,
+            creation_exception: exceptionRecord,
+          },
           userId, userEmail);
 
         return jsonResponse({ case: created });
@@ -306,10 +418,15 @@ Deno.serve(async (req) => {
         // Model B guardrail: legal approval + program version.
         let programVersion: string | null = null;
         if (model === 'B') {
-          const { data: settings } = await admin
+          // Surface read errors and tolerate multi-row tables: a silent read
+          // failure here previously disabled Model B with a misleading
+          // `model_b_not_approved` message.
+          const { data: settingsRows, error: settingsErr } = await admin
             .schema('aml').from('tenant_settings')
             .select('metadata')
-            .maybeSingle();
+            .limit(1);
+          if (settingsErr) throw settingsErr;
+          const settings = (settingsRows ?? [])[0] ?? null;
           const program = ((settings as any)?.metadata ?? {})?.aml_activation_program ?? {};
           if (program?.legal_approval !== true || !String(program?.program_version ?? '').trim()) {
             return jsonResponse({
@@ -332,25 +449,60 @@ Deno.serve(async (req) => {
           activated_at: new Date().toISOString(),
         };
 
+        // Phase 1 explicit activation contract (§17). Model labels are
+        // preserved in legacy_activation_model; meaning is carried by the
+        // explicit timing/agreement/gate fields.
+        const dimensionFields: Record<string, any> = {
+          case_stage: 'activated',
+          client_portal_status: 'not_started',
+          finance_portal_status: 'not_requested',
+          service_gate_status: 'cdd_incomplete',
+          activation_timing: model === 'A' ? 'post_agreement_trigger' : 'conditional_agreement',
+          agreement_state: model === 'A' ? 'operative' : 'conditional_executed',
+          activation_policy_version: programVersion,
+          legacy_activation_model: model,
+        };
+
         const ref = await generateCaseReference(admin);
-        const { data: created, error: createErr } = await admin
-          .schema('aml').from('cases').insert({
-            case_reference: ref,
-            subject_display_name: displayName,
-            subject_type: body.subject_type && ['individual', 'entity', 'trust'].includes(body.subject_type)
-              ? body.subject_type : 'individual',
-            client_id: clientId,
-            purchase_file_id: body.purchase_file_id ?? null,
-            risk_rating: null,
-            assigned_analyst_id: userId,
-            created_by: userId,
-            metadata: { activation },
-          }).select('*').single();
-        if (createErr) throw createErr;
+        const baseInsert = {
+          case_reference: ref,
+          subject_display_name: displayName,
+          subject_type: body.subject_type && ['individual', 'entity', 'trust'].includes(body.subject_type)
+            ? body.subject_type : 'individual',
+          client_id: clientId,
+          purchase_file_id: body.purchase_file_id ?? null,
+          risk_rating: null,
+          assigned_analyst_id: userId,
+          created_by: userId,
+          metadata: { activation },
+        };
+        let { data: created, error: createErr } = await admin
+          .schema('aml').from('cases')
+          .insert({ ...baseInsert, ...dimensionFields }).select('*').single();
+        if (createErr && isMissingColumnError(createErr)) {
+          ({ data: created, error: createErr } = await admin
+            .schema('aml').from('cases').insert(baseInsert).select('*').single());
+        }
+        if (createErr) {
+          // Partial unique index aml_cases_one_open_per_client closes the
+          // read-then-write race above; surface it as the same 409 contract.
+          if (createErr.code === '23505') {
+            return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+          }
+          throw createErr;
+        }
 
         await appendEvent(admin, created.id, 'case_created',
           `Case ${ref} activated (Model ${model}) for ${displayName}`,
-          { activation, client_id: clientId },
+          {
+            activation, client_id: clientId,
+            activation_contract: {
+              activation_timing: dimensionFields.activation_timing,
+              agreement_state: dimensionFields.agreement_state,
+              service_gate_status: dimensionFields.service_gate_status,
+              activation_policy_version: programVersion,
+            },
+          },
           userId, userEmail);
 
         return jsonResponse({ case: created, activation });
@@ -417,13 +569,29 @@ Deno.serve(async (req) => {
         const patch: Record<string, any> = { status: to };
         if (to === 'closed') patch.closed_at = new Date().toISOString();
 
-        const { data: updated, error: upErr } = await admin.schema('aml').from('cases')
-          .update(patch).eq('id', body.case_id).select('*').single();
+        // Keep the Phase 1 dimension columns coherent while legacy `status`
+        // is still the driver. Gate sync is the conservative legacy mapping;
+        // explicit gate decisions (Phase 8) will replace it.
+        const dimensionPatch: Record<string, any> = {
+          case_stage: STATUS_TO_STAGE[to] ?? null,
+          client_portal_status: STATUS_TO_CLIENT_PORTAL[to] ?? null,
+          service_gate_status: STATUS_TO_SERVICE_GATE[to] ?? null,
+        };
+
+        let { data: updated, error: upErr } = await admin.schema('aml').from('cases')
+          .update({ ...patch, ...dimensionPatch }).eq('id', body.case_id).select('*').single();
+        if (upErr && isMissingColumnError(upErr)) {
+          ({ data: updated, error: upErr } = await admin.schema('aml').from('cases')
+            .update(patch).eq('id', body.case_id).select('*').single());
+        }
         if (upErr) throw upErr;
 
         await appendEvent(admin, body.case_id, 'status_changed',
           `Status ${from} → ${to}${!legal.includes(to) ? ' (MLRO override)' : ''}`,
-          { from, to, reason: body.reason ?? null, override: !legal.includes(to) },
+          {
+            from, to, reason: body.reason ?? null, override: !legal.includes(to),
+            dimensions_synced: dimensionPatch,
+          },
           userId, userEmail);
 
         return jsonResponse({ case: updated });
@@ -453,6 +621,43 @@ Deno.serve(async (req) => {
           .order('created_at', { ascending: false }).limit(limit);
         if (error) throw error;
         return jsonResponse({ events: data ?? [] });
+      }
+
+      case 'client_summary': {
+        // Phase 4 — persistent AML summary for the master client record.
+        // Read-only; any AML role. Returns the client's current case (open
+        // first, else most recent), requirement progress and open-request
+        // counts so the Client page can show status without duplicating the
+        // case workspace.
+        const clientId = String(body.client_id ?? '').trim();
+        if (!clientId) return jsonResponse({ error: 'client_id is required' }, 400);
+        const { data: caseRows, error: caseErr } = await admin
+          .schema('aml').from('cases').select('*')
+          .eq('client_id', clientId)
+          .order('opened_at', { ascending: false })
+          .limit(5);
+        if (caseErr) throw caseErr;
+        const rows = caseRows ?? [];
+        const OPEN_BLOCKING = new Set(['cleared', 'blocked', 'closed']);
+        const openCase = rows.find((r: any) => !OPEN_BLOCKING.has(r.status)) ?? null;
+        const current = openCase ?? rows[0] ?? null;
+        if (!current) {
+          return jsonResponse({ case: null, has_open_case: false });
+        }
+        const [{ data: reqRows }, { data: requestRows }] = await Promise.all([
+          admin.schema('aml').from('document_requirements')
+            .select('required, status').eq('case_id', current.id),
+          admin.schema('aml').from('client_requests')
+            .select('id, status').eq('case_id', current.id).in('status', ['open', 'responded']),
+        ]);
+        const required = (reqRows ?? []).filter((r: any) => r.required);
+        const completed = required.filter((r: any) => ['uploaded', 'accepted'].includes(r.status));
+        return jsonResponse({
+          case: current,
+          has_open_case: Boolean(openCase),
+          requirement_progress: { completed: completed.length, total: required.length },
+          open_client_requests: (requestRows ?? []).length,
+        });
       }
 
       case 'list_requirements': {

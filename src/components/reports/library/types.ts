@@ -25,6 +25,7 @@ export interface InvestmentReport {
   id: string;
   property_address: string;
   property_listing_id: string | null;
+  client_property_id?: string | null;
   /** Server-resolved identity used to keep all report variants on one property package. */
   canonical_property_key?: string | null;
   report_content?: string;
@@ -37,7 +38,8 @@ export interface InvestmentReport {
   derived_from_report_id?: string | null;
   parent_report_id?: string | null;
   status?: string;
-  is_archived?: boolean;
+  is_archived?: boolean | null;
+  is_client_report?: boolean | null;
   manual_overrides?: any;
   financial_calculations?: any;
   demographics_data?: any;

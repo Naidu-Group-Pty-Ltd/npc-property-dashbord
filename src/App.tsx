@@ -82,6 +82,7 @@ import MarketQAQuality from "./pages/admin/MarketQAQuality";
 import ReclassifyPropertyAdmin from "./pages/admin/ReclassifyPropertyAdmin";
 import AgentQuality from "./pages/admin/AgentQuality";
 import AmlCases from "./pages/aml/AmlCases";
+import AmlCaseWorkspace from "./pages/aml/AmlCaseWorkspace";
 import AmlOverview from "./pages/aml/AmlOverview";
 import {
   AmlIntakeQueue, AmlVerification, AmlScreening, AmlRisk, AmlCounterparty,
@@ -384,6 +385,7 @@ const App = () => (
                   <Route index element={<AmlGuard capability="aml.view"><AmlOverview /></AmlGuard>} />
                   <Route path="intake" element={<AmlGuard capability="aml.view"><AmlIntakeQueue /></AmlGuard>} />
                   <Route path="cases" element={<AmlGuard capability="aml.view"><AmlCases /></AmlGuard>} />
+                  <Route path="cases/:caseId" element={<AmlGuard capability="aml.view"><AmlCaseWorkspace /></AmlGuard>} />
                   <Route path="verification" element={<AmlGuard capability="aml.view"><AmlVerification /></AmlGuard>} />
                   <Route path="screening" element={<AmlGuard capability="aml.view"><AmlScreening /></AmlGuard>} />
                   <Route path="risk" element={<AmlGuard capability="aml.view"><AmlRisk /></AmlGuard>} />
@@ -423,7 +425,7 @@ const App = () => (
                 <Route path="portal-config" element={<ModuleGuard moduleKey="portal_config"><PortalConfig /></ModuleGuard>} />
                 <Route path="marketing-analytics" element={<ModuleGuard moduleKey="marketing_analytics"><MarketingAnalytics /></ModuleGuard>} />
                 <Route path="conversations" element={<ModuleGuard moduleKey="conversations"><Conversations /></ModuleGuard>} />
-                <Route path="messages" element={<Messages />} />
+                <Route path="messages" element={<ModuleGuard moduleKey="conversations"><Messages /></ModuleGuard>} />
                 <Route path="lenders" element={<ModuleGuard moduleKey="lenders"><Lenders /></ModuleGuard>} />
                 <Route path="commissions" element={<Commissions />} />
                 <Route path="reports/analytics" element={<ReportsAnalytics />} />

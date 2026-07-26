@@ -10,12 +10,14 @@
  *   - inbox_list:  {} → cross-client unread summary for the partner
  */
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -370,10 +372,9 @@ async function crossClientInbox(supabase: any, partner: any) {
     .eq('finance_user_id', partner.id);
   if (assignmentError) return json({ error: assignmentError.message }, 500);
 
-  const allowedAssignments = (assignments ?? []).filter((a: any) => {
-    const msgPerm = a.permissions?.messages;
-    return !(msgPerm && msgPerm.view === false);
-  });
+  const allowedAssignments = (assignments ?? []).filter((a: any) =>
+    hasFinancePortalPermission(partner.global_permissions, a.permissions, 'messages', 'view', true)
+  );
   const clientIds = [...new Set(allowedAssignments.map((a: any) => a.client_id).filter(Boolean))];
   if (clientIds.length === 0) {
     return json({
@@ -387,10 +388,23 @@ async function crossClientInbox(supabase: any, partner: any) {
     });
   }
 
-  const [clientsRes, portalRes, financeThreadRes, threadRes, outboundRes, ghlConvRes, notesRes, activityRes] = await Promise.all([
+  const noteClientIds = allowedAssignments
+    .filter((a: any) => hasFinancePortalPermission(partner.global_permissions, a.permissions, 'notes', 'view'))
+    .map((a: any) => a.client_id);
+  const contactClientIds = allowedAssignments
+    .filter((a: any) => hasFinancePortalPermission(partner.global_permissions, a.permissions, 'contacts', 'view'))
+    .map((a: any) => a.client_id);
+  const emptyResult = Promise.resolve({ data: [], error: null });
+
+  const [clientsRes, contactsRes, portalRes, financeThreadRes, threadRes, outboundRes, ghlConvRes, notesRes, activityRes] = await Promise.all([
     supabase.from('clients')
-      .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, secondary_first_name, secondary_surname, secondary_email, secondary_mobile, last_note_at, finance_contact_id')
+      .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, last_note_at, finance_contact_id')
       .in('id', clientIds),
+    contactClientIds.length > 0
+      ? supabase.from('clients')
+        .select('id, secondary_first_name, secondary_surname, secondary_email, secondary_mobile')
+        .in('id', contactClientIds)
+      : emptyResult,
     supabase.from('client_portal_messages')
       .select('id, client_id, created_at, message, sender_type, sender_name, is_read, is_internal')
       .in('client_id', clientIds)
@@ -416,20 +430,21 @@ async function crossClientInbox(supabase: any, partner: any) {
       .in('client_id', clientIds)
       .order('last_message_date', { ascending: false, nullsFirst: false })
       .limit(1000),
-    supabase.from('client_notes')
+    noteClientIds.length > 0 ? supabase.from('client_notes')
       .select('id, client_id, note_type, content, visibility, source_surface, source_actor_type, source_actor_name, created_at, updated_at')
-      .in('client_id', clientIds)
+      .in('client_id', noteClientIds)
       .in('visibility', ['shared', 'finance_only'])
       .order('created_at', { ascending: false })
-      .limit(500),
-    supabase.from('client_activities')
+      .limit(500) : emptyResult,
+    noteClientIds.length > 0 ? supabase.from('client_activities')
       .select('id, client_id, activity_type, title, description, source_surface, source_actor_type, source_actor_name, created_at')
-      .in('client_id', clientIds)
+      .in('client_id', noteClientIds)
       .order('created_at', { ascending: false })
-      .limit(500),
+      .limit(500) : emptyResult,
   ]);
 
-  if (clientsRes.error) return json({ error: clientsRes.error.message }, 500);
+  const clientError = clientsRes.error || contactsRes.error;
+  if (clientError) return json({ error: clientError.message }, 500);
 
   const sourceErrors = [
     ['client_portal_messages', portalRes.error],
@@ -442,9 +457,11 @@ async function crossClientInbox(supabase: any, partner: any) {
   ].filter(([, err]: any[]) => !!err).map(([source, err]: any[]) => ({ source, message: err.message }));
 
   const byClient: Record<string, any> = {};
+  const contactsByClient = new Map((contactsRes.data ?? []).map((contact: any) => [contact.id, contact]));
   for (const c of clientsRes.data ?? []) {
+    const contact: any = contactsByClient.get(c.id);
     const primary = [c.primary_first_name, c.primary_surname].filter(Boolean).join(' ').trim();
-    const secondary = [c.secondary_first_name, c.secondary_surname].filter(Boolean).join(' ').trim();
+    const secondary = [contact?.secondary_first_name, contact?.secondary_surname].filter(Boolean).join(' ').trim();
     byClient[c.id] = {
       id: `client:${c.id}`,
       thread_key: `client:${c.id}`,
@@ -453,9 +470,9 @@ async function crossClientInbox(supabase: any, partner: any) {
       name: primary || 'Unknown client',
       secondary_name: secondary || null,
       email: c.primary_email || '',
-      secondary_email: c.secondary_email || '',
+      secondary_email: contact?.secondary_email || '',
       phone: c.primary_mobile || '',
-      secondary_phone: c.secondary_mobile || '',
+      secondary_phone: contact?.secondary_mobile || '',
       assigned_finance_partner: partner.full_name || partner.email || null,
       assigned_finance_partner_email: partner.email || null,
       sources: [] as string[],

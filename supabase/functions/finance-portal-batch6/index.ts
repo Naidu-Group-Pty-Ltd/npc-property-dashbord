@@ -34,11 +34,17 @@
  *  reminders_run_due       (cron) — escalates gentle → firm → broker_notified for stale doc requests
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import {
+  canAccessFinanceClient,
+  canAccessPurchaseFile,
+  canAccessPurchaseFileResource,
+} from '../_shared/financePortalObjectAuthz.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -100,10 +106,16 @@ Deno.serve(async (req) => {
     if (!portalUser || !portalUser.is_active || portalUser.revoked_at) return json({ error: 'Invalid session' }, 401);
     if (!portalUser.session_expires_at || new Date(portalUser.session_expires_at) < new Date()) return json({ error: 'Session expired' }, 401);
 
+    const requireFileAccess = async (purchaseFileId: string) =>
+      canAccessPurchaseFile(supabase, portalUser.id, purchaseFileId);
+    const requireResourceAccess = async (table: string, resourceId: string) =>
+      canAccessPurchaseFileResource(supabase, portalUser.id, table, resourceId);
+
     /* ===== Applicants ===== */
     if (operation === 'applicants_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_applicants')
         .select('*').eq('purchase_file_id', fid).order('position').order('created_at');
       if (error) return json({ error: error.message }, 500);
@@ -113,6 +125,7 @@ Deno.serve(async (req) => {
       const fid = body.purchase_file_id;
       const applicant = body.applicant || {};
       if (!fid || !applicant.display_name) return json({ error: 'purchase_file_id and display_name required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const insert = pick(applicant, APPLICANT_COLS);
       if (applicant.id) {
         const { data, error } = await supabase.from('purchase_file_applicants')
@@ -129,6 +142,7 @@ Deno.serve(async (req) => {
     if (operation === 'applicants_delete') {
       const id = body.applicant_id;
       if (!id) return json({ error: 'applicant_id required' }, 400);
+      if (!await requireResourceAccess('purchase_file_applicants', id)) return json({ error: 'Not authorised' }, 403);
       const { error } = await supabase.from('purchase_file_applicants').delete().eq('id', id);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
@@ -138,6 +152,7 @@ Deno.serve(async (req) => {
     if (operation === 'onboarding_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_onboarding_checklist')
         .select('*').eq('purchase_file_id', fid).order('position').order('created_at');
       if (error) return json({ error: error.message }, 500);
@@ -146,6 +161,7 @@ Deno.serve(async (req) => {
     if (operation === 'onboarding_seed') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data: pf } = await supabase.from('purchase_files').select('client_id').eq('id', fid).maybeSingle();
       const rows = DEFAULT_ONBOARDING.map(s => ({
         purchase_file_id: fid, client_id: pf?.client_id ?? null,
@@ -162,6 +178,7 @@ Deno.serve(async (req) => {
       const fid = body.purchase_file_id;
       const step = body.step || {};
       if (!fid || !step.label || !step.step_key) return json({ error: 'purchase_file_id, step_key and label required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const insert = pick(step, STEP_COLS);
       if (step.id) {
         const { data, error } = await supabase.from('purchase_file_onboarding_checklist')
@@ -181,6 +198,7 @@ Deno.serve(async (req) => {
       const id = body.step_id;
       const status = body.status;
       if (!id || !status) return json({ error: 'step_id and status required' }, 400);
+      if (!await requireResourceAccess('purchase_file_onboarding_checklist', id)) return json({ error: 'Not authorised' }, 403);
       const patch: any = { status, updated_at: new Date().toISOString() };
       if (status === 'complete') {
         patch.completed_at = new Date().toISOString();
@@ -194,6 +212,7 @@ Deno.serve(async (req) => {
     if (operation === 'onboarding_delete') {
       const id = body.step_id;
       if (!id) return json({ error: 'step_id required' }, 400);
+      if (!await requireResourceAccess('purchase_file_onboarding_checklist', id)) return json({ error: 'Not authorised' }, 403);
       const { error } = await supabase.from('purchase_file_onboarding_checklist').delete().eq('id', id);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
@@ -245,6 +264,11 @@ Deno.serve(async (req) => {
     if (operation === 'bookings_create') {
       const insert = pick(body, BOOKING_COLS);
       if (!insert.start_at || !insert.end_at) return json({ error: 'start_at and end_at required' }, 400);
+      if (insert.purchase_file_id && !await requireFileAccess(insert.purchase_file_id)) return json({ error: 'Not authorised' }, 403);
+      if (!insert.purchase_file_id && insert.client_id
+        && !await canAccessFinanceClient(supabase, portalUser.id, insert.client_id)) {
+        return json({ error: 'Not authorised' }, 403);
+      }
       const { data, error } = await supabase.from('finance_partner_bookings')
         .insert({ ...insert, finance_user_id: portalUser.id, booked_by: 'partner' })
         .select().single();
@@ -275,6 +299,7 @@ Deno.serve(async (req) => {
     if (operation === 'reminders_configure') {
       const id = body.instance_id;
       if (!id) return json({ error: 'instance_id required' }, 400);
+      if (!await requireResourceAccess('document_requirement_instances', id)) return json({ error: 'Not authorised' }, 403);
       const patch: any = { updated_at: new Date().toISOString() };
       if (body.auto_reminder_enabled != null) patch.auto_reminder_enabled = !!body.auto_reminder_enabled;
       if ('due_date' in body) patch.due_date = body.due_date || null;

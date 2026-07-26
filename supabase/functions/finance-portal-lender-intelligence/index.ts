@@ -14,10 +14,13 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 
+const LIVE_RATE_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token, x-session-id, x-portal-session-token',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token, x-session-id, x-portal-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -124,60 +127,6 @@ Deno.serve(async (req) => {
     ) {
       return json({ error: 'Session expired' }, 401);
     }
-
-    // -----------------------------------------------------------------------
-    // Refresh shared Command Centre rate cache (mirrors Borrowing Capacity calculator
-    // "Refresh all" flow). Calls cdr-lending-rates-service server-to-server with the
-    // service-role key, so Finance Partners can pull live lender rates on demand.
-    if (operation === 'refresh_rates') {
-      try {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-        const lenderOnly = body?.lender_id ? String(body.lender_id) : null;
-
-        const ctrl = new AbortController();
-        const t = setTimeout(() => ctrl.abort(), 240_000); // 4 minutes
-        const _anon = (Deno.env.get('SUPABASE_ANON_KEY') || '').trim();
-        const _internalSecret = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
-        const resp = await fetch(
-          `${supabaseUrl}/functions/v1/cdr-lending-rates-service`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              // AUTH-002: internal secret, not the service-role key.
-              Authorization: `Bearer ${_anon}`,
-              apikey: _internalSecret ? _anon : serviceKey,
-              ...(_internalSecret ? { 'x-internal-edge-secret': _internalSecret } : {}),
-            },
-            body: JSON.stringify(
-              lenderOnly
-                ? { action: 'rates', lender: lenderOnly, refresh: true }
-                : { action: 'refresh-all' },
-            ),
-            signal: ctrl.signal,
-          },
-        );
-        clearTimeout(t);
-
-        const payload = await resp.json().catch(() => ({}));
-        if (!resp.ok || payload?.success === false) {
-          return json(
-            { error: payload?.error || `Refresh failed (status ${resp.status})` },
-            502,
-          );
-        }
-        return json({
-          success: true,
-          summary: payload?.summary ?? null,
-          results: payload?.data ?? null,
-        });
-      } catch (e: any) {
-        return json({ error: e?.message || 'Refresh failed' }, 500);
-      }
-    }
-
-    // -----------------------------------------------------------------------
 
     if (operation === 'list_playbooks') {
       const { data, error } = await supabase

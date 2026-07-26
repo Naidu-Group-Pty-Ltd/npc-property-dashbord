@@ -18,7 +18,8 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token, x-finance-session-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token, x-finance-session-token",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const jr = (d: unknown, s = 200) =>
@@ -56,121 +57,10 @@ async function appendCaseEvent(
   });
 }
 
-type Comparison = {
-  id?: string;
-  case_id: string;
-  purchase_file_id?: string | null;
-  source?: string;
-  purchase_price?: number | null;
-  loan_amount?: number | null;
-  lender?: string | null;
-  lvr?: number | null;
-  borrower_contribution?: number | null;
-  refi_equity?: number | null;
-  gift_amount?: number | null;
-  gift_source?: string | null;
-  smsf_lrba?: boolean;
-  smsf_details?: any;
-  loan_purpose?: string | null;
-  funding_notes?: string | null;
-  raw_payload?: any;
-};
-
-/** Deterministic discrepancy engine. */
-function detectDiscrepancies(current: Comparison, previous: Comparison | null, pf: any | null): Array<{
-  kind: string; severity: "info"|"low"|"medium"|"high"|"critical"; summary: string; detail?: string;
-  expected_value?: any; observed_value?: any;
-}> {
-  const out: any[] = [];
-  const price = Number(current.purchase_price ?? 0);
-  const loan = Number(current.loan_amount ?? 0);
-  const contribution = Number(current.borrower_contribution ?? 0);
-  const gift = Number(current.gift_amount ?? 0);
-  const refi = Number(current.refi_equity ?? 0);
-  const lvr = Number(current.lvr ?? 0);
-
-  if (price > 0 && loan > 0) {
-    const impliedLvr = (loan / price) * 100;
-    if (lvr > 0 && Math.abs(impliedLvr - lvr) > 2.5) {
-      out.push({
-        kind: "lvr_mismatch", severity: "medium",
-        summary: `Declared LVR ${lvr.toFixed(1)}% differs from loan÷price (${impliedLvr.toFixed(1)}%)`,
-        expected_value: { lvr: Number(impliedLvr.toFixed(2)) }, observed_value: { lvr },
-      });
-    }
-    const fundingGap = price - (loan + contribution + gift + refi);
-    if (Math.abs(fundingGap) > 5000) {
-      out.push({
-        kind: "funding_gap", severity: fundingGap > 20000 ? "high" : "medium",
-        summary: `Funding sources do not reconcile to price (gap ${fundingGap.toLocaleString(undefined,{maximumFractionDigits:0})})`,
-        detail: `price=${price}, loan+contribution+gift+refi=${loan+contribution+gift+refi}`,
-        expected_value: { total: price }, observed_value: { total: loan + contribution + gift + refi },
-      });
-    }
-  }
-
-  if (gift > 0 && !current.gift_source) {
-    out.push({
-      kind: "unexplained_gift", severity: "high",
-      summary: `Gift of ${gift.toLocaleString()} declared without documented source`,
-    });
-  }
-  if (gift > 0 && price > 0 && gift / price > 0.2) {
-    out.push({
-      kind: "large_gift_ratio", severity: "high",
-      summary: `Gift represents ${((gift/price)*100).toFixed(0)}% of purchase price — enhanced SoF review required`,
-    });
-  }
-  if (lvr > 95) {
-    out.push({
-      kind: "lvr_over_95", severity: "medium",
-      summary: `LVR ${lvr.toFixed(1)}% exceeds 95% — confirm LMI + serviceability`,
-    });
-  }
-  if (current.smsf_lrba) {
-    out.push({
-      kind: "smsf_lrba_declared", severity: "info",
-      summary: "SMSF LRBA declared — verify trustee structure, custodian bare trust, single-acquirable-asset rule",
-    });
-  }
-
-  if (previous) {
-    if (previous.lender && current.lender && previous.lender !== current.lender) {
-      out.push({
-        kind: "lender_changed", severity: "low",
-        summary: `Lender changed from ${previous.lender} to ${current.lender}`,
-        expected_value: { lender: previous.lender }, observed_value: { lender: current.lender },
-      });
-    }
-    const prevLoan = Number(previous.loan_amount ?? 0);
-    if (prevLoan > 0 && loan > 0 && Math.abs(loan - prevLoan) / prevLoan > 0.1) {
-      out.push({
-        kind: "loan_amount_shift", severity: "medium",
-        summary: `Loan amount moved by ${(((loan-prevLoan)/prevLoan)*100).toFixed(1)}% vs last snapshot`,
-        expected_value: { loan_amount: prevLoan }, observed_value: { loan_amount: loan },
-      });
-    }
-  }
-
-  if (pf) {
-    const pfPrice = Number(pf.purchase_price ?? 0);
-    if (pfPrice > 0 && price > 0 && Math.abs(pfPrice - price) > 5000) {
-      out.push({
-        kind: "price_mismatch_pf", severity: "medium",
-        summary: `Finance portal purchase price ${pfPrice.toLocaleString()} differs from AML capture ${price.toLocaleString()}`,
-        expected_value: { purchase_price: pfPrice }, observed_value: { purchase_price: price },
-      });
-    }
-    if (pf.lender && current.lender && String(pf.lender).toLowerCase() !== String(current.lender).toLowerCase()) {
-      out.push({
-        kind: "lender_mismatch_pf", severity: "low",
-        summary: `Finance portal lender "${pf.lender}" differs from AML capture "${current.lender}"`,
-      });
-    }
-  }
-
-  return out;
-}
+// Phase 7: the comparison type + deterministic discrepancy engine moved to
+// _shared/amlFinanceEngine.ts so finance-portal submissions run through the
+// exact same reconciliation as staff-entered snapshots.
+import { detectDiscrepancies, type Comparison } from "../_shared/amlFinanceEngine.ts";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -201,8 +91,11 @@ Deno.serve(async (req) => {
     const userLabel = auth.username ?? null;
     const op = opPre;
 
-    // Limited status endpoint — AML role required because status/risk are AML case data.
-    // Returns just enough for the Finance Portal to show a status pill.
+    // Limited status endpoint — AML role required because case state is AML data.
+    // Phase 1 finance-safe contract (directive Appendix C.2): returns only the
+    // finance-portal dimension and gate-derived readiness. Raw risk_rating,
+    // screening and internal case state are excluded from the server response —
+    // removed at the contract, not hidden in the UI.
     if (op === "limited_status") {
       const { data: hasAmlRole } = await admin.rpc("has_any_aml_role", { _user_id: userId });
       if (!hasAmlRole) return jr({ error: "AML role required" }, 403);
@@ -211,23 +104,45 @@ Deno.serve(async (req) => {
       const clientId = body.client_id ? String(body.client_id) : null;
       if (!pfId && !clientId) return jr({ error: "purchase_file_id or client_id required" }, 400);
 
-      let q = aml.from("cases").select("id, status, risk_rating, updated_at, purchase_file_id, client_id");
+      // select('*') tolerates environments where the Phase 1 dimension
+      // migration has not been applied yet; fallbacks below cover both shapes.
+      let q = aml.from("cases").select("*");
       if (pfId) q = q.eq("purchase_file_id", pfId);
       else if (clientId) q = q.eq("client_id", clientId);
       const { data: rows } = await q.order("updated_at", { ascending: false }).limit(1);
       const c = (rows ?? [])[0] ?? null;
-      if (!c) return jr({ status: "not_started", risk_rating: null, updated_at: null });
+      if (!c) {
+        return jr({
+          finance_status: "not_requested",
+          service_readiness: "service_not_ready",
+          open_finance_discrepancies: 0,
+          updated_at: null,
+        });
+      }
 
       // Count open discrepancies without leaking detail.
       const { count } = await aml.from("finance_discrepancies")
         .select("id", { count: "exact", head: true })
         .eq("case_id", c.id).in("status", ["open", "under_review", "escalated"]);
 
+      const FINANCE_STATUSES = [
+        "not_requested", "information_required", "submitted", "clarification_required",
+        "under_review", "accepted", "no_further_action",
+      ];
+      const GATE_READY = new Set(["approved", "approved_with_controls"]);
+      // Legacy fallback: only a cleared case reads as an approved gate.
+      const gate = typeof c.service_gate_status === "string" && c.service_gate_status
+        ? c.service_gate_status
+        : (c.status === "cleared" ? "approved" : "not_activated");
+      const financeStatus = FINANCE_STATUSES.includes(c.finance_portal_status)
+        ? c.finance_portal_status
+        : "not_requested";
+
       return jr({
-        status: c.status,
-        risk_rating: c.risk_rating,
-        updated_at: c.updated_at,
+        finance_status: financeStatus,
+        service_readiness: GATE_READY.has(gate) ? "service_ready" : "service_not_ready",
         open_finance_discrepancies: count ?? 0,
+        updated_at: c.updated_at ?? null,
       });
     }
 
@@ -604,6 +519,109 @@ Deno.serve(async (req) => {
         await appendCaseEvent(admin, existing.case_id, "system", "Finance evidence removed", { id, label: existing.label }, userId, userLabel);
       }
       return jr({ ok: true });
+    }
+
+    // ── FINANCE REQUESTS (Phase 7, directive §15.4) ────────
+    // Staff side of the Command Center ↔ Finance Portal loop. The request
+    // message is finance-safe wording authored by staff; linked discrepancy
+    // internals never travel with the request. The finance-portal dimension
+    // (§15.3) is advanced explicitly at each step.
+    const FINANCE_REQUEST_KINDS = new Set(["funding_information", "financial_evidence", "clarification"]);
+    const setFinancePortalStatus = async (caseId: string, status: string) => {
+      const { error } = await aml.from("cases")
+        .update({ finance_portal_status: status }).eq("id", caseId);
+      // Tolerate a not-yet-migrated environment (PGRST204 missing column) —
+      // the legacy enum remains the compatibility source of truth there.
+      if (error && !/finance_portal_status/.test(error.message ?? "")) throw error;
+    };
+
+    if (op === "list_finance_requests") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const { data, error } = await aml.from("finance_requests")
+        .select("*").eq("case_id", caseId).order("created_at", { ascending: false });
+      if (error) return jr({ error: error.message }, 400);
+      return jr({ requests: data ?? [] });
+    }
+
+    if (op === "create_finance_request") {
+      requireWrite();
+      const reqBody = body.request ?? {};
+      const caseId = String(reqBody.case_id ?? "");
+      const kind = String(reqBody.kind ?? "");
+      const subject = String(reqBody.subject ?? "").trim();
+      const message = String(reqBody.message ?? "").trim();
+      if (!caseId) return jr({ error: "request.case_id required" }, 400);
+      if (!FINANCE_REQUEST_KINDS.has(kind)) return jr({ error: "request.kind invalid" }, 400);
+      if (!subject || !message) return jr({ error: "request.subject and request.message are required" }, 400);
+
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, client_id, purchase_file_id").eq("id", caseId).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      const purchaseFileId = reqBody.purchase_file_id
+        ? String(reqBody.purchase_file_id)
+        : (caseRow.purchase_file_id ?? null);
+
+      const { data: created, error: createErr } = await aml.from("finance_requests").insert({
+        case_id: caseId,
+        client_id: caseRow.client_id ?? null,
+        purchase_file_id: purchaseFileId,
+        kind, subject, message,
+        discrepancy_id: reqBody.discrepancy_id ? String(reqBody.discrepancy_id) : null,
+        status: "open",
+        created_by: userId,
+      }).select("*").maybeSingle();
+      if (createErr) return jr({ error: createErr.message }, 400);
+
+      await setFinancePortalStatus(caseId,
+        kind === "clarification" ? "clarification_required" : "information_required");
+      await appendCaseEvent(admin, caseId, "system",
+        `Finance request sent: ${subject}`,
+        { finance_request_id: created?.id, kind, purchase_file_id: purchaseFileId }, userId, userLabel);
+      return jr({ request: created });
+    }
+
+    if (op === "review_finance_request") {
+      requireWrite();
+      const id = String(body.request_id ?? "");
+      const { data: reqRow } = await aml.from("finance_requests")
+        .select("id, case_id, status, subject").eq("id", id).maybeSingle();
+      if (!reqRow) return jr({ error: "Request not found" }, 404);
+      if (reqRow.status !== "submitted") return jr({ error: "Only submitted requests can move to review" }, 400);
+      await setFinancePortalStatus(reqRow.case_id, "under_review");
+      await appendCaseEvent(admin, reqRow.case_id, "system",
+        `Finance submission under review: ${reqRow.subject}`,
+        { finance_request_id: id }, userId, userLabel);
+      return jr({ ok: true });
+    }
+
+    if (op === "resolve_finance_request") {
+      requireWrite();
+      const id = String(body.request_id ?? "");
+      const outcome = String(body.outcome ?? "resolved");
+      const financeStatusAfter = body.finance_status_after ? String(body.finance_status_after) : null;
+      if (!["resolved", "cancelled"].includes(outcome)) return jr({ error: "outcome must be resolved or cancelled" }, 400);
+      if (financeStatusAfter && !["under_review", "accepted", "no_further_action"].includes(financeStatusAfter)) {
+        return jr({ error: "finance_status_after invalid" }, 400);
+      }
+      const { data: reqRow } = await aml.from("finance_requests")
+        .select("id, case_id, status, subject").eq("id", id).maybeSingle();
+      if (!reqRow) return jr({ error: "Request not found" }, 404);
+      if (["resolved", "cancelled"].includes(reqRow.status)) return jr({ error: "Request already closed" }, 400);
+
+      const { data: updated, error: updErr } = await aml.from("finance_requests").update({
+        status: outcome,
+        resolved_at: new Date().toISOString(),
+        resolved_by: userId,
+        resolution_note: body.resolution_note ? String(body.resolution_note) : null,
+      }).eq("id", id).select("*").maybeSingle();
+      if (updErr) return jr({ error: updErr.message }, 400);
+
+      if (financeStatusAfter) await setFinancePortalStatus(reqRow.case_id, financeStatusAfter);
+      await appendCaseEvent(admin, reqRow.case_id, "system",
+        `Finance request ${outcome}: ${reqRow.subject}`,
+        { finance_request_id: id, outcome, finance_status_after: financeStatusAfter }, userId, userLabel);
+      return jr({ request: updated });
     }
 
     return jr({ error: `Unknown op: ${op}` }, 400);

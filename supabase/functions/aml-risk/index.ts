@@ -19,7 +19,8 @@ import { verifyAuth } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -34,7 +35,7 @@ async function sha256Hex(input: string) {
 async function appendCaseEvent(
   admin: any, caseId: string, category: string, summary: string,
   payload: any, actorId: string | null, actorLabel: string | null,
-) {
+): Promise<string | null> {
   const { data: prev } = await admin.schema("aml").from("case_events")
     .select("row_hash").eq("case_id", caseId).order("created_at", { ascending: false }).limit(1).maybeSingle();
   const prevHash = prev?.row_hash ?? null;
@@ -43,10 +44,11 @@ async function appendCaseEvent(
     case_id: caseId, category, summary, payload, actor_id: actorId, actor_label: actorLabel,
     prev_hash: prevHash, created_at: now,
   }));
-  await admin.schema("aml").from("case_events").insert({
+  const { data: inserted } = await admin.schema("aml").from("case_events").insert({
     case_id: caseId, category, summary, payload, actor_id: actorId, actor_label: actorLabel,
     prev_hash: prevHash, row_hash: rowHash, created_at: now,
-  });
+  }).select("id").maybeSingle();
+  return inserted?.id ?? null;
 }
 
 type Factor = { key: string; label: string; category: string; weight: number; scoring: Record<string, number>; active: boolean };
@@ -153,6 +155,27 @@ async function clearanceBlockReasons(admin: any, caseId: string, assessment: any
   for (const hold of authoritativeBlocks) reasons.push(`authoritative_${hold.key}`);
 
   return Array.from(new Set(reasons));
+}
+
+async function tenantCaseAccess(admin: any, userId: string, caseId: string) {
+  const { data: caseRow } = await admin.schema("aml").from("cases")
+    .select("id, tenant_id, service_gate_status").eq("id", caseId).maybeSingle();
+  if (!caseRow) return null;
+
+  const tenantId = String(caseRow.tenant_id || "default");
+  const [{ data: roleRows }, { data: isSuperadmin }] = await Promise.all([
+    admin.schema("aml").from("role_assignments")
+      .select("role").eq("user_id", userId).eq("tenant_id", tenantId).is("revoked_at", null),
+    admin.schema("aml").rpc("is_superadmin", { _user_id: userId }),
+  ]);
+  const roles = new Set<string>((roleRows ?? []).map((r: any) => r.role));
+  return {
+    caseRow,
+    canRead: Boolean(isSuperadmin) || roles.size > 0,
+    canWrite: Boolean(isSuperadmin) || roles.has("analyst") || roles.has("reviewer") || roles.has("mlro"),
+    canReview: Boolean(isSuperadmin) || roles.has("reviewer") || roles.has("mlro"),
+    isMlro: Boolean(isSuperadmin) || roles.has("mlro"),
+  };
 }
 
 Deno.serve(async (req) => {
@@ -337,16 +360,26 @@ Deno.serve(async (req) => {
     }
 
     // ─── Overrides ─────────────────────────────────────────────────
+    // §12.8: no rating override without reason, evidence, decision-maker,
+    // policy version and an audit event. Evidence is captured at request
+    // time; the policy version is stamped when the reviewer resolves.
     if (op === "request_override") {
       if (!canWrite) return jr({ error: "Insufficient permissions" }, 403);
       const { case_id, assessment_id, requested_reason, requested_rating } = body;
+      const evidence = String(body.evidence ?? "").trim();
       if (!case_id || !requested_reason) return jr({ error: "case_id and requested_reason required" }, 400);
+      if (String(requested_reason).trim().length < 10) return jr({ error: "requested_reason must be at least 10 characters" }, 400);
+      if (evidence.length < 10) {
+        return jr({ error: "evidence is required — describe or reference the material supporting the override" }, 400);
+      }
       const { data, error } = await admin.schema("aml").from("risk_overrides").insert({
         case_id, assessment_id: assessment_id ?? null, requested_by: userId,
         requested_reason, requested_rating: requested_rating ?? null, status: "pending",
+        evidence_note: evidence,
       }).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
-      await appendCaseEvent(admin, case_id, "edd_note", `Risk override requested`, { override_id: data?.id, requested_rating }, userId, userLabel);
+      await appendCaseEvent(admin, case_id, "edd_note", `Risk override requested`,
+        { override_id: data?.id, requested_rating, evidence }, userId, userLabel);
       return jr({ override: data });
     }
 
@@ -354,8 +387,17 @@ Deno.serve(async (req) => {
       if (!canReview) return jr({ error: "Reviewer/MLRO required" }, 403);
       const { override_id, status, reviewer_note } = body;
       if (!override_id || !["approved", "rejected"].includes(status)) return jr({ error: "invalid" }, 400);
+      const { data: existing } = await admin.schema("aml").from("risk_overrides")
+        .select("id, case_id").eq("id", override_id).maybeSingle();
+      if (!existing) return jr({ error: "Override not found" }, 404);
+      const { data: caseTenant } = await admin.schema("aml").from("cases")
+        .select("tenant_id").eq("id", existing.case_id).maybeSingle();
+      const { data: tenantPolicy } = await admin.schema("aml").from("tenant_settings")
+        .select("risk_program_version").eq("tenant_id", (caseTenant?.tenant_id as string) || "default").maybeSingle();
+      const overridePolicyVersion = (tenantPolicy?.risk_program_version as string) || "v1";
       const { data, error } = await admin.schema("aml").from("risk_overrides").update({
         status, reviewer_id: userId, reviewer_note: reviewer_note ?? null, decided_at: new Date().toISOString(),
+        program_version: overridePolicyVersion,
       }).eq("id", override_id).select("*").maybeSingle();
       if (error) return jr({ error: error.message }, 400);
       if (data) {
@@ -363,7 +405,9 @@ Deno.serve(async (req) => {
           await admin.schema("aml").from("cases").update({ risk_rating: data.requested_rating }).eq("id", data.case_id);
         }
         await appendCaseEvent(admin, data.case_id, "mlro_decision",
-          `Risk override ${status}`, { override_id, reviewer_note }, userId, userLabel);
+          `Risk override ${status} [policy ${overridePolicyVersion}]`,
+          { override_id, reviewer_note, program_version: overridePolicyVersion, evidence: data.evidence_note ?? null },
+          userId, userLabel);
       }
       return jr({ override: data });
     }
@@ -423,6 +467,14 @@ Deno.serve(async (req) => {
       else if (outcome === "blocked") toStatus = "blocked";
       else if (outcome === "escalated") toStatus = "escalated_mlro";
       if (toStatus) await admin.schema("aml").from("cases").update({ status: toStatus }).eq("id", case_id);
+
+      // Close the recommendation loop (§12.8): the analyst recommendation the
+      // reviewer acted on is stamped with this decision, not left dangling.
+      if (dec?.id) {
+        await admin.schema("aml").from("analyst_recommendations")
+          .update({ status: "actioned", actioned_decision_id: dec.id })
+          .eq("case_id", case_id).eq("status", "pending");
+      }
 
       await appendCaseEvent(admin, case_id, "mlro_decision",
         `Decision recorded: ${outcome} [policy ${programVersion}]`,
@@ -567,6 +619,205 @@ Deno.serve(async (req) => {
         purchase_ready: enabled ? purchase_ready : true,
         diagnostic: { purchase_ready, reasons, latest_decision: dec, open_conditions: cond ?? [], latest_assessment: ass },
       });
+    }
+
+    // ─── Analyst recommendations (Phase 8, §12.8) ──────────────────
+    // Analysts record a recommended outcome + rationale; reviewers see it
+    // when deciding. A new recommendation supersedes the previous pending
+    // one; `decide` stamps pending recommendations as actioned.
+    if (op === "recommend") {
+      const caseId = String(body.case_id ?? "");
+      const outcome = String(body.recommended_outcome ?? "");
+      const rationale = String(body.rationale ?? "").trim();
+      const RECOMMENDED_OUTCOMES = ["cleared", "cleared_with_conditions", "edd_required", "escalated", "blocked"];
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canWrite) return jr({ error: "Insufficient permissions" }, 403);
+      if (!RECOMMENDED_OUTCOMES.includes(outcome)) return jr({ error: "recommended_outcome invalid" }, 400);
+      if (rationale.length < 10) return jr({ error: "rationale must be at least 10 characters" }, 400);
+
+      const { data: latestAss } = await admin.schema("aml").from("risk_assessments")
+        .select("id").eq("case_id", caseId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+
+      await admin.schema("aml").from("analyst_recommendations")
+        .update({ status: "superseded" }).eq("case_id", caseId).eq("status", "pending");
+      const { data, error } = await admin.schema("aml").from("analyst_recommendations").insert({
+        case_id: caseId,
+        assessment_id: body.assessment_id ? String(body.assessment_id) : (latestAss?.id ?? null),
+        recommended_outcome: outcome, rationale, status: "pending", created_by: userId,
+      }).select("*").maybeSingle();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCaseEvent(admin, caseId, "edd_note",
+        `Analyst recommendation recorded: ${outcome.replace(/_/g, " ")}`,
+        { recommendation_id: data?.id, assessment_id: data?.assessment_id }, userId, userLabel);
+      return jr({ recommendation: data });
+    }
+
+    if (op === "list_recommendations") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canRead) return jr({ error: "AML role required for case tenant" }, 403);
+      const { data } = await admin.schema("aml").from("analyst_recommendations")
+        .select("*").eq("case_id", caseId).order("created_at", { ascending: false }).limit(50);
+      return jr({ recommendations: data ?? [] });
+    }
+
+    // ─── Service-gate decisions (Phase 8, §16 + Appendix C.4) ──────
+    // The ONLY writer of the service-gate dimension after activation. The
+    // gate is never inferred from case stage or risk rating: every change is
+    // an explicit, reasoned, audited decision with recorded preconditions.
+    if (op === "set_service_gate") {
+      const caseId = String(body.case_id ?? "");
+      const status = String(body.status ?? "");
+      const reason = String(body.reason ?? "").trim();
+      const GATE_STATUSES = [
+        "cdd_incomplete", "information_outstanding", "under_review",
+        "conditions_outstanding", "approved_with_controls", "approved",
+        "locked", "terminated",
+      ];
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canReview) return jr({ error: "Reviewer/MLRO required for case tenant" }, 403);
+      if (!GATE_STATUSES.includes(status)) return jr({ error: "status invalid" }, 400);
+      if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
+      if ((status === "locked" || status === "terminated") && !access.isMlro) {
+        return jr({ error: "Locking or terminating the service gate requires the MLRO" }, 403);
+      }
+
+      const caseRow = access.caseRow;
+      const { data: tenant } = await admin.schema("aml").from("tenant_settings")
+        .select("risk_program_version").eq("tenant_id", (caseRow.tenant_id as string) || "default").maybeSingle();
+      const gatePolicyVersion = (tenant?.risk_program_version as string) || "v1";
+
+      const [{ data: latestDec }, { data: openConds }, { data: latestAss }] = await Promise.all([
+        admin.schema("aml").from("decisions").select("*").eq("case_id", caseId)
+          .order("decided_at", { ascending: false }).limit(1).maybeSingle(),
+        admin.schema("aml").from("case_conditions").select("*").eq("case_id", caseId).eq("status", "open"),
+        admin.schema("aml").from("risk_assessments").select("*").eq("case_id", caseId)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+      ]);
+
+      // Approval preconditions: a recorded cleared decision, no mandatory
+      // blockers, and the conditions state matching the gate being granted.
+      if (status === "approved" || status === "approved_with_controls") {
+        if (!latestDec || latestDec.outcome !== "cleared") {
+          return jr({ error: "Approving the service gate requires a recorded cleared decision", code: "gate_requires_cleared_decision" }, 409);
+        }
+        const blockers = await clearanceBlockReasons(admin, caseId, latestAss, []);
+        const hardBlockers = blockers.filter((r) => r !== "no_assessment");
+        if (hardBlockers.length > 0) {
+          return jr({ error: "Cannot approve the service gate with unresolved mandatory holds", reasons: hardBlockers }, 409);
+        }
+        if (status === "approved" && (openConds ?? []).length > 0) {
+          return jr({ error: "Open conditions exist — use approved_with_controls or resolve them first", code: "open_conditions" }, 409);
+        }
+        if (status === "approved_with_controls" && (openConds ?? []).length === 0) {
+          return jr({ error: "approved_with_controls requires at least one open condition recording the controls", code: "no_controls" }, 409);
+        }
+      }
+
+      const effectiveAt = new Date().toISOString();
+      const gateConditions = (openConds ?? []).map((c: any) => ({ id: c.id, label: c.label, status: c.status }));
+      const { data: gateRow, error: gateErr } = await admin.schema("aml").from("service_gate_decisions").insert({
+        case_id: caseId, status, effective_at: effectiveAt,
+        conditions: gateConditions,
+        decision_id: latestDec?.id ?? null,
+        approved_by: userId, policy_version: gatePolicyVersion, reason,
+      }).select("*").maybeSingle();
+      if (gateErr) return jr({ error: gateErr.message }, 400);
+
+      await admin.schema("aml").from("cases").update({
+        service_gate_status: status,
+        service_gate_effective_at: effectiveAt,
+        service_gate_policy_version: gatePolicyVersion,
+      }).eq("id", caseId);
+
+      const auditEventId = await appendCaseEvent(admin, caseId, "mlro_decision",
+        `Service-gate change: ${String(caseRow.service_gate_status ?? "unset").replace(/_/g, " ")} → ${status.replace(/_/g, " ")}`,
+        {
+          gate_decision_id: gateRow?.id, status, reason, decision_id: latestDec?.id ?? null,
+          policy_version: gatePolicyVersion, conditions: gateConditions,
+        }, userId, userLabel);
+      if (gateRow?.id && auditEventId) {
+        await admin.schema("aml").from("service_gate_decisions")
+          .update({ audit_event_id: auditEventId }).eq("id", gateRow.id);
+      }
+      return jr({ gate: { ...gateRow, audit_event_id: auditEventId } });
+    }
+
+    // Appendix C.4 read contract for the latest gate decision.
+    if (op === "gate_contract") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canRead) return jr({ error: "AML role required for case tenant" }, 403);
+      const [{ data: gateRow }, { data: caseRow }] = await Promise.all([
+        admin.schema("aml").from("service_gate_decisions").select("*").eq("case_id", caseId)
+          .order("created_at", { ascending: false }).limit(1).maybeSingle(),
+        admin.schema("aml").from("cases")
+          .select("service_gate_status, service_gate_effective_at, service_gate_policy_version, status")
+          .eq("id", caseId).maybeSingle(),
+      ]);
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (gateRow) {
+        return jr({
+          gate: {
+            status: gateRow.status, effective_at: gateRow.effective_at,
+            conditions: gateRow.conditions ?? [], decision_id: gateRow.decision_id,
+            approved_by: gateRow.approved_by, policy_version: gateRow.policy_version,
+            audit_event_id: gateRow.audit_event_id, reason: gateRow.reason,
+          },
+        });
+      }
+      // No explicit gate decision yet — report the dimension column state
+      // (activation sets cdd_incomplete) with no approval provenance.
+      return jr({
+        gate: {
+          status: caseRow.service_gate_status ?? "not_activated",
+          effective_at: caseRow.service_gate_effective_at ?? null,
+          conditions: [], decision_id: null, approved_by: null,
+          policy_version: caseRow.service_gate_policy_version ?? null,
+          audit_event_id: null, reason: null,
+        },
+      });
+    }
+
+    // ─── Recalculation triggers (Phase 8, §12.8) ───────────────────
+    // Reports whether material inputs changed after the latest assessment,
+    // so stale ratings are visibly stale and get recomputed.
+    if (op === "recalc_status") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const { data: latestAss } = await admin.schema("aml").from("risk_assessments")
+        .select("id, created_at").eq("case_id", caseId)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (!latestAss) return jr({ recalc: { stale: true, reasons: ["no_assessment"], latest_assessment_at: null } });
+
+      const since = latestAss.created_at;
+      const [scr, idv, fin, quest, cp] = await Promise.all([
+        admin.schema("aml").from("screening_checks").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("updated_at", since),
+        admin.schema("aml").from("identity_checks").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("updated_at", since),
+        admin.schema("aml").from("finance_comparisons").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("captured_at", since),
+        admin.schema("aml").from("questionnaire_responses").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("updated_at", since),
+        admin.schema("aml").from("counterparty_cases").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).gt("updated_at", since),
+      ]);
+      const reasons: string[] = [];
+      if ((scr.count ?? 0) > 0) reasons.push("screening_changed");
+      if ((idv.count ?? 0) > 0) reasons.push("verification_changed");
+      if ((fin.count ?? 0) > 0) reasons.push("funding_changed");
+      if ((quest.count ?? 0) > 0) reasons.push("questionnaire_changed");
+      if ((cp.count ?? 0) > 0) reasons.push("counterparty_changed");
+      return jr({ recalc: { stale: reasons.length > 0, reasons, latest_assessment_at: since } });
     }
 
     return jr({ error: `Unknown op: ${op}` }, 400);

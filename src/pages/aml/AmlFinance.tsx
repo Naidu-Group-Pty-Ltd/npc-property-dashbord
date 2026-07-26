@@ -19,6 +19,8 @@ import {
   type AmlFinanceDiscrepancy,
   type AmlEvidenceReference,
   type AmlDiscrepancyStatus,
+  type AmlFinanceRequest,
+  type AmlFinanceRequestKind,
 } from "@/lib/aml/amlFinanceApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { LegacyAliasBanner } from "@/components/aml/LegacyAliasBanner";
@@ -53,6 +55,11 @@ export default function AmlFinance() {
   const [comparisons, setComparisons] = useState<AmlFinanceComparison[]>([]);
   const [discrepancies, setDiscrepancies] = useState<AmlFinanceDiscrepancy[]>([]);
   const [evidence, setEvidence] = useState<AmlEvidenceReference[]>([]);
+  const [requests, setRequests] = useState<AmlFinanceRequest[]>([]);
+  const [reqOpen, setReqOpen] = useState(false);
+  const [reqForm, setReqForm] = useState<{ kind: AmlFinanceRequestKind; subject: string; message: string }>({
+    kind: "funding_information", subject: "", message: "",
+  });
   const [busy, setBusy] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState<Partial<AmlFinanceComparison>>({});
@@ -78,14 +85,16 @@ export default function AmlFinance() {
     if (!caseId) return;
     setBusy(true);
     try {
-      const [c, d, e] = await Promise.all([
+      const [c, d, e, r] = await Promise.all([
         amlFinanceApi.listComparisons(caseId),
         amlFinanceApi.listDiscrepancies({ case_id: caseId }),
         amlFinanceApi.listEvidence(caseId),
+        amlFinanceApi.listFinanceRequests(caseId).catch(() => ({ requests: [] })),
       ]);
       setComparisons(c.comparisons);
       setDiscrepancies(d.discrepancies);
       setEvidence(e.evidence);
+      setRequests(r.requests ?? []);
     } catch (err: any) { toast.error(err?.message ?? "Failed to load"); }
     finally { setBusy(false); }
   };
@@ -172,6 +181,65 @@ export default function AmlFinance() {
     finally { setBusy(false); }
   };
 
+  const [reqDiscrepancyId, setReqDiscrepancyId] = useState<string | null>(null);
+  const openRequestCount = requests.filter((r) => ["open", "submitted", "clarification_required"].includes(r.status)).length;
+
+  const handleCreateRequest = async () => {
+    if (!caseId || !reqForm.subject.trim() || !reqForm.message.trim()) return;
+    setBusy(true);
+    try {
+      await amlFinanceApi.createFinanceRequest({
+        case_id: caseId,
+        kind: reqForm.kind,
+        subject: reqForm.subject.trim(),
+        message: reqForm.message.trim(),
+        purchase_file_id: currentCase?.purchase_file_id ?? undefined,
+        discrepancy_id: reqDiscrepancyId ?? undefined,
+      });
+      toast.success("Request sent to the finance partner");
+      setReqOpen(false);
+      setReqForm({ kind: "funding_information", subject: "", message: "" });
+      setReqDiscrepancyId(null);
+      await load();
+    } catch (e: any) { toast.error(e?.message ?? "Failed to send request"); }
+    finally { setBusy(false); }
+  };
+
+  const handleReviewRequest = async (id: string) => {
+    setBusy(true);
+    try {
+      await amlFinanceApi.reviewFinanceRequest(id);
+      toast.success("Marked under review");
+      await load();
+    } catch (e: any) { toast.error(e?.message ?? "Failed"); }
+    finally { setBusy(false); }
+  };
+
+  const handleResolveRequest = async (
+    id: string,
+    financeStatusAfter?: "accepted" | "no_further_action",
+  ) => {
+    setBusy(true);
+    try {
+      await amlFinanceApi.resolveFinanceRequest({
+        request_id: id, outcome: "resolved", finance_status_after: financeStatusAfter,
+      });
+      toast.success("Request resolved");
+      await load();
+    } catch (e: any) { toast.error(e?.message ?? "Failed"); }
+    finally { setBusy(false); }
+  };
+
+  const askClarification = (discrepancy: AmlFinanceDiscrepancy) => {
+    setReqDiscrepancyId(discrepancy.id);
+    setReqForm({
+      kind: "clarification",
+      subject: "Clarification needed on funding details",
+      message: "",
+    });
+    setReqOpen(true);
+  };
+
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-4 px-6 py-6">
       <LegacyAliasBanner label="Funding & Finance" tabHint="finance" routePath="/admin/aml/finance" />
@@ -240,6 +308,9 @@ export default function AmlFinance() {
             <Badge variant="secondary" className="ml-2">{openDiscrepancyCount}</Badge>
           )}</TabsTrigger>
           <TabsTrigger value="evidence">Evidence</TabsTrigger>
+          <TabsTrigger value="requests">Requests {openRequestCount > 0 && (
+            <Badge variant="secondary" className="ml-2">{openRequestCount}</Badge>
+          )}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="comparisons" className="space-y-3">
@@ -398,6 +469,7 @@ export default function AmlFinance() {
                       <TableCell className="text-right space-x-1">
                         {canWrite && ["open", "under_review"].includes(d.status) && (
                           <>
+                            <Button size="sm" variant="outline" onClick={() => askClarification(d)}>Ask finance</Button>
                             <Button size="sm" variant="outline" onClick={() => handleResolve(d.id, "resolved")}>Resolve</Button>
                             <Button size="sm" variant="outline" onClick={() => handleResolve(d.id, "escalated")}>Escalate</Button>
                           </>
@@ -487,6 +559,112 @@ export default function AmlFinance() {
                   {evidence.length === 0 && (
                     <TableRow><TableCell colSpan={5} className="text-center text-sm text-muted-foreground py-8">
                       No evidence attached yet.
+                    </TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="requests" className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground max-w-xl">
+              Requests go to the finance partner assigned to this client. Write the message in
+              plain, finance-safe language — never include internal reasoning, risk or screening detail.
+            </p>
+            <Dialog open={reqOpen} onOpenChange={(v) => { setReqOpen(v); if (!v) setReqDiscrepancyId(null); }}>
+              <DialogTrigger asChild>
+                <Button size="sm" disabled={!canWrite || !caseId}>
+                  <PlusCircle className="mr-2 h-4 w-4" /> New request
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader><DialogTitle>Ask the finance partner</DialogTitle></DialogHeader>
+                <div className="space-y-3">
+                  <div>
+                    <Label>Type</Label>
+                    <Select value={reqForm.kind} onValueChange={(v) => setReqForm({ ...reqForm, kind: v as AmlFinanceRequestKind })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="funding_information">Funding information</SelectItem>
+                        <SelectItem value="financial_evidence">Financial evidence</SelectItem>
+                        <SelectItem value="clarification">Clarification</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {reqDiscrepancyId && (
+                    <p className="text-xs text-muted-foreground">
+                      Linked to a detected discrepancy. Only the wording below reaches the finance
+                      partner — the discrepancy detail stays internal.
+                    </p>
+                  )}
+                  <div><Label>Subject</Label>
+                    <Input value={reqForm.subject} onChange={(e) => setReqForm({ ...reqForm, subject: e.target.value })} /></div>
+                  <div><Label>Message (shown to the finance partner)</Label>
+                    <Textarea rows={4} value={reqForm.message} onChange={(e) => setReqForm({ ...reqForm, message: e.target.value })}
+                      placeholder="e.g. Please confirm the loan amount and lender for this purchase, and how the balance of funds will be sourced." /></div>
+                </div>
+                <DialogFooter>
+                  <Button variant="ghost" onClick={() => setReqOpen(false)}>Cancel</Button>
+                  <Button onClick={handleCreateRequest} disabled={busy || !reqForm.subject.trim() || !reqForm.message.trim()}>
+                    Send request
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+
+          <Card>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Sent</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Subject</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Response</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {requests.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell className="text-xs">{new Date(r.created_at).toLocaleDateString()}</TableCell>
+                      <TableCell><Badge variant="outline" className="capitalize">{r.kind.replace(/_/g, " ")}</Badge></TableCell>
+                      <TableCell className="max-w-[280px]">
+                        <div className="truncate text-sm">{r.subject}</div>
+                        <div className="truncate text-xs text-muted-foreground">{r.message}</div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="capitalize">{r.status.replace(/_/g, " ")}</Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[260px] text-xs text-muted-foreground">
+                        {r.responded_at ? (
+                          <>
+                            <div>{r.responded_by_label ?? "Finance partner"} · {new Date(r.responded_at).toLocaleDateString()}</div>
+                            {r.response_payload?.text && <div className="truncate">{r.response_payload.text}</div>}
+                            {r.comparison_id && <div>Funding snapshot recorded</div>}
+                          </>
+                        ) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right space-x-1">
+                        {canWrite && r.status === "submitted" && (
+                          <>
+                            <Button size="sm" variant="outline" disabled={busy} onClick={() => handleReviewRequest(r.id)}>Review</Button>
+                            <Button size="sm" variant="outline" disabled={busy} onClick={() => handleResolveRequest(r.id, "accepted")}>Accept</Button>
+                          </>
+                        )}
+                        {canWrite && ["open", "clarification_required", "submitted"].includes(r.status) && (
+                          <Button size="sm" variant="ghost" disabled={busy} onClick={() => handleResolveRequest(r.id)}>Close</Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {requests.length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-8">
+                      No requests yet. Send one to start the finance information loop.
                     </TableCell></TableRow>
                   )}
                 </TableBody>

@@ -18,6 +18,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
+import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const BUCKET = 'finance-portal-messages';
@@ -25,6 +26,10 @@ const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const SIGNED_URL_TTL = 60 * 10;
 const ALLOWED_MIME_PREFIXES = ['image/', 'application/pdf', 'application/msword',
   'application/vnd.openxmlformats-officedocument', 'text/'];
+
+function isAttachmentPathForThread(path: unknown, clientId: string, threadId: string): path is string {
+  return typeof path === 'string' && path.startsWith(`${clientId}/${threadId}/`);
+}
 
 function extractFinancePortalToken(headers: Headers, body?: any): string | null {
   // Only finance-specific token locations identify a Finance Portal partner.
@@ -124,7 +129,8 @@ Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = {
     ...createCorsHeaders(origin),
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-portal-session-token, x-session-token, x-command-centre-session-token, x-session-id',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-portal-session-token, x-session-token, x-command-centre-session-token, x-session-id',
+    'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   };
 
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -155,7 +161,7 @@ Deno.serve(async (req) => {
     const financeToken = isStaffCaller ? null : extractFinancePortalToken(req.headers, body);
     const portalToken = isStaffCaller ? null : (req.headers.get('x-portal-session-token') || body?.portal_session_token || null);
     let actor: { type: 'partner'; portalUserId: string; email: string; name: string }
-             | { type: 'staff'; userId: string; username: string }
+             | { type: 'staff'; userId: string; username: string; authMethod?: string | null }
              | { type: 'client'; portalUserId: string; clientId: string; name: string }
              | null = null;
 
@@ -167,7 +173,7 @@ Deno.serve(async (req) => {
       if (auth.error || !auth.userId) {
         return jsonResponse({ error: auth.error || 'Authentication required' }, 401, corsHeaders);
       }
-      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff' };
+      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff', authMethod: auth.authMethod };
     } else if (financeToken) {
       const { data: portalUser, error: portalUserErr } = await supabase
         .from('finance_portal_users')
@@ -207,7 +213,27 @@ Deno.serve(async (req) => {
       if (auth.error || !auth.userId) {
         return jsonResponse({ error: 'Authentication required' }, 401, corsHeaders);
       }
-      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff' };
+      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff', authMethod: auth.authMethod };
+    }
+
+    // This handler uses the service-role client, so RLS cannot protect finance
+    // messages from an authenticated but unauthorized Command Centre user.
+    // Deny staff access unless their effective module permissions authorize the
+    // requested read or mutation; portal actors retain their object-level gates.
+    if (actor.type === 'staff') {
+      const readOperations = new Set(['list_threads', 'list_messages', 'get_attachment_url']);
+      const requiredPermission: ModulePerm = operation === 'archive_thread'
+        ? 'can_delete'
+        : readOperations.has(operation) ? 'can_view' : 'can_edit';
+      const authz = await requireModulePermission(
+        supabase,
+        { userId: actor.userId, authMethod: actor.authMethod },
+        'finance_portal_admin',
+        requiredPermission,
+      );
+      if (!authz.ok) {
+        return jsonResponse({ error: authz.error || 'Access denied' }, 403, corsHeaders);
+      }
     }
 
     // Helper: ensure partner is assigned to client and has messages permission
@@ -498,6 +524,9 @@ Deno.serve(async (req) => {
       else if (actor.type === 'staff') insertRow.staff_user_id = actor.userId;
 
       if (attachment && attachment.path) {
+        if (!isAttachmentPathForThread(attachment.path, thread.client_id, thread_id)) {
+          return jsonResponse({ error: 'Attachment path does not belong to this thread' }, 400, corsHeaders);
+        }
         insertRow.attachment_path = attachment.path;
         insertRow.attachment_filename = (attachment.filename || '').slice(0, 255) || null;
         insertRow.attachment_mime = (attachment.mime || '').slice(0, 100) || null;
@@ -712,6 +741,10 @@ Deno.serve(async (req) => {
         .eq('id', message_id)
         .maybeSingle();
       if (!msg || !msg.attachment_path) return jsonResponse({ error: 'Attachment not found' }, 404, corsHeaders);
+
+      if (!isAttachmentPathForThread(msg.attachment_path, msg.client_id, msg.thread_id)) {
+        return jsonResponse({ error: 'Attachment not found' }, 404, corsHeaders);
+      }
 
       if (actor.type === 'partner') {
         const fuId = (msg as any).finance_portal_threads?.finance_user_id;

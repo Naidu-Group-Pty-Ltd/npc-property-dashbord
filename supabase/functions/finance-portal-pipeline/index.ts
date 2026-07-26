@@ -15,11 +15,13 @@
  * Service-role internally to bypass RLS.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
+import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token, x-session-id, x-portal-session-token',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token, x-session-id, x-portal-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -63,30 +65,8 @@ const KANBAN_LANES: string[] = [
 ];
 
 
-function mergePermissions(global: any, perClient: any) {
-  const out: Record<string, { view: boolean; edit: boolean; delete: boolean }> = {};
-  const keys = new Set<string>([
-    ...Object.keys(global && typeof global === 'object' ? global : {}),
-    ...Object.keys(perClient && typeof perClient === 'object' ? perClient : {}),
-  ]);
-  for (const key of keys) {
-    const g = (global && global[key]) || {};
-    const p = (perClient && perClient[key]) || {};
-    out[key] = {
-      view: !!(g.view || p.view),
-      edit: !!(g.edit || p.edit),
-      delete: !!(g.delete || p.delete),
-    };
-  }
-  return out;
-}
-
 function hasPurchaseFilePermission(global: any, perClient: any, action: 'view' | 'edit') {
-  const merged = mergePermissions(global, perClient);
-  const globalHas = global && typeof global === 'object' && global.purchase_files;
-  const clientHas = perClient && typeof perClient === 'object' && perClient.purchase_files;
-  if (!globalHas && !clientHas) return true;
-  return !!merged.purchase_files?.[action];
+  return hasFinancePortalPermission(global, perClient, 'purchase_files', action);
 }
 
 // Confidence weighting per status — used by revenue calendar.

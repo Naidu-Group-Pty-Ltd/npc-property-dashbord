@@ -16,11 +16,16 @@
  * ready for wiring to live APIs once credentials are added.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import {
+  canAccessPurchaseFile,
+  canAccessPurchaseFileResource,
+} from '../_shared/financePortalObjectAuthz.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
@@ -120,10 +125,16 @@ Deno.serve(async (req) => {
     if (!portalUser || !portalUser.is_active || portalUser.revoked_at) return json({ error: 'Invalid session' }, 401);
     if (!portalUser.session_expires_at || new Date(portalUser.session_expires_at) < new Date()) return json({ error: 'Session expired' }, 401);
 
+    const requireFileAccess = async (purchaseFileId: string) =>
+      canAccessPurchaseFile(supabase, portalUser.id, purchaseFileId);
+    const requireResourceAccess = async (table: string, resourceId: string) =>
+      canAccessPurchaseFileResource(supabase, portalUser.id, table, resourceId);
+
     /* ===== #38 Doc Compliance Checks ===== */
     if (operation === 'compliance_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_doc_compliance_checks')
         .select('*').eq('purchase_file_id', fid).order('ran_at', { ascending: false });
       if (error) return json({ error: error.message }, 500);
@@ -136,6 +147,7 @@ Deno.serve(async (req) => {
       const label: string = body.label || 'document';
       const documentUrl: string | null = body.document_url || null;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
 
       const { data: rec, error: insErr } = await supabase.from('purchase_file_doc_compliance_checks').insert({
         purchase_file_id: fid, document_id: documentId ?? null, requirement_instance_id: instId ?? null,
@@ -174,6 +186,7 @@ Deno.serve(async (req) => {
     if (operation === 'voi_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_voi_verifications')
         .select('*').eq('purchase_file_id', fid).order('created_at', { ascending: false });
       if (error) return json({ error: error.message }, 500);
@@ -182,6 +195,7 @@ Deno.serve(async (req) => {
     if (operation === 'voi_create') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const provider = body.provider || 'stub';
       const token = crypto.randomUUID();
       const verification_url = provider === 'stub'
@@ -198,6 +212,7 @@ Deno.serve(async (req) => {
     if (operation === 'voi_update_status') {
       const id = body.id; const status = body.status;
       if (!id || !status) return json({ error: 'id and status required' }, 400);
+      if (!await requireResourceAccess('purchase_file_voi_verifications', id)) return json({ error: 'Not authorised' }, 403);
       const patch: any = { status };
       if (status === 'passed' || status === 'failed') patch.completed_at = new Date().toISOString();
       if (body.selfie_match != null) patch.selfie_match = !!body.selfie_match;
@@ -212,6 +227,7 @@ Deno.serve(async (req) => {
     if (operation === 'bank_stmts_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_bank_statement_requests')
         .select('*').eq('purchase_file_id', fid).order('created_at', { ascending: false });
       if (error) return json({ error: error.message }, 500);
@@ -220,6 +236,7 @@ Deno.serve(async (req) => {
     if (operation === 'bank_stmts_request') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const provider = body.provider || 'illion';
       const period_days = Number(body.period_days || 90);
       const ref = crypto.randomUUID();
@@ -235,6 +252,7 @@ Deno.serve(async (req) => {
     if (operation === 'bank_stmts_update_status') {
       const id = body.id; const status = body.status;
       if (!id || !status) return json({ error: 'id and status required' }, 400);
+      if (!await requireResourceAccess('purchase_file_bank_statement_requests', id)) return json({ error: 'Not authorised' }, 403);
       const patch: any = { status };
       if (status === 'received') {
         patch.statements_received_at = new Date().toISOString();
@@ -251,6 +269,7 @@ Deno.serve(async (req) => {
     if (operation === 'credit_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_credit_checks')
         .select('*').eq('purchase_file_id', fid).order('created_at', { ascending: false });
       if (error) return json({ error: error.message }, 500);
@@ -259,6 +278,7 @@ Deno.serve(async (req) => {
     if (operation === 'credit_create') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       if (!body.consent_given) return json({ error: 'consent_given required' }, 400);
       const provider = body.provider || 'stub';
       const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
@@ -276,6 +296,7 @@ Deno.serve(async (req) => {
     if (operation === 'credit_record_result') {
       const id = body.id;
       if (!id) return json({ error: 'id required' }, 400);
+      if (!await requireResourceAccess('purchase_file_credit_checks', id)) return json({ error: 'Not authorised' }, 403);
       const patch: any = {
         status: body.status || 'complete',
         ran_at: new Date().toISOString(),
@@ -295,6 +316,7 @@ Deno.serve(async (req) => {
     if (operation === 'discovery_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_discovery_signatures')
         .select('*').eq('purchase_file_id', fid).order('created_at', { ascending: false });
       if (error) return json({ error: error.message }, 500);
@@ -304,6 +326,7 @@ Deno.serve(async (req) => {
       const fid = body.purchase_file_id;
       const doc_type = body.doc_type;
       if (!fid || !doc_type) return json({ error: 'purchase_file_id and doc_type required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const provider = body.provider || (Deno.env.get('DOCUSIGN_ACCESS_TOKEN') ? 'docusign' : 'stub');
       const envelope_id = provider === 'docusign'
         ? `pending-${crypto.randomUUID()}` // real envelope creation handled by existing DocuSign worker; this records intent
@@ -323,6 +346,7 @@ Deno.serve(async (req) => {
     if (operation === 'discovery_update_status') {
       const id = body.id; const status = body.status;
       if (!id || !status) return json({ error: 'id and status required' }, 400);
+      if (!await requireResourceAccess('purchase_file_discovery_signatures', id)) return json({ error: 'Not authorised' }, 403);
       const patch: any = { status };
       if (status === 'signed') patch.signed_at = new Date().toISOString();
       if (body.document_url) patch.document_url = body.document_url;
@@ -336,6 +360,7 @@ Deno.serve(async (req) => {
     if (operation === 'nccp_list') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_nccp_bundles')
         .select('*').eq('purchase_file_id', fid).order('generated_at', { ascending: false });
       if (error) return json({ error: error.message }, 500);
@@ -344,6 +369,7 @@ Deno.serve(async (req) => {
     if (operation === 'nccp_build') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       const { manifest, missing, completeness } = await buildNccpManifest(supabase, fid);
       const { data, error } = await supabase.from('purchase_file_nccp_bundles').insert({
         purchase_file_id: fid,
@@ -357,6 +383,7 @@ Deno.serve(async (req) => {
     if (operation === 'nccp_archive') {
       const id = body.id;
       if (!id) return json({ error: 'id required' }, 400);
+      if (!await requireResourceAccess('purchase_file_nccp_bundles', id)) return json({ error: 'Not authorised' }, 403);
       const { data, error } = await supabase.from('purchase_file_nccp_bundles')
         .update({ status: 'archived' }).eq('id', id).select().single();
       if (error) return json({ error: error.message }, 500);
