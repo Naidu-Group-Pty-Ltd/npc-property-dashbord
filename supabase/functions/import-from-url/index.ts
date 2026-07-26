@@ -10,6 +10,7 @@
 // Figma links are exported via the Figma API when FIGMA_TOKEN is configured.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { sanitizeFigmaFrame, type SanitizedFigmaNode } from '../_shared/figma.ts';
 
 const MAX_BYTES = 30 * 1024 * 1024; // 30 MB
 const MAX_REDIRECTS = 5;
@@ -94,9 +95,9 @@ async function safeFetch(startUrl: string): Promise<{ res: Response; finalUrl: U
 
 /**
  * Best-effort Figma export (needs FIGMA_TOKEN). Returns the first frame as a PNG
- * AND its node subtree (`figmaFrame`) so the client can ground on the exact
- * text/positions/colours (§7d) instead of flattening to a raster. The PNG fields
- * stay for backwards compatibility (older clients use the image flow).
+ * and a minimal, visible-only node projection (`figmaFrame`) so the client can
+ * ground on exact text/positions/colours without exposing provider metadata.
+ * The PNG fields stay for backwards compatibility (older clients use the image flow).
  */
 async function figmaExport(key: string, cors: Record<string, string>): Promise<Response | null> {
   const token = Deno.env.get('FIGMA_TOKEN');
@@ -111,7 +112,7 @@ async function figmaExport(key: string, cors: Record<string, string>): Promise<R
     if (!pageId) return null;
 
     // Deep-fetch the page subtree → ground on the first frame's real nodes.
-    let figmaFrame: unknown = null;
+    let figmaFrame: SanitizedFigmaNode | null = null;
     let exportNodeId = pageId;
     try {
       const nodesRes = await fetch(`https://api.figma.com/v1/files/${key}/nodes?ids=${encodeURIComponent(pageId)}`, { headers: { 'X-Figma-Token': token } });
@@ -119,7 +120,10 @@ async function figmaExport(key: string, cors: Record<string, string>): Promise<R
         const nodesJson = await nodesRes.json();
         const pageNode = nodesJson?.nodes?.[pageId]?.document;
         const firstFrame = pageNode?.children?.find((c: any) => c?.type === 'FRAME');
-        if (firstFrame) { figmaFrame = firstFrame; exportNodeId = firstFrame.id; }
+        if (firstFrame) {
+          figmaFrame = sanitizeFigmaFrame(firstFrame);
+          exportNodeId = firstFrame.id;
+        }
       }
     } catch { /* grounding is best-effort; PNG path still works */ }
 
@@ -139,7 +143,7 @@ async function figmaExport(key: string, cors: Record<string, string>): Promise<R
       filename: `${name}.png`,
       dataBase64: base64(buf),
       finalUrl: finalUrl.toString(),
-      figmaFrame, // §7d — node tree for hierarchy-accurate grounding (client converts)
+      figmaFrame,
     }, 200, cors);
   } catch (_e) {
     return null;
