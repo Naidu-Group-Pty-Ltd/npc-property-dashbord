@@ -812,7 +812,7 @@ export function renderTemplateToHtml(
 <meta charset="utf-8"/>
 <title>${escapeHtml(docTitle)}</title>
 ${metaTags}
-<style>${css}</style>
+<style>${escapeStyleElementContent(css)}</style>
 </head>
 <body>
 ${pageHtml}
@@ -827,4 +827,15 @@ ${editorRuntime}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
+}
+
+/**
+ * Keep generated CSS inside the HTML parser's raw-text style element.
+ *
+ * Escaping every less-than sign as CSS preserves its value while preventing
+ * untrusted template tokens (or other generated CSS) from spelling an HTML
+ * `</style>` end tag.
+ */
+function escapeStyleElementContent(css: string): string {
+  return css.replace(/</g, '\\3C ');
 }
