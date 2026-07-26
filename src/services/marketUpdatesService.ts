@@ -98,33 +98,33 @@ export interface MarketSourceAlert { source_id: string; name: string; severity: 
 
 export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: MarketSource[]; alerts: MarketSourceAlert[] }> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'list' } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'list' });
     if (error) throw error;
-    return { sources: safeArray<MarketSource>(data?.sources), alerts: safeArray<MarketSourceAlert>(data?.alerts) };
+    return { sources: safeArray<MarketSource>((data as any)?.sources), alerts: safeArray<MarketSourceAlert>((data as any)?.alerts) };
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function toggleMarketSource(source_id: string, enabled: boolean): Promise<MarketSource | null> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'toggle', source_id, enabled } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'toggle', source_id, enabled });
     if (error) throw error;
-    return data?.source ?? null;
+    return (data as any)?.source ?? null;
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function updateMarketSourceConfig(source_id: string, patch: Partial<Pick<MarketSource, 'refresh_frequency_hours' | 'reliability_tier' | 'description'>>): Promise<MarketSource | null> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'update', source_id, ...patch } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'update', source_id, ...patch });
     if (error) throw error;
-    return data?.source ?? null;
+    return (data as any)?.source ?? null;
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function clearMarketSourceError(source_id: string): Promise<MarketSource | null> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'clear_error', source_id } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'clear_error', source_id });
     if (error) throw error;
-    return data?.source ?? null;
+    return (data as any)?.source ?? null;
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
