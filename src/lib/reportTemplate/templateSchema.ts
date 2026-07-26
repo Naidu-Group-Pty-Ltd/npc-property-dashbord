@@ -24,14 +24,36 @@ const GradientStopColorSchema = z.string().regex(
   'Gradient stops must be a hex color or transparent',
 );
 
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+const RemoteFontUrlSchema = z.string().refine(
+  isHttpUrl,
+  'Font stylesheet URLs must use HTTP or HTTPS',
+);
+const FontSourceSchema = z.string().refine(
+  (value) => isHttpUrl(value)
+    || /^data:font\/(?:woff2?|ttf|otf|opentype);base64,[a-z0-9+/]+={0,2}$/i.test(value),
+  'Font sources must be an HTTP(S) URL or a base64-encoded font data URL',
+);
+
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Phase 5 — fontFaces entry. Supports either a remote stylesheet (Google Fonts
 // CSS URL) via `cssUrl`, or a direct font-file `src` for self-hosting.
 export const FontFaceSchema = z.object({
   family: z.string(),                     // e.g. "Playfair Display"
-  cssUrl: z.string().optional(),          // https://fonts.googleapis.com/css2?...  (or data:)
-  src: z.string().optional(),             // direct .woff2/.otf URL, OR a data: URL (R0 — embedded/captured font)
-  weight: z.union([z.number(), z.string()]).optional(),
+  cssUrl: RemoteFontUrlSchema.optional(), // remote HTTP(S) font stylesheet
+  src: FontSourceSchema.optional(),       // remote font file or base64 data: font (R0 — embedded/captured font)
+  weight: z.union([
+    z.number().min(1).max(1000),
+    z.string().regex(/^(?:normal|bold|bolder|lighter|[1-9]\d{0,2}|1000)(?: (?:[1-9]\d{0,2}|1000))?$/),
+  ]).optional(),
   style: z.enum(['normal', 'italic']).optional(),
   display: z.enum(['auto', 'swap', 'block', 'fallback', 'optional']).optional(),
   source: z.enum(['url', 'embedded']).optional(),   // 'embedded' = captured from a reference PDF/image (data: src)
