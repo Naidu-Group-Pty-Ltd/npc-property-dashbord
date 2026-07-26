@@ -469,7 +469,7 @@ export default function MarketUpdates() {
               <div className="space-y-1">
                 <p className="font-semibold text-destructive">Market Updates requires attention</p>
                 <p className="text-sm text-foreground">{operationalIssue.message}</p>
-                <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}</p>
+                <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}{operationalIssue.correlationId ? ` · Correlation: ${operationalIssue.correlationId}` : ''} · {operationalIssue.retryable ? 'Retryable' : 'Administrator action required'}</p>
                 <p className="text-sm text-muted-foreground">{operationalIssue.remediation}</p>
               </div>
               <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={operationalIssue.stage === 'digest' ? handleGenerateDigest : loadUpdates}>{operationalIssue.stage === 'digest' ? 'Retry digest' : 'Retry page data'}</Button><Button size="sm" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button></div>
