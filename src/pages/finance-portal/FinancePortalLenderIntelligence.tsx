@@ -111,30 +111,6 @@ export default function FinancePortalLenderIntelligence() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [compareWarning, setCompareWarning] = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
-  const [refreshingLive, setRefreshingLive] = useState(false);
-  const [refreshSummary, setRefreshSummary] = useState<string | null>(null);
-
-  const refreshLiveRates = async () => {
-    setRefreshingLive(true);
-    setRefreshSummary(null);
-    const { data, error } = await invokeFinanceFunction(
-      'finance-portal-lender-intelligence',
-      { operation: 'refresh_rates' },
-    );
-    if (error) {
-      setRefreshSummary(error.message || 'Failed to refresh live rates from data holders.');
-    } else {
-      const s = (data as any)?.summary;
-      setRefreshSummary(
-        s
-          ? `Refreshed ${s.successfulLenders}/${s.totalLenders} lenders · ${s.totalRates} rates cached.`
-          : 'Live rates refreshed.',
-      );
-      await load();
-    }
-    setRefreshingLive(false);
-  };
-
   const load = async () => {
     setLoading(true);
     setLoadError(null);
@@ -255,12 +231,6 @@ export default function FinancePortalLenderIntelligence() {
           <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> Reload cache
           </Button>
-          <Button size="sm" onClick={() => void refreshLiveRates()} disabled={refreshingLive || loading}>
-            {refreshingLive
-              ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              : <RefreshCw className="h-4 w-4 mr-2" />}
-            Refresh live rates
-          </Button>
         </div>
       </div>
 
@@ -268,8 +238,7 @@ export default function FinancePortalLenderIntelligence() {
         <Database className="h-4 w-4" />
         <AlertTitle>Shared Command Centre source of truth</AlertTitle>
         <AlertDescription>
-          Live rates are pulled from CDR data holders (Macquarie, NAB, CBA, ANZ, Westpac, BankWest, BOQ, AMP, Bendigo, Suncorp, BankSA, St.George, ING, HSBC, UBank) plus manual rate cards (Resimac) and cached in <code>bank_lending_rates_cache</code>. Use <strong>Refresh live rates</strong> to force a fresh pull from the data holders — the same flow used by the Borrowing Capacity calculator.
-          {refreshSummary && <div className="mt-2 text-sm">{refreshSummary}</div>}
+          Live rates are pulled from CDR data holders (Macquarie, NAB, CBA, ANZ, Westpac, BankWest, BOQ, AMP, Bendigo, Suncorp, BankSA, St.George, ING, HSBC, UBank) plus manual rate cards (Resimac) and cached in <code>bank_lending_rates_cache</code>. Use <strong>Reload cache</strong> to display the latest rates published by Command Centre.
         </AlertDescription>
       </Alert>
 

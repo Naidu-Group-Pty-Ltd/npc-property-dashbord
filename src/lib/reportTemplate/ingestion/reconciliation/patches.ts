@@ -1,15 +1,11 @@
-import { OverlaySchema, parseTemplate, type Overlay, type ReportTemplate } from '../../templateSchema';
+import { parseTemplate, type ReportTemplate } from '../../templateSchema';
 import type { TemplateImportPatch } from './types';
+import { validateReconciliationOverlay } from './validatePlan';
 
 export interface PatchApplyResult {
   template: ReportTemplate;
   applied: number;
   rejected: Array<{ patch: TemplateImportPatch; reason: string }>;
-}
-
-function validateOverlay(overlay: unknown): Overlay | null {
-  const parsed = OverlaySchema.safeParse(overlay);
-  return parsed.success ? parsed.data : null;
 }
 
 function reject(patch: TemplateImportPatch, reason: string) {
@@ -47,7 +43,7 @@ export function applyTemplateImportPatches(template: ReportTemplate, patches: Te
     block.overlays = Array.isArray(block.overlays) ? block.overlays : [];
 
     if (patch.operation === 'addOverlay') {
-      const overlay = validateOverlay(patch.overlay);
+      const overlay = validateReconciliationOverlay(patch.overlay);
       if (!overlay) {
         rejected.push(reject(patch, 'Added overlay is not schema-valid.'));
         continue;
@@ -71,7 +67,7 @@ export function applyTemplateImportPatches(template: ReportTemplate, patches: Te
 
     const current = block.overlays[index];
     const updated = { ...current, ...patch.changes, id: current.id, type: current.type };
-    const overlay = validateOverlay(updated);
+    const overlay = validateReconciliationOverlay(updated);
     if (!overlay) {
       rejected.push(reject(patch, `Updated overlay ${patch.overlayId} is not schema-valid.`));
       continue;

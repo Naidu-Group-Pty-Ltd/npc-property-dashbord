@@ -56,6 +56,7 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
       excerpt_selector?: string;
       anchor_patterns?: string[];
       title_min_length?: number;
+      sitemap_urls?: string[];
     };
     for (const item of [...doc.querySelectorAll(cfg.item_selector || 'article')]) {
       try {
@@ -100,6 +101,55 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
           author: null,
           category: null,
         });
+      }
+    }
+
+    // 4) Sitemap fallback — used when the listing HTML has no article anchors
+    // (client-rendered SPAs) or when the origin blocks the listing page.
+    if (!out.length && Array.isArray(cfg.sitemap_urls) && cfg.sitemap_urls.length && Array.isArray(cfg.anchor_patterns) && cfg.anchor_patterns.length) {
+      const patterns = cfg.anchor_patterns
+        .map((p) => { try { return new RegExp(p, 'i'); } catch { return null; } })
+        .filter((r): r is RegExp => !!r);
+      const minLen = Math.max(6, Number(cfg.title_min_length ?? 12));
+      const cap = Number(Deno.env.get('MARKET_UPDATES_MAX_ITEMS_PER_SOURCE') || 40);
+      for (const sm of cfg.sitemap_urls) {
+        if (out.length >= cap) break;
+        try {
+          const { body: xml } = await boundedFetch(sm, allowed, {
+            headers: { accept: 'application/xml,text/xml,*/*', 'user-agent': readUA() },
+          }, 15_000, 8_000_000);
+          const urlBlocks = xml.match(/<url\b[\s\S]*?<\/url>/gi) || [];
+          const rows = urlBlocks.map((block) => ({
+            loc: (block.match(/<loc>\s*([^<]+?)\s*<\/loc>/i)?.[1] || '').trim(),
+            lastmod: (block.match(/<lastmod>\s*([^<]+?)\s*<\/lastmod>/i)?.[1] || '').trim(),
+          })).filter((r) => r.loc);
+          // Newest first when lastmod is available
+          rows.sort((a, b) => (Date.parse(b.lastmod) || 0) - (Date.parse(a.lastmod) || 0));
+          for (const { loc, lastmod } of rows) {
+            let path: string;
+            try { path = new URL(loc).pathname; } catch { continue; }
+            if (!patterns.some((r) => r.test(path))) continue;
+            let canonical: string;
+            try { canonical = normaliseUrl(loc, url, allowed); } catch { continue; }
+            const slug = decodeURIComponent(path.replace(/\/+$/, '').split('/').pop() || '')
+              .replace(/[-_]+/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            const title = slug.length >= minLen ? slug.replace(/\b\w/g, (c) => c.toUpperCase()) : '';
+            if (!title) continue;
+            out.push({
+              externalId: canonical,
+              title: title.slice(0, 240),
+              canonicalUrl: canonical,
+              originalUrl: loc,
+              publishedAt: lastmod && Date.parse(lastmod) ? new Date(lastmod).toISOString() : null,
+              excerpt: null,
+              author: null,
+              category: null,
+            });
+            if (out.length >= cap) break;
+          }
+        } catch { /* skip failing sitemap */ }
       }
     }
 

@@ -231,6 +231,9 @@ export async function renderAndGroundCode(
   }, { timeoutMs: input.zipBase64 ? 240000 : 180000 });
   if (error) throw new Error(error.message || 'render-source failed');
   if (data?.error) throw new Error(renderSourceErrorMessage(data.error));
+  if (data?.code === 'render_source_unconfigured') {
+    throw new Error(renderSourceErrorMessage(data));
+  }
 
   const renderedPages = normalizeRenderPages(data);
   if (!renderedPages.length) throw new Error(renderSourceErrorMessage(data?.message ?? 'render-source returned no screenshot or DOM box tree.'));

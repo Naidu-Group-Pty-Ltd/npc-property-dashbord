@@ -304,13 +304,22 @@ async function resolveSignedSourceUrl(
   body: Record<string, unknown>,
 ): Promise<{ url: string; cleanup?: () => Promise<void> } | { error: string }> {
   const directUrl = typeof body.source_url === 'string' ? body.source_url : '';
-  if (directUrl) return { url: directUrl };
+  // Never bridge a caller-controlled URL into the privileged parser network.
+  // Sources must first be uploaded to one of the private, server-controlled
+  // locations below so this function is the only component that mints the URL.
+  if (directUrl) return { error: 'source_url is not supported; upload the PDF first' };
 
   const storagePath = typeof body.source_path === 'string' ? body.source_path : '';
   const bucket = typeof body.source_bucket === 'string' && body.source_bucket
     ? (body.source_bucket as string)
     : SOURCE_BUCKET;
   if (storagePath) {
+    const isTemplateSource = bucket === SOURCE_BUCKET;
+    const isUploadedSource = bucket === DIAGNOSTICS_BUCKET
+      && storagePath.startsWith('pdf-import-sources/');
+    if (!isTemplateSource && !isUploadedSource) {
+      return { error: 'source bucket or path is not allowed' };
+    }
     const { data, error } = await admin.storage.from(bucket).createSignedUrl(storagePath, 600);
     if (error || !data) return { error: error?.message ?? 'failed to sign source URL' };
     return { url: data.signedUrl };
@@ -337,7 +346,7 @@ async function resolveSignedSourceUrl(
       },
     };
   }
-  return { error: 'must supply source_url, source_path, or source_base64' };
+  return { error: 'must supply source_path or source_base64' };
 }
 
 async function fetchAndHash(signedUrl: string): Promise<{ hash: string; size: number } | null> {
@@ -1157,11 +1166,12 @@ Deno.serve(async (req) => {
     if (operation === 'status') {
       const jobId = body.job_id as string;
       if (!jobId) return json({ error: 'job_id required' }, 400);
-      const { data, error } = await admin
+      let query = admin
         .from('pdf_import_jobs')
         .select('*')
-        .eq('id', jobId)
-        .single();
+        .eq('id', jobId);
+      if (auth.userId !== 'service_role') query = query.eq('user_id', userId);
+      const { data, error } = await query.single();
       if (error) return json({ error: error.message }, 404);
       return json({ job: data });
     }
@@ -1302,8 +1312,6 @@ Deno.serve(async (req) => {
       let source: SourceDescriptor | undefined;
       if (typeof body.source_path === 'string' && body.source_path) {
         source = { kind: 'storage', bucket: (body.source_bucket as string) || SOURCE_BUCKET, path: body.source_path as string };
-      } else if (typeof body.source_url === 'string' && body.source_url) {
-        source = { kind: 'url', url: body.source_url as string };
       }
       // base64 → resolveSignedSourceUrl persisted it to DIAGNOSTICS_BUCKET inbox.
       // We can't recover the inbox path cleanly here, so chunked + base64 will
