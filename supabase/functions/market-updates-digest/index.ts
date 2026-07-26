@@ -1,13 +1,15 @@
 // Market Updates Digest — Phase 2
 // Generates period-scoped executive digests (24h / weekly / biweekly / monthly / quarterly / annual)
-// from published, source-cited market updates. Groups by segment, calls Lovable AI Gateway for the
-// narrative, and persists one row per (period, period_start) in market_digests.
+// from published, source-cited market updates. Calls the central assignment-based LLM router for the narrative, and persists one row per (period, period_start) in market_digests.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { consumeRateLimit, verifyRequiredCronSecret, securityJsonError } from "../_shared/requestSecurity.ts";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireModulePermission } from '../_shared/authz.ts';
+import { callLLM } from '../_shared/llmRouter.ts';
+import { canonicalPeriodWindow, type DigestPeriod as Period } from './periodWindow.ts';
+import { classifyMarketError, logMarketEvent, marketCorrelationId } from '../_shared/marketUpdatesObservability.ts';
 
 const jsonWithCors = (cors: Record<string, string>) => (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -15,43 +17,10 @@ const jsonWithCors = (cors: Record<string, string>) => (body: unknown, status = 
     headers: { ...cors, "content-type": "application/json" },
   });
 
-const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-const AI_MODEL = Deno.env.get("MARKET_AI_MODEL") ?? "google/gemini-3-flash-preview";
-
-type Period = "24h" | "weekly" | "biweekly" | "monthly" | "quarterly" | "annual";
 const VALID_PERIODS: Period[] = ["24h", "weekly", "biweekly", "monthly", "quarterly", "annual"];
-const SEGMENTS = [
-  "finance", "property", "construction", "political",
-  "economic", "social", "policy_regulation", "rental",
-];
 
-function periodWindow(period: Period, ref = new Date()): { start: Date; end: Date } {
-  const end = new Date(ref);
-  const start = new Date(ref);
-  switch (period) {
-    case "24h": start.setUTCDate(end.getUTCDate() - 1); break;
-    case "weekly": start.setUTCDate(end.getUTCDate() - 7); break;
-    case "biweekly": start.setUTCDate(end.getUTCDate() - 14); break;
-    case "monthly": start.setUTCMonth(end.getUTCMonth() - 1); break;
-    case "quarterly": start.setUTCMonth(end.getUTCMonth() - 3); break;
-    case "annual": start.setUTCFullYear(end.getUTCFullYear() - 1); break;
-  }
-  return { start, end };
-}
 
-function groupBySegment(updates: any[]) {
-  const map: Record<string, any[]> = Object.fromEntries(SEGMENTS.map((s) => [s, []]));
-  for (const u of updates) {
-    const segs: string[] = Array.isArray(u.segments) && u.segments.length ? u.segments : [u.category];
-    for (const seg of segs) {
-      if (map[seg]) map[seg].push(u);
-    }
-  }
-  return map;
-}
-
-async function synthesizeWithAI(period: Period, windowLabel: string, grouped: Record<string, any[]>, updates: any[]) {
-  if (!LOVABLE_API_KEY) return null;
+async function synthesizeWithAI(period: Period, windowLabel: string, updates: any[]) {
   const compact = updates.slice(0, 60).map((u: any) => ({
     id: u.id,
     title: u.title,
@@ -104,76 +73,33 @@ async function synthesizeWithAI(period: Period, windowLabel: string, grouped: Re
     },
   };
 
-  const body = {
-    model: AI_MODEL,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an Australian real-estate market intelligence editor. Produce a factual, source-grounded " +
-          `${period} digest. Cite only from the supplied updates (use their IDs in top_update_ids). ` +
-          "Never invent figures, sources or events. Australian English. Concise, executive tone; no filler.",
-      },
-      {
-        role: "user",
-        content: `Period: ${period} (${windowLabel})
-Updates (${updates.length} total):
-${JSON.stringify(compact, null, 2)}`,
-      },
+  const started = Date.now();
+  const result = await callLLM({
+    agentKey:'market_updates_digest',
+    messages:[
+      { role:'system', content:"You are an Australian real-estate market intelligence editor. Produce a factual, source-grounded " + period + " digest. Cite only supplied updates and use their raw IDs in top_update_ids. Never invent figures, sources or events. Australian English; concise executive tone." },
+      { role:'user', content:`Period: ${period} (${windowLabel})\nUpdates (${updates.length} total):\n${JSON.stringify(compact, null, 2)}` },
     ],
-    tools: [tool],
-    tool_choice: { type: "function", function: { name: "record_market_digest" } },
-  };
-
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+    tools:[tool], toolChoice:{ type:'function', function:{ name:'record_market_digest' } }, requiredToolName:'record_market_digest', requireValidToolArguments:true,
+    timeoutMs:35_000, deadlineAt:Date.now()+70_000,
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`AI digest ${res.status}: ${text.slice(0, 400)}`);
-  }
-  const data = await res.json();
-  const tc = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!tc) return null;
-  try {
-    return JSON.parse(tc.function.arguments);
-  } catch {
-    return null;
-  }
-}
-
-function fallbackDigest(period: Period, updates: any[], grouped: Record<string, any[]>) {
-  const bySeg = (seg: string) =>
-    (grouped[seg] ?? []).slice(0, 5).map((u) => u.ai_summary || u.title);
+  const toolCall = result.toolCalls?.find((call:any) => call?.function?.name === 'record_market_digest');
+  if (!toolCall?.function?.arguments) throw Object.assign(new Error('digest_tool_output_missing'), { attempts:result.attempts });
   return {
-    executive_summary:
-      `${updates.length} source-backed Australian market update${updates.length === 1 ? "" : "s"} across the ${period} window. Review cited sources before acting.`,
-    top_update_ids: updates.slice(0, 5).map((u: any) => u.id),
-    finance_lending_highlights: bySeg("finance"),
-    property_market_highlights: bySeg("property"),
-    construction_supply_highlights: bySeg("construction"),
-    policy_regulation_highlights: bySeg("policy_regulation"),
-    political_economic_watchpoints: [...bySeg("political"), ...bySeg("economic")],
-    social_watchpoints: bySeg("social"),
-    segment_breakdown: Object.fromEntries(
-      SEGMENTS.map((s) => [s, `${grouped[s]?.length ?? 0} update(s) in this window.`]),
-    ),
-    buyer_implications: null,
-    investor_implications: null,
-    broker_adviser_implications: null,
-    client_advisory_implications: [],
-    recommended_watchlist_for_tomorrow: [],
-    confidence_score: 55,
+    body:JSON.parse(toolCall.function.arguments),
+    telemetry:{
+      model_used:result.modelUsed, route_used:result.routeUsed,
+      provider_attempts:result.attempts.map(attempt => ({ route:attempt.route, model_id:attempt.model_id, ok:attempt.ok, status:attempt.status ?? null })),
+      fallback_used:result.attempts.length > 1, ai_latency_ms:Date.now()-started, ai_failure_reason:null,
+    },
   };
 }
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
+  const correlationId = marketCorrelationId(req.headers);
+  cors['x-correlation-id'] = correlationId;
+  const requestStartedAt = Date.now();
   const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
@@ -206,14 +132,18 @@ Deno.serve(async (req) => {
 
   const payload = await req.json().catch(() => ({}));
   const period: Period = VALID_PERIODS.includes(payload?.period) ? payload.period : "24h";
-  const { start, end } = periodWindow(period);
+  const scheduledReference = cronOk && typeof payload?.reference_at === 'string' ? new Date(payload.reference_at) : null;
+  const reference = scheduledReference && Number.isFinite(scheduledReference.getTime()) ? scheduledReference : new Date();
+  const { start, end, key:periodKey } = canonicalPeriodWindow(period, reference);
+  logMarketEvent('info',{function:'market-updates-digest',stage:'digest',correlation_id:correlationId,status:'started',period,period_key:periodKey});
   const windowLabel = `${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)}`;
 
   // Cron and manual retries are idempotent per period window. Return the
   // authoritative existing digest before any provider call.
-  const { data: existingDigest } = await sb.from('market_digests')
-    .select('*').eq('period', period).eq('period_start', start.toISOString()).maybeSingle();
-  if (existingDigest) return json({ digest: existingDigest, noData: false, period, period_start: start.toISOString(), period_end: end.toISOString(), idempotent: true, message: 'Market digest already exists for this period.' });
+  const { data: existingDigest, error:existingError } = await sb.from('market_digests')
+    .select('*').eq('period', period).eq('period_key', periodKey).maybeSingle();
+  if (existingError) return json({ error:'Digest state could not be loaded.', code:'digest_state_failed' },500);
+  if (existingDigest && ['published','no_data'].includes(existingDigest.status)) return json({ digest: existingDigest, noData: existingDigest.status === 'no_data', period, period_key:periodKey, period_start: start.toISOString(), period_end: end.toISOString(), idempotent: true, message: 'Market digest window is already complete.' });
 
   if (interactiveUserId) {
     try {
@@ -225,6 +155,10 @@ Deno.serve(async (req) => {
     } catch { return securityJsonError(503, 'metering_unavailable'); }
   }
 
+  const queuedDigest = { correlation_id:correlationId, period, period_key:periodKey, period_start:start.toISOString(), period_end:end.toISOString(), queued_at:new Date().toISOString(), started_at:null, completed_at:null, error_code:null, safe_error_message:null, executive_summary:'Digest generation is queued.', status:'queued', update_count:0, candidate_count:0, top_update_ids:[], source_urls:[] };
+  const { error:queuedError } = await sb.from('market_digests').upsert(queuedDigest,{onConflict:'period,period_key'});
+  if (queuedError) return json({ error:'Digest queue state could not be persisted.', code:'digest_persist_failed' },500);
+
   const { data: updates, error } = await sb
     .from("market_updates")
     .select(
@@ -232,33 +166,49 @@ Deno.serve(async (req) => {
     )
     .eq("status", "published")
     .gte("ingested_at", start.toISOString())
-    .lte("ingested_at", end.toISOString())
+    .lt("ingested_at", end.toISOString())
     .order("ingested_at", { ascending: false })
     .limit(200);
 
-  if (error) return json({ error: error.message }, 500);
+  if (error) {
+    await sb.from('market_digests').update({status:'failed',completed_at:new Date().toISOString(),error_code:'digest_input_failed',safe_error_message:'Published updates could not be loaded.'}).eq('period',period).eq('period_key',periodKey);
+    return json({ error: 'Published updates could not be loaded.', code:'digest_input_failed' }, 500);
+  }
+  const [{ count:candidateCount, error:candidateError }, { data:lastPublished, error:lastPublishedError }] = await Promise.all([
+    sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status','candidate').gte('ingested_at',start.toISOString()).lt('ingested_at',end.toISOString()),
+    sb.from('market_updates').select('source_published_at,ingested_at').eq('status','published').order('ingested_at',{ascending:false}).limit(1).maybeSingle(),
+  ]);
+  if (candidateError || lastPublishedError) {
+    await sb.from('market_digests').update({status:'failed',completed_at:new Date().toISOString(),error_code:'digest_context_failed',safe_error_message:'Digest context could not be loaded.'}).eq('period',period).eq('period_key',periodKey);
+    return json({ error:'Digest context could not be loaded.', code:'digest_context_failed' }, 500);
+  }
+  const baseDigest = { period, period_key:periodKey, period_start:start.toISOString(), period_end:end.toISOString(), candidate_count:candidateCount ?? 0, last_published_update_at:lastPublished?.source_published_at ?? lastPublished?.ingested_at ?? null };
   if (!updates?.length) {
-    return json({
-      digest: null,
-      noData: true,
-      period,
-      period_start: start.toISOString(),
-      period_end: end.toISOString(),
-      message: `No source-backed market updates were found in the ${period} window.`,
-    });
+    const noData = { ...baseDigest, executive_summary:`No source-backed published updates were available for this ${period} window. ${(candidateCount ?? 0) > 0 ? `${candidateCount} candidate item(s) require review.` : 'Review enabled sources and the assigned AI route.'}`, status:'no_data', update_count:0, completed_at:new Date().toISOString(), top_update_ids:[], source_urls:[] };
+    const { data:noDataRow, error:noDataError } = await sb.from('market_digests').upsert(noData,{onConflict:'period,period_key'}).select('*').single();
+    if (noDataError) return json({ error:'No-data digest status could not be persisted.', code:'digest_persist_failed' },500);
+    return json({ digest:noDataRow, noData:true, period, period_key:periodKey, period_start:start.toISOString(), period_end:end.toISOString(), candidate_count:candidateCount ?? 0, last_published_update_at:noData.last_published_update_at, message:noData.executive_summary });
   }
+  const generating = { ...baseDigest, executive_summary:'Digest generation is in progress.', status:'generating', update_count:updates.length, started_at:new Date().toISOString(), top_update_ids:[], source_urls:[] };
+  const { error:generatingError } = await sb.from('market_digests').upsert(generating,{onConflict:'period,period_key'});
+  if (generatingError) return json({ error:'Digest generation state could not be persisted.', code:'digest_persist_failed' },500);
 
-  const grouped = groupBySegment(updates);
-  let ai: any = null;
+  let synthesis:any;
   try {
-    ai = await synthesizeWithAI(period, windowLabel, grouped, updates);
-  } catch (e) {
-    console.warn("AI digest failed:", String((e as any)?.message ?? e));
+    synthesis = await synthesizeWithAI(period, windowLabel, updates);
+  } catch (providerError:any) {
+    const providerCode=classifyMarketError(providerError);
+    logMarketEvent('warn',{ function:'market-updates-digest', stage:'provider', correlation_id:correlationId, status:'failed', retry_attempt:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0, error_class:classifyMarketError(providerError) });
+    await sb.from('market_digests').update({ status:'failed', completed_at:new Date().toISOString(), error_code:'provider_unavailable', safe_error_message:'The configured digest route was unavailable.' }).eq('period',period).eq('period_key',periodKey);
+    return json({ error:'The configured Market Updates digest route is unavailable.', code:providerCode, stage:'digest', correlation_id:correlationId, retryable:!['provider_unauthorised','provider_payment_required'].includes(providerCode) }, 503);
   }
-  const body = ai ?? fallbackDigest(period, updates, grouped);
+  const allowedIds = new Set(updates.map((update:any) => update.id));
+  const body = synthesis.body;
+  body.top_update_ids = Array.isArray(body.top_update_ids) ? body.top_update_ids.filter((id:unknown) => typeof id === 'string' && allowedIds.has(id)) : [];
 
   const digest = {
     period,
+    period_key:periodKey,
     period_start: start.toISOString(),
     period_end: end.toISOString(),
     executive_summary: body.executive_summary,
@@ -284,20 +234,24 @@ Deno.serve(async (req) => {
     ],
     confidence_score: Number(body.confidence_score ?? 70),
     status: "published",
+    update_count:updates.length, candidate_count:candidateCount ?? 0, last_published_update_at:lastPublished?.source_published_at ?? lastPublished?.ingested_at ?? null, completed_at:new Date().toISOString(), error_code:null, safe_error_message:null,
+    ...synthesis.telemetry,
   };
 
-  // Upsert on (period, period_start) — replace same-day regenerations for the same window.
+  // Upsert on the canonical period key so retries replace, rather than duplicate, a window.
   const { data, error: insertError } = await sb
     .from("market_digests")
-    .upsert(digest, { onConflict: "period,period_start" })
+    .upsert(digest, { onConflict: "period,period_key" })
     .select("*")
     .single();
-  if (insertError) return json({ error: insertError.message }, 500);
+  if (insertError) return json({ error:'Generated digest could not be persisted.', code:'digest_persist_failed' }, 500);
 
+  logMarketEvent('info',{function:'market-updates-digest',stage:'digest',correlation_id:correlationId,status:'published',duration_ms:Date.now()-requestStartedAt,route:synthesis.telemetry.route_used,model_id:synthesis.telemetry.model_used,period_key:periodKey,update_count:updates.length});
   return json({
     digest: data,
     noData: false,
     period,
+    period_key:periodKey,
     period_start: digest.period_start,
     period_end: digest.period_end,
     update_count: updates.length,
