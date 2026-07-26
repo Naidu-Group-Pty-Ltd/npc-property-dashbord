@@ -67,7 +67,7 @@ describe('preloadImages raster references', () => {
 });
 
 describe('preloadImages QR bindings', () => {
-  it('defers bindable QR data until report data is available to the renderer', async () => {
+  it('leaves bindable QR data for local rendering without contacting a QR service', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
@@ -80,15 +80,13 @@ describe('preloadImages QR bindings', () => {
     });
   });
 
-  it('continues preloading literal QR data', async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 404 }));
+  it('leaves literal QR data for local rendering without contacting a QR service', async () => {
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    await preloadImages(templateWithQr('https://portal.example/client/123') as any);
+    const result = await preloadImages(templateWithQr('https://portal.example/client/123') as any);
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.qrserver.com/v1/create-qr-code/?size=360x360&data=https%3A%2F%2Fportal.example%2Fclient%2F123',
-      { mode: 'cors' },
-    );
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.pages[0].blocks[0].props.qrUrl).toBeUndefined();
   });
 });

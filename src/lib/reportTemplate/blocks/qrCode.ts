@@ -1,12 +1,12 @@
 /**
- * QR code block — uses api.qrserver.com to render a PNG that the image
- * preloader fetches and embeds as a data URL.
+ * QR code block — encodes and draws the QR locally.
  *
  * Props: data (bindable, encoded payload), x, y, size, caption?, color?
  */
 import type { Block } from '../templateSchema';
 import type { BlockRenderContext } from './index';
 import { resolveBindable, resolveBindableColor } from '../bindingResolver';
+import { encodeQrModules } from '../qrCodeEncoder';
 
 export function drawQrBlock(block: Block, ctx: BlockRenderContext): void {
   const { doc } = ctx;
@@ -14,12 +14,23 @@ export function drawQrBlock(block: Block, ctx: BlockRenderContext): void {
   const x = Number(p.x ?? 24);
   const y = Number(p.y ?? 320);
   const size = Number(p.size ?? 120);
-  // qrUrl is populated by the preloader (see imagePreloader).
-  const url = (p.qrUrl as string) || '';
-  if (url && (url.startsWith('data:') || url.startsWith('http'))) {
-    try {
-      doc.addImage(url, 'PNG', x, y, size, size);
-    } catch (e) { console.warn('[qr] addImage failed', e); }
+  const data = resolveBindable(p.data, ctx);
+  const modules = data ? encodeQrModules(data) : [];
+  if (modules.length) {
+    const quietZone = 2;
+    const moduleSize = size / (modules.length + quietZone * 2);
+    doc.setFillColor(255, 255, 255);
+    doc.rect(x, y, size, size, 'F');
+    doc.setFillColor(0, 0, 0);
+    modules.forEach((row, rowIndex) => row.forEach((dark, columnIndex) => {
+      if (dark) doc.rect(
+        x + (columnIndex + quietZone) * moduleSize,
+        y + (rowIndex + quietZone) * moduleSize,
+        moduleSize,
+        moduleSize,
+        'F',
+      );
+    }));
   } else {
     doc.setDrawColor(200, 200, 200);
     doc.rect(x, y, size, size, 'S');
