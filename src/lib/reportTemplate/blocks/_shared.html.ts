@@ -153,7 +153,10 @@ function withCascadeWrapper(html: string, node: { anchors?: any[]; id?: string }
 /** Render an overlay (text / image / shape / textOnPath / table) as an absolute-positioned HTML element. */
 export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
   if (!evalConditional(overlay.conditional, ctx)) return '';
-  const fx = buildEffectStyle(overlay as any);
+  // Effects originate in saved template JSON and are embedded in quoted style
+  // attributes below. Encode them at this shared boundary so a CSS value cannot
+  // terminate the attribute and inject HTML.
+  const fx = esc(buildEffectStyle(overlay as any));
   const z = Number.isFinite(Number((overlay as any).zIndex)) ? `z-index:${Number((overlay as any).zIndex)};` : '';
   const opacity = Number.isFinite(Number(overlay.opacity)) ? Number(overlay.opacity) : 1;
   const rotation = Number.isFinite(Number(overlay.rotation)) ? Number(overlay.rotation) : 0;
