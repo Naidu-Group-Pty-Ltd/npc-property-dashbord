@@ -457,11 +457,11 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'Primary first name and surname are required' }, 400);
       }
 
-      // Owner-created clients: grant the creating partner full edit/delete on every
-      // permission key, regardless of org-wide defaults. They originated the file,
-      // so they need to be able to add secondary contacts, properties, etc.
+      // Owner-created clients receive full access to their client data. Purchase files
+      // are limited to view/edit because delete authorizes archive/cancellation, including
+      // for files that staff may later create under the same client.
       const assignmentPermissions = CREATE_CLIENT_PERMISSION_TABLES.reduce((acc, key) => {
-        acc[key] = { view: true, edit: true, delete: true };
+        acc[key] = { view: true, edit: true, delete: key !== 'purchase_files' };
         return acc;
       }, {} as Record<string, { view: boolean; edit: boolean; delete: boolean }>);
       const provenance = buildProvenance({
