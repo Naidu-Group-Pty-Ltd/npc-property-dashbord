@@ -46,7 +46,8 @@
     "test:market-updates-automation": "node scripts/validate-market-updates-automation.mjs",
     "test:market-updates-observability": "node scripts/validate-market-updates-observability.mjs",
     "test:market-updates-security-legal": "node scripts/validate-market-updates-security-legal.mjs",
-    "test:market-updates-phase13": "node scripts/test-market-updates-phase13.mjs"
+    "test:market-updates-phase13": "node scripts/test-market-updates-phase13.mjs",
+    "test:market-updates-phase14": "node scripts/validate-market-updates-phase14-deployment.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
