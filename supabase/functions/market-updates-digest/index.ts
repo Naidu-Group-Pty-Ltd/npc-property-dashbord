@@ -128,7 +128,9 @@ Deno.serve(async (req) => {
 
   const payload = await req.json().catch(() => ({}));
   const period: Period = VALID_PERIODS.includes(payload?.period) ? payload.period : "24h";
-  const { start, end, key:periodKey } = canonicalPeriodWindow(period);
+  const scheduledReference = cronOk && typeof payload?.reference_at === 'string' ? new Date(payload.reference_at) : null;
+  const reference = scheduledReference && Number.isFinite(scheduledReference.getTime()) ? scheduledReference : new Date();
+  const { start, end, key:periodKey } = canonicalPeriodWindow(period, reference);
   const windowLabel = `${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)}`;
 
   // Cron and manual retries are idempotent per period window. Return the

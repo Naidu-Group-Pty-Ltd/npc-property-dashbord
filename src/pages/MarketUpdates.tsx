@@ -128,10 +128,6 @@ export default function MarketUpdates() {
     ? error.issue
     : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
-  const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
-    ? error.issue
-    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
-
   const loadUpdates = async () => {
     setLoading(true);
     const [updatesResult, healthResult] = await Promise.allSettled([
@@ -442,6 +438,7 @@ export default function MarketUpdates() {
               </p>
               <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                 <Badge variant="outline">Last ingest: {dateLabel(sourceHealth.lastSuccessAt)}</Badge>
+                <Badge variant="outline" className={sourceHealth.automation?.cronStale ? 'text-destructive' : undefined}>Automation: {sourceHealth.automation?.cronStale ? 'stale' : dateLabel(sourceHealth.automation?.lastIngestionDispatchAt)}</Badge>
                 <Badge variant="outline">{sourceHealth.enabledSources}/{sourceHealth.totalSources} sources live</Badge>
                 {sourceHealth.failedSources > 0 && <Badge variant="outline" className="text-destructive"><AlertTriangle className="mr-1 h-3 w-3" />{sourceHealth.failedSources} failing</Badge>}
               </div>

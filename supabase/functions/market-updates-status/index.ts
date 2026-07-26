@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
 
     if (action !== 'status') return json({ error:'Unknown action', correlation_id:correlationId }, 400, cors, correlationId);
 
-    const [sourcesResult, latestRunResult, latestFetchResult, latestDigestResult, updateRows, assignmentsResult, openRouterResult, latestCronResult] = await Promise.all([
+    const [sourcesResult, latestRunResult, latestFetchResult, latestDigestResult, updateRows, assignmentsResult, openRouterResult, latestCronResult, automationResult] = await Promise.all([
       sb.from('market_sources').select(SOURCE_COLUMNS).eq('registry_status','canonical').order('name'),
       sb.from('market_ingestion_runs').select('*').order('started_at',{ ascending:false }).limit(1).maybeSingle(),
       sb.from('market_source_fetch_runs').select('id,source_id,status,started_at,completed_at,http_status,items_discovered,items_published,safe_error_message').in('status',['completed','degraded']).order('started_at',{ ascending:false }).limit(1).maybeSingle(),
@@ -96,6 +96,7 @@ Deno.serve(async (req) => {
       sb.from('agent_model_assignments').select('agent_key,route,model_id,fallback_chain,last_used_at,last_error,updated_at,is_active').in('agent_key',AGENT_KEYS).eq('is_active',true),
       sb.from('llm_integration_settings').select('provider,is_enabled,last_test_at,last_test_success').ilike('provider','openrouter').maybeSingle(),
       sb.from('market_ingestion_runs').select('*').eq('trigger_type','cron').in('status',['completed','partial']).order('completed_at',{ ascending:false }).limit(1).maybeSingle(),
+      sb.rpc('market_updates_automation_status'),
     ]);
     if (sourcesResult.error) throw Object.assign(new Error('canonical source query failed'), { stage:'status' });
     const warnings = buildWarnings(sourcesResult.data ?? [], latestRunResult.error ? null : latestRunResult.data, assignmentsResult.error ? [] : assignmentsResult.data ?? []);
@@ -117,6 +118,12 @@ Deno.serve(async (req) => {
       ? new Date(new Date(source.last_fetched_at).getTime() + Math.max(15, Number(source.refresh_frequency_minutes ?? 60)) * 60_000).toISOString()
       : new Date().toISOString()).sort()[0] ?? null;
     const assignments = assignmentsResult.error ? [] : assignmentsResult.data ?? [];
+    const adminPermission = await requireAdmin(sb,{ userId:auth.userId, authMethod:auth.authMethod });
+    const automation = automationResult.error ? null : automationResult.data;
+    if (adminPermission.ok && automationResult.error) warnings.push('automation_status_unavailable');
+    if (adminPermission.ok && automation?.cron_stale) warnings.push('cron_stale');
+    if (adminPermission.ok && automation?.required_secrets_present === false) warnings.push('automation_secrets_missing');
+    if (adminPermission.ok && Number(automation?.configured_job_count ?? 0) < Number(automation?.expected_job_count ?? 8)) warnings.push('cron_jobs_missing');
     return json({
       status:{
         ...health,
@@ -132,6 +139,7 @@ Deno.serve(async (req) => {
           return assignment ? { agentKey, configured:true, route:assignment.route, modelId:assignment.model_id, fallbackCount:Array.isArray(assignment.fallback_chain) ? assignment.fallback_chain.length : 0, lastUsedAt:assignment.last_used_at, hasError:Boolean(assignment.last_error), updatedAt:assignment.updated_at } : { agentKey, configured:false };
         }),
         openRouter:{ configured:!openRouterResult.error && Boolean(openRouterResult.data), enabled:!openRouterResult.error && openRouterResult.data?.is_enabled === true, lastTestAt:openRouterResult.error ? null : openRouterResult.data?.last_test_at ?? null, lastTestSuccess:openRouterResult.error ? null : openRouterResult.data?.last_test_success ?? null },
+        automation:automation ? { lastDispatchAt:automation.last_dispatch_at, lastIngestionDispatchAt:automation.last_ingestion_dispatch_at, cronStale:automation.cron_stale, configuredJobCount:automation.configured_job_count, expectedJobCount:automation.expected_job_count, requiredSecretsPresent:adminPermission.ok ? automation.required_secrets_present : undefined, alerts:adminPermission.ok ? automation.alerts ?? [] : [] } : null,
         warnings,
       },
       correlation_id:correlationId,

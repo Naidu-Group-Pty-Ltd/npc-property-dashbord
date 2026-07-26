@@ -42,7 +42,8 @@
     "test:market-source-refresh-cadence": "node scripts/validate-market-source-refresh-cadence.mjs",
     "test:market-updates-digest": "node scripts/validate-market-updates-digest.mjs",
     "test:market-updates-qa": "node scripts/validate-market-updates-qa.mjs",
-    "test:market-updates-frontend-recovery": "node scripts/validate-market-updates-frontend-recovery.mjs"
+    "test:market-updates-frontend-recovery": "node scripts/validate-market-updates-frontend-recovery.mjs",
+    "test:market-updates-automation": "node scripts/validate-market-updates-automation.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
