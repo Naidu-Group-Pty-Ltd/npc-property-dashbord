@@ -56,6 +56,7 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
       excerpt_selector?: string;
       anchor_patterns?: string[];
       title_min_length?: number;
+      sitemap_urls?: string[];
     };
     for (const item of [...doc.querySelectorAll(cfg.item_selector || 'article')]) {
       try {
