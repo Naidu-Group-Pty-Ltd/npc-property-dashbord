@@ -108,17 +108,19 @@ export function StaffFinancePortalMessagesPanel({ clientId, className }: Props) 
 
     setThreads(list);
 
-    if (
-      list.length > 0 &&
-      (!preserveSelection || !selectedThreadId || !list.some((t) => t.id === selectedThreadId))
-    ) {
+    if (list.length > 0) {
       // Default to the most recently active thread.
       const sorted = [...list].sort((a, b) => {
         const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
         const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
         return tb - ta;
       });
-      setSelectedThreadId(sorted[0].id);
+      setSelectedThreadId((currentThreadId) => {
+        if (preserveSelection && currentThreadId && list.some((t) => t.id === currentThreadId)) {
+          return currentThreadId;
+        }
+        return sorted[0].id;
+      });
     }
     setLoading(false);
   };
