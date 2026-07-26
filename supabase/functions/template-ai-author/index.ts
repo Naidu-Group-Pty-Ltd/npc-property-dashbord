@@ -10,12 +10,18 @@
  * Uses the Lovable AI Gateway (LOVABLE_API_KEY) with tool-calling for
  * structured output. No DB writes — pure transform.
  */
-import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
+import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
+import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { checkPermission } from '../_shared/permissions.ts';
+import { rateLimit } from '../_shared/wp08Guards.ts';
 
 const GATEWAY = 'https://ai.gateway.lovable.dev/v1/chat/completions';
 const MODEL = 'google/gemini-2.5-flash';
+const AI_TIMEOUT_MS = 45_000;
+const MAX_REQUEST_BYTES = 64 * 1024;
 
-function json(body: unknown, status = 200) {
+function json(body: unknown, status = 200, corsHeaders: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -42,11 +48,19 @@ async function callAI(opts: {
     body.tool_choice = { type: 'function', function: { name: opts.tool.name } };
   }
 
-  const res = await fetch(GATEWAY, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(GATEWAY, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   if (res.status === 429) throw new Error('Rate limit exceeded — try again shortly.');
   if (res.status === 402) throw new Error('AI credits exhausted — top up the workspace.');
   if (!res.ok) {
@@ -267,25 +281,64 @@ Tier: ${tier}.`;
 }
 
 Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
   try {
-    if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
-    const body = await req.json().catch(() => ({}));
+    if (req.method !== 'POST') return json({ error: 'POST only' }, 405, corsHeaders);
+    const declaredLength = Number(req.headers.get('content-length') || 0);
+    if (declaredLength > MAX_REQUEST_BYTES) {
+      return json({ error: 'Request body too large' }, 413, corsHeaders);
+    }
+
+    const rawBody = await req.text();
+    if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
+      return json({ error: 'Request body too large' }, 413, corsHeaders);
+    }
+    let body: Record<string, any>;
+    try { body = JSON.parse(rawBody || '{}'); }
+    catch { return json({ error: 'Invalid JSON body' }, 400, corsHeaders); }
+
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    );
+    const auth = await verifyAuth(supabase, req.headers, body);
+    if (auth.error || !auth.userId) {
+      return createUnauthorizedResponse('Authentication required', corsHeaders);
+    }
+    const permission = await checkPermission(
+      supabase,
+      auth.userId,
+      'report_templates',
+      'update',
+      auth.authMethod,
+    );
+    if (!permission.allowed) {
+      return json({ error: 'Template edit permission required' }, 403, corsHeaders);
+    }
+    const limit = rateLimit(`template-ai-author:${auth.userId}`, 20, 60_000);
+    if (!limit.allowed) {
+      return json({ error: 'Rate limit exceeded — try again shortly.' }, 429, corsHeaders);
+    }
+
     const action = String(body?.action ?? '');
     switch (action) {
-      case 'generate_layout': return json(await generateLayout(body));
-      case 'rewrite_copy':    return json(await rewriteCopy(body));
-      case 'suggest_bindings':return json(await suggestBindings(body));
-      case 'name_suggest':    return json(await nameSuggest(body));
-      case 'generate_cover':  return json(await generateCover(body));
-      default: return json({ error: `Unknown action: ${action}` }, 400);
+      case 'generate_layout': return json(await generateLayout(body), 200, corsHeaders);
+      case 'rewrite_copy':    return json(await rewriteCopy(body), 200, corsHeaders);
+      case 'suggest_bindings':return json(await suggestBindings(body), 200, corsHeaders);
+      case 'name_suggest':    return json(await nameSuggest(body), 200, corsHeaders);
+      case 'generate_cover':  return json(await generateCover(body), 200, corsHeaders);
+      default: return json({ error: `Unknown action: ${action}` }, 400, corsHeaders);
     }
   } catch (e: any) {
     const msg = e?.message ?? String(e);
     const status = /rate limit/i.test(msg) ? 429
       : /credits/i.test(msg) ? 402
+      : e?.name === 'AbortError' ? 504
       : /missing|unknown action/i.test(msg) ? 400
       : 500;
-    return json({ error: msg }, status);
+    return json({ error: e?.name === 'AbortError' ? 'AI request timed out' : msg }, status, corsHeaders);
   }
 });
