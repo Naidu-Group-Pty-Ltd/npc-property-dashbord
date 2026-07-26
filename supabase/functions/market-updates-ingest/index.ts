@@ -1,6 +1,5 @@
 // Market Updates Ingest — Phase 2
-// Fetches enabled RSS sources, deduplicates, classifies with Lovable AI Gateway
-// (google/gemini-3-flash-preview) into 8 real-estate intelligence segments,
+// Fetches enabled RSS sources, deduplicates, classifies through the central assignment-based LLM router into 8 real-estate intelligence segments,
 // enriches with implications/risk flags/citations, and persists to market_updates.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -9,6 +8,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { adapterFor } from "./adapters/index.ts";
 import type { SourceConfig } from "./adapters/types.ts";
 import { MARKET_AUDIENCES, MARKET_SEGMENTS, normaliseClassification } from "./classification.ts";
+import { callLLM } from "../_shared/llmRouter.ts";
 
 const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -16,8 +16,6 @@ const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
     headers: { ...cors, "content-type": "application/json" },
   });
 
-const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-const AI_MODEL = Deno.env.get("MARKET_AI_MODEL") ?? "google/gemini-3-flash-preview";
 const RELEVANCE_THRESHOLD = Number(Deno.env.get("MARKET_RELEVANCE_THRESHOLD") ?? 40);
 const AI_CONFIDENCE_THRESHOLD = Number(Deno.env.get("MARKET_AI_CONFIDENCE_THRESHOLD") ?? 55);
 
@@ -98,101 +96,57 @@ async function fetchSource(source:any){
   return adapterFor(cfg).fetch(cfg,cfg.next_cursor);
 }
 
+function safeAttempts(attempts: any[] | undefined) {
+  return (attempts ?? []).map((attempt) => ({ route:attempt.route, model_id:attempt.model_id, ok:attempt.ok === true, status:Number(attempt.status) || null }));
+}
+
 async function classifyWithAI(item: any, source: any) {
-  if (!LOVABLE_API_KEY) return null;
   const tool = {
     type: "function",
     function: {
       name: "record_market_update",
-      description:
-        "Classify an Australian real-estate intelligence item into segments with implications and citations.",
+      description: "Classify an Australian real-estate intelligence item into segments with implications and citations.",
       parameters: {
-        type: "object",
+        type: "object", additionalProperties: false,
         properties: {
           category: { type: "string", enum: SEGMENTS as unknown as string[] },
-          segments: {
-            type: "array",
-            items: { type: "string", enum: SEGMENTS as unknown as string[] },
-          },
+          segments: { type: "array", items: { type: "string", enum: SEGMENTS as unknown as string[] } },
           geography: { type: "array", items: { type: "string" } },
           impact_level: { type: "string", enum: ["low", "medium", "high", "critical"] },
-          audience_tags: {
-            type: "array",
-            items: {
-              type: "string",
-              enum: MARKET_AUDIENCES as unknown as string[],
-            },
-          },
-          ai_summary: { type: "string" },
-          key_points: { type: "array", items: { type: "string" } },
-          why_it_matters: { type: "string" },
-          property_implications: { type: "string" },
-          finance_implications: { type: "string" },
-          policy_implications: { type: "string" },
+          audience_tags: { type: "array", items: { type: "string", enum: MARKET_AUDIENCES as unknown as string[] } },
+          ai_summary: { type: "string" }, key_points: { type: "array", items: { type: "string" } },
+          why_it_matters: { type: "string" }, property_implications: { type: "string" },
+          finance_implications: { type: "string" }, policy_implications: { type: "string" },
           risk_flags: { type: "array", items: { type: "string" } },
-          lending_criteria_tags: { type: "array", items: { type: "string" } }, legal_topics: { type: "array", items: { type: "string" } }, economic_topics: { type: "array", items: { type: "string" } },
-          legal_status: { type: "string" }, effective_date: { type: ["string","null"] }, primary_source_urls: { type: "array", items: { type: "string" } },
-          confidence_score: { type: "number" },
+          lending_criteria_tags: { type: "array", items: { type: "string" } },
+          legal_topics: { type: "array", items: { type: "string" } }, economic_topics: { type: "array", items: { type: "string" } },
+          legal_status: { type: "string" }, effective_date: { type: ["string","null"] },
+          primary_source_urls: { type: "array", items: { type: "string" } }, confidence_score: { type: "number" },
         },
-        required: [
-          "category", "segments", "geography", "impact_level", "audience_tags",
-          "ai_summary", "key_points", "why_it_matters", "confidence_score",
-        ],
-        additionalProperties: false,
+        required: ["category", "segments", "geography", "impact_level", "audience_tags", "ai_summary", "key_points", "why_it_matters", "confidence_score"],
       },
     },
   };
-
-  const body = {
-    model: AI_MODEL,
+  const started = Date.now();
+  const result = await callLLM({
+    agentKey: 'market_updates_classifier',
     messages: [
-      {
-        role: "system",
-        content:
-          "You are an Australian real-estate market intelligence analyst. Classify items into these segments: " +
-          SEGMENTS.join(", ") +
-          ". Multi-tag when clearly relevant. Ground every claim in the provided source text; never invent facts, figures or citations. Use plain factual Australian English. Separate reporting, advocacy, legal commentary, bills, enacted Acts, operative law and lender policy. Never infer a commencement or effective date without a primary source. Use concise transformative metadata-only summaries. If context is thin, mark impact_level 'low' and confidence_score below 50.",
-      },
-      {
-        role: "user",
-        content: `Source: ${source.name} (${source.source_authority ?? source.category}; perspective: ${source.perspective ?? "not stated"})
-URL: ${item.canonicalUrl}
-Published: ${item.publishedAt ?? "unknown"}
-Title: ${item.title}
-Excerpt:
-${item.excerpt ?? "(no excerpt supplied)"}`,
-      },
+      { role:'system', content:"You are an Australian real-estate market intelligence analyst. Classify items into these segments: " + SEGMENTS.join(", ") + ". Multi-tag when clearly relevant. Ground every claim in the supplied source; never invent facts, figures, dates or citations. Separate reporting, advocacy, legal commentary, bills, enacted Acts, operative law and lender policy. Use concise transformative metadata-only summaries. If context is thin, use low impact and confidence below 50." },
+      { role:'user', content:`Source: ${source.name} (${source.source_authority ?? source.category}; perspective: ${source.perspective ?? "not stated"})\nURL: ${item.canonicalUrl}\nPublished: ${item.publishedAt ?? "unknown"}\nTitle: ${item.title}\nExcerpt:\n${item.excerpt ?? "(no excerpt supplied)"}` },
     ],
-    tools: [tool],
-    tool_choice: { type: "function", function: { name: "record_market_update" } },
-  };
-
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+    tools:[tool], toolChoice:{ type:'function', function:{ name:'record_market_update' } }, requiredToolName:'record_market_update', requireValidToolArguments:true,
+    timeoutMs:25_000, deadlineAt:Date.now()+55_000,
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`AI classify ${res.status}: ${text.slice(0, 400)}`);
-  }
-  const data = await res.json();
-  const tc = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!tc) return null;
-  try {
-    const parsed = JSON.parse(tc.function.arguments);
-    if (!Array.isArray(parsed.segments) || !parsed.segments.length) {
-      parsed.segments = [parsed.category];
-    }
-    parsed.segments = parsed.segments.filter((s: string) => SEGMENTS.includes(s as any));
-    if (!parsed.segments.length) parsed.segments = ["property"];
-    return normaliseClassification(parsed);
-  } catch {
-    return null;
-  }
+  const toolCall = result.toolCalls?.find((call:any) => call?.function?.name === 'record_market_update');
+  if (!toolCall?.function?.arguments) throw Object.assign(new Error('classifier_tool_output_missing'), { attempts:result.attempts });
+  const parsed = JSON.parse(toolCall.function.arguments);
+  if (!Array.isArray(parsed.segments) || !parsed.segments.length) parsed.segments = [parsed.category];
+  parsed.segments = parsed.segments.filter((segment:string) => SEGMENTS.includes(segment as any));
+  if (!parsed.segments.length) parsed.segments = ['property'];
+  return {
+    classification:normaliseClassification(parsed),
+    telemetry:{ model_used:result.modelUsed, route_used:result.routeUsed, provider_attempts:safeAttempts(result.attempts), fallback_used:result.attempts.length > 1, ai_latency_ms:Date.now()-started, ai_failure_reason:null },
+  };
 }
 
 Deno.serve(async (req) => {
@@ -245,7 +199,7 @@ Deno.serve(async (req) => {
     return json({ runId: run.id, status: run.status, active: true, message: 'An ingestion run is already active.' }, 202, cors);
   }
 
-  let query = sb.from("market_sources").select("*").eq("enabled", true);
+  let query = sb.from("market_sources").select("*").eq("registry_status", "canonical").eq("enabled", true);
   if (Array.isArray(sourceIds) && sourceIds.length) query = query.in("id", sourceIds);
   const { data: sources, error } = await query;
   if (error) {
@@ -253,7 +207,7 @@ Deno.serve(async (req) => {
     return json({ error: "Unable to read the Market Updates source registry." }, 500, cors);
   }
   if (!sources?.length) {
-    const { count } = await sb.from("market_sources").select("id", { count: "exact", head: true });
+    const { count } = await sb.from("market_sources").select("id", { count: "exact", head: true }).eq("registry_status", "canonical");
     const message = count === 0
       ? "The Market Updates source registry has not been seeded in this environment."
       : "No enabled market sources are configured in the connected database.";
@@ -276,6 +230,17 @@ Deno.serve(async (req) => {
     sourceErrors: [] as Array<{ sourceId: string; message: string }>,
     message: "Market ingestion completed.",
   };
+
+  if (!test) {
+    try {
+      const readiness = await callLLM({ agentKey:'market_updates_classifier', messages:[{ role:'user', content:'Reply with: ready' }], maxTokens:8, timeoutMs:12_000, deadlineAt:Date.now()+25_000 });
+      await sb.from('market_ingestion_runs').update({ metadata:{ ...(run.metadata ?? {}), classifier_readiness:{ ok:true, model_used:readiness.modelUsed, route_used:readiness.routeUsed, attempts:safeAttempts(readiness.attempts) } } }).eq('id',run.id);
+    } catch (providerError:any) {
+      await sb.from('market_ingestion_runs').update({ status:'failed', completed_at:new Date().toISOString(), error_summary:'Market Updates classifier route is unavailable.', metadata:{ ...(run.metadata ?? {}), classifier_readiness:{ ok:false, attempts:safeAttempts(providerError?.attempts) } } }).eq('id',run.id);
+      console.warn(JSON.stringify({ function:'market-updates-ingest', stage:'provider_readiness', run_id:run.id, status:'failed', attempts:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0 }));
+      return json({ runId:run.id, status:'failed', error:'The configured Market Updates classifier route is unavailable.', code:'provider_unavailable' }, 503, cors);
+    }
+  }
 
   for (const source of sources ?? []) {
     let fetchRunId: string | null = null;
@@ -355,11 +320,15 @@ Deno.serve(async (req) => {
         }
 
         let ai: any = null;
+        let aiTelemetry:any = { model_used:null, route_used:null, provider_attempts:[], fallback_used:false, ai_latency_ms:null, ai_failure_reason:null };
         try {
-          ai = await classifyWithAI(item, source);
-          if (ai) summary.aiClassified++;
-        } catch (e) {
-          console.warn(`AI classify failed for ${source.name}:`, String(e?.message ?? e));
+          const classified = await classifyWithAI(item, source);
+          ai = classified.classification;
+          aiTelemetry = classified.telemetry;
+          summary.aiClassified++;
+        } catch (e:any) {
+          aiTelemetry = { ...aiTelemetry, provider_attempts:safeAttempts(e?.attempts), fallback_used:Array.isArray(e?.attempts) && e.attempts.length > 1, ai_failure_reason:'classifier_unavailable_or_invalid' };
+          console.warn(JSON.stringify({ function:'market-updates-ingest', stage:'classification', source_id:source.id, status:'fallback', attempts:aiTelemetry.provider_attempts.length }));
         }
         if (!ai) {
           const heur = heuristicClassify(item);
@@ -412,7 +381,7 @@ Deno.serve(async (req) => {
           confidence_score: confidence,
           citation_urls,
           source_authority: source.source_authority, source_perspective: source.perspective, author:item.author, public_excerpt:item.excerpt,
-          source_payload_hash: await sha256(JSON.stringify({title:item.title,url:item.canonicalUrl,date:item.publishedAt,excerpt:item.excerpt})), classification_version:"market-v2", summarisation_version:"market-v2", model_used:AI_MODEL,
+          source_payload_hash: await sha256(JSON.stringify({title:item.title,url:item.canonicalUrl,date:item.publishedAt,excerpt:item.excerpt})), classification_version:"market-v2-router", summarisation_version:"market-v2", ...aiTelemetry,
           lending_criteria_tags: ai.lending_criteria_tags ?? [], legal_topics: ai.legal_topics ?? [], economic_topics: ai.economic_topics ?? [], legal_status: ai.legal_status ?? "not_applicable", effective_date:ai.effective_date ?? null, primary_source_urls:ai.primary_source_urls ?? [],
           relevance_score: relevance,
           freshness_tier: freshnessTier(item.publishedAt),
