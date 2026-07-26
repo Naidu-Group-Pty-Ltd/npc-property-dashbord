@@ -101,6 +101,7 @@ export default function TemplateSharePreview() {
       </header>
       <iframe
         title="Shared template"
+        sandbox=""
         srcDoc={rendered.html}
         className="flex-1 w-full bg-white"
         style={{ minHeight: 'calc(100vh - 49px)' }}
