@@ -1544,7 +1544,7 @@ function renderDonutSvg(
     return `<path d="${d}" fill="${fill}" stroke="${VIZ_PAPER}" stroke-width="1.2"/>`;
   }).join("");
   const centerVal = opts.centerLabel ?? `${Math.round((segments[0]?.value || 0) / total * 100)}%`;
-  const centerSub = opts.centerSub ?? svgEscape(segments[0]?.label || "");
+  const centerSub = svgEscape(opts.centerSub ?? segments[0]?.label ?? "");
   const legend = segments.map((s, i) => {
     const pct = Math.round((Math.max(0, s.value) / total) * 100);
     const y = 48 + i * 22;
