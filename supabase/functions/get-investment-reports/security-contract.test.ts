@@ -12,10 +12,27 @@ describe('get-investment-reports authorization contract', () => {
 
     expect(functionSource).toContain("table === 'generated_reports' ? 'generated_reports' : 'reports'");
     expect(functionSource).toContain("'can_view'");
-    expect(functionSource).toContain('return createForbiddenResponse(');
+    expect(functionSource).toContain("return failure('FORBIDDEN'");
     expect(permissionGate).toBeGreaterThan(-1);
     expect(singleRead).toBeGreaterThan(permissionGate);
     expect(multipleRead).toBeGreaterThan(permissionGate);
     expect(listRead).toBeGreaterThan(permissionGate);
+  });
+
+  it('owns lightweight projections and returns structured paginated responses', () => {
+    expect(functionSource).toContain('INVESTMENT_LIBRARY_SELECT');
+    expect(functionSource).toContain('canonical_property_key');
+    const libraryProjection = functionSource.match(/INVESTMENT_LIBRARY_SELECT = '([^']+)'/)?.[1] || '';
+    expect(libraryProjection).not.toContain('report_content');
+    expect(functionSource).toContain("projection === 'detail' ? INVESTMENT_DETAIL_SELECT");
+    expect(functionSource).toContain("code: 'REPORT_SCHEMA_MISMATCH'");
+    expect(functionSource).toContain("error.code === '42703'");
+    expect(functionSource).toContain("error.code === 'PGRST204'");
+    expect(functionSource).toContain("query.or('is_archived.is.null,is_archived.eq.false')");
+    expect(functionSource).toContain("query.or('is_client_report.is.null,is_client_report.eq.false')");
+    expect(functionSource).toContain("query.eq('is_archived', true)");
+    expect(functionSource).toContain("select(select, { count: 'exact' })");
+    expect(functionSource).toContain('hasNextPage');
+    expect(functionSource).toContain('correlationId');
   });
 });
