@@ -29,6 +29,12 @@ export interface CallLLMArgs {
   /** Optional tool definitions (OpenAI-compatible) */
   tools?: any[];
   toolChoice?: any;
+  /** Treat a successful provider response without this tool call as a failed
+   * attempt and continue through the configured fallback chain. */
+  requiredToolName?: string;
+  /** Continue to the next fallback when the required tool arguments are not
+   * valid JSON. Schema-level validation remains the caller's responsibility. */
+  requireValidToolArguments?: boolean;
   /** Optional reasoning effort hint (gateway / openrouter) */
   reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
   /** If true, returns the raw response body instead of parsed content (for streaming). */
@@ -63,6 +69,7 @@ interface AgentAssignment {
   temperature: number | null;
   max_tokens: number | null;
   reasoning_effort: string | null;
+  is_active?: boolean;
 }
 
 const RETRYABLE_STATUSES = new Set([404, 410, 500, 502, 503, 504]);
@@ -93,6 +100,14 @@ function asTimeoutResult(e: unknown): { ok: false; status: number; error: string
   return null;
 }
 
+function safeAttemptError(status?: number, error?: string): string | undefined {
+  if (!error) return undefined;
+  if (status === 504 || /timed out|deadline/i.test(error)) return 'provider_timeout';
+  if (/not configured/i.test(error)) return 'provider_not_configured';
+  if (status) return `provider_http_${status}`;
+  return 'provider_error';
+}
+
 function getAdminClient() {
   const url = Deno.env.get('SUPABASE_URL')!;
   const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -104,13 +119,14 @@ async function loadAssignment(agentKey: string): Promise<AgentAssignment> {
   const admin = getAdminClient();
   const { data, error } = await admin
     .from('agent_model_assignments')
-    .select('agent_key, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort')
+    .select('agent_key, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort, is_active')
     .in('agent_key', [agentKey, 'default'])
     .order('agent_key', { ascending: agentKey === 'default' });
 
   if (error) throw new Error(`[llmRouter] Failed to load assignment: ${error.message}`);
 
-  const row = data?.find((r) => r.agent_key === agentKey) ?? data?.find((r) => r.agent_key === 'default');
+  const row = data?.find((r) => r.agent_key === agentKey && r.is_active !== false)
+    ?? data?.find((r) => r.agent_key === 'default' && r.is_active !== false);
   if (!row) {
     // Hardcoded ultimate fallback if even 'default' is missing
     return {
@@ -121,6 +137,7 @@ async function loadAssignment(agentKey: string): Promise<AgentAssignment> {
       temperature: null,
       max_tokens: null,
       reasoning_effort: null,
+      is_active: true,
     };
   }
   return row as AgentAssignment;
@@ -349,18 +366,37 @@ export async function callLLM(args: CallLLMArgs): Promise<CallLLMResult> {
       perAttemptArgs = { ...args, timeoutMs: Math.min(args.timeoutMs ?? remaining, remaining) };
     }
     const res = await callRoute(step.route, step.model_id, perAttemptArgs, assignment);
-    attempts.push({ route: step.route, model_id: step.model_id, ok: res.ok, status: res.status, error: res.error?.slice(0, 240) });
+    attempts.push({ route: step.route, model_id: step.model_id, ok: res.ok, status: res.status, error: safeAttemptError(res.status, res.error) });
 
     if (res.ok && res.data) {
+      const choice = res.data.choices?.[0];
+      const content = choice?.message?.content ?? '';
+      const toolCalls = choice?.message?.tool_calls;
+      if (args.requiredToolName && !toolCalls?.some((call: any) => call?.function?.name === args.requiredToolName)) {
+        attempts[attempts.length - 1] = {
+          route: step.route, model_id: step.model_id, ok: false,
+          status: 422, error: `required tool call missing: ${args.requiredToolName}`,
+        };
+        continue;
+      }
+      if (args.requiredToolName && args.requireValidToolArguments) {
+        const requiredCall = toolCalls?.find((call: any) => call?.function?.name === args.requiredToolName);
+        try {
+          JSON.parse(requiredCall?.function?.arguments ?? '');
+        } catch {
+          attempts[attempts.length - 1] = {
+            route: step.route, model_id: step.model_id, ok: false,
+            status: 422, error: `required tool arguments invalid: ${args.requiredToolName}`,
+          };
+          continue;
+        }
+      }
       // Best-effort: log usage on success
       try {
         const admin = getAdminClient();
         await admin.from('agent_model_assignments').update({ last_used_at: new Date().toISOString(), last_error: null }).eq('agent_key', args.agentKey);
       } catch { /* swallow */ }
 
-      const choice = res.data.choices?.[0];
-      const content = choice?.message?.content ?? '';
-      const toolCalls = choice?.message?.tool_calls;
       return {
         content: typeof content === 'string' ? content : JSON.stringify(content),
         rawResponse: res.data,
