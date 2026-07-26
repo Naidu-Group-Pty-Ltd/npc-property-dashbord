@@ -16,6 +16,28 @@ function safeKey(k: string): string {
   return k.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
+/**
+ * Keep template-controlled custom-property values inside their declaration and
+ * prevent PDF renderers from treating them as resource-bearing CSS. Backslash
+ * escapes are rejected as well so forbidden syntax cannot be obfuscated.
+ */
+function safeTokenValue(value: unknown): string | null {
+  const candidate = String(value);
+  if (
+    /[\\;{}<>\u0000-\u001f\u007f]/.test(candidate)
+    || /(?:url|image-set|src)\s*\(/i.test(candidate)
+    || /@import|(?:https?|file):|\/\//i.test(candidate)
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+export function tokenCssDeclaration(prefix: string, key: string, value: unknown, suffix = ''): string | null {
+  const safeValue = safeTokenValue(value);
+  return safeValue === null ? null : `  --${prefix}-${safeKey(key)}: ${safeValue}${suffix};`;
+}
+
 function escapeCssString(value: unknown): string {
   return String(value).replace(/[\\'\n\r\f<>]/g, (character) => `\\${character.charCodeAt(0).toString(16)} `);
 }
@@ -43,27 +65,19 @@ function safeFontWeight(value: unknown): string {
 
 export function tokensToCssVariables(tokens: Tokens): string {
   const lines: string[] = [':root {'];
-  for (const [k, v] of Object.entries(tokens.colors || {})) {
-    lines.push(`  --color-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.fonts || {})) {
-    lines.push(`  --font-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.spacing || {})) {
-    lines.push(`  --space-${safeKey(k)}: ${v}px;`);
-  }
-  for (const [k, v] of Object.entries(tokens.radii || {})) {
-    lines.push(`  --radius-${safeKey(k)}: ${v}px;`);
-  }
-  for (const [k, v] of Object.entries(tokens.shadows || {})) {
-    lines.push(`  --shadow-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.gradients || {})) {
-    lines.push(`  --gradient-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.typeScale || {})) {
-    lines.push(`  --text-${safeKey(k)}: ${v}pt;`);
-  }
+  const push = (prefix: string, values: Record<string, unknown>, suffix = '') => {
+    for (const [key, value] of Object.entries(values || {})) {
+      const declaration = tokenCssDeclaration(prefix, key, value, suffix);
+      if (declaration) lines.push(declaration);
+    }
+  };
+  push('color', tokens.colors);
+  push('font', tokens.fonts);
+  push('space', tokens.spacing, 'px');
+  push('radius', tokens.radii, 'px');
+  push('shadow', tokens.shadows);
+  push('gradient', tokens.gradients);
+  push('text', tokens.typeScale, 'pt');
   lines.push('}');
   return lines.join('\n');
 }
