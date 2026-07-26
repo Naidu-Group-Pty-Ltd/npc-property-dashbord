@@ -18,6 +18,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
+import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const BUCKET = 'finance-portal-messages';
@@ -155,7 +156,7 @@ Deno.serve(async (req) => {
     const financeToken = isStaffCaller ? null : extractFinancePortalToken(req.headers, body);
     const portalToken = isStaffCaller ? null : (req.headers.get('x-portal-session-token') || body?.portal_session_token || null);
     let actor: { type: 'partner'; portalUserId: string; email: string; name: string }
-             | { type: 'staff'; userId: string; username: string }
+             | { type: 'staff'; userId: string; username: string; authMethod?: string | null }
              | { type: 'client'; portalUserId: string; clientId: string; name: string }
              | null = null;
 
@@ -167,7 +168,7 @@ Deno.serve(async (req) => {
       if (auth.error || !auth.userId) {
         return jsonResponse({ error: auth.error || 'Authentication required' }, 401, corsHeaders);
       }
-      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff' };
+      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff', authMethod: auth.authMethod };
     } else if (financeToken) {
       const { data: portalUser, error: portalUserErr } = await supabase
         .from('finance_portal_users')
@@ -207,7 +208,27 @@ Deno.serve(async (req) => {
       if (auth.error || !auth.userId) {
         return jsonResponse({ error: 'Authentication required' }, 401, corsHeaders);
       }
-      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff' };
+      actor = { type: 'staff', userId: auth.userId, username: auth.username || 'Staff', authMethod: auth.authMethod };
+    }
+
+    // This handler uses the service-role client, so RLS cannot protect finance
+    // messages from an authenticated but unauthorized Command Centre user.
+    // Deny staff access unless their effective module permissions authorize the
+    // requested read or mutation; portal actors retain their object-level gates.
+    if (actor.type === 'staff') {
+      const readOperations = new Set(['list_threads', 'list_messages', 'get_attachment_url']);
+      const requiredPermission: ModulePerm = operation === 'archive_thread'
+        ? 'can_delete'
+        : readOperations.has(operation) ? 'can_view' : 'can_edit';
+      const authz = await requireModulePermission(
+        supabase,
+        { userId: actor.userId, authMethod: actor.authMethod },
+        'finance_portal_admin',
+        requiredPermission,
+      );
+      if (!authz.ok) {
+        return jsonResponse({ error: authz.error || 'Access denied' }, 403, corsHeaders);
+      }
     }
 
     // Helper: ensure partner is assigned to client and has messages permission
