@@ -305,6 +305,10 @@ function resolveLinkHref(
     href = idx >= 0 ? `#tpl-page-${idx}` : '#';
   } else if (raw.startsWith('anchor:')) {
     href = `#anc-${raw.slice(7).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  } else if (!/^(?:https?:|mailto:|tel:)/i.test(raw)) {
+    // Do not pass renderer-capable schemes (for example file: or data:) to
+    // WeasyPrint, and do not emit browser-executable javascript: links.
+    return null;
   }
   const target = link.target ?? (href.startsWith('#') ? '_self' : '_blank');
   const title = link.title ? resolveBindable(link.title, ctxBase) : '';
@@ -317,7 +321,9 @@ function bookmarkAttrs(bm: any, ctxBase: ResolveContext): string {
   const label = bm.label ? resolveBindable(bm.label, ctxBase) : bm.name;
   const level = Number(bm.level ?? 2);
   // WeasyPrint reads `bookmark-label` / `bookmark-level` for the PDF outline.
-  return ` id="${anchorId}" style="bookmark-label:'${String(label).replace(/'/g, "\\'")}';bookmark-level:${level};"`;
+  const cssLabel = String(label).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n]/g, ' ');
+  const style = `bookmark-label:'${cssLabel}';bookmark-level:${level};`;
+  return ` id="${escapeHtml(anchorId)}" style="${escapeHtml(style)}"`;
 }
 
 
@@ -367,7 +373,7 @@ function renderBlockOnce(block: any, ctxBase: ResolveContext, blockCtx: HtmlBloc
   const wrap = (inner: string) => {
     if (link) {
       const titleAttr = link.title ? ` title="${escapeHtml(link.title)}"` : '';
-      return `<a href="${link.href}" target="${link.target}"${titleAttr} style="text-decoration:none;color:inherit;display:contents;">${inner}</a>`;
+      return `<a href="${escapeHtml(link.href)}" target="${escapeHtml(link.target)}"${titleAttr} style="text-decoration:none;color:inherit;display:contents;">${inner}</a>`;
     }
     return inner;
   };
