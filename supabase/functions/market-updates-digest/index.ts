@@ -1,13 +1,13 @@
 // Market Updates Digest — Phase 2
 // Generates period-scoped executive digests (24h / weekly / biweekly / monthly / quarterly / annual)
-// from published, source-cited market updates. Groups by segment, calls Lovable AI Gateway for the
-// narrative, and persists one row per (period, period_start) in market_digests.
+// from published, source-cited market updates. Calls the central assignment-based LLM router for the narrative, and persists one row per (period, period_start) in market_digests.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { consumeRateLimit, verifyRequiredCronSecret, securityJsonError } from "../_shared/requestSecurity.ts";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireModulePermission } from '../_shared/authz.ts';
+import { callLLM } from '../_shared/llmRouter.ts';
 
 const jsonWithCors = (cors: Record<string, string>) => (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -15,16 +15,8 @@ const jsonWithCors = (cors: Record<string, string>) => (body: unknown, status = 
     headers: { ...cors, "content-type": "application/json" },
   });
 
-const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-const AI_MODEL = Deno.env.get("MARKET_AI_MODEL") ?? "google/gemini-3-flash-preview";
-
 type Period = "24h" | "weekly" | "biweekly" | "monthly" | "quarterly" | "annual";
 const VALID_PERIODS: Period[] = ["24h", "weekly", "biweekly", "monthly", "quarterly", "annual"];
-const SEGMENTS = [
-  "finance", "property", "construction", "political",
-  "economic", "social", "policy_regulation", "rental",
-];
-
 function periodWindow(period: Period, ref = new Date()): { start: Date; end: Date } {
   const end = new Date(ref);
   const start = new Date(ref);
@@ -39,19 +31,8 @@ function periodWindow(period: Period, ref = new Date()): { start: Date; end: Dat
   return { start, end };
 }
 
-function groupBySegment(updates: any[]) {
-  const map: Record<string, any[]> = Object.fromEntries(SEGMENTS.map((s) => [s, []]));
-  for (const u of updates) {
-    const segs: string[] = Array.isArray(u.segments) && u.segments.length ? u.segments : [u.category];
-    for (const seg of segs) {
-      if (map[seg]) map[seg].push(u);
-    }
-  }
-  return map;
-}
 
-async function synthesizeWithAI(period: Period, windowLabel: string, grouped: Record<string, any[]>, updates: any[]) {
-  if (!LOVABLE_API_KEY) return null;
+async function synthesizeWithAI(period: Period, windowLabel: string, updates: any[]) {
   const compact = updates.slice(0, 60).map((u: any) => ({
     id: u.id,
     title: u.title,
@@ -104,71 +85,25 @@ async function synthesizeWithAI(period: Period, windowLabel: string, grouped: Re
     },
   };
 
-  const body = {
-    model: AI_MODEL,
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are an Australian real-estate market intelligence editor. Produce a factual, source-grounded " +
-          `${period} digest. Cite only from the supplied updates (use their IDs in top_update_ids). ` +
-          "Never invent figures, sources or events. Australian English. Concise, executive tone; no filler.",
-      },
-      {
-        role: "user",
-        content: `Period: ${period} (${windowLabel})
-Updates (${updates.length} total):
-${JSON.stringify(compact, null, 2)}`,
-      },
+  const started = Date.now();
+  const result = await callLLM({
+    agentKey:'market_updates_digest',
+    messages:[
+      { role:'system', content:"You are an Australian real-estate market intelligence editor. Produce a factual, source-grounded " + period + " digest. Cite only supplied updates and use their raw IDs in top_update_ids. Never invent figures, sources or events. Australian English; concise executive tone." },
+      { role:'user', content:`Period: ${period} (${windowLabel})\nUpdates (${updates.length} total):\n${JSON.stringify(compact, null, 2)}` },
     ],
-    tools: [tool],
-    tool_choice: { type: "function", function: { name: "record_market_digest" } },
-  };
-
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${LOVABLE_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
+    tools:[tool], toolChoice:{ type:'function', function:{ name:'record_market_digest' } }, requiredToolName:'record_market_digest', requireValidToolArguments:true,
+    timeoutMs:35_000, deadlineAt:Date.now()+70_000,
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`AI digest ${res.status}: ${text.slice(0, 400)}`);
-  }
-  const data = await res.json();
-  const tc = data.choices?.[0]?.message?.tool_calls?.[0];
-  if (!tc) return null;
-  try {
-    return JSON.parse(tc.function.arguments);
-  } catch {
-    return null;
-  }
-}
-
-function fallbackDigest(period: Period, updates: any[], grouped: Record<string, any[]>) {
-  const bySeg = (seg: string) =>
-    (grouped[seg] ?? []).slice(0, 5).map((u) => u.ai_summary || u.title);
+  const toolCall = result.toolCalls?.find((call:any) => call?.function?.name === 'record_market_digest');
+  if (!toolCall?.function?.arguments) throw Object.assign(new Error('digest_tool_output_missing'), { attempts:result.attempts });
   return {
-    executive_summary:
-      `${updates.length} source-backed Australian market update${updates.length === 1 ? "" : "s"} across the ${period} window. Review cited sources before acting.`,
-    top_update_ids: updates.slice(0, 5).map((u: any) => u.id),
-    finance_lending_highlights: bySeg("finance"),
-    property_market_highlights: bySeg("property"),
-    construction_supply_highlights: bySeg("construction"),
-    policy_regulation_highlights: bySeg("policy_regulation"),
-    political_economic_watchpoints: [...bySeg("political"), ...bySeg("economic")],
-    social_watchpoints: bySeg("social"),
-    segment_breakdown: Object.fromEntries(
-      SEGMENTS.map((s) => [s, `${grouped[s]?.length ?? 0} update(s) in this window.`]),
-    ),
-    buyer_implications: null,
-    investor_implications: null,
-    broker_adviser_implications: null,
-    client_advisory_implications: [],
-    recommended_watchlist_for_tomorrow: [],
-    confidence_score: 55,
+    body:JSON.parse(toolCall.function.arguments),
+    telemetry:{
+      model_used:result.modelUsed, route_used:result.routeUsed,
+      provider_attempts:result.attempts.map(attempt => ({ route:attempt.route, model_id:attempt.model_id, ok:attempt.ok, status:attempt.status ?? null })),
+      fallback_used:result.attempts.length > 1, ai_latency_ms:Date.now()-started, ai_failure_reason:null,
+    },
   };
 }
 
@@ -248,14 +183,14 @@ Deno.serve(async (req) => {
     });
   }
 
-  const grouped = groupBySegment(updates);
-  let ai: any = null;
+  let synthesis:any;
   try {
-    ai = await synthesizeWithAI(period, windowLabel, grouped, updates);
-  } catch (e) {
-    console.warn("AI digest failed:", String((e as any)?.message ?? e));
+    synthesis = await synthesizeWithAI(period, windowLabel, updates);
+  } catch (providerError:any) {
+    console.warn(JSON.stringify({ function:'market-updates-digest', stage:'provider', status:'failed', attempts:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0 }));
+    return json({ error:'The configured Market Updates digest route is unavailable.', code:'provider_unavailable', retryable:true }, 503);
   }
-  const body = ai ?? fallbackDigest(period, updates, grouped);
+  const body = synthesis.body;
 
   const digest = {
     period,
@@ -284,6 +219,7 @@ Deno.serve(async (req) => {
     ],
     confidence_score: Number(body.confidence_score ?? 70),
     status: "published",
+    ...synthesis.telemetry,
   };
 
   // Upsert on (period, period_start) — replace same-day regenerations for the same window.
