@@ -2,34 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { renderTemplateToHtml } from '../htmlRenderer';
 import { parseTemplate } from '../templateSchema';
 
-describe('HTML renderer security', () => {
-  it('keeps gradient stop content inside the page style attribute', () => {
-    const marker = 'window.__GRADIENT_XSS__=1';
+describe('HTML renderer style isolation', () => {
+  it('does not let imported font tokens close the document style element', () => {
+    const payload = '"</style><script>window.__fontTokenXss = true</script><style>"';
     const template = parseTemplate({
       version: 1,
-      tokens: { colors: {}, fonts: {}, spacing: {} },
+      tokens: { colors: {}, fonts: { imported: payload }, spacing: {} },
       pages: [{
         id: 'page-1',
-        name: 'Page 1',
+        name: 'Imported page',
         size: { width: 595, height: 842 },
-        background: {
-          gradient: {
-            type: 'linear',
-            angle: 180,
-            stops: [
-              { color: `red\";><script>${marker}</script><section style=\"`, position: 0 },
-              { color: '#ffffff', position: 100 },
-            ],
-          },
-        },
         blocks: [],
       }],
     });
 
-    const { html } = renderTemplateToHtml(template, { data: {}, editorMode: false });
+    const { css, html } = renderTemplateToHtml(template);
 
-    expect(html).not.toContain(`<script>${marker}</script>`);
-    expect(html).toContain(`red&quot;;&gt;&lt;script&gt;${marker}&lt;/script&gt;`);
-    expect(html.match(/<section\b/g)).toHaveLength(1);
+    expect(css).toContain(payload);
+    expect(html).not.toContain('</style><script>');
+    expect(html).not.toContain('<script>window.__fontTokenXss');
+    expect(html).toContain('\\3C /style>\\3C script>');
   });
 });
