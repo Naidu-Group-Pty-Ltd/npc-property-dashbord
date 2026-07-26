@@ -223,6 +223,28 @@ describe('report template cascade map', () => {
     expect(csv).toContain('Needs a stronger visual landing point.');
   });
 
+  it('neutralizes spreadsheet formulas in cascade diagnostics CSV cells', () => {
+    const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## =Malicious section' });
+    const anchor = makeFieldAnchor(contract.sections[0].fields.find((field) => field.path.endsWith('.body'))!);
+    const template = baseTemplate([anchor]);
+    template.pages[0].name = '+Malicious page';
+    template.pages[0].blocks[0].id = '-malicious-block';
+    (template.pages[0].blocks[0].overlays[0] as any).id = '@malicious-overlay';
+    (template.pages[0].blocks[0].overlays[0] as any).anchors[0].qaOwner = '\tmalicious-owner';
+    (template.pages[0].blocks[0].overlays[0] as any).anchors[0].qaNote = '\rmalicious-note';
+
+    const cascade = buildCascadeMap(template, contract);
+    const csv = cascadeDiagnosticsToCsv(buildCascadeDiagnosticsExport(cascade, contract));
+
+    expect(csv).toContain("'=Malicious section");
+    expect(csv).toContain('1:+Malicious page');
+    expect(csv).toContain("'-malicious-block");
+    expect(csv).toContain("'@malicious-overlay");
+    expect(csv).toContain("'\tmalicious-owner");
+    expect(csv).toContain("\"'\rmalicious-note\"");
+    expect(csv).not.toMatch(/(?:^|,)"?[=+\-@\t\r]/m);
+  });
+
   it('can emit cascade metadata and debug tags in HTML render mode', () => {
     const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## Executive Summary' });
     const anchor = {
