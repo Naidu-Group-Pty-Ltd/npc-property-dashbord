@@ -128,7 +128,7 @@ SERVICE_TOKEN_NEXT = os.environ.get("PDF_PARSE_SERVICE_TOKEN_NEXT", "").strip()
 SERVICE_TOKENS = {t for t in (SERVICE_TOKEN, SERVICE_TOKEN_NEXT) if t}
 ENGINE_VERSION = "docling-2.14.0+phaseD+waveD+option3+waveG-chunked+phase1-plan-router+phase3-raster-manifest+phase4j-capability-activation+phase2-fitz-vectors-typography+phase3-fonts+phase6e-stroke-style"
 DOCLING_CAPABILITY_ACTIVATION_VERSION = "docling-capability-activation-v1"
-MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "75")) * 1024 * 1024
+MAX_PDF_BYTES = int(os.environ.get("DOCLING_MAX_PDF_MB", "50")) * 1024 * 1024
 # Each page currently produces seven objects plus one job manifest.  Bound the
 # page namespace as well as the input bytes so small, high-page-count PDFs
 # cannot amplify into an unbounded number of service-role Storage writes.
@@ -191,14 +191,14 @@ def _env_bool(name: str, default: bool) -> bool:
 PREWARM_ON_STARTUP = _env_bool("DOCLING_PREWARM_ON_STARTUP", True)
 
 
-# Phase B/D toggles — Wave A raises defaults for maximum extraction quality.
+# Phase B/D toggles. Expensive enrichments remain available as explicit opt-ins.
 ENABLE_PICTURE_CLASSIFICATION = _env_bool("ENABLE_PICTURE_CLASSIFICATION", True)
-ENABLE_PICTURE_DESCRIPTION_DEFAULT = _env_bool("ENABLE_PICTURE_DESCRIPTION", True)
+ENABLE_PICTURE_DESCRIPTION_DEFAULT = _env_bool("ENABLE_PICTURE_DESCRIPTION", False)
 ENABLE_FORMULA_ENRICHMENT = _env_bool("ENABLE_FORMULA_ENRICHMENT", True)
 ENABLE_CODE_ENRICHMENT = _env_bool("ENABLE_CODE_ENRICHMENT", True)
-# Wave A: force-OCR is now ON by default so scanned PDFs and outline-rendered text are captured.
-ENABLE_OCR_FALLBACK = _env_bool("ENABLE_OCR_FALLBACK", True)
-FORCE_FULL_PAGE_OCR = _env_bool("DOCLING_FORCE_FULL_PAGE_OCR", True)
+# OCR fallback and full-page OCR are resource-intensive and must be enabled explicitly.
+ENABLE_OCR_FALLBACK = _env_bool("ENABLE_OCR_FALLBACK", False)
+FORCE_FULL_PAGE_OCR = _env_bool("DOCLING_FORCE_FULL_PAGE_OCR", False)
 # Multi-language OCR — order matters; first match wins per region.
 OCR_LANGS = [s.strip() for s in os.environ.get("DOCLING_OCR_LANGS", "en,fr,de,es,zh,ja,ko,ar").split(",") if s.strip()]
 # Lower bitmap threshold = OCR runs even on lightly-bitmapped regions.
