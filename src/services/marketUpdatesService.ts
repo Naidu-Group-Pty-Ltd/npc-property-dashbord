@@ -256,14 +256,18 @@ export async function streamMarketUpdateQuestion(
     const res = await fetch(url, {
       method: 'POST',
       signal: opts.signal,
+      // `correlation_id` travels in the body, not a header: a custom header
+      // would need every reachable edge function redeployed with it in
+      // `Access-Control-Allow-Headers` before the browser would allow the
+      // request at all. See src/lib/secureInvoke.ts for the full rationale.
       headers: {
         'content-type': 'application/json',
         'authorization': `Bearer ${token}`,
         'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
-        'x-correlation-id':correlationId,
       },
       body: JSON.stringify({
         question,
+        correlation_id: correlationId,
         updateIds: opts.updateIds,
         history: opts.history,
         segment: opts.segment,
