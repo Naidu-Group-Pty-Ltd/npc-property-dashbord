@@ -12,6 +12,7 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { notifyFinancePortalAssignees } from "../_shared/finance-portal-notify.ts";
+import { hasFinancePortalPermission } from "../_shared/finance-portal-permissions.ts";
 import { notifyClientPortal } from "../_shared/client-portal-notify.ts";
 import { insertTargetedNotification } from "../_shared/notify.ts";
 
@@ -131,10 +132,8 @@ Deno.serve(async (req) => {
     if (!operation) return jsonResponse({ error: 'operation required' }, 400);
 
     // Helper: resolve permissions for a given client_id; returns null if not assigned.
-    // Default-allow purchase_files (view+edit) when the matrix doesn't mention the key
-    // OR when neither layer has explicitly granted edit. Without this, partners assigned
-    // before the purchase_files permission key existed (or with an empty object stub)
-    // can't create files even though product expectation is "assigned == can manage PFs".
+    // Default-allow purchase_files (view+edit) only when the matrix doesn't mention the key.
+    // This preserves access for legacy assignments without overriding explicit read-only access.
     async function getEffectivePermissions(clientId: string) {
       const { data: assignment } = await supabase
         .from('finance_portal_client_assignments')
@@ -144,18 +143,18 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (!assignment) return null;
       const merged = mergePermissions(portalUser.global_permissions, assignment.permissions);
-      const globalPf = (portalUser.global_permissions as any)?.purchase_files;
-      const clientPf = (assignment.permissions as any)?.purchase_files;
-      const globalGrantsEdit = globalPf && typeof globalPf === 'object' && globalPf.edit === true;
-      const clientGrantsEdit = clientPf && typeof clientPf === 'object' && clientPf.edit === true;
-      const explicitlyDenied =
-        (globalPf && typeof globalPf === 'object' && globalPf.edit === false && globalPf.view === false) ||
-        (clientPf && typeof clientPf === 'object' && clientPf.edit === false && clientPf.view === false);
-      if (!globalGrantsEdit && !clientGrantsEdit && !explicitlyDenied) {
+      const canEdit = hasFinancePortalPermission(
+        portalUser.global_permissions,
+        assignment.permissions,
+        'purchase_files',
+        'edit',
+        true,
+      );
+      if (canEdit && !merged.purchase_files?.edit) {
         merged.purchase_files = {
-          view: !!(merged.purchase_files?.view) || true,
+          view: true,
           edit: true,
-          delete: !!(merged.purchase_files?.delete),
+          delete: false,
         };
       }
       return merged;
@@ -389,19 +388,8 @@ Deno.serve(async (req) => {
         .select()
         .single();
       if (error || !created) {
-        console.error('[finance-portal-purchase-files] create_file insert failed', {
-          message: error?.message,
-          code: (error as any)?.code,
-          details: (error as any)?.details,
-          hint: (error as any)?.hint,
-          insertRow,
-        });
-        return jsonResponse({
-          error: error?.message || 'Failed to create purchase file',
-          code: (error as any)?.code || null,
-          details: (error as any)?.details || null,
-          hint: (error as any)?.hint || null,
-        }, 500);
+        console.error('[finance-portal-purchase-files] create_file insert failed');
+        return jsonResponse({ error: 'Failed to create purchase file' }, 500);
       }
 
       // ───── Best-effort side effects (must NEVER fail the primary create) ─────
@@ -733,4 +721,3 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: err?.message || 'Unexpected error' }, 500);
   }
 });
-

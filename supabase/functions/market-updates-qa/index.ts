@@ -3,6 +3,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { consumeRateLimit, enforceJsonBodyLimit, getTrustedClientIp, requireHumanOrSignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
+import { callLLM } from '../_shared/llmRouter.ts';
 
 const cors = {
   'Access-Control-Allow-Origin': '*',
@@ -13,9 +14,6 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json' } });
 
 const REFUSAL = 'I do not have enough sourced market updates to answer that yet.';
-const MODEL_FAST = Deno.env.get('MARKET_AI_MODEL_FAST') || 'google/gemini-3-flash-preview';
-const MODEL_DEEP = Deno.env.get('MARKET_AI_MODEL_DEEP') || 'google/gemini-2.5-pro';
-const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 
 interface Ctx {
   id: string;
@@ -82,12 +80,11 @@ function rankAndTrim(rows: Ctx[], terms: string[], segment: string | undefined, 
 }
 
 async function callAI(
-  model: string,
+  agentKey: 'market_updates_qa_fast' | 'market_updates_qa_deep',
   question: string,
   context: Ctx[],
   history: HistoryTurn[],
-): Promise<{ answer: string; used_ids: string[]; confidence: number; limitations: string[]; follow_up_questions: string[]; key_figures: Array<{ label: string; value: string; source_id?: string }>; time_horizon: string; sentiment: string } | null> {
-  if (!LOVABLE_API_KEY) return null;
+) {
   const contextBlock = context.map((c, i) => {
     const cites = Array.from(new Set([...(c.citation_urls ?? []), c.source_url].filter(Boolean)));
     return `[[${i + 1}]] id=${c.id}
@@ -120,7 +117,6 @@ STRICT RULES:
   ];
 
   const body = {
-    model,
     messages,
     tools: [{
       type: 'function',
@@ -157,38 +153,27 @@ STRICT RULES:
       },
     }],
     tool_choice: { type: 'function', function: { name: 'submit_market_answer' } },
-    max_tokens: 900,
   };
 
-  try {
-    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${LOVABLE_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) { console.warn('[qa] AI gateway', res.status, await res.text()); return null; }
-    const data = await res.json();
-    const call = data?.choices?.[0]?.message?.tool_calls?.[0];
-    if (!call?.function?.arguments) return null;
-    const parsed = JSON.parse(call.function.arguments);
-    return {
-      answer: String(parsed.answer ?? REFUSAL).trim(),
-      used_ids: Array.isArray(parsed.used_ids) ? parsed.used_ids.map(String) : [],
-      confidence: Number.isFinite(parsed.confidence) ? Number(parsed.confidence) : 50,
-      limitations: Array.isArray(parsed.limitations) ? parsed.limitations.map(String) : [],
-      follow_up_questions: Array.isArray(parsed.follow_up_questions) ? parsed.follow_up_questions.map(String).slice(0, 4) : [],
-      key_figures: Array.isArray(parsed.key_figures) ? parsed.key_figures.slice(0, 8).map((k: any) => ({
-        label: String(k.label ?? ''),
-        value: String(k.value ?? ''),
-        source_id: k.source_id ? String(k.source_id) : undefined,
-      })) : [],
-      time_horizon: typeof parsed.time_horizon === 'string' ? parsed.time_horizon : 'unclear',
-      sentiment: typeof parsed.sentiment === 'string' ? parsed.sentiment : 'neutral',
-    };
-  } catch (e) {
-    console.warn('[qa] AI call failed', (e as Error).message);
-    return null;
-  }
+  const started = Date.now();
+  const result = await callLLM({
+    agentKey, messages:body.messages as any, tools:body.tools, toolChoice:body.tool_choice, requiredToolName:'submit_market_answer', requireValidToolArguments:true,
+    timeoutMs:30_000, deadlineAt:Date.now()+65_000,
+  });
+  const call = result.toolCalls?.find((toolCall:any) => toolCall?.function?.name === 'submit_market_answer');
+  if (!call?.function?.arguments) throw Object.assign(new Error('qa_tool_output_missing'), { attempts:result.attempts });
+  const parsed = JSON.parse(call.function.arguments);
+  return {
+    answer: String(parsed.answer ?? REFUSAL).trim(),
+    used_ids: Array.isArray(parsed.used_ids) ? parsed.used_ids.map(String) : [],
+    confidence: Number.isFinite(parsed.confidence) ? Number(parsed.confidence) : 50,
+    limitations: Array.isArray(parsed.limitations) ? parsed.limitations.map(String) : [],
+    follow_up_questions: Array.isArray(parsed.follow_up_questions) ? parsed.follow_up_questions.map(String).slice(0, 4) : [],
+    key_figures: Array.isArray(parsed.key_figures) ? parsed.key_figures.slice(0, 8).map((figure:any) => ({ label:String(figure.label ?? ''), value:String(figure.value ?? ''), source_id:figure.source_id ? String(figure.source_id) : undefined })) : [],
+    time_horizon: typeof parsed.time_horizon === 'string' ? parsed.time_horizon : 'unclear',
+    sentiment: typeof parsed.sentiment === 'string' ? parsed.sentiment : 'neutral',
+    telemetry:{ model_used:result.modelUsed, route_used:result.routeUsed, provider_attempts:result.attempts.map(attempt => ({ route:attempt.route, model_id:attempt.model_id, ok:attempt.ok, status:attempt.status ?? null })), fallback_used:result.attempts.length > 1, ai_latency_ms:Date.now()-started, ai_failure_reason:null },
+  };
 }
 
 function sseEvent(event: string, data: unknown): string {
@@ -331,9 +316,14 @@ Deno.serve(async (req) => {
   }
 
   const contextIds = new Set(context.map(c => c.id));
-  const model = isComplex(question, history) ? MODEL_DEEP : MODEL_FAST;
-  let ai = await callAI(model, question, context, history);
-  if (!ai && model !== MODEL_FAST) ai = await callAI(MODEL_FAST, question, context, history);
+  const agentKey = isComplex(question, history) ? 'market_updates_qa_deep' : 'market_updates_qa_fast';
+  let ai:any;
+  try {
+    ai = await callAI(agentKey, question, context, history);
+  } catch (providerError:any) {
+    console.warn(JSON.stringify({ function:'market-updates-qa', stage:'provider', status:'failed', correlation_id:auth.correlationId, attempts:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0 }));
+    return json({ error:'The configured Market Updates Q&A route is unavailable.', code:'provider_unavailable', retryable:true, correlation_id:auth.correlationId }, 503);
+  }
 
   let answer: string, used_ids: string[], confidence: number, limitations: string[];
   let follow_up_questions: string[] = [];
@@ -360,7 +350,15 @@ Deno.serve(async (req) => {
     source_id: k.source_id ? remapCitedId(k.source_id) : undefined,
   })) : [];
 
-  if (!ai || !aiUsedIds.length || aiUsedIds.some(id => !contextIds.has(id)) || ai.answer.length < 4) {
+  if (ai.answer === REFUSAL && aiUsedIds.length === 0) {
+    answer = REFUSAL;
+    used_ids = [];
+    confidence = Math.max(0, Math.min(100, ai.confidence));
+    limitations = ai.limitations.length ? ai.limitations : ['The retrieved source-backed updates do not contain enough evidence to answer.'];
+    follow_up_questions = ai.follow_up_questions;
+    time_horizon = ai.time_horizon;
+    sentiment = ai.sentiment;
+  } else if (!aiUsedIds.length || aiUsedIds.some(id => !contextIds.has(id)) || ai.answer.length < 4) {
     answer = context.slice(0, 3).map(c => `• ${c.title} (${c.source_name}): ${c.ai_summary || c.why_it_matters || 'Limited sourced context.'}`).join('\n');
     used_ids = context.slice(0, 3).map(c => c.id);
     confidence = 45;
@@ -404,7 +402,7 @@ Deno.serve(async (req) => {
     key_figures,
     time_horizon,
     sentiment,
-    model_used: model,
+    ...ai.telemetry,
     created_by: userId,
     metadata: {
       retrieval_mode: retrievalMode,
@@ -434,7 +432,9 @@ Deno.serve(async (req) => {
     key_figures,
     time_horizon,
     sentiment,
-    model_used: model,
+    model_used: ai.telemetry.model_used,
+    route_used: ai.telemetry.route_used,
+    fallback_used: ai.telemetry.fallback_used,
     context_size: context.length,
     conversation_id,
     retrieved,
@@ -458,7 +458,7 @@ Deno.serve(async (req) => {
   const body = new ReadableStream({
     async start(controller) {
       try {
-        controller.enqueue(encoder.encode(sseEvent('start', { model_used: model, context_size: context.length })));
+        controller.enqueue(encoder.encode(sseEvent('start', { model_used:ai.telemetry.model_used, route_used:ai.telemetry.route_used, context_size:context.length })));
         let acc = '';
         for (const w of words) {
           acc += w;
