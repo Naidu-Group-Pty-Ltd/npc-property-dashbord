@@ -16,6 +16,8 @@
  *      permanent public URL for private content (EC-5). Use signed URLs.
  *  R7: global PDF recovery exposed without an internal-service or superadmin
  *      authorization gate.
+ *  R8: finance portal messaging staff access backed by the service-role client
+ *      without a deny-by-default finance module permission gate.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
@@ -105,6 +107,20 @@ for (const file of files) {
       && /createForbiddenResponse/.test(recoveryBranch);
     if (!hasPrivilegedGate) {
       errors.push('[R7] pdf-parse-dispatch/index.ts: global stuck-job recovery must require a verified internal service caller or a superadmin role before using the service-role client.');
+    }
+  }
+
+  if (rel === 'finance-portal-messages/index.ts') {
+    const gatePosition = src.indexOf("requireModulePermission(");
+    const operationPosition = src.indexOf("if (operation === 'list_threads')");
+    const hasStaffModuleGate = gatePosition !== -1
+      && operationPosition !== -1
+      && gatePosition < operationPosition
+      && src.includes("if (actor.type === 'staff')")
+      && src.includes("'finance_portal_admin'")
+      && src.includes('requiredPermission');
+    if (!hasStaffModuleGate) {
+      errors.push('[R8] finance-portal-messages/index.ts: service-role-backed staff operations must pass the deny-by-default finance_portal_admin permission gate before accessing messages.');
     }
   }
 }
