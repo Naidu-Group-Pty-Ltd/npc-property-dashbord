@@ -19,6 +19,10 @@ import { z } from 'zod';
 export const BindableStringSchema = z.string();
 export const BindableColorSchema = z.string(); // "#hex" or "token:primary" or "{{...}}"
 export const BindableNumberSchema = z.union([z.number(), z.string()]);
+const GradientStopColorSchema = z.string().regex(
+  /^(?:#[0-9a-f]{3,4}|#[0-9a-f]{6}|#[0-9a-f]{8}|transparent)$/i,
+  'Gradient stops must be a hex color or transparent',
+);
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Phase 5 — fontFaces entry. Supports either a remote stylesheet (Google Fonts
@@ -555,7 +559,7 @@ export const PageSchema = z.object({
       type: z.enum(['linear', 'radial']).default('linear'),
       angle: z.number().min(0).max(360).default(180),  // deg — linear only
       stops: z.array(z.object({
-        color: z.string(),                              // hex (8-digit allowed)
+        color: GradientStopColorSchema,                 // hex (8-digit allowed) or transparent
         position: z.number().min(0).max(100),
       })).default([]),
     }).optional(),
