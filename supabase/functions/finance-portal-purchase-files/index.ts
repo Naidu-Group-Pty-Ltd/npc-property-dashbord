@@ -389,19 +389,8 @@ Deno.serve(async (req) => {
         .select()
         .single();
       if (error || !created) {
-        console.error('[finance-portal-purchase-files] create_file insert failed', {
-          message: error?.message,
-          code: (error as any)?.code,
-          details: (error as any)?.details,
-          hint: (error as any)?.hint,
-          insertRow,
-        });
-        return jsonResponse({
-          error: error?.message || 'Failed to create purchase file',
-          code: (error as any)?.code || null,
-          details: (error as any)?.details || null,
-          hint: (error as any)?.hint || null,
-        }, 500);
+        console.error('[finance-portal-purchase-files] create_file insert failed');
+        return jsonResponse({ error: 'Failed to create purchase file' }, 500);
       }
 
       // ───── Best-effort side effects (must NEVER fail the primary create) ─────
