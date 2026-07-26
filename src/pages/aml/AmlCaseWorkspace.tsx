@@ -39,6 +39,7 @@ import {
 import {
   amlMonitoringApi, type AmlCaseMonitoring, type AmlReview, type AmlReviewTriggerKind,
 } from "@/lib/aml/amlMonitoringApi";
+import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import {
   CASE_STAGE_LABELS, caseStage, clientPortalStatus, CLIENT_PORTAL_STATUS_LABELS,
   serviceGateStatus, progressRail, type ProgressRailState,
@@ -545,6 +546,7 @@ function DocumentsEvidenceSection({
     discrepancies_created: number;
   } | null>(null);
   const [evidence, setEvidence] = useState<any[]>([]);
+  const { prompt, dialog } = usePromptDialog();
 
   const refresh = useCallback(async () => {
     const [reqs, docs, ev] = await Promise.all([
@@ -569,10 +571,22 @@ function DocumentsEvidenceSection({
   };
 
   const review = async (documentId: string, decision: "accepted" | "rejected") => {
-    const reason = decision === "rejected"
-      ? window.prompt("Reason shown to the client for rejecting this document:") ?? undefined
-      : undefined;
-    if (decision === "rejected" && !reason) return;
+    let reason: string | undefined;
+    if (decision === "rejected") {
+      const values = await prompt({
+        title: "Reject this document",
+        description: "The client sees this wording, so explain plainly what is wrong and what to send instead.",
+        confirmLabel: "Reject document",
+        destructive: true,
+        fields: [{
+          name: "reason", label: "Reason shown to the client", type: "textarea",
+          required: true, minLength: 10,
+          placeholder: "e.g. The bank statement is missing the first page — please upload all pages.",
+        }],
+      });
+      if (!values) return;
+      reason = values.reason;
+    }
     setBusy(documentId);
     try {
       await amlCasesApi.reviewDocument(documentId, decision, reason);
@@ -789,6 +803,7 @@ function DocumentsEvidenceSection({
           )}
         </Card>
       )}
+      {dialog}
     </div>
   );
 }
@@ -824,6 +839,7 @@ function MonitoringReviewsSection({
   const [triggerDetail, setTriggerDetail] = useState("");
   const [endReason, setEndReason] = useState("");
   const [showEnd, setShowEnd] = useState(false);
+  const { prompt, dialog } = usePromptDialog();
 
   const load = useCallback(async () => {
     try {
@@ -854,12 +870,21 @@ function MonitoringReviewsSection({
   };
 
   const extendDeadline = async (review: AmlReview) => {
-    const due = window.prompt("New deadline (YYYY-MM-DD):") ?? "";
-    if (!due.trim()) return;
-    const reason = window.prompt("Reason for extending the deadline (minimum 10 characters):") ?? "";
-    if (!reason.trim()) return;
+    const values = await prompt({
+      title: "Extend review deadline",
+      description: "The original deadline is preserved and every extension is counted on the case audit trail.",
+      confirmLabel: "Extend deadline",
+      fields: [
+        { name: "due", label: "New deadline", type: "date", required: true,
+          helpText: "Must be later than the current deadline." },
+        { name: "reason", label: "Reason for the extension", type: "textarea",
+          required: true, minLength: 10,
+          placeholder: "Why the review cannot be completed by the current date." },
+      ],
+    });
+    if (!values) return;
     await run(review.id, () => amlMonitoringApi.extendReviewDeadline({
-      id: review.id, due_at: new Date(`${due.trim()}T00:00:00Z`).toISOString(), reason: reason.trim(),
+      id: review.id, due_at: new Date(`${values.due}T00:00:00Z`).toISOString(), reason: values.reason,
     }), "Deadline extended");
   };
 
@@ -951,14 +976,22 @@ function MonitoringReviewsSection({
                     </Button>
                   )}
                   <Button size="sm" variant="ghost" disabled={busy === "pause"}
-                    onClick={() => {
-                      const reason = window.prompt(
-                        paused ? "Reason for resuming monitoring (minimum 10 characters):"
-                          : "Reason for pausing monitoring (minimum 10 characters):",
-                      ) ?? "";
-                      if (!reason.trim()) return;
+                    onClick={async () => {
+                      const values = await prompt({
+                        title: paused ? "Resume ongoing monitoring" : "Pause ongoing monitoring",
+                        description: paused
+                          ? "Scheduled reviews and monitoring alerts start again for this case."
+                          : "Scheduled reviews stay in place but no new monitoring work is raised until you resume.",
+                        confirmLabel: paused ? "Resume monitoring" : "Pause monitoring",
+                        fields: [{
+                          name: "reason", label: "Reason", type: "textarea",
+                          required: true, minLength: 10,
+                          placeholder: paused ? "Why monitoring is resuming." : "Why monitoring is being paused.",
+                        }],
+                      });
+                      if (!values) return;
                       void run("pause", () => amlMonitoringApi.setMonitoringStatus({
-                        case_id: caseId, status: paused ? "active" : "paused", reason: reason.trim(),
+                        case_id: caseId, status: paused ? "active" : "paused", reason: values.reason,
                       }), paused ? "Monitoring resumed" : "Monitoring paused");
                     }}>
                     {paused ? "Resume monitoring" : "Pause monitoring"}
@@ -980,7 +1013,7 @@ function MonitoringReviewsSection({
                   <Textarea
                     rows={2}
                     aria-label="Reason for ending the relationship"
-                    placeholder="Reason (required, minimum 10 characters)"
+                    placeholder="Reason (required, minimum 10 characters)…"
                     value={endReason}
                     onChange={(e) => setEndReason(e.target.value)}
                   />
@@ -1052,9 +1085,18 @@ function MonitoringReviewsSection({
                               Extend
                             </Button>
                             <Button size="sm" variant="outline" disabled={busy === r.id}
-                              onClick={() => {
-                                const notes = window.prompt("Review outcome notes (optional):") ?? "";
-                                void run(r.id, () => amlMonitoringApi.completeReview(r.id, "no_change", "complete", notes || undefined), "Review completed");
+                              onClick={async () => {
+                                const values = await prompt({
+                                  title: "Complete this review",
+                                  description: "Completing a periodic review books the next one from the case's current risk rating.",
+                                  confirmLabel: "Complete review",
+                                  fields: [{
+                                    name: "notes", label: "Outcome notes", type: "textarea",
+                                    placeholder: "What was checked and what you concluded (optional).",
+                                  }],
+                                });
+                                if (!values) return;
+                                void run(r.id, () => amlMonitoringApi.completeReview(r.id, "no_change", "complete", values.notes || undefined), "Review completed");
                               }}>
                               Complete
                             </Button>
@@ -1099,7 +1141,7 @@ function MonitoringReviewsSection({
               <Textarea
                 rows={2}
                 aria-label="Trigger detail"
-                placeholder="What changed and why it needs review (required, minimum 10 characters)."
+                placeholder="What changed and why it needs review (required, minimum 10 characters)…"
                 value={triggerDetail}
                 onChange={(e) => setTriggerDetail(e.target.value)}
               />
@@ -1148,6 +1190,7 @@ function MonitoringReviewsSection({
           </CardContent>
         </Card>
       )}
+      {dialog}
     </div>
   );
 }
@@ -1165,6 +1208,7 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
   const [cddSummary, setCddSummary] = useState<AmlCounterpartyCddSummary | null>(null);
   const [settlementGate, setSettlementGate] = useState<AmlSettlementGateStatus | null>(null);
   const [busyCp, setBusyCp] = useState<string | null>(null);
+  const { prompt, dialog } = usePromptDialog();
 
   const load = useCallback(async () => {
     try {
@@ -1193,13 +1237,21 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
   useEffect(() => { void load(); }, [load]);
 
   const setDelayedCdd = async (cp: AmlCounterpartyCase) => {
-    const deadline = window.prompt("Delayed CDD deadline (YYYY-MM-DD):") ?? "";
-    if (!deadline.trim()) return;
-    const justification = window.prompt("Justification for delaying CDD (minimum 10 characters):") ?? "";
-    if (!justification.trim()) return;
+    const values = await prompt({
+      title: `Delay CDD for ${cp.subject_display_name}`,
+      description: "Record when the outstanding due diligence must be completed and why the delay is justified.",
+      confirmLabel: "Record delayed CDD",
+      fields: [
+        { name: "deadline", label: "Completion deadline", type: "date", required: true },
+        { name: "justification", label: "Justification", type: "textarea",
+          required: true, minLength: 10,
+          placeholder: "Why the checks cannot be completed before proceeding." },
+      ],
+    });
+    if (!values) return;
     setBusyCp(cp.id);
     try {
-      await amlTransactionsApi.setDelayedCdd({ id: cp.id, deadline: deadline.trim(), justification: justification.trim() });
+      await amlTransactionsApi.setDelayedCdd({ id: cp.id, deadline: values.deadline, justification: values.justification });
       toast({ title: "Delayed CDD recorded" });
       await load();
     } catch (e: any) {
@@ -1210,13 +1262,21 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
   };
 
   const markUncooperative = async (cp: AmlCounterpartyCase) => {
-    const reason = window.prompt(
-      "Reason for marking this counterparty uncooperative (minimum 10 characters).\nAt least two recorded contact attempts are required first:",
-    ) ?? "";
-    if (!reason.trim()) return;
+    const values = await prompt({
+      title: `Mark ${cp.subject_display_name} uncooperative`,
+      description: "This escalates the counterparty record. At least two contact attempts must already be recorded as evidence of reasonable steps.",
+      confirmLabel: "Mark uncooperative",
+      destructive: true,
+      fields: [{
+        name: "reason", label: "Reason", type: "textarea",
+        required: true, minLength: 10,
+        placeholder: "What was asked for, when, and how the counterparty responded.",
+      }],
+    });
+    if (!values) return;
     setBusyCp(cp.id);
     try {
-      await amlTransactionsApi.markUncooperative({ id: cp.id, reason: reason.trim() });
+      await amlTransactionsApi.markUncooperative({ id: cp.id, reason: values.reason });
       toast({ title: "Counterparty marked uncooperative", description: "The case has been escalated for review." });
       await load();
     } catch (e: any) {
@@ -1392,6 +1452,7 @@ function PurchaseCounterpartySection({ caseRow, canWrite }: { caseRow: AmlCase; 
           </CardContent>
         </Card>
       )}
+      {dialog}
     </div>
   );
 }
@@ -1447,10 +1508,16 @@ function RequestsSection({
                   <SelectItem value="re_consent">Re-consent</SelectItem>
                 </SelectContent>
               </Select>
-              <Input placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
+              <Input
+                aria-label="Request subject"
+                placeholder="Subject…"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+              />
             </div>
             <Textarea
-              placeholder="Plain-English explanation the client will see. Do not include internal reasoning."
+              aria-label="Message shown to the client"
+              placeholder="Plain-English explanation the client will see. Do not include internal reasoning…"
               value={message}
               onChange={(e) => setMessage(e.target.value)}
             />
@@ -1578,7 +1645,8 @@ function ActionPanel({
           <CardHeader className="pb-2"><CardTitle className="text-sm">Advance status</CardTitle></CardHeader>
           <CardContent className="space-y-2">
             <Input
-              placeholder="Reason (optional)"
+              aria-label="Reason for the status change"
+              placeholder="Reason (optional)…"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
             />

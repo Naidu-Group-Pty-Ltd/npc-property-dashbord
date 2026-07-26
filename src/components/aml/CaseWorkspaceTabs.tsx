@@ -960,7 +960,7 @@ export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: Am
                           </div>
                         </td>
                         <td className="py-2 pr-3">{CONTROL_LABELS[o.control_type] ?? o.control_type}</td>
-                        <td className="py-2 pr-3">{Number(o.ownership_percent) > 0 ? `${o.ownership_percent}%` : "—"}</td>
+                        <td className="py-2 pr-3 tabular-nums">{Number(o.ownership_percent) > 0 ? `${o.ownership_percent}%` : "—"}</td>
                         <td className="py-2 pr-3">
                           <div className="space-y-1">
                             <Badge
