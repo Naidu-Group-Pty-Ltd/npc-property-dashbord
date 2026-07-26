@@ -56,7 +56,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ClientNotes } from './ClientNotes';
-import { StartClientComplianceButton } from './StartClientComplianceButton';
+import { ClientAmlSummaryCard } from './ClientAmlSummaryCard';
 import { ClientTags } from './ClientTags';
 import { ClientReminders } from './ClientReminders';
 import { ClientActivityTimeline } from './ClientActivityTimeline';
@@ -300,13 +300,6 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
           <span className={isMobile ? "text-xs" : ""}>Review</span>
         </Button>
 
-        <StartClientComplianceButton
-          clientId={client.id}
-          clientName={`${smartCapitalize(client.primary_first_name || '')} ${smartCapitalize(client.primary_surname || '')}`.trim()}
-          size="sm"
-          compact={isMobile}
-        />
-
         {properties.length > 0 && (
           <PortfolioAnalysisPDFGenerator
             clientId={client.id}
@@ -431,6 +424,13 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
         <div className="min-h-0 w-full flex-1 overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]">
           <div className="min-w-0 w-full" {...(isMobile ? tabSwipeHandlers : {})}>
             <TabsContent value="overview" className="space-y-4 mt-4">
+              {/* Persistent AML/CTF summary — renders nothing for users
+                  without AML access or while the integration flag is off. */}
+              <ClientAmlSummaryCard
+                clientId={client.id}
+                clientName={`${smartCapitalize(client.primary_first_name || '')} ${smartCapitalize(client.primary_surname || '')}`.trim()}
+              />
+
               {/* Contact Info */}
               <div className="grid gap-4 md:grid-cols-2">
                 <Card>

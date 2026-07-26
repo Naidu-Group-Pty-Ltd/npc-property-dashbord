@@ -61,9 +61,38 @@ export interface AmlEvidenceReference {
   created_at: string;
 }
 
+export type AmlFinanceRequestKind = "funding_information" | "financial_evidence" | "clarification";
+export type AmlFinanceRequestStatus = "open" | "submitted" | "clarification_required" | "resolved" | "cancelled";
+
+/** Phase 7 — staff view of a Command Center → Finance Portal request. */
+export interface AmlFinanceRequest {
+  id: string;
+  case_id: string;
+  client_id: string | null;
+  purchase_file_id: string | null;
+  kind: AmlFinanceRequestKind;
+  subject: string;
+  message: string;
+  discrepancy_id: string | null;
+  status: AmlFinanceRequestStatus;
+  response_payload: Record<string, any>;
+  responded_at: string | null;
+  responded_by_label: string | null;
+  comparison_id: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  resolution_note: string | null;
+}
+
+/**
+ * Phase 1 finance-safe contract (directive Appendix C.2). The server no
+ * longer returns raw case status or risk_rating on this op — only the
+ * finance-portal dimension and gate-derived readiness.
+ */
 export interface AmlLimitedStatus {
-  status: string;
-  risk_rating: string | null;
+  finance_status: string;
+  service_readiness: "service_ready" | "service_not_ready";
   updated_at: string | null;
   open_finance_discrepancies?: number;
 }
@@ -101,6 +130,20 @@ export const amlFinanceApi = {
 
   limitedStatus: (params: { purchase_file_id?: string; client_id?: string }) =>
     invoke<AmlLimitedStatus>({ op: "limited_status", ...params }),
+
+  // Phase 7 — Command Center ↔ Finance Portal request loop (§15.4)
+  listFinanceRequests: (case_id: string) =>
+    invoke<{ requests: AmlFinanceRequest[] }>({ op: "list_finance_requests", case_id }),
+  createFinanceRequest: (request: {
+    case_id: string; kind: AmlFinanceRequestKind; subject: string; message: string;
+    purchase_file_id?: string; discrepancy_id?: string;
+  }) => invoke<{ request: AmlFinanceRequest }>({ op: "create_finance_request", request }),
+  reviewFinanceRequest: (request_id: string) =>
+    invoke<{ ok: true }>({ op: "review_finance_request", request_id }),
+  resolveFinanceRequest: (params: {
+    request_id: string; outcome?: "resolved" | "cancelled"; resolution_note?: string;
+    finance_status_after?: "under_review" | "accepted" | "no_further_action";
+  }) => invoke<{ request: AmlFinanceRequest }>({ op: "resolve_finance_request", ...params }),
 
   // Phase 8 — cross-portal handoff + duplicate doc-ref scanning
   duplicateDocumentRefs: (case_id?: string) =>

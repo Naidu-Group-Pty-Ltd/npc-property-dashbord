@@ -115,6 +115,16 @@ Run before Phase 1 begins and record results:
 - [x] Data layer inventory + guardrail confirmations documented (§5, §7)
 - [x] Non-destructive per-phase backlog defined (§8)
 - [x] `AGENTS.md` created with non-negotiable rules
-- [ ] Baseline test suite executed by operator and recorded here (§9)  ← run before Phase 1
+- [x] Baseline test suite executed and recorded (§9) — see
+  `docs/aml/phase-0r-takeover-assessment.md` §5 (2026-07-25 takeover baseline).
+  Runnable-in-environment commands executed and recorded; `security:edge-check`
+  and Playwright e2e were not runnable in the assessment container and are
+  explicitly recorded as such with operator commands (issue I-16). Lint,
+  `audit:style` and `security:registry` fail on unmodified `main` (issue I-02) —
+  recorded, not silently fixed.
 
 Phase 0 complete once §9 is signed off. Do not begin Phase 1 until then.
+Takeover addendum (2026-07-25): the Phase 0R reconciliation of this audit against
+the live deployed environment — including the migration parity gap, live feature
+flag values and the empty production data state — is recorded in
+`docs/aml/phase-0r-takeover-assessment.md`.
