@@ -12025,6 +12025,7 @@ export type Database = {
         Row: {
           bulk_job_id: string | null
           calculation_version: string | null
+          canonical_property_key: string | null
           client_property_id: string | null
           created_at: string
           current_version: number | null
@@ -12062,6 +12063,7 @@ export type Database = {
         Insert: {
           bulk_job_id?: string | null
           calculation_version?: string | null
+          canonical_property_key?: string | null
           client_property_id?: string | null
           created_at?: string
           current_version?: number | null
@@ -12099,6 +12101,7 @@ export type Database = {
         Update: {
           bulk_job_id?: string | null
           calculation_version?: string | null
+          canonical_property_key?: string | null
           client_property_id?: string | null
           created_at?: string
           current_version?: number | null

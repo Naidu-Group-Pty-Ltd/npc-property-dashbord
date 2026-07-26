@@ -5,7 +5,7 @@ import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 
 interface ReportLibraryTabsProps {
   isMobile: boolean;
-  investmentCount: number;
+  investmentCount: number | null;
   comparisonCount: number;
 }
 
@@ -69,7 +69,7 @@ export function ReportLibraryTabs({ isMobile, investmentCount, comparisonCount }
                 </span>
                 <span className="flex shrink-0 flex-col items-end gap-3">
                   <Badge variant="secondary" className="flex h-7 min-w-7 items-center justify-center rounded-full border border-white/10 bg-black/25 px-2 text-xs font-bold text-foreground shadow-inner transition-colors group-data-[state=active]:border-purple-300/40 group-data-[state=active]:bg-purple-300/15 group-data-[state=active]:text-purple-50">
-                    {counts[value]}
+                    {counts[value] ?? '—'}
                   </Badge>
                   <ChevronRight className="h-4 w-4 text-muted-foreground/55 transition-all duration-200 group-hover:translate-x-0.5 group-hover:text-purple-200/80 group-data-[state=active]:text-purple-100" aria-hidden="true" />
                 </span>

@@ -129,6 +129,12 @@ describe('placeholder detection (Phase 4 semantic mapping)', () => {
     expect(suggestions[0]).toMatchObject({ path: 'property.suburb', matchText: 'Kalkallo' });
   });
 
+  it('bounds address matching for long attacker-controlled near misses', () => {
+    const crafted = `${'Alpha '.repeat(1_000)}Estate ${'Bravo '.repeat(1_000)}ZZ 1234`;
+    const tpl = makeTemplate([textOverlay('crafted', crafted)]);
+    expect(detectPlaceholderSuggestions(tpl)).toEqual([]);
+  });
+
   it('does not flag plain percentages without yield context', () => {
     const tpl = makeTemplate([textOverlay('v', 'Vacancy sits at 1.2% this quarter')]);
     expect(detectPlaceholderSuggestions(tpl).some((s) => s.path === 'financials.yield')).toBe(false);

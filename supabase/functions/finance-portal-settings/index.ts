@@ -80,10 +80,30 @@ Deno.serve(async (req) => {
     // here, so authors can manage their own items only.
     const isSuperadmin = false;
 
+    async function canAccessPurchaseFile(purchaseFileId: string): Promise<boolean> {
+      const { data: purchaseFile, error: purchaseFileError } = await supabase
+        .from('purchase_files')
+        .select('client_id')
+        .eq('id', purchaseFileId)
+        .maybeSingle();
+      if (purchaseFileError || !purchaseFile?.client_id) return false;
+
+      const { data: assignment, error: assignmentError } = await supabase
+        .from('finance_portal_client_assignments')
+        .select('purchase_file_id')
+        .eq('finance_user_id', portalUser.id)
+        .eq('client_id', purchaseFile.client_id)
+        .maybeSingle();
+
+      return !assignmentError && !!assignment &&
+        (!assignment.purchase_file_id || assignment.purchase_file_id === purchaseFileId);
+    }
+
     // ── COMMENTS ───────────────────────────────────────────────────────
     if (operation === 'list_comments') {
       const { purchase_file_id, entity_type, entity_id } = body;
       if (!purchase_file_id || !entity_type) return json({ error: 'purchase_file_id and entity_type required' }, 400);
+      if (!await canAccessPurchaseFile(purchase_file_id)) return json({ error: 'Forbidden' }, 403);
 
       let q = supabase
         .from('purchase_file_entity_comments')
@@ -104,6 +124,7 @@ Deno.serve(async (req) => {
       if (!purchase_file_id || !entity_type || !text?.trim()) {
         return json({ error: 'purchase_file_id, entity_type and body required' }, 400);
       }
+      if (!await canAccessPurchaseFile(purchase_file_id)) return json({ error: 'Forbidden' }, 403);
       const row = {
         purchase_file_id,
         entity_type,
