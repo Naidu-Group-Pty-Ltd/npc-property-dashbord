@@ -100,6 +100,17 @@ for (const file of files) {
   }
 
   if (rel === 'pdf-parse-dispatch/index.ts') {
+    const statusBranch = src.match(/if \(operation === 'status'\) \{([\s\S]*?)if \(operation === 'download'\)/)?.[1] ?? '';
+    const statusIsOwnerScoped = /\.select\(STATUS_SAFE_FIELDS\)/.test(statusBranch)
+      && /\.eq\('user_id', userId\)/.test(statusBranch)
+      && !/\.select\('\*'\)/.test(statusBranch);
+    if (!statusIsOwnerScoped) {
+      errors.push('[R7] pdf-parse-dispatch/index.ts: status reads must select only safe fields and scope the service-role query to the authenticated job owner.');
+    }
+    if (/return `url:\$\{body\.source_url\}`/.test(src) || /source = \{ kind: 'url', url: body\.source_url/.test(src)) {
+      errors.push('[R7] pdf-parse-dispatch/index.ts: pre-signed source URLs must not be persisted in job metadata.');
+    }
+
     const recoveryBranch = src.match(/if \(operation === 'recover'\) \{([\s\S]*?)recoverStuckJobs\(admin\)/)?.[1] ?? '';
     const hasPrivilegedGate = /auth\.userId !== 'service_role'/.test(recoveryBranch)
       && /\.from\('user_roles'\)/.test(recoveryBranch)
