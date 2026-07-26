@@ -156,6 +156,27 @@ async function clearanceBlockReasons(admin: any, caseId: string, assessment: any
   return Array.from(new Set(reasons));
 }
 
+async function tenantCaseAccess(admin: any, userId: string, caseId: string) {
+  const { data: caseRow } = await admin.schema("aml").from("cases")
+    .select("id, tenant_id, service_gate_status").eq("id", caseId).maybeSingle();
+  if (!caseRow) return null;
+
+  const tenantId = String(caseRow.tenant_id || "default");
+  const [{ data: roleRows }, { data: isSuperadmin }] = await Promise.all([
+    admin.schema("aml").from("role_assignments")
+      .select("role").eq("user_id", userId).eq("tenant_id", tenantId).is("revoked_at", null),
+    admin.schema("aml").rpc("is_superadmin", { _user_id: userId }),
+  ]);
+  const roles = new Set<string>((roleRows ?? []).map((r: any) => r.role));
+  return {
+    caseRow,
+    canRead: Boolean(isSuperadmin) || roles.size > 0,
+    canWrite: Boolean(isSuperadmin) || roles.has("analyst") || roles.has("reviewer") || roles.has("mlro"),
+    canReview: Boolean(isSuperadmin) || roles.has("reviewer") || roles.has("mlro"),
+    isMlro: Boolean(isSuperadmin) || roles.has("mlro"),
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -604,12 +625,14 @@ Deno.serve(async (req) => {
     // when deciding. A new recommendation supersedes the previous pending
     // one; `decide` stamps pending recommendations as actioned.
     if (op === "recommend") {
-      if (!canWrite) return jr({ error: "Insufficient permissions" }, 403);
       const caseId = String(body.case_id ?? "");
       const outcome = String(body.recommended_outcome ?? "");
       const rationale = String(body.rationale ?? "").trim();
       const RECOMMENDED_OUTCOMES = ["cleared", "cleared_with_conditions", "edd_required", "escalated", "blocked"];
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canWrite) return jr({ error: "Insufficient permissions" }, 403);
       if (!RECOMMENDED_OUTCOMES.includes(outcome)) return jr({ error: "recommended_outcome invalid" }, 400);
       if (rationale.length < 10) return jr({ error: "rationale must be at least 10 characters" }, 400);
 
@@ -633,6 +656,9 @@ Deno.serve(async (req) => {
     if (op === "list_recommendations") {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canRead) return jr({ error: "AML role required for case tenant" }, 403);
       const { data } = await admin.schema("aml").from("analyst_recommendations")
         .select("*").eq("case_id", caseId).order("created_at", { ascending: false }).limit(50);
       return jr({ recommendations: data ?? [] });
@@ -643,7 +669,6 @@ Deno.serve(async (req) => {
     // gate is never inferred from case stage or risk rating: every change is
     // an explicit, reasoned, audited decision with recorded preconditions.
     if (op === "set_service_gate") {
-      if (!canReview) return jr({ error: "Reviewer/MLRO required" }, 403);
       const caseId = String(body.case_id ?? "");
       const status = String(body.status ?? "");
       const reason = String(body.reason ?? "").trim();
@@ -653,15 +678,16 @@ Deno.serve(async (req) => {
         "locked", "terminated",
       ];
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canReview) return jr({ error: "Reviewer/MLRO required for case tenant" }, 403);
       if (!GATE_STATUSES.includes(status)) return jr({ error: "status invalid" }, 400);
       if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
-      if ((status === "locked" || status === "terminated") && !isMlro) {
+      if ((status === "locked" || status === "terminated") && !access.isMlro) {
         return jr({ error: "Locking or terminating the service gate requires the MLRO" }, 403);
       }
 
-      const { data: caseRow } = await admin.schema("aml").from("cases")
-        .select("id, tenant_id, service_gate_status").eq("id", caseId).maybeSingle();
-      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      const caseRow = access.caseRow;
       const { data: tenant } = await admin.schema("aml").from("tenant_settings")
         .select("risk_program_version").eq("tenant_id", (caseRow.tenant_id as string) || "default").maybeSingle();
       const gatePolicyVersion = (tenant?.risk_program_version as string) || "v1";
@@ -726,6 +752,9 @@ Deno.serve(async (req) => {
     if (op === "gate_contract") {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canRead) return jr({ error: "AML role required for case tenant" }, 403);
       const [{ data: gateRow }, { data: caseRow }] = await Promise.all([
         admin.schema("aml").from("service_gate_decisions").select("*").eq("case_id", caseId)
           .order("created_at", { ascending: false }).limit(1).maybeSingle(),
