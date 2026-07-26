@@ -406,6 +406,21 @@ describe("risk, decision and service gate (Phase 8, §12.8 + §16 + C.4)", () =>
     expect(riskSource).toContain('status: "actioned", actioned_decision_id: dec.id');
   });
 
+  it("authorizes recommendation and service-gate access against the case tenant", () => {
+    const helper = riskSource.slice(
+      riskSource.indexOf("async function tenantCaseAccess"),
+      riskSource.indexOf("Deno.serve"));
+    expect(helper).toContain('.eq("tenant_id", tenantId)');
+    expect(helper).toContain('rpc("is_superadmin"');
+
+    for (const operation of ["recommend", "list_recommendations", "set_service_gate", "gate_contract"]) {
+      const start = riskSource.indexOf(`op === "${operation}"`);
+      const next = riskSource.indexOf('if (op === "', start + 10);
+      const branch = riskSource.slice(start, next < 0 ? undefined : next);
+      expect(branch).toContain("tenantCaseAccess(admin, userId, caseId)");
+    }
+  });
+
   it("only changes the service gate through an explicit reasoned decision", () => {
     const branch = riskSource.slice(
       riskSource.indexOf('op === "set_service_gate"'),
