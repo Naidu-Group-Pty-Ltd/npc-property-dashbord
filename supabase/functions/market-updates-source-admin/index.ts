@@ -3,15 +3,10 @@
 // Roles allowed: 'admin' | 'superadmin'. Bypass via x-cron-secret for ops.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth } from "../_shared/auth.ts";
+import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-cron-secret, x-session-token, x-command-centre-session-token",
-};
-const json = (b: unknown, status = 200) =>
+const jsonWithCors = (cors: Record<string, string>) => (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), {
     status,
     headers: { ...cors, "content-type": "application/json" },
@@ -35,6 +30,8 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
 }
 
 Deno.serve(async (req) => {
+  const cors = createCorsHeaders(req.headers.get("origin"));
+  const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
