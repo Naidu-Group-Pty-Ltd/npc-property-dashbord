@@ -492,9 +492,25 @@ describe("monitoring and ongoing CDD (Phase 10, §12.9 + §18)", () => {
     const branch = monSource.slice(
       monSource.indexOf('op === "schedule_periodic_review"'),
       monSource.indexOf('op === "record_trigger_review"'));
-    expect(branch).toContain("requireWrite();");
+    expect(branch).toContain("hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)");
     expect(branch).toContain("reviewIntervalMonths(caseRow)");
     expect(monSource).toContain("DEFAULT_REVIEW_INTERVALS");
+  });
+
+  it("authorizes every Phase 10 case operation against the case tenant", () => {
+    expect(monSource).toContain('aml.rpc("has_any_tenant_aml_role"');
+    expect(monSource).toContain('aml.rpc("has_tenant_aml_role"');
+    for (const nextOperation of [
+      "record_trigger_review", "assign_review", "extend_review_deadline",
+      "end_relationship", "set_monitoring_status", "case_monitoring_summary",
+    ]) {
+      const start = nextOperation === "record_trigger_review"
+        ? monSource.indexOf('op === "schedule_periodic_review"')
+        : monSource.indexOf(`op === "${nextOperation}"`);
+      const following = monSource.indexOf('if (op ===', start + 1);
+      const branch = monSource.slice(start, following === -1 ? undefined : following);
+      expect(branch).toContain("hasTenantAccess(caseRow.tenant_id");
+    }
   });
 
   it("raises trigger reviews only from a known trigger catalogue with detail", () => {
