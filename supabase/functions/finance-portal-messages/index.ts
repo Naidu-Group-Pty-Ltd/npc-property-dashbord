@@ -26,6 +26,10 @@ const SIGNED_URL_TTL = 60 * 10;
 const ALLOWED_MIME_PREFIXES = ['image/', 'application/pdf', 'application/msword',
   'application/vnd.openxmlformats-officedocument', 'text/'];
 
+function isAttachmentPathForThread(path: unknown, clientId: string, threadId: string): path is string {
+  return typeof path === 'string' && path.startsWith(`${clientId}/${threadId}/`);
+}
+
 function extractFinancePortalToken(headers: Headers, body?: any): string | null {
   // Only finance-specific token locations identify a Finance Portal partner.
   // Command Centre staff calls also include generic x-session-token/session_token
@@ -498,6 +502,9 @@ Deno.serve(async (req) => {
       else if (actor.type === 'staff') insertRow.staff_user_id = actor.userId;
 
       if (attachment && attachment.path) {
+        if (!isAttachmentPathForThread(attachment.path, thread.client_id, thread_id)) {
+          return jsonResponse({ error: 'Attachment path does not belong to this thread' }, 400, corsHeaders);
+        }
         insertRow.attachment_path = attachment.path;
         insertRow.attachment_filename = (attachment.filename || '').slice(0, 255) || null;
         insertRow.attachment_mime = (attachment.mime || '').slice(0, 100) || null;
@@ -712,6 +719,10 @@ Deno.serve(async (req) => {
         .eq('id', message_id)
         .maybeSingle();
       if (!msg || !msg.attachment_path) return jsonResponse({ error: 'Attachment not found' }, 404, corsHeaders);
+
+      if (!isAttachmentPathForThread(msg.attachment_path, msg.client_id, msg.thread_id)) {
+        return jsonResponse({ error: 'Attachment not found' }, 404, corsHeaders);
+      }
 
       if (actor.type === 'partner') {
         const fuId = (msg as any).finance_portal_threads?.finance_user_id;
