@@ -20,7 +20,7 @@
  */
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
-import { makeCanvasRenderKey } from '@/lib/reportTemplate/previewCache';
+import { makeCanvasRenderKey, pageWithoutOverlays } from '@/lib/reportTemplate/previewCache';
 import { normalizePageSize } from '@/lib/reportTemplate/rendering/pageGeometry';
 import { overlayPaintOrder } from '@/lib/reportTemplate/paintOrder';
 import { screenToPagePoint, PALETTE_DRAG_MIME, parsePaletteDrag } from '@/lib/reportTemplate/overlayDropFactory';
@@ -175,7 +175,10 @@ function EditorialCanvasImpl({
   );
   const html = useMemo(() => {
     try {
-      const visible: ReportTemplate = { ...template, pages: [viewPage] };
+      // Overlays are rendered by the React handle layer below. Exclude them from
+      // srcDoc as well as its cache key so stale rich HTML can never survive an
+      // overlay edit while the background iframe remains memoized.
+      const visible: ReportTemplate = { ...template, pages: [pageWithoutOverlays(viewPage)] };
       const r = renderTemplateToHtml(visible, {
         data: sampleData,
         customCss,

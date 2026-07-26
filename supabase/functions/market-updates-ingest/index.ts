@@ -245,7 +245,7 @@ Deno.serve(async (req) => {
     return json({ runId: run.id, status: run.status, active: true, message: 'An ingestion run is already active.' }, 202, cors);
   }
 
-  let query = sb.from("market_sources").select("*").eq("enabled", true);
+  let query = sb.from("market_sources").select("*").eq("registry_status", "canonical").eq("enabled", true);
   if (Array.isArray(sourceIds) && sourceIds.length) query = query.in("id", sourceIds);
   const { data: sources, error } = await query;
   if (error) {
@@ -253,7 +253,7 @@ Deno.serve(async (req) => {
     return json({ error: "Unable to read the Market Updates source registry." }, 500, cors);
   }
   if (!sources?.length) {
-    const { count } = await sb.from("market_sources").select("id", { count: "exact", head: true });
+    const { count } = await sb.from("market_sources").select("id", { count: "exact", head: true }).eq("registry_status", "canonical");
     const message = count === 0
       ? "The Market Updates source registry has not been seeded in this environment."
       : "No enabled market sources are configured in the connected database.";

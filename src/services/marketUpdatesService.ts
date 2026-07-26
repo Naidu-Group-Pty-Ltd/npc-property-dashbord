@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -92,39 +92,58 @@ export async function fetchLatestMarketDigest(period: MarketDigestPeriod = '24h'
   } catch (e) { throw operationalError('database', e); }
 }
 
-export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').order('name'); if (error) throw error; return data ?? []; } catch (e) { throw operationalError('database', e); } }
+export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').eq('registry_status','canonical').order('name'); if (error) throw error; return data ?? []; } catch (e) { throw operationalError('database', e); } }
 
 export interface MarketSourceAlert { source_id: string; name: string; severity: 'error' | 'warning' | 'info'; message: string; }
 
-export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: MarketSource[]; alerts: MarketSourceAlert[] }> {
+export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: MarketSource[]; legacySources: MarketSource[]; alerts: MarketSourceAlert[]; registry: MarketSourceRegistrySummary }> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'list' } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'list' });
     if (error) throw error;
-    return { sources: safeArray<MarketSource>(data?.sources), alerts: safeArray<MarketSourceAlert>(data?.alerts) };
+    const payload = data as any;
+    const registry = safeObject<Record<string, any>>(payload?.registry);
+    return {
+      sources: safeArray<MarketSource>(payload?.sources),
+      legacySources: safeArray<MarketSource>(payload?.legacy_sources),
+      alerts: safeArray<MarketSourceAlert>(payload?.alerts),
+      registry: {
+        canonical: Number(registry.canonical ?? 0),
+        enabledCanonical: Number(registry.enabledCanonical ?? 0),
+        disabledCanonical: Number(registry.disabledCanonical ?? 0),
+        archivedLegacy: Number(registry.archivedLegacy ?? 0),
+        unresolvedLegacy: Number(registry.unresolvedLegacy ?? 0),
+        totalRecords: Number(registry.totalRecords ?? 0),
+        matchedLegacy: Number(registry.matchedLegacy ?? 0),
+        mergedRows: Number(registry.mergedRows ?? 0),
+        updateReferencesReassigned: Number(registry.updateReferencesReassigned ?? 0),
+        fetchRunReferencesReassigned: Number(registry.fetchRunReferencesReassigned ?? 0),
+        reconciledAt: registry.reconciledAt ?? null,
+      },
+    };
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function toggleMarketSource(source_id: string, enabled: boolean): Promise<MarketSource | null> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'toggle', source_id, enabled } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'toggle', source_id, enabled });
     if (error) throw error;
-    return data?.source ?? null;
+    return (data as any)?.source ?? null;
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function updateMarketSourceConfig(source_id: string, patch: Partial<Pick<MarketSource, 'refresh_frequency_hours' | 'reliability_tier' | 'description'>>): Promise<MarketSource | null> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'update', source_id, ...patch } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'update', source_id, ...patch });
     if (error) throw error;
-    return data?.source ?? null;
+    return (data as any)?.source ?? null;
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
 export async function clearMarketSourceError(source_id: string): Promise<MarketSource | null> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-source-admin', { body: { action: 'clear_error', source_id } });
+    const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'clear_error', source_id });
     if (error) throw error;
-    return data?.source ?? null;
+    return (data as any)?.source ?? null;
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
@@ -176,10 +195,10 @@ export async function ensureMarketUpdatesFresh(health:MarketSourceHealth,publish
 
 export async function generateMarketDigest(period: MarketDigestPeriod = '24h'): Promise<MarketDigestGenerationResult> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-digest', { body: { period } });
+    const { data, error } = await invokeSecureFunction('market-updates-digest', { period });
     if (error) throw error;
-    const digest = data?.digest ? mapDigest(data.digest) : (await fetchLatestMarketDigest(period));
-    return { digest, message: data?.message ?? '', noData: Boolean(data?.noData) };
+    const digest = (data as any)?.digest ? mapDigest((data as any).digest) : (await fetchLatestMarketDigest(period));
+    return { digest, message: (data as any)?.message ?? '', noData: Boolean((data as any)?.noData) };
   } catch (e) { throw operationalError('digest', e, 'market-updates-digest'); }
 }
 

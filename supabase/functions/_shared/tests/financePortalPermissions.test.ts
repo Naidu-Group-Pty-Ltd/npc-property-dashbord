@@ -32,6 +32,17 @@ describe('hasFinancePortalPermission', () => {
 
   it('preserves legacy default access only when the module is unconfigured', () => {
     expect(hasFinancePortalPermission({}, {}, 'purchase_files', 'view', true)).toBe(true);
+    expect(hasFinancePortalPermission({}, {}, 'purchase_files', 'edit', true)).toBe(true);
     expect(hasFinancePortalPermission({}, {}, 'purchase_files', 'view')).toBe(false);
+  });
+
+  it('does not turn explicit read-only purchase-file access into edit access', () => {
+    expect(hasFinancePortalPermission(
+      {},
+      { purchase_files: { view: true, edit: false, delete: false } },
+      'purchase_files',
+      'edit',
+      true,
+    )).toBe(false);
   });
 });
