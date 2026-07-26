@@ -14,6 +14,8 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 
+const LIVE_RATE_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':

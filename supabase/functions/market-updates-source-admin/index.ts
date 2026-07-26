@@ -3,15 +3,10 @@
 // Roles allowed: 'admin' | 'superadmin'. Bypass via x-cron-secret for ops.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth } from "../_shared/auth.ts";
+import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-cron-secret, x-session-token, x-command-centre-session-token",
-};
-const json = (b: unknown, status = 200) =>
+const jsonWithCors = (cors: Record<string, string>) => (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), {
     status,
     headers: { ...cors, "content-type": "application/json" },
@@ -35,6 +30,8 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
 }
 
 Deno.serve(async (req) => {
+  const cors = createCorsHeaders(req.headers.get("origin"));
+  const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -68,11 +65,20 @@ Deno.serve(async (req) => {
       const { data, error } = await sb
         .from("market_sources")
         .select("*")
+        .order("registry_status")
         .order("enabled", { ascending: false })
         .order("name");
       if (error) throw error;
+      const { data: reconciliation, error: reconciliationError } = await sb
+        .from("market_source_reconciliation_audits")
+        .select("*")
+        .eq("reconciliation_key", "approved-australian-registry-v2")
+        .maybeSingle();
+      if (reconciliationError) throw reconciliationError;
+      const canonical = (data ?? []).filter((s: any) => s.registry_status === "canonical");
+      const legacy = (data ?? []).filter((s: any) => s.registry_status !== "canonical");
       const now = Date.now();
-      const alerts = (data ?? [])
+      const alerts = canonical
         .filter((s: any) => s.enabled)
         .map((s: any) => {
           const staleHours = s.last_success_at
@@ -94,7 +100,24 @@ Deno.serve(async (req) => {
           return null;
         })
         .filter(Boolean);
-      return json({ sources: data ?? [], alerts });
+      return json({
+        sources: canonical,
+        legacy_sources: legacy,
+        alerts,
+        registry: {
+          canonical: canonical.length,
+          enabledCanonical: canonical.filter((s: any) => s.enabled).length,
+          disabledCanonical: canonical.filter((s: any) => !s.enabled).length,
+          archivedLegacy: legacy.filter((s: any) => s.registry_status === "archived_legacy").length,
+          unresolvedLegacy: legacy.filter((s: any) => s.registry_status === "unresolved_legacy").length,
+          totalRecords: (data ?? []).length,
+          matchedLegacy: reconciliation?.matched_legacy_rows ?? 0,
+          mergedRows: reconciliation?.merged_rows ?? 0,
+          updateReferencesReassigned: reconciliation?.update_references_reassigned ?? 0,
+          fetchRunReferencesReassigned: reconciliation?.fetch_run_references_reassigned ?? 0,
+          reconciledAt: reconciliation?.completed_at ?? null,
+        },
+      });
     }
 
     if (action === "toggle") {
@@ -105,6 +128,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update({ enabled, updated_at: new Date().toISOString() })
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
@@ -124,6 +148,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update(patch)
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
@@ -137,6 +162,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update({ last_error: null, updated_at: new Date().toISOString() })
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
