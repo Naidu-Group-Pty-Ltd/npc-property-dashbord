@@ -45,4 +45,26 @@ describe('HTML renderer security', () => {
     expect(html).not.toContain('<script>globalThis.pwned=true</script>');
     expect(html).toContain('&quot;;&gt;&lt;script&gt;globalThis.pwned=true&lt;/script&gt;&lt;div style=&quot;');
   });
+
+  it('rejects HTML and resource injection in baseline grid colors', () => {
+    const payload = 'red\"><img src="http://127.0.0.1/internal">';
+    const template = parseTemplate({
+      version: 1,
+      tokens: { colors: {}, fonts: {}, spacing: {} },
+      pages: [{
+        id: 'p1',
+        name: 'Page 1',
+        size: { width: 595, height: 842 },
+        background: {},
+        baselineGrid: { size: 12, color: payload, show: true, offset: 0 },
+        blocks: [],
+      }],
+    });
+
+    const html = renderTemplateToHtml(template, { data: {}, editorMode: false }).html;
+
+    expect(html).not.toContain(payload);
+    expect(html).not.toContain('http://127.0.0.1/internal');
+    expect(html).toContain('#BF9B5033 11pt, #BF9B5033 12pt');
+  });
 });
