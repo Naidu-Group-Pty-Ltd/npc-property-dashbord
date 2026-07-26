@@ -14,7 +14,7 @@ const DIGEST_COLUMNS = 'id,correlation_id,period,period_key,generated_at,period_
 const AGENT_KEYS = ['market_updates_classifier', 'market_updates_digest', 'market_updates_qa_fast', 'market_updates_qa_deep'];
 const PERIODS = new Set(['24h', 'weekly', 'biweekly', 'monthly', 'quarterly', 'annual']);
 const UPDATE_STATUSES = new Set(['published', 'candidate', 'ignored', 'rejected', 'failed']);
-const MAX_REQUEST_BYTES = 100_000;
+const MAX_REQUEST_BYTES = 16_384;
 
 function json(body: unknown, status: number, cors: Record<string,string>, correlationId: string) {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type':'application/json', 'cache-control':'private, no-store', 'x-correlation-id':correlationId } });
@@ -31,11 +31,20 @@ Deno.serve(async (req) => {
   if (!csrf.ok) return csrfDenied(cors, csrf);
   if (req.method !== 'POST') return json({ error:'Method not allowed', correlation_id:correlationId }, 405, cors, correlationId);
 
-  const parsed = await enforceJsonBodyLimit<any>(req, MAX_REQUEST_BYTES);
-  if (!parsed.ok) return parsed.error;
-  const body = parsed.value;
   const sb = admin();
-  const auth = await verifyAuth(sb, req.headers, body);
+  let auth = await verifyAuth(sb, req.headers, {});
+  const parsed = await enforceJsonBodyLimit<unknown>(req, MAX_REQUEST_BYTES);
+  if (!parsed.ok) {
+    return new Response(parsed.error.body, {
+      status: parsed.error.status,
+      headers: { ...Object.fromEntries(parsed.error.headers), ...cors, 'x-correlation-id':correlationId },
+    });
+  }
+  if (parsed.value === null || typeof parsed.value !== 'object' || Array.isArray(parsed.value)) {
+    return json({ error:'Invalid request', code:'invalid_request', correlation_id:correlationId }, 400, cors, correlationId);
+  }
+  const body = parsed.value as Record<string, unknown>;
+  if (auth.error || !auth.userId) auth = await verifyAuth(sb, req.headers, body);
   if (auth.error || !auth.userId) return json({ error:'Authentication required', code:'market_updates_auth_required', correlation_id:correlationId, retryable:false }, 401, cors, correlationId);
   const permission = await requireModulePermission(sb, { userId:auth.userId, authMethod:auth.authMethod }, 'market_updates', 'can_view');
   if (!permission.ok) return json({ error:'Market Updates view permission required', code:'market_updates_view_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
@@ -43,7 +52,7 @@ Deno.serve(async (req) => {
   const action = String(body.action ?? 'status');
   try {
     if (action === 'updates') {
-      const status = UPDATE_STATUSES.has(body.status) ? body.status : 'published';
+      const status = typeof body.status === 'string' && UPDATE_STATUSES.has(body.status) ? body.status : 'published';
       if (status !== 'published') {
         const adminPermission = await requireAdmin(sb, { userId:auth.userId, authMethod:auth.authMethod });
         if (!adminPermission.ok) return json({ error:'Admin privilege required to review unpublished updates', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
@@ -66,7 +75,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'digest') {
-      const period = PERIODS.has(body.period) ? body.period : '24h';
+      const period = typeof body.period === 'string' && PERIODS.has(body.period) ? body.period : '24h';
       const { data, error } = await sb.from('market_digests').select(DIGEST_COLUMNS)
         .in('status',['published','no_data']).eq('period',period).order('period_start',{ ascending:false }).limit(1).maybeSingle();
       if (error) throw Object.assign(new Error('digest query failed'), { stage:'digest' });
