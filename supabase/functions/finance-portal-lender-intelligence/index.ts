@@ -14,6 +14,8 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 
+const LIVE_RATE_REFRESH_COOLDOWN_MS = 5 * 60 * 1000;
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
@@ -131,6 +133,37 @@ Deno.serve(async (req) => {
     // service-role key, so Finance Partners can pull live lender rates on demand.
     if (operation === 'refresh_rates') {
       try {
+        // Claim the per-user cooldown before starting any downstream work. The
+        // conditional update is atomic, so concurrent requests from tabs or scripts
+        // cannot race through the guard.
+        const refreshClaimedAt = new Date();
+        const refreshAllowedBefore = new Date(
+          refreshClaimedAt.getTime() - LIVE_RATE_REFRESH_COOLDOWN_MS,
+        ).toISOString();
+        const { data: refreshClaim, error: refreshClaimError } = await supabase
+          .from('finance_portal_users')
+          .update({ last_live_rates_refresh_at: refreshClaimedAt.toISOString() })
+          .eq('id', portalUser.id)
+          .or(
+            `last_live_rates_refresh_at.is.null,last_live_rates_refresh_at.lt.${refreshAllowedBefore}`,
+          )
+          .select('id')
+          .maybeSingle();
+
+        if (refreshClaimError) {
+          console.error('[lender-intelligence] Failed to claim live-rate refresh', refreshClaimError);
+          return json({ error: 'Unable to authorize live-rate refresh' }, 503);
+        }
+        if (!refreshClaim) {
+          return json(
+            {
+              error: 'Live rates were refreshed recently. Please try again later.',
+              retry_after_seconds: Math.ceil(LIVE_RATE_REFRESH_COOLDOWN_MS / 1000),
+            },
+            429,
+          );
+        }
+
         const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
         const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
         const lenderOnly = body?.lender_id ? String(body.lender_id) : null;
