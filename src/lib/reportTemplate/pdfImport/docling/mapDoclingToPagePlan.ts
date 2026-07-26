@@ -283,7 +283,9 @@ function pagePlanForPage(
     height: page.size.height,
     background: {
       color: '#FFFFFF',
-      imageUrl: opts.mode === 'semantic' ? '' : (raster?.dataUrl ?? page.image_uri ?? ''),
+      // Keep the reference available for reconciliation in every mode. Semantic
+      // mode hides it with zero opacity rather than discarding the source URL.
+      imageUrl: raster?.dataUrl ?? page.image_uri ?? '',
       // Phase 6B — hybrid demotes the raster to a faint reference underlay (was
       // 0.85, which let the flat raster dominate and ghost the overlays); the
       // reconstruction now leads, with the raster as a dim alignment backdrop.
