@@ -15,7 +15,13 @@ GET /healthz -> 200 "ok"
 
 import os
 import logging
+import ipaddress
+import socket
+import ssl
+import zlib
 from importlib import metadata
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 from flask import Flask, request, Response, jsonify
 from weasyprint import HTML
 from weasyprint.urls import URLFetchingError, default_url_fetcher
