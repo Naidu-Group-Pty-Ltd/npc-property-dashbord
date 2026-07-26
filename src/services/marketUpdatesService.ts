@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -92,15 +92,34 @@ export async function fetchLatestMarketDigest(period: MarketDigestPeriod = '24h'
   } catch (e) { throw operationalError('database', e); }
 }
 
-export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').order('name'); if (error) throw error; return data ?? []; } catch (e) { throw operationalError('database', e); } }
+export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').eq('registry_status','canonical').order('name'); if (error) throw error; return data ?? []; } catch (e) { throw operationalError('database', e); } }
 
 export interface MarketSourceAlert { source_id: string; name: string; severity: 'error' | 'warning' | 'info'; message: string; }
 
-export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: MarketSource[]; alerts: MarketSourceAlert[] }> {
+export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: MarketSource[]; legacySources: MarketSource[]; alerts: MarketSourceAlert[]; registry: MarketSourceRegistrySummary }> {
   try {
     const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'list' });
     if (error) throw error;
-    return { sources: safeArray<MarketSource>((data as any)?.sources), alerts: safeArray<MarketSourceAlert>((data as any)?.alerts) };
+    const payload = data as any;
+    const registry = safeObject<Record<string, any>>(payload?.registry);
+    return {
+      sources: safeArray<MarketSource>(payload?.sources),
+      legacySources: safeArray<MarketSource>(payload?.legacy_sources),
+      alerts: safeArray<MarketSourceAlert>(payload?.alerts),
+      registry: {
+        canonical: Number(registry.canonical ?? 0),
+        enabledCanonical: Number(registry.enabledCanonical ?? 0),
+        disabledCanonical: Number(registry.disabledCanonical ?? 0),
+        archivedLegacy: Number(registry.archivedLegacy ?? 0),
+        unresolvedLegacy: Number(registry.unresolvedLegacy ?? 0),
+        totalRecords: Number(registry.totalRecords ?? 0),
+        matchedLegacy: Number(registry.matchedLegacy ?? 0),
+        mergedRows: Number(registry.mergedRows ?? 0),
+        updateReferencesReassigned: Number(registry.updateReferencesReassigned ?? 0),
+        fetchRunReferencesReassigned: Number(registry.fetchRunReferencesReassigned ?? 0),
+        reconciledAt: registry.reconciledAt ?? null,
+      },
+    };
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 

@@ -65,11 +65,20 @@ Deno.serve(async (req) => {
       const { data, error } = await sb
         .from("market_sources")
         .select("*")
+        .order("registry_status")
         .order("enabled", { ascending: false })
         .order("name");
       if (error) throw error;
+      const { data: reconciliation, error: reconciliationError } = await sb
+        .from("market_source_reconciliation_audits")
+        .select("*")
+        .eq("reconciliation_key", "approved-australian-registry-v2")
+        .maybeSingle();
+      if (reconciliationError) throw reconciliationError;
+      const canonical = (data ?? []).filter((s: any) => s.registry_status === "canonical");
+      const legacy = (data ?? []).filter((s: any) => s.registry_status !== "canonical");
       const now = Date.now();
-      const alerts = (data ?? [])
+      const alerts = canonical
         .filter((s: any) => s.enabled)
         .map((s: any) => {
           const staleHours = s.last_success_at
@@ -91,7 +100,24 @@ Deno.serve(async (req) => {
           return null;
         })
         .filter(Boolean);
-      return json({ sources: data ?? [], alerts });
+      return json({
+        sources: canonical,
+        legacy_sources: legacy,
+        alerts,
+        registry: {
+          canonical: canonical.length,
+          enabledCanonical: canonical.filter((s: any) => s.enabled).length,
+          disabledCanonical: canonical.filter((s: any) => !s.enabled).length,
+          archivedLegacy: legacy.filter((s: any) => s.registry_status === "archived_legacy").length,
+          unresolvedLegacy: legacy.filter((s: any) => s.registry_status === "unresolved_legacy").length,
+          totalRecords: (data ?? []).length,
+          matchedLegacy: reconciliation?.matched_legacy_rows ?? 0,
+          mergedRows: reconciliation?.merged_rows ?? 0,
+          updateReferencesReassigned: reconciliation?.update_references_reassigned ?? 0,
+          fetchRunReferencesReassigned: reconciliation?.fetch_run_references_reassigned ?? 0,
+          reconciledAt: reconciliation?.completed_at ?? null,
+        },
+      });
     }
 
     if (action === "toggle") {
@@ -102,6 +128,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update({ enabled, updated_at: new Date().toISOString() })
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
@@ -121,6 +148,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update(patch)
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
@@ -134,6 +162,7 @@ Deno.serve(async (req) => {
         .from("market_sources")
         .update({ last_error: null, updated_at: new Date().toISOString() })
         .eq("id", id)
+        .eq("registry_status", "canonical")
         .select()
         .single();
       if (error) throw error;
