@@ -62,37 +62,34 @@ const mapDigest = (r: any): MarketDigest24h => ({
   source_urls: safeArray(r.source_urls),
 });
 
+async function invokeMarketRead<T>(body: Record<string, any>, stage: MarketUpdatesOperationalIssue['stage'] = 'database'): Promise<T> {
+  const { data, error } = await invokeSecureFunction<T>('market-updates-status', body);
+  if (error) throw operationalError(stage, error, 'market-updates-status');
+  if (!data) throw operationalError(stage, new Error('Market Updates read returned no data.'), 'market-updates-status');
+  return data;
+}
+
 export async function fetchMarketUpdates(filters: MarketUpdateFilters = {}): Promise<MarketUpdate[]> {
-  try {
-    let q = db.from('market_updates').select('*')
-      .eq('status', filters.status ?? 'published')
-      .order('source_published_at', { ascending: false, nullsFirst: false })
-      .order('ingested_at', { ascending: false })
-      .limit(filters.limit ?? 200);
-    if (filters.category && filters.category !== 'all') q = q.eq('category', filters.category);
-    if (filters.impact && filters.impact !== 'all') q = q.eq('impact_level', filters.impact);
-    if (filters.freshness && filters.freshness !== 'all') q = q.eq('freshness_tier', filters.freshness);
-    if (filters.geography && filters.geography !== 'all') q = q.contains('geography', [filters.geography]);
-    if (filters.audience && filters.audience !== 'all') q = q.contains('audience_tags', [filters.audience]);
-    if (filters.segment && filters.segment !== 'all') q = q.contains('segments', [filters.segment]);
-    if (filters.search) q = q.or(`title.ilike.%${filters.search}%,ai_summary.ilike.%${filters.search}%,source_name.ilike.%${filters.search}%`);
-    if (filters.dateRange?.from) q = q.gte('source_published_at', filters.dateRange.from);
-    if (filters.dateRange?.to) q = q.lte('source_published_at', filters.dateRange.to);
-    const { data, error } = await q;
-    if (error) throw error;
-    return (data ?? []).map(mapUpdate);
-  } catch (error) { throw operationalError('database', error); }
+  const payload = await invokeMarketRead<{ updates?: any[] }>({
+    action:'updates', status:filters.status ?? 'published', limit:filters.limit ?? 200,
+    category:filters.category, impact:filters.impact, freshness:filters.freshness, geography:filters.geography,
+    audience:filters.audience, segment:filters.segment, dateFrom:filters.dateRange?.from, dateTo:filters.dateRange?.to,
+  });
+  const updates = safeArray<any>(payload.updates).map(mapUpdate);
+  if (!filters.search) return updates;
+  const search = filters.search.toLowerCase();
+  return updates.filter(update => `${update.title} ${update.ai_summary ?? ''} ${update.source_name}`.toLowerCase().includes(search));
 }
 
 export async function fetchLatestMarketDigest(period: MarketDigestPeriod = '24h'): Promise<MarketDigest24h | null> {
-  try {
-    const { data, error } = await db.from('market_digests').select('*').eq('status','published').eq('period', period).order('generated_at',{ ascending:false }).limit(1).maybeSingle();
-    if (error) throw error;
-    return data ? mapDigest(data) : null;
-  } catch (e) { throw operationalError('database', e); }
+  const payload = await invokeMarketRead<{ digest?: any | null }>({ action:'digest', period }, 'digest');
+  return payload.digest ? mapDigest(payload.digest) : null;
 }
 
-export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').eq('registry_status','canonical').order('name'); if (error) throw error; return data ?? []; } catch (e) { throw operationalError('database', e); } }
+export async function fetchMarketSources(): Promise<MarketSource[]> {
+  const payload = await invokeMarketRead<{ sources?: MarketSource[] }>({ action:'sources' });
+  return safeArray<MarketSource>(payload.sources);
+}
 
 export interface MarketSourceAlert { source_id: string; name: string; severity: 'error' | 'warning' | 'info'; message: string; }
 
@@ -148,13 +145,9 @@ export async function clearMarketSourceError(source_id: string): Promise<MarketS
 }
 
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
-  const sources = await fetchMarketSources();
-  const failed = sources.filter(s => s.health_status === 'failed' || (s.consecutive_failures ?? 0) >= 3);
-  const degraded = sources.filter(s => s.health_status === 'degraded' || ((s.consecutive_failures ?? 0) > 0 && (s.consecutive_failures ?? 0) < 3));
-  const latest = (field: keyof MarketSource) => sources.map(s => s[field] as string | null | undefined).filter(Boolean).sort().pop() ?? null;
-  const { data, error } = await db.from('market_ingestion_runs').select('*').order('started_at',{ascending:false}).limit(1).maybeSingle();
-  if (error) throw operationalError('database', error);
-  return { totalSources: sources.length, enabledSources: sources.filter(s => s.enabled).length, healthySources:sources.filter(s=>s.health_status==='healthy').length, degradedSources:degraded.length, failedSources: failed.length, lastFetchedAt: latest('last_fetched_at'), lastSuccessAt: latest('last_success_at'), lastError: failed[0]?.last_error ?? null, latestRun:(data as MarketIngestionRun|null) ?? null };
+  const payload = await invokeMarketRead<{ status?: MarketSourceHealth }>({ action:'status' });
+  if (!payload.status) throw operationalError('database', new Error('Market Updates status was missing.'), 'market-updates-status');
+  return payload.status;
 }
 
 export async function triggerMarketIngestion(options: { force?: boolean; trigger_type?:'page_open'|'manual'|'digest_prerequisite'; sourceIds?:string[]; test?:boolean } = {}): Promise<MarketIngestionSummary> {
@@ -169,9 +162,9 @@ export async function triggerMarketIngestion(options: { force?: boolean; trigger
 export async function followMarketIngestionRun(runId: string, timeoutMs = 190_000): Promise<MarketIngestionSummary> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const { data, error } = await db.from('market_ingestion_runs').select('*').eq('id', runId).single();
-    if (error) throw operationalError('database', error);
-    const run = data as MarketIngestionRun;
+    const payload = await invokeMarketRead<{ run?: MarketIngestionRun | null }>({ action:'run', runId });
+    if (!payload.run) throw operationalError('database', new Error('Ingestion run was not found.'), 'market-updates-status');
+    const run = payload.run;
     if (!['queued', 'running'].includes(run.status)) {
       if (run.status === 'failed') throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'source_failed', message:run.error_summary || 'The Market Updates ingestion run failed.', remediation:'Open Sources to review source health, then retry.', functionName:'market-updates-ingest', retryable:true });
       return { runId:run.id, status:run.status, active:false, sourcesConsidered:run.sources_considered, sourcesProcessed:run.sources_processed, sourcesSucceeded:run.sources_succeeded, sourcesFailed:run.sources_failed, ingested:run.items_discovered, published:run.items_published, candidates:(run as any).items_candidate ?? 0, ignored:(run as any).items_ignored ?? 0, failed:run.sources_failed, skippedDuplicates:(run as any).items_deduplicated ?? 0, sourceErrors:[], message:`Market ingestion ${run.status}.` };
