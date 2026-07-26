@@ -289,7 +289,7 @@ Deno.serve(async (req) => {
       const last = source.last_fetched_at
         ? Date.now() - new Date(source.last_fetched_at).getTime()
         : Infinity;
-      if (!force && last < (source.refresh_frequency_minutes ?? source.refresh_frequency_hours * 60) * 60_000) return;
+      if (!force && last < source.refresh_frequency_minutes * 60_000) return;
       summary.sourcesProcessed++;
 
       const { data: fetchRun } = await checkedMutation(sb.from("market_source_fetch_runs").insert({

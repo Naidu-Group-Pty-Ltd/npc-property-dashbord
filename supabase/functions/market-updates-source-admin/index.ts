@@ -84,14 +84,15 @@ Deno.serve(async (req) => {
           const staleHours = s.last_success_at
             ? (now - new Date(s.last_success_at).getTime()) / 3_600_000
             : Infinity;
-          const overdue = staleHours > Math.max(24, (s.refresh_frequency_hours ?? 24) * 3);
+          const cadenceMinutes = Math.max(15, Number(s.refresh_frequency_minutes ?? 60));
+          const overdue = staleHours * 60 > Math.max(180, cadenceMinutes * 3);
           if (s.last_error) {
             return { source_id: s.id, name: s.name, severity: "error", message: s.last_error };
           }
           if (overdue && Number.isFinite(staleHours)) {
             return {
               source_id: s.id, name: s.name, severity: "warning",
-              message: `No successful fetch for ${Math.round(staleHours)}h (target ${s.refresh_frequency_hours}h).`,
+              message: `No successful fetch for ${Math.round(staleHours)}h (target ${cadenceMinutes} minutes).`,
             };
           }
           if (!Number.isFinite(staleHours)) {
@@ -101,7 +102,7 @@ Deno.serve(async (req) => {
         })
         .filter(Boolean);
       return json({
-        sources: canonical,
+        sources: canonical.map((s: any) => ({ ...s, next_eligible_fetch_at: s.last_fetched_at ? new Date(new Date(s.last_fetched_at).getTime() + Math.max(15, Number(s.refresh_frequency_minutes ?? 60)) * 60_000).toISOString() : new Date().toISOString() })),
         legacy_sources: legacy,
         alerts,
         registry: {
@@ -138,9 +139,13 @@ Deno.serve(async (req) => {
     if (action === "update") {
       const id = body.source_id as string;
       if (!id) return json({ error: "source_id required" }, 400);
+      if (body.refresh_frequency_hours !== undefined) return json({ error: "refresh_frequency_hours is deprecated; use refresh_frequency_minutes" }, 400);
       const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
-      if (typeof body.refresh_frequency_hours === "number") {
-        patch.refresh_frequency_hours = Math.max(1, Math.min(168, Math.round(body.refresh_frequency_hours)));
+      if (body.refresh_frequency_minutes !== undefined) {
+        if (typeof body.refresh_frequency_minutes !== "number" || !Number.isFinite(body.refresh_frequency_minutes) || body.refresh_frequency_minutes < 15 || body.refresh_frequency_minutes > 10080) {
+          return json({ error: "refresh_frequency_minutes must be between 15 and 10080" }, 400);
+        }
+        patch.refresh_frequency_minutes = Math.round(body.refresh_frequency_minutes);
       }
       if (typeof body.reliability_tier === "string") patch.reliability_tier = body.reliability_tier;
       if (typeof body.description === "string") patch.description = body.description;

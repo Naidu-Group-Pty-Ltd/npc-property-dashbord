@@ -26,6 +26,9 @@ const EMPTY_REGISTRY: MarketSourceRegistrySummary = { canonical:0, enabledCanoni
 type RegistryView = 'canonical' | 'unresolved_legacy' | 'archived_legacy';
 
 const dateLabel = (v?: string | null) => v ? new Date(v).toLocaleString('en-AU', { dateStyle: 'medium', timeStyle: 'short' }) : 'Never';
+const nextEligibleFetch = (source:MarketSource) => source.next_eligible_fetch_at ?? (source.last_fetched_at
+  ? new Date(new Date(source.last_fetched_at).getTime() + source.refresh_frequency_minutes * 60_000).toISOString()
+  : new Date().toISOString());
 const reasonLabel = (reason?: string | null) => reason ? reason.replaceAll('_', ' ') : 'No reconciliation reason recorded';
 
 export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { open:boolean; onOpenChange:(v:boolean)=>void; onChanged?:()=>void }) {
@@ -37,6 +40,7 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
   const [loading, setLoading] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [freqDraft, setFreqDraft] = useState<Record<string, number>>({});
+  const [mutationResult, setMutationResult] = useState<Record<string, { ok:boolean; message:string }>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = async () => {
@@ -59,10 +63,14 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
 
   const mutate = async (sourceId: string, action: () => Promise<MarketSource | null>) => {
     setBusyId(sourceId);
+    setMutationResult((previous) => ({ ...previous, [sourceId]: { ok:true, message:'Saving…' } }));
     try {
       const updated = await action();
       if (updated) setSources((previous) => previous.map((source) => source.id === sourceId ? updated : source));
+      setMutationResult((previous) => ({ ...previous, [sourceId]: { ok:true, message:'Saved' } }));
       onChanged?.();
+    } catch (error) {
+      setMutationResult((previous) => ({ ...previous, [sourceId]: { ok:false, message:error instanceof Error ? error.message : 'Change could not be saved.' } }));
     } finally {
       setBusyId(null);
     }
@@ -70,8 +78,8 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
   const onToggle = (source:MarketSource, enabled:boolean) => mutate(source.id, () => toggleMarketSource(source.id, enabled));
   const onSaveFreq = (source:MarketSource) => {
     const value = freqDraft[source.id];
-    if (!value || value === source.refresh_frequency_hours) return Promise.resolve();
-    return mutate(source.id, () => updateMarketSourceConfig(source.id, { refresh_frequency_hours:value }));
+    if (!value || value === source.refresh_frequency_minutes) return Promise.resolve();
+    return mutate(source.id, () => updateMarketSourceConfig(source.id, { refresh_frequency_minutes:value }));
   };
   const onClearError = (source:MarketSource) => mutate(source.id, async () => {
     const updated = await clearMarketSourceError(source.id);
@@ -80,10 +88,14 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
   });
   const runSource = async (source:MarketSource, test=false) => {
     setBusyId(source.id);
+    setMutationResult((previous) => ({ ...previous, [source.id]: { ok:true, message:test ? 'Testing…' : 'Running…' } }));
     try {
       await triggerMarketIngestion({ force:true, trigger_type:'manual', sourceIds:[source.id], test });
       await load();
+      setMutationResult((previous) => ({ ...previous, [source.id]: { ok:true, message:test ? 'Test completed' : 'Run completed' } }));
       onChanged?.();
+    } catch (error) {
+      setMutationResult((previous) => ({ ...previous, [source.id]: { ok:false, message:error instanceof Error ? error.message : 'Source run failed.' } }));
     } finally {
       setBusyId(null);
     }
@@ -138,14 +150,14 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
 
           {loading && displayedSources.length === 0 ? <div className="flex h-40 items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading sources…</div>
           : displayedSources.length === 0 ? <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No {view === 'canonical' ? 'canonical' : view === 'unresolved_legacy' ? 'unresolved legacy' : 'archived legacy'} sources.</div>
-          : <div className="space-y-2">{displayedSources.map((source) => <SourceCard key={source.id} source={source} canonical={view === 'canonical'} busy={busyId === source.id} frequencyDraft={freqDraft[source.id]} setFrequency={(value) => setFreqDraft((draft) => ({...draft, [source.id]:value}))} onToggle={onToggle} onSaveFreq={onSaveFreq} onClearError={onClearError} onRun={runSource} />)}</div>}
+          : <div className="space-y-2">{displayedSources.map((source) => <SourceCard key={source.id} source={source} canonical={view === 'canonical'} busy={busyId === source.id} frequencyDraft={freqDraft[source.id]} mutationResult={mutationResult[source.id]} setFrequency={(value) => setFreqDraft((draft) => ({...draft, [source.id]:value}))} onToggle={onToggle} onSaveFreq={onSaveFreq} onClearError={onClearError} onRun={runSource} />)}</div>}
         </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-function SourceCard({ source, canonical, busy, frequencyDraft, setFrequency, onToggle, onSaveFreq, onClearError, onRun }: { source:MarketSource; canonical:boolean; busy:boolean; frequencyDraft?:number; setFrequency:(value:number)=>void; onToggle:(source:MarketSource, enabled:boolean)=>void; onSaveFreq:(source:MarketSource)=>void; onClearError:(source:MarketSource)=>void; onRun:(source:MarketSource, test?:boolean)=>void }) {
+function SourceCard({ source, canonical, busy, frequencyDraft, mutationResult, setFrequency, onToggle, onSaveFreq, onClearError, onRun }: { source:MarketSource; canonical:boolean; busy:boolean; frequencyDraft?:number; mutationResult?:{ok:boolean;message:string}; setFrequency:(value:number)=>void; onToggle:(source:MarketSource, enabled:boolean)=>void; onSaveFreq:(source:MarketSource)=>void; onClearError:(source:MarketSource)=>void; onRun:(source:MarketSource, test?:boolean)=>void }) {
   const hasError = Boolean(source.last_error);
   const status = (source.registry_status ?? 'canonical') as MarketSourceRegistryStatus;
   return <article className={cn('rounded-lg border border-border/60 bg-card p-3', hasError && canonical && 'border-destructive/40')}>
@@ -153,11 +165,11 @@ function SourceCard({ source, canonical, busy, frequencyDraft, setFrequency, onT
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2"><span className="font-semibold break-words">{source.name}</span><Badge variant="outline" className="text-[10px] uppercase">{status.replace('_legacy', '')}</Badge><Badge variant="outline" className="text-[10px] uppercase">{source.source_type}</Badge><Badge variant="outline" className="text-[10px] uppercase">{source.reliability_tier}</Badge></div>
         <p className="mt-1 break-all text-[11px] text-muted-foreground">{source.url}</p>
-        {canonical ? <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"><span>Last success: <strong className="text-foreground">{dateLabel(source.last_success_at)}</strong></span><span>Health: <strong className="text-foreground">{source.enabled ? source.health_status ?? 'degraded' : 'disabled'}</strong></span><span>HTTP: <strong className="text-foreground">{source.last_http_status ?? '—'}</strong></span><span>Items: <strong className="text-foreground">{source.last_items_discovered ?? 0} found / {source.last_items_published ?? 0} published</strong></span></div>
+        {canonical ? <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"><span>Last success: <strong className="text-foreground">{dateLabel(source.last_success_at)}</strong></span><span>Next eligible fetch: <strong className="text-foreground">{dateLabel(nextEligibleFetch(source))}</strong></span><span>Health: <strong className="text-foreground">{source.enabled ? source.health_status ?? 'degraded' : 'disabled'}</strong></span><span>HTTP: <strong className="text-foreground">{source.last_http_status ?? '—'}</strong></span><span>Items: <strong className="text-foreground">{source.last_items_discovered ?? 0} found / {source.last_items_published ?? 0} published</strong></span></div>
         : <div className="mt-2 rounded border border-border/60 bg-muted/30 p-2 text-[11px]"><p><strong>Reconciliation:</strong> {reasonLabel(source.reconciliation_reason)}</p>{source.superseded_by_source_id && <p className="mt-1 break-all text-muted-foreground">Superseded by source ID: {source.superseded_by_source_id}</p>}<p className="mt-1 text-muted-foreground">Historical record retained · ingestion disabled</p></div>}
         {hasError && canonical && <div className="mt-2 flex items-start gap-2 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive"><XCircle className="mt-0.5 h-3 w-3 shrink-0" /><span className="break-words">{source.last_error}</span></div>}
       </div>
-      {canonical && <div className="flex flex-wrap items-end gap-2 lg:justify-end"><Button size="sm" variant="outline" onClick={() => onRun(source, true)} disabled={busy}>Test</Button><Button size="sm" variant="outline" onClick={() => onRun(source)} disabled={busy}><Play className="mr-1 h-3 w-3" />Run</Button><div><Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Refresh (h)</Label><div className="mt-1 flex items-center gap-1"><Input type="number" min={1} max={168} defaultValue={source.refresh_frequency_hours} className="h-8 w-20" onChange={(event) => setFrequency(Number(event.target.value))} /><Button size="sm" variant="ghost" disabled={busy || !frequencyDraft || frequencyDraft === source.refresh_frequency_hours} onClick={() => onSaveFreq(source)}>Save</Button></div></div>{hasError && <Button size="sm" variant="outline" onClick={() => onClearError(source)} disabled={busy}>Clear error</Button>}<div className="flex flex-col items-center gap-1"><Switch checked={source.enabled} onCheckedChange={(value) => onToggle(source, value)} disabled={busy} aria-label={`${source.enabled ? 'Disable' : 'Enable'} ${source.name}`} /><span className="text-[10px] text-muted-foreground">{source.enabled ? 'On' : 'Off'}</span></div></div>}
+      {canonical && <div className="flex max-w-full flex-wrap items-end gap-2 lg:justify-end"><Button size="sm" variant="outline" onClick={() => onRun(source, true)} disabled={busy}>Test</Button><Button size="sm" variant="outline" onClick={() => onRun(source)} disabled={busy}><Play className="mr-1 h-3 w-3" />Run</Button><div><Label htmlFor={`cadence-${source.id}`} className="text-[10px] uppercase tracking-wide text-muted-foreground">Refresh cadence (minutes)</Label><div className="mt-1 flex flex-wrap items-center gap-1"><Input id={`cadence-${source.id}`} type="number" min={15} max={10080} step={15} value={frequencyDraft ?? source.refresh_frequency_minutes} className="h-8 w-24" onChange={(event) => setFrequency(Number(event.target.value))} /><span className="text-[10px] text-muted-foreground">≈ {((frequencyDraft ?? source.refresh_frequency_minutes) / 60).toFixed(1)}h</span>{frequencyDraft !== undefined && frequencyDraft !== source.refresh_frequency_minutes && <Button size="sm" variant="ghost" disabled={busy || frequencyDraft < 15 || frequencyDraft > 10080} onClick={() => onSaveFreq(source)}>Save</Button>}</div>{mutationResult && <p role="status" className={cn('mt-1 max-w-52 text-[10px]', mutationResult.ok ? 'text-success' : 'text-destructive')}>{mutationResult.message}</p>}</div>{hasError && <Button size="sm" variant="outline" onClick={() => onClearError(source)} disabled={busy}>Clear error</Button>}<div className="flex flex-col items-center gap-1"><Switch checked={source.enabled} onCheckedChange={(value) => onToggle(source, value)} disabled={busy} aria-label={`${source.enabled ? 'Disable' : 'Enable'} ${source.name}`} /><span className="text-[10px] text-muted-foreground">{source.enabled ? 'On' : 'Off'}</span></div></div>}
     </div>
   </article>;
 }

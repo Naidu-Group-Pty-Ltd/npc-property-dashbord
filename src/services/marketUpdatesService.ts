@@ -128,7 +128,7 @@ export async function toggleMarketSource(source_id: string, enabled: boolean): P
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
-export async function updateMarketSourceConfig(source_id: string, patch: Partial<Pick<MarketSource, 'refresh_frequency_hours' | 'reliability_tier' | 'description'>>): Promise<MarketSource | null> {
+export async function updateMarketSourceConfig(source_id: string, patch: Partial<Pick<MarketSource, 'refresh_frequency_minutes' | 'reliability_tier' | 'description'>>): Promise<MarketSource | null> {
   try {
     const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'update', source_id, ...patch });
     if (error) throw error;
