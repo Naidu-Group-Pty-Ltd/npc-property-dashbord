@@ -62,15 +62,15 @@ verify_jwt = false
 
 [functions.template-share]
 verify_jwt = false
-request_timeout = 1500
+request_timeout = 60
 
 [functions.template-analytics]
 verify_jwt = false
-request_timeout = 1500
+request_timeout = 60
 
 [functions.template-ai-author]
 verify_jwt = true
-request_timeout = 1500
+request_timeout = 60
 
 [functions.finance-portal-client-comms]
 verify_jwt = false
