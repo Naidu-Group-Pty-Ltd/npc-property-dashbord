@@ -26,10 +26,17 @@ import { toast } from "@/hooks/use-toast";
 import {
   amlVerificationApi, type IdentityCheck, type ScreeningCheck,
 } from "@/lib/aml/amlVerificationApi";
+// (IdentityCheck / ScreeningCheck also power the Phase 6 verification linking)
 import {
   amlRiskApi, type AmlRiskAssessment, type AmlCaseCondition, type AmlDecision,
+  type AmlAnalystRecommendation, type AmlServiceGateContract, type AmlRecalcStatus,
 } from "@/lib/aml/amlRiskApi";
-import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy } from "@/lib/aml/amlFinanceApi";
+import { useAmlAccess } from "@/hooks/useAmlAccess";
+import { amlFinanceApi, type AmlFinanceComparison, type AmlFinanceDiscrepancy, type AmlFinanceRequest } from "@/lib/aml/amlFinanceApi";
+import {
+  amlEntitiesApi, type AmlEntity, type AmlBeneficialOwner, type AmlAuthorisedRep,
+  type AmlOwnershipSummary, type AmlProvenanceRow, type AmlQuestionnaireImportReport,
+} from "@/lib/aml/amlEntitiesApi";
 import type { AmlCase, AmlCaseEvent } from "@/lib/aml/amlCasesApi";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 
@@ -98,7 +105,7 @@ export function CaseWorkspaceTabs({ caseRow, events, canWrite, canInvestigate, o
       </TabsContent>
       {v3Case && (
         <TabsContent value="ownership" className="mt-4">
-          <OwnershipControlTab caseRow={caseRow} />
+          <OwnershipControlTab caseRow={caseRow} canWrite={canInvestigate} />
         </TabsContent>
       )}
       {v3Case && canInvestigate && (
@@ -164,7 +171,7 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
 
 /* -------------------- Verification -------------------- */
 
-function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+export function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
   const [items, setItems] = useState<IdentityCheck[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -222,7 +229,7 @@ function VerificationTab({ caseId, canWrite, onChanged }: { caseId: string; canW
 
 /* -------------------- Screening -------------------- */
 
-function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+export function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
   const [items, setItems] = useState<ScreeningCheck[] | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -280,20 +287,57 @@ function ScreeningTab({ caseId, canWrite, onChanged }: { caseId: string; canWrit
 
 /* -------------------- Risk & Decision -------------------- */
 
-function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+const RECOMMENDATION_OUTCOMES: Array<{ value: AmlAnalystRecommendation["recommended_outcome"]; label: string }> = [
+  { value: "cleared", label: "Clear" },
+  { value: "cleared_with_conditions", label: "Clear with conditions" },
+  { value: "edd_required", label: "Enhanced due diligence" },
+  { value: "escalated", label: "Escalate to MLRO" },
+  { value: "blocked", label: "Block" },
+];
+
+const GATE_OPTION_LABELS: Record<string, string> = {
+  cdd_incomplete: "CDD incomplete",
+  information_outstanding: "Information outstanding",
+  under_review: "Under review",
+  conditions_outstanding: "Conditions outstanding",
+  approved_with_controls: "Approved with controls",
+  approved: "Approved",
+  locked: "Locked",
+  terminated: "Terminated",
+};
+
+export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: boolean; onChanged: () => void }) {
+  const access = useAmlAccess();
+  const canReview = access.roles.has("reviewer") || access.roles.has("mlro");
+  const isMlro = access.isMlro;
   const [assessments, setAssessments] = useState<AmlRiskAssessment[] | null>(null);
   const [conditions, setConditions] = useState<AmlCaseCondition[]>([]);
   const [latestDecision, setLatestDecision] = useState<AmlDecision | null>(null);
+  const [recommendations, setRecommendations] = useState<AmlAnalystRecommendation[]>([]);
+  const [gate, setGate] = useState<AmlServiceGateContract | null>(null);
+  const [recalc, setRecalc] = useState<AmlRecalcStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [recOutcome, setRecOutcome] = useState<AmlAnalystRecommendation["recommended_outcome"]>("cleared");
+  const [recRationale, setRecRationale] = useState("");
+  const [decideOutcome, setDecideOutcome] = useState<"cleared" | "blocked" | "escalated">("cleared");
+  const [decideRationale, setDecideRationale] = useState("");
+  const [gateStatus, setGateStatus] = useState<string>("under_review");
+  const [gateReason, setGateReason] = useState("");
 
   const load = async () => {
     try {
-      const [a, c, d] = await Promise.all([
+      const [a, c, d, r, g, rc] = await Promise.all([
         amlRiskApi.listAssessments(caseId),
         amlRiskApi.listConditions(caseId),
         amlRiskApi.latestDecision(caseId),
+        amlRiskApi.listRecommendations(caseId).catch(() => ({ recommendations: [] })),
+        amlRiskApi.gateContract(caseId).catch(() => ({ gate: null as any })),
+        amlRiskApi.recalcStatus(caseId).catch(() => ({ recalc: null as any })),
       ]);
       setAssessments(a.assessments); setConditions(c.conditions); setLatestDecision(d.decision);
+      setRecommendations(r.recommendations ?? []);
+      setGate(g.gate ?? null);
+      setRecalc(rc.recalc ?? null);
     } catch (e: any) { toast({ title: "Load failed", description: e.message, variant: "destructive" }); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [caseId]);
@@ -312,10 +356,62 @@ function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: bo
     finally { setBusy(false); }
   };
 
+  const recordRecommendation = async () => {
+    setBusy(true);
+    try {
+      await amlRiskApi.recommend({ case_id: caseId, recommended_outcome: recOutcome, rationale: recRationale.trim() });
+      toast({ title: "Recommendation recorded" });
+      setRecRationale("");
+      await load();
+    } catch (e: any) { toast({ title: "Could not record recommendation", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  };
+
+  const recordDecision = async () => {
+    setBusy(true);
+    try {
+      await amlRiskApi.decide({ case_id: caseId, outcome: decideOutcome, rationale: decideRationale.trim() || undefined });
+      toast({ title: "Decision recorded" });
+      setDecideRationale("");
+      await load(); onChanged();
+    } catch (e: any) { toast({ title: "Decision failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  };
+
+  const applyGate = async () => {
+    setBusy(true);
+    try {
+      await amlRiskApi.setServiceGate({ case_id: caseId, status: gateStatus, reason: gateReason.trim() });
+      toast({ title: "Service gate updated" });
+      setGateReason("");
+      await load(); onChanged();
+    } catch (e: any) { toast({ title: "Gate change failed", description: e.message, variant: "destructive" }); }
+    finally { setBusy(false); }
+  };
+
   const latest = assessments?.[0];
+  const pendingRecommendation = recommendations.find((r) => r.status === "pending") ?? null;
 
   return (
     <div className="space-y-4">
+      {recalc?.stale && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warning/40 bg-warning/5 p-3 text-xs">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" aria-hidden />
+            <span>
+              {recalc.reasons.includes("no_assessment")
+                ? "No risk assessment has been computed for this case yet."
+                : `Material information changed after the last assessment (${recalc.reasons.map((r) => r.replace(/_changed$/, "").replace(/_/g, " ")).join(", ")}) — the rating may be out of date.`}
+            </span>
+          </div>
+          {canWrite && (
+            <Button size="sm" variant="outline" onClick={evaluate} disabled={busy}>
+              Recompute now
+            </Button>
+          )}
+        </div>
+      )}
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <div className="flex items-center gap-2 flex-wrap">
@@ -416,18 +512,162 @@ function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: bo
       </Card>
 
       <Card>
+        <CardHeader><CardTitle className="text-sm">Analyst recommendation</CardTitle></CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {pendingRecommendation ? (
+            <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">Awaiting review</div>
+              <div className="mt-1 font-medium capitalize">
+                {pendingRecommendation.recommended_outcome.replace(/_/g, " ")}
+              </div>
+              <p className="mt-1 text-xs text-muted-foreground">{pendingRecommendation.rationale}</p>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                Recorded {new Date(pendingRecommendation.created_at).toLocaleString()}
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No recommendation awaiting review.
+              {recommendations.length > 0 && ` ${recommendations.length} previous recommendation${recommendations.length === 1 ? "" : "s"} on record.`}
+            </p>
+          )}
+          {canWrite && (
+            <div className="space-y-2 border-t border-border/50 pt-3">
+              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  aria-label="Recommended outcome"
+                  value={recOutcome}
+                  onChange={(e) => setRecOutcome(e.target.value as typeof recOutcome)}
+                >
+                  {RECOMMENDATION_OUTCOMES.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+                <Button
+                  size="sm" variant="outline" className="sm:justify-self-start"
+                  disabled={busy || recRationale.trim().length < 10}
+                  onClick={recordRecommendation}
+                >
+                  Record recommendation
+                </Button>
+              </div>
+              <textarea
+                className="min-h-[64px] w-full rounded-md border border-input bg-background p-2 text-sm"
+                aria-label="Recommendation rationale"
+                placeholder="Rationale (required, minimum 10 characters) — what the reviewer needs to know."
+                value={recRationale}
+                onChange={(e) => setRecRationale(e.target.value)}
+              />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader><CardTitle className="text-sm">Latest decision</CardTitle></CardHeader>
-        <CardContent className="text-sm">
+        <CardContent className="text-sm space-y-3">
           {!latestDecision ? (
             <p className="text-muted-foreground">No decision recorded.</p>
           ) : (
-            <>
+            <div>
               <Row k="Outcome" v={latestDecision.outcome} />
               <Row k="Decided" v={new Date(latestDecision.decided_at).toLocaleString()} />
+              {latestDecision.program_version && <Row k="Policy" v={latestDecision.program_version} />}
               {latestDecision.rationale && (
                 <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{latestDecision.rationale}</div>
               )}
-            </>
+            </div>
+          )}
+          {canReview && (
+            <div className="space-y-2 border-t border-border/50 pt-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">Record decision</div>
+              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  aria-label="Decision outcome"
+                  value={decideOutcome}
+                  onChange={(e) => setDecideOutcome(e.target.value as typeof decideOutcome)}
+                >
+                  <option value="cleared">Clear</option>
+                  <option value="escalated">Escalate to MLRO</option>
+                  <option value="blocked">Block</option>
+                </select>
+                <Button size="sm" className="sm:justify-self-start" disabled={busy} onClick={recordDecision}>
+                  Record decision
+                </Button>
+              </div>
+              <textarea
+                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
+                aria-label="Decision rationale"
+                placeholder="Decision rationale — frozen into the decision snapshot."
+                value={decideRationale}
+                onChange={(e) => setDecideRationale(e.target.value)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Clearance is refused while mandatory holds or open conditions remain.
+              </p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-sm">Service gate</CardTitle></CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {gate ? (
+            <div>
+              <Row k="Status" v={GATE_OPTION_LABELS[gate.status] ?? gate.status.replace(/_/g, " ")} />
+              <Row k="Effective" v={gate.effective_at ? new Date(gate.effective_at).toLocaleString() : "—"} />
+              {gate.policy_version && <Row k="Policy" v={gate.policy_version} />}
+              {gate.reason && <div className="mt-2 rounded bg-muted/40 p-2 text-xs">{gate.reason}</div>}
+              {gate.conditions.length > 0 && (
+                <div className="mt-2">
+                  <div className="text-[11px] text-muted-foreground">Attached conditions</div>
+                  <ul className="mt-0.5 space-y-0.5 text-xs">
+                    {gate.conditions.map((c, i) => <li key={c.id ?? i}>• {c.label}</li>)}
+                  </ul>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-muted-foreground">Gate state unavailable.</p>
+          )}
+          {canReview && (
+            <div className="space-y-2 border-t border-border/50 pt-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">Change service gate</div>
+              <p className="text-[11px] text-muted-foreground">
+                The gate controls service entitlement separately from case stage and risk.
+                Approval requires a recorded cleared decision; approval with controls requires
+                open conditions documenting those controls.
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[220px_1fr]">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  aria-label="New service-gate status"
+                  value={gateStatus}
+                  onChange={(e) => setGateStatus(e.target.value)}
+                >
+                  {Object.entries(GATE_OPTION_LABELS)
+                    .filter(([k]) => (isMlro ? true : k !== "locked" && k !== "terminated"))
+                    .map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+                </select>
+                <Button
+                  size="sm" variant="outline" className="sm:justify-self-start"
+                  disabled={busy || gateReason.trim().length < 10}
+                  onClick={applyGate}
+                >
+                  Apply gate change
+                </Button>
+              </div>
+              <textarea
+                className="min-h-[56px] w-full rounded-md border border-input bg-background p-2 text-sm"
+                aria-label="Gate change reason"
+                placeholder="Reason (required, minimum 10 characters) — recorded on the gate decision and audit trail."
+                value={gateReason}
+                onChange={(e) => setGateReason(e.target.value)}
+              />
+            </div>
           )}
         </CardContent>
       </Card>
@@ -437,7 +677,7 @@ function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWrite: bo
 
 /* -------------------- Audit -------------------- */
 
-function AuditTab({ events }: { events: AmlCaseEvent[] }) {
+export function AuditTab({ events }: { events: AmlCaseEvent[] }) {
   return (
     <Card>
       <CardHeader><CardTitle className="text-sm">Audit trail (hash-chained)</CardTitle></CardHeader>
@@ -471,50 +711,517 @@ function AuditTab({ events }: { events: AmlCaseEvent[] }) {
   );
 }
 
-/* -------------------- Ownership & Control (V3) -------------------- */
+/* -------------------- Ownership & Control (V3, Phase 6) -------------------- */
+
+const VERIFICATION_LABELS: Record<string, string> = {
+  unverified: "Not verified", pending: "Verification pending", verified: "Verified",
+  failed: "Verification failed", waived: "Waived",
+};
+
+const CONTROL_LABELS: Record<string, string> = {
+  shareholding: "Shareholder", trustee: "Trustee", beneficiary: "Beneficiary",
+  appointor: "Appointor", director: "Director", partner: "Partner",
+  settlor: "Settlor", other: "Other controller",
+};
+
+const ENTITY_TYPE_LABELS: Record<string, string> = {
+  company: "Company", trust: "Trust", smsf: "Self-managed super fund",
+  partnership: "Partnership", sole_trader: "Sole trader", other: "Other",
+};
 
 /**
- * Directive 3 — case-scoped ownership & control summary.
- * Shows the case subject's structure classification and a deep-link
- * to the legacy Ownership & Control (formerly Structures) page. No
- * write actions here — mutations remain on the dedicated page so
- * capability + step-up rules are enforced by that surface.
+ * Phase 6 — the case-scoped ownership & control working surface.
+ * Reads the canonical entity engine (entities / beneficial owners /
+ * authorised representatives) for the case subject, surfaces completeness
+ * warnings, and lets analysts reconcile the client's questionnaire answers
+ * into those records. Source values land in provenance — mismatches are
+ * flagged as conflicts for resolution, never overwritten.
  */
-function OwnershipControlTab({ caseRow }: { caseRow: AmlCase }) {
-  const isEntity = caseRow.subject_type !== "individual";
+export function OwnershipControlTab({ caseRow, canWrite = false }: { caseRow: AmlCase; canWrite?: boolean }) {
+  const [loading, setLoading] = useState(true);
+  const [entity, setEntity] = useState<AmlEntity | null>(null);
+  const [owners, setOwners] = useState<AmlBeneficialOwner[]>([]);
+  const [reps, setReps] = useState<AmlAuthorisedRep[]>([]);
+  const [summary, setSummary] = useState<AmlOwnershipSummary | null>(null);
+  const [provenance, setProvenance] = useState<AmlProvenanceRow[]>([]);
+  const [idChecks, setIdChecks] = useState<IdentityCheck[]>([]);
+  const [scrChecks, setScrChecks] = useState<ScreeningCheck[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [linkingParty, setLinkingParty] = useState<string | null>(null);
+  const [lastReport, setLastReport] = useState<AmlQuestionnaireImportReport | null>(null);
+
+  const load = React.useCallback(async () => {
+    try {
+      setLoading(true);
+      const [linksRes, provRes, idRes, scrRes] = await Promise.all([
+        amlEntitiesApi.listEntitiesForCase(caseRow.id),
+        amlEntitiesApi.listProvenance(caseRow.id).catch(() => ({ provenance: [] })),
+        amlVerificationApi.listIdv(caseRow.id).catch(() => ({ identity_checks: [] })),
+        amlVerificationApi.listScreening(caseRow.id).catch(() => ({ screening_checks: [] })),
+      ]);
+      setProvenance(provRes.provenance ?? []);
+      setIdChecks(idRes.identity_checks ?? []);
+      setScrChecks(scrRes.screening_checks ?? []);
+      const links = linksRes.links ?? [];
+      const subject = links.find((l) => l.link_role === "subject") ?? links[0];
+      if (!subject?.entity_id) {
+        setEntity(null); setOwners([]); setReps([]); setSummary(null);
+        return;
+      }
+      const [detail, summaryRes] = await Promise.all([
+        amlEntitiesApi.getEntity(subject.entity_id),
+        amlEntitiesApi.ownershipSummary(subject.entity_id),
+      ]);
+      setEntity(detail.entity);
+      setOwners(detail.owners ?? []);
+      setReps(detail.reps ?? []);
+      setSummary(summaryRes.summary ?? null);
+    } catch {
+      // panel falls back to its empty state
+    } finally {
+      setLoading(false);
+    }
+  }, [caseRow.id]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const linkCheck = async (
+    target: "owner" | "rep", partyId: string,
+    kind: "identity" | "screening", checkId: string,
+  ) => {
+    if (!checkId) return;
+    setLinkingParty(partyId);
+    try {
+      await amlEntitiesApi.linkVerification({
+        case_id: caseRow.id, target, party_id: partyId,
+        ...(kind === "identity" ? { identity_check_id: checkId } : { screening_check_id: checkId }),
+      });
+      toast({ title: "Verification linked" });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Could not link verification", description: e.message, variant: "destructive" });
+    } finally {
+      setLinkingParty(null);
+    }
+  };
+
+  const runImport = async () => {
+    setImporting(true);
+    try {
+      const { report } = await amlEntitiesApi.importFromQuestionnaire(caseRow.id);
+      setLastReport(report);
+      const created = report.owners_created.length + report.reps_created.length;
+      toast({
+        title: "Client answers reconciled",
+        description: `${created} part${created === 1 ? "y" : "ies"} recorded, ${report.conflicts.length} conflict${report.conflicts.length === 1 ? "" : "s"} flagged.`,
+      });
+      await load();
+    } catch (e: any) {
+      toast({ title: "Import failed", description: e.message, variant: "destructive" });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const conflicts = useMemo(
+    () => provenance.filter((p) => p.conflict_status === "conflict"),
+    [provenance],
+  );
+
+  const warnings = useMemo(() => {
+    const out: string[] = [];
+    if (!entity) return out;
+    if (summary) {
+      if (summary.total_owners === 0) {
+        out.push("No beneficial owners or controllers are recorded for this structure yet.");
+      } else {
+        if (summary.missing_ownership_percent > 0.5) {
+          out.push(`Recorded ownership covers ${summary.total_ownership_percent}% — ${summary.missing_ownership_percent.toFixed(1)}% is unaccounted for.`);
+        }
+        if (summary.ubo_count === 0) {
+          out.push("No ultimate beneficial owner (25%+ ownership or control) has been identified.");
+        }
+        if (summary.unverified_count > 0) {
+          out.push(`${summary.unverified_count} listed ${summary.unverified_count === 1 ? "person has" : "people have"} not completed identity verification.`);
+        }
+        if (summary.pep_count > 0) {
+          out.push(`${summary.pep_count} listed ${summary.pep_count === 1 ? "person is" : "people are"} politically exposed — enhanced due diligence applies.`);
+        }
+        if (summary.sanctioned_count > 0) {
+          out.push(`${summary.sanctioned_count} listed ${summary.sanctioned_count === 1 ? "person matches" : "people match"} a sanctions listing — do not proceed without a decision.`);
+        }
+      }
+    }
+    return out;
+  }, [entity, summary]);
+
+  if (loading) {
+    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  }
+
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3">
-        <div>
-          <CardTitle className="text-sm">Ownership & Control</CardTitle>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Structures — beneficial owners, controllers and authorised representatives —
-            scoped to this case subject.
-          </p>
-        </div>
-        <Button asChild size="sm" variant="outline">
-          <Link to="/admin/aml/counterparty">
-            Open Ownership & Control
-            <ExternalLink className="ml-2 h-3.5 w-3.5" />
-          </Link>
-        </Button>
-      </CardHeader>
-      <CardContent className="space-y-3 text-sm">
-        <Row k="Subject" v={caseRow.subject_display_name} />
-        <Row k="Subject type" v={caseRow.subject_type} />
-        {!isEntity ? (
-          <div className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
-            Individual subjects do not carry beneficial ownership or trustee structures.
-            Use the Verification tab for identity evidence.
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-sm">Ownership & Control</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Beneficial owners, controllers and authorised representatives for this
+              case subject, reconciled from the client's own declarations.
+            </p>
           </div>
-        ) : (
-          <div className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
-            Manage this subject's ownership graph on the Ownership & Control page.
-            Changes there flow back to the case decision audit trail.
+          <div className="flex flex-wrap justify-end gap-2">
+            {canWrite && (
+              <Button size="sm" variant="outline" disabled={importing} onClick={runImport}>
+                {importing && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
+                Import client answers
+              </Button>
+            )}
+            <Button asChild size="sm" variant="ghost">
+              <Link to="/admin/aml/counterparty">
+                Full register <ExternalLink className="ml-2 h-3.5 w-3.5" />
+              </Link>
+            </Button>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          {!entity ? (
+            <div className="rounded-md border border-dashed border-border/60 p-3 text-xs text-muted-foreground">
+              {caseRow.subject_type === "individual"
+                ? "No entity structure is recorded for this case. Individual purchasers do not carry beneficial ownership structures; related parties the client declares (gift donors, private lenders, co-purchasers) appear below after import."
+                : "No entity has been linked to this case yet. If the client has completed the entity section of their questionnaire, use “Import client answers” to create the canonical record."}
+            </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Row k="Legal name" v={entity.legal_name} />
+              <Row k="Structure" v={ENTITY_TYPE_LABELS[entity.entity_type] ?? entity.entity_type} />
+              <Row k="ABN" v={entity.abn ?? "—"} />
+              <Row k="ACN" v={entity.acn ?? "—"} />
+              <Row k="Established" v={entity.incorporation_date ? new Date(entity.incorporation_date).toLocaleDateString() : "—"} />
+              <Row k="Jurisdiction" v={entity.jurisdiction} />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {warnings.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning" /> Completeness checks
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="list-disc space-y-1 pl-4 text-xs">
+              {warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {entity && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">
+              Owners & controllers
+              {summary && summary.total_owners > 0 && (
+                <span className="ml-2 font-normal text-xs text-muted-foreground">
+                  {summary.total_ownership_percent}% of ownership recorded
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {owners.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No owners or controllers recorded yet.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <caption className="sr-only">Beneficial owners and controllers for {entity.legal_name}</caption>
+                  <thead>
+                    <tr className="border-b border-border/60 text-left text-xs text-muted-foreground">
+                      <th scope="col" className="py-2 pr-3 font-medium">Name</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Role</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Ownership</th>
+                      <th scope="col" className="py-2 pr-3 font-medium">Verification</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {owners.map((o) => (
+                      <tr key={o.id} className="border-b border-border/40 last:border-0">
+                        <td className="py-2 pr-3">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span>{o.full_name}</span>
+                            {o.is_ubo && <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">UBO</Badge>}
+                            {o.is_pep && <Badge variant="outline" className="h-5 border-warning/50 px-1.5 text-[10px] text-warning">PEP</Badge>}
+                            {o.is_sanctioned && <Badge variant="outline" className="h-5 border-destructive/50 px-1.5 text-[10px] text-destructive">Sanctions</Badge>}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3">{CONTROL_LABELS[o.control_type] ?? o.control_type}</td>
+                        <td className="py-2 pr-3 tabular-nums">{Number(o.ownership_percent) > 0 ? `${o.ownership_percent}%` : "—"}</td>
+                        <td className="py-2 pr-3">
+                          <div className="space-y-1">
+                            <Badge
+                              variant="outline"
+                              className={
+                                o.verification_state === "verified" || o.verification_state === "waived"
+                                  ? "border-success/40 text-success"
+                                  : o.verification_state === "failed"
+                                    ? "border-destructive/40 text-destructive"
+                                    : "border-muted-foreground/30 text-muted-foreground"
+                              }
+                            >
+                              {VERIFICATION_LABELS[o.verification_state] ?? o.verification_state}
+                            </Badge>
+                            {canWrite && !o.identity_check_id && idChecks.length > 0 && (
+                              <select
+                                className="block h-7 w-full max-w-[190px] rounded-md border border-input bg-background px-1.5 text-xs"
+                                aria-label={`Link identity check for ${o.full_name}`}
+                                value=""
+                                disabled={linkingParty === o.id}
+                                onChange={(e) => linkCheck("owner", o.id, "identity", e.target.value)}
+                              >
+                                <option value="">Link identity check…</option>
+                                {idChecks.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.subject_label} · {String(c.status).replace(/_/g, " ")}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {canWrite && !o.screening_check_id && scrChecks.length > 0 && (
+                              <select
+                                className="block h-7 w-full max-w-[190px] rounded-md border border-input bg-background px-1.5 text-xs"
+                                aria-label={`Link screening check for ${o.full_name}`}
+                                value=""
+                                disabled={linkingParty === o.id}
+                                onChange={(e) => linkCheck("owner", o.id, "screening", e.target.value)}
+                              >
+                                <option value="">Link screening…</option>
+                                {scrChecks.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.subject_label} · {String(c.status).replace(/_/g, " ")}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {o.identity_check_id && (
+                              <div className="text-[10px] text-muted-foreground">Identity check linked</div>
+                            )}
+                            {o.screening_check_id && (
+                              <div className="text-[10px] text-muted-foreground">Screening linked</div>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {entity && (owners.length > 0 || reps.length > 0) && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Structure diagram</CardTitle></CardHeader>
+          <CardContent>
+            <OwnershipGraph entity={entity} owners={owners} reps={reps} />
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              The tables above are the accessible equivalent of this diagram.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {entity && reps.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Authorised representatives</CardTitle></CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <caption className="sr-only">Authorised representatives for {entity.legal_name}</caption>
+                <thead>
+                  <tr className="border-b border-border/60 text-left text-xs text-muted-foreground">
+                    <th scope="col" className="py-2 pr-3 font-medium">Name</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Role</th>
+                    <th scope="col" className="py-2 pr-3 font-medium">Verification</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reps.map((r) => (
+                    <tr key={r.id} className="border-b border-border/40 last:border-0">
+                      <td className="py-2 pr-3">{r.full_name}</td>
+                      <td className="py-2 pr-3">{r.role_title}</td>
+                      <td className="py-2 pr-3">
+                        <div className="space-y-1">
+                          <Badge
+                            variant="outline"
+                            className={
+                              r.verification_state === "verified" || r.verification_state === "waived"
+                                ? "border-success/40 text-success"
+                                : r.verification_state === "failed"
+                                  ? "border-destructive/40 text-destructive"
+                                  : "border-muted-foreground/30 text-muted-foreground"
+                            }
+                          >
+                            {VERIFICATION_LABELS[r.verification_state] ?? r.verification_state}
+                          </Badge>
+                          {canWrite && !r.identity_check_id && idChecks.length > 0 && (
+                            <select
+                              className="block h-7 w-full max-w-[190px] rounded-md border border-input bg-background px-1.5 text-xs"
+                              aria-label={`Link identity check for ${r.full_name}`}
+                              value=""
+                              disabled={linkingParty === r.id}
+                              onChange={(e) => linkCheck("rep", r.id, "identity", e.target.value)}
+                            >
+                              <option value="">Link identity check…</option>
+                              {idChecks.map((c) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.subject_label} · {String(c.status).replace(/_/g, " ")}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {r.identity_check_id && (
+                            <div className="text-[10px] text-muted-foreground">Identity check linked</div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {conflicts.length > 0 && (
+        <Card className="border-warning/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning" /> Source conflicts to resolve
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              The client's declared values differ from what is already on record.
+              Recorded values were kept — review each and resolve on the full register.
+            </p>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2 text-xs">
+              {conflicts.map((c) => (
+                <li key={c.id} className="rounded-md border border-border/60 p-2">
+                  <div className="font-medium">{c.field_key.replace(/^entity\./, "").replace(/_/g, " ")}</div>
+                  <div className="text-muted-foreground">
+                    Client declared: {typeof c.value === "object" && c.value !== null && "v" in c.value
+                      ? String((c.value as any).v)
+                      : String(c.value ?? "—")}
+                    {" · "}{new Date(c.submitted_at).toLocaleDateString()}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {lastReport && lastReport.parties_needing_review.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-sm">Declared parties needing manual handling</CardTitle></CardHeader>
+          <CardContent>
+            <ul className="space-y-1 text-xs">
+              {lastReport.parties_needing_review.map((p, i) => (
+                <li key={i}>
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-muted-foreground"> — {p.role}. {
+                    p.reason === "no_entity_structure_on_case"
+                      ? "This case has no entity structure; record them via the Requests or Verification workflow."
+                      : "This role is recorded as source information only; add them to the register manually if they hold ownership or control."
+                  }</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Phase 6 — visual ownership graph (§12.4). Pure SVG hub-and-spoke: the
+ * entity at the hub, owners/controllers with solid edges (labelled with
+ * ownership %), representatives with dashed edges. currentColor only — the
+ * surrounding text classes supply the semantic palette. The owners/reps
+ * tables are the accessible equivalent; the SVG is decorative structure.
+ */
+function OwnershipGraph({ entity, owners, reps }: {
+  entity: AmlEntity; owners: AmlBeneficialOwner[]; reps: AmlAuthorisedRep[];
+}) {
+  const nodes = [
+    ...owners.map((o) => ({
+      id: o.id,
+      name: o.full_name,
+      sub: [
+        CONTROL_LABELS[o.control_type] ?? o.control_type,
+        Number(o.ownership_percent) > 0 ? `${o.ownership_percent}%` : null,
+        o.is_ubo ? "UBO" : null,
+      ].filter(Boolean).join(" · "),
+      dashed: false,
+    })),
+    ...reps.map((r) => ({
+      id: r.id, name: r.full_name, sub: r.role_title, dashed: true,
+    })),
+  ];
+  const rowH = 46;
+  const height = Math.max(nodes.length * rowH + 16, 96);
+  const hubY = height / 2;
+  const width = 640;
+  const label = `Ownership structure for ${entity.legal_name}: ${owners.length} owner${owners.length === 1 ? "" : "s"} or controllers and ${reps.length} authorised representative${reps.length === 1 ? "" : "s"}.`;
+
+  return (
+    <div className="overflow-x-auto text-muted-foreground">
+      <svg
+        role="img"
+        aria-label={label}
+        viewBox={`0 0 ${width} ${height}`}
+        className="min-w-[560px] max-w-full"
+        style={{ height }}
+      >
+        {/* hub */}
+        <rect x={8} y={hubY - 24} width={196} height={48} rx={8}
+          fill="none" stroke="currentColor" strokeOpacity={0.6} />
+        <text x={106} y={hubY - 4} textAnchor="middle" fontSize={12} fontWeight={600} fill="currentColor">
+          {entity.legal_name.length > 26 ? `${entity.legal_name.slice(0, 25)}…` : entity.legal_name}
+        </text>
+        <text x={106} y={hubY + 13} textAnchor="middle" fontSize={10} fill="currentColor" fillOpacity={0.7}>
+          {ENTITY_TYPE_LABELS[entity.entity_type] ?? entity.entity_type}
+        </text>
+        {nodes.map((n, i) => {
+          const y = 8 + i * rowH + rowH / 2;
+          return (
+            <g key={n.id}>
+              <path
+                d={`M 204 ${hubY} C 280 ${hubY}, 300 ${y}, 356 ${y}`}
+                fill="none" stroke="currentColor" strokeOpacity={0.45}
+                strokeDasharray={n.dashed ? "4 4" : undefined}
+              />
+              <circle cx={362} cy={y} r={3.5} fill="currentColor" fillOpacity={0.6} />
+              <text x={374} y={y - 2} fontSize={11.5} fontWeight={500} fill="currentColor">
+                {n.name.length > 32 ? `${n.name.slice(0, 31)}…` : n.name}
+              </text>
+              <text x={374} y={y + 12} fontSize={10} fill="currentColor" fillOpacity={0.7}>
+                {n.sub}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
 }
 
@@ -526,20 +1233,23 @@ function OwnershipControlTab({ caseRow }: { caseRow: AmlCase }) {
  * discrepancy engine as the standalone page. Read-only here — the
  * page owns entitlement gate + write actions.
  */
-function FundingFinanceTab({ caseId }: { caseId: string }) {
+export function FundingFinanceTab({ caseId }: { caseId: string }) {
   const [loading, setLoading] = useState(true);
   const [comparisons, setComparisons] = useState<AmlFinanceComparison[]>([]);
   const [discrepancies, setDiscrepancies] = useState<AmlFinanceDiscrepancy[]>([]);
+  const [financeRequests, setFinanceRequests] = useState<AmlFinanceRequest[]>([]);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
         setLoading(true);
-        const [c, d] = await Promise.all([
+        const [c, d, fr] = await Promise.all([
           amlFinanceApi.listComparisons(caseId),
           amlFinanceApi.listDiscrepancies({ case_id: caseId }),
+          amlFinanceApi.listFinanceRequests(caseId).catch(() => ({ requests: [] })),
         ]);
+        if (alive) setFinanceRequests((fr as any)?.requests ?? []);
         if (!alive) return;
         setComparisons((c as any)?.comparisons ?? (Array.isArray(c) ? c : []));
         setDiscrepancies((d as any)?.discrepancies ?? (Array.isArray(d) ? d : []));
@@ -585,6 +1295,17 @@ function FundingFinanceTab({ caseId }: { caseId: string }) {
             <div className="grid gap-2 sm:grid-cols-2">
               <Row k="Latest comparison" v={latest ? new Date(latest.created_at ?? "").toLocaleDateString() : "—"} />
               <Row k="Open discrepancies" v={String(openDiscrepancies.length)} />
+              <Row
+                k="Finance requests"
+                v={
+                  financeRequests.length === 0
+                    ? "None sent"
+                    : `${financeRequests.filter((r) => ["open", "clarification_required"].includes(r.status)).length} awaiting partner · ${financeRequests.filter((r) => r.status === "submitted").length} to review`
+                }
+              />
+              {latest && (
+                <Row k="Latest source" v={String(latest.source ?? "").replace(/_/g, " ") || "—"} />
+              )}
             </div>
             {openDiscrepancies.length > 0 ? (
               <div className="rounded-md border border-warning/30 bg-warning/5 p-3 text-xs text-warning flex items-start gap-2">
@@ -640,7 +1361,7 @@ const CATEGORY_META: Record<TimelineCategory, { label: string; icon: React.Compo
  *     (tipping-off protection preserved).
  *   - No SMR / regulatory records; those remain gated on the AUSTRAC hub.
  */
-function TimelineTab({
+export function TimelineTab({
   caseId,
   events,
   canInvestigate,

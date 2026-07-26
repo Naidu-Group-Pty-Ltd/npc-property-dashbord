@@ -618,6 +618,10 @@ request_timeout = 60
 verify_jwt = false
 request_timeout = 60
 
+[functions.finance-portal-aml-requests]
+verify_jwt = false
+request_timeout = 60
+
 [functions.finance-portal-purchase-files]
 verify_jwt = false
 request_timeout = 60
@@ -773,6 +777,12 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.mission-control-purchases]
+verify_jwt = false
+
+[functions.mission-control-invoices]
+verify_jwt = false
+
+[functions.mission-control-payment-methods]
 verify_jwt = false
 
 [functions.finance-portal-bulk-actions]

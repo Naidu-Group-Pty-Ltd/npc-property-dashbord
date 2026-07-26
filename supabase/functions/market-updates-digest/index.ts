@@ -9,6 +9,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireModulePermission } from '../_shared/authz.ts';
 import { callLLM } from '../_shared/llmRouter.ts';
 import { canonicalPeriodWindow, type DigestPeriod as Period } from './periodWindow.ts';
+import { classifyMarketError, logMarketEvent, marketCorrelationId } from '../_shared/marketUpdatesObservability.ts';
 
 const jsonWithCors = (cors: Record<string, string>) => (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -96,6 +97,9 @@ async function synthesizeWithAI(period: Period, windowLabel: string, updates: an
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
+  const correlationId = marketCorrelationId(req.headers);
+  cors['x-correlation-id'] = correlationId;
+  const requestStartedAt = Date.now();
   const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
 
@@ -131,6 +135,7 @@ Deno.serve(async (req) => {
   const scheduledReference = cronOk && typeof payload?.reference_at === 'string' ? new Date(payload.reference_at) : null;
   const reference = scheduledReference && Number.isFinite(scheduledReference.getTime()) ? scheduledReference : new Date();
   const { start, end, key:periodKey } = canonicalPeriodWindow(period, reference);
+  logMarketEvent('info',{function:'market-updates-digest',stage:'digest',correlation_id:correlationId,status:'started',period,period_key:periodKey});
   const windowLabel = `${start.toISOString().slice(0, 10)} → ${end.toISOString().slice(0, 10)}`;
 
   // Cron and manual retries are idempotent per period window. Return the
@@ -150,7 +155,7 @@ Deno.serve(async (req) => {
     } catch { return securityJsonError(503, 'metering_unavailable'); }
   }
 
-  const queuedDigest = { period, period_key:periodKey, period_start:start.toISOString(), period_end:end.toISOString(), queued_at:new Date().toISOString(), started_at:null, completed_at:null, error_code:null, safe_error_message:null, executive_summary:'Digest generation is queued.', status:'queued', update_count:0, candidate_count:0, top_update_ids:[], source_urls:[] };
+  const queuedDigest = { correlation_id:correlationId, period, period_key:periodKey, period_start:start.toISOString(), period_end:end.toISOString(), queued_at:new Date().toISOString(), started_at:null, completed_at:null, error_code:null, safe_error_message:null, executive_summary:'Digest generation is queued.', status:'queued', update_count:0, candidate_count:0, top_update_ids:[], source_urls:[] };
   const { error:queuedError } = await sb.from('market_digests').upsert(queuedDigest,{onConflict:'period,period_key'});
   if (queuedError) return json({ error:'Digest queue state could not be persisted.', code:'digest_persist_failed' },500);
 
@@ -192,9 +197,10 @@ Deno.serve(async (req) => {
   try {
     synthesis = await synthesizeWithAI(period, windowLabel, updates);
   } catch (providerError:any) {
-    console.warn(JSON.stringify({ function:'market-updates-digest', stage:'provider', status:'failed', attempts:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0 }));
+    const providerCode=classifyMarketError(providerError);
+    logMarketEvent('warn',{ function:'market-updates-digest', stage:'provider', correlation_id:correlationId, status:'failed', retry_attempt:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0, error_class:classifyMarketError(providerError) });
     await sb.from('market_digests').update({ status:'failed', completed_at:new Date().toISOString(), error_code:'provider_unavailable', safe_error_message:'The configured digest route was unavailable.' }).eq('period',period).eq('period_key',periodKey);
-    return json({ error:'The configured Market Updates digest route is unavailable.', code:'provider_unavailable', retryable:true }, 503);
+    return json({ error:'The configured Market Updates digest route is unavailable.', code:providerCode, stage:'digest', correlation_id:correlationId, retryable:!['provider_unauthorised','provider_payment_required'].includes(providerCode) }, 503);
   }
   const allowedIds = new Set(updates.map((update:any) => update.id));
   const body = synthesis.body;
@@ -240,6 +246,7 @@ Deno.serve(async (req) => {
     .single();
   if (insertError) return json({ error:'Generated digest could not be persisted.', code:'digest_persist_failed' }, 500);
 
+  logMarketEvent('info',{function:'market-updates-digest',stage:'digest',correlation_id:correlationId,status:'published',duration_ms:Date.now()-requestStartedAt,route:synthesis.telemetry.route_used,model_id:synthesis.telemetry.model_used,period_key:periodKey,update_count:updates.length});
   return json({
     digest: data,
     noData: false,

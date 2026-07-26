@@ -6,6 +6,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { classifyMarketError, logMarketEvent, marketCorrelationId } from "../_shared/marketUpdatesObservability.ts";
 const jsonWithCors = (cors: Record<string, string>) => (b: unknown, status = 200) =>
   new Response(JSON.stringify(b), {
     status,
@@ -31,6 +32,8 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
+  const correlationId=marketCorrelationId(req.headers);
+  cors['x-correlation-id']=correlationId;
   const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
@@ -59,6 +62,7 @@ Deno.serve(async (req) => {
   let body: any = {};
   try { body = req.method === "GET" ? {} : await req.json(); } catch { /* noop */ }
   const action = (body.action ?? new URL(req.url).searchParams.get("action") ?? "list") as string;
+  logMarketEvent('info',{function:'market-updates-source-admin',stage:'request',correlation_id:correlationId,status:'started',action});
 
   try {
     if (action === "list") {
@@ -176,6 +180,8 @@ Deno.serve(async (req) => {
 
     return json({ error: `unknown action: ${action}` }, 400);
   } catch (e: any) {
-    return json({ error: String(e?.message ?? e) }, 500);
+    const errorClass=classifyMarketError(e);
+    logMarketEvent('error',{function:'market-updates-source-admin',stage:'database',correlation_id:correlationId,status:'failed',error_class:errorClass});
+    return json({ error:'Market source administration could not complete the operation.', code:errorClass, stage:'database', correlation_id:correlationId, retryable:true }, 500);
   }
 });
