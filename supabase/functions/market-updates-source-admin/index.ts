@@ -30,6 +30,8 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
 }
 
 Deno.serve(async (req) => {
+  const cors = createCorsHeaders(req.headers.get("origin"));
+  const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
