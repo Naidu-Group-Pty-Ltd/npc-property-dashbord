@@ -812,7 +812,7 @@ export function renderTemplateToHtml(
 <meta charset="utf-8"/>
 <title>${escapeHtml(docTitle)}</title>
 ${metaTags}
-<style>${escapeStyleText(css)}</style>
+<style>${escapeStyleElementContent(css)}</style>
 </head>
 <body>
 ${pageHtml}
@@ -829,7 +829,12 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
 }
 
-/** Keep generated CSS inside the HTML parser's raw-text style context. */
-function escapeStyleText(css: string): string {
-  return css.replace(/</g, '\\3C ');
+/**
+ * Keep generated CSS inside its raw-text element. CSS may contain values from
+ * imported documents, so an HTML end-tag sequence must be encoded as CSS
+ * before the document is parsed. The CSS escape still evaluates to "<" when
+ * it occurs in a valid CSS string while the HTML parser never sees </style.
+ */
+function escapeStyleElementContent(css: string): string {
+  return css.replace(/<\/style/gi, '\\3C /style');
 }
