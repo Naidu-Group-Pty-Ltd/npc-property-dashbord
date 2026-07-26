@@ -349,10 +349,14 @@ describe("finance portal request channel is finance-safe (Phase 7, §15.1/§15.2
     expect(fpSource).not.toContain("verifyAuth(");
   });
 
-  it("scopes every read to the partner's client assignments", () => {
+  it("preserves client-wide and per-deal assignment scope on every read", () => {
     expect(fpSource).toContain("finance_portal_client_assignments");
-    expect(fpSource).toContain('allowedClients.has(String(r.client_id))');
+    expect(fpSource).toContain('.select("client_id, purchase_file_id")');
     expect(fpSource).toContain('.in("client_id", Array.from(allowedClients))');
+    expect(fpSource).toContain("a.purchase_file_id == null");
+    expect(fpSource).toContain("String(a.purchase_file_id) === String(r.purchase_file_id)");
+    expect(fpSource).toContain("if (!isAssignedRequest(r)) return null;");
+    expect(fpSource).toContain("(data ?? []).filter(isAssignedRequest).map(safeRequestProjection)");
   });
 
   it("never projects case identifiers or internal fields to the partner", () => {
@@ -362,7 +366,7 @@ describe("finance portal request channel is finance-safe (Phase 7, §15.1/§15.2
     expect(projection).not.toContain("case_id");
     expect(projection).not.toContain("discrepancy_id");
     expect(projection).not.toContain("resolution_note");
-    expect(fpSource).toContain("requests: (data ?? []).map(safeRequestProjection)");
+    expect(fpSource).toContain(".map(safeRequestProjection)");
   });
 
   it("returns no risk, screening or discrepancy detail in any response", () => {
