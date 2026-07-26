@@ -188,7 +188,11 @@ function applyFilters(value: any, filterParts: string[]): any {
   return value;
 }
 
-export function resolveBindable(input: unknown, ctx: ResolveContext): string {
+export function resolveBindable(
+  input: unknown,
+  ctx: ResolveContext,
+  transformResolvedValue: (value: string) => string = (value) => value,
+): string {
   if (input == null) return '';
   const s = String(input);
 
@@ -226,7 +230,7 @@ export function resolveBindable(input: unknown, ctx: ResolveContext): string {
     }
 
     value = applyFilters(value, filterParts);
-    return value == null ? '' : String(value);
+    return value == null ? '' : transformResolvedValue(String(value));
   });
 }
 

@@ -141,6 +141,13 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
+function escCssString(s: unknown): string {
+  return esc(s).replace(
+    /["\\\n\r\f]/g,
+    (character) => `\\${character.charCodeAt(0).toString(16)} `,
+  );
+}
+
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
@@ -1544,7 +1551,7 @@ function renderDonutSvg(
     return `<path d="${d}" fill="${fill}" stroke="${VIZ_PAPER}" stroke-width="1.2"/>`;
   }).join("");
   const centerVal = opts.centerLabel ?? `${Math.round((segments[0]?.value || 0) / total * 100)}%`;
-  const centerSub = opts.centerSub ?? svgEscape(segments[0]?.label || "");
+  const centerSub = svgEscape((opts.centerSub ?? segments[0]?.label ?? "").toUpperCase());
   const legend = segments.map((s, i) => {
     const pct = Math.round((Math.max(0, s.value) / total) * 100);
     const y = 48 + i * 22;
@@ -1559,7 +1566,7 @@ function renderDonutSvg(
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     ${title}${arcs}
     <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="Playfair Display,Georgia,serif" font-weight="800" font-size="28" fill="${VIZ_INK}" style="font-variant-numeric:lining-nums tabular-nums;">${svgEscape(centerVal)}</text>
-    <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.6" fill="${VIZ_INK_MUTED}">${centerSub.toUpperCase()}</text>
+    <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.6" fill="${VIZ_INK_MUTED}">${centerSub}</text>
     ${legend}
   </svg>`;
 }
@@ -3104,12 +3111,12 @@ export async function buildHtml(
         font-variant-numeric: oldstyle-nums proportional-nums;
       }
       @top-right {
-        content: "${esc(address)}";
+        content: "${escCssString(address)}";
         font-family: 'Cormorant Garamond', serif;
         font-style: italic; font-size: 9pt; color: ${THEME.inkMuted};
       }
       @bottom-left {
-        content: "${esc(brandName)}";
+        content: "${escCssString(brandName)}";
         font-family: 'Inter', sans-serif;
         font-size: 7.5pt; color: ${THEME.inkMuted};
         letter-spacing: .14em; text-transform: uppercase;
@@ -4555,7 +4562,7 @@ ${(() => {
       margin: 18mm 16mm 16mm 16mm;
       background: ${palette.paper};
       @top-left { content: string(chapter); }
-      @top-right { content: "${esc(address)}"; font-style: italic; }
+      @top-right { content: "${escCssString(address)}"; font-style: italic; }
       @bottom-right { content: counter(page) " · " counter(pages); }
     }
     .landscape-spread {
@@ -4836,14 +4843,14 @@ ${(() => {
         color: var(--ed-ink-soft);
       }
       @top-right {
-        content: "${esc(address)}";
+        content: "${escCssString(address)}";
         font-family: 'IBM Plex Mono', monospace;
         font-size: 7.6pt; font-weight: 400;
         color: var(--ed-ink-soft);
         font-style: normal; letter-spacing: 0.08em;
       }
       @bottom-left {
-        content: "${esc(brandName)}";
+        content: "${escCssString(brandName)}";
         font-family: 'IBM Plex Mono', monospace;
         font-size: 7.4pt; font-weight: 500;
         text-transform: uppercase; letter-spacing: 0.22em;

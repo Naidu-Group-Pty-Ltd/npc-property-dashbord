@@ -17,6 +17,7 @@ const PIXEL_BYTES = Uint8Array.from(atob(PIXEL_BASE64), c => c.charCodeAt(0));
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': '*',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 const respondPixel = () => new Response(PIXEL_BYTES, {

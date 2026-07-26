@@ -150,7 +150,19 @@ export async function invokeSecureFunction<T = any>(
     // WP-11B/C cookie-only: the staff session travels solely in the HttpOnly
     // `__Host-session_token` cookie (`credentials: 'include'`). No raw session
     // token is read from storage or attached to the body/headers.
+    //
+    // CORS-SAFE CARRIERS — do not move these into request headers.
+    // The frontend deploys as one bundle; the ~300 edge functions each carry
+    // their own bundled copy of `_shared/auth.ts` and are redeployed
+    // individually. A custom request header therefore only works once EVERY
+    // function it can reach has been redeployed with that header in its
+    // `Access-Control-Allow-Headers`. Until then the browser fails the
+    // preflight and `fetch()` throws `Failed to fetch` — the whole app goes
+    // dark. Body fields have no preflight requirement, so they stay correct
+    // no matter how far the client runs ahead of the backend.
+    // See scripts/security/check-cors-contract.mjs.
     const requestBody = {
+      correlation_id: correlationId,
       ...(body ?? {}),
       ...(stepUpToken ? { step_up_token: stepUpToken } : {}),
     };
@@ -161,12 +173,14 @@ export async function invokeSecureFunction<T = any>(
 
     const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
       method: 'POST',
+      // Only CORS-safelisted headers plus the two Supabase auth headers every
+      // deployed function already allow-lists. `correlation_id` and
+      // `step_up_token` ride in the body (see the note above) — adding either
+      // as a header here breaks every page until all functions are redeployed.
       headers: {
         'Content-Type': 'application/json',
         'apikey': SUPABASE_ANON_KEY,
         'Authorization': `Bearer ${bearerToken}`,
-        ...(stepUpToken ? { 'x-step-up-token': stepUpToken } : {}),
-        'x-correlation-id': correlationId,
       },
       credentials: TOKEN_AUTH_FUNCTIONS.has(functionName) ? 'omit' : 'include',
       body: JSON.stringify(requestBody),

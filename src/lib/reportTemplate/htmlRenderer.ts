@@ -25,7 +25,8 @@ import {
 } from './bindingResolver';
 import { getHtmlBlockRenderer, renderUnsupportedHtml, type HtmlBlockContext } from './blocks/html';
 import { renderOverlay } from './blocks/_shared.html';
-import { tokenCssDeclaration, tokensToCssVariables, tokensToFontFaceCss } from './cssTokens';
+import { tokensToCssVariables, tokensToFontFaceCss } from './cssTokens';
+import { toRendererHex } from './cssColor';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { stableJson, templateMetaKey } from './previewCache';
 
@@ -539,7 +540,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   const bg = (page as any).baselineGrid;
   if (bg?.show) {
     const size = Number(bg.size ?? 12);
-    const color = String(bg.color ?? 'rgba(191,155,80,0.20)');
+    const color = toRendererHex(bg.color) ?? '#BF9B5033';
     const offset = Number(bg.offset ?? 0);
     baselineEl = `<div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(to bottom, transparent 0, transparent ${size - 1}pt, ${color} ${size - 1}pt, ${color} ${size}pt);background-position:0 ${offset}pt;"></div>`;
   }
