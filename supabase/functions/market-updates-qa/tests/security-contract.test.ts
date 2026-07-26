@@ -23,7 +23,20 @@ Deno.test('scheduled Market Q&A callers use signed internal invocation with a ta
 });
 Deno.test('Market AI endpoints keep provider failures generic and bound input', () => {
   assertStringIncludes(voice, 'enforceBase64Limit'); assertStringIncludes(voice, 'transcription_unavailable');
-  assertStringIncludes(qa, 'enforceJsonBodyLimit'); assertStringIncludes(qa, 'max_tokens: 900');
+  assertStringIncludes(qa, 'enforceJsonBodyLimit');
+  assertStringIncludes(qa, "'market_updates_qa_fast'");
+  assertStringIncludes(qa, "'market_updates_qa_deep'");
+  assertStringIncludes(qa, 'callLLM({');
+  assert(!qa.includes('ai.gateway.lovable.dev'));
   assert(!qa.includes('anonymous callers still get an answer'));
   assert(!voice.includes('details: lastDetails'));
+});
+Deno.test('Market Q&A keeps retrieval grounded and authenticated-origin safe', () => {
+  assertStringIncludes(qa, 'createCorsHeaders');
+  assertStringIncludes(qa, 'enforceCsrf');
+  assert(!qa.includes("'Access-Control-Allow-Origin': '*'"));
+  assertStringIncludes(qa, ".eq('status','published')");
+  assertStringIncludes(qa, "code:'retrieval_failed'");
+  assertStringIncludes(qa, 'contextIds.has(k.source_id!)');
+  assertStringIncludes(qa, 'The generated answer could not be validated against the retrieved source records.');
 });
