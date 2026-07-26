@@ -482,6 +482,77 @@ describe("transaction and counterparty CDD (Phase 9, §12.5)", () => {
   });
 });
 
+describe("monitoring and ongoing CDD (Phase 10, §12.9 + §18)", () => {
+  const monSource = readFileSync(
+    join(repo, "supabase/functions/aml-monitoring/index.ts"), "utf8");
+  const cddMigration = readFileSync(
+    join(repo, "supabase/migrations/20260726120000_aml_ongoing_cdd.sql"), "utf8");
+
+  it("schedules the periodic cycle from the case's risk rating", () => {
+    const branch = monSource.slice(
+      monSource.indexOf('op === "schedule_periodic_review"'),
+      monSource.indexOf('op === "record_trigger_review"'));
+    expect(branch).toContain("requireWrite();");
+    expect(branch).toContain("reviewIntervalMonths(caseRow)");
+    expect(monSource).toContain("DEFAULT_REVIEW_INTERVALS");
+  });
+
+  it("raises trigger reviews only from a known trigger catalogue with detail", () => {
+    const branch = monSource.slice(
+      monSource.indexOf('op === "record_trigger_review"'),
+      monSource.indexOf('op === "assign_review"'));
+    expect(branch).toContain("TRIGGER_KINDS[triggerKind]");
+    expect(branch).toContain("detail must be at least 10 characters");
+    expect(monSource).toContain("screening_match:");
+    expect(monSource).toContain("ownership_change:");
+  });
+
+  it("never moves a deadline silently — reason, original date and count are kept", () => {
+    const branch = monSource.slice(
+      monSource.indexOf('op === "extend_review_deadline"'),
+      monSource.indexOf('op === "end_relationship"'));
+    expect(branch).toContain("reason must be at least 10 characters");
+    expect(branch).toContain("original_due_at: existing.original_due_at ?? existing.due_at");
+    expect(branch).toContain("extension_count: Number(existing.extension_count ?? 0) + 1");
+    expect(branch).toContain("appendCaseEvent(");
+  });
+
+  it("relationship end is reasoned, gated on outstanding work and preserves history", () => {
+    const branch = monSource.slice(
+      monSource.indexOf('op === "end_relationship"'),
+      monSource.indexOf('op === "set_monitoring_status"'));
+    expect(branch).toContain("Reviewer/MLRO required");
+    expect(branch).toContain("reason must be at least 10 characters");
+    expect(branch).toContain("open_obligations");
+    // Scheduled work is cancelled, never deleted.
+    expect(branch).not.toContain(".delete()");
+    expect(branch).toContain('outcome: "relationship_ended"');
+  });
+
+  it("ended relationships stop generating new monitoring work", () => {
+    expect(monSource).toContain('.eq("monitoring_status", "ended")');
+    expect(monSource).toContain("if (isEnded(s.case_id)) continue;");
+    expect(monSource).toContain('.eq("monitoring_status", "active")');
+    expect(monSource).toContain("relationship_ended");
+  });
+
+  it("reinstating an ended relationship is MLRO-only", () => {
+    const branch = monSource.slice(
+      monSource.indexOf('op === "set_monitoring_status"'),
+      monSource.indexOf('op === "case_monitoring_summary"'));
+    expect(branch).toContain("Only the MLRO can reinstate monitoring on an ended relationship");
+    expect(branch).toContain("ending a relationship uses end_relationship");
+  });
+
+  it("migration is additive with a documented rollback", () => {
+    expect(cddMigration).toContain("ADD COLUMN IF NOT EXISTS monitoring_status");
+    expect(cddMigration).toContain("ADD COLUMN IF NOT EXISTS relationship_ended_at");
+    expect(cddMigration).toContain("ADD COLUMN IF NOT EXISTS extension_count");
+    expect(cddMigration).toContain("-- ROLLBACK:");
+    expect(cddMigration).not.toMatch(/DROP TABLE(?!\s+IF EXISTS aml\.(finance_requests|service_gate_decisions))/);
+  });
+});
+
 describe("workflow-dimension migration invariants", () => {
   it("enforces one open case per client with a partial unique index", () => {
     expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");

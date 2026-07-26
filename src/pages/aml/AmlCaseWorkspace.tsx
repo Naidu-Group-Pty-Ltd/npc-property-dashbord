@@ -14,8 +14,8 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle, ArrowLeft, CheckCircle2, Circle, CircleDot, ClipboardList,
-  FileText, Handshake, Loader2, Lock, MailQuestion, Minus, Network, ScanSearch,
-  Scale, User, Wallet, History,
+  FileText, Handshake, Loader2, Lock, MailQuestion, Minus, Network, Radar,
+  ScanSearch, Scale, User, Wallet, History,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,6 +36,9 @@ import {
   amlTransactionsApi, type AmlTransaction, type AmlCounterpartyCase,
   type AmlCounterpartyCddSummary, type AmlSettlementGateStatus,
 } from "@/lib/aml/amlTransactionsApi";
+import {
+  amlMonitoringApi, type AmlCaseMonitoring, type AmlReview, type AmlReviewTriggerKind,
+} from "@/lib/aml/amlMonitoringApi";
 import {
   CASE_STAGE_LABELS, caseStage, clientPortalStatus, CLIENT_PORTAL_STATUS_LABELS,
   serviceGateStatus, progressRail, type ProgressRailState,
@@ -78,7 +81,7 @@ const GATE_LABELS: Record<string, string> = {
 type SectionKey =
   | "overview" | "identity" | "ownership"
   | "counterparty" | "finance" | "documents"
-  | "risk" | "requests" | "timeline";
+  | "risk" | "monitoring" | "requests" | "timeline";
 
 interface SectionDef {
   key: SectionKey;
@@ -108,6 +111,7 @@ const SECTION_GROUPS: Array<{ group: string; sections: SectionDef[] }> = [
     group: "Decision & oversight",
     sections: [
       { key: "risk", label: "Risk & Decision", icon: Scale, visible: () => true },
+      { key: "monitoring", label: "Monitoring & Reviews", icon: Radar, visible: (a) => a.canInvestigate },
       { key: "requests", label: "Requests", icon: MailQuestion, visible: () => true },
       { key: "timeline", label: "Timeline & Audit", icon: History, visible: () => true },
     ],
@@ -368,6 +372,14 @@ export default function AmlCaseWorkspace() {
             <DocumentsEvidenceSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
           )}
           {section === "risk" && <RiskTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />}
+          {section === "monitoring" && canInvestigate && (
+            <MonitoringReviewsSection
+              caseId={caseRow.id}
+              canWrite={canWrite}
+              isReviewer={access.roles.has("reviewer") || access.isMlro}
+              onChanged={load}
+            />
+          )}
           {section === "requests" && (
             <RequestsSection
               caseId={caseRow.id}
@@ -775,6 +787,365 @@ function DocumentsEvidenceSection({
               )}
             </CardContent>
           )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Monitoring & Reviews (Phase 10, §12.9 + §18)                        */
+/* ------------------------------------------------------------------ */
+
+const TRIGGER_OPTIONS: Array<{ value: AmlReviewTriggerKind; label: string }> = [
+  { value: "risk_increase", label: "Risk rating increased" },
+  { value: "screening_match", label: "New screening match" },
+  { value: "adverse_media", label: "Adverse media identified" },
+  { value: "ownership_change", label: "Ownership or control changed" },
+  { value: "transaction_change", label: "Material transaction change" },
+  { value: "counterparty_uncooperative", label: "Counterparty uncooperative" },
+  { value: "client_circumstances", label: "Client circumstances changed" },
+  { value: "other", label: "Other trigger" },
+];
+
+const REVIEW_CLASSIFICATION_LABELS: Record<string, string> = {
+  periodic: "Periodic review",
+  trigger_based: "Trigger review",
+  pre_commencement: "Pre-commencement review",
+};
+
+function MonitoringReviewsSection({
+  caseId, canWrite, isReviewer, onChanged,
+}: { caseId: string; canWrite: boolean; isReviewer: boolean; onChanged: () => void }) {
+  const [monitoring, setMonitoring] = useState<AmlCaseMonitoring | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [triggerKind, setTriggerKind] = useState<AmlReviewTriggerKind>("risk_increase");
+  const [triggerDetail, setTriggerDetail] = useState("");
+  const [endReason, setEndReason] = useState("");
+  const [showEnd, setShowEnd] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const { monitoring: m } = await amlMonitoringApi.caseMonitoringSummary(caseId);
+      setMonitoring(m);
+    } catch {
+      setMonitoring(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [caseId]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const run = async (key: string, fn: () => Promise<unknown>, okTitle: string) => {
+    setBusy(key);
+    try {
+      await fn();
+      toast({ title: okTitle });
+      await load();
+      onChanged();
+    } catch (e: any) {
+      toast({ title: "Action failed", description: e.message, variant: "destructive" });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const extendDeadline = async (review: AmlReview) => {
+    const due = window.prompt("New deadline (YYYY-MM-DD):") ?? "";
+    if (!due.trim()) return;
+    const reason = window.prompt("Reason for extending the deadline (minimum 10 characters):") ?? "";
+    if (!reason.trim()) return;
+    await run(review.id, () => amlMonitoringApi.extendReviewDeadline({
+      id: review.id, due_at: new Date(`${due.trim()}T00:00:00Z`).toISOString(), reason: reason.trim(),
+    }), "Deadline extended");
+  };
+
+  if (loading) {
+    return <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin" /></div>;
+  }
+  if (!monitoring) {
+    return (
+      <Card><CardContent className="py-6 text-sm text-muted-foreground">
+        Monitoring information is unavailable for this case.
+      </CardContent></Card>
+    );
+  }
+
+  const ended = monitoring.monitoring_status === "ended";
+  const paused = monitoring.monitoring_status === "paused";
+  const today = new Date().toISOString();
+
+  return (
+    <div className="space-y-4">
+      <Card className={ended ? "border-muted-foreground/40" : undefined}>
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="text-sm">Ongoing monitoring</CardTitle>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Customer due diligence continues for as long as the business relationship lasts.
+              </p>
+            </div>
+            <Badge
+              variant="outline"
+              className={
+                ended ? "border-muted-foreground/40 text-muted-foreground"
+                : paused ? "border-warning/40 text-warning"
+                : "border-success/40 text-success"
+              }
+            >
+              {ended ? "Relationship ended" : paused ? "Paused" : "Active"}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          {ended ? (
+            <>
+              <Row k="Ended" v={monitoring.relationship_ended_at ? new Date(monitoring.relationship_ended_at).toLocaleDateString() : "—"} />
+              {monitoring.relationship_end_reason && (
+                <div className="rounded bg-muted/40 p-2 text-xs">{monitoring.relationship_end_reason}</div>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Scheduled reviews are closed and no new monitoring work will be raised.
+                The full history and evidence remain on the case and stay subject to retention rules.
+              </p>
+            </>
+          ) : (
+            <>
+              <Row k="Review cycle" v={`Every ${monitoring.review_interval_months} months${monitoring.risk_rating ? ` (${monitoring.risk_rating} risk)` : ""}`} />
+              <Row
+                k="Next periodic review"
+                v={
+                  monitoring.next_periodic_review_at
+                    ? <span className={monitoring.next_periodic_review_at < today ? "text-warning" : ""}>
+                        {new Date(monitoring.next_periodic_review_at).toLocaleDateString()}
+                        {monitoring.next_periodic_review_at < today ? " · due" : ""}
+                      </span>
+                    : <span className="text-muted-foreground">Not scheduled</span>
+                }
+              />
+              <Row k="Last review" v={monitoring.last_periodic_review_at ? new Date(monitoring.last_periodic_review_at).toLocaleDateString() : "—"} />
+              <Row
+                k="Screening refresh"
+                v={
+                  monitoring.rescreen_due_at
+                    ? <span className={monitoring.rescreen_overdue ? "text-warning" : ""}>
+                        {monitoring.rescreen_overdue ? "Overdue since " : "Due "}
+                        {new Date(monitoring.rescreen_due_at).toLocaleDateString()}
+                      </span>
+                    : <span className="text-muted-foreground">No screening on record</span>
+                }
+              />
+              {paused && monitoring.monitoring_status_reason && (
+                <div className="rounded bg-muted/40 p-2 text-xs">Paused: {monitoring.monitoring_status_reason}</div>
+              )}
+              {canWrite && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  {!monitoring.next_periodic_review_at && (
+                    <Button size="sm" variant="outline" disabled={busy === "schedule"}
+                      onClick={() => run("schedule", () => amlMonitoringApi.schedulePeriodicReview({ case_id: caseId }), "Periodic review scheduled")}>
+                      Schedule periodic review
+                    </Button>
+                  )}
+                  <Button size="sm" variant="ghost" disabled={busy === "pause"}
+                    onClick={() => {
+                      const reason = window.prompt(
+                        paused ? "Reason for resuming monitoring (minimum 10 characters):"
+                          : "Reason for pausing monitoring (minimum 10 characters):",
+                      ) ?? "";
+                      if (!reason.trim()) return;
+                      void run("pause", () => amlMonitoringApi.setMonitoringStatus({
+                        case_id: caseId, status: paused ? "active" : "paused", reason: reason.trim(),
+                      }), paused ? "Monitoring resumed" : "Monitoring paused");
+                    }}>
+                    {paused ? "Resume monitoring" : "Pause monitoring"}
+                  </Button>
+                  {isReviewer && (
+                    <Button size="sm" variant="ghost" onClick={() => setShowEnd((v) => !v)}>
+                      Record relationship end
+                    </Button>
+                  )}
+                </div>
+              )}
+              {showEnd && isReviewer && (
+                <div className="space-y-2 rounded-md border border-border/60 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Recording the end of the business relationship closes ongoing due diligence and
+                    starts the records-retention clock. History is preserved. Outstanding enhanced
+                    due diligence or alerts must be resolved first.
+                  </p>
+                  <Textarea
+                    rows={2}
+                    aria-label="Reason for ending the relationship"
+                    placeholder="Reason (required, minimum 10 characters)"
+                    value={endReason}
+                    onChange={(e) => setEndReason(e.target.value)}
+                  />
+                  <Button size="sm" variant="outline" disabled={busy === "end" || endReason.trim().length < 10}
+                    onClick={() => run("end", async () => {
+                      await amlMonitoringApi.endRelationship({ case_id: caseId, reason: endReason.trim() });
+                      setEndReason(""); setShowEnd(false);
+                    }, "Relationship end recorded")}>
+                    Confirm relationship end
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between gap-2">
+            <CardTitle className="text-sm">
+              Reviews
+              {monitoring.overdue_review_count > 0 && (
+                <span className="ml-2 text-xs font-normal text-warning">
+                  {monitoring.overdue_review_count} overdue
+                </span>
+              )}
+            </CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {monitoring.open_reviews.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No reviews are currently open.</p>
+          ) : (
+            <ul className="divide-y divide-border/60 text-sm">
+              {monitoring.open_reviews.map((r) => {
+                const overdue = Boolean(r.due_at && r.due_at < today);
+                return (
+                  <li key={r.id} className="space-y-1 py-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate">
+                          {REVIEW_CLASSIFICATION_LABELS[r.classification] ?? r.classification}
+                          {r.trigger_kind && (
+                            <span className="text-muted-foreground">
+                              {" "}· {TRIGGER_OPTIONS.find((t) => t.value === r.trigger_kind)?.label ?? r.trigger_kind}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {r.due_at ? `Due ${new Date(r.due_at).toLocaleDateString()}` : "No deadline"}
+                          {overdue ? " · overdue" : ""}
+                          {r.extension_count ? ` · extended ${r.extension_count}×` : ""}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className={overdue ? "border-warning/40 text-warning" : "capitalize"}>
+                          {String(r.status).replace(/_/g, " ")}
+                        </Badge>
+                        {canWrite && (
+                          <>
+                            {!r.assigned_to && (
+                              <Button size="sm" variant="ghost" disabled={busy === r.id}
+                                onClick={() => run(r.id, () => amlMonitoringApi.assignReview({ id: r.id }), "Review assigned to you")}>
+                                Take
+                              </Button>
+                            )}
+                            <Button size="sm" variant="ghost" disabled={busy === r.id} onClick={() => extendDeadline(r)}>
+                              Extend
+                            </Button>
+                            <Button size="sm" variant="outline" disabled={busy === r.id}
+                              onClick={() => {
+                                const notes = window.prompt("Review outcome notes (optional):") ?? "";
+                                void run(r.id, () => amlMonitoringApi.completeReview(r.id, "no_change", "complete", notes || undefined), "Review completed");
+                              }}>
+                              Complete
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    {r.extension_reason && (
+                      <p className="text-xs text-muted-foreground">Extension reason: {r.extension_reason}</p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+
+          {canWrite && !ended && (
+            <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+              <div className="text-xs font-semibold uppercase text-muted-foreground">Raise a trigger review</div>
+              <div className="grid gap-2 sm:grid-cols-[240px_1fr]">
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                  aria-label="Trigger type"
+                  value={triggerKind}
+                  onChange={(e) => setTriggerKind(e.target.value as AmlReviewTriggerKind)}
+                >
+                  {TRIGGER_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </select>
+                <Button
+                  size="sm" variant="outline" className="sm:justify-self-start"
+                  disabled={busy === "trigger" || triggerDetail.trim().length < 10}
+                  onClick={() => run("trigger", async () => {
+                    await amlMonitoringApi.recordTriggerReview({
+                      case_id: caseId, trigger_kind: triggerKind, detail: triggerDetail.trim(),
+                    });
+                    setTriggerDetail("");
+                  }, "Trigger review raised")}
+                >
+                  Raise review
+                </Button>
+              </div>
+              <Textarea
+                rows={2}
+                aria-label="Trigger detail"
+                placeholder="What changed and why it needs review (required, minimum 10 characters)."
+                value={triggerDetail}
+                onChange={(e) => setTriggerDetail(e.target.value)}
+              />
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {(monitoring.open_alerts.length > 0 || monitoring.open_edd.length > 0) && (
+        <Card className="border-warning/40">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <AlertTriangle className="h-4 w-4 text-warning" /> Open monitoring work
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {monitoring.open_alerts.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold uppercase text-muted-foreground">Alerts</div>
+                <ul className="mt-1 space-y-1 text-xs">
+                  {monitoring.open_alerts.map((a) => (
+                    <li key={a.id} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate">{a.title}</span>
+                      <Badge variant="outline" className="capitalize">{a.severity}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {monitoring.open_edd.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold uppercase text-muted-foreground">Enhanced due diligence</div>
+                <ul className="mt-1 space-y-1 text-xs">
+                  {monitoring.open_edd.map((e) => (
+                    <li key={e.id} className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate">{e.reason}</span>
+                      <Badge variant="outline" className="capitalize">{String(e.status).replace(/_/g, " ")}</Badge>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Alerts and EDD are worked on the Monitoring page; decisions there write back to this case's audit trail.
+            </p>
+          </CardContent>
         </Card>
       )}
     </div>

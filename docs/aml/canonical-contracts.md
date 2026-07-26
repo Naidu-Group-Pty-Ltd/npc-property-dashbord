@@ -253,3 +253,47 @@ the ONLY writer is `aml-risk` op `set_service_gate` (reviewer/MLRO;
 - Both fields are stripped from the generic `upsert_cp_case` patch — they
   change only through the dedicated audited ops, and every action appends a
   hash-chained case event ("Counterparty Action" in the §19 audit taxonomy).
+
+## 13. Ongoing CDD and the relationship lifecycle (Phase 10, §12.9 + §18)
+
+Ongoing customer due diligence runs for the applicable relationship period and
+is driven by three review classifications on
+`aml.existing_customer_reviews`: `periodic`, `trigger_based` and the legacy
+`pre_commencement` remediation queue.
+
+- **Risk-based periodic cycle**: interval months come from
+  `aml.tenant_settings.review_interval_config` (defaults
+  prohibited 3 · high 12 · medium 24 · low 36 · unrated 12).
+  `schedule_periodic_review` books the next review and stamps
+  `aml.cases.next_periodic_review_at`; `complete_review` on a periodic review
+  records `last_periodic_review_at` and books the following cycle, so the
+  cadence cannot lapse silently. The cron scan raises the review when its
+  scheduled date arrives.
+- **Trigger-event reviews**: `record_trigger_review` accepts only the
+  catalogue (risk_increase · screening_match · adverse_media ·
+  ownership_change · transaction_change · counterparty_uncooperative ·
+  client_circumstances · other), each with its own SLA and priority, and
+  requires a detail note (≥10 chars) that lands on the case timeline.
+- **Assignments and deadlines**: `assign_review` records ownership;
+  `extend_review_deadline` requires a reason (≥10 chars), refuses to move a
+  deadline earlier or to touch a closed review, preserves `original_due_at`,
+  increments `extension_count` and audits every change. Overdue reviews
+  escalate to `remediation_required` on the cron scan.
+- **Relationship end** (§18 retention trigger): `end_relationship` is
+  reviewer/MLRO-only, requires a reason (≥10 chars), and is refused while
+  enhanced due diligence or alerts remain open unless the MLRO records it.
+  It sets `monitoring_status='ended'` with
+  `relationship_ended_at`/`relationship_end_reason`/`_recorded_by`, clears the
+  next-review date and marks open reviews `exited` with outcome
+  `relationship_ended` — cancelled, never deleted. All completed history and
+  evidence remain on the case for retention.
+- **Monitoring suppression**: the cron scan loads ended cases once and skips
+  them for rescreening alerts, stale-verification alerts and periodic-review
+  creation. `schedule_periodic_review` and `record_trigger_review` return 409
+  `relationship_ended` for those cases.
+- **Pause/resume**: `set_monitoring_status` handles `active`/`paused` with a
+  reason; it cannot end a relationship, and reinstating monitoring on an
+  ended relationship is MLRO-only (it reverses a regulatory record).
+- **Read**: `case_monitoring_summary` powers the workspace section —
+  relationship state, cycle interval, next/last review, screening-refresh due
+  and overdue flag, open and recent reviews, open alerts and open EDD.
