@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Eye, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 
 const MAX_PAGE_HTML_CACHE_ENTRIES = 16;
+export const LIVE_PREVIEW_SANDBOX = 'allow-scripts';
 
 // Template + selection come straight from templateEditorStore (slice
 // subscriptions, rehaul Phase 2); only preview-specific inputs remain props.
@@ -179,7 +180,7 @@ function LiveHtmlPreviewImpl({
             ref={iframeRef}
             title="Live HTML preview"
             srcDoc={html}
-            sandbox="allow-scripts"
+            sandbox={LIVE_PREVIEW_SANDBOX}
             className="w-full h-full bg-white border-0"
           />
         </div>
