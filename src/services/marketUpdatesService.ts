@@ -176,10 +176,10 @@ export async function ensureMarketUpdatesFresh(health:MarketSourceHealth,publish
 
 export async function generateMarketDigest(period: MarketDigestPeriod = '24h'): Promise<MarketDigestGenerationResult> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-digest', { body: { period } });
+    const { data, error } = await invokeSecureFunction('market-updates-digest', { period });
     if (error) throw error;
-    const digest = data?.digest ? mapDigest(data.digest) : (await fetchLatestMarketDigest(period));
-    return { digest, message: data?.message ?? '', noData: Boolean(data?.noData) };
+    const digest = (data as any)?.digest ? mapDigest((data as any).digest) : (await fetchLatestMarketDigest(period));
+    return { digest, message: (data as any)?.message ?? '', noData: Boolean((data as any)?.noData) };
   } catch (e) { throw operationalError('digest', e, 'market-updates-digest'); }
 }
 
