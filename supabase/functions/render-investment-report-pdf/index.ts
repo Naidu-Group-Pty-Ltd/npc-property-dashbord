@@ -1544,7 +1544,7 @@ function renderDonutSvg(
     return `<path d="${d}" fill="${fill}" stroke="${VIZ_PAPER}" stroke-width="1.2"/>`;
   }).join("");
   const centerVal = opts.centerLabel ?? `${Math.round((segments[0]?.value || 0) / total * 100)}%`;
-  const centerSub = svgEscape(opts.centerSub ?? segments[0]?.label ?? "");
+  const centerSub = svgEscape((opts.centerSub ?? segments[0]?.label ?? "").toUpperCase());
   const legend = segments.map((s, i) => {
     const pct = Math.round((Math.max(0, s.value) / total) * 100);
     const y = 48 + i * 22;
@@ -1559,7 +1559,7 @@ function renderDonutSvg(
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     ${title}${arcs}
     <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="Playfair Display,Georgia,serif" font-weight="800" font-size="28" fill="${VIZ_INK}" style="font-variant-numeric:lining-nums tabular-nums;">${svgEscape(centerVal)}</text>
-    <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.6" fill="${VIZ_INK_MUTED}">${svgEscape(centerSub.toUpperCase())}</text>
+    <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.6" fill="${VIZ_INK_MUTED}">${centerSub}</text>
     ${legend}
   </svg>`;
 }
