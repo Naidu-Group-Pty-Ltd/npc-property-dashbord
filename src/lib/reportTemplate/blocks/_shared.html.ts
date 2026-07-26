@@ -106,11 +106,11 @@ function buildEffectStyle(o: any): string {
   if (e.shadow) {
     const s = e.shadow;
     const inset = s.inset ? 'inset ' : '';
-    parts.push(`box-shadow:${inset}${Number(s.x ?? 0)}pt ${Number(s.y ?? 2)}pt ${Number(s.blur ?? 8)}pt ${Number(s.spread ?? 0)}pt ${s.color ?? 'rgba(0,0,0,0.25)'}`);
+    parts.push(`box-shadow:${inset}${Number(s.x ?? 0)}pt ${Number(s.y ?? 2)}pt ${Number(s.blur ?? 8)}pt ${Number(s.spread ?? 0)}pt ${esc(s.color ?? 'rgba(0,0,0,0.25)')}`);
   }
   if (e.blendMode && e.blendMode !== 'normal') parts.push(`mix-blend-mode:${e.blendMode}`);
   if (e.outline && Number(e.outline.width ?? 0) > 0) {
-    parts.push(`outline:${Number(e.outline.width)}pt ${e.outline.style ?? 'solid'} ${e.outline.color ?? '#BF9B50'}`);
+    parts.push(`outline:${Number(e.outline.width)}pt ${e.outline.style ?? 'solid'} ${esc(e.outline.color ?? '#BF9B50')}`);
     parts.push(`outline-offset:${Number(e.outline.offset ?? 0)}pt`);
   }
   return parts.length ? parts.join(';') + ';' : '';
