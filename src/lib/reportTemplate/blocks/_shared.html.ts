@@ -442,8 +442,12 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
           const cellRule = matchRule(r, c.key);
           const applied = rowRule ?? cellRule;
           const align = s.align ?? c.align ?? 'left';
-          const bg = s.bg ?? (applied?.bg) ?? baseRowBg;
-          const fg = s.color ?? (applied?.color) ?? rowColor;
+          const bg = applied?.bg != null && s.bg == null
+            ? resolveBindableColor(applied.bg, ctx, baseRowBg)
+            : s.bg ?? baseRowBg;
+          const fg = applied?.color != null && s.color == null
+            ? resolveBindableColor(applied.color, ctx, rowColor)
+            : s.color ?? rowColor;
           const fw = s.fontWeight ?? (applied?.fontWeight) ?? 'normal';
           let raw: any = r[c.key];
           if (typeof raw === 'string') raw = resolveBindable(raw, ctx);
