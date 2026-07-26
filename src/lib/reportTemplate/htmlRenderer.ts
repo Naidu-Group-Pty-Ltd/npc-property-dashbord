@@ -830,11 +830,12 @@ function escapeHtml(s: string): string {
 }
 
 /**
- * Keep generated CSS inside its raw-text element. CSS may contain values from
- * imported documents, so an HTML end-tag sequence must be encoded as CSS
- * before the document is parsed. The CSS escape still evaluates to "<" when
- * it occurs in a valid CSS string while the HTML parser never sees </style.
+ * Keep generated CSS inside the HTML parser's raw-text style element.
+ *
+ * Escaping every less-than sign as CSS preserves its value while preventing
+ * untrusted template tokens (or other generated CSS) from spelling an HTML
+ * `</style>` end tag.
  */
 function escapeStyleElementContent(css: string): string {
-  return css.replace(/<\/style/gi, '\\3C /style');
+  return css.replace(/</g, '\\3C ');
 }
