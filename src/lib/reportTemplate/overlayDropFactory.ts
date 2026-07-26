@@ -6,7 +6,7 @@
  * overlay of the matching kind at the drop point. Pure + unit-tested; the
  * defaults mirror the palette in `PagesPanel.tsx`.
  */
-import { type Block, type Overlay } from './templateSchema';
+import { BlockSchema, OverlaySchema, type Block, type Overlay } from './templateSchema';
 
 export interface DropPoint {
   x: number;

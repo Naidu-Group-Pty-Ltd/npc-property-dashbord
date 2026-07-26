@@ -11,8 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketSources, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
-import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketQAMessage, MarketSegment, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
+import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
@@ -94,7 +94,6 @@ function SegmentChip({ seg, active, onClick }: { seg: MarketSegment | 'all'; act
 export default function MarketUpdates() {
   const navigate = useNavigate();
   const [updates, setUpdates] = useState<MarketUpdate[]>([]);
-  const [sources, setSources] = useState<MarketSource[]>([]);
   const [sourceHealth, setSourceHealth] = useState<MarketSourceHealth>({ totalSources:0, enabledSources:0, healthySources:0, degradedSources:0, failedSources:0 });
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState(false);
@@ -102,7 +101,10 @@ export default function MarketUpdates() {
   const [period, setPeriod] = useState<MarketDigestPeriod>('24h');
   const [digest, setDigest] = useState<MarketDigest24h | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [operationalIssue, setOperationalIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [dataIssue, setDataIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [digestIssue, setDigestIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [actionIssue, setActionIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const operationalIssue = actionIssue ?? dataIssue ?? digestIssue;
   const [selectedUpdate, setSelectedUpdate] = useState<MarketUpdate | null>(null);
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
   const [question, setQuestion] = useState('');
@@ -118,21 +120,47 @@ export default function MarketUpdates() {
   const [sourcesAdminOpen, setSourcesAdminOpen] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<'updates' | 'ask-ai'>('updates');
 
+  const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
+    ? error.issue
+    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
+
   const loadUpdates = async () => {
     setLoading(true);
-    try {
-      const [u, s, h] = await Promise.all([fetchMarketUpdates({ limit: 200 }), fetchMarketSources(), fetchMarketSourceHealth()]);
-      setUpdates(u); setSources(s); setSourceHealth(h); setOperationalIssue(null);
-    } catch (error) {
-      if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue);
-      else setOperationalIssue({ stage:'database', code:'unknown', message:'Market Updates data could not be loaded.', remediation:'Retry; if it persists, ask an administrator to review the connected environment.', retryable:true });
-    } finally { setLoading(false); }
+    const [updatesResult, healthResult] = await Promise.allSettled([
+      fetchMarketUpdates({ limit:200 }),
+      fetchMarketSourceHealth(),
+    ]);
+    if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
+    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
+    setDataIssue(failure ? issueFrom(failure.reason) : null);
+    setLoading(false);
+    return {
+      updates: updatesResult.status === 'fulfilled' ? updatesResult.value : null,
+      health: healthResult.status === 'fulfilled' ? healthResult.value : null,
+    };
   };
-  const loadDigest = async (p: MarketDigestPeriod) => { try { setDigest(await fetchLatestMarketDigest(p)); } catch (error) { if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue); } };
+  const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
+    try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
+    catch (error) { setDigestIssue(issueFrom(error)); }
+  };
 
   useEffect(() => {
-    let cancelled=false;
-    const start=async()=>{ setLoading(true); try { const [u,src,h]=await Promise.all([fetchMarketUpdates({limit:200}),fetchMarketSources(),fetchMarketSourceHealth()]); if(cancelled)return; setUpdates(u);setSources(src);setSourceHealth(h);setOperationalIssue(null); const result=await ensureMarketUpdatesFresh(h,u.length); if(!cancelled&&result){setMessage(result.active?'Checking for newer market intelligence…':`Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);await loadUpdates();} } catch(error){if(!cancelled&&error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue);} finally {if(!cancelled)setLoading(false);}}; void start(); return()=>{cancelled=true};
+    let cancelled = false;
+    const start = async () => {
+      const loaded = await loadUpdates();
+      if (cancelled || !loaded.updates || !loaded.health) return;
+      try {
+        setActionIssue(null);
+        const result = await ensureMarketUpdatesFresh(loaded.health, loaded.updates.length);
+        if (!cancelled && result) {
+          setMessage(result.active ? 'Checking for newer market intelligence…' : `Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);
+          await loadUpdates();
+        }
+      } catch (error) { if (!cancelled) setActionIssue(issueFrom(error)); }
+    };
+    void start();
+    return () => { cancelled = true; };
   }, []);
   useEffect(() => { void loadDigest(period); }, [period]);
 
@@ -174,15 +202,15 @@ export default function MarketUpdates() {
 
   const handleGenerateDigest = async () => {
     setDigestLoading(true);
-    try { const result = await generateMarketDigest(period); setMessage(result.message || null); setDigest(result.digest); }
-    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    try { setActionIssue(null); const result = await generateMarketDigest(period); setMessage(result.message || null); setDigest(result.digest); }
+    catch(error) { setActionIssue(issueFrom(error)); }
     finally { setDigestLoading(false); }
   };
 
   const handleIngest = async () => {
     setIngesting(true);
-    try { const summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' }); setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`); await loadUpdates(); }
-    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    try { setActionIssue(null); const summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' }); setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`); await loadUpdates(); }
+    catch(error) { setActionIssue(issueFrom(error)); }
     finally { setIngesting(false); }
   };
 

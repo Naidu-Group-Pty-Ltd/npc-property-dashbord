@@ -104,6 +104,16 @@ describe('unified palette drag payload', () => {
     expect(parsePaletteDrag(token)).toBeNull();
   });
 
+  it('rejects payloads not created by the in-page palette', () => {
+    expect(parsePaletteDrag(JSON.stringify(overlayItem))).toBeNull();
+    expect(parsePaletteDrag(JSON.stringify({ token: 'attacker', item: overlayItem }))).toBeNull();
+  });
+
+  it('rejects trusted but schema-invalid palette items', () => {
+    const invalid = { kind: 'overlay' as const, overlay: { ...overlayItem.overlay, type: 'script' } } as any;
+    expect(parsePaletteDrag(serializePaletteDrag(invalid))).toBeNull();
+  });
+
   it('centres an overlay on the drop point and clamps to origin', () => {
     const o = positionOverlayAtPoint(overlayItem.overlay, { x: 300, y: 200 }) as any;
     expect(o.x).toBe(200); // 300 - 200/2
