@@ -223,28 +223,26 @@ describe('report template cascade map', () => {
     expect(csv).toContain('Needs a stronger visual landing point.');
   });
 
-  it('neutralizes spreadsheet formula triggers in cascade diagnostics CSV cells', () => {
-    const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## Executive Summary' });
-    const anchor = {
-      ...makeFieldAnchor(contract.sections[0].fields.find((f) => f.path.endsWith('.body'))!),
-      qaOwner: '\t=HYPERLINK("https://attacker.example")',
-      qaNote: '\r@SUM(1+1)',
-    };
-    const cascade = buildCascadeMap(baseTemplate([anchor]), contract);
-    const diagnostics = buildCascadeDiagnosticsExport(cascade, contract);
-    diagnostics.sections[0].label = '=2+3';
-    diagnostics.sections[0].fields[0].label = '+2+3';
-    diagnostics.sections[0].targets[0].pageName = '-2+3';
-    diagnostics.sections[0].targets[0].blockId = '@SUM(1+1)';
+  it('neutralizes spreadsheet formulas in cascade diagnostics CSV cells', () => {
+    const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## =Malicious section' });
+    const anchor = makeFieldAnchor(contract.sections[0].fields.find((field) => field.path.endsWith('.body'))!);
+    const template = baseTemplate([anchor]);
+    template.pages[0].name = '+Malicious page';
+    template.pages[0].blocks[0].id = '-malicious-block';
+    (template.pages[0].blocks[0].overlays[0] as any).id = '@malicious-overlay';
+    (template.pages[0].blocks[0].overlays[0] as any).anchors[0].qaOwner = '\tmalicious-owner';
+    (template.pages[0].blocks[0].overlays[0] as any).anchors[0].qaNote = '\rmalicious-note';
 
-    const csv = cascadeDiagnosticsToCsv(diagnostics);
+    const cascade = buildCascadeMap(template, contract);
+    const csv = cascadeDiagnosticsToCsv(buildCascadeDiagnosticsExport(cascade, contract));
 
-    expect(csv).toContain("'=2+3");
-    expect(csv).toContain("'+2+3");
-    expect(csv).toContain("'-2+3");
-    expect(csv).toContain("'@SUM(1+1)");
-    expect(csv).toContain("'\t=HYPERLINK(\"\"https://attacker.example\"\")");
-    expect(csv).toContain("\"'\r@SUM(1+1)\"");
+    expect(csv).toContain("'=Malicious section");
+    expect(csv).toContain('1:+Malicious page');
+    expect(csv).toContain("'-malicious-block");
+    expect(csv).toContain("'@malicious-overlay");
+    expect(csv).toContain("'\tmalicious-owner");
+    expect(csv).toContain("\"'\rmalicious-note\"");
+    expect(csv).not.toMatch(/(?:^|,)"?[=+\-@\t\r]/m);
   });
 
   it('can emit cascade metadata and debug tags in HTML render mode', () => {
