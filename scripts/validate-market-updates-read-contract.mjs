@@ -10,6 +10,11 @@ const fail = message => { throw new Error(`Market Updates read-contract validati
 const requires = (text, token, context) => { if (!text.includes(token)) fail(`${context} missing ${token}`); };
 
 for (const token of ['verifyAuth','requireModulePermission','market_updates',"action === 'updates'","action === 'digest'","action === 'sources'","action === 'run'","action !== 'status'",'correlation_id']) requires(statusFunction,token,'status function');
+for (const token of ['enforceJsonBodyLimit','MAX_REQUEST_BYTES']) requires(statusFunction,token,'status function request limit');
+if (statusFunction.indexOf('enforceJsonBodyLimit<any>(req, MAX_REQUEST_BYTES)') > statusFunction.indexOf('verifyAuth(sb, req.headers, body)')) {
+  fail('status function authenticates only after unbounded body parsing');
+}
+if (statusFunction.includes('await req.json()')) fail('status function directly parses an unbounded request body');
 for (const table of requiredTables) requires(migration, `'${table}'`, 'RLS migration');
 for (const token of ['revoke all on table','from public, anon, authenticated','grant all on table','to service_role','enable row level security']) requires(migration,token,'RLS migration');
 requires(config,'[functions.market-updates-status]','function config');
