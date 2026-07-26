@@ -4,6 +4,7 @@ import { mapDoclingToRawBlocks } from '../mapDoclingToRawBlocks';
 import { mapDoclingToPagePlan } from '../mapDoclingToPagePlan';
 import { fontLookupKey } from '../../fontResolver';
 import { applyTemplateImportPlan } from '@/lib/reportTemplate/ingestion/reconciliation/applyPlan';
+import { validateTemplateImportPlan } from '@/lib/reportTemplate/ingestion/reconciliation/validatePlan';
 import { parseTemplate } from '@/lib/reportTemplate/templateSchema';
 
 const FIXTURE: DoclingDocument = {
@@ -60,10 +61,16 @@ describe('docling adapter', () => {
     expect(plan.importSummary.visualFidelityMode).toBe('background-first');
   });
 
-  it('semantic mode leaves overlays editable and skips raster background', () => {
-    const plan = mapDoclingToPagePlan(FIXTURE, { importId: 'imp-3', mode: 'semantic' });
+  it('semantic mode leaves overlays editable while preserving the hidden reference raster', () => {
+    const plan = mapDoclingToPagePlan(FIXTURE, {
+      importId: 'imp-3',
+      mode: 'semantic',
+      rastersByPage: { 1: { width: 1190, height: 1684, dataUrl: 'data:image/png;base64,RASTER' } },
+    });
     expect(plan.pages[0].overlays.every((o) => o.locked === false)).toBe(true);
-    expect(plan.pages[0].background.imageUrl).toBe('');
+    expect(plan.pages[0].background.imageUrl).toBe('data:image/png;base64,RASTER');
+    expect(plan.pages[0].background.opacity).toBe(0);
+    expect(validateTemplateImportPlan(plan).ok).toBe(true);
     expect(plan.importSummary.visualFidelityMode).toBe('semantic');
   });
 
