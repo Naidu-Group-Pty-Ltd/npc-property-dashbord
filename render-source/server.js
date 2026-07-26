@@ -25,6 +25,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
+const { assertPublicUrl, installNetworkPolicy } = require('./network-policy');
 
 const app = express();
 app.use(express.json({ limit: process.env.MAX_BODY || '60mb' }));
@@ -44,26 +45,6 @@ function authOk(req) {
   const h = req.headers.authorization || '';
   if (!h.startsWith('Bearer ')) return false;
   return h.slice(7).trim().replace(/^"|"$/g, '') === EXPECTED_TOKEN;
-}
-
-// SSRF guard — block private/reserved hosts (mirrors import-from-url).
-function isPrivateHost(hostname) {
-  const h = (hostname || '').toLowerCase();
-  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  if (/^(10|127)\./.test(h)) return true;
-  if (/^192\.168\./.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
-  if (/^169\.254\./.test(h)) return true;
-  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true;
-  if (h === '0.0.0.0' || h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
-  return false;
-}
-
-function assertFetchable(rawUrl) {
-  const u = new URL(rawUrl);
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('Only http(s) URLs are allowed.');
-  if (isPrivateHost(u.hostname)) throw new Error('Refusing to render a private/reserved host.');
-  return u;
 }
 
 // ── C3: wrap a single-file React/JSX component in a self-mounting HTML harness ──
@@ -383,13 +364,15 @@ app.post('/render', async (req, res) => {
   let zipId;
   let zipPrep;
   try {
-    if (url) assertFetchable(url);
+    if (url) await assertPublicUrl(url);
     if (zipBase64) { zipId = crypto.randomUUID(); zipPrep = prepareZipServe(zipBase64, zipId); }
 
     const browser = await getBrowser();
     context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, javaScriptEnabled: true });
     const page = await context.newPage();
     page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+    const localOrigin = zipBase64 ? `http://127.0.0.1:${PORT}` : undefined;
+    await installNetworkPolicy(page, { localOrigin });
 
     if (url) {
       await page.goto(url, { waitUntil: 'networkidle' });
