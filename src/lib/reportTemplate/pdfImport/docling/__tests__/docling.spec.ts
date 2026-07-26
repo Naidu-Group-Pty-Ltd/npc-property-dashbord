@@ -310,6 +310,33 @@ describe('docling adapter', () => {
     expect(img?.src).toBe('data:image/png;base64,iVBORw0KG');
   });
 
+  it.each([
+    { kind: 'remote URL', uri: 'https://attacker.example/ssrf.png' },
+    { kind: 'local file URL', uri: 'file:///etc/passwd' },
+    { kind: 'SVG data URI', uri: 'data:image/svg+xml;base64,PHN2Zz4=' },
+    { kind: 'binding URL', uri: '{{scheme}}://127.0.0.1/internal?secret={{secret}}' },
+    {
+      kind: 'oversized raster data URI',
+      uri: `data:image/png;base64,${'A'.repeat(Math.ceil((10 * 1024 * 1024) / 3) * 4 + 1)}`,
+    },
+  ])('rejects unsafe Docling picture URI: $kind', ({ uri }) => {
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      pictures: [
+        {
+          prov: [{ page_no: 1, bbox: { l: 60, t: 200, r: 400, b: 400, coord_origin: 'TOPLEFT' } }],
+          image: { uri },
+        } as DoclingDocument['pictures'] extends (infer U)[] ? U : never,
+      ],
+    };
+
+    const mapped = mapDoclingToRawBlocks(doc);
+    expect(mapped.byPage[1][0].meta?.imageUri).toBeUndefined();
+    const plan = mapDoclingToPagePlan(doc, { importId: 'imp-unsafe-image', mode: 'semantic' });
+    const img = plan.pages[0].overlays.find((o) => o.id.includes('picture')) as { src?: string } | undefined;
+    expect(img?.src).toBe('');
+  });
+
   it('Wave F3: preserves explicit Docling reading_order for multi-column pages', () => {
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 600, height: 800 } } },
