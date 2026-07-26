@@ -22,7 +22,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const PERMISSION_TABLES = [
   'properties', 'income', 'expenses', 'assets',
   'liabilities', 'employment', 'address_history', 'notes', 'contacts',
-  'documents', 'borrowing_capacity', 'messages'
+  'documents', 'borrowing_capacity', 'messages', 'purchase_files'
 ] as const;
 
 const EMPTY_PERMISSIONS = PERMISSION_TABLES.reduce((acc, t) => {
