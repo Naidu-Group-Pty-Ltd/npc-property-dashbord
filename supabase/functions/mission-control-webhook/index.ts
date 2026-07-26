@@ -17,7 +17,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "content-type, x-mc-event, x-mc-signature, x-mc-idempotency-key",
+    "content-type, x-correlation-id, x-step-up-token, x-mc-event, x-mc-signature, x-mc-idempotency-key",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 

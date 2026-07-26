@@ -422,6 +422,53 @@ const LEGACY_FALLBACK_ORIGINS = [
   'https://npc-property-dashbord.lovable.app',
 ];
 
+/**
+ * CORS-REQ-HEADERS: canonical allowlist of REQUEST headers the browser may send.
+ *
+ * A preflight succeeds only when EVERY header the client puts in
+ * `Access-Control-Request-Headers` appears here. A header the app sends but
+ * that is missing from this list fails the preflight, so the real request is
+ * never dispatched and `fetch()` rejects with an opaque `TypeError: Failed to
+ * fetch` — indistinguishable from the function being down.
+ *
+ * `src/lib/secureInvoke.ts` attaches `x-correlation-id` to EVERY edge-function
+ * call and `x-step-up-token` to step-up-gated calls, so both must stay listed.
+ * Anything new added to a client request header must be added here in the same
+ * change; `scripts/security/check-cors-contract.mjs` enforces that.
+ */
+export const CORS_ALLOWED_REQUEST_HEADERS = [
+  'authorization',
+  'x-client-info',
+  'apikey',
+  'content-type',
+  // Observability + step-up (sent by src/lib/secureInvoke.ts).
+  'x-correlation-id',
+  'x-step-up-token',
+  // Session carriers for the staff / client / finance portals.
+  'x-session-token',
+  'x-command-centre-session-token',
+  'x-portal-session-token',
+  'x-finance-session-token',
+  'x-session-id',
+  'x-generation-run-id',
+].join(', ');
+
+/**
+ * CORS-RES-HEADERS: response headers the browser is allowed to reveal to JS.
+ *
+ * Cross-origin, `response.headers.get()` can only see the seven CORS-safelisted
+ * response headers unless the header is named here. Without this list the
+ * metering/correlation headers below silently read back as `null`, so token
+ * accounting records 0 and correlation ids never reach the client logs.
+ */
+export const CORS_EXPOSED_RESPONSE_HEADERS = [
+  'x-correlation-id',
+  'x-tokens-used',
+  'x-tokens-reserved',
+  'x-tokens-estimated',
+  'x-duration-ms',
+].join(', ');
+
 function parseAllowedOrigins(): string[] {
   const raw = Deno.env.get('ALLOWED_ORIGINS') || '';
   const fromEnv = raw
@@ -471,9 +518,13 @@ export function createCorsHeaders(origin: string | null = null): Record<string, 
     'Access-Control-Allow-Origin': allowedOrigin,
     // Required for browser preflight (POST + application/json)
     'Access-Control-Allow-Methods': 'GET,POST,PUT,PATCH,DELETE,OPTIONS',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token, x-portal-session-token, x-finance-session-token, x-generation-run-id',
+    'Access-Control-Allow-Headers': CORS_ALLOWED_REQUEST_HEADERS,
+    // Without this the client reads back `null` for every custom header.
+    'Access-Control-Expose-Headers': CORS_EXPOSED_RESPONSE_HEADERS,
     // Required for HttpOnly cookie auth
     'Access-Control-Allow-Credentials': 'true',
+    // Cache the preflight so each call isn't a two-round-trip.
+    'Access-Control-Max-Age': '86400',
     // Ensure caches/proxies don't mix CORS responses across origins
     'Vary': 'Origin',
   };
@@ -494,7 +545,9 @@ export function createTokenAuthCorsHeaders(): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-session-token, x-generation-run-id',
+    'Access-Control-Allow-Headers': CORS_ALLOWED_REQUEST_HEADERS,
+    'Access-Control-Expose-Headers': CORS_EXPOSED_RESPONSE_HEADERS,
+    'Access-Control-Max-Age': '86400',
   };
 }
 
