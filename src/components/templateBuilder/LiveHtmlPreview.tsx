@@ -179,7 +179,7 @@ function LiveHtmlPreviewImpl({
             ref={iframeRef}
             title="Live HTML preview"
             srcDoc={html}
-            sandbox="allow-scripts allow-same-origin"
+            sandbox="allow-scripts"
             className="w-full h-full bg-white border-0"
           />
         </div>
