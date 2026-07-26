@@ -350,7 +350,8 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       }
       const pathId = `txp-${overlay.id}`;
       const offset = Math.max(0, Math.min(100, Number(o.startOffset ?? 0)));
-      return withCascadeWrapper(`<svg xmlns="http://www.w3.org/2000/svg" style="${base}overflow:visible;" viewBox="0 0 ${w} ${h}" width="${w}pt" height="${h}pt"><defs><path id="${pathId}" d="${d}" fill="none"/></defs><text fill="${color}" font-family="${esc(family)}" font-size="${size}" font-weight="${o.fontWeight ?? 'normal'}" letter-spacing="${o.letterSpacing ?? 0}"><textPath href="#${pathId}" startOffset="${offset}%">${esc(text)}</textPath></text></svg>`, overlay as any, ctx);
+      const escapedPathId = esc(pathId);
+      return withCascadeWrapper(`<svg xmlns="http://www.w3.org/2000/svg" style="${esc(`${base}overflow:visible;`)}" viewBox="0 0 ${w} ${h}" width="${w}pt" height="${h}pt"><defs><path id="${escapedPathId}" d="${esc(d)}" fill="none"/></defs><text fill="${esc(color)}" font-family="${esc(family)}" font-size="${size}" font-weight="${esc(o.fontWeight ?? 'normal')}" letter-spacing="${esc(o.letterSpacing ?? 0)}"><textPath href="#${escapedPathId}" startOffset="${offset}%">${esc(text)}</textPath></text></svg>`, overlay as any, ctx);
     }
     case 'table': {
       const o: any = overlay;
@@ -366,7 +367,7 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
         rows = o.rows.map((r: any[]) => Object.fromEntries(cols.map((c, i) => [c.key || `col${i}`, r?.[i] ?? ''])));
       }
       if (o.maxRows) rows = rows.slice(0, o.maxRows);
-      const family = o.fontFamily ? esc(resolveTokenReference(o.fontFamily, ctx) || 'Helvetica') : 'inherit';
+      const family = o.fontFamily ? resolveTokenReference(o.fontFamily, ctx) || 'Helvetica' : 'inherit';
       const headerBg = o.headerBg ? resolveBindableColor(o.headerBg, ctx, '#111') : '#111';
       const headerColor = o.headerColor ? resolveBindableColor(o.headerColor, ctx, '#fff') : '#fff';
       const rowBg = o.rowBg ? resolveBindableColor(o.rowBg, ctx, 'transparent') : 'transparent';
@@ -433,7 +434,8 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
         const bg = s.bg ?? headerBg;
         const fg = s.color ?? headerColor;
         const fw = s.fontWeight ?? o.headerFontWeight ?? 'bold';
-        return `<th${spanAttrs(-1, i)} style="padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.headerHeight ?? 22)}pt">${esc(c.label ?? c.key)}</th>`;
+        const style = `padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.headerHeight ?? 22)}pt`;
+        return `<th${spanAttrs(-1, i)} style="${esc(style)}">${esc(c.label ?? c.key)}</th>`;
       }).join('');
       const bodyRows = rows.map((r, ri) => {
         const baseRowBg = altRowBg && ri % 2 === 1 ? altRowBg : rowBg;
@@ -456,11 +458,13 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
           if (typeof raw === 'string') raw = resolveBindable(raw, ctx);
           const val = fmtCell(raw, c.format);
           const icon = cellRule?.icon && cellRule.icon !== 'none' ? `<span style="margin-right:4pt;opacity:0.85">${iconGlyph(cellRule.icon)}</span>` : '';
-          return `<td${spanAttrs(ri, ci)} style="padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.rowHeight ?? 20)}pt">${icon}${esc(val)}</td>`;
+          const style = `padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.rowHeight ?? 20)}pt`;
+          return `<td${spanAttrs(ri, ci)} style="${esc(style)}">${icon}${esc(val)}</td>`;
         }).join('');
         return `<tr>${tds}</tr>`;
       }).join('');
-      return withCascadeWrapper(`<div style="${base}overflow:hidden;"><table style="width:100%;border-collapse:collapse;font-family:${family};font-size:${Number(o.fontSize ?? 10)}pt;table-layout:fixed;">${colGroup ? `<colgroup>${colGroup}</colgroup>` : ''}${o.showHeader !== false ? `<thead><tr>${headerCells}</tr></thead>` : ''}<tbody>${bodyRows}</tbody></table></div>`, overlay as any, ctx);
+      const tableStyle = `width:100%;border-collapse:collapse;font-family:${family};font-size:${Number(o.fontSize ?? 10)}pt;table-layout:fixed;`;
+      return withCascadeWrapper(`<div style="${esc(`${base}overflow:hidden;`)}"><table style="${esc(tableStyle)}">${colGroup ? `<colgroup>${colGroup}</colgroup>` : ''}${o.showHeader !== false ? `<thead><tr>${headerCells}</tr></thead>` : ''}<tbody>${bodyRows}</tbody></table></div>`, overlay as any, ctx);
     }
   }
   return '';
