@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
@@ -74,7 +75,7 @@ Deno.serve(async (req) => {
 
     // Validate authentication (JWT first, then session token)
     // IMPORTANT: verifyAuth checks headers/cookies first, then body
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('[get-investment-reports] Auth failed:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
@@ -90,6 +91,21 @@ Deno.serve(async (req) => {
         JSON.stringify({ error: `Invalid table: ${table}` }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // This function reads with the service role, so RLS cannot enforce the
+    // caller's module boundary. Require report access before accepting any
+    // caller-controlled report ID, filters, or selected fields.
+    const moduleKey = table === 'generated_reports' ? 'generated_reports' : 'reports';
+    const permission = await requireModulePermission(
+      supabase,
+      { userId, authMethod },
+      moduleKey,
+      'can_view',
+    );
+    if (!permission.ok) {
+      console.warn(`[get-investment-reports] Permission denied for user ${userId} on ${table}`);
+      return createForbiddenResponse(permission.error || 'Report view permission required', corsHeaders);
     }
 
     // Single report fetch
