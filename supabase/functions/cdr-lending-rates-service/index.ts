@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { buildResimacRates, RESIMAC_LENDER } from './resimacRates.ts';
+import { isSafeCdrUrl } from './cdrUrlSafety.ts';
 
 // ============================================
 // MANUAL (non-CDR) lender registry
@@ -170,7 +171,8 @@ async function fetchRegisterBaseUrls(lenderId: string): Promise<string[]> {
       .filter((b) => matches.some((m) => String(b.brandName || '').toLowerCase().includes(m)))
       .map((b) => String(b.publicBaseUri || '').replace(/\/$/, ''))
       .filter(Boolean)
-      .map((base) => base.endsWith('/cds-au/v1') ? base : `${base}/cds-au/v1`);
+      .map((base) => base.endsWith('/cds-au/v1') ? base : `${base}/cds-au/v1`)
+      .filter((base) => isSafeCdrUrl(base, false));
   } catch (e) {
     console.warn(`[CDR] Register lookup failed for ${lenderId}:`, e);
     return [];
@@ -193,6 +195,9 @@ async function fetchCdr(
   let currentUrl = url;
   for (let i = 0; i <= maxRedirects; i++) {
     chain.push(currentUrl);
+    if (!isSafeCdrUrl(currentUrl)) {
+      return { response: null, finalUrl: currentUrl, redirectChain: chain, lastStatus: 0, error: 'Unsafe CDR URL rejected' };
+    }
     try {
       const requestHeaders = {
         'User-Agent': 'Mozilla/5.0 (compatible; NPCFinancePortal/1.0; +https://npcservices.com.au)',
