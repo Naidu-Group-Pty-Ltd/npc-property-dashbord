@@ -50,7 +50,8 @@ const MAX_TRIGGER_BODY_BYTES = 64 * 1024;
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-internal-call',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-internal-call',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 Deno.serve(async (req) => {
