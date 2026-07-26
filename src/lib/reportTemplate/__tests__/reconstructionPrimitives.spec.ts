@@ -50,6 +50,16 @@ describe('R0 — vector overlay (editable SVG)', () => {
     });
     expect(render(tpl)).toContain('fill="#00aa00"');
   });
+
+  it('does not allow path colours to break out of SVG attributes', () => {
+    const tpl = pageWith({
+      id: 'v3', type: 'vector', x: 0, y: 0, width: 20, height: 20,
+      paths: [{ d: 'M0 0 H10', fill: '#"/><script id="vector-xss">alert(1)</script>' }],
+    });
+    const html = render(tpl);
+    expect(html).not.toContain('vector-xss');
+    expect(html).toContain('fill="none"');
+  });
 });
 
 describe('R0 — rich-text runs (per-run colour/font/weight)', () => {
@@ -97,5 +107,42 @@ describe('R0 — embedded (data:) fonts', () => {
       pages: [],
     });
     expect((tpl.tokens as any).fontFaces[0].src).toBe('data:font/woff2;base64,AAAA');
+  });
+
+  it('rejects font sources that could break out of the generated style element', () => {
+    const payload = `x');}</style><script id="font-xss">alert(1)</script><style>`;
+    expect(() => parseTemplate({
+      version: 1,
+      tokens: { colors: {}, fonts: {}, spacing: {}, fontFaces: [{ family: 'X', src: payload }] },
+      pages: [],
+    })).toThrow();
+
+    const css = tokensToFontFaceCss({
+      colors: {}, fonts: {}, spacing: {},
+      fontFaces: [{ family: `X';}</style><script>alert(1)</script>`, src: payload }],
+    } as any);
+    expect(css).toBe('');
+
+    const escapedFamilyCss = tokensToFontFaceCss({
+      colors: {}, fonts: {}, spacing: {},
+      fontFaces: [{ family: `X';}</style><script>alert(1)</script>`, src: 'data:font/woff2;base64,AAAA' }],
+    } as any);
+    expect(escapedFamilyCss).not.toContain('</style>');
+    expect(escapedFamilyCss).not.toContain('<script>');
+
+    const escapedWeightCss = tokensToFontFaceCss({
+      colors: {}, fonts: {}, spacing: {},
+      fontFaces: [{ family: 'X', src: 'data:font/woff2;base64,AAAA', weight: '400;}</style><script>alert(1)</script>' }],
+    } as any);
+    expect(escapedWeightCss).not.toContain('</style>');
+    expect(escapedWeightCss).toContain('font-weight: normal');
+  });
+
+  it('rejects non-HTTP stylesheet URLs', () => {
+    expect(() => parseTemplate({
+      version: 1,
+      tokens: { colors: {}, fonts: {}, spacing: {}, fontFaces: [{ family: 'X', cssUrl: 'javascript:alert(1)' }] },
+      pages: [],
+    })).toThrow();
   });
 });

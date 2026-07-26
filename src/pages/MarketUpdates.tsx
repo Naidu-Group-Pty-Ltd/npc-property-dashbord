@@ -128,6 +128,10 @@ export default function MarketUpdates() {
     ? error.issue
     : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
+  const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
+    ? error.issue
+    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
+
   const loadUpdates = async () => {
     setLoading(true);
     const [updatesResult, healthResult] = await Promise.allSettled([
