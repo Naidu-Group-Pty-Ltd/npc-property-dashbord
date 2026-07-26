@@ -1,6 +1,6 @@
 import { DOMParser } from 'npm:linkedom@0.18.12';
 import type { MarketSourceAdapter, NormalisedSourceBatch, NormalisedSourceItem, SourceConfig, SourceValidationResult } from './types.ts';
-import { boundedFetch, normaliseUrl, sourceDomains } from './security.ts';
+import { boundedFetch, normaliseUrl, safeSourceExcerpt, sourceDomains } from './security.ts';
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 const LD_ARTICLE_TYPES = new Set(['Article', 'NewsArticle', 'Report', 'BlogPosting', 'AnalysisNewsArticle', 'ReportageNewsArticle', 'OpinionNewsArticle']);
@@ -39,7 +39,7 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
             canonicalUrl: canonical,
             originalUrl: x.url || canonical,
             publishedAt: x.datePublished && Date.parse(x.datePublished) ? new Date(x.datePublished).toISOString() : null,
-            excerpt: x.description || null,
+            excerpt: safeSourceExcerpt(source, x.description),
             author: x.author?.name || (typeof x.author === 'string' ? x.author : null),
             category: x.articleSection || null,
           });
@@ -71,7 +71,7 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
           canonicalUrl: canonical,
           originalUrl: link.href,
           publishedAt: dt && Date.parse(dt) ? new Date(dt).toISOString() : null,
-          excerpt: item.querySelector(cfg.excerpt_selector || 'p')?.textContent?.trim() || null,
+          excerpt: safeSourceExcerpt(source, item.querySelector(cfg.excerpt_selector || 'p')?.textContent),
           author: null,
           category: null,
         });

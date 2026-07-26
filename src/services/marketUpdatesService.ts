@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -15,23 +15,26 @@ function operationalError(stage: MarketUpdatesOperationalIssue['stage'], error: 
   if (error instanceof MarketUpdatesOperationalError) return error;
   const status = Number(error?.status || error?.statusCode) || undefined;
   const raw = String(error?.message ?? error ?? '').toLowerCase();
-  const code = error?.network ? 'network_error'
+  const safeCode = typeof error?.code === 'string' ? error.code : null;
+  const code = safeCode ?? (error?.network ? 'network_error'
     : status === 401 ? 'unauthorised'
     : status === 403 || raw.includes('permission denied') || raw.includes('row-level security') ? 'rls_denied'
     : status === 404 ? 'function_missing'
     : raw.includes('does not exist') || raw.includes('schema cache') || raw.includes('pgrst205') || raw.includes('42p01') ? 'migration_missing'
-    : status && status >= 500 ? 'server_error' : 'unknown';
+    : status && status >= 500 ? 'server_error' : 'unknown');
   const messages: Record<string, string> = {
     network_error: 'The Market Updates service could not be reached.', unauthorised: 'Your sign-in session is missing or expired.',
     rls_denied: 'Your account is not authorised to access this Market Updates operation.', function_missing: `The ${functionName ?? 'required'} Edge Function is not deployed.`,
     migration_missing: 'The Market Updates database migration has not been applied in this environment.', server_error: 'The Market Updates service returned an internal error.', unknown: 'Market Updates could not complete this operation.',
+    session_expired:'Your sign-in session has expired.', provider_not_configured:'The assigned Market Updates AI route is not configured.', provider_unauthorised:'The assigned AI provider rejected its credentials.', provider_payment_required:'The assigned AI provider requires billing attention.', provider_rate_limited:'The assigned AI provider is rate limited.', provider_timeout:'The assigned AI provider timed out.', source_fetch_failed:'A configured market source could not be fetched.', source_parse_failed:'A market source response could not be parsed.', source_validation_failed:'A market source response failed validation.', database_insert_failed:'A Market Updates item could not be persisted.', digest_failed:'The Market Updates digest failed.', cron_missing:'Market Updates automation is not configured.', cron_stale:'Market Updates automation is stale.',
   };
   const remediation: Record<string, string> = {
     network_error: 'Check connectivity and retry.', unauthorised: 'Sign in again, then retry.', rls_denied: 'Ask an administrator to verify your role and Market Updates policies.',
     function_missing: 'Deploy the Market Updates Edge Functions to the frontend project.', migration_missing: 'Apply the pending Market Updates migrations and seed migration.',
     server_error: 'Review the function log and latest ingestion run, then retry.', unknown: 'Retry; if it persists, review the connected project and function logs.',
+    session_expired:'Sign in again, then retry.', provider_not_configured:'Configure and test the Market Updates agent in Model Hub.', provider_unauthorised:'An administrator must verify the provider credential.', provider_payment_required:'An administrator must review provider billing.', provider_rate_limited:'Wait briefly and retry; the configured fallback may be used.', provider_timeout:'Retry; if this persists, test the fallback chain.', source_fetch_failed:'Open Sources, test the affected source, and retry.', source_parse_failed:'Open Sources and review the adapter result.', source_validation_failed:'Review the source URL and adapter security validation.', database_insert_failed:'Review the ingestion run and database function logs.', digest_failed:'Retry digest generation and review the digest agent route.', cron_missing:'Apply the automation migration and verify scheduled jobs.', cron_stale:'Inspect cron history and the latest automation dispatch.',
   };
-  return new MarketUpdatesOperationalError({ stage, code: code as MarketUpdatesOperationalIssue['code'], message: messages[code], remediation: remediation[code], httpStatus: status, functionName, retryable: !['rls_denied'].includes(code) }, { cause: error });
+  return new MarketUpdatesOperationalError({ stage:(error?.stage as MarketUpdatesOperationalIssue['stage']) ?? stage, code: code as MarketUpdatesOperationalIssue['code'], message: messages[code] ?? messages.unknown, remediation: remediation[code] ?? remediation.unknown, httpStatus: status, functionName, correlationId:error?.correlationId, retryable:typeof error?.retryable === 'boolean' ? error.retryable : !['rls_denied','provider_unauthorised','provider_payment_required'].includes(code) }, { cause: error });
 }
 
 const mapUpdate = (r: any): MarketUpdate => ({
@@ -62,45 +65,61 @@ const mapDigest = (r: any): MarketDigest24h => ({
   source_urls: safeArray(r.source_urls),
 });
 
+async function invokeMarketRead<T>(body: Record<string, any>, stage: MarketUpdatesOperationalIssue['stage'] = 'database'): Promise<T> {
+  const { data, error } = await invokeSecureFunction<T>('market-updates-status', body);
+  if (error) throw operationalError(stage, error, 'market-updates-status');
+  if (!data) throw operationalError(stage, new Error('Market Updates read returned no data.'), 'market-updates-status');
+  return data;
+}
+
 export async function fetchMarketUpdates(filters: MarketUpdateFilters = {}): Promise<MarketUpdate[]> {
-  try {
-    let q = db.from('market_updates').select('*')
-      .eq('status', filters.status ?? 'published')
-      .order('source_published_at', { ascending: false, nullsFirst: false })
-      .order('ingested_at', { ascending: false })
-      .limit(filters.limit ?? 200);
-    if (filters.category && filters.category !== 'all') q = q.eq('category', filters.category);
-    if (filters.impact && filters.impact !== 'all') q = q.eq('impact_level', filters.impact);
-    if (filters.freshness && filters.freshness !== 'all') q = q.eq('freshness_tier', filters.freshness);
-    if (filters.geography && filters.geography !== 'all') q = q.contains('geography', [filters.geography]);
-    if (filters.audience && filters.audience !== 'all') q = q.contains('audience_tags', [filters.audience]);
-    if (filters.segment && filters.segment !== 'all') q = q.contains('segments', [filters.segment]);
-    if (filters.search) q = q.or(`title.ilike.%${filters.search}%,ai_summary.ilike.%${filters.search}%,source_name.ilike.%${filters.search}%`);
-    if (filters.dateRange?.from) q = q.gte('source_published_at', filters.dateRange.from);
-    if (filters.dateRange?.to) q = q.lte('source_published_at', filters.dateRange.to);
-    const { data, error } = await q;
-    if (error) throw error;
-    return (data ?? []).map(mapUpdate);
-  } catch (error) { throw operationalError('database', error); }
+  const payload = await invokeMarketRead<{ updates?: any[] }>({
+    action:'updates', status:filters.status ?? 'published', limit:filters.limit ?? 200,
+    category:filters.category, impact:filters.impact, freshness:filters.freshness, geography:filters.geography,
+    audience:filters.audience, segment:filters.segment, dateFrom:filters.dateRange?.from, dateTo:filters.dateRange?.to,
+  });
+  const updates = safeArray<any>(payload.updates).map(mapUpdate);
+  if (!filters.search) return updates;
+  const search = filters.search.toLowerCase();
+  return updates.filter(update => `${update.title} ${update.ai_summary ?? ''} ${update.source_name}`.toLowerCase().includes(search));
 }
 
 export async function fetchLatestMarketDigest(period: MarketDigestPeriod = '24h'): Promise<MarketDigest24h | null> {
-  try {
-    const { data, error } = await db.from('market_digests').select('*').eq('status','published').eq('period', period).order('generated_at',{ ascending:false }).limit(1).maybeSingle();
-    if (error) throw error;
-    return data ? mapDigest(data) : null;
-  } catch (e) { throw operationalError('database', e); }
+  const payload = await invokeMarketRead<{ digest?: any | null }>({ action:'digest', period }, 'digest');
+  return payload.digest ? mapDigest(payload.digest) : null;
 }
 
-export async function fetchMarketSources(): Promise<MarketSource[]> { try { const { data, error } = await db.from('market_sources').select('*').order('name'); if (error) throw error; return data ?? []; } catch (e) { throw operationalError('database', e); } }
+export async function fetchMarketSources(): Promise<MarketSource[]> {
+  const payload = await invokeMarketRead<{ sources?: MarketSource[] }>({ action:'sources' });
+  return safeArray<MarketSource>(payload.sources);
+}
 
 export interface MarketSourceAlert { source_id: string; name: string; severity: 'error' | 'warning' | 'info'; message: string; }
 
-export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: MarketSource[]; alerts: MarketSourceAlert[] }> {
+export async function fetchMarketSourceAdminSnapshot(): Promise<{ sources: MarketSource[]; legacySources: MarketSource[]; alerts: MarketSourceAlert[]; registry: MarketSourceRegistrySummary }> {
   try {
     const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'list' });
     if (error) throw error;
-    return { sources: safeArray<MarketSource>((data as any)?.sources), alerts: safeArray<MarketSourceAlert>((data as any)?.alerts) };
+    const payload = data as any;
+    const registry = safeObject<Record<string, any>>(payload?.registry);
+    return {
+      sources: safeArray<MarketSource>(payload?.sources),
+      legacySources: safeArray<MarketSource>(payload?.legacy_sources),
+      alerts: safeArray<MarketSourceAlert>(payload?.alerts),
+      registry: {
+        canonical: Number(registry.canonical ?? 0),
+        enabledCanonical: Number(registry.enabledCanonical ?? 0),
+        disabledCanonical: Number(registry.disabledCanonical ?? 0),
+        archivedLegacy: Number(registry.archivedLegacy ?? 0),
+        unresolvedLegacy: Number(registry.unresolvedLegacy ?? 0),
+        totalRecords: Number(registry.totalRecords ?? 0),
+        matchedLegacy: Number(registry.matchedLegacy ?? 0),
+        mergedRows: Number(registry.mergedRows ?? 0),
+        updateReferencesReassigned: Number(registry.updateReferencesReassigned ?? 0),
+        fetchRunReferencesReassigned: Number(registry.fetchRunReferencesReassigned ?? 0),
+        reconciledAt: registry.reconciledAt ?? null,
+      },
+    };
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
@@ -112,7 +131,7 @@ export async function toggleMarketSource(source_id: string, enabled: boolean): P
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
-export async function updateMarketSourceConfig(source_id: string, patch: Partial<Pick<MarketSource, 'refresh_frequency_hours' | 'reliability_tier' | 'description'>>): Promise<MarketSource | null> {
+export async function updateMarketSourceConfig(source_id: string, patch: Partial<Pick<MarketSource, 'refresh_frequency_minutes' | 'reliability_tier' | 'description'>>): Promise<MarketSource | null> {
   try {
     const { data, error } = await invokeSecureFunction('market-updates-source-admin', { action: 'update', source_id, ...patch });
     if (error) throw error;
@@ -129,13 +148,9 @@ export async function clearMarketSourceError(source_id: string): Promise<MarketS
 }
 
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
-  const sources = await fetchMarketSources();
-  const failed = sources.filter(s => s.health_status === 'failed' || (s.consecutive_failures ?? 0) >= 3);
-  const degraded = sources.filter(s => s.health_status === 'degraded' || ((s.consecutive_failures ?? 0) > 0 && (s.consecutive_failures ?? 0) < 3));
-  const latest = (field: keyof MarketSource) => sources.map(s => s[field] as string | null | undefined).filter(Boolean).sort().pop() ?? null;
-  const { data, error } = await db.from('market_ingestion_runs').select('*').order('started_at',{ascending:false}).limit(1).maybeSingle();
-  if (error) throw operationalError('database', error);
-  return { totalSources: sources.length, enabledSources: sources.filter(s => s.enabled).length, healthySources:sources.filter(s=>s.health_status==='healthy').length, degradedSources:degraded.length, failedSources: failed.length, lastFetchedAt: latest('last_fetched_at'), lastSuccessAt: latest('last_success_at'), lastError: failed[0]?.last_error ?? null, latestRun:(data as MarketIngestionRun|null) ?? null };
+  const payload = await invokeMarketRead<{ status?: MarketSourceHealth }>({ action:'status' });
+  if (!payload.status) throw operationalError('database', new Error('Market Updates status was missing.'), 'market-updates-status');
+  return payload.status;
 }
 
 export async function triggerMarketIngestion(options: { force?: boolean; trigger_type?:'page_open'|'manual'|'digest_prerequisite'; sourceIds?:string[]; test?:boolean } = {}): Promise<MarketIngestionSummary> {
@@ -150,12 +165,12 @@ export async function triggerMarketIngestion(options: { force?: boolean; trigger
 export async function followMarketIngestionRun(runId: string, timeoutMs = 190_000): Promise<MarketIngestionSummary> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
-    const { data, error } = await db.from('market_ingestion_runs').select('*').eq('id', runId).single();
-    if (error) throw operationalError('database', error);
-    const run = data as MarketIngestionRun;
+    const payload = await invokeMarketRead<{ run?: MarketIngestionRun | null }>({ action:'run', runId });
+    if (!payload.run) throw operationalError('database', new Error('Ingestion run was not found.'), 'market-updates-status');
+    const run = payload.run;
     if (!['queued', 'running'].includes(run.status)) {
       if (run.status === 'failed') throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'source_failed', message:run.error_summary || 'The Market Updates ingestion run failed.', remediation:'Open Sources to review source health, then retry.', functionName:'market-updates-ingest', retryable:true });
-      return { runId:run.id, status:run.status, active:false, sourcesConsidered:run.sources_considered, sourcesProcessed:run.sources_processed, sourcesSucceeded:run.sources_succeeded, sourcesFailed:run.sources_failed, ingested:run.items_discovered, published:run.items_published, candidates:(run as any).items_candidate ?? 0, ignored:(run as any).items_ignored ?? 0, failed:run.sources_failed, skippedDuplicates:(run as any).items_deduplicated ?? 0, sourceErrors:[], message:`Market ingestion ${run.status}.` };
+      return { runId:run.id, status:run.status, active:false, sourcesConsidered:run.sources_considered, sourcesProcessed:run.sources_processed, sourcesSucceeded:run.sources_succeeded, sourcesFailed:run.sources_failed, discovered:run.items_discovered, classified:run.items_classified ?? 0, ingested:run.items_discovered, published:run.items_published, candidates:run.items_candidate ?? 0, ignored:run.items_ignored ?? 0, rejected:run.items_rejected ?? 0, persistenceFailed:run.items_failed ?? 0, failed:run.sources_failed, skippedDuplicates:run.items_deduplicated ?? 0, sourceErrors:[], message:`Market ingestion ${run.status}.` };
     }
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }
@@ -198,6 +213,7 @@ export async function answerMarketUpdateQuestion(
     if (error) throw error;
     return {
       id: crypto.randomUUID(),
+      correlation_id:data.correlation_id,
       role: 'assistant',
       content: data.answer,
       citations: safeArray(data.citations),
@@ -210,14 +226,13 @@ export async function answerMarketUpdateQuestion(
       time_horizon: data.time_horizon,
       sentiment: data.sentiment,
       model_used: data.model_used,
+      route_used: data.route_used,
+      fallback_used: Boolean(data.fallback_used),
       retrieved: Array.isArray(data.retrieved) ? data.retrieved : [],
       question_id: data.question_id ?? null,
       rate_limited: Boolean(data.rate_limited),
     };
-  } catch (e) {
-    warnMissing('Market Q&A function unavailable or insufficient context.', e);
-    return { id: crypto.randomUUID(), role:'assistant', content:'I do not have enough sourced market updates to answer that yet.', citations:[], source_update_ids:[], confidence_score:0, limitations:['Market Q&A only answers from published, source-backed market updates.'], created_at:new Date().toISOString(), follow_up_questions: [], key_figures: [], retrieved: [], question_id: null };
-  }
+  } catch (e) { throw operationalError('qa', e, 'market-updates-qa'); }
 }
 
 /** SSE-streaming variant. `onDelta` receives the accumulated answer text as it streams.
@@ -236,6 +251,7 @@ export async function streamMarketUpdateQuestion(
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-qa`;
   const session = (await supabase.auth.getSession()).data.session;
   const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const correlationId=crypto.randomUUID();
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -244,6 +260,7 @@ export async function streamMarketUpdateQuestion(
         'content-type': 'application/json',
         'authorization': `Bearer ${token}`,
         'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
+        'x-correlation-id':correlationId,
       },
       body: JSON.stringify({
         question,
@@ -260,6 +277,7 @@ export async function streamMarketUpdateQuestion(
     let buffer = '';
     let metadata: any = null;
     let acc = '';
+    let streamError: string | null = null;
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -282,12 +300,16 @@ export async function streamMarketUpdateQuestion(
             opts.onDelta?.(acc);
           } else if (event === 'metadata') {
             metadata = parsed;
+          } else if (event === 'error') {
+            streamError = typeof parsed.message === 'string' ? parsed.message : 'Market Q&A stream failed.';
           }
         } catch { /* ignore parse errors */ }
       }
     }
+    if (streamError || !metadata) throw new Error(streamError ?? 'Market Q&A stream ended without metadata.');
     return {
       id: crypto.randomUUID(),
+      correlation_id:metadata?.correlation_id,
       role: 'assistant',
       content: metadata?.answer ?? acc,
       citations: safeArray(metadata?.citations),
@@ -300,11 +322,14 @@ export async function streamMarketUpdateQuestion(
       time_horizon: metadata?.time_horizon,
       sentiment: metadata?.sentiment,
       model_used: metadata?.model_used,
+      route_used: metadata?.route_used,
+      fallback_used: Boolean(metadata?.fallback_used),
       retrieved: Array.isArray(metadata?.retrieved) ? metadata.retrieved : [],
       question_id: metadata?.question_id ?? null,
       rate_limited: Boolean(metadata?.rate_limited),
     };
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
     warnMissing('Market Q&A streaming failed; falling back to non-streaming.', e);
     return answerMarketUpdateQuestion(question, opts.updateIds, opts.history, opts.segment, opts.conversation_id);
   }

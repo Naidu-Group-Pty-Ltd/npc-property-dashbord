@@ -925,6 +925,11 @@ verify_jwt = false
 verify_jwt = false
 
 
+
+[functions.market-updates-status]
+# Authoritative sanitised read contract; authentication and module access are enforced in-function.
+verify_jwt = false
+
 [functions.market-updates-feed]
 verify_jwt = false
 # Auth is verified in-function to support authenticated RSS clients and ETag responses.
