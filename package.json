@@ -14,6 +14,8 @@
     "audit:style:report": "node scripts/audit-style-tokens.cjs --report",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:market-source-reconciliation": "node scripts/validate-market-source-reconciliation.mjs",
+    "test:market-updates-read-contract": "node scripts/validate-market-updates-read-contract.mjs",
     "test:messaging-governance": "node scripts/validate-messaging-governance.cjs",
     "test:messaging-phase8": "node scripts/validate-messaging-phase8-scenarios.cjs",
     "test:messaging-phase9": "node scripts/validate-messaging-phase9-deployment.cjs",
