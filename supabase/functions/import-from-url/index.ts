@@ -10,6 +10,7 @@
 // Figma links are exported via the Figma API when FIGMA_TOKEN is configured.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuthOrNativeUser, createTokenAuthCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { sanitizeFigmaFrame, type SanitizedFigmaNode } from '../_shared/figma.ts';
 
 const MAX_BYTES = 30 * 1024 * 1024; // 30 MB
 const MAX_REDIRECTS = 5;
@@ -19,33 +20,7 @@ function json(body: unknown, status: number, cors: Record<string, string>): Resp
   return new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 }
 
-// SSRF guard (mirrors src/lib/reportTemplate/importUrl.isLikelyPrivateHost).
-function isPrivateHost(hostname: string): boolean {
-  const h = (hostname || '').toLowerCase().replace(/\.$/, '').replace(/^\[|\]$/g, '');
-  if (!h) return true;
-  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal') || h.endsWith('.localhost')) return true;
-  if (h === '0.0.0.0' || h === '::1' || h === '::') return true;
-  if (h.startsWith('fe80:') || h.startsWith('fc') || h.startsWith('fd')) return true;
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (m) {
-    const a = Number(m[1]), b = Number(m[2]);
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a >= 224) return true;
-  }
-  return false;
-}
-
-function assertFetchable(rawUrl: string): URL {
-  let u: URL;
-  try { u = new URL(rawUrl); } catch { throw new Error('Invalid URL'); }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('Only http(s) URLs are allowed');
-  if (isPrivateHost(u.hostname)) throw new Error('Refusing to fetch a private/internal address');
-  return u;
-}
+const resolveDns = (hostname: string, recordType: DnsRecordType) => Deno.resolveDns(hostname, recordType);
 
 function base64(bytes: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -68,7 +43,7 @@ function filenameFrom(url: URL, contentType: string): string {
 
 /** Fetch following redirects manually so every hop is SSRF-checked. */
 async function safeFetch(startUrl: string): Promise<{ res: Response; finalUrl: URL }> {
-  let current = assertFetchable(startUrl);
+  let current = await assertPublicUrl(startUrl, resolveDns);
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -84,7 +59,7 @@ async function safeFetch(startUrl: string): Promise<{ res: Response; finalUrl: U
     }
     if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
       const loc = new URL(res.headers.get('location')!, current);
-      current = assertFetchable(loc.toString());
+      current = await assertPublicUrl(loc.toString(), resolveDns);
       continue;
     }
     return { res, finalUrl: current };
@@ -94,9 +69,9 @@ async function safeFetch(startUrl: string): Promise<{ res: Response; finalUrl: U
 
 /**
  * Best-effort Figma export (needs FIGMA_TOKEN). Returns the first frame as a PNG
- * AND its node subtree (`figmaFrame`) so the client can ground on the exact
- * text/positions/colours (§7d) instead of flattening to a raster. The PNG fields
- * stay for backwards compatibility (older clients use the image flow).
+ * and a minimal, visible-only node projection (`figmaFrame`) so the client can
+ * ground on exact text/positions/colours without exposing provider metadata.
+ * The PNG fields stay for backwards compatibility (older clients use the image flow).
  */
 async function figmaExport(key: string, cors: Record<string, string>): Promise<Response | null> {
   const token = Deno.env.get('FIGMA_TOKEN');
@@ -111,7 +86,7 @@ async function figmaExport(key: string, cors: Record<string, string>): Promise<R
     if (!pageId) return null;
 
     // Deep-fetch the page subtree → ground on the first frame's real nodes.
-    let figmaFrame: unknown = null;
+    let figmaFrame: SanitizedFigmaNode | null = null;
     let exportNodeId = pageId;
     try {
       const nodesRes = await fetch(`https://api.figma.com/v1/files/${key}/nodes?ids=${encodeURIComponent(pageId)}`, { headers: { 'X-Figma-Token': token } });
@@ -119,7 +94,10 @@ async function figmaExport(key: string, cors: Record<string, string>): Promise<R
         const nodesJson = await nodesRes.json();
         const pageNode = nodesJson?.nodes?.[pageId]?.document;
         const firstFrame = pageNode?.children?.find((c: any) => c?.type === 'FRAME');
-        if (firstFrame) { figmaFrame = firstFrame; exportNodeId = firstFrame.id; }
+        if (firstFrame) {
+          figmaFrame = sanitizeFigmaFrame(firstFrame);
+          exportNodeId = firstFrame.id;
+        }
       }
     } catch { /* grounding is best-effort; PNG path still works */ }
 
@@ -139,7 +117,7 @@ async function figmaExport(key: string, cors: Record<string, string>): Promise<R
       filename: `${name}.png`,
       dataBase64: base64(buf),
       finalUrl: finalUrl.toString(),
-      figmaFrame, // §7d — node tree for hierarchy-accurate grounding (client converts)
+      figmaFrame,
     }, 200, cors);
   } catch (_e) {
     return null;

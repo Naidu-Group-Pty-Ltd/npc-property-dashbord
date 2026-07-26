@@ -5,6 +5,7 @@
 // full source row is preserved in `source_snapshot` for forensic recovery.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
+import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 
 type AssetClass = 'residential' | 'commercial' | 'industrial';
 
@@ -88,21 +89,18 @@ Deno.serve(async (req) => {
 
   try {
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
-    const ANON = Deno.env.get('SUPABASE_ANON_KEY')!;
     const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const authHeader = req.headers.get('Authorization') ?? '';
-
-    // Verify superadmin via user-scoped client
-    const userClient = createClient(SUPABASE_URL, ANON, { global: { headers: { Authorization: authHeader } } });
-    const { data: userData } = await userClient.auth.getUser();
-    const userId = userData?.user?.id ?? null;
-    if (!userId) return new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-
     const admin = createClient(SUPABASE_URL, SERVICE);
+    const body = await req.json().catch(() => ({}));
+
+    // Support both the application's custom staff auth and native Supabase Auth.
+    const auth = await verifyAuthOrNativeUser(admin, req, body);
+    const userId = auth.userId;
+    if (auth.error || !userId) return new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
     const { data: roleData } = await admin.from('user_roles').select('role').eq('user_id', userId).eq('role', 'superadmin').maybeSingle();
     if (!roleData) return new Response(JSON.stringify({ error: 'forbidden' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
-    const body = await req.json().catch(() => ({}));
     const { action, source, target, propertyId, dryRun } = body as {
       action?: 'preview' | 'execute' | 'list';
       source?: AssetClass; target?: AssetClass; propertyId?: string; dryRun?: boolean;

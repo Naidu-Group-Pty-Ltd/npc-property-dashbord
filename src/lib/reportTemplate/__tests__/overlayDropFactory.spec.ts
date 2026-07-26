@@ -91,9 +91,27 @@ describe('unified palette drag payload', () => {
     expect((parsed as any).type).toBe('kpi-grid');
   });
 
-  it('returns null for empty or malformed payloads', () => {
+  it('rejects empty, forged, and unknown payloads', () => {
     expect(parsePaletteDrag('')).toBeNull();
     expect(parsePaletteDrag('{not json')).toBeNull();
+    expect(parsePaletteDrag(JSON.stringify(overlayItem))).toBeNull();
+    expect(parsePaletteDrag('00000000-0000-4000-8000-000000000000')).toBeNull();
+  });
+
+  it('allows each trusted drag token to be consumed only once', () => {
+    const token = serializePaletteDrag(overlayItem);
+    expect(parsePaletteDrag(token)).toEqual(overlayItem);
+    expect(parsePaletteDrag(token)).toBeNull();
+  });
+
+  it('rejects payloads not created by the in-page palette', () => {
+    expect(parsePaletteDrag(JSON.stringify(overlayItem))).toBeNull();
+    expect(parsePaletteDrag(JSON.stringify({ token: 'attacker', item: overlayItem }))).toBeNull();
+  });
+
+  it('rejects trusted but schema-invalid palette items', () => {
+    const invalid = { kind: 'overlay' as const, overlay: { ...overlayItem.overlay, type: 'script' } } as any;
+    expect(parsePaletteDrag(serializePaletteDrag(invalid))).toBeNull();
   });
 
   it('centres an overlay on the drop point and clamps to origin', () => {

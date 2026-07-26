@@ -71,6 +71,20 @@ function pictureAltText(picture: DoclingPictureItem): string | undefined {
 
 const DEFAULT_FONT_FAMILY = 'Helvetica';
 
+// Imported picture URIs are later emitted into HTML and rendered by WeasyPrint.
+// Keep this boundary deliberately narrow so parser-controlled values cannot
+// trigger network/file fetches, SVG execution, binding resolution, or large
+// data-URI allocations during preview/export.
+const MAX_DOCLING_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_DOCLING_IMAGE_BASE64_LENGTH = Math.ceil(MAX_DOCLING_IMAGE_BYTES / 3) * 4;
+
+function safeDoclingImageUri(uri: unknown): string | undefined {
+  if (typeof uri !== 'string') return undefined;
+  const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]*={0,2})$/i.exec(uri);
+  if (!match || !match[1] || match[1].length > MAX_DOCLING_IMAGE_BASE64_LENGTH) return undefined;
+  return uri;
+}
+
 function nearestDesignFont(family: string | undefined, label?: DoclingTextLabel): string {
   const f = (family ?? '').toLowerCase();
   if (label === 'code' || /mono|courier|consolas|menlo|source code/.test(f)) return 'Menlo, Consolas, monospace';
@@ -412,7 +426,7 @@ function pictureItemToBlock(
   if (bbox.width <= 0 || bbox.height <= 0) return null;
   const altText = pictureAltText(item);
   const pictureClass = topPictureClass(item);
-  const imageUri = item.image?.uri;
+  const imageUri = safeDoclingImageUri(item.image?.uri);
   const imageDiagnosticsPath = item.image?.diagnostics_path;
   const displayText = altText || item.caption || (pictureClass ? `[${pictureClass}]` : '[image]');
   return {
