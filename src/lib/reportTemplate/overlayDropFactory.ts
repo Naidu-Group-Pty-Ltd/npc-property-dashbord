@@ -55,27 +55,39 @@ export function draggableKindForOverlayType(type: string | undefined | null): Dr
 // ─── Unified palette drag payload (all overlays + blocks) ────────────────────
 //
 // Rather than re-deriving each element's defaults (error-prone for tables/curved
-// text), we serialize the palette item's own `build()` output on dragstart and
-// rebuild it at the drop point. Overlays are repositioned under the cursor;
-// blocks flow into the page (renderer-safe).
+// text), we retain the palette item's own `build()` output behind an opaque,
+// one-time token on dragstart. This ensures only items built in this app runtime
+// can be dropped. Overlays are repositioned under the cursor; blocks flow into
+// the page (renderer-safe).
 
 export const PALETTE_DRAG_MIME = 'application/x-tpl-palette';
 
 /** The shape a palette item's `build()` returns — an overlay wrapper or a block. */
 export type BuiltPaletteItem = Block | { kind: 'overlay'; overlay: Overlay };
 
+const MAX_PENDING_PALETTE_DRAGS = 100;
+const pendingPaletteDrags = new Map<string, BuiltPaletteItem>();
+
 export function serializePaletteDrag(built: BuiltPaletteItem): string {
-  return JSON.stringify(built);
+  const token = crypto.randomUUID();
+  pendingPaletteDrags.set(token, built);
+
+  // Drag cancellations never reach parsePaletteDrag, so keep the registry
+  // bounded rather than retaining palette items for the lifetime of the app.
+  while (pendingPaletteDrags.size > MAX_PENDING_PALETTE_DRAGS) {
+    const oldestToken = pendingPaletteDrags.keys().next().value;
+    if (!oldestToken) break;
+    pendingPaletteDrags.delete(oldestToken);
+  }
+
+  return token;
 }
 
 export function parsePaletteDrag(raw: string): BuiltPaletteItem | null {
   if (!raw) return null;
-  try {
-    const v = JSON.parse(raw);
-    return v && typeof v === 'object' ? (v as BuiltPaletteItem) : null;
-  } catch {
-    return null;
-  }
+  const built = pendingPaletteDrags.get(raw) ?? null;
+  pendingPaletteDrags.delete(raw);
+  return built;
 }
 
 export function isOverlayPayload(item: BuiltPaletteItem): item is { kind: 'overlay'; overlay: Overlay } {
