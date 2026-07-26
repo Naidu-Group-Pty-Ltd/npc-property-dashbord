@@ -924,7 +924,8 @@ export function buildCascadeDiagnosticsExport(
 }
 
 function csvCell(value: unknown): string {
-  const s = String(value ?? '');
+  const raw = String(value ?? '');
+  const s = /^[-=+@\t\r]/.test(raw) ? `'${raw}` : raw;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
