@@ -12,7 +12,7 @@ import { fetchGlobalReportSettings, type ContactDetails, type ProfessionalDiscla
 import { getBrandPdfPalette } from '@/branding/brandPalette';
 import { useBrand } from '@/branding/BrandProvider';
 import { smartCapitalize } from '@/lib/nameUtils';
-import { sanitizePdfHtml } from '@/utils/sanitizePdfHtml';
+import { escapeHtml } from '@/utils/escapeHtml';
 import {
   buildHouseholdIncome,
   buildPropertyExpenditure,
@@ -2561,12 +2561,12 @@ function generateHTMLContent(
                       return '<span style="color:#6b7280;font-style:italic;">Same as primary</span>';
                     }
                     const sec = formatAUAddress(client.secondary_current_address, client.secondary_current_suburb, client.secondary_current_state, client.secondary_current_postcode);
-                    if (sec !== '-') return sec;
+                    if (sec !== '-') return escapeHtml(sec);
                     return '<span style="color:#9ca3af;font-style:italic;">Not recorded</span>';
                   })()}</td></tr>
-                  <tr><td class="label">Country</td><td class="value">${formatCountry(client.secondary_country || client.country)}</td></tr>
-                  <tr><td class="label">Living Situation</td><td class="value">${enumOrNotRecorded(client.secondary_living_situation || client.living_situation)}</td></tr>
-                  <tr><td class="label">Residential status</td><td class="value">${enumOrNotRecorded(client.secondary_residential_status)}</td></tr>
+                  <tr><td class="label">Country</td><td class="value">${escapeHtml(formatCountry(client.secondary_country || client.country))}</td></tr>
+                  <tr><td class="label">Living Situation</td><td class="value">${escapeHtml(enumOrNotRecorded(client.secondary_living_situation || client.living_situation))}</td></tr>
+                  <tr><td class="label">Residential status</td><td class="value">${escapeHtml(enumOrNotRecorded(client.secondary_residential_status))}</td></tr>
                 </table>
               </div>
               ` : ''}
