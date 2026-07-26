@@ -297,3 +297,47 @@ is driven by three review classifications on
 - **Read**: `case_monitoring_summary` powers the workspace section —
   relationship state, cycle interval, next/last review, screening-refresh due
   and overdue flag, open and recent reviews, open alerts and open EDD.
+
+## 14. Trigger-based retention and audit integrity (Phase 11, §18 + §19)
+
+§18 is explicit that retention **must not** be "automatic deletion seven years
+after upload". The clock now starts at a recorded trigger event.
+
+- **`aml.retention_triggers`** (browser read-only; service-role writes only)
+  records, per record: category, `trigger_kind` (relationship_end ·
+  occasional_transaction_complete · transaction_date ·
+  program_version_obsolete · investigation_complete · report_complete ·
+  legal_hold_release), trigger date, legal/program basis, retention period,
+  derived `minimum_retention_date`, privacy restriction and disposal method.
+  Re-recording **supersedes** the prior trigger (never edits it), so the basis
+  for any retention decision stays reconstructable.
+- **`record_retention_trigger`** requires a valid trigger kind and a legal
+  basis (falling back to the schedule's). **`sync_case_triggers`** derives
+  triggers from state already recorded elsewhere — Phase 10 relationship end,
+  acknowledged reports, completed EDD — and is idempotent.
+  **`list_retention_records`** returns the full §18 display contract
+  including live legal-hold state and whether the retention period has run.
+- **Disposal safety** — the §18 sequence is enforced end to end:
+  1. `dry_run_scan` enumerates candidates **only** from operative triggers
+     whose minimum retention date has passed; a record with no trigger has not
+     started its clock and is never enumerated.
+  2. Dependency check (`dependencyBlockersFor`): open regulatory report, open
+     reporting obligation, open investigation, open alert, still referenced as
+     evidence, or relationship not ended → `blocked`.
+  3. Legal-hold check at scan and again at execution.
+  4. MLRO approval (`request_approval` → `approve_scan`).
+  5. Audit event on every step (hash-chained `records_audit_events`).
+  6. **Disposal evidence** written only after the action succeeds, recording
+     exactly what was performed (`hard_delete` row deletion vs `soft_marked`
+     with no field-level redaction), the trigger, basis, approver, executor
+     and both check results, hashed. A failed disposal is recorded `failed`,
+     never `disposed`; an item whose trigger was superseded or whose date has
+     not been reached is `blocked` even after approval.
+- **§19 independent-review evidence**: `verify_audit_chain` recomputes every
+  row hash and re-walks the `prev_hash` linkage for `aml.case_events` or
+  `records_audit_events`, reporting `row_hash_mismatch` /
+  `prev_hash_discontinuity` breaks — a reviewer establishes integrity rather
+  than trusting the stored hashes. `export_audit_bundle` (MLRO-only, reason
+  ≥10 chars, itself audited) emits the case, full event trail, retention
+  records and legal holds with an embedded integrity statement and a
+  bundle hash.

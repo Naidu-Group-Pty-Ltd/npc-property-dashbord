@@ -553,6 +553,97 @@ describe("monitoring and ongoing CDD (Phase 10, §12.9 + §18)", () => {
   });
 });
 
+describe("records and retention (Phase 11, §18 + §19)", () => {
+  const recSource = readFileSync(
+    join(repo, "supabase/functions/aml-records/index.ts"), "utf8");
+  const retMigration = readFileSync(
+    join(repo, "supabase/migrations/20260726140000_aml_retention_triggers.sql"), "utf8");
+
+  it("retention runs from recorded trigger events, never from age since upload", () => {
+    const branch = recSource.slice(
+      recSource.indexOf('case "dry_run_scan"'),
+      recSource.indexOf('case "request_approval"'));
+    // Candidates come from the trigger table's due minimum-retention dates.
+    expect(branch).toContain('from("retention_triggers")');
+    expect(branch).toContain('.lte("minimum_retention_date", nowIso)');
+    // The old age-based cutoff must be gone entirely.
+    expect(branch).not.toContain("retention_years) * 365.25");
+    expect(branch).not.toMatch(/\.lt\(src\.timestampCol, cutoff\)/);
+  });
+
+  it("only accepts the §18 trigger catalogue and requires a legal basis", () => {
+    expect(recSource).toContain("RETENTION_TRIGGER_KINDS");
+    for (const kind of [
+      "relationship_end", "occasional_transaction_complete", "transaction_date",
+      "program_version_obsolete", "investigation_complete", "report_complete", "legal_hold_release",
+    ]) {
+      expect(recSource).toContain(`${kind}:`);
+    }
+    const branch = recSource.slice(
+      recSource.indexOf('case "record_retention_trigger"'),
+      recSource.indexOf('case "sync_case_triggers"'));
+    expect(branch).toContain("trigger_kind invalid");
+    expect(branch).toContain("legal_basis is required");
+    // Re-recording supersedes rather than rewriting the basis.
+    expect(branch).toContain("superseded_at: new Date().toISOString()");
+  });
+
+  it("checks dependencies and legal holds before any disposal, at scan and at execution", () => {
+    expect(recSource).toContain("async function dependencyBlockersFor(");
+    for (const blocker of [
+      "open_regulatory_report", "open_reporting_obligation", "open_investigation",
+      "referenced_as_evidence", "relationship_not_ended",
+    ]) {
+      expect(recSource).toContain(blocker);
+    }
+    const exec = recSource.slice(
+      recSource.indexOf('case "execute_scan"'),
+      recSource.indexOf('case "audit_timeline"'));
+    expect(exec).toContain("await activeHoldFor(");
+    expect(exec).toContain("await dependencyBlockersFor(");
+    expect(exec).toContain("retention_trigger_no_longer_operative");
+  });
+
+  it("records disposal evidence describing only what actually happened", () => {
+    const exec = recSource.slice(
+      recSource.indexOf('case "execute_scan"'),
+      recSource.indexOf('case "audit_timeline"'));
+    expect(exec).toContain("disposal_evidence:");
+    expect(exec).toContain("evidence_hash");
+    expect(exec).toContain('dependency_check: "passed"');
+    expect(exec).toContain('legal_hold_check: "passed"');
+    // A soft disposal must not claim redaction it did not perform.
+    expect(exec).toContain("no field-level redaction performed");
+    // A failed disposal is recorded as failed, not as disposed.
+    expect(exec).toContain('disposition: "failed"');
+  });
+
+  it("verifies the hash chain by recomputation for independent review", () => {
+    const branch = recSource.slice(
+      recSource.indexOf('case "verify_audit_chain"'),
+      recSource.indexOf('case "export_audit_bundle"'));
+    expect(branch).toContain("recomputed !== ev.row_hash");
+    expect(branch).toContain("prev_hash_discontinuity");
+    expect(branch).toContain("intact: breaks.length === 0");
+  });
+
+  it("audit export is MLRO-only, reasoned and carries its own integrity statement", () => {
+    const branch = recSource.slice(recSource.indexOf('case "export_audit_bundle"'));
+    expect(branch).toContain("MLRO required");
+    expect(branch).toContain("reason must be at least 10 characters");
+    expect(branch).toContain("bundle_hash");
+    expect(branch).toContain("integrity:");
+    expect(branch).toContain("Audit bundle exported for case");
+  });
+
+  it("trigger table is browser read-only and the migration is reversible", () => {
+    expect(retMigration).toContain("ALTER TABLE aml.retention_triggers ENABLE ROW LEVEL SECURITY;");
+    expect(retMigration).toContain("GRANT SELECT ON aml.retention_triggers TO authenticated;");
+    expect(retMigration).not.toMatch(/CREATE POLICY[\s\S]{0,160}ON aml\.retention_triggers[\s\S]{0,80}FOR (ALL|INSERT|UPDATE)/);
+    expect(retMigration).toContain("-- ROLLBACK:");
+  });
+});
+
 describe("workflow-dimension migration invariants", () => {
   it("enforces one open case per client with a partial unique index", () => {
     expect(migrationSource).toContain("CREATE UNIQUE INDEX IF NOT EXISTS aml_cases_one_open_per_client");
