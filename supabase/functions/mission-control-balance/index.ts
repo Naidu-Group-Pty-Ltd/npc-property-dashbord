@@ -50,7 +50,7 @@ Deno.serve(async (req) => {
     // zero-balance placeholder so the header pill and Billing UI can render
     // instead of blank-screening on a 404. Same for the "unconfigured" case
     // (MC secrets missing in a preview environment).
-    if (isMc && (e.status === 404 || e.code === "unconfigured" || e.code === "mc_error")) {
+    if (isMc && (e.status === 404 || e.code === "unconfigured")) {
       const empty = {
         available: 0,
         allowance: 0,
