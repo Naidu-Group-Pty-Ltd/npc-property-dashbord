@@ -4,14 +4,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { consumeRateLimit, enforceJsonBodyLimit, getTrustedClientIp, requireHumanOrSignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
 import { callLLM } from '../_shared/llmRouter.ts';
-
-const cors = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type': 'application/json' } });
+import { createCorsHeaders } from '../_shared/auth.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
 const REFUSAL = 'I do not have enough sourced market updates to answer that yet.';
 
@@ -184,8 +178,12 @@ const RATE_LIMIT_HOUR = Number(Deno.env.get('MARKET_QA_RATE_LIMIT_HOUR') || 30);
 const RATE_LIMIT_DAY = Number(Deno.env.get('MARKET_QA_RATE_LIMIT_DAY') || 200);
 
 Deno.serve(async (req) => {
+  const cors = createCorsHeaders(req.headers.get('origin'));
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers:{ ...cors, 'content-type':'application/json' } });
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
   if (req.method !== 'POST') return json({ error: 'Invalid request.' }, 400);
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
   const parsed = await enforceJsonBodyLimit<any>(req, 100_000);
   if (!parsed.ok) return new Response(parsed.error.body, { status: parsed.error.status, headers: { ...cors, 'content-type': 'application/json' } });
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -221,12 +219,13 @@ Deno.serve(async (req) => {
   // Anchor ids from prior turns in the same conversation — retrieval boost + inclusion.
   let anchorIds: string[] = [];
   if (conversation_id) {
-    const { data: prior } = await sb.from('market_update_questions')
+    const { data: prior, error:priorError } = await sb.from('market_update_questions')
       .select('source_update_ids')
       .eq('conversation_id', conversation_id)
       .eq('created_by', userId)
       .order('created_at', { ascending: false })
       .limit(3);
+    if (priorError) return json({ error:'Conversation history could not be loaded.', code:'conversation_retrieval_failed', retryable:true, correlation_id:auth.correlationId },503);
     if (prior) {
       anchorIds = Array.from(new Set(prior.flatMap((p: any) => Array.isArray(p.source_update_ids) ? p.source_update_ids : []))).slice(0, 8);
     }
@@ -268,16 +267,17 @@ Deno.serve(async (req) => {
         if (added.length && (data?.length ?? 0) > added.length) retrievalMode = 'hybrid';
         else if (added.length) retrievalMode = 'lexical';
       }
-    } catch (e) { console.warn('[qa] lexical supplement skipped:', (e as Error).message); }
+    } catch { console.warn(JSON.stringify({ function:'market-updates-qa', stage:'lexical_supplement', status:'skipped', correlation_id:auth.correlationId })); }
   }
 
   // Semantic fallback: if term-restricted query returned nothing, pull recent high-impact pool.
   if (!error && (!data || data.length === 0) && !updateIds.length) {
-    const fallback = await sb.from('market_updates')
+    let fallbackQuery = sb.from('market_updates')
       .select('id,title,source_name,source_url,source_published_at,category,segments,geography,impact_level,ai_summary,why_it_matters,key_points,citation_urls')
-      .eq('status', 'published')
-      .order('source_published_at', { ascending: false, nullsFirst: false })
-      .limit(80);
+      .eq('status', 'published');
+    if (segment) fallbackQuery = fallbackQuery.contains('segments',[segment]);
+    const fallback = await fallbackQuery.order('source_published_at', { ascending: false, nullsFirst: false }).limit(80);
+    if (fallback.error) error = fallback.error;
     data = fallback.data ?? [];
     retrievalMode = 'fallback';
   }
@@ -290,14 +290,17 @@ Deno.serve(async (req) => {
     if (missing.length) {
       const anchorRows = await sb.from('market_updates')
         .select('id,title,source_name,source_url,source_published_at,category,segments,geography,impact_level,ai_summary,why_it_matters,key_points,citation_urls')
+        .eq('status','published')
         .in('id', missing);
-      data = [...(data ?? []), ...(anchorRows.data ?? [])];
+      if (anchorRows.error) return json({ error:'Conversation sources could not be loaded.', code:'retrieval_failed', retryable:true, correlation_id:auth.correlationId },503);
+      const permittedAnchors = segment ? (anchorRows.data ?? []).filter((row:any) => Array.isArray(row.segments) && row.segments.includes(segment)) : (anchorRows.data ?? []);
+      data = [...(data ?? []), ...permittedAnchors];
     }
   }
 
   if (error) {
-    console.warn('[qa] retrieval error', error.message);
-    return json({ answer: REFUSAL, citations: [], source_update_ids: [], confidence_score: 0, limitations: ['Retrieval error.'], follow_up_questions: [], key_figures: [], time_horizon: 'unclear', sentiment: 'neutral' });
+    console.warn(JSON.stringify({ function:'market-updates-qa', stage:'retrieval', status:'failed', correlation_id:auth.correlationId }));
+    return json({ error:'Published Market Updates context could not be retrieved.', code:'retrieval_failed', retryable:true, correlation_id:auth.correlationId },503);
   }
 
   // Boost anchor rows during ranking.
@@ -359,17 +362,17 @@ Deno.serve(async (req) => {
     time_horizon = ai.time_horizon;
     sentiment = ai.sentiment;
   } else if (!aiUsedIds.length || aiUsedIds.some(id => !contextIds.has(id)) || ai.answer.length < 4) {
-    answer = context.slice(0, 3).map(c => `• ${c.title} (${c.source_name}): ${c.ai_summary || c.why_it_matters || 'Limited sourced context.'}`).join('\n');
-    used_ids = context.slice(0, 3).map(c => c.id);
-    confidence = 45;
-    limitations = ['Extractive fallback used because the AI response was ungrounded or unavailable.', 'Not financial, legal, tax or investment advice.'];
+    answer = REFUSAL;
+    used_ids = [];
+    confidence = 0;
+    limitations = ['The generated answer could not be validated against the retrieved source records.'];
   } else {
     answer = ai.answer;
     used_ids = aiUsedIds.filter(id => contextIds.has(id));
     confidence = Math.max(0, Math.min(100, ai.confidence));
     limitations = ai.limitations.length ? ai.limitations : ['Answer limited to stored market update summaries and citations; not financial, legal, tax or investment advice.'];
     follow_up_questions = ai.follow_up_questions;
-    key_figures = aiKeyFigures.filter(k => !k.source_id || contextIds.has(k.source_id));
+    key_figures = aiKeyFigures.filter(k => Boolean(k.source_id) && contextIds.has(k.source_id!));
     time_horizon = ai.time_horizon;
     sentiment = ai.sentiment;
   }
@@ -412,7 +415,7 @@ Deno.serve(async (req) => {
     },
   };
   const persistPromise = sb.from('market_update_questions').insert(insertRow).select('id').maybeSingle()
-    .then((res: any) => { if (res?.error) console.warn('[qa] log insert', res.error.message); return res?.data?.id ?? null; });
+    .then((res: any) => { if (res?.error) console.warn(JSON.stringify({ function:'market-updates-qa', stage:'persistence', status:'failed', correlation_id:auth.correlationId, error_class:'database_insert_failed' })); return res?.data?.id ?? null; });
 
   let question_id: string | null = null;
   if (!stream) {
@@ -478,4 +481,3 @@ Deno.serve(async (req) => {
     headers: { ...cors, 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'x-accel-buffering': 'no' },
   });
 });
-

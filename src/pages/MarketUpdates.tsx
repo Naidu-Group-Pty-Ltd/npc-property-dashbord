@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, Radio } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, Radio, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -111,6 +111,8 @@ export default function MarketUpdates() {
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
   const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; confidence_score?: number | null; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null }>>([]);
   const [asking, setAsking] = useState(false);
+  const qaAbortRef = useRef<AbortController | null>(null);
+  const qaRequestRef = useRef(0);
   const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
   const [dialogConversationId, setDialogConversationId] = useState<string>(() => crypto.randomUUID());
   const [search, setSearch] = useState('');
@@ -221,6 +223,10 @@ export default function MarketUpdates() {
     const priorHistory = qaThread.map((t) => ({ role: t.role, content: t.content }));
     const inDialog = Boolean(qaUpdate);
     const convId = inDialog ? dialogConversationId : conversationId;
+    qaAbortRef.current?.abort();
+    const controller = new AbortController();
+    qaAbortRef.current = controller;
+    const requestId = ++qaRequestRef.current;
     setQaThread((t) => [...t, { role: 'user', content: q }, { role: 'assistant', content: '', streaming: true }]);
     setQuestion('');
     try {
@@ -230,7 +236,9 @@ export default function MarketUpdates() {
         history: priorHistory,
         segment: seg,
         conversation_id: convId,
+        signal: controller.signal,
         onDelta: (acc) => {
+          if (qaRequestRef.current !== requestId) return;
           setQaThread((t) => {
             const next = [...t];
             const last = next[next.length - 1];
@@ -239,6 +247,7 @@ export default function MarketUpdates() {
           });
         },
       });
+      if (qaRequestRef.current !== requestId) return;
       setQaMessage(answer);
       setQaThread((t) => {
         const next = [...t];
@@ -259,14 +268,23 @@ export default function MarketUpdates() {
         return next;
       });
     } catch (err) {
+      if (qaRequestRef.current !== requestId || (err instanceof DOMException && err.name === 'AbortError')) return;
       setQaThread((t) => {
         const next = [...t];
         next[next.length - 1] = { role: 'assistant', content: err instanceof Error ? err.message : 'Failed to get an answer. Please try again.', streaming: false };
         return next;
       });
     } finally {
-      setAsking(false);
+      if (qaRequestRef.current === requestId) { setAsking(false); qaAbortRef.current = null; }
     }
+  };
+
+  const cancelAsk = () => {
+    qaRequestRef.current += 1;
+    qaAbortRef.current?.abort();
+    qaAbortRef.current = null;
+    setAsking(false);
+    setQaThread((thread) => thread.filter((turn) => !turn.streaming));
   };
 
 
@@ -291,7 +309,7 @@ export default function MarketUpdates() {
             <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market updates. Threaded — follow-ups keep prior context.</p>
           </div>
           {qaThread.length > 0 && (
-            <Button size="sm" variant="ghost" onClick={() => { setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
+            <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
           )}
         </div>
       </CardHeader>
@@ -362,6 +380,7 @@ export default function MarketUpdates() {
             <Button className="flex-1" onClick={() => handleAsk()} disabled={asking || !question.trim()}>
               {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
             </Button>
+            {asking && <Button variant="outline" onClick={cancelAsk}><XCircle className="mr-2 h-4 w-4" />Cancel</Button>}
           </div>
         </div>
       </CardContent>
@@ -760,7 +779,7 @@ export default function MarketUpdates() {
         </Dialog>
 
         {/* Q&A Dialog */}
-        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
+        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Ask AI about this update</DialogTitle>
@@ -817,6 +836,7 @@ export default function MarketUpdates() {
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>
                   {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
                 </Button>
+                {asking && <Button variant="outline" onClick={cancelAsk}><XCircle className="mr-2 h-4 w-4" />Cancel</Button>}
               </div>
             </div>
           </DialogContent>

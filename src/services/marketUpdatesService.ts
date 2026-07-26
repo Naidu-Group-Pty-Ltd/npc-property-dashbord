@@ -222,14 +222,13 @@ export async function answerMarketUpdateQuestion(
       time_horizon: data.time_horizon,
       sentiment: data.sentiment,
       model_used: data.model_used,
+      route_used: data.route_used,
+      fallback_used: Boolean(data.fallback_used),
       retrieved: Array.isArray(data.retrieved) ? data.retrieved : [],
       question_id: data.question_id ?? null,
       rate_limited: Boolean(data.rate_limited),
     };
-  } catch (e) {
-    warnMissing('Market Q&A function unavailable or insufficient context.', e);
-    return { id: crypto.randomUUID(), role:'assistant', content:'I do not have enough sourced market updates to answer that yet.', citations:[], source_update_ids:[], confidence_score:0, limitations:['Market Q&A only answers from published, source-backed market updates.'], created_at:new Date().toISOString(), follow_up_questions: [], key_figures: [], retrieved: [], question_id: null };
-  }
+  } catch (e) { throw operationalError('qa', e, 'market-updates-qa'); }
 }
 
 /** SSE-streaming variant. `onDelta` receives the accumulated answer text as it streams.
@@ -272,6 +271,7 @@ export async function streamMarketUpdateQuestion(
     let buffer = '';
     let metadata: any = null;
     let acc = '';
+    let streamError: string | null = null;
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -294,10 +294,13 @@ export async function streamMarketUpdateQuestion(
             opts.onDelta?.(acc);
           } else if (event === 'metadata') {
             metadata = parsed;
+          } else if (event === 'error') {
+            streamError = typeof parsed.message === 'string' ? parsed.message : 'Market Q&A stream failed.';
           }
         } catch { /* ignore parse errors */ }
       }
     }
+    if (streamError || !metadata) throw new Error(streamError ?? 'Market Q&A stream ended without metadata.');
     return {
       id: crypto.randomUUID(),
       role: 'assistant',
@@ -312,11 +315,14 @@ export async function streamMarketUpdateQuestion(
       time_horizon: metadata?.time_horizon,
       sentiment: metadata?.sentiment,
       model_used: metadata?.model_used,
+      route_used: metadata?.route_used,
+      fallback_used: Boolean(metadata?.fallback_used),
       retrieved: Array.isArray(metadata?.retrieved) ? metadata.retrieved : [],
       question_id: metadata?.question_id ?? null,
       rate_limited: Boolean(metadata?.rate_limited),
     };
   } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
     warnMissing('Market Q&A streaming failed; falling back to non-streaming.', e);
     return answerMarketUpdateQuestion(question, opts.updateIds, opts.history, opts.segment, opts.conversation_id);
   }

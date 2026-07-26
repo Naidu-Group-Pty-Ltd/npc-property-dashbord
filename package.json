@@ -40,7 +40,8 @@
     "security:test": "npm run security:registry && npm run security:static && npm run security:edd-boundary && npm run security:edge-check",
     "test:market-updates-publication-decisions": "node scripts/validate-market-updates-publication-decisions.mjs",
     "test:market-source-refresh-cadence": "node scripts/validate-market-source-refresh-cadence.mjs",
-    "test:market-updates-digest": "node scripts/validate-market-updates-digest.mjs"
+    "test:market-updates-digest": "node scripts/validate-market-updates-digest.mjs",
+    "test:market-updates-qa": "node scripts/validate-market-updates-qa.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
