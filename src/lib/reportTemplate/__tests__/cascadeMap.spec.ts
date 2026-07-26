@@ -223,6 +223,30 @@ describe('report template cascade map', () => {
     expect(csv).toContain('Needs a stronger visual landing point.');
   });
 
+  it('neutralizes spreadsheet formula triggers in cascade diagnostics CSV cells', () => {
+    const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## Executive Summary' });
+    const anchor = {
+      ...makeFieldAnchor(contract.sections[0].fields.find((f) => f.path.endsWith('.body'))!),
+      qaOwner: '\t=HYPERLINK("https://attacker.example")',
+      qaNote: '\r@SUM(1+1)',
+    };
+    const cascade = buildCascadeMap(baseTemplate([anchor]), contract);
+    const diagnostics = buildCascadeDiagnosticsExport(cascade, contract);
+    diagnostics.sections[0].label = '=2+3';
+    diagnostics.sections[0].fields[0].label = '+2+3';
+    diagnostics.sections[0].targets[0].pageName = '-2+3';
+    diagnostics.sections[0].targets[0].blockId = '@SUM(1+1)';
+
+    const csv = cascadeDiagnosticsToCsv(diagnostics);
+
+    expect(csv).toContain("'=2+3");
+    expect(csv).toContain("'+2+3");
+    expect(csv).toContain("'-2+3");
+    expect(csv).toContain("'@SUM(1+1)");
+    expect(csv).toContain("'\t=HYPERLINK(\"\"https://attacker.example\"\")");
+    expect(csv).toContain("\"'\r@SUM(1+1)\"");
+  });
+
   it('can emit cascade metadata and debug tags in HTML render mode', () => {
     const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## Executive Summary' });
     const anchor = {
