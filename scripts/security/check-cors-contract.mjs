@@ -84,6 +84,25 @@ for (const [h, file] of read) {
   }
 }
 
+// ── The shared transport must not add custom request headers ────────────────
+// This is the rule that matters most in practice. The frontend ships as one
+// bundle; each of the ~300 edge functions carries its own bundled copy of
+// `_shared/auth.ts` and is redeployed individually. A custom header added to
+// the shared transport only works once EVERY function it can reach has been
+// redeployed — until then the preflight fails and the entire app goes dark.
+// Body fields carry the same data with no preflight requirement.
+const SHARED_TRANSPORT = 'src/lib/secureInvoke.ts';
+// Line-based scan: an `'x-…':` object key on its own line is a header entry.
+// (Block matching is unreliable here — a `${...}` template inside a header
+// value closes a naive brace match early and hides everything after it.)
+for (const rawLine of readFileSync(SHARED_TRANSPORT, 'utf8').split('\n')) {
+  const line = rawLine.trim();
+  if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue;
+  const m = line.match(/['"](x-[a-z0-9-]+)['"]\s*:/i);
+  if (!m) continue;
+  errors.push(`${SHARED_TRANSPORT}: adds custom request header \`${m[1].toLowerCase()}\` on the shared edge-function transport. It reaches ~300 independently-deployed functions and fails the preflight on every one not yet redeployed with it allow-listed — taking the whole app down. Send it as a body field instead.`);
+}
+
 // ── Hand-rolled CORS objects must be supersets of what the client needs ─────
 // Session/portal carriers are per-surface, so only the headers the shared
 // client attaches to *every* call are required everywhere.
