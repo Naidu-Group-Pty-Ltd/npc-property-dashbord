@@ -9,6 +9,8 @@ on:
   push:
     branches: [main]
 
+# CI only reads repository contents. Keep the workflow token least-privileged
+# while dependency lifecycle scripts and build tooling execute.
 permissions:
   contents: read
 
