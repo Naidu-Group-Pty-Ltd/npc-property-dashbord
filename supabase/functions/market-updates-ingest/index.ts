@@ -260,6 +260,7 @@ Deno.serve(async (req) => {
     aiClassified: 0,
     aiFallbacks: 0,
     sourceErrors: [] as Array<{ sourceId: string; message: string }>,
+    warnings: [] as string[],
     message: "Market ingestion completed.",
   };
 
@@ -413,7 +414,12 @@ Deno.serve(async (req) => {
   if (finalRunUpdate.error) return json({ runId:run.id, status:'failed', error:'Unable to persist final ingestion status.', code:'database_update_failed' }, 500, cors);
   if(summary.published>0&&!test){
     const cronSecret = Deno.env.get('MARKET_INGESTION_CRON_SECRET');
-    if (cronSecret) fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/market-updates-digest`,{method:'POST',headers:{'x-cron-secret':cronSecret,'content-type':'application/json'},body:JSON.stringify({period:'24h',internal_action:'post_ingestion'})}).catch(()=>undefined);
+    if (cronSecret) {
+      try {
+        const digestResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/market-updates-digest`,{method:'POST',headers:{'x-cron-secret':cronSecret,'content-type':'application/json'},body:JSON.stringify({period:'24h',internal_action:'post_ingestion',ingestion_run_id:run.id})});
+        if (!digestResponse.ok) summary.warnings.push('post_ingestion_digest_failed');
+      } catch { summary.warnings.push('post_ingestion_digest_unreachable'); }
+    } else summary.warnings.push('digest_cron_secret_missing');
   }
   return json({...summary,status:finalStatus}, 200, cors);
 });
