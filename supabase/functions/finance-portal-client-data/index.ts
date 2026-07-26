@@ -1064,20 +1064,23 @@ Deno.serve(async (req) => {
       if (!record_id) return jsonResponse({ error: 'record_id required' }, 400);
       if (!permissions[table_key]?.delete) return jsonResponse({ error: 'No delete permission for ' + table_key }, 403);
 
-      const { error } = await supabase
+      const { data: deletedRecord, error } = await supabase
         .from(dbTable)
         .delete()
         .eq('id', record_id)
-        .eq('client_id', client_id);
+        .eq('client_id', client_id)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!deletedRecord) return jsonResponse({ error: 'Record not found' }, 404);
       if (dbTable === 'client_income_sources') {
-        await syncClientRollups(supabase, client_id, dbTable, { id: record_id });
-        await logIncomeSourceSyncEvent(supabase, { clientId: client_id, recordId: record_id, operation: 'delete', portalUser });
+        await syncClientRollups(supabase, client_id, dbTable, deletedRecord);
+        await logIncomeSourceSyncEvent(supabase, { clientId: client_id, recordId: deletedRecord.id, operation: 'delete', portalUser });
       }
       if (dbTable === 'client_address_history') {
-        await logAddressSyncEvent(supabase, { clientId: client_id, record: { id: record_id }, operation: 'delete', portalUser });
+        await logAddressSyncEvent(supabase, { clientId: client_id, record: deletedRecord, operation: 'delete', portalUser });
       }
-      await audit('delete_record', table_key, record_id);
+      await audit('delete_record', table_key, deletedRecord.id);
       return jsonResponse({ success: true });
     }
 
