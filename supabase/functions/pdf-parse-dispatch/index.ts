@@ -310,13 +310,22 @@ async function resolveSignedSourceUrl(
   body: Record<string, unknown>,
 ): Promise<{ url: string; cleanup?: () => Promise<void> } | { error: string }> {
   const directUrl = typeof body.source_url === 'string' ? body.source_url : '';
-  if (directUrl) return { url: directUrl };
+  // Never bridge a caller-controlled URL into the privileged parser network.
+  // Sources must first be uploaded to one of the private, server-controlled
+  // locations below so this function is the only component that mints the URL.
+  if (directUrl) return { error: 'source_url is not supported; upload the PDF first' };
 
   const storagePath = typeof body.source_path === 'string' ? body.source_path : '';
   const bucket = typeof body.source_bucket === 'string' && body.source_bucket
     ? (body.source_bucket as string)
     : SOURCE_BUCKET;
   if (storagePath) {
+    const isTemplateSource = bucket === SOURCE_BUCKET;
+    const isUploadedSource = bucket === DIAGNOSTICS_BUCKET
+      && storagePath.startsWith('pdf-import-sources/');
+    if (!isTemplateSource && !isUploadedSource) {
+      return { error: 'source bucket or path is not allowed' };
+    }
     const { data, error } = await admin.storage.from(bucket).createSignedUrl(storagePath, 600);
     if (error || !data) return { error: error?.message ?? 'failed to sign source URL' };
     return { url: data.signedUrl };
@@ -343,7 +352,7 @@ async function resolveSignedSourceUrl(
       },
     };
   }
-  return { error: 'must supply source_url, source_path, or source_base64' };
+  return { error: 'must supply source_path or source_base64' };
 }
 
 async function fetchAndHash(signedUrl: string): Promise<{ hash: string; size: number } | null> {
@@ -1022,9 +1031,8 @@ async function runJob(
         if (!retryable || attempt === MAX_SIDECAR_ATTEMPTS) throw new Error(lastErr);
       } catch (e) {
         lastErr = String((e as Error)?.message ?? e);
-        if (!lastErr.startsWith('sidecar /parse')) {
-          await appendAttempt(admin, jobId, { endpoint: '/parse', attempt, ok: false, error_code: 'fetch_exception', retryable: attempt < MAX_SIDECAR_ATTEMPTS, message: lastErr.slice(0, 500), duration_ms: Date.now() - attemptStarted });
-        }
+        if (lastErr.startsWith('sidecar /parse')) throw new Error(lastErr);
+        await appendAttempt(admin, jobId, { endpoint: '/parse', attempt, ok: false, error_code: 'fetch_exception', retryable: attempt < MAX_SIDECAR_ATTEMPTS, message: lastErr.slice(0, 500), duration_ms: Date.now() - attemptStarted });
         if (attempt === MAX_SIDECAR_ATTEMPTS) throw new Error(lastErr);
       }
       const delay = [2000, 5000][attempt - 1] ?? 5000;

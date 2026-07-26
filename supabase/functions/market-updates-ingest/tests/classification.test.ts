@@ -1,11 +1,22 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { categoryForSegment, normaliseClassification } from "../classification.ts";
+import { categoryForSegment, normaliseClassification, validateClassification } from "../classification.ts";
 
 Deno.test("segment categories use persisted database values", () => {
   assertEquals(categoryForSegment("property"), "property_market");
   assertEquals(categoryForSegment("economic"), "economy");
   assertEquals(categoryForSegment("rental"), "rental_market");
   assertEquals(categoryForSegment("social"), "other");
+});
+
+Deno.test("classification validates geography, impact and required summary", () => {
+  const result = validateClassification({
+    category: "finance", segments: ["finance"], audience_tags: [],
+    geography: ["NSW", "Mars"], impact_level: "urgent", ai_summary: "",
+    confidence_score: 75,
+  });
+  assertEquals(result.geography, ["NSW"]);
+  assertEquals(result.impact_level, "low");
+  assertEquals(result.validation_failures, ["unsupported_geography_removed", "unsupported_impact_replaced", "summary_missing"]);
 });
 
 Deno.test("classification removes incompatible audience tags", () => {

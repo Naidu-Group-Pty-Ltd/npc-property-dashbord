@@ -106,11 +106,11 @@ function buildEffectStyle(o: any): string {
   if (e.shadow) {
     const s = e.shadow;
     const inset = s.inset ? 'inset ' : '';
-    parts.push(`box-shadow:${inset}${Number(s.x ?? 0)}pt ${Number(s.y ?? 2)}pt ${Number(s.blur ?? 8)}pt ${Number(s.spread ?? 0)}pt ${s.color ?? 'rgba(0,0,0,0.25)'}`);
+    parts.push(`box-shadow:${inset}${Number(s.x ?? 0)}pt ${Number(s.y ?? 2)}pt ${Number(s.blur ?? 8)}pt ${Number(s.spread ?? 0)}pt ${esc(s.color ?? 'rgba(0,0,0,0.25)')}`);
   }
   if (e.blendMode && e.blendMode !== 'normal') parts.push(`mix-blend-mode:${e.blendMode}`);
   if (e.outline && Number(e.outline.width ?? 0) > 0) {
-    parts.push(`outline:${Number(e.outline.width)}pt ${e.outline.style ?? 'solid'} ${e.outline.color ?? '#BF9B50'}`);
+    parts.push(`outline:${Number(e.outline.width)}pt ${e.outline.style ?? 'solid'} ${esc(e.outline.color ?? '#BF9B50')}`);
     parts.push(`outline-offset:${Number(e.outline.offset ?? 0)}pt`);
   }
   return parts.length ? parts.join(';') + ';' : '';
@@ -153,7 +153,10 @@ function withCascadeWrapper(html: string, node: { anchors?: any[]; id?: string }
 /** Render an overlay (text / image / shape / textOnPath / table) as an absolute-positioned HTML element. */
 export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
   if (!evalConditional(overlay.conditional, ctx)) return '';
-  const fx = buildEffectStyle(overlay as any);
+  // Effects originate in saved template JSON and are embedded in quoted style
+  // attributes below. Encode them at this shared boundary so a CSS value cannot
+  // terminate the attribute and inject HTML.
+  const fx = esc(buildEffectStyle(overlay as any));
   const z = Number.isFinite(Number((overlay as any).zIndex)) ? `z-index:${Number((overlay as any).zIndex)};` : '';
   const opacity = Number.isFinite(Number(overlay.opacity)) ? Number(overlay.opacity) : 1;
   const rotation = Number.isFinite(Number(overlay.rotation)) ? Number(overlay.rotation) : 0;
@@ -284,7 +287,7 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       if (overlay.shape === 'line') {
         return withCascadeWrapper(`<div style="${base}border-top:${sw}pt solid ${stroke};"></div>`, overlay as any, ctx);
       }
-      return withCascadeWrapper(`<div style="${base}background:${fill};border:${sw}pt solid ${stroke};border-radius:${radius};"></div>`, overlay as any, ctx);
+      return withCascadeWrapper(`<div style="${base}background:${esc(fill)};border:${sw}pt solid ${stroke};border-radius:${radius};"></div>`, overlay as any, ctx);
     }
     case 'vector': {
       // R0 — editable vector geometry (icons/logos captured as SVG paths).
@@ -347,7 +350,8 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
       }
       const pathId = `txp-${overlay.id}`;
       const offset = Math.max(0, Math.min(100, Number(o.startOffset ?? 0)));
-      return withCascadeWrapper(`<svg xmlns="http://www.w3.org/2000/svg" style="${base}overflow:visible;" viewBox="0 0 ${w} ${h}" width="${w}pt" height="${h}pt"><defs><path id="${pathId}" d="${d}" fill="none"/></defs><text fill="${color}" font-family="${esc(family)}" font-size="${size}" font-weight="${o.fontWeight ?? 'normal'}" letter-spacing="${o.letterSpacing ?? 0}"><textPath href="#${pathId}" startOffset="${offset}%">${esc(text)}</textPath></text></svg>`, overlay as any, ctx);
+      const escapedPathId = esc(pathId);
+      return withCascadeWrapper(`<svg xmlns="http://www.w3.org/2000/svg" style="${esc(`${base}overflow:visible;`)}" viewBox="0 0 ${w} ${h}" width="${w}pt" height="${h}pt"><defs><path id="${escapedPathId}" d="${esc(d)}" fill="none"/></defs><text fill="${esc(color)}" font-family="${esc(family)}" font-size="${size}" font-weight="${esc(o.fontWeight ?? 'normal')}" letter-spacing="${esc(o.letterSpacing ?? 0)}"><textPath href="#${escapedPathId}" startOffset="${offset}%">${esc(text)}</textPath></text></svg>`, overlay as any, ctx);
     }
     case 'table': {
       const o: any = overlay;
@@ -363,7 +367,7 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
         rows = o.rows.map((r: any[]) => Object.fromEntries(cols.map((c, i) => [c.key || `col${i}`, r?.[i] ?? ''])));
       }
       if (o.maxRows) rows = rows.slice(0, o.maxRows);
-      const family = o.fontFamily ? esc(resolveTokenReference(o.fontFamily, ctx) || 'Helvetica') : 'inherit';
+      const family = o.fontFamily ? resolveTokenReference(o.fontFamily, ctx) || 'Helvetica' : 'inherit';
       const headerBg = o.headerBg ? resolveBindableColor(o.headerBg, ctx, '#111') : '#111';
       const headerColor = o.headerColor ? resolveBindableColor(o.headerColor, ctx, '#fff') : '#fff';
       const rowBg = o.rowBg ? resolveBindableColor(o.rowBg, ctx, 'transparent') : 'transparent';
@@ -430,7 +434,8 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
         const bg = s.bg ?? headerBg;
         const fg = s.color ?? headerColor;
         const fw = s.fontWeight ?? o.headerFontWeight ?? 'bold';
-        return `<th${spanAttrs(-1, i)} style="padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.headerHeight ?? 22)}pt">${esc(c.label ?? c.key)}</th>`;
+        const style = `padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.headerHeight ?? 22)}pt`;
+        return `<th${spanAttrs(-1, i)} style="${esc(style)}">${esc(c.label ?? c.key)}</th>`;
       }).join('');
       const bodyRows = rows.map((r, ri) => {
         const baseRowBg = altRowBg && ri % 2 === 1 ? altRowBg : rowBg;
@@ -442,18 +447,24 @@ export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
           const cellRule = matchRule(r, c.key);
           const applied = rowRule ?? cellRule;
           const align = s.align ?? c.align ?? 'left';
-          const bg = s.bg ?? (applied?.bg) ?? baseRowBg;
-          const fg = s.color ?? (applied?.color) ?? rowColor;
+          const bg = applied?.bg != null && s.bg == null
+            ? resolveBindableColor(applied.bg, ctx, baseRowBg)
+            : s.bg ?? baseRowBg;
+          const fg = applied?.color != null && s.color == null
+            ? resolveBindableColor(applied.color, ctx, rowColor)
+            : s.color ?? rowColor;
           const fw = s.fontWeight ?? (applied?.fontWeight) ?? 'normal';
           let raw: any = r[c.key];
           if (typeof raw === 'string') raw = resolveBindable(raw, ctx);
           const val = fmtCell(raw, c.format);
           const icon = cellRule?.icon && cellRule.icon !== 'none' ? `<span style="margin-right:4pt;opacity:0.85">${iconGlyph(cellRule.icon)}</span>` : '';
-          return `<td${spanAttrs(ri, ci)} style="padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.rowHeight ?? 20)}pt">${icon}${esc(val)}</td>`;
+          const style = `padding:${cp}pt;text-align:${align};background:${bg};color:${fg};font-weight:${fw};border:${bw}pt solid ${borderColor};height:${Number(o.rowHeight ?? 20)}pt`;
+          return `<td${spanAttrs(ri, ci)} style="${esc(style)}">${icon}${esc(val)}</td>`;
         }).join('');
         return `<tr>${tds}</tr>`;
       }).join('');
-      return withCascadeWrapper(`<div style="${base}overflow:hidden;"><table style="width:100%;border-collapse:collapse;font-family:${family};font-size:${Number(o.fontSize ?? 10)}pt;table-layout:fixed;">${colGroup ? `<colgroup>${colGroup}</colgroup>` : ''}${o.showHeader !== false ? `<thead><tr>${headerCells}</tr></thead>` : ''}<tbody>${bodyRows}</tbody></table></div>`, overlay as any, ctx);
+      const tableStyle = `width:100%;border-collapse:collapse;font-family:${family};font-size:${Number(o.fontSize ?? 10)}pt;table-layout:fixed;`;
+      return withCascadeWrapper(`<div style="${esc(`${base}overflow:hidden;`)}"><table style="${esc(tableStyle)}">${colGroup ? `<colgroup>${colGroup}</colgroup>` : ''}${o.showHeader !== false ? `<thead><tr>${headerCells}</tr></thead>` : ''}<tbody>${bodyRows}</tbody></table></div>`, overlay as any, ctx);
     }
   }
   return '';

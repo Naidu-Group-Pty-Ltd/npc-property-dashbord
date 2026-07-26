@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { makePreviewKey, makeCanvasRenderKey } from '../previewCache';
+import { makePreviewKey, makeCanvasRenderKey, pageWithoutOverlays } from '../previewCache';
 import { type ReportTemplate, type Page, type Block, type Overlay } from '../templateSchema';
 
 const ov = (id: string, x = 0, y = 0): Overlay => ({ id, type: 'text', x, y, text: '' } as unknown as Overlay);
@@ -62,5 +62,17 @@ describe('makeCanvasRenderKey', () => {
     expect(makeCanvasRenderKey(template, p, {}, '')).not.toBe(makeCanvasRenderKey(themed, p, {}, ''));
     expect(makeCanvasRenderKey(template, p, { a: 1 }, '')).not.toBe(makeCanvasRenderKey(template, p, { a: 2 }, ''));
     expect(makeCanvasRenderKey(template, p, {}, '.a{}')).not.toBe(makeCanvasRenderKey(template, p, {}, '.b{}'));
+  });
+});
+
+describe('pageWithoutOverlays', () => {
+  it('removes overlay content from the iframe render input without mutating the page', () => {
+    const overlay = { ...ov('o1'), rich: true, text: '<script>malicious()</script>' } as Overlay;
+    const page = pg('p1', [blk('b1', 'free', [overlay])]);
+
+    const renderPage = pageWithoutOverlays(page);
+
+    expect(renderPage.blocks[0].overlays).toEqual([]);
+    expect(page.blocks[0].overlays).toEqual([overlay]);
   });
 });

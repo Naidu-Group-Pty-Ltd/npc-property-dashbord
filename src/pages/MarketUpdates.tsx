@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, Radio } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, Radio, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,8 +11,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketSources, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
-import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketQAMessage, MarketSegment, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, followMarketIngestionRun, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
+import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
@@ -94,7 +94,6 @@ function SegmentChip({ seg, active, onClick }: { seg: MarketSegment | 'all'; act
 export default function MarketUpdates() {
   const navigate = useNavigate();
   const [updates, setUpdates] = useState<MarketUpdate[]>([]);
-  const [sources, setSources] = useState<MarketSource[]>([]);
   const [sourceHealth, setSourceHealth] = useState<MarketSourceHealth>({ totalSources:0, enabledSources:0, healthySources:0, degradedSources:0, failedSources:0 });
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState(false);
@@ -102,13 +101,18 @@ export default function MarketUpdates() {
   const [period, setPeriod] = useState<MarketDigestPeriod>('24h');
   const [digest, setDigest] = useState<MarketDigest24h | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [operationalIssue, setOperationalIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [dataIssue, setDataIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [digestIssue, setDigestIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [actionIssue, setActionIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const operationalIssue = actionIssue ?? dataIssue ?? digestIssue;
   const [selectedUpdate, setSelectedUpdate] = useState<MarketUpdate | null>(null);
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
   const [question, setQuestion] = useState('');
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
   const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; confidence_score?: number | null; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null }>>([]);
   const [asking, setAsking] = useState(false);
+  const qaAbortRef = useRef<AbortController | null>(null);
+  const qaRequestRef = useRef(0);
   const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
   const [dialogConversationId, setDialogConversationId] = useState<string>(() => crypto.randomUUID());
   const [search, setSearch] = useState('');
@@ -117,22 +121,54 @@ export default function MarketUpdates() {
   const [filters, setFilters] = useState({ category: 'all', geography: 'all', impact: 'all', audience: 'all' });
   const [sourcesAdminOpen, setSourcesAdminOpen] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<'updates' | 'ask-ai'>('updates');
+  const [runSummary, setRunSummary] = useState<MarketIngestionRun | null>(null);
+  const [candidateReview, setCandidateReview] = useState<MarketUpdate[] | null>(null);
+
+  const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
+    ? error.issue
+    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
+
+  const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
+    ? error.issue
+    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
   const loadUpdates = async () => {
     setLoading(true);
-    try {
-      const [u, s, h] = await Promise.all([fetchMarketUpdates({ limit: 200 }), fetchMarketSources(), fetchMarketSourceHealth()]);
-      setUpdates(u); setSources(s); setSourceHealth(h); setOperationalIssue(null);
-    } catch (error) {
-      if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue);
-      else setOperationalIssue({ stage:'database', code:'unknown', message:'Market Updates data could not be loaded.', remediation:'Retry; if it persists, ask an administrator to review the connected environment.', retryable:true });
-    } finally { setLoading(false); }
+    const [updatesResult, healthResult] = await Promise.allSettled([
+      fetchMarketUpdates({ limit:200 }),
+      fetchMarketSourceHealth(),
+    ]);
+    if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
+    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
+    setDataIssue(failure ? issueFrom(failure.reason) : null);
+    setLoading(false);
+    return {
+      updates: updatesResult.status === 'fulfilled' ? updatesResult.value : null,
+      health: healthResult.status === 'fulfilled' ? healthResult.value : null,
+    };
   };
-  const loadDigest = async (p: MarketDigestPeriod) => { try { setDigest(await fetchLatestMarketDigest(p)); } catch (error) { if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue); } };
+  const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
+    try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
+    catch (error) { setDigestIssue(issueFrom(error)); }
+  };
 
   useEffect(() => {
-    let cancelled=false;
-    const start=async()=>{ setLoading(true); try { const [u,src,h]=await Promise.all([fetchMarketUpdates({limit:200}),fetchMarketSources(),fetchMarketSourceHealth()]); if(cancelled)return; setUpdates(u);setSources(src);setSourceHealth(h);setOperationalIssue(null); const result=await ensureMarketUpdatesFresh(h,u.length); if(!cancelled&&result){setMessage(result.active?'Checking for newer market intelligence…':`Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);await loadUpdates();} } catch(error){if(!cancelled&&error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue);} finally {if(!cancelled)setLoading(false);}}; void start(); return()=>{cancelled=true};
+    let cancelled = false;
+    const start = async () => {
+      const loaded = await loadUpdates();
+      if (cancelled || !loaded.updates || !loaded.health) return;
+      try {
+        setActionIssue(null);
+        const result = await ensureMarketUpdatesFresh(loaded.health, loaded.updates.length);
+        if (!cancelled && result) {
+          setMessage(result.active ? 'Checking for newer market intelligence…' : `Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);
+          await loadUpdates();
+        }
+      } catch (error) { if (!cancelled) setActionIssue(issueFrom(error)); }
+    };
+    void start();
+    return () => { cancelled = true; };
   }, []);
   useEffect(() => { void loadDigest(period); }, [period]);
 
@@ -146,6 +182,8 @@ export default function MarketUpdates() {
     if (search && !`${u.title} ${u.ai_summary ?? ''} ${u.source_name}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   }), [updates, filters, activeSegment, activeFreshness, search]);
+  const hasActiveFilters = Boolean(search.trim()) || activeSegment !== 'all' || activeFreshness !== 'all' || Object.values(filters).some(value => value !== 'all');
+  const clearFilters = () => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); };
 
   const freshnessCounts = useMemo(() => ({
     all: updates.length,
@@ -171,19 +209,47 @@ export default function MarketUpdates() {
   ], [freshnessCounts, updates, segmentCounts]);
 
   const highImpact = updates.filter(u => u.impact_level === 'high').slice(0, 5);
+  const feedEmptyState = useMemo(() => {
+    if (loading) return null;
+    if (updates.length > 0 && filteredUpdates.length === 0 && hasActiveFilters) return { title:'Published updates hidden by filters', description:'Clear the active filters to restore the complete published feed.', kind:'filters' as const };
+    if (updates.length > 0) return null;
+    if (dataIssue && sourceHealth.totalSources === 0) return { title:'Market Updates data is unavailable', description:'Previously loaded content is not available in this session. Retry the authoritative status and feed requests.', kind:'failure' as const };
+    if (sourceHealth.totalSources === 0) return { title:'No canonical source registry', description:'Apply the canonical registry migration, then open Sources to verify the approved feeds.', kind:'registry' as const };
+    if (sourceHealth.enabledSources === 0) return { title:'Sources are configured but none are enabled', description:'Open Sources and enable at least one approved canonical source.', kind:'disabled' as const };
+    if (sourceHealth.activeRun) return { title:'Ingestion is running', description:'The active run is discovering and classifying source-backed items. Progress is shown above.', kind:'running' as const };
+    if ((sourceHealth.candidates ?? 0) > 0) return { title:'Items are awaiting review', description:`${sourceHealth.candidates} candidate item(s) were discovered but did not meet automatic publication criteria.`, kind:'candidates' as const };
+    if (!sourceHealth.latestRun) return { title:'Sources are enabled and ready for their first run', description:'Sync the latest news to retrieve, classify and publish eligible source-backed updates.', kind:'never-run' as const };
+    if ((sourceHealth.latestRun.items_discovered ?? 0) > 0 && (sourceHealth.latestRun.items_classified ?? 0) < sourceHealth.latestRun.items_discovered) return { title:'Discovered items are awaiting AI classification', description:'Review the latest run and test the configured Market Updates classifier route.', kind:'classification' as const };
+    return { title:'No published updates yet', description:'The latest run completed without an eligible publication. Review candidates, source health and AI readiness.', kind:'no-published' as const };
+  }, [loading, updates.length, filteredUpdates.length, hasActiveFilters, dataIssue, sourceHealth]);
 
   const handleGenerateDigest = async () => {
     setDigestLoading(true);
-    try { const result = await generateMarketDigest(period); setMessage(result.message || null); setDigest(result.digest); }
-    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    try { setActionIssue(null); const result = await generateMarketDigest(period); setMessage(result.message || null); setDigest(result.digest); }
+    catch(error) { setActionIssue(issueFrom(error)); }
     finally { setDigestLoading(false); }
   };
 
   const handleIngest = async () => {
     setIngesting(true);
-    try { const summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' }); setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`); await loadUpdates(); }
-    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    try {
+      setActionIssue(null);
+      let summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' });
+      if (summary.runId) {
+        setRunSummary({ id:summary.runId, trigger_type:'manual', started_at:new Date().toISOString(), status:summary.active ? 'running' : summary.status ?? 'completed', sources_considered:summary.sourcesConsidered ?? 0, sources_processed:summary.sourcesProcessed ?? 0, sources_succeeded:summary.sourcesSucceeded ?? 0, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored });
+        if (summary.active) summary = await followMarketIngestionRun(summary.runId);
+      }
+      setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`);
+      await loadUpdates();
+      setRunSummary((current) => current ? { ...current, status:summary.status ?? 'completed', completed_at:new Date().toISOString(), sources_processed:summary.sourcesProcessed ?? current.sources_processed, sources_succeeded:summary.sourcesSucceeded ?? current.sources_succeeded, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_deduplicated:summary.skippedDuplicates, items_classified:summary.classified ?? 0, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored, items_rejected:summary.rejected ?? 0, items_failed:summary.persistenceFailed ?? 0 } : current);
+    }
+    catch(error) { setActionIssue(issueFrom(error)); }
     finally { setIngesting(false); }
+  };
+
+  const reviewCandidates = async () => {
+    try { setActionIssue(null); setCandidateReview(await fetchMarketUpdates({ status:'candidate', limit:100 })); }
+    catch (error) { setActionIssue(issueFrom(error)); }
   };
 
   const handleAsk = async (overrideQuestion?: string) => {
@@ -193,6 +259,10 @@ export default function MarketUpdates() {
     const priorHistory = qaThread.map((t) => ({ role: t.role, content: t.content }));
     const inDialog = Boolean(qaUpdate);
     const convId = inDialog ? dialogConversationId : conversationId;
+    qaAbortRef.current?.abort();
+    const controller = new AbortController();
+    qaAbortRef.current = controller;
+    const requestId = ++qaRequestRef.current;
     setQaThread((t) => [...t, { role: 'user', content: q }, { role: 'assistant', content: '', streaming: true }]);
     setQuestion('');
     try {
@@ -202,7 +272,9 @@ export default function MarketUpdates() {
         history: priorHistory,
         segment: seg,
         conversation_id: convId,
+        signal: controller.signal,
         onDelta: (acc) => {
+          if (qaRequestRef.current !== requestId) return;
           setQaThread((t) => {
             const next = [...t];
             const last = next[next.length - 1];
@@ -211,6 +283,7 @@ export default function MarketUpdates() {
           });
         },
       });
+      if (qaRequestRef.current !== requestId) return;
       setQaMessage(answer);
       setQaThread((t) => {
         const next = [...t];
@@ -231,14 +304,23 @@ export default function MarketUpdates() {
         return next;
       });
     } catch (err) {
+      if (qaRequestRef.current !== requestId || (err instanceof DOMException && err.name === 'AbortError')) return;
       setQaThread((t) => {
         const next = [...t];
         next[next.length - 1] = { role: 'assistant', content: err instanceof Error ? err.message : 'Failed to get an answer. Please try again.', streaming: false };
         return next;
       });
     } finally {
-      setAsking(false);
+      if (qaRequestRef.current === requestId) { setAsking(false); qaAbortRef.current = null; }
     }
+  };
+
+  const cancelAsk = () => {
+    qaRequestRef.current += 1;
+    qaAbortRef.current?.abort();
+    qaAbortRef.current = null;
+    setAsking(false);
+    setQaThread((thread) => thread.filter((turn) => !turn.streaming));
   };
 
 
@@ -263,7 +345,7 @@ export default function MarketUpdates() {
             <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market updates. Threaded — follow-ups keep prior context.</p>
           </div>
           {qaThread.length > 0 && (
-            <Button size="sm" variant="ghost" onClick={() => { setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
+            <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
           )}
         </div>
       </CardHeader>
@@ -334,6 +416,7 @@ export default function MarketUpdates() {
             <Button className="flex-1" onClick={() => handleAsk()} disabled={asking || !question.trim()}>
               {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
             </Button>
+            {asking && <Button variant="outline" onClick={cancelAsk}><XCircle className="mr-2 h-4 w-4" />Cancel</Button>}
           </div>
         </div>
       </CardContent>
@@ -350,8 +433,8 @@ export default function MarketUpdates() {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge className="bg-primary/15 text-primary hover:bg-primary/20">AI Market Intelligence</Badge>
                 <Badge variant="outline">Australia · RBA · APRA · Treasury</Badge>
-                <LiveModelBadge agentKey="market_qa" size="sm" showSlot={false} />
-                <LiveModelBadge agentKey="market_digest" size="sm" showSlot={false} />
+                <LiveModelBadge agentKey="market_updates_classifier" size="sm" showSlot={false} />
+                <LiveModelBadge agentKey="market_updates_digest" size="sm" showSlot={false} />
               </div>
               <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market Updates</h1>
               <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
@@ -367,6 +450,8 @@ export default function MarketUpdates() {
               <Button onClick={loadUpdates} variant="outline"><RefreshCw className="mr-2 h-4 w-4" />Refresh View</Button>
               <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
               <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
+              {(sourceHealth.candidates ?? 0) > 0 && <Button variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
+              {sourceHealth.latestRun && <Button variant="ghost" onClick={() => setRunSummary(sourceHealth.latestRun!)}>View latest run</Button>}
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
           </div>
@@ -390,17 +475,20 @@ export default function MarketUpdates() {
                 <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}</p>
                 <p className="text-sm text-muted-foreground">{operationalIssue.remediation}</p>
               </div>
-              <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={loadUpdates}>Retry</Button><Button size="sm" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button></div>
+              <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={operationalIssue.stage === 'digest' ? handleGenerateDigest : loadUpdates}>{operationalIssue.stage === 'digest' ? 'Retry digest' : 'Retry page data'}</Button><Button size="sm" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button></div>
             </CardContent>
           </Card>
         )}
 
-        <button type="button" onClick={() => setSourcesAdminOpen(true)} className="grid w-full grid-cols-2 gap-3 rounded-xl border border-border/60 bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-4 lg:grid-cols-7" aria-label="Open market source health administration">
+        <button type="button" onClick={() => setSourcesAdminOpen(true)} className="grid w-full grid-cols-2 gap-3 rounded-xl border border-border/60 bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-4 xl:grid-cols-6" aria-label="Open market source health administration">
           {[
-            ['Configured', sourceHealth.totalSources], ['Enabled', sourceHealth.enabledSources], ['Healthy', sourceHealth.healthySources], ['Degraded', sourceHealth.degradedSources], ['Failed', sourceHealth.failedSources],
+            ['Configured', sourceHealth.totalSources], ['Enabled', sourceHealth.enabledSources], ['Healthy', sourceHealth.healthySources], ['Degraded', sourceHealth.degradedSources], ['Failed', sourceHealth.failedSources], ['Candidates', sourceHealth.candidates ?? 0], ['Ignored', sourceHealth.ignored ?? 0],
             ['Last successful run', dateLabel(sourceHealth.lastSuccessAt)], ['Latest duration', sourceHealth.latestRun?.duration_ms ? `${Math.round(sourceHealth.latestRun.duration_ms / 1000)}s` : 'Not available'],
+            ['Latest AI model', (sourceHealth.latestRun?.metadata?.classifier_readiness as any)?.model_used ?? sourceHealth.agents?.find(agent => agent.agentKey === 'market_updates_classifier')?.modelId ?? 'Not configured'], ['Latest AI route', (sourceHealth.latestRun?.metadata?.classifier_readiness as any)?.route_used ?? sourceHealth.agents?.find(agent => agent.agentKey === 'market_updates_classifier')?.route ?? 'Not configured'], ['Next eligible fetch', dateLabel(sourceHealth.nextScheduledFetch)],
           ].map(([name,value]) => <span key={String(name)} className="min-w-0"><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{name}</span><strong className="mt-1 block truncate text-sm">{value}</strong></span>)}
         </button>
+
+        {(runSummary || sourceHealth.activeRun) && (() => { const run = runSummary ?? sourceHealth.activeRun!; return <Card aria-live="polite" className="border-primary/20"><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">Ingestion run <span className="font-mono text-xs">{run.id.slice(0,8)}</span></p><p className="text-xs text-muted-foreground">{titleCase(run.status)} · {run.sources_processed}/{run.sources_considered} sources processed</p></div>{['queued','running'].includes(run.status) && <Loader2 className="h-4 w-4 animate-spin text-primary" />}</div><div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{[['Discovered',run.items_discovered],['Deduplicated',run.items_deduplicated ?? 0],['Classified',run.items_classified ?? 0],['Published',run.items_published],['Candidates',run.items_candidate ?? 0],['Ignored',run.items_ignored ?? 0],['Failed items',run.items_failed ?? 0],['Failed sources',run.sources_failed]].map(([label,value]) => <div key={String(label)} className="rounded border border-border/60 p-2"><span className="block text-muted-foreground">{label}</span><strong>{value}</strong></div>)}</div></CardContent></Card>; })()}
 
         {/* KPIs */}
         <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -564,15 +652,19 @@ export default function MarketUpdates() {
                 <div className="space-y-3">
                   {[1,2,3].map(i => <Card key={i} className="animate-pulse"><CardContent className="h-40 p-6" /></Card>)}
                 </div>
-              ) : filteredUpdates.length === 0 ? (
+              ) : feedEmptyState ? (
                 <Card className="border-dashed">
                   <CardContent className="p-10 text-center">
                     <Globe2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
-                    <h3 className="text-lg font-semibold">Filters exclude available updates</h3>
-                    <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Filters are hiding available updates. Clear all filters to restore the complete published feed.</p>
-                    <div className="mt-4 flex justify-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); }}>Clear filters</Button>
+                    <h3 className="text-lg font-semibold">{feedEmptyState.title}</h3>
+                    <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{feedEmptyState.description}</p>
+                    <div className="mt-4 flex flex-wrap justify-center gap-2">
+                      {feedEmptyState.kind === 'filters' && <Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button>}
+                      <Button size="sm" variant="outline" onClick={loadUpdates}><RefreshCw className="mr-2 h-4 w-4" />Retry page data</Button>
                       <Button size="sm" onClick={handleIngest} disabled={ingesting}>{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
+                      {['registry','disabled'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button>}
+                      {['candidates','classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
+                      {feedEmptyState.kind === 'classification' && <Button size="sm" variant="outline" onClick={() => setWorkspaceTab('ask-ai')}>Test AI route</Button>}
                     </div>
                   </CardContent>
                 </Card>
@@ -732,7 +824,7 @@ export default function MarketUpdates() {
         </Dialog>
 
         {/* Q&A Dialog */}
-        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
+        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Ask AI about this update</DialogTitle>
@@ -789,7 +881,17 @@ export default function MarketUpdates() {
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>
                   {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
                 </Button>
+                {asking && <Button variant="outline" onClick={cancelAsk}><XCircle className="mr-2 h-4 w-4" />Cancel</Button>}
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={candidateReview !== null} onOpenChange={(open) => { if (!open) setCandidateReview(null); }}>
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden p-0">
+            <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12"><DialogTitle>Candidate review</DialogTitle><p className="text-xs text-muted-foreground">Admin-only items awaiting a publication decision. Reasons and source links remain visible for review.</p></DialogHeader>
+            <div className="max-h-[70vh] space-y-3 overflow-y-auto overflow-x-hidden px-5 py-4">
+              {candidateReview?.length ? candidateReview.map(candidate => <article key={candidate.id} className="rounded-lg border border-border/60 p-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Candidate</Badge><span className="text-xs text-muted-foreground">{candidate.source_name}</span></div><h3 className="mt-2 font-semibold">{candidate.title}</h3><p className="mt-2 text-sm text-muted-foreground">{candidate.candidate_reason ? titleCase(candidate.candidate_reason) : 'Publication criteria were not met.'}</p><div className="mt-3 flex flex-wrap gap-2"><a href={candidate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline"><ExternalLink className="h-3 w-3" />Open source</a>{candidate.model_used && <Badge variant="secondary">{candidate.route_used ?? 'route'} · {candidate.model_used}</Badge>}</div></article>) : <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No candidate items require review.</div>}
             </div>
           </DialogContent>
         </Dialog>
