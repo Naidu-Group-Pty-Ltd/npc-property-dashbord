@@ -544,7 +544,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   const editorAttrs = editorMode ? ` data-page-id="${escapeHtml(String(page.id))}" data-page-index="${pageIndex}"` : '';
   const compositionAttrs = ` ${pageCompositionDataAttrs(page as unknown as Page, regionPlan, escapeHtml)}`;
   const dataAttrs = editorAttrs + compositionAttrs;
-  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${bgStyle}">${baselineEl}${blocks.join('\n')}${regionCropsHtml}</section>`;
+  return `<section id="tpl-page-${pageIndex}" class="tpl-page tpl-page-${pageIndex}"${dataAttrs} style="${escapeHtml(bgStyle)}">${baselineEl}${blocks.join('\n')}${regionCropsHtml}</section>`;
 }
 interface CascadeIndexEntry {
   pageIndex: number;
@@ -812,7 +812,7 @@ export function renderTemplateToHtml(
 <meta charset="utf-8"/>
 <title>${escapeHtml(docTitle)}</title>
 ${metaTags}
-<style>${css}</style>
+<style>${escapeStyleElementContent(css)}</style>
 </head>
 <body>
 ${pageHtml}
@@ -827,4 +827,15 @@ ${editorRuntime}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
+}
+
+/**
+ * Keep generated CSS inside the HTML parser's raw-text style element.
+ *
+ * Escaping every less-than sign as CSS preserves its value while preventing
+ * untrusted template tokens (or other generated CSS) from spelling an HTML
+ * `</style>` end tag.
+ */
+function escapeStyleElementContent(css: string): string {
+  return css.replace(/</g, '\\3C ');
 }
