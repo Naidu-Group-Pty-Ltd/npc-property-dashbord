@@ -1023,9 +1023,8 @@ async function runJob(
         if (!retryable || attempt === MAX_SIDECAR_ATTEMPTS) throw new Error(lastErr);
       } catch (e) {
         lastErr = String((e as Error)?.message ?? e);
-        if (!lastErr.startsWith('sidecar /parse')) {
-          await appendAttempt(admin, jobId, { endpoint: '/parse', attempt, ok: false, error_code: 'fetch_exception', retryable: attempt < MAX_SIDECAR_ATTEMPTS, message: lastErr.slice(0, 500), duration_ms: Date.now() - attemptStarted });
-        }
+        if (lastErr.startsWith('sidecar /parse')) throw new Error(lastErr);
+        await appendAttempt(admin, jobId, { endpoint: '/parse', attempt, ok: false, error_code: 'fetch_exception', retryable: attempt < MAX_SIDECAR_ATTEMPTS, message: lastErr.slice(0, 500), duration_ms: Date.now() - attemptStarted });
         if (attempt === MAX_SIDECAR_ATTEMPTS) throw new Error(lastErr);
       }
       const delay = [2000, 5000][attempt - 1] ?? 5000;
