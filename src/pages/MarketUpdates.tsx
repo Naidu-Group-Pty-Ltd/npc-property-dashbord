@@ -423,9 +423,9 @@ export default function MarketUpdates() {
           </Card>
         )}
 
-        <button type="button" onClick={() => setSourcesAdminOpen(true)} className="grid w-full grid-cols-2 gap-3 rounded-xl border border-border/60 bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-4 lg:grid-cols-7" aria-label="Open market source health administration">
+        <button type="button" onClick={() => setSourcesAdminOpen(true)} className="grid w-full grid-cols-2 gap-3 rounded-xl border border-border/60 bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-4 lg:grid-cols-9" aria-label="Open market source health administration">
           {[
-            ['Configured', sourceHealth.totalSources], ['Enabled', sourceHealth.enabledSources], ['Healthy', sourceHealth.healthySources], ['Degraded', sourceHealth.degradedSources], ['Failed', sourceHealth.failedSources],
+            ['Configured', sourceHealth.totalSources], ['Enabled', sourceHealth.enabledSources], ['Healthy', sourceHealth.healthySources], ['Degraded', sourceHealth.degradedSources], ['Failed', sourceHealth.failedSources], ['Candidates', sourceHealth.candidates ?? 0], ['Ignored', sourceHealth.ignored ?? 0],
             ['Last successful run', dateLabel(sourceHealth.lastSuccessAt)], ['Latest duration', sourceHealth.latestRun?.duration_ms ? `${Math.round(sourceHealth.latestRun.duration_ms / 1000)}s` : 'Not available'],
           ].map(([name,value]) => <span key={String(name)} className="min-w-0"><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{name}</span><strong className="mt-1 block truncate text-sm">{value}</strong></span>)}
         </button>

@@ -4,15 +4,15 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
-import { requireModulePermission } from '../_shared/authz.ts';
+import { requireAdmin, requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
-const UPDATE_COLUMNS = 'id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,created_at,updated_at';
+const UPDATE_COLUMNS = 'id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,created_at,updated_at';
 const SOURCE_COLUMNS = 'id,source_key,name,description,source_type,adapter_type,url,primary_url,feed_urls,listing_urls,source_authority,perspective,copyright_mode,category,geography,reliability_tier,enabled,refresh_frequency_hours,refresh_frequency_minutes,consecutive_failures,health_status,registry_status,disabled_reason,last_http_status,last_latency_ms,last_items_discovered,last_items_published,last_fetched_at,last_success_at,created_at,updated_at';
 const DIGEST_COLUMNS = 'id,period,generated_at,period_start,period_end,executive_summary,top_update_ids,finance_lending_highlights,property_market_highlights,construction_supply_highlights,policy_regulation_highlights,political_economic_watchpoints,social_watchpoints,segment_breakdown,buyer_implications,investor_implications,broker_adviser_implications,client_advisory_implications,recommended_watchlist_for_tomorrow,source_urls,confidence_score,status,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason';
 const AGENT_KEYS = ['market_updates_classifier', 'market_updates_digest', 'market_updates_qa_fast', 'market_updates_qa_deep'];
 const PERIODS = new Set(['24h', 'weekly', 'biweekly', 'monthly', 'quarterly', 'annual']);
-const UPDATE_STATUSES = new Set(['published', 'candidate', 'ignored', 'failed']);
+const UPDATE_STATUSES = new Set(['published', 'candidate', 'ignored', 'rejected', 'failed']);
 
 function json(body: unknown, status: number, cors: Record<string,string>, correlationId: string) {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type':'application/json', 'cache-control':'private, no-store', 'x-correlation-id':correlationId } });
@@ -40,6 +40,10 @@ Deno.serve(async (req) => {
   try {
     if (action === 'updates') {
       const status = UPDATE_STATUSES.has(body.status) ? body.status : 'published';
+      if (status !== 'published') {
+        const adminPermission = await requireAdmin(sb, { userId:auth.userId, authMethod:auth.authMethod });
+        if (!adminPermission.ok) return json({ error:'Admin privilege required to review unpublished updates', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
+      }
       const limit = Math.max(1, Math.min(200, Number(body.limit) || 200));
       let query = sb.from('market_updates').select(UPDATE_COLUMNS).eq('status', status)
         .order('source_published_at', { ascending:false, nullsFirst:false })
