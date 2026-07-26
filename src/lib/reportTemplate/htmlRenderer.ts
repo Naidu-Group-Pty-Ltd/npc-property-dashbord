@@ -25,7 +25,7 @@ import {
 } from './bindingResolver';
 import { getHtmlBlockRenderer, renderUnsupportedHtml, type HtmlBlockContext } from './blocks/html';
 import { renderOverlay } from './blocks/_shared.html';
-import { tokensToCssVariables, tokensToFontFaceCss } from './cssTokens';
+import { tokenCssDeclaration, tokensToCssVariables, tokensToFontFaceCss } from './cssTokens';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { stableJson, templateMetaKey } from './previewCache';
 
@@ -114,7 +114,8 @@ function themeOverrideCss(pageIndex: number, base: Tokens, merged: Tokens): stri
   const push = (prefix: string, baseMap: any, mergedMap: any, suffix = '') => {
     for (const [k, v] of Object.entries(mergedMap || {})) {
       if ((baseMap || {})[k] !== v) {
-        diffs.push(`  --${prefix}-${String(k).replace(/[^a-zA-Z0-9_-]/g, '-')}: ${v}${suffix};`);
+        const declaration = tokenCssDeclaration(prefix, k, v, suffix);
+        if (declaration) diffs.push(declaration);
       }
     }
   };
