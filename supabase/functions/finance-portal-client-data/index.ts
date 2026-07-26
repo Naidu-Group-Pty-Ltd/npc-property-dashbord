@@ -602,8 +602,6 @@ Deno.serve(async (req) => {
             source: 'finance_portal',
             sourceActorId: portalUser.id,
           };
-          if (body?.pipeline_ghl_id) syncBody.pipelineGhlId = body.pipeline_ghl_id;
-          if (body?.pipeline_stage_ghl_id) syncBody.pipelineStageGhlId = body.pipeline_stage_ghl_id;
 
           const _anon = Deno.env.get('SUPABASE_ANON_KEY') || '';
           const _internalSecret = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
