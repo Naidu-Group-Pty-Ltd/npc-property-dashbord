@@ -349,10 +349,14 @@ describe("finance portal request channel is finance-safe (Phase 7, §15.1/§15.2
     expect(fpSource).not.toContain("verifyAuth(");
   });
 
-  it("scopes every read to the partner's client assignments", () => {
+  it("preserves client-wide and per-deal assignment scope on every read", () => {
     expect(fpSource).toContain("finance_portal_client_assignments");
-    expect(fpSource).toContain('allowedClients.has(String(r.client_id))');
+    expect(fpSource).toContain('.select("client_id, purchase_file_id")');
     expect(fpSource).toContain('.in("client_id", Array.from(allowedClients))');
+    expect(fpSource).toContain("a.purchase_file_id == null");
+    expect(fpSource).toContain("String(a.purchase_file_id) === String(r.purchase_file_id)");
+    expect(fpSource).toContain("if (!isAssignedRequest(r)) return null;");
+    expect(fpSource).toContain("(data ?? []).filter(isAssignedRequest).map(safeRequestProjection)");
   });
 
   it("never projects case identifiers or internal fields to the partner", () => {
@@ -362,7 +366,7 @@ describe("finance portal request channel is finance-safe (Phase 7, §15.1/§15.2
     expect(projection).not.toContain("case_id");
     expect(projection).not.toContain("discrepancy_id");
     expect(projection).not.toContain("resolution_note");
-    expect(fpSource).toContain("requests: (data ?? []).map(safeRequestProjection)");
+    expect(fpSource).toContain(".map(safeRequestProjection)");
   });
 
   it("returns no risk, screening or discrepancy detail in any response", () => {
@@ -400,6 +404,21 @@ describe("risk, decision and service gate (Phase 8, §12.8 + §16 + C.4)", () =>
     expect(branch).toContain("Insufficient permissions");
     expect(branch).toContain("rationale must be at least 10 characters");
     expect(riskSource).toContain('status: "actioned", actioned_decision_id: dec.id');
+  });
+
+  it("authorizes recommendation and service-gate access against the case tenant", () => {
+    const helper = riskSource.slice(
+      riskSource.indexOf("async function tenantCaseAccess"),
+      riskSource.indexOf("Deno.serve"));
+    expect(helper).toContain('.eq("tenant_id", tenantId)');
+    expect(helper).toContain('rpc("is_superadmin"');
+
+    for (const operation of ["recommend", "list_recommendations", "set_service_gate", "gate_contract"]) {
+      const start = riskSource.indexOf(`op === "${operation}"`);
+      const next = riskSource.indexOf('if (op === "', start + 10);
+      const branch = riskSource.slice(start, next < 0 ? undefined : next);
+      expect(branch).toContain("tenantCaseAccess(admin, userId, caseId)");
+    }
   });
 
   it("only changes the service gate through an explicit reasoned decision", () => {
