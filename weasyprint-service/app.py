@@ -18,6 +18,7 @@ import logging
 from importlib import metadata
 from flask import Flask, request, Response, jsonify
 from weasyprint import HTML
+from weasyprint.urls import URLFetchingError, default_url_fetcher
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("weasyprint-service")
@@ -26,6 +27,13 @@ app = Flask(__name__)
 
 EXPECTED_TOKEN = (os.environ.get("WEASYPRINT_SERVICE_TOKEN") or os.environ.get("WEASYPRINT_API_KEY") or "").strip().strip('"')
 MAX_HTML_BYTES = int(os.environ.get("MAX_HTML_BYTES", str(25 * 1024 * 1024)))  # 25 MB
+
+
+def embedded_resource_fetcher(url: str, timeout: int = 10, ssl_context=None):
+    """Resolve embedded resources while refusing all filesystem and network access."""
+    if not url.lower().startswith("data:"):
+        raise URLFetchingError("external resources are disabled")
+    return default_url_fetcher(url, timeout=timeout, ssl_context=ssl_context)
 
 
 def _package_version(name: str) -> str:
@@ -100,7 +108,11 @@ def render():
             write_kwargs["pdf_variant"] = pdf_variant
         # `pdf_forms`/`uncompressed_pdf` skipped; we want tagged + compressed.
         try:
-            pdf_bytes = HTML(string=html, base_url=base_url).write_pdf(
+            pdf_bytes = HTML(
+                string=html,
+                base_url=base_url,
+                url_fetcher=embedded_resource_fetcher,
+            ).write_pdf(
                 **write_kwargs,
                 optimize_images=optimize_images,
                 presentational_hints=False,
@@ -108,7 +120,11 @@ def render():
         except TypeError:
             # Fallback for very old WeasyPrint builds that don't accept these kwargs.
             log.warning("write_pdf kwargs unsupported, falling back to defaults")
-            pdf_bytes = HTML(string=html, base_url=base_url).write_pdf()
+            pdf_bytes = HTML(
+                string=html,
+                base_url=base_url,
+                url_fetcher=embedded_resource_fetcher,
+            ).write_pdf()
     except Exception as exc:  # noqa: BLE001
         log.exception("weasyprint render failed")
         return jsonify({"error": f"render_failed: {exc}"}), 500
