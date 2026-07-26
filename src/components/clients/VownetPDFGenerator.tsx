@@ -12,6 +12,7 @@ import { fetchGlobalReportSettings, type ContactDetails, type ProfessionalDiscla
 import { getBrandPdfPalette } from '@/branding/brandPalette';
 import { useBrand } from '@/branding/BrandProvider';
 import { smartCapitalize } from '@/lib/nameUtils';
+import { sanitizePdfHtml } from '@/utils/sanitizePdfHtml';
 import {
   buildHouseholdIncome,
   buildPropertyExpenditure,
@@ -498,9 +499,12 @@ export function VownetPDFGenerator({
       // Fetch white-label brand settings for the contact/disclaimer page
       const __brandSettings = await fetchGlobalReportSettings();
       // Generate HTML content (with dynamic brand)
-      const htmlContent = generateHTMLContent(data, includeOwnerOccupied, __brandSettings?.contactDetails, __brandSettings?.disclaimer);
+      const htmlContent = sanitizePdfHtml(
+        generateHTMLContent(data, includeOwnerOccupied, __brandSettings?.contactDetails, __brandSettings?.disclaimer),
+      );
 
-      // Write the full HTML into the iframe's clean document
+      // Parse only sanitized HTML in this same-origin document. html2canvas needs
+      // DOM access, so an opaque-origin iframe sandbox cannot be used here.
       iframeDoc.open();
       iframeDoc.write(htmlContent);
       iframeDoc.close();
