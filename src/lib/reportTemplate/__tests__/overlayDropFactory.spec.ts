@@ -91,9 +91,17 @@ describe('unified palette drag payload', () => {
     expect((parsed as any).type).toBe('kpi-grid');
   });
 
-  it('returns null for empty or malformed payloads', () => {
+  it('rejects empty, forged, and unknown payloads', () => {
     expect(parsePaletteDrag('')).toBeNull();
     expect(parsePaletteDrag('{not json')).toBeNull();
+    expect(parsePaletteDrag(JSON.stringify(overlayItem))).toBeNull();
+    expect(parsePaletteDrag('00000000-0000-4000-8000-000000000000')).toBeNull();
+  });
+
+  it('allows each trusted drag token to be consumed only once', () => {
+    const token = serializePaletteDrag(overlayItem);
+    expect(parsePaletteDrag(token)).toEqual(overlayItem);
+    expect(parsePaletteDrag(token)).toBeNull();
   });
 
   it('rejects payloads not created by the in-page palette', () => {
