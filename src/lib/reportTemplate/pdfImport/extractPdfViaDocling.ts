@@ -332,22 +332,31 @@ function wireModeToDocling(mode: string | null | undefined, fallback: DoclingPla
   return fallback;
 }
 
-function rastersByPage(payload: unknown): DoclingRasterByPage | undefined {
+export function rastersByPage(payload: unknown): DoclingRasterByPage | undefined {
   if (!payload || typeof payload !== 'object') return undefined;
   const env = payload as DoclingRasterResponse;
   const pages = env.pages;
   if (!Array.isArray(pages)) return undefined;
-  const mime = env.format === 'jpeg' ? 'image/jpeg' : 'image/png';
   const out: DoclingRasterByPage = {};
   for (const p of pages) {
-    if (p?.page_no == null) continue;
+    const width = p?.width_px ?? p?.width;
+    const height = p?.height_px ?? p?.height;
+    const base64 = p?.base64 ?? p?.image_base64;
+    const mime = p?.mime ?? (env.format === 'jpeg' ? 'image/jpeg' : 'image/png');
+    if (
+      typeof p?.page_no !== 'number'
+      || typeof width !== 'number'
+      || typeof height !== 'number'
+      || typeof base64 !== 'string'
+      || base64.length === 0
+    ) continue;
     out[p.page_no] = {
-      width: p.width,
-      height: p.height,
-      dataUrl: `data:${mime};base64,${p.image_base64}`,
+      width,
+      height,
+      dataUrl: `data:${mime};base64,${base64}`,
     };
   }
-  return out;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 async function manifestToRastersByPage(payload: unknown): Promise<DoclingRasterByPage | undefined> {
