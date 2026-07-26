@@ -4,7 +4,7 @@
  * .make/.fig) route through `runReferenceImport`, which owns:
  *   - source classification (`classifyReferenceFile`)
  *   - the per-kind pipelines (engines stay where they were: extractPdfViaDocling,
- *     the design agent, renderAndGroundCode, the local render fallback)
+ *     the design agent, renderAndGroundCode)
  *   - consistent staging callbacks, validation, font-face loading, and
  *     actionable error messages (auth, unconfigured service, …)
  *
@@ -30,7 +30,6 @@ import { figmaNodesToBoxTree } from '../figmaGrounding';
 import { normalizeImportUrl, isHttpUrl, suggestedName } from '../importUrl';
 import { extractMakeAssets, isFigmaMakeFile, MAKE_NO_RASTER_GUIDANCE } from './makeImport';
 import { convertDocumentToHtml, documentKindForFile } from './docConvert';
-import { renderCodeLocally, isRenderSourceUnconfigured, URL_NEEDS_SERVICE_GUIDANCE } from './localRender';
 import { ensureCatalogFontFaces } from '../fontCatalog';
 import { pickInkColor } from '../pdfImport/tokenDerivation';
 import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
@@ -135,28 +134,10 @@ function sourceToRenderableHtml(raw: string, filename?: string | null): string {
 
 const CSS_SAMPLE_HTML = '<!doctype html><html><body><main class="template-builder-css-sample"><section class="hero"><p class="eyebrow">CSS preview</p><h1>Template style sample</h1><p>Upload paired HTML or a project ZIP for exact content reconstruction.</p><button>Sample CTA</button></section></main></body></html>';
 
+const URL_NEEDS_SERVICE_GUIDANCE = 'Live URL rendering requires the render-source service. Configure RENDER_SOURCE_URL and RENDER_SOURCE_TOKEN, or upload a PDF, image, or other supported file instead.';
+
 const defaultInvoke: InvokeFn = (name, body, options) =>
   invokeSecureFunction(name, body as any, { timeoutMs: options?.timeoutMs ?? 180000 }) as any;
-
-/**
- * render-source with the in-browser fallback: when the service is not
- * configured on this deployment, render locally in a sandboxed iframe (same
- * payload shape, so the CDIR pipeline downstream is unchanged).
- */
-export function withLocalRenderFallback(invoke: InvokeFn, onStage?: (s: string) => void): InvokeFn {
-  return async (name, body, options) => {
-    const res = await invoke(name, body, options);
-    if (name === 'render-source' && isRenderSourceUnconfigured(res as any)) {
-      onStage?.('Render service not configured — rendering locally in your browser…');
-      try {
-        return { data: await renderCodeLocally(body as CodeRenderInput), error: null };
-      } catch (e) {
-        return { data: null, error: { message: (e as Error).message } };
-      }
-    }
-    return res;
-  };
-}
 
 // ─── shared impure helpers (moved out of the dialog) ───────────────────────────
 
@@ -539,7 +520,9 @@ async function importCode(
   source: Extract<ReferenceImportSource, { kind: 'code' }>,
   ctx: ReferenceImportContext,
 ): Promise<ReferenceImportOutcome> {
-  const invoke = withLocalRenderFallback(ctx.invoke ?? defaultInvoke, ctx.onStage);
+  // Untrusted source code must only execute in the isolated render service,
+  // never in the authenticated user's browser or network context.
+  const invoke = ctx.invoke ?? defaultInvoke;
 
   let input: CodeRenderInput;
   let label: string;
@@ -619,8 +602,7 @@ async function importUrlSource(
   if (d?.error) throw new Error(describeAuthError(String(d.error)) ?? String(d.error));
   if (d?.kind === 'needs_export') throw new Error(d.guidance ?? 'This link needs a PDF/image export.');
   if (!d?.dataBase64) {
-    // Live web pages have no file payload — the render service (or its local
-    // fallback for pasted HTML) is the path for those.
+    // Live web pages have no file payload, so they require the render service.
     throw new Error(URL_NEEDS_SERVICE_GUIDANCE);
   }
 

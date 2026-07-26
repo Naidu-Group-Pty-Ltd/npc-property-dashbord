@@ -8,14 +8,12 @@
  *   C1 html/css   → { html, css? }            setContent
  *   C2 live url   → { url }                    goto (SSRF-guarded)
  *   C3 react/jsx  → { jsx, entry? }            Babel-standalone harness (React via CDN)
- *   C4 repo/zip   → { zipBase64, buildCmd? }   extract → (optional sandboxed build) → static serve
+ *   C4 repo/zip   → { zipBase64 }              extract → static serve
  *
  *   POST /render   Authorization: Bearer <RENDER_SOURCE_TOKEN>
  *   GET  /healthz  → 200 "ok"
  *
- * C4 build execution runs untrusted code; it is OFF unless RENDER_SOURCE_ALLOW_BUILD=1
- * (so the default safely serves static/exported zips only). Deploy build-enabled
- * instances on an isolated, egress-restricted sandbox.
+ * C4 accepts static/exported zips only. Uploaded projects are never executed.
  */
 const express = require('express');
 const { chromium } = require('playwright');
@@ -25,6 +23,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { execSync } = require('child_process');
+const { assertPublicUrl, installNetworkPolicy } = require('./network-policy');
 
 const app = express();
 app.use(express.json({ limit: process.env.MAX_BODY || '60mb' }));
@@ -32,9 +31,7 @@ app.use(express.json({ limit: process.env.MAX_BODY || '60mb' }));
 const EXPECTED_TOKEN = (process.env.RENDER_SOURCE_TOKEN || '').trim().replace(/^"|"$/g, '');
 const NAV_TIMEOUT_MS = Number(process.env.NAV_TIMEOUT_MS || 20000);
 const MAX_DIM = 4000;
-const ALLOW_BUILD = process.env.RENDER_SOURCE_ALLOW_BUILD === '1';
 const MAX_UNZIP_BYTES = Number(process.env.MAX_UNZIP_BYTES || 200 * 1024 * 1024);
-const BUILD_TIMEOUT_MS = Number(process.env.BUILD_TIMEOUT_MS || 180000);
 
 // id → absolute static dir, served at /__build/:id for C4 renders.
 const buildDirs = new Map();
@@ -44,26 +41,6 @@ function authOk(req) {
   const h = req.headers.authorization || '';
   if (!h.startsWith('Bearer ')) return false;
   return h.slice(7).trim().replace(/^"|"$/g, '') === EXPECTED_TOKEN;
-}
-
-// SSRF guard — block private/reserved hosts (mirrors import-from-url).
-function isPrivateHost(hostname) {
-  const h = (hostname || '').toLowerCase();
-  if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal')) return true;
-  if (/^(10|127)\./.test(h)) return true;
-  if (/^192\.168\./.test(h)) return true;
-  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
-  if (/^169\.254\./.test(h)) return true;
-  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true;
-  if (h === '0.0.0.0' || h === '::1' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80')) return true;
-  return false;
-}
-
-function assertFetchable(rawUrl) {
-  const u = new URL(rawUrl);
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('Only http(s) URLs are allowed.');
-  if (isPrivateHost(u.hostname)) throw new Error('Refusing to render a private/reserved host.');
-  return u;
 }
 
 // ── C3: wrap a single-file React/JSX component in a self-mounting HTML harness ──
@@ -132,7 +109,7 @@ function jsxToHarness(jsx, entryName) {
 </script></body></html>`;
 }
 
-// ── C4: extract a zip, optionally build, return a static dir to serve ──
+// ── C4: extract a static/exported zip and return its static dir to serve ──
 function extractZip(b64, destRoot) {
   const zip = new AdmZip(Buffer.from(b64, 'base64'));
   let total = 0;
@@ -175,15 +152,8 @@ function prepareZipServe(b64, id) {
   extractZip(b64, root);
   const projectRoot = findProjectRoot(root);
   let serveDir = findServeDir(projectRoot) || findServeDir(root);
-  if (!serveDir && ALLOW_BUILD && fs.existsSync(path.join(projectRoot, 'package.json'))) {
-    execSync('npm install --no-audit --no-fund', { cwd: projectRoot, timeout: BUILD_TIMEOUT_MS, stdio: 'ignore' });
-    try { execSync('npm run build', { cwd: projectRoot, timeout: BUILD_TIMEOUT_MS, stdio: 'ignore' }); } catch { /* build script may not exist */ }
-    serveDir = findServeDir(projectRoot) || findServeDir(root);
-  }
   if (!serveDir) {
-    throw new Error(ALLOW_BUILD
-      ? 'No index.html found after build.'
-      : 'No index.html found (static zip expected; set RENDER_SOURCE_ALLOW_BUILD=1 to build projects).');
+    throw new Error('No index.html found (only static/exported project zips are supported).');
   }
   buildDirs.set(id, serveDir);
   return { root };
@@ -383,13 +353,15 @@ app.post('/render', async (req, res) => {
   let zipId;
   let zipPrep;
   try {
-    if (url) assertFetchable(url);
+    if (url) await assertPublicUrl(url);
     if (zipBase64) { zipId = crypto.randomUUID(); zipPrep = prepareZipServe(zipBase64, zipId); }
 
     const browser = await getBrowser();
     context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, javaScriptEnabled: true });
     const page = await context.newPage();
     page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
+    const localOrigin = zipBase64 ? `http://127.0.0.1:${PORT}` : undefined;
+    await installNetworkPolicy(page, { localOrigin });
 
     if (url) {
       await page.goto(url, { waitUntil: 'networkidle' });
@@ -431,4 +403,4 @@ app.post('/render', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`render-source listening on :${PORT} (build ${ALLOW_BUILD ? 'enabled' : 'disabled'})`));
+app.listen(PORT, '0.0.0.0', () => console.log(`render-source listening on :${PORT}`));

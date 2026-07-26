@@ -158,6 +158,7 @@ export default function BcSegmentEngineAdmin() {
       clientId: dryClientId.trim(),
       overrides: { forceSegmentEngine: true },
       dryRun: true,
+      saveResult: false,
     });
     setDryRunning(false);
     if (error) {
