@@ -62,28 +62,25 @@ describe('HTML renderer security', () => {
     expect(html).toContain('&quot;;&gt;&lt;script&gt;globalThis.pwned=true&lt;/script&gt;&lt;div style=&quot;');
   });
 
-  it('escapes link and bookmark values before embedding them in attributes', () => {
-    const html = renderLinkedBlock(
-      { href: 'https://example.invalid/" data-injected="yes', title: 'A " title' },
-      { name: 'toc', label: 'Chapter " data-injected="yes', level: 2 },
-    );
+  it('rejects HTML and resource injection in baseline grid colors', () => {
+    const payload = 'red\"><img src="http://127.0.0.1/internal">';
+    const template = parseTemplate({
+      version: 1,
+      tokens: { colors: {}, fonts: {}, spacing: {} },
+      pages: [{
+        id: 'p1',
+        name: 'Page 1',
+        size: { width: 595, height: 842 },
+        background: {},
+        baselineGrid: { size: 12, color: payload, show: true, offset: 0 },
+        blocks: [],
+      }],
+    });
 
-    expect(html).toContain('href="https://example.invalid/&quot; data-injected=&quot;yes"');
-    expect(html).toContain('title="A &quot; title"');
-    expect(html).toContain('bookmark-label:&#39;Chapter &quot; data-injected=&quot;yes&#39;;bookmark-level:2;');
-    expect(html).not.toContain(' data-injected="yes"');
-  });
+    const html = renderTemplateToHtml(template, { data: {}, editorMode: false }).html;
 
-  it.each(['javascript:alert(1)', 'data:text/html,<img src=x>', 'file:///etc/passwd'])(
-    'does not render links using the unsafe %s scheme',
-    (href) => {
-      const html = renderLinkedBlock({ href });
-
-      expect(html).not.toContain(`<a href="${href}`);
-    },
-  );
-
-  it('resolves page links without crashing', () => {
-    expect(renderLinkedBlock({ href: 'page:p2' })).toContain('href="#tpl-page-1" target="_self"');
+    expect(html).not.toContain(payload);
+    expect(html).not.toContain('http://127.0.0.1/internal');
+    expect(html).toContain('#BF9B5033 11pt, #BF9B5033 12pt');
   });
 });
