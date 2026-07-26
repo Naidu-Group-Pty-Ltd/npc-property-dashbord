@@ -721,7 +721,9 @@ Deno.serve(async (req) => {
       const totalCount = Object.keys(CDR_LENDERS).length + Object.keys(MANUAL_LENDERS).length;
       console.log(`[CDR] Starting PARALLEL refresh-all for ${totalCount} lenders`);
 
-      const PER_LENDER_TIMEOUT_MS = 60_000; // detail v6 can be slower on lenders with many mortgage tiers
+      // Fifteen CDR lenders at concurrency five require up to three waves. Keep
+      // those waves within the function's 120-second request timeout.
+      const PER_LENDER_TIMEOUT_MS = 25_000;
       const withTimeout = <T,>(p: Promise<T>, ms: number, label: string): Promise<T> =>
         Promise.race([
           p,
