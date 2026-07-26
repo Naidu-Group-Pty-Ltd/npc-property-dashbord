@@ -83,15 +83,23 @@ Deno.serve(async (req) => {
     if ("error" in session && session.error) return jr({ error: session.error }, session.status ?? 401);
     const portalUser = (session as any).portalUser;
 
-    // Assignment scoping: this partner only ever sees requests for clients
-    // they are assigned to. client_id is denormalised onto the request row so
-    // no aml.cases read is needed here.
+    // Assignment scoping: a null purchase_file_id grants client-wide access;
+    // otherwise the assignment is restricted to that exact purchase file.
+    // Keep both dimensions here because this service-role-backed handler is
+    // the authorization boundary for all request reads and writes.
     const { data: assignments } = await admin
       .from("finance_portal_client_assignments")
-      .select("client_id")
+      .select("client_id, purchase_file_id")
       .eq("finance_user_id", portalUser.id);
     const allowedClients = new Set((assignments ?? []).map((a: any) => String(a.client_id)));
     if (allowedClients.size === 0) return jr({ requests: [] });
+
+    const isAssignedRequest = (r: any) => Boolean(r.client_id) && (assignments ?? []).some((a: any) =>
+      String(a.client_id) === String(r.client_id) &&
+      (a.purchase_file_id == null || (
+        r.purchase_file_id != null && String(a.purchase_file_id) === String(r.purchase_file_id)
+      )),
+    );
 
     const aml = admin.schema("aml");
     const op = String(body?.op ?? "");
@@ -99,7 +107,7 @@ Deno.serve(async (req) => {
     const loadScopedRequest = async (id: string) => {
       const { data: r } = await aml.from("finance_requests").select("*").eq("id", id).maybeSingle();
       if (!r) return null;
-      if (!r.client_id || !allowedClients.has(String(r.client_id))) return null;
+      if (!isAssignedRequest(r)) return null;
       return r;
     };
 
@@ -111,7 +119,7 @@ Deno.serve(async (req) => {
       if (pfId) q = q.eq("purchase_file_id", pfId);
       const { data, error } = await q;
       if (error) return jr({ error: "Unable to load requests" }, 400);
-      return jr({ requests: (data ?? []).map(safeRequestProjection) });
+      return jr({ requests: (data ?? []).filter(isAssignedRequest).map(safeRequestProjection) });
     }
 
     if (op === "submit") {

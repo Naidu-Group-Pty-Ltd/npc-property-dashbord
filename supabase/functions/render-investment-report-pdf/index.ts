@@ -1559,7 +1559,7 @@ function renderDonutSvg(
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="xMidYMid meet">
     ${title}${arcs}
     <text x="${cx}" y="${cy - 2}" text-anchor="middle" font-family="Playfair Display,Georgia,serif" font-weight="800" font-size="28" fill="${VIZ_INK}" style="font-variant-numeric:lining-nums tabular-nums;">${svgEscape(centerVal)}</text>
-    <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.6" fill="${VIZ_INK_MUTED}">${centerSub.toUpperCase()}</text>
+    <text x="${cx}" y="${cy + 18}" text-anchor="middle" font-family="Inter,sans-serif" font-size="9" letter-spacing="1.6" fill="${VIZ_INK_MUTED}">${svgEscape(centerSub.toUpperCase())}</text>
     ${legend}
   </svg>`;
 }
