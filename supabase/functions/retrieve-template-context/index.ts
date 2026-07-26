@@ -89,7 +89,7 @@ Deno.serve(async (req) => {
       maxChunks = 5,
       similarityThreshold = 0.7,
     }: RetrievalRequest = body;
-    
+
     // SECURITY: Verify authentication
     const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
