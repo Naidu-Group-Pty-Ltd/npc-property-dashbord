@@ -166,7 +166,7 @@ Deno.serve(async (req) => {
       metadata: { email: normalizedEmail },
     });
 
-    const sessionCookie = createSessionCookie(sessionToken, expiresAt)
+    const sessionCookie = createFinanceSessionCookie(sessionToken, expiresAt)
 
     return new Response(
       JSON.stringify({
