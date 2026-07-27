@@ -57,10 +57,14 @@ export function ReportVariantControls({ compositeReportId, reportVariant, onNavi
   return (
     <div className="flex flex-wrap items-center justify-center gap-1.5" aria-label="Client report generation controls">
       {([
-        ['financial', 'Financial', 'Generate detailed financial modelling, costs, yields and cash-flow analysis.', Calculator, 'border-violet-400/35 bg-violet-500/10 text-violet-100 hover:border-violet-300 hover:bg-violet-500/20 hover:shadow-violet-500/25'],
-        ['strategic', 'Strategic', 'Generate property due diligence, risks, opportunities and strategic assessment.', Compass, 'border-primary/45 bg-primary/10 text-primary-foreground hover:border-primary hover:bg-primary/20 hover:shadow-primary/30'],
-        ['briefing', 'Briefing', 'Generate a concise client-facing property briefing and key findings.', FileText, 'border-purple-400/40 bg-purple-500/10 text-purple-100 hover:border-purple-300 hover:bg-purple-500/20 hover:shadow-purple-500/25'],
-        ['snapshot', 'Snapshot', 'Generate a rapid high-level overview and major decision indicators.', Zap, 'border-fuchsia-400/40 bg-fuchsia-500/10 text-fuchsia-100 hover:border-fuchsia-300 hover:bg-fuchsia-500/20 hover:shadow-fuchsia-500/25'],
+        // Accents match REPORT_VARIANT_META in @/lib/reports/reportVariants so a
+        // pathway keeps one identity across the app. The previous styling paired a
+        // light tint with -100 shade text, which was near-invisible on the light
+        // theme; `text-foreground` reads correctly on both.
+        ['financial', 'Financial', 'Generate detailed financial modelling, costs, yields and cash-flow analysis.', Calculator, 'border-chart-3/45 bg-chart-3/10 text-foreground hover:border-chart-3 hover:bg-chart-3/20 hover:shadow-chart-3/25'],
+        ['strategic', 'Strategic', 'Generate property due diligence, risks, opportunities and strategic assessment.', Compass, 'border-chart-1/45 bg-chart-1/10 text-foreground hover:border-chart-1 hover:bg-chart-1/20 hover:shadow-chart-1/25'],
+        ['briefing', 'Briefing', 'Generate a concise client-facing property briefing and key findings.', FileText, 'border-chart-7/45 bg-chart-7/10 text-foreground hover:border-chart-7 hover:bg-chart-7/20 hover:shadow-chart-7/25'],
+        ['snapshot', 'Snapshot', 'Generate a rapid high-level overview and major decision indicators.', Zap, 'border-chart-8/45 bg-chart-8/10 text-foreground hover:border-chart-8 hover:bg-chart-8/20 hover:shadow-chart-8/25'],
       ] as Array<[ClientReportVariant, string, string, typeof Calculator, string]>).filter(([id]) => CLIENT_REPORT_VARIANTS.includes(id)).map(([pathway, title, description, Icon, accentClass]) => {
         const processing = forking === pathway;
         const active = activeVariant === pathway;

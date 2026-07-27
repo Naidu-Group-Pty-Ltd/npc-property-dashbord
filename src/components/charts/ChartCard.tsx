@@ -161,7 +161,7 @@ function LazyChartPreview({ chart }: { chart: ChartData }) {
   return (
     <div ref={ref} className="h-full w-full" aria-busy={!visible}>
       {visible ? renderChartImage(chart, 'card') : (
-        <div className="relative h-full w-full overflow-hidden rounded-xl bg-slate-100">
+        <div className="relative h-full w-full overflow-hidden rounded-xl bg-muted">
           <div className="absolute inset-y-0 -left-1/2 w-1/2 animate-[shimmer_1.6s_infinite] bg-gradient-to-r from-transparent via-white/80 to-transparent" />
         </div>
       )}
@@ -214,12 +214,12 @@ function ChartCardComponent({ chart, isSelected, onToggleSelect, onExpand, onExp
             {isLive && (
               <Badge
                 variant="outline"
-                className="inline-flex h-6 items-center gap-1 rounded-full border-emerald-400/40 bg-emerald-500/10 px-2 py-0 text-[10px] font-bold leading-none tracking-wide text-emerald-600 shadow-sm backdrop-blur-sm dark:text-emerald-300"
+                className="inline-flex h-6 items-center gap-1 rounded-full border-success/40 bg-success/10 px-2 py-0 text-[10px] font-bold leading-none tracking-wide text-success shadow-sm backdrop-blur-sm dark:text-success"
                 title="Rendered live from stored chart data"
               >
                 <span className="relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
                 </span>
                 Live
               </Badge>
@@ -343,7 +343,7 @@ function ChartCardComponent({ chart, isSelected, onToggleSelect, onExpand, onExp
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => onExport(chart, { format: 'svg' })} disabled={!isLive && !chart.image_data?.startsWith('data:image/svg+xml')}>
-                <FileCode2 className="mr-2 h-3.5 w-3.5 text-emerald-500" />
+                <FileCode2 className="mr-2 h-3.5 w-3.5 text-success" />
                 <div className="flex flex-col"><span className="text-xs font-semibold">SVG · Vector</span><span className="text-[10px] text-muted-foreground">{isLive ? 'Re-rendered live from data' : 'Available for legacy SVG charts only'}</span></div>
               </DropdownMenuItem>
             </DropdownMenuContent>

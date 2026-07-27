@@ -451,7 +451,7 @@ export function RiskTab({ caseId, canWrite, onChanged }: { caseId: string; canWr
                   <ul className="mt-1 space-y-1">
                     {latest.triggered_holds.map((h) => (
                       <li key={h.key}>
-                        <Badge variant="outline" className={h.severity === "block" ? "border-destructive/40 text-destructive" : "border-yellow-500/40 text-yellow-500"}>
+                        <Badge variant="outline" className={h.severity === "block" ? "border-destructive/40 text-destructive" : "border-warning/40 text-warning"}>
                           {h.severity.toUpperCase()}
                         </Badge>{" "}
                         {h.label}
@@ -1345,7 +1345,7 @@ const CATEGORY_META: Record<TimelineCategory, { label: string; icon: React.Compo
   event:        { label: "Case event",   icon: CircleDot,    className: "text-muted-foreground" },
   verification: { label: "Verification", icon: ShieldCheck,  className: "text-primary" },
   screening:    { label: "Screening",    icon: ScanSearch,   className: "text-primary" },
-  risk:         { label: "Risk",         icon: Gauge,        className: "text-yellow-500" },
+  risk:         { label: "Risk",         icon: Gauge,        className: "text-warning" },
   decision:     { label: "Decision",     icon: Scale,        className: "text-success" },
   finance:      { label: "Finance",      icon: Wallet,       className: "text-warning" },
 };

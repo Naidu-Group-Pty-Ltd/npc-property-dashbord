@@ -326,7 +326,7 @@ export function ReminderActions({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 w-full rounded-xl text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground dark:text-muted-foreground hover:bg-white/5 hover:text-slate-200 focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
+          className="h-7 w-full rounded-xl text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground dark:text-muted-foreground hover:bg-white/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black"
           onClick={() => { setShowSnooze(false); setCustomSnoozeDate(undefined); }}
         >
           Cancel

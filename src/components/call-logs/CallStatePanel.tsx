@@ -8,7 +8,7 @@ const toneStyles: Record<CallStateTone, string> = {
   emerald: 'border-success/20 bg-success/10 text-success shadow-success/10',
   blue: 'border-info/20 bg-info/10 text-info shadow-info/10',
   purple: 'border-accent/20 bg-accent/10 text-accent shadow-accent/10',
-  neutral: 'border-border/20 bg-zinc-400/10 text-muted-foreground dark:text-foreground shadow-sm dark:shadow-black/20',
+  neutral: 'border-border/20 bg-muted/40 text-muted-foreground dark:text-foreground shadow-sm dark:shadow-black/20',
   danger: 'border-destructive/20 bg-destructive/10 text-destructive shadow-destructive/10',
 };
 
