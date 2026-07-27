@@ -101,6 +101,69 @@ const DEFAULT_FILTERS = {
   includeNearbySuburbs: false,
 };
 
+type ListingFilters = typeof DEFAULT_FILTERS;
+
+// URL <-> filter serialisation. Only non-default values are written to the URL so
+// links stay clean. Boolean flags are serialised as "1" and view/search live under
+// short keys (`view`, `q`).
+const URL_KEYS_STRING = [
+  'propertyType', 'suburb', 'state', 'zipCode', 'sourceHost', 'agencyName',
+  'priceMin', 'priceMax', 'bedsMin', 'bedsMax', 'bathsMin', 'bathsMax',
+  'carsMin', 'carsMax', 'keywordSearch',
+] as const;
+const URL_KEYS_BOOL = ['hasInspection', 'lowConfidence', 'offMarket', 'includeNearbySuburbs'] as const;
+
+function parseListingsUrlState(params: URLSearchParams): {
+  filters: Partial<ListingFilters>;
+  search: string | null;
+  view: 'list' | 'table' | 'map' | null;
+  hasAny: boolean;
+} {
+  let hasAny = false;
+  const filters: Partial<ListingFilters> = {};
+  for (const key of URL_KEYS_STRING) {
+    const v = params.get(key);
+    if (v !== null && v !== '') {
+      (filters as Record<string, unknown>)[key] = v;
+      hasAny = true;
+    }
+  }
+  for (const key of URL_KEYS_BOOL) {
+    if (params.get(key) === '1') {
+      (filters as Record<string, unknown>)[key] = true;
+      hasAny = true;
+    }
+  }
+  const search = params.get('q');
+  const viewRaw = params.get('view');
+  const view = viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' ? viewRaw : null;
+  if (search !== null) hasAny = true;
+  if (view !== null) hasAny = true;
+  return { filters, search, view, hasAny };
+}
+
+function buildListingsUrlParams(
+  filters: ListingFilters,
+  search: string,
+  view: 'list' | 'table' | 'map',
+  defaultView: 'list' | 'table' | 'map',
+): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const key of URL_KEYS_STRING) {
+    const value = filters[key];
+    const defaultValue = DEFAULT_FILTERS[key];
+    if (typeof value === 'string' && value && value !== defaultValue) {
+      params.set(key, value);
+    }
+  }
+  for (const key of URL_KEYS_BOOL) {
+    if (filters[key]) params.set(key, '1');
+  }
+  if (search) params.set('q', search);
+  if (view !== defaultView) params.set('view', view);
+  return params;
+}
+
 type ListingsStatePanelProps = {
   icon: ElementType;
   eyebrow: string;
