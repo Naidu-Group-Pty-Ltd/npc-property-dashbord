@@ -265,6 +265,14 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (!pf) return json({ error: 'PF not found' }, 404);
 
+      const { data: assignment } = await supabase
+        .from('finance_portal_client_assignments')
+        .select('client_id')
+        .eq('finance_user_id', portalUser.id)
+        .eq('client_id', pf.client_id)
+        .maybeSingle();
+      if (!assignment) return json({ error: 'PF not found' }, 404);
+
       let deal: any = null;
       let owner: any = null;
       if (pf.client_deal_id) {
