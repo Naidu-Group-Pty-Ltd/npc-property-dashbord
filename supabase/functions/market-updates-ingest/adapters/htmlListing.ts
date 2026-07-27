@@ -1,6 +1,7 @@
 import { DOMParser } from 'npm:linkedom@0.18.12';
 import type { MarketSourceAdapter, NormalisedSourceBatch, NormalisedSourceItem, SourceConfig, SourceValidationResult } from './types.ts';
-import { boundedFetch, normaliseUrl, safeSourceExcerpt, sourceDomains } from './security.ts';
+import { boundedFetch, normaliseUrl, sourceDomains } from './security.ts';
+import { compileAnchorPatterns, MAX_ANCHOR_MATCH_LENGTH } from './anchorPatterns.ts';
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 const LD_ARTICLE_TYPES = new Set(['Article', 'NewsArticle', 'Report', 'BlogPosting', 'AnalysisNewsArticle', 'ReportageNewsArticle', 'OpinionNewsArticle']);
@@ -80,12 +81,11 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
 
     // 3) Anchor pattern fallback for JS-rendered listing pages
     if (!out.length && Array.isArray(cfg.anchor_patterns) && cfg.anchor_patterns.length) {
-      const patterns = cfg.anchor_patterns
-        .map((p) => { try { return new RegExp(p, 'i'); } catch { return null; } })
-        .filter((r): r is RegExp => !!r);
+      const patterns = compileAnchorPatterns(cfg.anchor_patterns);
       const minLen = Math.max(6, Number(cfg.title_min_length ?? 12));
       for (const a of [...doc.querySelectorAll('a[href]')] as HTMLAnchorElement[]) {
         const href = a.getAttribute('href') || '';
+        if (href.length > MAX_ANCHOR_MATCH_LENGTH) continue;
         if (!patterns.some((r) => r.test(href))) continue;
         const text = (a.textContent || a.getAttribute('aria-label') || a.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
         if (text.length < minLen) continue;
@@ -107,9 +107,7 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
     // 4) Sitemap fallback — used when the listing HTML has no article anchors
     // (client-rendered SPAs) or when the origin blocks the listing page.
     if (!out.length && Array.isArray(cfg.sitemap_urls) && cfg.sitemap_urls.length && Array.isArray(cfg.anchor_patterns) && cfg.anchor_patterns.length) {
-      const patterns = cfg.anchor_patterns
-        .map((p) => { try { return new RegExp(p, 'i'); } catch { return null; } })
-        .filter((r): r is RegExp => !!r);
+      const patterns = compileAnchorPatterns(cfg.anchor_patterns);
       const minLen = Math.max(6, Number(cfg.title_min_length ?? 12));
       const cap = Number(Deno.env.get('MARKET_UPDATES_MAX_ITEMS_PER_SOURCE') || 40);
       for (const sm of cfg.sitemap_urls) {
@@ -128,6 +126,7 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
           for (const { loc, lastmod } of rows) {
             let path: string;
             try { path = new URL(loc).pathname; } catch { continue; }
+            if (path.length > MAX_ANCHOR_MATCH_LENGTH) continue;
             if (!patterns.some((r) => r.test(path))) continue;
             let canonical: string;
             try { canonical = normaliseUrl(loc, url, allowed); } catch { continue; }

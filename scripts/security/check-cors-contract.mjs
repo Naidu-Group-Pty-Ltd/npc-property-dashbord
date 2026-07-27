@@ -95,12 +95,53 @@ const SHARED_TRANSPORT = 'src/lib/secureInvoke.ts';
 // Line-based scan: an `'x-…':` object key on its own line is a header entry.
 // (Block matching is unreliable here — a `${...}` template inside a header
 // value closes a naive brace match early and hides everything after it.)
-for (const rawLine of readFileSync(SHARED_TRANSPORT, 'utf8').split('\n')) {
+const transportSrcRaw = readFileSync(SHARED_TRANSPORT, 'utf8');
+for (const rawLine of transportSrcRaw.split('\n')) {
   const line = rawLine.trim();
   if (line.startsWith('//') || line.startsWith('*') || line.startsWith('/*')) continue;
   const m = line.match(/['"](x-[a-z0-9-]+)['"]\s*:/i);
   if (!m) continue;
   errors.push(`${SHARED_TRANSPORT}: adds custom request header \`${m[1].toLowerCase()}\` on the shared edge-function transport. It reaches ~300 independently-deployed functions and fails the preflight on every one not yet redeployed with it allow-listed — taking the whole app down. Send it as a body field instead.`);
+}
+
+// ── Credentialed callers must not reach a wildcard-origin function ──────────
+// `invokeSecureFunction` sends `credentials: 'include'` so the HttpOnly
+// `__Host-session_token` cookie reaches the function. The Fetch spec requires
+// the browser to REJECT a credentialed response whose
+// `Access-Control-Allow-Origin` is `*` — opaquely, as `Failed to fetch`. So a
+// function on that transport may never answer with a wildcard origin; it needs
+// the exact-origin allowlist (`createCorsHeaders`, or the `withRequestOrigin`
+// wrapper in `_shared/corsOrigin.ts`). This is what broke the AML/CTF surface.
+const tokenAuthMatch = transportSrcRaw.match(/TOKEN_AUTH_FUNCTIONS\s*=\s*new Set\(\[([\s\S]*?)\]\)/);
+const TOKEN_AUTH = new Set(
+  tokenAuthMatch ? [...tokenAuthMatch[1].matchAll(/['"]([a-z0-9-]+)['"]/gi)].map((m) => m[1]) : [],
+);
+if (!tokenAuthMatch) {
+  errors.push(`${SHARED_TRANSPORT}: could not parse TOKEN_AUTH_FUNCTIONS — the credentialed-CORS gate depends on it.`);
+}
+
+// Functions invoked through the credentialed transport (literal names).
+const credentialed = new Set();
+for (const file of walkFiles(SRC_DIR)) {
+  const src = readFileSync(file, 'utf8');
+  for (const m of src.matchAll(/invoke(?:SecureFunction|AmlFunction)(?:<[^>]*>)?\(\s*["'`]([a-zA-Z0-9_-]+)["'`]/g)) {
+    credentialed.add(m[1]);
+  }
+}
+
+for (const fn of [...credentialed].sort()) {
+  if (TOKEN_AUTH.has(fn)) continue; // sent with credentials:'omit' — wildcard is valid
+  const path = `${FUNC_DIR}/${fn}/index.ts`;
+  let src;
+  try { src = readFileSync(path, 'utf8'); } catch { continue; } // deployed-only, not in repo
+  const hasWildcard = /["']Access-Control-Allow-Origin["']\s*:\s*["']\*["']/.test(src);
+  if (!hasWildcard) continue;
+  if (/withRequestOrigin/.test(src)) continue; // wrapper rewrites it per request
+  // Several functions keep a now-dead wildcard literal but actually build their
+  // real headers with createCorsHeaders(origin) — those answer an exact origin,
+  // so they are not broken. Verified against the live deployment.
+  if (/createCorsHeaders\s*\(/.test(src)) continue;
+  errors.push(`${path}: answers \`Access-Control-Allow-Origin: *\` but is called through the credentialed transport. Browsers reject a credentialed response with a wildcard origin, so every call fails as "Failed to fetch". Use createCorsHeaders(origin), or wrap the handler with withRequestOrigin (_shared/corsOrigin.ts).`);
 }
 
 // ── Hand-rolled CORS objects must be supersets of what the client needs ─────

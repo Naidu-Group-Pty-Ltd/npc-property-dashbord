@@ -142,11 +142,11 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
-function escCssString(s: unknown): string {
-  return esc(s).replace(
-    /["\\\n\r\f]/g,
-    (character) => `\\${character.charCodeAt(0).toString(16)} `,
-  );
+function cssString(s: unknown): string {
+  return esc(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r\n|\r|\n|\f/g, "\\A ");
 }
 
 function slugify(s: string): string {
@@ -1978,8 +1978,8 @@ function applyEditorialMarkdown(md: string): string {
         attrs[String(k).toLowerCase()] = String(v);
         return "";
       });
-      if (name === "pullquote") return `\n<aside class="pull-quote"><p>${inner.replace(/\n+/g, " ")}</p></aside>\n`;
-      if (name === "sidenote") return `\n<aside class="sidenote"><p>${inner.replace(/\n+/g, " ")}</p></aside>\n`;
+      if (name === "pullquote") return `\n<aside class="pull-quote"><p>${esc(inner.replace(/\n+/g, " "))}</p></aside>\n`;
+      if (name === "sidenote") return `\n<aside class="sidenote"><p>${esc(inner.replace(/\n+/g, " "))}</p></aside>\n`;
       if (name === "cols") return `\n<div class="two-col">\n\n${inner}\n\n</div>\n`;
       if (name === "stat") {
         // Inline oversized statistic block: ::: stat label="Median yield" unit="%"  → body = "4.8"
@@ -3112,12 +3112,12 @@ export async function buildHtml(
         font-variant-numeric: oldstyle-nums proportional-nums;
       }
       @top-right {
-        content: "${escCssString(address)}";
+        content: "${cssString(address)}";
         font-family: 'Cormorant Garamond', serif;
         font-style: italic; font-size: 9pt; color: ${THEME.inkMuted};
       }
       @bottom-left {
-        content: "${escCssString(brandName)}";
+        content: "${cssString(brandName)}";
         font-family: 'Inter', sans-serif;
         font-size: 7.5pt; color: ${THEME.inkMuted};
         letter-spacing: .14em; text-transform: uppercase;
@@ -4563,7 +4563,7 @@ ${(() => {
       margin: 18mm 16mm 16mm 16mm;
       background: ${palette.paper};
       @top-left { content: string(chapter); }
-      @top-right { content: "${escCssString(address)}"; font-style: italic; }
+      @top-right { content: "${cssString(address)}"; font-style: italic; }
       @bottom-right { content: counter(page) " · " counter(pages); }
     }
     .landscape-spread {
@@ -4844,14 +4844,14 @@ ${(() => {
         color: var(--ed-ink-soft);
       }
       @top-right {
-        content: "${escCssString(address)}";
+        content: "${cssString(address)}";
         font-family: 'IBM Plex Mono', monospace;
         font-size: 7.6pt; font-weight: 400;
         color: var(--ed-ink-soft);
         font-style: normal; letter-spacing: 0.08em;
       }
       @bottom-left {
-        content: "${escCssString(brandName)}";
+        content: "${cssString(brandName)}";
         font-family: 'IBM Plex Mono', monospace;
         font-size: 7.4pt; font-weight: 500;
         text-transform: uppercase; letter-spacing: 0.22em;

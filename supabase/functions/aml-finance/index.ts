@@ -61,8 +61,9 @@ async function appendCaseEvent(
 // _shared/amlFinanceEngine.ts so finance-portal submissions run through the
 // exact same reconciliation as staff-entered snapshots.
 import { detectDiscrepancies, type Comparison } from "../_shared/amlFinanceEngine.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -631,3 +632,7 @@ Deno.serve(async (req) => {
     return jr({ error: e?.message ?? "internal error" }, 500);
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));

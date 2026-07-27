@@ -10,7 +10,7 @@ const functionSource = readFileSync(
 describe('render-investment-report-pdf SVG escaping contract', () => {
   it('escapes explicit donut center subtitles before inserting them into SVG', () => {
     expect(functionSource).toContain(
-      'const centerSub = svgEscape(opts.centerSub ?? segments[0]?.label ?? "");',
+      'const centerSub = svgEscape((opts.centerSub ?? segments[0]?.label ?? "").toUpperCase());',
     );
     expect(functionSource).not.toContain(
       'const centerSub = opts.centerSub ?? svgEscape(',
@@ -27,5 +27,19 @@ describe('render-investment-report-pdf SVG escaping contract', () => {
     expect(functionSource).toContain('return createForbiddenResponse(');
     expect(permissionGate).toBeGreaterThan(-1);
     expect(reportRead).toBeGreaterThan(permissionGate);
+  });
+});
+
+describe('render-investment-report-pdf editorial shortcode escaping contract', () => {
+  it.each(['pullquote', 'sidenote'])('escapes %s bodies before inserting them into HTML', (name) => {
+    expect(functionSource).toMatch(
+      new RegExp(`if \\(name === "${name}"\\)[^\\n]+\\$\\{esc\\(inner\\.replace`),
+    );
+  });
+
+  it('does not interpolate unescaped editorial text into HTML', () => {
+    expect(functionSource).not.toMatch(
+      /if \(name === "(?:pullquote|sidenote)"\)[^\n]+\$\{inner\.replace/,
+    );
   });
 });
