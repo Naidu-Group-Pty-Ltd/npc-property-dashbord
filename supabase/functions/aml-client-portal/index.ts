@@ -9,7 +9,8 @@
  *   - overview                     { case_id? }         → landing payload
  *   - get_questionnaire            { case_id, section } → current draft
  *   - save_questionnaire           { case_id, section, payload, submit? }
- *   - record_consent               { case_id, kind, version, payload? }
+ *   - get_consents                 { case_id }          → current AUSTRAC-referenced catalogue + acceptance state
+ *   - record_consent               { case_id, kind, version?, payload? }
  *   - list_requirements            { case_id }
  *   - request_upload_url           { case_id, requirement_id?, filename, mime_type, size_bytes }
  *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, mime_type, size_bytes, checksum? }
@@ -121,6 +122,107 @@ function sanitiseFilename(name: string): string {
   return String(name || 'upload').replace(/[^\w.\-]+/g, '_').slice(0, 180);
 }
 
+/* ───────────────────────── Consent (AUSTRAC-referenced) ─────────────────────
+ * Consent used to be three hard-coded checkboxes gated by localStorage, which
+ * is not evidence: nothing recorded what the client was actually shown, and
+ * the gate could be stepped around client-side. The catalogue in
+ * aml.consent_documents is now the single source of truth, and the gate below
+ * is enforced on the server for every op that collects client data.
+ *
+ * If the catalogue table is unreachable we FAIL CLOSED — a portal that
+ * silently collects identity data without a recorded consent is worse than
+ * one that is briefly unavailable.
+ * ------------------------------------------------------------------------- */
+
+type ConsentDocument = {
+  id: string;
+  code: string;
+  version: string;
+  acknowledgement_type: 'consent' | 'notice';
+  title: string;
+  summary: string;
+  body: string;
+  statutory_basis: string[];
+  reference_links: Array<{ label: string; url: string }>;
+  required: boolean;
+  sort_order: number;
+};
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Text the acceptance hash is taken over — the exact wording presented. */
+function consentCanonicalText(doc: ConsentDocument): string {
+  return [doc.code, doc.version, doc.title, doc.summary, doc.body,
+    (doc.statutory_basis ?? []).join('|')].join('\n');
+}
+
+/** Current (non-retired, in-force) catalogue, ordered for presentation. */
+async function loadConsentCatalogue(admin: any): Promise<{ version: string | null; documents: ConsentDocument[] }> {
+  const { data, error } = await admin.schema('aml').from('consent_documents')
+    .select('*')
+    .is('retired_at', null)
+    .lte('effective_from', new Date().toISOString())
+    .order('version', { ascending: false })
+    .order('sort_order', { ascending: true });
+  if (error) throw error;
+  const rows = (data ?? []) as ConsentDocument[];
+  if (rows.length === 0) return { version: null, documents: [] };
+  // Highest in-force version wins; a partially-published newer version never
+  // mixes with an older one.
+  const version = rows[0].version;
+  return {
+    version,
+    documents: rows.filter((r) => r.version === version)
+      .sort((a, b) => a.sort_order - b.sort_order),
+  };
+}
+
+type ConsentState = {
+  version: string | null;
+  documents: ConsentDocument[];
+  accepted: Array<{ code: string; version: string; accepted_at: string }>;
+  outstanding: string[];
+  satisfied: boolean;
+};
+
+async function loadConsentState(admin: any, caseId: string): Promise<ConsentState> {
+  const { version, documents } = await loadConsentCatalogue(admin);
+  const { data: rows, error } = await admin.schema('aml').from('consents')
+    .select('kind, version, accepted_at').eq('case_id', caseId);
+  if (error) throw error;
+  const accepted = (rows ?? []).map((r: any) => ({
+    code: String(r.kind), version: String(r.version), accepted_at: r.accepted_at,
+  }));
+  // Acceptance is version-specific: republishing the catalogue re-asks.
+  const acceptedCurrent = new Set(
+    accepted.filter((a) => a.version === version).map((a) => a.code));
+  const outstanding = documents
+    .filter((d) => d.required && !acceptedCurrent.has(d.code))
+    .map((d) => d.code);
+  return {
+    version, documents, accepted, outstanding,
+    // No published catalogue → nothing can be satisfied. Fail closed.
+    satisfied: Boolean(version) && documents.length > 0 && outstanding.length === 0,
+  };
+}
+
+function consentRequiredResponse(state: ConsentState) {
+  return jsonResponse({
+    error: state.version
+      ? 'Please review and accept the consents and disclosures before continuing.'
+      : 'Consents and disclosures are being updated. Please try again shortly or contact your adviser.',
+    code: 'consent_required',
+    consent: {
+      version: state.version,
+      outstanding: state.outstanding,
+      satisfied: state.satisfied,
+    },
+  }, 403);
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
@@ -189,6 +291,9 @@ Deno.serve(async (req) => {
         );
         const portalStatus = portalStatusFor(c);
         const presentation = PORTAL_STATUS_PRESENTATION[portalStatus] ?? { label: 'In progress', tone: 'progress' as const };
+        // Server-owned consent state — the portal stepper mirrors this rather
+        // than trusting a browser-local flag.
+        const consentState = await loadConsentState(admin, c.id);
         return jsonResponse({
           case: {
             id: c.id, reference: c.case_reference, subject: c.subject_display_name,
@@ -198,6 +303,12 @@ Deno.serve(async (req) => {
             status_label: presentation.label, status_tone: presentation.tone,
           },
           questionnaire_version: QUESTIONNAIRE_VERSION,
+          consent: {
+            version: consentState.version,
+            satisfied: consentState.satisfied,
+            outstanding: consentState.outstanding,
+            required_count: consentState.documents.filter((d) => d.required).length,
+          },
           structure_type: String(sectionMap.get('purchasing_structure')?.payload?.entity_type ?? '') || null,
           sections: active.map((s) => ({
             section: s, status: sectionMap.get(s)?.status ?? 'not_started',
@@ -228,6 +339,10 @@ Deno.serve(async (req) => {
       case 'save_questionnaire': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
+        // Consent precedes collection (Privacy Act 1988, APP 3/5). Enforced
+        // here, not only in the UI stepper.
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
         // Validated against the full catalogue (not the currently-applicable
         // subset) so an in-flight save is never rejected by a concurrent
         // structure change; superseded answers are retained, never deleted.
@@ -245,19 +360,91 @@ Deno.serve(async (req) => {
         return jsonResponse({ response: data });
       }
 
+      case 'get_consents': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const state = await loadConsentState(admin, c.id);
+        const acceptedAt = new Map(
+          state.accepted.filter((a) => a.version === state.version).map((a) => [a.code, a.accepted_at]));
+        return jsonResponse({
+          version: state.version,
+          satisfied: state.satisfied,
+          outstanding: state.outstanding,
+          documents: state.documents.map((d) => ({
+            code: d.code,
+            title: d.title,
+            summary: d.summary,
+            body: d.body,
+            acknowledgement_type: d.acknowledgement_type,
+            statutory_basis: d.statutory_basis ?? [],
+            reference_links: d.reference_links ?? [],
+            required: d.required,
+            accepted_at: acceptedAt.get(d.code) ?? null,
+          })),
+        });
+      }
+
       case 'record_consent': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!body.kind || !body.version) return jsonResponse({ error: 'kind + version required' }, 400);
+        const code = String(body.kind ?? body.code ?? '').trim();
+        if (!code) return jsonResponse({ error: 'kind is required' }, 400);
+        if (body.accepted === false) {
+          return jsonResponse({ error: 'Acceptance is required to record a consent' }, 400);
+        }
+
+        // The acceptance must name a document that is actually published and
+        // current — otherwise the record could not be tied back to wording.
+        const { version, documents } = await loadConsentCatalogue(admin);
+        const doc = documents.find((d) => d.code === code);
+        if (!doc) {
+          return jsonResponse({
+            error: 'Unknown or superseded consent document', code: 'consent_document_unknown',
+            current_version: version,
+          }, 400);
+        }
+        if (body.version && String(body.version) !== doc.version) {
+          return jsonResponse({
+            error: 'This consent has been updated. Please reload and review the current wording.',
+            code: 'consent_version_stale', current_version: doc.version,
+          }, 409);
+        }
+
         const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null;
         const ua = req.headers.get('user-agent') ?? null;
-        const { data, error } = await admin.schema('aml').from('consents').insert({
-          case_id: c.id, kind: String(body.kind).slice(0, 80), version: String(body.version).slice(0, 40),
+        // Hash of the exact text presented, so the acceptance stays meaningful
+        // even if the catalogue row is later corrected or retired.
+        const documentHash = await sha256Hex(consentCanonicalText(doc));
+        const row = {
+          case_id: c.id, kind: doc.code, version: doc.version,
           actor_type: 'client', actor_id: portalUserId, actor_label: actorLabel,
-          ip_address: ip, user_agent: ua, payload: body.payload ?? {},
-        }).select('*').single();
+          ip_address: ip, user_agent: ua,
+          document_id: doc.id, document_hash: documentHash,
+          payload: {
+            ...(body.payload && typeof body.payload === 'object' ? body.payload : {}),
+            acknowledgement_type: doc.acknowledgement_type,
+            title: doc.title,
+            statutory_basis: doc.statutory_basis ?? [],
+          },
+        };
+        let { data, error } = await admin.schema('aml').from('consents')
+          .upsert(row, { onConflict: 'case_id,kind,version' }).select('*').single();
+        if (error && /document_id|document_hash|no unique|constraint/i.test(error.message ?? '')) {
+          // Catalogue migration not applied yet — record the acceptance rather
+          // than losing it, and let the state read decide the gate.
+          const { document_id: _d, document_hash: _h, ...legacy } = row as any;
+          ({ data, error } = await admin.schema('aml').from('consents')
+            .insert(legacy).select('*').single());
+        }
         if (error) throw error;
-        return jsonResponse({ consent: data });
+
+        const state = await loadConsentState(admin, c.id);
+        return jsonResponse({
+          consent: data,
+          consent_state: {
+            version: state.version, satisfied: state.satisfied, outstanding: state.outstanding,
+          },
+        });
       }
 
       case 'list_requirements': {
@@ -271,6 +458,8 @@ Deno.serve(async (req) => {
       case 'request_upload_url': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const uploadConsent = await loadConsentState(admin, c.id);
+        if (!uploadConsent.satisfied) return consentRequiredResponse(uploadConsent);
         const filename = sanitiseFilename(body.filename);
         const mime = String(body.mime_type ?? 'application/octet-stream');
         const size = Number(body.size_bytes ?? 0);
@@ -289,6 +478,8 @@ Deno.serve(async (req) => {
       case 'confirm_upload': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const confirmConsent = await loadConsentState(admin, c.id);
+        if (!confirmConsent.satisfied) return consentRequiredResponse(confirmConsent);
         if (!body.storage_path || !body.filename) return jsonResponse({ error: 'storage_path + filename required' }, 400);
         const storagePath = String(body.storage_path);
         const pathParts = storagePath.split('/');
@@ -360,11 +551,14 @@ Deno.serve(async (req) => {
       case 'submit_for_review': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const submitConsent = await loadConsentState(admin, c.id);
+        if (!submitConsent.satisfied) return consentRequiredResponse(submitConsent);
         const [{ data: sections }, { data: reqs }, { data: docs }, { data: consents }] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses').select('*').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements').select('*').eq('case_id', c.id),
           admin.schema('aml').from('documents').select('*').eq('case_id', c.id).neq('status', 'deleted'),
-          admin.schema('aml').from('consents').select('kind, version, accepted_at').eq('case_id', c.id),
+          admin.schema('aml').from('consents')
+            .select('kind, version, accepted_at, document_hash').eq('case_id', c.id),
         ]);
         const missingRequired = (reqs ?? []).filter((r: any) => r.required && !['uploaded','accepted'].includes(r.status));
         if (missingRequired.length > 0) {
@@ -394,6 +588,7 @@ Deno.serve(async (req) => {
         const snapshot = {
           case: { id: c.id, reference: c.case_reference, subject: c.subject_display_name },
           questionnaire_version: QUESTIONNAIRE_VERSION,
+          consent_version: submitConsent.version,
           applicable_sections: active,
           sections: sections ?? [], requirements: reqs ?? [], documents: docs ?? [], consents: consents ?? [],
           submitted_by: { id: portalUserId, label: actorLabel },
