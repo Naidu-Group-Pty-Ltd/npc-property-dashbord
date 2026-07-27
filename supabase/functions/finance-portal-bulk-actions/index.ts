@@ -6,6 +6,7 @@
  * caller before performing the action. Returns a per-file outcome summary.
  */
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { hasFinancePortalPermission, type FinancePortalPermissionAction } from '../_shared/finance-portal-permissions.ts';
 import { parseNaturalDate } from '../_shared/parse-natural-date.ts';
 
 const corsHeaders = {
@@ -36,12 +37,44 @@ Deno.serve(async (req) => {
     const fileIds: string[] = Array.isArray(body.file_ids) ? body.file_ids.filter(Boolean).slice(0, 100) : [];
     if (!fileIds.length) return json({ error: 'file_ids required' }, 400);
 
-    // Fetch files + verify caller is assigned partner for each (mine or watching)
-    const { data: files } = await supabase
+    const requiredPermission: Record<string, { key: string; action: FinancePortalPermissionAction }> = {
+      bulk_snooze: { key: 'purchase_files', action: 'edit' },
+      bulk_reassign: { key: 'purchase_files', action: 'edit' },
+      bulk_archive: { key: 'purchase_files', action: 'delete' },
+      bulk_send_message: { key: 'messages', action: 'edit' },
+      bulk_request_doc: { key: 'documents', action: 'edit' },
+    };
+    const permission = requiredPermission[operation];
+    if (!permission) return json({ error: `Unknown operation: ${operation}` }, 400);
+
+    // Service-role queries bypass RLS. Require both file ownership and an explicit
+    // per-client assignment/permission before treating a file as actionable.
+    const { data: files, error: filesError } = await supabase
       .from('purchase_files')
       .select('id, client_id, title, assigned_finance_user_id')
       .in('id', fileIds);
-    const accessible = (files || []).filter(f => f.assigned_finance_user_id === portalUser.id);
+    if (filesError) return json({ error: 'Unable to verify purchase files' }, 500);
+
+    const clientIds = [...new Set((files || []).map(f => f.client_id).filter(Boolean))];
+    const { data: assignments, error: assignmentsError } = await supabase
+      .from('finance_portal_client_assignments')
+      .select('client_id, permissions')
+      .eq('finance_user_id', portalUser.id)
+      .in('client_id', clientIds);
+    if (assignmentsError) return json({ error: 'Unable to verify client permissions' }, 500);
+
+    const permissionsByClient = new Map(
+      (assignments || []).map(assignment => [assignment.client_id, assignment.permissions]),
+    );
+    const accessible = (files || []).filter(file => {
+      if (file.assigned_finance_user_id !== portalUser.id || !permissionsByClient.has(file.client_id)) return false;
+      return hasFinancePortalPermission(
+        portalUser.global_permissions,
+        permissionsByClient.get(file.client_id),
+        permission.key,
+        permission.action,
+      );
+    });
     const accessibleIds = accessible.map(f => f.id);
     const skipped = fileIds.filter(id => !accessibleIds.includes(id));
 
@@ -80,13 +113,31 @@ Deno.serve(async (req) => {
     if (operation === 'bulk_reassign') {
       const newOwnerId = body.new_owner_finance_user_id;
       if (!newOwnerId) return json({ error: 'new_owner_finance_user_id required' }, 400);
-      for (const f of accessible) {
+      const accessibleClientIds = [...new Set(accessible.map(f => f.client_id))];
+      const [{ data: newOwner }, { data: newOwnerAssignments, error: newOwnerAssignmentsError }] = await Promise.all([
+        supabase.from('finance_portal_users')
+          .select('id')
+          .eq('id', newOwnerId)
+          .eq('is_active', true)
+          .is('revoked_at', null)
+          .maybeSingle(),
+        supabase.from('finance_portal_client_assignments')
+          .select('client_id')
+          .eq('finance_user_id', newOwnerId)
+          .in('client_id', accessibleClientIds),
+      ]);
+      if (!newOwner || newOwnerAssignmentsError) return json({ error: 'Invalid reassignment target' }, 400);
+      const allowedClientIds = new Set((newOwnerAssignments || []).map(assignment => assignment.client_id));
+      for (const f of accessible.filter(file => allowedClientIds.has(file.client_id))) {
         const { error } = await supabase.from('purchase_files')
           .update({ assigned_finance_user_id: newOwnerId })
           .eq('id', f.id);
         results.push({ id: f.id, ok: !error, error: error?.message });
       }
-      return json({ ok: true, processed: results.filter(r => r.ok).length, skipped, results });
+      const reassignmentSkipped = accessible
+        .filter(file => !allowedClientIds.has(file.client_id))
+        .map(file => file.id);
+      return json({ ok: true, processed: results.filter(r => r.ok).length, skipped: [...skipped, ...reassignmentSkipped], results });
     }
 
     if (operation === 'bulk_send_message') {
