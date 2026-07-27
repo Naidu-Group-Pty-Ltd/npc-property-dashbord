@@ -403,7 +403,45 @@ export function DashboardSidebar() {
           )}
         </div>
 
+        {!isCollapsed && (
+          <div className="px-4 pb-2">
+            <label className="relative block">
+              <span className="sr-only">Filter navigation</span>
+              <Search
+                aria-hidden="true"
+                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                type="search"
+                value={navFilter}
+                onChange={(event) => setNavFilter(event.target.value)}
+                placeholder="Filter navigation…"
+                aria-label="Filter navigation"
+                className="h-8 w-full rounded-md border border-[color:var(--sidebar-border)] bg-[color:hsl(var(--sidebar-background))] pl-8 pr-7 text-xs text-sidebar-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              {navFilter.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setNavFilter('')}
+                  aria-label="Clear navigation filter"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <XIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </label>
+            <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
+              Tip: press <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">⌘K</kbd> for the command palette.
+            </p>
+          </div>
+        )}
+
         <nav className="dashboard-sidebar-nav" aria-label="Dashboard navigation">
+          {groupedNavItems.length === 0 && !isCollapsed && (
+            <div className="mx-4 my-3 rounded-md border border-dashed border-[color:var(--sidebar-border)] p-3 text-center text-xs text-muted-foreground">
+              No matches for “{navFilter}”.
+            </div>
+          )}
           {groupedNavItems.map((group) => renderGroup(group))}
 
           {amlGroupedItems && renderGroup(amlGroupedItems)}
