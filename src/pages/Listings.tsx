@@ -3,7 +3,7 @@ import type { ElementType, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -76,6 +76,7 @@ const getListingConfidenceBadgeTone = (confidence: number) =>
 const ListingDetailsModal = lazy(() => import('@/components/listings/ListingDetailsModal').then(m => ({ default: m.ListingDetailsModal })));
 const InvestmentReportModal = lazy(() => import('@/components/listings/InvestmentReportModal').then(m => ({ default: m.InvestmentReportModal })));
 const BulkGenerationModal = lazy(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
+const ListingsMapView = lazy(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
 
 // Default empty filter state — keyword always starts blank
 const DEFAULT_FILTERS = {
@@ -187,7 +188,7 @@ export default function Listings() {
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const isMobile = useIsMobile();
-  const [viewMode, setViewMode] = useState<'list' | 'table'>(isMobile ? 'list' : 'table');
+  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(isMobile ? 'list' : 'table');
   
   // Listings are locked to the Property Intake Master Airtable base — no other datasets should be exposed here.
   const PROPERTY_INTAKE_TABLE = 'Property Intake Master';
@@ -531,6 +532,8 @@ export default function Listings() {
   });
   const hasSearchQuery = searchQuery.trim().length > 0;
   const showListView = viewMode === 'list';
+  const showTableView = viewMode === 'table';
+  const showMapView = viewMode === 'map';
   const emptyStateCopy = hasSearchQuery
     ? {
         icon: Search,
@@ -632,12 +635,23 @@ export default function Listings() {
                 type="button"
                 size="sm"
                 variant="outline"
-                aria-pressed={!showListView}
+                aria-pressed={showTableView}
                 onClick={() => setViewMode('table')}
-                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', !showListView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showTableView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
               >
                 <Table2 className="h-4 w-4" />
                 Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-pressed={showMapView}
+                onClick={() => setViewMode('map')}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showMapView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+              >
+                <MapIcon className="h-4 w-4" />
+                Map
               </Button>
             </div>
 
@@ -759,8 +773,12 @@ export default function Listings() {
         </div>
       </section>
 
-      {/* Content: Cards on Mobile, Table on Desktop */}
-      {showListView ? (
+      {/* Content: Cards on Mobile, Table on Desktop, Map view geocodes on demand */}
+      {showMapView ? (
+        <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
+          <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
+        </Suspense>
+      ) : showListView ? (
         <div className="space-y-3">
           {filteredListings.length === 0 ? (
             <ListingsStatePanel
