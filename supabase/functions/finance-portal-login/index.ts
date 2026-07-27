@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyPassword } from "../_shared/password.ts"
-import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
+import { createCorsHeaders, createFinanceSessionCookie } from "../_shared/auth.ts"
 
 const SESSION_HOURS = 12; // Finance portal sessions are shorter than client portal
 const MAX_FAILED_ATTEMPTS = 5;
@@ -166,7 +166,7 @@ Deno.serve(async (req) => {
       metadata: { email: normalizedEmail },
     });
 
-    const sessionCookie = createSessionCookie(sessionToken, expiresAt)
+    const sessionCookie = createFinanceSessionCookie(sessionToken, expiresAt)
 
     return new Response(
       JSON.stringify({

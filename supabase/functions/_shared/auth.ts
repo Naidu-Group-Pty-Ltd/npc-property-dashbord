@@ -594,6 +594,28 @@ export function createClearSessionCookies(): string[] {
 }
 
 /**
+ * Finance-portal-scoped session cookie. Uses a dedicated cookie name so it does
+ * NOT collide with the main dashboard's `__Host-session_token` when a user is
+ * signed into both apps on the same browser (both cookies are scoped to
+ * *.supabase.co because that's where edge functions live). Prior to this,
+ * signing into the main dashboard overwrote the finance portal cookie and
+ * every finance-portal-verify call returned 401.
+ */
+export function createFinanceSessionCookie(
+  sessionToken: string,
+  expiresAt: Date,
+  options?: { clear?: boolean }
+): string {
+  const maxAge = options?.clear ? 0 : Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+  const expires = options?.clear ? new Date(0).toUTCString() : expiresAt.toUTCString();
+  return `__Host-finance_session_token=${options?.clear ? '' : sessionToken}; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}; Expires=${expires}; Path=/`;
+}
+
+export function createClearFinanceSessionCookie(): string {
+  return createFinanceSessionCookie('', new Date(0), { clear: true });
+}
+
+/**
  * Create an unauthorized response with proper CORS headers
  */
 export function createUnauthorizedResponse(
