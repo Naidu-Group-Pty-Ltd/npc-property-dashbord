@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   Home, 
@@ -40,6 +40,8 @@ import {
   Coins,
   Inbox,
   ChevronDown,
+  Search,
+  X as XIcon,
 } from 'lucide-react';
 import {
   Sidebar,
