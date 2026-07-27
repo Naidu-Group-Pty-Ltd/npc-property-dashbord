@@ -11,8 +11,8 @@ Guidance for Claude Code (and Claude-based tools) working in this repo.
 
 ## Installed tooling (already wired for Claude Code)
 - **MCP servers** — [`.mcp.json`](./.mcp.json): `shadcn`, `chrome-devtools`,
-  `@21st-dev/magic`. Setup and the `MAGIC_API_KEY` step are in
-  [`MCP_SETUP.md`](./MCP_SETUP.md).
+  `@21st-dev/magic`, `21st` (hosted HTTP). Setup and the `MAGIC_API_KEY` /
+  `TWENTY_FIRST_API_KEY` steps are in [`MCP_SETUP.md`](./MCP_SETUP.md).
 - **Skills** — [`.claude/skills/`](./.claude/skills/): `frontend-design` (aesthetic
   direction) and `web-design-guidelines` (accessibility / UX review).
 
