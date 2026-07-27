@@ -5395,7 +5395,7 @@ if (import.meta.main) Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
     const body = await req.json();
 
-    const { error: authError } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
 
     const { reportId, includeCharts, includeHeroImages, includeSparklines, designOptions } = body;
@@ -5404,6 +5404,45 @@ if (import.meta.main) Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // The service-role client bypasses RLS, so establish object access before
+    // loading any report content. Internal service calls retain their existing
+    // access; staff may render reports they generated or reports for a client
+    // they own, matching the investment_reports read policy.
+    if (authMethod !== "service_role") {
+      const { data: reportAccess, error: reportAccessError } = await supabase
+        .from("investment_reports")
+        .select("generated_by, client_property_id")
+        .eq("id", reportId)
+        .maybeSingle();
+
+      let canAccessReport = !reportAccessError && reportAccess?.generated_by === userId;
+      if (!canAccessReport && reportAccess?.client_property_id && userId) {
+        const { data: clientProperty } = await supabase
+          .from("client_properties")
+          .select("client_id")
+          .eq("id", reportAccess.client_property_id)
+          .maybeSingle();
+
+        if (clientProperty?.client_id) {
+          const { data: client } = await supabase
+            .from("clients")
+            .select("id")
+            .eq("id", clientProperty.client_id)
+            .eq("created_by", userId)
+            .maybeSingle();
+          canAccessReport = Boolean(client);
+        }
+      }
+
+      // Do not reveal whether a caller-supplied report UUID exists.
+      if (!canAccessReport) {
+        return new Response(JSON.stringify({ error: "Report not found" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
 
     const { data: report, error } = await supabase
