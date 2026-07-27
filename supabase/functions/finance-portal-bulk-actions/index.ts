@@ -6,6 +6,7 @@
  * caller before performing the action. Returns a per-file outcome summary.
  */
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { hasFinancePortalPermission, type FinancePortalPermissionAction } from '../_shared/finance-portal-permissions.ts';
 import { parseNaturalDate } from '../_shared/parse-natural-date.ts';
 
 const corsHeaders = {
@@ -41,7 +42,42 @@ Deno.serve(async (req) => {
       .from('purchase_files')
       .select('id, client_id, title, assigned_finance_user_id')
       .in('id', fileIds);
-    const accessible = (files || []).filter(f => f.assigned_finance_user_id === portalUser.id);
+    const ownedFiles = (files || []).filter(f => f.assigned_finance_user_id === portalUser.id);
+    const permissionByOperation: Record<string, {
+      key: string;
+      action: FinancePortalPermissionAction;
+      defaultAllowWhenUnconfigured: boolean;
+    }> = {
+      bulk_archive: { key: 'purchase_files', action: 'delete', defaultAllowWhenUnconfigured: false },
+      bulk_send_message: { key: 'messages', action: 'edit', defaultAllowWhenUnconfigured: true },
+      bulk_request_doc: { key: 'documents', action: 'edit', defaultAllowWhenUnconfigured: true },
+    };
+    const requiredPermission = permissionByOperation[operation];
+    let accessible = ownedFiles;
+
+    if (requiredPermission && ownedFiles.length) {
+      const clientIds = [...new Set(ownedFiles.map(f => f.client_id))];
+      const { data: assignments, error: assignmentsError } = await supabase
+        .from('finance_portal_client_assignments')
+        .select('client_id, permissions')
+        .eq('finance_user_id', portalUser.id)
+        .in('client_id', clientIds);
+      if (assignmentsError) return json({ error: 'Unable to verify permissions' }, 500);
+
+      const permissionsByClient = new Map(
+        (assignments || []).map(a => [a.client_id, a.permissions]),
+      );
+      accessible = ownedFiles.filter(f => {
+        if (!permissionsByClient.has(f.client_id)) return false;
+        return hasFinancePortalPermission(
+          portalUser.global_permissions,
+          permissionsByClient.get(f.client_id),
+          requiredPermission.key,
+          requiredPermission.action,
+          requiredPermission.defaultAllowWhenUnconfigured,
+        );
+      });
+    }
     const accessibleIds = accessible.map(f => f.id);
     const skipped = fileIds.filter(id => !accessibleIds.includes(id));
 
