@@ -117,8 +117,11 @@ export default function CashFlowAnalysis() {
       if (error) throw new Error(error.message);
 
       const fetched: InvestmentReport[] = data?.reports || [];
-      const reportsWithCashFlowData = fetched.filter(hasRequiredData);
-      setReports(prev => append ? [...prev, ...reportsWithCashFlowData] : reportsWithCashFlowData);
+      // Note: the `library` projection returned by get-investment-reports does not
+      // include manual_overrides or financial_calculations, so we cannot filter by
+      // purchase price here. The full payload (with price/rent) is fetched on click
+      // via openAnalysisForReport(); the modal handles missing figures gracefully.
+      setReports(prev => append ? [...prev, ...fetched] : fetched);
       setBackendOffset(currentOffset + fetched.length);
       setHasMore(fetched.length === PAGE_SIZE);
     } catch (error: any) {
