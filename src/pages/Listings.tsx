@@ -34,7 +34,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { ReportActionMenu } from '@/components/reports/ReportActionMenu';
 import { useReportPreferences, type ReportScope, type ReportTier } from '@/hooks/useReportPreferences';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ListingRowContextMenu } from '@/components/listings/ListingRowContextMenu';
 import { cn } from '@/lib/utils';
 
@@ -100,6 +100,69 @@ const DEFAULT_FILTERS = {
   keywordSearch: '',
   includeNearbySuburbs: false,
 };
+
+type ListingFilters = typeof DEFAULT_FILTERS;
+
+// URL <-> filter serialisation. Only non-default values are written to the URL so
+// links stay clean. Boolean flags are serialised as "1" and view/search live under
+// short keys (`view`, `q`).
+const URL_KEYS_STRING = [
+  'propertyType', 'suburb', 'state', 'zipCode', 'sourceHost', 'agencyName',
+  'priceMin', 'priceMax', 'bedsMin', 'bedsMax', 'bathsMin', 'bathsMax',
+  'carsMin', 'carsMax', 'keywordSearch',
+] as const;
+const URL_KEYS_BOOL = ['hasInspection', 'lowConfidence', 'offMarket', 'includeNearbySuburbs'] as const;
+
+function parseListingsUrlState(params: URLSearchParams): {
+  filters: Partial<ListingFilters>;
+  search: string | null;
+  view: 'list' | 'table' | 'map' | null;
+  hasAny: boolean;
+} {
+  let hasAny = false;
+  const filters: Partial<ListingFilters> = {};
+  for (const key of URL_KEYS_STRING) {
+    const v = params.get(key);
+    if (v !== null && v !== '') {
+      (filters as Record<string, unknown>)[key] = v;
+      hasAny = true;
+    }
+  }
+  for (const key of URL_KEYS_BOOL) {
+    if (params.get(key) === '1') {
+      (filters as Record<string, unknown>)[key] = true;
+      hasAny = true;
+    }
+  }
+  const search = params.get('q');
+  const viewRaw = params.get('view');
+  const view = viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' ? viewRaw : null;
+  if (search !== null) hasAny = true;
+  if (view !== null) hasAny = true;
+  return { filters, search, view, hasAny };
+}
+
+function buildListingsUrlParams(
+  filters: ListingFilters,
+  search: string,
+  view: 'list' | 'table' | 'map',
+  defaultView: 'list' | 'table' | 'map',
+): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const key of URL_KEYS_STRING) {
+    const value = filters[key];
+    const defaultValue = DEFAULT_FILTERS[key];
+    if (typeof value === 'string' && value && value !== defaultValue) {
+      params.set(key, value);
+    }
+  }
+  for (const key of URL_KEYS_BOOL) {
+    if (filters[key]) params.set(key, '1');
+  }
+  if (search) params.set('q', search);
+  if (view !== defaultView) params.set('view', view);
+  return params;
+}
 
 type ListingsStatePanelProps = {
   icon: ElementType;
@@ -186,10 +249,23 @@ export default function Listings() {
   const { canEdit: canEditListings, canDelete: canDeleteListings } = useModulePermissions('listings');
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
-  const [searchQuery, setSearchQuery] = useState('');
   const isMobile = useIsMobile();
-  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(isMobile ? 'list' : 'table');
-  
+  const defaultViewMode: 'list' | 'table' | 'map' = isMobile ? 'list' : 'table';
+
+  // Snapshot URL state once at mount so we can hydrate filters/search/view before
+  // React writes anything back to the address bar.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialUrlState = useMemo(
+    () => parseListingsUrlState(new URLSearchParams(window.location.search)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const [searchQuery, setSearchQuery] = useState(() => initialUrlState.search ?? '');
+  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(
+    () => initialUrlState.view ?? defaultViewMode,
+  );
+
   // Listings are locked to the Property Intake Master Airtable base — no other datasets should be exposed here.
   const PROPERTY_INTAKE_TABLE = 'Property Intake Master';
   useEffect(() => {
@@ -213,19 +289,20 @@ export default function Listings() {
 
 
   
-  // Load filters from localStorage — always reset keywordSearch to blank on mount
-  const [filters, setFilters] = useState(() => {
+  // Hydrate filters: URL params win, then localStorage, then defaults. Keyword
+  // still resets on load unless the URL explicitly carries one.
+  const [filters, setFilters] = useState<ListingFilters>(() => {
+    let base: ListingFilters = { ...DEFAULT_FILTERS };
     const savedFilters = localStorage.getItem('listingFilters');
     if (savedFilters) {
       try {
         const parsed = JSON.parse(savedFilters);
-        // Always reset keyword search to blank on page load to prevent stale pre-population
-        return { ...DEFAULT_FILTERS, ...parsed, keywordSearch: '' };
+        base = { ...DEFAULT_FILTERS, ...parsed, keywordSearch: '' };
       } catch (e) {
         console.error('Failed to parse saved filters:', e);
       }
     }
-    return { ...DEFAULT_FILTERS };
+    return { ...base, ...initialUrlState.filters };
   });
 
   const [selectedListing, setSelectedListing] = useState<PropertyListing | null>(null);
@@ -240,18 +317,36 @@ export default function Listings() {
   // Per-row pending scope/tier choice in the picker (controlled)
 
   useEffect(() => {
-    setViewMode(isMobile ? 'list' : 'table');
-  }, [isMobile]);
+    // Only auto-switch on breakpoint change when the URL isn't pinning a view.
+    if (!initialUrlState.view) {
+      setViewMode(isMobile ? 'list' : 'table');
+    }
+  }, [isMobile, initialUrlState.view]);
 
   // Sync global search with local search when component mounts or global search changes
   useEffect(() => {
-    setSearchQuery(globalSearchQuery);
+    if (globalSearchQuery) setSearchQuery(globalSearchQuery);
   }, [globalSearchQuery]);
 
-  // Save filters to localStorage whenever they change
+  // Persist filters + mirror filter/search/view state into the URL so links are
+  // shareable and the map view stays in lockstep with the active filter set.
   useEffect(() => {
     localStorage.setItem('listingFilters', JSON.stringify(filters));
   }, [filters]);
+
+  useEffect(() => {
+    const next = buildListingsUrlParams(filters, searchQuery, viewMode, defaultViewMode);
+    // Preserve unrelated query keys already on the URL.
+    const merged = new URLSearchParams(searchParams);
+    const managed = new Set<string>([...URL_KEYS_STRING, ...URL_KEYS_BOOL, 'q', 'view']);
+    managed.forEach((k) => merged.delete(k));
+    next.forEach((value, key) => merged.set(key, value));
+    if (merged.toString() !== searchParams.toString()) {
+      setSearchParams(merged, { replace: true });
+    }
+    // We intentionally omit searchParams/setSearchParams to avoid write loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, searchQuery, viewMode, defaultViewMode]);
 
   // Refresh function — bypass cache for explicit user refresh
   const loadListings = useCallback(() => {
