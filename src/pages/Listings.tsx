@@ -635,12 +635,23 @@ export default function Listings() {
                 type="button"
                 size="sm"
                 variant="outline"
-                aria-pressed={!showListView}
+                aria-pressed={showTableView}
                 onClick={() => setViewMode('table')}
-                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', !showListView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showTableView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
               >
                 <Table2 className="h-4 w-4" />
                 Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-pressed={showMapView}
+                onClick={() => setViewMode('map')}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showMapView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+              >
+                <MapIcon className="h-4 w-4" />
+                Map
               </Button>
             </div>
 
