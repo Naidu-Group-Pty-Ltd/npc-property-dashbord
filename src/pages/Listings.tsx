@@ -34,7 +34,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { ReportActionMenu } from '@/components/reports/ReportActionMenu';
 import { useReportPreferences, type ReportScope, type ReportTier } from '@/hooks/useReportPreferences';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ListingRowContextMenu } from '@/components/listings/ListingRowContextMenu';
 import { cn } from '@/lib/utils';
 
