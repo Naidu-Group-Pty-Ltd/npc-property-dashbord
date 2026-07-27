@@ -102,9 +102,15 @@ Deno.serve(async (req) => {
   const requestStartedAt = Date.now();
   const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({ error: "method_not_allowed" }), {
+      status: 405,
+      headers: { ...cors, "content-type": "application/json", allow: "POST" },
+    });
+  }
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
-  // No-op for GET/HEAD/OPTIONS and any request without the session cookie.
+  // No-op for requests without the session cookie.
   const __csrf = enforceCsrf(req);
   if (!__csrf.ok) return csrfDenied(cors, __csrf);
   // WP-03: strict cron auth via constant-time helper. Admin manual trigger

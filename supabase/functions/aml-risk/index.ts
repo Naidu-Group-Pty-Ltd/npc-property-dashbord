@@ -606,12 +606,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // when deciding. A new recommendation supersedes the previous pending
     // one; `decide` stamps pending recommendations as actioned.
     if (op === "recommend") {
-      if (!canWrite) return jr({ error: "Insufficient permissions" }, 403);
       const caseId = String(body.case_id ?? "");
       const outcome = String(body.recommended_outcome ?? "");
       const rationale = String(body.rationale ?? "").trim();
       const RECOMMENDED_OUTCOMES = ["cleared", "cleared_with_conditions", "edd_required", "escalated", "blocked"];
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canWrite) return jr({ error: "Insufficient permissions" }, 403);
       if (!RECOMMENDED_OUTCOMES.includes(outcome)) return jr({ error: "recommended_outcome invalid" }, 400);
       if (rationale.length < 10) return jr({ error: "rationale must be at least 10 characters" }, 400);
 
@@ -635,6 +637,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "list_recommendations") {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canRead) return jr({ error: "AML role required for case tenant" }, 403);
       const { data } = await admin.schema("aml").from("analyst_recommendations")
         .select("*").eq("case_id", caseId).order("created_at", { ascending: false }).limit(50);
       return jr({ recommendations: data ?? [] });
@@ -645,7 +650,6 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // gate is never inferred from case stage or risk rating: every change is
     // an explicit, reasoned, audited decision with recorded preconditions.
     if (op === "set_service_gate") {
-      if (!canReview) return jr({ error: "Reviewer/MLRO required" }, 403);
       const caseId = String(body.case_id ?? "");
       const status = String(body.status ?? "");
       const reason = String(body.reason ?? "").trim();
@@ -655,15 +659,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         "locked", "terminated",
       ];
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canReview) return jr({ error: "Reviewer/MLRO required for case tenant" }, 403);
       if (!GATE_STATUSES.includes(status)) return jr({ error: "status invalid" }, 400);
       if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
-      if ((status === "locked" || status === "terminated") && !isMlro) {
+      if ((status === "locked" || status === "terminated") && !access.isMlro) {
         return jr({ error: "Locking or terminating the service gate requires the MLRO" }, 403);
       }
 
-      const { data: caseRow } = await admin.schema("aml").from("cases")
-        .select("id, tenant_id, service_gate_status").eq("id", caseId).maybeSingle();
-      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      const caseRow = access.caseRow;
       const { data: tenant } = await admin.schema("aml").from("tenant_settings")
         .select("risk_program_version").eq("tenant_id", (caseRow.tenant_id as string) || "default").maybeSingle();
       const gatePolicyVersion = (tenant?.risk_program_version as string) || "v1";
@@ -728,6 +733,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (op === "gate_contract") {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
+      const access = await tenantCaseAccess(admin, userId, caseId);
+      if (!access) return jr({ error: "Case not found" }, 404);
+      if (!access.canRead) return jr({ error: "AML role required for case tenant" }, 403);
       const [{ data: gateRow }, { data: caseRow }] = await Promise.all([
         admin.schema("aml").from("service_gate_decisions").select("*").eq("case_id", caseId)
           .order("created_at", { ascending: false }).limit(1).maybeSingle(),
