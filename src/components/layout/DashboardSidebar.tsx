@@ -248,12 +248,18 @@ export function DashboardSidebar() {
     [visibleAdminItems]
   );
 
+  const normalisedFilter = navFilter.trim().toLowerCase();
+  const matchesFilter = (title: string) =>
+    normalisedFilter.length === 0 || title.toLowerCase().includes(normalisedFilter);
+
   const groupedNavItems = navigationGroups
     .map((group) => ({
       ...group,
       items: group.itemTitles.flatMap((title) => {
         const item = visibleNavItemsByTitle.get(title);
-        return item ? [item] : [];
+        if (!item) return [];
+        if (!matchesFilter(item.title)) return [];
+        return [item];
       }),
     }))
     .filter((group) => group.items.length > 0);
@@ -262,7 +268,9 @@ export function DashboardSidebar() {
     ...adminGroup,
     items: adminGroup.itemTitles.flatMap((title) => {
       const item = visibleAdminItemsByTitle.get(title);
-      return item ? [item] : [];
+      if (!item) return [];
+      if (!matchesFilter(item.title)) return [];
+      return [item];
     }),
   };
 
