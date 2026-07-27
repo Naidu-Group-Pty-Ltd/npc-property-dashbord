@@ -13,6 +13,7 @@ import { getBrandPdfPalette } from '@/branding/brandPalette';
 import { useBrand } from '@/branding/BrandProvider';
 import { smartCapitalize } from '@/lib/nameUtils';
 import { escapeHtml } from '@/utils/escapeHtml';
+import { sanitizePdfHtml } from '@/utils/sanitizePdfHtml';
 import {
   buildHouseholdIncome,
   buildPropertyExpenditure,
