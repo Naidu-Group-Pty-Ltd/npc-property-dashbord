@@ -397,6 +397,7 @@ async function prepareFinanceNotePayload(supabase: any, clientId: string, payloa
 }
 
 Deno.serve(async (req) => {
+  corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
