@@ -17,6 +17,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
@@ -157,28 +158,7 @@ async function clearanceBlockReasons(admin: any, caseId: string, assessment: any
   return Array.from(new Set(reasons));
 }
 
-async function tenantCaseAccess(admin: any, userId: string, caseId: string) {
-  const { data: caseRow } = await admin.schema("aml").from("cases")
-    .select("id, tenant_id, service_gate_status").eq("id", caseId).maybeSingle();
-  if (!caseRow) return null;
-
-  const tenantId = String(caseRow.tenant_id || "default");
-  const [{ data: roleRows }, { data: isSuperadmin }] = await Promise.all([
-    admin.schema("aml").from("role_assignments")
-      .select("role").eq("user_id", userId).eq("tenant_id", tenantId).is("revoked_at", null),
-    admin.schema("aml").rpc("is_superadmin", { _user_id: userId }),
-  ]);
-  const roles = new Set<string>((roleRows ?? []).map((r: any) => r.role));
-  return {
-    caseRow,
-    canRead: Boolean(isSuperadmin) || roles.size > 0,
-    canWrite: Boolean(isSuperadmin) || roles.has("analyst") || roles.has("reviewer") || roles.has("mlro"),
-    canReview: Boolean(isSuperadmin) || roles.has("reviewer") || roles.has("mlro"),
-    isMlro: Boolean(isSuperadmin) || roles.has("mlro"),
-  };
-}
-
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -826,3 +806,7 @@ Deno.serve(async (req) => {
     return jr({ error: String((e as Error)?.message ?? e) }, 500);
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));

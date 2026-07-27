@@ -10,6 +10,7 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -67,7 +68,7 @@ async function callWeasyPrint(
   }
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'method not allowed' }), {
@@ -257,3 +258,7 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));

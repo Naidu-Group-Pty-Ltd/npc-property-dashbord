@@ -7,6 +7,7 @@ import { verifyAuth } from '../_shared/auth.ts';
 import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY')!;
@@ -104,7 +105,7 @@ async function planWithLLM(goal: string, skillPrompt?: string): Promise<Array<{ 
   }));
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -427,3 +428,7 @@ async function runScheduled(sb: any) {
   }
   return json({ launched });
 }
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
