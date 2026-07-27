@@ -105,39 +105,32 @@ Deno.serve(async (req) => {
     if (!portalUser || !portalUser.is_active || portalUser.revoked_at) return json({ error: 'Invalid session' }, 401);
     if (!portalUser.session_expires_at || new Date(portalUser.session_expires_at) < new Date()) return json({ error: 'Session expired' }, 401);
 
-    const requireFileAccess = async (
-      purchaseFileId: string,
-      action: FinancePortalPermissionAction,
-    ) => {
-      const { data: file } = await supabase.from('purchase_files')
-        .select('client_id').eq('id', purchaseFileId).maybeSingle();
-      if (!file?.client_id) return false;
-
-      const { data: assignment } = await supabase.from('finance_portal_client_assignments')
-        .select('permissions')
-        .eq('finance_user_id', portalUser.id)
-        .eq('client_id', file.client_id)
-        .or(`purchase_file_id.is.null,purchase_file_id.eq.${purchaseFileId}`)
-        .limit(1).maybeSingle();
-      if (!assignment) return false;
-
-      return hasFinancePortalPermission(
-        portalUser.global_permissions,
-        assignment.permissions,
-        'purchase_files',
-        action,
-        true,
+    const requireFileAccess = async (purchaseFileId: string, action: 'view' | 'edit' | 'delete') =>
+      canAccessPurchaseFile(
+        supabase, portalUser.id, purchaseFileId,
+        portalUser.global_permissions, 'purchase_files', action,
       );
-    };
     const requireResourceAccess = async (
       table: string,
       resourceId: string,
-      action: FinancePortalPermissionAction,
-    ) => {
-      const { data: resource } = await supabase.from(table)
-        .select('purchase_file_id').eq('id', resourceId).maybeSingle();
-      return !!resource?.purchase_file_id
-        && requireFileAccess(resource.purchase_file_id, action);
+      action: 'view' | 'edit' | 'delete',
+      permissionKey = 'purchase_files',
+    ) => canAccessPurchaseFileResource(
+      supabase, portalUser.id, table, resourceId,
+      portalUser.global_permissions, permissionKey, action,
+    );
+    const requireBookingAssociationAccess = async (purchaseFileId?: string | null, clientId?: string | null) => {
+      if (purchaseFileId) {
+        if (!await requireFileAccess(purchaseFileId, 'edit')) return false;
+        if (!clientId) return true;
+        const { data: matchingFile, error } = await supabase.from('purchase_files')
+          .select('id').eq('id', purchaseFileId).eq('client_id', clientId).maybeSingle();
+        return !error && !!matchingFile;
+      }
+      return !clientId || canAccessFinanceClient(
+        supabase, portalUser.id, clientId, null,
+        portalUser.global_permissions, 'purchase_files', 'edit',
+      );
     };
 
     /* ===== Applicants ===== */
@@ -171,7 +164,7 @@ Deno.serve(async (req) => {
     if (operation === 'applicants_delete') {
       const id = body.applicant_id;
       if (!id) return json({ error: 'applicant_id required' }, 400);
-      if (!await requireResourceAccess('purchase_file_applicants', id, 'edit')) return json({ error: 'Not authorised' }, 403);
+      if (!await requireResourceAccess('purchase_file_applicants', id, 'delete')) return json({ error: 'Not authorised' }, 403);
       const { error } = await supabase.from('purchase_file_applicants').delete().eq('id', id);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
@@ -241,7 +234,7 @@ Deno.serve(async (req) => {
     if (operation === 'onboarding_delete') {
       const id = body.step_id;
       if (!id) return json({ error: 'step_id required' }, 400);
-      if (!await requireResourceAccess('purchase_file_onboarding_checklist', id, 'edit')) return json({ error: 'Not authorised' }, 403);
+      if (!await requireResourceAccess('purchase_file_onboarding_checklist', id, 'delete')) return json({ error: 'Not authorised' }, 403);
       const { error } = await supabase.from('purchase_file_onboarding_checklist').delete().eq('id', id);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
@@ -293,9 +286,7 @@ Deno.serve(async (req) => {
     if (operation === 'bookings_create') {
       const insert = pick(body, BOOKING_COLS);
       if (!insert.start_at || !insert.end_at) return json({ error: 'start_at and end_at required' }, 400);
-      if (insert.purchase_file_id && !await requireFileAccess(insert.purchase_file_id)) return json({ error: 'Not authorised' }, 403);
-      if (!insert.purchase_file_id && insert.client_id
-        && !await canAccessFinanceClient(supabase, portalUser.id, insert.client_id)) {
+      if (!await requireBookingAssociationAccess(insert.purchase_file_id, insert.client_id)) {
         return json({ error: 'Not authorised' }, 403);
       }
       const { data, error } = await supabase.from('finance_partner_bookings')
@@ -308,6 +299,16 @@ Deno.serve(async (req) => {
       const id = body.booking_id;
       if (!id) return json({ error: 'booking_id required' }, 400);
       const patch = pick(body.payload || {}, BOOKING_COLS);
+      if ('purchase_file_id' in patch || 'client_id' in patch) {
+        const { data: booking } = await supabase.from('finance_partner_bookings')
+          .select('purchase_file_id, client_id').eq('id', id).eq('finance_user_id', portalUser.id).maybeSingle();
+        if (!booking) return json({ error: 'Not authorised' }, 403);
+        const purchaseFileId = 'purchase_file_id' in patch ? patch.purchase_file_id : booking.purchase_file_id;
+        const clientId = 'client_id' in patch ? patch.client_id : booking.client_id;
+        if (!await requireBookingAssociationAccess(purchaseFileId, clientId)) {
+          return json({ error: 'Not authorised' }, 403);
+        }
+      }
       const { data, error } = await supabase.from('finance_partner_bookings')
         .update({ ...patch, updated_at: new Date().toISOString() })
         .eq('id', id).eq('finance_user_id', portalUser.id).select().single();
@@ -328,7 +329,7 @@ Deno.serve(async (req) => {
     if (operation === 'reminders_configure') {
       const id = body.instance_id;
       if (!id) return json({ error: 'instance_id required' }, 400);
-      if (!await requireResourceAccess('document_requirement_instances', id)) return json({ error: 'Not authorised' }, 403);
+      if (!await requireResourceAccess('document_requirement_instances', id, 'edit', 'documents')) return json({ error: 'Not authorised' }, 403);
       const patch: any = { updated_at: new Date().toISOString() };
       if (body.auto_reminder_enabled != null) patch.auto_reminder_enabled = !!body.auto_reminder_enabled;
       if ('due_date' in body) patch.due_date = body.due_date || null;
