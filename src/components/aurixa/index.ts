@@ -18,6 +18,15 @@ export type { SectionEmptyStateProps, SectionEmptyStateAction } from './SectionE
 export { BreadcrumbRail } from './BreadcrumbRail';
 export type { BreadcrumbRailProps } from './BreadcrumbRail';
 
+export { AuroraHero } from './AuroraHero';
+export type { AuroraHeroProps } from './AuroraHero';
+
+export { MetricTile } from './MetricTile';
+export type { MetricTileProps, MetricTileTone, MetricTileDelta } from './MetricTile';
+
+export { KpiRow } from './KpiRow';
+export type { KpiRowProps } from './KpiRow';
+
 // Re-export existing Aurixa primitives so consumers have one import path.
 export { AurixaMark } from '@/components/agent/AurixaMark';
 export { AurixaSectionHeader } from '@/components/agent/AurixaSectionHeader';
