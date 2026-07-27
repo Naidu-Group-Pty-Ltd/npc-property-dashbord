@@ -532,6 +532,8 @@ export default function Listings() {
   });
   const hasSearchQuery = searchQuery.trim().length > 0;
   const showListView = viewMode === 'list';
+  const showTableView = viewMode === 'table';
+  const showMapView = viewMode === 'map';
   const emptyStateCopy = hasSearchQuery
     ? {
         icon: Search,
