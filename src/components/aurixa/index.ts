@@ -64,6 +64,23 @@ export type { StepperProps, StepperStep } from './Stepper';
 export { FormField } from './FormField';
 export type { FormFieldProps, FormFieldRenderArgs } from './FormField';
 
+export { SuggestionChips } from './SuggestionChips';
+export type { SuggestionChipsProps, SuggestionChip } from './SuggestionChips';
+
+export { ToolCallCard } from './ToolCallCard';
+export type { ToolCallCardProps, ToolCallStatus } from './ToolCallCard';
+
+export { ModelBadge } from './ModelBadge';
+export type { ModelBadgeProps } from './ModelBadge';
+
+export { VoiceWaveform } from './VoiceWaveform';
+export type { VoiceWaveformProps } from './VoiceWaveform';
+
+export { ShimmerText } from './ShimmerText';
+export type { ShimmerTextProps } from './ShimmerText';
+
+
+
 
 
 
