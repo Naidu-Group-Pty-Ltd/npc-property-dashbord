@@ -11,6 +11,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
 import { TokenBalanceBanner } from '@/components/billing/TokenBalanceBanner';
+import { GlobalCommandPalette } from './GlobalCommandPalette';
 
 export function DashboardLayout() {
   const breakpoint = useBreakpoint();
@@ -42,6 +43,7 @@ export function DashboardLayout() {
 
         <MobileNav />
         <AgentChatWidget />
+        <GlobalCommandPalette />
       </div>
     );
   }
@@ -72,6 +74,7 @@ export function DashboardLayout() {
         </div>
       </div>
       <AgentChatWidget />
+      <GlobalCommandPalette />
     </SidebarProvider>
   );
 }
