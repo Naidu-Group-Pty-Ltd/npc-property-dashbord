@@ -38,6 +38,41 @@ function trackingPixelUrl(token: string): string {
   return `https://${projectRef}.supabase.co/functions/v1/finance-email-track-pixel?t=${token}`;
 }
 
+async function authorizeClientMessages(
+  supabase: any,
+  partner: any,
+  clientId: string,
+  action: 'view' | 'edit',
+) {
+  const { data: assignment, error } = await supabase
+    .from('finance_portal_client_assignments')
+    .select('permissions')
+    .eq('finance_user_id', partner.id)
+    .eq('client_id', clientId)
+    .maybeSingle();
+
+  if (error) return json({ error: 'assignment_lookup_failed' }, 500);
+  if (!assignment) return json({ error: 'client_access_denied' }, 403);
+  if (!hasFinancePortalPermission(partner.global_permissions, assignment.permissions, 'messages', action, true)) {
+    return json({ error: 'messages_permission_denied' }, 403);
+  }
+  return null;
+}
+
+async function validatePurchaseFileScope(supabase: any, purchaseFileId: string | undefined, clientId: string) {
+  if (!purchaseFileId) return null;
+  const { data: purchaseFile, error } = await supabase
+    .from('purchase_files')
+    .select('client_id')
+    .eq('id', purchaseFileId)
+    .maybeSingle();
+  if (error) return json({ error: 'purchase_file_lookup_failed' }, 500);
+  if (!purchaseFile || purchaseFile.client_id !== clientId) {
+    return json({ error: 'purchase_file_access_denied' }, 403);
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
@@ -67,44 +102,11 @@ Deno.serve(async (req) => {
   }
 });
 
-async function authorizeClientMessages(
-  supabase: any,
-  partner: any,
-  clientId: string,
-  action: 'view' | 'edit',
-  purchaseFileId?: string,
-) {
-  const { data: assignment, error: assignmentError } = await supabase
-    .from('finance_portal_client_assignments')
-    .select('permissions')
-    .eq('finance_user_id', partner.id)
-    .eq('client_id', clientId)
-    .maybeSingle();
-  if (assignmentError) return json({ error: assignmentError.message }, 500);
-  if (!assignment) return json({ error: 'not_assigned_to_client' }, 403);
-
-  if (!hasFinancePortalPermission(partner.global_permissions, assignment.permissions, 'messages', action, true)) {
-    return json({ error: 'messages_permission_required' }, 403);
-  }
-
-  if (purchaseFileId) {
-    const { data: purchaseFile, error: purchaseFileError } = await supabase
-      .from('purchase_files')
-      .select('id')
-      .eq('id', purchaseFileId)
-      .eq('client_id', clientId)
-      .maybeSingle();
-    if (purchaseFileError) return json({ error: purchaseFileError.message }, 500);
-    if (!purchaseFile) return json({ error: 'purchase_file_client_mismatch' }, 403);
-  }
-
-  return null;
-}
-
 async function listInbox(supabase: any, partner: any, body: any) {
   const clientId = body.client_id;
   if (!clientId) return json({ error: 'client_id_required' }, 400);
-  const denied = await authorizeClientMessages(supabase, partner, clientId, 'view', body.purchase_file_id);
+  const denied = await authorizeClientMessages(supabase, partner, clientId, 'view')
+    || await validatePurchaseFileScope(supabase, body.purchase_file_id, clientId);
   if (denied) return denied;
   const limit = Math.min(body.limit ?? 100, 300);
   const channels = Array.isArray(body.channels) ? body.channels : null;
@@ -205,9 +207,9 @@ async function sendMessage(supabase: any, partner: any, body: any) {
   const { client_id, purchase_file_id, channel, body: text, subject, template_id } = body;
   if (!client_id || !channel || !text) return json({ error: 'missing_required' }, 400);
   if (!['sms','whatsapp','email','portal'].includes(channel)) return json({ error: 'invalid_channel' }, 400);
-  if (!await canAccessFinanceClient(supabase, partner.id, client_id, purchase_file_id)) {
-    return json({ error: 'client_access_denied' }, 403);
-  }
+  const denied = await authorizeClientMessages(supabase, partner, client_id, 'edit')
+    || await validatePurchaseFileScope(supabase, purchase_file_id, client_id);
+  if (denied) return denied;
 
   // Lookup client recipient info
   const { data: client } = await supabase
@@ -394,24 +396,13 @@ async function translate(supabase: any, partner: any, body: any) {
 async function markRead(supabase: any, partner: any, body: any) {
   const { kind, id } = body;
   if (!kind || !id) return json({ error: 'missing_required' }, 400);
-  const table = kind === 'portal'
-    ? 'client_portal_messages'
-    : kind === 'outbound'
-      ? 'finance_outbound_messages'
-      : null;
-  if (!table) return json({ error: 'invalid_kind' }, 400);
-
-  const { data: message, error } = await supabase
-    .from(table)
-    .select('client_id')
-    .eq('id', id)
-    .maybeSingle();
+  if (!['portal', 'outbound'].includes(kind)) return json({ error: 'invalid_kind' }, 400);
+  const table = kind === 'portal' ? 'client_portal_messages' : 'finance_outbound_messages';
+  const { data: message, error } = await supabase.from(table).select('client_id').eq('id', id).maybeSingle();
   if (error) return json({ error: 'message_lookup_failed' }, 500);
   if (!message) return json({ error: 'message_not_found' }, 404);
-  if (!await canAccessFinanceClient(supabase, partner.id, message.client_id)) {
-    return json({ error: 'client_access_denied' }, 403);
-  }
-
+  const denied = await authorizeClientMessages(supabase, partner, message.client_id, 'edit');
+  if (denied) return denied;
   if (kind === 'portal') {
     await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id).eq('client_id', message.client_id);
   } else if (kind === 'outbound') {
