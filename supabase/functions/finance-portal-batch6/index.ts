@@ -39,12 +39,13 @@ import {
 } from '../_shared/financePortalObjectAuthz.ts';
 import { hasFinancePortalPermission, type FinancePortalPermissionAction } from '../_shared/finance-portal-permissions.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
+import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+// Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
+// echo the request Origin (never `*`) with `Allow-Credentials: true`.
+let corsHeaders: Record<string, string> = {
+  ...__createCorsHeaders(null),
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
 const APPLICANT_COLS = ['display_name','role','email','phone','date_of_birth','is_primary','position','metadata'];
@@ -83,6 +84,7 @@ function isCronCall(req: Request) {
 }
 
 Deno.serve(async (req) => {
+  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
