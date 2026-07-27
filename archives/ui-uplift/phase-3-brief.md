@@ -24,20 +24,23 @@ work; new pages and future refactors adopt the primitives incrementally.
 - Barrel export updated in `src/components/aurixa/index.ts` so consumers use one
   path: `import { DataTableToolbar, BulkActionBar } from '@/components/aurixa'`.
 
-## Adoption notes for target pages
+## Migration status
 
-The heavy list pages (`Listings.tsx` ~1.1k LOC, `GeneratedReports.tsx` ~1.2k LOC,
-`DealPipeline.tsx`, `CallLogs.tsx`) already ship bespoke toolbars and floating
-bulk bars. To avoid regressions this phase publishes the primitives and defers
-the mechanical migrations to focused follow-ups:
+- **Listings** (`src/pages/Listings.tsx`) — MIGRATED. The bespoke floating
+  `Card` (previously lines 1016–1066) has been replaced with `<BulkActionBar>`.
+  Selection state, "select all" checkbox, `canEditListings` gating, the 2–10
+  property constraint, and the helper text are all preserved via slots.
+- **Generated Reports** (`src/pages/GeneratedReports.tsx`) — NO-OP. The page
+  has no floating bulk bar and its search value is piped into a nested filter
+  subcomponent; wrapping the existing composed panel in `DataTableToolbar`
+  offers no user-visible benefit and would churn a 1.2k-LOC file. Primitive
+  remains available if/when the filter panel is refactored.
+- **Client Management** (`src/pages/ClientManagement.tsx`) — NO-OP. Selection
+  is already handled by the domain-specific `ClientBulkActions` component
+  (delete, tag, assign, export) which is richer than the generic primitive.
+  The generic `BulkActionBar` is reserved for pages without a bespoke bulk
+  surface.
 
-1. Replace the existing floating `Card` in `Listings.tsx` (lines ~1016–1066) with
-   `<BulkActionBar count={selectedListings.size} onClear={…}>`.
-2. Wrap the search + filter row on `Listings.tsx` and `GeneratedReports.tsx` in
-   `<DataTableToolbar>` slots, keeping state intact.
-3. Repeat for `DealPipeline.tsx` (list mode) and `CallLogs.tsx`.
-
-Each replacement is a pure JSX swap — state, filters, and data fetching stay put.
 
 ## Verification
 

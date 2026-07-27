@@ -16,6 +16,8 @@ import { MobileFilterSheet } from '@/components/listings/MobileFilterSheet';
 import { PropertyCard } from '@/components/listings/PropertyCard';
 import { propertyDataService } from '@/services/propertyDataService';
 import { PropertyListing } from '@/lib/airtable';
+import { BulkActionBar } from '@/components/aurixa';
+
 
 
 import { buildFullAddress, extractAUState, extractPostcode } from '@/lib/addressUtils';
@@ -1013,57 +1015,37 @@ export default function Listings() {
       )}
 
       {/* Floating Action Bar */}
-      {selectedListings.size > 0 && (
-        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-md md:max-w-lg md:w-auto">
-          <Card className="rounded-2xl border border-primary/30 bg-card/95 shadow-[0_18px_50px_rgba(15,23,42,0.18)] ring-1 ring-primary/10 backdrop-blur dark:border-primary/30 dark:bg-background/90 dark:shadow-black/45">
-            <CardContent className="py-2 px-3 md:py-3 md:px-6">
-              <div className="flex items-center gap-2 md:gap-4">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Checkbox 
-                    checked={selectedListings.size === filteredListings.length}
-                    onCheckedChange={toggleSelectAll}
-                    className="shrink-0"
-                  />
-                  <span className="font-medium text-sm truncate">
-                    {selectedListings.size} selected
-                  </span>
-                </div>
-                
-                <div className="h-6 w-px bg-border shrink-0 hidden md:block" />
-                
-                {canEditListings && (
-                  <Button
-                    onClick={() => setIsBulkGenerationModalOpen(true)}
-                    disabled={selectedListings.size < 2 || selectedListings.size > 10}
-                    size="sm"
-                    className="shrink-0 text-xs md:text-sm"
-                  >
-                    <FileText className="h-4 w-4 md:mr-2" />
-                    <span className="hidden md:inline">Generate Reports</span>
-                  </Button>
-                )}
-                
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedListings(new Set())}
-                  className="shrink-0"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              
-              {(selectedListings.size < 2 || selectedListings.size > 10) && !isMobile && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  {selectedListings.size < 2 
-                    ? 'Select at least 2 properties to generate bulk reports' 
-                    : 'Maximum 10 properties allowed per bulk generation'}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <BulkActionBar
+        count={selectedListings.size}
+        label={selectedListings.size === 1 ? 'listing selected' : 'listings selected'}
+        onClear={() => setSelectedListings(new Set())}
+        helper={
+          !isMobile && (selectedListings.size < 2 || selectedListings.size > 10)
+            ? selectedListings.size < 2
+              ? 'Select at least 2 properties to generate bulk reports'
+              : 'Maximum 10 properties allowed per bulk generation'
+            : undefined
+        }
+      >
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox
+            checked={selectedListings.size === filteredListings.length && filteredListings.length > 0}
+            onCheckedChange={toggleSelectAll}
+          />
+          <span className="hidden sm:inline">Select all</span>
+        </label>
+        {canEditListings && (
+          <Button
+            onClick={() => setIsBulkGenerationModalOpen(true)}
+            disabled={selectedListings.size < 2 || selectedListings.size > 10}
+            size="sm"
+          >
+            <FileText className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Generate Reports</span>
+          </Button>
+        )}
+      </BulkActionBar>
     </div>
   );
 }
+
