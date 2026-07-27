@@ -6,7 +6,8 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { marked } from "https://esm.sh/marked@12.0.2";
-import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
+import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
+import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 
@@ -5395,8 +5396,8 @@ if (import.meta.main) Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
     const body = await req.json();
 
-    const { error: authError } = await verifyAuth(supabase, req.headers, body);
-    if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+    const auth = await verifyAuth(supabase, req.headers, body);
+    if (auth.error || !auth.userId) return createUnauthorizedResponse(auth.error || "Authentication required", corsHeaders);
 
     const { reportId, includeCharts, includeHeroImages, includeSparklines, designOptions } = body;
     if (!reportId || typeof reportId !== "string") {
@@ -5404,6 +5405,16 @@ if (import.meta.main) Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    const permission = await requireModulePermission(
+      supabase,
+      { userId: auth.userId, authMethod: auth.authMethod },
+      "reports",
+      "can_view",
+    );
+    if (!permission.ok) {
+      return createForbiddenResponse(permission.error || "Report view permission required", corsHeaders);
     }
 
     const { data: report, error } = await supabase
