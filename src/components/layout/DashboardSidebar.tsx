@@ -205,7 +205,13 @@ export function DashboardSidebar() {
   const aml = useAmlAccess();
   const isCollapsed = state === 'collapsed';
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
-  
+  const [navFilter, setNavFilter] = useState('');
+
+  // Clear the sidebar search whenever the sidebar collapses to icon mode.
+  useEffect(() => {
+    if (isCollapsed) setNavFilter('');
+  }, [isCollapsed]);
+
   const isActive = (path: string) => {
     if (path === '/commercial') {
       return currentPath === '/commercial' || currentPath.startsWith('/commercial/') || currentPath === '/industrial' || currentPath.startsWith('/industrial/');
