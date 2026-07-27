@@ -732,12 +732,15 @@ describe("activation client picker", () => {
     const branch = casesSource.slice(
       casesSource.indexOf("case 'search_clients':"),
       casesSource.indexOf("case 'client_summary':"));
-    expect(branch).toContain("if (!canWrite) return jr({ error: 'Insufficient permissions' }, 403)");
+    expect(branch).toContain("if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403)");
     expect(branch).toContain(".eq('is_active', true)");
     expect(branch).toContain(".limit(20)");
     // Projection must not leak financial or contact data into the picker.
     expect(branch).toContain("select('id, primary_first_name, primary_surname, is_active')");
     expect(branch).not.toMatch(/email|phone|portfolio|income/i);
+    // This file's response helper is jsonResponse; `jr` belongs to other
+    // functions and would be a ReferenceError at runtime here.
+    expect(casesSource).not.toMatch(/\bjr\(/);
   });
 });
 

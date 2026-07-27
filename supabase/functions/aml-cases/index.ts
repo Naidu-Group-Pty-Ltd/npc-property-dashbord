@@ -737,12 +737,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         //
         // Deliberately narrow: active clients only, name match only, capped
         // result set, and a projection carrying no financial or contact data.
-        if (!canWrite) return jr({ error: 'Insufficient permissions' }, 403);
+        if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
         const q = String(body.query ?? '').trim();
-        if (q.length < 2) return jr({ clients: [] });
+        if (q.length < 2) return jsonResponse({ clients: [] });
 
         const safe = q.replace(/[%,()]/g, ' ').trim();
-        if (!safe) return jr({ clients: [] });
+        if (!safe) return jsonResponse({ clients: [] });
 
         const { data: rows, error: searchErr } = await admin
           .from('clients')
@@ -751,7 +751,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .or(`primary_first_name.ilike.%${safe}%,primary_surname.ilike.%${safe}%`)
           .order('primary_surname', { ascending: true })
           .limit(20);
-        if (searchErr) return jr({ error: searchErr.message }, 400);
+        if (searchErr) return jsonResponse({ error: searchErr.message }, 400);
 
         // Flag clients that already hold an open case so the operator does not
         // start a duplicate (the unique index would reject it at 409 anyway).
@@ -765,7 +765,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           openCaseIds = new Set((openCases ?? []).map((c: any) => String(c.client_id)));
         }
 
-        return jr({
+        return jsonResponse({
           clients: (rows ?? []).map((r: any) => ({
             id: r.id,
             label: [r.primary_first_name, r.primary_surname].filter(Boolean).join(' ').trim() || 'Unnamed client',
