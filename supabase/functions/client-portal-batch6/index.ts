@@ -24,6 +24,23 @@ function json(d: unknown, s = 200) {
   return new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
 
+function isOfferedSlot(
+  window: { weekday: number; start_time: string; end_time: string; slot_duration_min: number },
+  start: Date,
+  end: Date,
+) {
+  if (window.weekday !== start.getDay()) return false;
+  const [sh, sm] = window.start_time.split(':').map(Number);
+  const [eh, em] = window.end_time.split(':').map(Number);
+  const windowStart = new Date(start); windowStart.setHours(sh, sm, 0, 0);
+  const windowEnd = new Date(start); windowEnd.setHours(eh, em, 0, 0);
+  const durationMs = window.slot_duration_min * 60000;
+  return start.getTime() >= windowStart.getTime()
+    && end.getTime() <= windowEnd.getTime()
+    && end.getTime() - start.getTime() === durationMs
+    && (start.getTime() - windowStart.getTime()) % durationMs === 0;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
@@ -112,6 +129,10 @@ Deno.serve(async (req) => {
       const financeUserId = body.finance_user_id;
       const days = Math.min(Math.max(parseInt(body.days || '14'), 1), 30);
       if (!financeUserId) return json({ error: 'finance_user_id required' }, 400);
+      const { data: assignment, error: assignmentError } = await supabase.from('finance_portal_client_assignments')
+        .select('id').eq('finance_user_id', financeUserId).eq('client_id', clientId).maybeSingle();
+      if (assignmentError) return json({ error: assignmentError.message }, 500);
+      if (!assignment) return json({ error: 'Finance partner is not assigned to this client' }, 403);
       const { data: windows } = await supabase.from('finance_partner_availability')
         .select('*').eq('finance_user_id', financeUserId).eq('is_active', true);
       const { data: existing } = await supabase.from('finance_partner_bookings')
@@ -144,6 +165,30 @@ Deno.serve(async (req) => {
     if (operation === 'booking_create') {
       const fuid = body.finance_user_id;
       if (!fuid || !body.start_at || !body.end_at) return json({ error: 'finance_user_id, start_at, end_at required' }, 400);
+      const start = new Date(body.start_at);
+      const end = new Date(body.end_at);
+      const now = new Date();
+      if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start.getTime() < now.getTime() + 2 * 3600000
+        || end.getTime() <= start.getTime() || start.getTime() > now.getTime() + 30 * 86400000) {
+        return json({ error: 'Invalid booking interval' }, 400);
+      }
+      const { data: assignment, error: assignmentError } = await supabase.from('finance_portal_client_assignments')
+        .select('id').eq('finance_user_id', fuid).eq('client_id', clientId).maybeSingle();
+      if (assignmentError) return json({ error: assignmentError.message }, 500);
+      if (!assignment) return json({ error: 'Finance partner is not assigned to this client' }, 403);
+      if (body.purchase_file_id) {
+        const { data: purchaseFile, error: purchaseFileError } = await supabase.from('purchase_files')
+          .select('id').eq('id', body.purchase_file_id).eq('client_id', clientId).is('archived_at', null).maybeSingle();
+        if (purchaseFileError) return json({ error: purchaseFileError.message }, 500);
+        if (!purchaseFile) return json({ error: 'Purchase file not found' }, 404);
+      }
+      const { data: windows, error: windowsError } = await supabase.from('finance_partner_availability')
+        .select('weekday, start_time, end_time, slot_duration_min')
+        .eq('finance_user_id', fuid).eq('is_active', true);
+      if (windowsError) return json({ error: windowsError.message }, 500);
+      if (!(windows || []).some((window) => isOfferedSlot(window, start, end))) {
+        return json({ error: 'Requested interval is not an available slot' }, 400);
+      }
       // re-verify no clash
       const { data: clash } = await supabase.from('finance_partner_bookings')
         .select('id').eq('finance_user_id', fuid).neq('status', 'cancelled')

@@ -67,12 +67,45 @@ Deno.serve(async (req) => {
   }
 });
 
+async function authorizeClientMessages(
+  supabase: any,
+  partner: any,
+  clientId: string,
+  action: 'view' | 'edit',
+  purchaseFileId?: string,
+) {
+  const { data: assignment, error: assignmentError } = await supabase
+    .from('finance_portal_client_assignments')
+    .select('permissions')
+    .eq('finance_user_id', partner.id)
+    .eq('client_id', clientId)
+    .maybeSingle();
+  if (assignmentError) return json({ error: assignmentError.message }, 500);
+  if (!assignment) return json({ error: 'not_assigned_to_client' }, 403);
+
+  if (!hasFinancePortalPermission(partner.global_permissions, assignment.permissions, 'messages', action, true)) {
+    return json({ error: 'messages_permission_required' }, 403);
+  }
+
+  if (purchaseFileId) {
+    const { data: purchaseFile, error: purchaseFileError } = await supabase
+      .from('purchase_files')
+      .select('id')
+      .eq('id', purchaseFileId)
+      .eq('client_id', clientId)
+      .maybeSingle();
+    if (purchaseFileError) return json({ error: purchaseFileError.message }, 500);
+    if (!purchaseFile) return json({ error: 'purchase_file_client_mismatch' }, 403);
+  }
+
+  return null;
+}
+
 async function listInbox(supabase: any, partner: any, body: any) {
   const clientId = body.client_id;
   if (!clientId) return json({ error: 'client_id_required' }, 400);
-  if (!await canAccessFinanceClient(supabase, partner.id, clientId, body.purchase_file_id)) {
-    return json({ error: 'client_access_denied' }, 403);
-  }
+  const denied = await authorizeClientMessages(supabase, partner, clientId, 'view', body.purchase_file_id);
+  if (denied) return denied;
   const limit = Math.min(body.limit ?? 100, 300);
   const channels = Array.isArray(body.channels) ? body.channels : null;
 
