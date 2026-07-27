@@ -61,14 +61,14 @@ describe('docling adapter', () => {
     expect(plan.importSummary.visualFidelityMode).toBe('background-first');
   });
 
-  it('semantic mode leaves overlays editable while preserving the hidden reference raster', () => {
+  it('semantic mode leaves overlays editable without retaining the source raster', () => {
     const plan = mapDoclingToPagePlan(FIXTURE, {
       importId: 'imp-3',
       mode: 'semantic',
       rastersByPage: { 1: { width: 1190, height: 1684, dataUrl: 'data:image/png;base64,RASTER' } },
     });
     expect(plan.pages[0].overlays.every((o) => o.locked === false)).toBe(true);
-    expect(plan.pages[0].background.imageUrl).toBe('data:image/png;base64,RASTER');
+    expect(plan.pages[0].background.imageUrl).toBe('');
     expect(plan.pages[0].background.opacity).toBe(0);
     expect(validateTemplateImportPlan(plan).ok).toBe(true);
     expect(plan.importSummary.visualFidelityMode).toBe('semantic');

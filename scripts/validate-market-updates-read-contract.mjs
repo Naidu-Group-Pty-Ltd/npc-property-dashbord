@@ -9,7 +9,9 @@ const requiredTables = ['market_sources','market_updates','market_digests','mark
 const fail = message => { throw new Error(`Market Updates read-contract validation failed: ${message}`); };
 const requires = (text, token, context) => { if (!text.includes(token)) fail(`${context} missing ${token}`); };
 
-for (const token of ['verifyAuth','requireModulePermission','market_updates',"action === 'updates'","action === 'digest'","action === 'sources'","action === 'run'","action !== 'status'",'correlation_id']) requires(statusFunction,token,'status function');
+for (const token of ['verifyAuth','requireModulePermission','enforceJsonBodyLimit<unknown>(req, MAX_REQUEST_BYTES)',"typeof parsed.value !== 'object'",'Array.isArray(parsed.value)','market_updates',"action === 'updates'","action === 'digest'","action === 'sources'","action === 'run'","action !== 'status'",'correlation_id']) requires(statusFunction,token,'status function');
+if (statusFunction.includes('await req.json()')) fail('status function parses an unbounded request body');
+if (statusFunction.indexOf('verifyAuth(sb, req.headers, {})') > statusFunction.indexOf('enforceJsonBodyLimit<unknown>(req, MAX_REQUEST_BYTES)')) fail('status function does not attempt header authentication before parsing JSON');
 for (const table of requiredTables) requires(migration, `'${table}'`, 'RLS migration');
 for (const token of ['revoke all on table','from public, anon, authenticated','grant all on table','to service_role','enable row level security']) requires(migration,token,'RLS migration');
 requires(config,'[functions.market-updates-status]','function config');

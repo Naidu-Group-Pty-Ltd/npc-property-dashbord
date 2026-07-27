@@ -6,6 +6,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { corsHeaders } from 'npm:@supabase/supabase-js@2/cors';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
 type AssetClass = 'residential' | 'commercial' | 'industrial';
 
@@ -86,6 +87,9 @@ function mapPayload(row: any, source: AssetClass, target: AssetClass, userId: st
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   try {
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
