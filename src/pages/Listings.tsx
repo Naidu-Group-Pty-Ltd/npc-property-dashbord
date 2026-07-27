@@ -773,8 +773,12 @@ export default function Listings() {
         </div>
       </section>
 
-      {/* Content: Cards on Mobile, Table on Desktop */}
-      {showListView ? (
+      {/* Content: Cards on Mobile, Table on Desktop, Map view geocodes on demand */}
+      {showMapView ? (
+        <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
+          <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
+        </Suspense>
+      ) : showListView ? (
         <div className="space-y-3">
           {filteredListings.length === 0 ? (
             <ListingsStatePanel
