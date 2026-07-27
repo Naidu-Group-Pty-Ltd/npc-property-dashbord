@@ -27,6 +27,13 @@ export type { MetricTileProps, MetricTileTone, MetricTileDelta } from './MetricT
 export { KpiRow } from './KpiRow';
 export type { KpiRowProps } from './KpiRow';
 
+export { DataTableToolbar } from './DataTableToolbar';
+export type { DataTableToolbarProps, TableDensity } from './DataTableToolbar';
+
+export { BulkActionBar } from './BulkActionBar';
+export type { BulkActionBarProps } from './BulkActionBar';
+
+
 // Re-export existing Aurixa primitives so consumers have one import path.
 export { AurixaMark } from '@/components/agent/AurixaMark';
 export { AurixaSectionHeader } from '@/components/agent/AurixaSectionHeader';
