@@ -20,7 +20,7 @@ import { cn } from '@/lib/utils';
  */
 export type KanbanColumnTone = 'default' | 'success' | 'warning' | 'destructive';
 
-export interface KanbanColumnProps extends React.HTMLAttributes<HTMLDivElement> {
+export interface KanbanColumnProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> {
   title: React.ReactNode;
   description?: React.ReactNode;
   /** Number of cards currently in the column. */
