@@ -10,7 +10,7 @@ import { GlassCard } from './GlassCard';
  * eyebrow/title/description/actions. Never hardcodes colours or fonts;
  * consumes semantic tokens exclusively.
  */
-export interface AuroraHeroProps extends React.HTMLAttributes<HTMLDivElement> {
+export interface AuroraHeroProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> {
   eyebrow?: React.ReactNode;
   title: React.ReactNode;
   description?: React.ReactNode;
