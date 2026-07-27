@@ -152,7 +152,7 @@ Deno.serve(async (req) => {
       entity_id: portalUser.id,
     });
 
-    const sessionCookie = createSessionCookie(newSessionToken, expiresAt);
+    const sessionCookie = createFinanceSessionCookie(newSessionToken, expiresAt);
 
     return new Response(
       JSON.stringify({
