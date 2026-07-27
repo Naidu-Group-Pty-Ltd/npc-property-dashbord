@@ -33,6 +33,27 @@ export type { DataTableToolbarProps, TableDensity } from './DataTableToolbar';
 export { BulkActionBar } from './BulkActionBar';
 export type { BulkActionBarProps } from './BulkActionBar';
 
+export { KanbanColumn } from './KanbanColumn';
+export type { KanbanColumnProps, KanbanColumnTone } from './KanbanColumn';
+
+export { KanbanCard } from './KanbanCard';
+export type {
+  KanbanCardProps,
+  KanbanCardRisk,
+  KanbanCardAssignee,
+  KanbanCardMetaEntry,
+} from './KanbanCard';
+
+export { TimelineRail } from './TimelineRail';
+export type {
+  TimelineRailProps,
+  TimelineEvent,
+  TimelineEventTone,
+  TimelineFilter,
+} from './TimelineRail';
+
+
+
 
 // Re-export existing Aurixa primitives so consumers have one import path.
 export { AurixaMark } from '@/components/agent/AurixaMark';
