@@ -43,6 +43,7 @@ export function DashboardLayout() {
 
         <MobileNav />
         <AgentChatWidget />
+        <GlobalCommandPalette />
       </div>
     );
   }
@@ -73,6 +74,7 @@ export function DashboardLayout() {
         </div>
       </div>
       <AgentChatWidget />
+      <GlobalCommandPalette />
     </SidebarProvider>
   );
 }
