@@ -18,11 +18,16 @@ describe('render-investment-report-pdf SVG escaping contract', () => {
   });
 });
 
-describe('render-investment-report-pdf CSS escaping contract', () => {
-  it('escapes CSS string delimiters in generated margin-box content', () => {
-    expect(functionSource).toContain('.replace(/\\\\/g, "\\\\\\\\")');
-    expect(functionSource).toContain('.replace(/\\r\\n|\\r|\\n|\\f/g, "\\\\A ")');
-    expect(functionSource).not.toMatch(/content:\s*"\$\{esc\((?:address|brandName)\)\}"/);
-    expect(functionSource.match(/content:\s*"\$\{cssString\((?:address|brandName)\)\}"/g)).toHaveLength(5);
+describe('render-investment-report-pdf editorial shortcode escaping contract', () => {
+  it.each(['pullquote', 'sidenote'])('escapes %s bodies before inserting them into HTML', (name) => {
+    expect(functionSource).toMatch(
+      new RegExp(`if \\(name === "${name}"\\)[^\\n]+\\$\\{esc\\(inner\\.replace`),
+    );
+  });
+
+  it('does not interpolate unescaped editorial text into HTML', () => {
+    expect(functionSource).not.toMatch(
+      /if \(name === "(?:pullquote|sidenote)"\)[^\n]+\$\{inner\.replace/,
+    );
   });
 });

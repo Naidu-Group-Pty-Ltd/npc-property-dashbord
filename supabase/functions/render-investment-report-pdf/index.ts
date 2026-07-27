@@ -1977,8 +1977,8 @@ function applyEditorialMarkdown(md: string): string {
         attrs[String(k).toLowerCase()] = String(v);
         return "";
       });
-      if (name === "pullquote") return `\n<aside class="pull-quote"><p>${inner.replace(/\n+/g, " ")}</p></aside>\n`;
-      if (name === "sidenote") return `\n<aside class="sidenote"><p>${inner.replace(/\n+/g, " ")}</p></aside>\n`;
+      if (name === "pullquote") return `\n<aside class="pull-quote"><p>${esc(inner.replace(/\n+/g, " "))}</p></aside>\n`;
+      if (name === "sidenote") return `\n<aside class="sidenote"><p>${esc(inner.replace(/\n+/g, " "))}</p></aside>\n`;
       if (name === "cols") return `\n<div class="two-col">\n\n${inner}\n\n</div>\n`;
       if (name === "stat") {
         // Inline oversized statistic block: ::: stat label="Median yield" unit="%"  → body = "4.8"
