@@ -12025,6 +12025,7 @@ export type Database = {
         Row: {
           bulk_job_id: string | null
           calculation_version: string | null
+          canonical_property_key: string | null
           client_property_id: string | null
           created_at: string
           current_version: number | null
@@ -12062,6 +12063,7 @@ export type Database = {
         Insert: {
           bulk_job_id?: string | null
           calculation_version?: string | null
+          canonical_property_key?: string | null
           client_property_id?: string | null
           created_at?: string
           current_version?: number | null
@@ -12099,6 +12101,7 @@ export type Database = {
         Update: {
           bulk_job_id?: string | null
           calculation_version?: string | null
+          canonical_property_key?: string | null
           client_property_id?: string | null
           created_at?: string
           current_version?: number | null
@@ -20939,6 +20942,10 @@ export type Database = {
         Args: { p_immediate?: boolean; p_job_id: string }
         Returns: undefined
       }
+      canonical_report_address_key: {
+        Args: { raw_address: string }
+        Returns: string
+      }
       chart_config_is_live: { Args: { cfg: Json }; Returns: boolean }
       check_and_bump_rate_limit: {
         Args: { p_key: string; p_max: number; p_window_seconds: number }
@@ -21431,6 +21438,14 @@ export type Database = {
       }
       resolve_client_display_name: {
         Args: { p_client_id: string }
+        Returns: string
+      }
+      resolve_investment_report_property_key: {
+        Args: {
+          p_address: string
+          p_client_property_id: string
+          p_listing_id: string
+        }
         Returns: string
       }
       resolve_report_template: {
