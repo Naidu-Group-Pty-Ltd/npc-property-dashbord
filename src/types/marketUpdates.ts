@@ -10,7 +10,7 @@ export type MarketSegment = 'finance' | 'property' | 'construction' | 'political
 export type MarketFreshnessTier = 'breaking' | 'today' | 'this_week' | 'older';
 export type MarketDigestPeriod = '24h' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly' | 'annual';
 
-export type MarketUpdatesFailureStage = 'authentication' | 'database' | 'function' | 'network' | 'source_adapter' | 'classification' | 'ingestion' | 'digest' | 'configuration';
+export type MarketUpdatesFailureStage = 'authentication' | 'database' | 'function' | 'network' | 'source_adapter' | 'classification' | 'ingestion' | 'digest' | 'qa' | 'configuration';
 export type MarketUpdatesErrorCode = 'missing_session' | 'session_expired' | 'migration_missing' | 'rls_denied' | 'function_missing' | 'unauthorised' | 'forbidden' | 'server_error' | 'network_error' | 'registry_empty' | 'sources_disabled' | 'ingestion_empty' | 'source_failed' | 'source_fetch_failed' | 'source_parse_failed' | 'source_validation_failed' | 'database_insert_failed' | 'provider_not_configured' | 'provider_unauthorised' | 'provider_payment_required' | 'provider_rate_limited' | 'provider_timeout' | 'digest_failed' | 'cron_missing' | 'cron_stale' | 'ai_unavailable' | 'unknown';
 export interface MarketUpdatesOperationalIssue { stage:MarketUpdatesFailureStage; code:MarketUpdatesErrorCode; message:string; remediation:string; httpStatus?:number; functionName?:string; correlationId?:string; retryable:boolean; }
 

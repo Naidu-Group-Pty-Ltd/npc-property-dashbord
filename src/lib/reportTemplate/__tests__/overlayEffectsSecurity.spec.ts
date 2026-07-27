@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { renderOverlay } from '../blocks/_shared.html';
 import type { Overlay } from '../templateSchema';
 
-const context = { data: {} };
+const context = { data: {}, tokens: { colors: {}, fonts: {}, spacing: {} } } as any;
 
 function shapeWithShadow(color: string): Overlay {
   return {
     id: 'shape-with-shadow',
     type: 'shape',
-    shape: 'rectangle',
+    shape: 'rect',
     x: 0,
     y: 0,
     width: 100,
@@ -18,7 +18,7 @@ function shapeWithShadow(color: string): Overlay {
     effects: {
       shadow: { x: 0, y: 2, blur: 8, spread: 0, color },
     },
-  } as Overlay;
+  } as unknown as Overlay;
 }
 
 describe('overlay effect HTML rendering', () => {
