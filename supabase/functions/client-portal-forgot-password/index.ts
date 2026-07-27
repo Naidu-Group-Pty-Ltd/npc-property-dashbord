@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { generateOtp, hashResetToken } from "../_shared/resetTokens.ts"
+import { getBrandConfig } from "../_shared/brand-config.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
