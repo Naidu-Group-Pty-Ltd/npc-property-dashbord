@@ -204,3 +204,24 @@ The one condition attached to that assessment is blocker 7.1 — while the
 external sync can overwrite the deployed functions, production hardening is not
 durable regardless of what this branch contains. That should be resolved before
 any flag is switched on.
+
+## 8. Deployment status — activation fix + AUSTRAC consent (2026-07-27)
+
+| Component | State |
+|---|---|
+| `20260727090000_aml_consent_catalogue.sql` | **Applied live.** 5 documents seeded at v2026.1; `document_id` + `document_hash` present on `aml.consents`. |
+| `aml-client-portal` | **Deployed, v231.** Content verified against branch source. Consent gate live. |
+| `aml-cases` | **Not yet deployed.** Contains the `search_clients` activation fix, the portal notification on activation, and `consent_status`. |
+| `aml-risk` | **Not yet deployed.** Contains the restored `tenantCaseAccess` helper. |
+
+`aml-cases` and `aml-risk` both import `_shared/auth.ts`, the authentication
+trust boundary. The only deployment channel available in this session requires
+transmitting every bundle file by hand, and a transcription error in that file
+would take the AML command centre down. Deployment of these two was therefore
+left to the repository's main-sync pipeline, which redeploys functions from
+`main` from the committed sources with no transcription step.
+
+Consequence while they are pending: activation from the AML page still fails
+(unchanged from before this work), and the consent panel in the case workspace
+shows its unavailable state. Nothing is in a worse position than before —
+there are zero AML cases, so the newly-live consent gate blocks nobody.
