@@ -79,6 +79,20 @@ export type { VoiceWaveformProps } from './VoiceWaveform';
 export { ShimmerText } from './ShimmerText';
 export type { ShimmerTextProps } from './ShimmerText';
 
+export { ReportTocRail } from './ReportTocRail';
+export type { ReportTocRailProps, ReportTocRailSection } from './ReportTocRail';
+
+export { ReportActionDock } from './ReportActionDock';
+export type { ReportActionDockProps, ReportActionDockAction } from './ReportActionDock';
+
+export { ReportCoverHero } from './ReportCoverHero';
+export type { ReportCoverHeroProps } from './ReportCoverHero';
+
+export { ReportGroupedList } from './ReportGroupedList';
+export type { ReportGroupedListProps, ReportGroupedListGroup } from './ReportGroupedList';
+
+
+
 
 
 
