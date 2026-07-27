@@ -76,6 +76,7 @@ const getListingConfidenceBadgeTone = (confidence: number) =>
 const ListingDetailsModal = lazy(() => import('@/components/listings/ListingDetailsModal').then(m => ({ default: m.ListingDetailsModal })));
 const InvestmentReportModal = lazy(() => import('@/components/listings/InvestmentReportModal').then(m => ({ default: m.InvestmentReportModal })));
 const BulkGenerationModal = lazy(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
+const ListingsMapView = lazy(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
 
 // Default empty filter state — keyword always starts blank
 const DEFAULT_FILTERS = {
