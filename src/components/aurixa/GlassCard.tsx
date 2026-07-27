@@ -57,8 +57,7 @@ export const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps>(
         {aurora && (
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-0 -z-10 opacity-90 motion-reduce:opacity-70"
-            style={{ background: 'var(--aurora-gradient)' }}
+            className="pointer-events-none absolute inset-0 -z-10 bg-[image:var(--aurora-gradient)] opacity-90 motion-reduce:opacity-70"
           />
         )}
         {children}
