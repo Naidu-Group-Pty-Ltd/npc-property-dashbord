@@ -25,7 +25,7 @@ import {
 } from './bindingResolver';
 import { getHtmlBlockRenderer, renderUnsupportedHtml, type HtmlBlockContext } from './blocks/html';
 import { renderOverlay } from './blocks/_shared.html';
-import { tokensToCssVariables, tokensToFontFaceCss } from './cssTokens';
+import { tokensToCssVariables, tokensToFontFaceCss, tokenCssDeclaration } from './cssTokens';
 import { toRendererHex } from './cssColor';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { stableJson, templateMetaKey } from './previewCache';
