@@ -11,6 +11,7 @@
  */
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
+import { canAccessFinanceClient } from '../_shared/financePortalObjectAuthz.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 
@@ -403,9 +404,9 @@ async function markRead(supabase: any, partner: any, body: any) {
   const denied = await authorizeClientMessages(supabase, partner, message.client_id, 'edit');
   if (denied) return denied;
   if (kind === 'portal') {
-    await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id);
+    await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id).eq('client_id', message.client_id);
   } else if (kind === 'outbound') {
-    await supabase.from('finance_outbound_messages').update({ read_at: new Date().toISOString(), status: 'read' }).eq('id', id);
+    await supabase.from('finance_outbound_messages').update({ read_at: new Date().toISOString(), status: 'read' }).eq('id', id).eq('client_id', message.client_id);
   }
   return json({ ok: true });
 }

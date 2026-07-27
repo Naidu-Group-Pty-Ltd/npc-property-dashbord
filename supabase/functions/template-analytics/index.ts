@@ -19,6 +19,7 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { verifySession } from '../_shared/auth.ts';
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -42,7 +43,7 @@ function fmtDate(iso: string): string {
   return iso.slice(0, 10);
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
@@ -223,3 +224,7 @@ Deno.serve(async (req) => {
     return json({ error: msg }, 500);
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));

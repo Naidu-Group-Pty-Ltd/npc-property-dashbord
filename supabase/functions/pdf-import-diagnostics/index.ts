@@ -28,6 +28,7 @@ import {
 } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const DIAGNOSTICS_BUCKET = 'pdf-import-diagnostics';
@@ -127,7 +128,7 @@ async function resolveImportGate(
   return { importId: null, gate: null };
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   const cors = createTokenAuthCorsHeaders();
   const json = (b: unknown, status = 200) =>
     new Response(JSON.stringify(b), {
@@ -424,3 +425,7 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
