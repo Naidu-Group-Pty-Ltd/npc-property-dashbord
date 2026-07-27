@@ -79,6 +79,24 @@ Deno.serve(async (req) => {
     const canWrite = roles.has("analyst") || roles.has("reviewer") || roles.has("mlro");
     const isMlro = roles.has("mlro");
     const requireWrite = () => { if (!canWrite) throw new Response(JSON.stringify({ error: "Insufficient permissions" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); };
+    const hasTenantAccess = async (tenantId: string, allowedRoles?: string[]) => {
+      if (!tenantId) return false;
+      if (!allowedRoles) {
+        const { data } = await aml.rpc("has_any_tenant_aml_role", {
+          _user_id: userId, _tenant_id: tenantId,
+        });
+        return data === true;
+      }
+      const checks = await Promise.all(allowedRoles.map(async (role) => {
+        const { data } = await aml.rpc("has_tenant_aml_role", {
+          _user_id: userId, _tenant_id: tenantId, _role: role,
+        });
+        return data === true;
+      }));
+      return checks.some(Boolean);
+    };
+    const WRITE_ROLES = ["analyst", "reviewer", "mlro"];
+    const REVIEW_ROLES = ["reviewer", "mlro"];
 
     // ── RULES ─────────────────────────────────────────
     if (op === "list_rules") {
@@ -365,7 +383,6 @@ Deno.serve(async (req) => {
       client_circumstances:     { label: "Client circumstances changed",     days: 30, priority: "normal" },
       other:                    { label: "Other trigger",                    days: 30, priority: "normal" },
     };
-    const canReview = roles.has("reviewer") || isMlro;
     const OPEN_REVIEW_STATUSES = ["queued", "in_progress", "remediation_required"];
 
     async function reviewIntervalMonths(caseRow: any): Promise<number> {
@@ -384,12 +401,12 @@ Deno.serve(async (req) => {
     }
 
     if (op === "schedule_periodic_review") {
-      requireWrite();
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const { data: caseRow } = await aml.from("cases")
         .select("id, client_id, tenant_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
         return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
       }
@@ -419,7 +436,6 @@ Deno.serve(async (req) => {
     }
 
     if (op === "record_trigger_review") {
-      requireWrite();
       const caseId = String(body.case_id ?? "");
       const triggerKind = String(body.trigger_kind ?? "");
       const detail = String(body.detail ?? "").trim();
@@ -427,8 +443,9 @@ Deno.serve(async (req) => {
       if (!TRIGGER_KINDS[triggerKind]) return jr({ error: "trigger_kind invalid" }, 400);
       if (detail.length < 10) return jr({ error: "detail must be at least 10 characters" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, client_id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, client_id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (caseRow.monitoring_status === "ended") {
         return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
       }
@@ -452,10 +469,16 @@ Deno.serve(async (req) => {
     }
 
     if (op === "assign_review") {
-      requireWrite();
       const id = String(body.id ?? "");
       const assignee = body.assigned_to ? String(body.assigned_to) : userId;
       if (!id) return jr({ error: "id required" }, 400);
+      const { data: existing } = await aml.from("existing_customer_reviews")
+        .select("id, case_id").eq("id", id).maybeSingle();
+      if (!existing) return jr({ error: "Review not found" }, 404);
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       const { data, error } = await aml.from("existing_customer_reviews")
         .update({ assigned_to: assignee, status: body.status ? String(body.status) : "in_progress" })
         .eq("id", id).select("*").single();
@@ -471,7 +494,6 @@ Deno.serve(async (req) => {
     // Deadlines never move silently: the original date is preserved, each
     // extension is counted, and the reason is recorded on the case timeline.
     if (op === "extend_review_deadline") {
-      requireWrite();
       const id = String(body.id ?? "");
       const newDue = String(body.due_at ?? "");
       const reason = String(body.reason ?? "").trim();
@@ -482,6 +504,10 @@ Deno.serve(async (req) => {
       const { data: existing } = await aml.from("existing_customer_reviews")
         .select("id, case_id, due_at, original_due_at, extension_count, classification, status").eq("id", id).maybeSingle();
       if (!existing) return jr({ error: "Review not found" }, 404);
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
       if (!OPEN_REVIEW_STATUSES.includes(String(existing.status))) {
         return jr({ error: "Only an open review can have its deadline extended" }, 400);
       }
@@ -514,7 +540,6 @@ Deno.serve(async (req) => {
     // audited. Scheduled ongoing-CDD work is cancelled, never deleted — the
     // completed history and evidence stay exactly as recorded.
     if (op === "end_relationship") {
-      if (!canReview) return jr({ error: "Reviewer/MLRO required" }, 403);
       const caseId = String(body.case_id ?? "");
       const reason = String(body.reason ?? "").trim();
       const endedAt = body.ended_at ? new Date(String(body.ended_at)) : new Date();
@@ -523,8 +548,10 @@ Deno.serve(async (req) => {
       if (Number.isNaN(endedAt.getTime())) return jr({ error: "ended_at must be a valid date" }, 400);
 
       const { data: caseRow } = await aml.from("cases")
-        .select("id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, REVIEW_ROLES)) return jr({ error: "Reviewer/MLRO required" }, 403);
+      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
       if (caseRow.monitoring_status === "ended") return jr({ error: "The relationship is already recorded as ended" }, 400);
 
       // Outstanding regulatory work must be resolved before the relationship
@@ -535,7 +562,7 @@ Deno.serve(async (req) => {
         aml.from("alerts").select("id", { count: "exact", head: true })
           .eq("case_id", caseId).in("status", ["open", "investigating"]),
       ]);
-      if (((openEdd ?? 0) > 0 || (openAlerts ?? 0) > 0) && !isMlro) {
+      if (((openEdd ?? 0) > 0 || (openAlerts ?? 0) > 0) && !tenantIsMlro) {
         return jr({
           error: "Outstanding enhanced due diligence or alerts must be resolved, or an MLRO must record the end",
           code: "open_obligations",
@@ -577,14 +604,17 @@ Deno.serve(async (req) => {
       }
       if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
       const { data: caseRow } = await aml.from("cases")
-        .select("id, monitoring_status").eq("id", caseId).maybeSingle();
+        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
       if (!caseRow) return jr({ error: "Case not found" }, 404);
+      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
       // Reinstating monitoring on an ended relationship reverses a regulatory
       // record — MLRO only.
-      if (caseRow.monitoring_status === "ended" && !isMlro) {
+      if (caseRow.monitoring_status === "ended" && !tenantIsMlro) {
         return jr({ error: "Only the MLRO can reinstate monitoring on an ended relationship" }, 403);
       }
-      if (caseRow.monitoring_status !== "ended") requireWrite();
+      if (caseRow.monitoring_status !== "ended" && !await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) {
+        return jr({ error: "Insufficient permissions" }, 403);
+      }
 
       const patch: Record<string, unknown> = { monitoring_status: status, monitoring_status_reason: reason };
       if (caseRow.monitoring_status === "ended" && status === "active") {
@@ -606,10 +636,13 @@ Deno.serve(async (req) => {
       const caseId = String(body.case_id ?? "");
       if (!caseId) return jr({ error: "case_id required" }, 400);
       const nowIso = new Date().toISOString();
-      const [caseRes, reviewsRes, alertsRes, eddRes, screenRes] = await Promise.all([
-        aml.from("cases").select(
+      const caseRes = await aml.from("cases").select(
           "id, risk_rating, tenant_id, monitoring_status, monitoring_status_reason, relationship_ended_at, relationship_end_reason, next_periodic_review_at, last_periodic_review_at",
-        ).eq("id", caseId).maybeSingle(),
+        ).eq("id", caseId).maybeSingle();
+      const caseRow = caseRes.data;
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id)) return jr({ error: "AML role required for case tenant" }, 403);
+      const [reviewsRes, alertsRes, eddRes, screenRes] = await Promise.all([
         aml.from("existing_customer_reviews").select("*").eq("case_id", caseId)
           .order("due_at", { ascending: true, nullsFirst: false }).limit(50),
         aml.from("alerts").select("id, title, severity, status, created_at, assigned_to")
@@ -619,8 +652,6 @@ Deno.serve(async (req) => {
         aml.from("screening_checks").select("completed_at").eq("case_id", caseId)
           .not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(1).maybeSingle(),
       ]);
-      const caseRow = caseRes.data;
-      if (!caseRow) return jr({ error: "Case not found" }, 404);
 
       const reviews = reviewsRes.data ?? [];
       const openReviews = reviews.filter((r: any) => OPEN_REVIEW_STATUSES.includes(String(r.status)));
