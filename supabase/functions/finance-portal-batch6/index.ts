@@ -36,9 +36,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import {
   canAccessFinanceClient,
-  canAccessPurchaseFile,
-  canAccessPurchaseFileResource,
 } from '../_shared/financePortalObjectAuthz.ts';
+import { hasFinancePortalPermission, type FinancePortalPermissionAction } from '../_shared/finance-portal-permissions.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

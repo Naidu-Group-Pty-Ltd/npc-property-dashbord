@@ -30,6 +30,7 @@ async function resolveTenantId(admin: any, caseId: string): Promise<string> {
   } catch { return DEFAULT_TENANT; }
 }
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,7 +65,7 @@ async function appendCaseEvent(admin: any, caseId: string, category: string, sum
   });
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -392,3 +393,7 @@ Deno.serve(async (req) => {
     return jr({ error: e?.message ?? "internal_error" }, 500);
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
