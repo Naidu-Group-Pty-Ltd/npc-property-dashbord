@@ -44,11 +44,17 @@ const SUBJECT_TYPE_LABELS: Record<string, string> = {
   individual: "Individual", entity: "Entity / company", trust: "Trust",
 };
 
+/**
+ * Risk rating escalates through tone *and* weight rather than four unrelated
+ * hues: the two "bad" ratings share the destructive token and are separated by
+ * fill strength, so `prohibited` is unmistakably the loudest pill in the table.
+ * All four consume semantic tokens, so they hold up in both themes.
+ */
 const RISK_STYLES: Record<AmlRiskRating, string> = {
   low: "bg-success/20 text-success border-success/40",
-  medium: "bg-yellow-500/20 text-yellow-500 border-yellow-500/40",
-  high: "bg-orange-500/20 text-orange-500 border-orange-500/40",
-  prohibited: "bg-destructive/20 text-destructive border-destructive/40",
+  medium: "bg-warning/20 text-warning border-warning/40",
+  high: "bg-destructive/15 text-destructive border-destructive/40",
+  prohibited: "border-destructive bg-destructive text-destructive-foreground",
 };
 
 const NEXT_STATUSES: Record<AmlCaseStatus, AmlCaseStatus[]> = {

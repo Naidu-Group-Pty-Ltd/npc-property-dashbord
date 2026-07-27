@@ -96,7 +96,7 @@ const getHealthBadgeClassName = (health: string | null) => {
     case 'good': return 'border-success/45 bg-success/12 text-success-foreground ring-1 ring-inset ring-success/15 hover:bg-success/18';
     case 'fair': return 'border-brand-300/50 bg-brand-400/13 text-brand-100 ring-1 ring-inset ring-brand-200/15 hover:bg-brand-400/18';
     case 'poor': return 'border-destructive/45 bg-destructive/13 text-destructive-foreground ring-1 ring-inset ring-destructive/15 hover:bg-destructive/18';
-    default: return 'border-border/30 bg-slate-400/10 text-foreground dark:text-foreground ring-1 ring-inset ring-border dark:ring-white/10 hover:bg-slate-400/15';
+    default: return 'border-border/30 bg-muted/40 text-foreground dark:text-foreground ring-1 ring-inset ring-border dark:ring-white/10 hover:bg-muted/60';
   }
 };
 
@@ -296,7 +296,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
             variant="outline"
             size="sm"
             onClick={() => refetch()}
-            className="rounded-2xl border-destructive/25 bg-destructive/10 text-destructive-foreground transition-all hover:border-destructive/45 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-2 focus-visible:ring-destructive/30 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+            className="rounded-2xl border-destructive/25 bg-destructive/10 text-destructive-foreground transition-all hover:border-destructive/45 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-2 focus-visible:ring-destructive/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             <RefreshCw className={`mr-2 h-4 w-4 ${isRefetching ? 'animate-spin' : ''}`} />
             Retry
@@ -374,7 +374,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
                 placeholder="Search by client name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-12 rounded-2xl border-border dark:border-white/10 bg-background dark:bg-background/80 pl-14 pr-4 text-sm font-medium text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/20 transition-all placeholder:text-muted-foreground hover:border-brand-300/25 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="h-12 rounded-2xl border-border dark:border-white/10 bg-background dark:bg-background/80 pl-14 pr-4 text-sm font-medium text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/20 transition-all placeholder:text-muted-foreground hover:border-brand-300/25 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               />
             </div>
             <Button
@@ -382,7 +382,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
               size="sm"
               aria-label="Refresh portfolio analysis reports"
               onClick={() => refetch()}
-              className="h-12 justify-center rounded-2xl border-brand-300/25 bg-white/[0.03] px-5 font-semibold text-brand-100 shadow-sm shadow-sm dark:shadow-black/10 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-300/55 hover:bg-brand-300/12 hover:text-brand-50 hover:shadow-[0_14px_34px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 active:translate-y-0 sm:min-w-[124px]"
+              className="h-12 justify-center rounded-2xl border-brand-300/25 bg-white/[0.03] px-5 font-semibold text-brand-100 shadow-sm shadow-sm dark:shadow-black/10 transition-all duration-200 hover:-translate-y-0.5 hover:border-brand-300/55 hover:bg-brand-300/12 hover:text-brand-50 hover:shadow-[0_14px_34px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background active:translate-y-0 sm:min-w-[124px]"
             >
               <RefreshCw className={`mr-2 h-4 w-4 ${isRefetching ? 'animate-spin text-brand-200' : 'text-brand-200/85'}`} />
               Refresh
@@ -486,7 +486,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
                         </span>
                       </TableCell>
                       <TableCell className="px-4 py-4">
-                        <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-border dark:border-white/10 bg-white/[0.035] px-3 py-1.5 text-sm font-medium text-muted-foreground dark:text-foreground transition-colors group-hover/row:border-brand-300/20 group-hover/row:bg-brand-300/[0.06] group-hover/row:text-slate-100">
+                        <div className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-border dark:border-white/10 bg-white/[0.035] px-3 py-1.5 text-sm font-medium text-muted-foreground dark:text-foreground transition-colors group-hover/row:border-brand-300/20 group-hover/row:bg-brand-300/[0.06] group-hover/row:text-foreground">
                           <Calendar className="h-3.5 w-3.5 shrink-0 text-brand-200/80" />
                           {format(new Date(report.created_at), 'dd MMM yyyy')}
                         </div>
@@ -498,7 +498,7 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
                               variant="ghost"
                               size="icon"
                               aria-label={`Open actions for ${smartCapitalize(report.client_name)}`}
-                              className="h-10 w-10 rounded-xl border border-transparent text-muted-foreground dark:text-foreground transition-all group-hover/row:border-brand-300/25 group-hover/row:bg-white/[0.05] group-hover/row:text-brand-100 hover:border-brand-300/45 hover:bg-brand-400/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 data-[state=open]:border-brand-300/45 data-[state=open]:bg-brand-400/10 data-[state=open]:text-brand-100"
+                              className="h-10 w-10 rounded-xl border border-transparent text-muted-foreground dark:text-foreground transition-all group-hover/row:border-brand-300/25 group-hover/row:bg-white/[0.05] group-hover/row:text-brand-100 hover:border-brand-300/45 hover:bg-brand-400/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-brand-300/45 data-[state=open]:bg-brand-400/10 data-[state=open]:text-brand-100"
                             >
                               <MoreVertical className="h-4 w-4" />
                             </Button>

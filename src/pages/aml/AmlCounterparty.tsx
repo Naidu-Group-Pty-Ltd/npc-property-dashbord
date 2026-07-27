@@ -25,10 +25,10 @@ const VERIF_STATES: AmlVerificationState[] = ["unverified", "pending", "verified
 function verifBadge(v: AmlVerificationState) {
   const map: Record<AmlVerificationState, string> = {
     verified: "border-success/40 text-success",
-    pending: "border-yellow-500/40 text-yellow-500",
+    pending: "border-warning/40 text-warning",
     unverified: "border-muted-foreground/40 text-muted-foreground",
     failed: "border-destructive/40 text-destructive",
-    waived: "border-blue-500/40 text-blue-500",
+    waived: "border-info/40 text-info",
   };
   return <Badge variant="outline" className={`capitalize ${map[v]}`}>{v}</Badge>;
 }
@@ -150,7 +150,7 @@ export default function AmlCounterparty() {
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium">{e.legal_name}</span>
                         {e.is_sanctioned && <Badge variant="destructive" className="h-5">Sanctioned</Badge>}
-                        {e.is_pep_linked && <Badge variant="outline" className="h-5 border-yellow-500/40 text-yellow-500">PEP</Badge>}
+                        {e.is_pep_linked && <Badge variant="outline" className="h-5 border-warning/40 text-warning">PEP</Badge>}
                       </div>
                       <div className="mt-0.5 text-xs text-muted-foreground truncate">
                         <span className="capitalize">{e.entity_type.replace("_", " ")}</span>
@@ -273,7 +273,7 @@ function EntityDetail({
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{o.full_name}</span>
                   {o.is_ubo && <Badge variant="secondary">UBO</Badge>}
-                  {o.is_pep && <Badge variant="outline" className="border-yellow-500/40 text-yellow-500">PEP</Badge>}
+                  {o.is_pep && <Badge variant="outline" className="border-warning/40 text-warning">PEP</Badge>}
                   {o.is_sanctioned && <Badge variant="destructive">Sanctioned</Badge>}
                 </div>
                 <div className="text-xs text-muted-foreground">
@@ -356,7 +356,7 @@ function EntityDetail({
 
 function SummaryTile({ label, value, warn }: { label: string; value: React.ReactNode; warn?: boolean }) {
   return (
-    <div className={`rounded-md border p-2 text-center ${warn ? "border-yellow-500/40 bg-yellow-500/5" : "border-border/60"}`}>
+    <div className={`rounded-md border p-2 text-center ${warn ? "border-warning/40 bg-warning/5" : "border-border/60"}`}>
       <div className="text-lg font-semibold">{value}</div>
       <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
     </div>

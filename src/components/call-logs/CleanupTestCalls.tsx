@@ -235,7 +235,7 @@ export const CleanupTestCalls = ({ onComplete, testNumbersButtonClassName, flush
           </div>
           <div className="px-6 py-5">
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isLoading} className="rounded-2xl border-border dark:border-white/10 bg-white/[0.03] text-muted-foreground dark:text-foreground hover:bg-white/10 hover:text-zinc-50">Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isLoading} className="rounded-2xl border-border dark:border-white/10 bg-white/[0.03] text-muted-foreground dark:text-foreground hover:bg-white/10 hover:text-foreground">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleCleanup}
               disabled={isLoading}

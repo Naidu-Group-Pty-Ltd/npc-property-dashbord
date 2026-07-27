@@ -301,7 +301,11 @@ function Stepper({
             >
               <span className={cn(
                 'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold',
-                done ? 'bg-emerald-500 text-white' : active ? 'bg-brand-500 text-white' : 'bg-muted',
+                done
+                  ? 'bg-success text-success-foreground'
+                  : active
+                    ? 'bg-brand text-brand-foreground'
+                    : 'bg-muted text-muted-foreground',
               )}>
                 {done ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
               </span>
@@ -877,7 +881,7 @@ function DocumentsStep({
                 <li key={r.id} className="py-3 flex items-start gap-3">
                   <div className={cn(
                     'h-8 w-8 rounded-full flex items-center justify-center shrink-0',
-                    done ? 'bg-emerald-500/15 text-emerald-500' :
+                    done ? 'bg-success/15 text-success' :
                     rejected ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground',
                   )}>
                     {done ? <CheckCircle2 className="h-4 w-4" /> : rejected ? <AlertTriangle className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
@@ -1031,7 +1035,7 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
   };
 
   return (
-    <Card className="border-amber-500/30 bg-amber-500/5">
+    <Card className="border-warning/30 bg-warning/5">
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Information requests from your advisor</CardTitle>
       </CardHeader>

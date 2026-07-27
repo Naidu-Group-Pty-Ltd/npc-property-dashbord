@@ -52,7 +52,7 @@ interface TimelinePoint {
 
 const HEALTH_TONE: Record<AmlProviderHealth, string> = {
   ok: "text-success",
-  degraded: "text-amber-500",
+  degraded: "text-warning",
   failing: "text-destructive",
   unknown: "text-muted-foreground",
 };
@@ -185,7 +185,7 @@ export default function AmlIntegrationHealth() {
             screening, monitoring, and reporting connectors. Relocated
             out of the daily workflow per Directive 13.
             {!metricsRelocation && (
-              <span className="block text-xs text-amber-500 mt-1">
+              <span className="block text-xs text-warning mt-1">
                 Note: <code>aml_v3_metrics_relocation</code> is off — legacy
                 tiles still render in Configuration. Flip the flag in the
                 Cutover Console to complete the relocation.
@@ -336,7 +336,7 @@ export default function AmlIntegrationHealth() {
                     <TableCell className="text-right tabular-nums">
                       <span className={
                         r.failure_rate > 0.15 ? "text-destructive"
-                          : r.failure_rate > 0.05 ? "text-amber-500"
+                          : r.failure_rate > 0.05 ? "text-warning"
                           : "text-foreground"
                       }>
                         {fmtPct(r.failure_rate)}
@@ -403,7 +403,7 @@ function KpiCard({
 }) {
   const toneClass =
     tone === "bad" ? "text-destructive" :
-    tone === "warn" ? "text-amber-500" :
+    tone === "warn" ? "text-warning" :
     tone === "good" ? "text-success" : "text-foreground";
   return (
     <Card>

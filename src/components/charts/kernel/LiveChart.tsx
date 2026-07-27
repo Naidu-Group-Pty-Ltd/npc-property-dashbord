@@ -89,6 +89,10 @@ export function LiveChart({ chart, model: providedModel, variant = 'card', class
   const barSize = isExport ? 120 : isCard ? 56 : 88;
   const tickInterval = isCard ? Math.max(0, Math.ceil(model.data.length / 7) - 1) : Math.max(0, Math.ceil(model.data.length / 12) - 1);
 
+  // Export mode is rasterised into PNGs that land in PDFs and printed reports, so
+  // it deliberately pins fixed light colours instead of theme tokens — otherwise a
+  // chart exported while the dashboard is in dark mode would bake a black surface
+  // into the document. On-screen rendering uses tokens and themes normally.
   const surfaceClass = isExport
     ? 'bg-white text-slate-900'
     : 'bg-transparent text-foreground';

@@ -5116,7 +5116,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                   )}
                   
                   {aiAnalysis && (
-                    <div className="max-h-[min(70vh,900px)] space-y-4 overflow-y-auto overscroll-contain rounded-3xl border border-brand-300/25 bg-background/95 dark:bg-background/95 p-3 shadow-2xl shadow-slate-950/20 ring-1 ring-brand-400/15 sm:p-4 [scrollbar-gutter:stable]">
+                    <div className="max-h-[min(70vh,900px)] space-y-4 overflow-y-auto overscroll-contain rounded-3xl border border-brand-300/25 bg-background/95 dark:bg-background/95 p-3 shadow-2xl shadow-foreground/20 ring-1 ring-brand-400/15 sm:p-4 [scrollbar-gutter:stable]">
                       {/* Executive Summary */}
                       {aiAnalysis.executiveSummary && (
                         <div className="min-w-0 rounded-2xl border border-brand-300/30 bg-gradient-to-br from-card dark:from-background via-card dark:via-background to-card dark:to-background p-4 shadow-lg shadow-sm dark:shadow-black/20 ring-1 ring-brand-400/10 sm:p-5">

@@ -978,7 +978,7 @@ export function ImportPdfDialog({ open, onOpenChange }: Props) {
                     />
                   </div>
                   {result.visualQuality.manualReviewRequired && (
-                    <div className="mt-2 text-[11px] text-amber-600 dark:text-amber-500">
+                    <div className="mt-2 text-[11px] text-warning">
                       Some pages scored below the quality gate — open the import review to inspect source/generated/diff and repair or force a fallback mode.
                     </div>
                   )}

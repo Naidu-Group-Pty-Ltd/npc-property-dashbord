@@ -324,14 +324,14 @@ export default function ReportRequests() {
                 placeholder="Search by client, property, or notes..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="h-12 rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 pl-11 pr-4 text-sm text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 hover:border-white/20 hover:bg-black/55 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                className="h-12 rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 pl-11 pr-4 text-sm text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 hover:border-white/20 hover:bg-black/55 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               />
             </div>
             <Select value={typeFilter} onValueChange={setTypeFilter}>
               <SelectTrigger
                 aria-label="Filter report requests by type"
                 className={cn(
-                  'h-12 w-full rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 px-4 text-sm font-medium text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 transition-all duration-200 hover:border-brand-300/30 hover:bg-black/55 focus:border-brand-300/55 focus:ring-2 focus:ring-brand-300/20 focus:ring-offset-2 focus:ring-offset-zinc-950 data-[state=open]:border-brand-300/45 data-[state=open]:bg-brand-300/10 lg:w-60',
+                  'h-12 w-full rounded-2xl border-border dark:border-white/10 bg-background/45 dark:bg-black/45 px-4 text-sm font-medium text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 transition-all duration-200 hover:border-brand-300/30 hover:bg-black/55 focus:border-brand-300/55 focus:ring-2 focus:ring-brand-300/20 focus:ring-offset-2 focus:ring-offset-background data-[state=open]:border-brand-300/45 data-[state=open]:bg-brand-300/10 lg:w-60',
                   typeFilter !== 'all' && 'border-brand-300/35 bg-brand-300/10 text-brand-100'
                 )}
               >
@@ -443,7 +443,7 @@ export default function ReportRequests() {
 
       {/* Detail / Action Dialog */}
       <Dialog open={!!selectedRequest} onOpenChange={(open) => { if (!open) setSelectedRequest(null); }}>
-        <DialogContent className="!flex w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] flex-col gap-0 !overflow-hidden border-brand-300/25 bg-[linear-gradient(145deg,rgba(24,24,27,0.98),rgba(9,9,11,0.96))] p-0 text-foreground shadow-[0_28px_90px_rgba(0,0,0,0.72)] sm:max-h-[min(calc(100dvh-2rem),760px)] sm:max-w-xl sm:rounded-3xl [&>button]:right-5 [&>button]:top-5 [&>button]:z-10 [&>button]:rounded-full [&>button]:border [&>button]:border-white/10 [&>button]:bg-black/35 [&>button]:text-zinc-300 [&>button]:opacity-100 [&>button]:shadow-inner [&>button]:shadow-black/30 [&>button]:transition-all [&>button:hover]:border-brand-300/40 [&>button:hover]:bg-brand-300/10 [&>button:hover]:text-brand-100 [&>button:focus-visible]:ring-2 [&>button:focus-visible]:ring-brand-300/40 [&>button:focus-visible]:ring-offset-2 [&>button:focus-visible]:ring-offset-zinc-950">
+        <DialogContent className="!flex w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] flex-col gap-0 !overflow-hidden border-brand-300/25 bg-[linear-gradient(145deg,rgba(24,24,27,0.98),rgba(9,9,11,0.96))] p-0 text-foreground shadow-[0_28px_90px_rgba(0,0,0,0.72)] sm:max-h-[min(calc(100dvh-2rem),760px)] sm:max-w-xl sm:rounded-3xl [&>button]:right-5 [&>button]:top-5 [&>button]:z-10 [&>button]:rounded-full [&>button]:border [&>button]:border-white/10 [&>button]:bg-black/35 [&>button]:text-muted-foreground [&>button]:opacity-100 [&>button]:shadow-inner [&>button]:shadow-black/30 [&>button]:transition-all [&>button:hover]:border-brand-300/40 [&>button:hover]:bg-brand-300/10 [&>button:hover]:text-brand-100 [&>button:focus-visible]:ring-2 [&>button:focus-visible]:ring-brand-300/40 [&>button:focus-visible]:ring-offset-2 [&>button:focus-visible]:ring-offset-background">
           <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/70 to-transparent" />
           <DialogHeader className="shrink-0 border-b border-border bg-white/[0.02] px-4 pb-5 pt-6 pr-16 text-left dark:border-white/10 sm:px-6 sm:pr-16">
             <DialogTitle className="flex items-center gap-3 text-xl font-semibold tracking-[-0.02em] text-foreground dark:text-white">
@@ -504,7 +504,7 @@ export default function ReportRequests() {
                           aria-label={`Set request status to ${conf.label}`}
                           onClick={() => handleStatusUpdate(selectedRequest.id, status)}
                           className={cn(
-                            'min-h-10 rounded-full border-border dark:border-white/10 bg-background/60 dark:bg-background/60 px-3.5 text-xs font-semibold text-muted-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/20 transition-all duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:translate-y-0 disabled:opacity-100',
+                            'min-h-10 rounded-full border-border dark:border-white/10 bg-background/60 dark:bg-background/60 px-3.5 text-xs font-semibold text-muted-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/20 transition-all duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:translate-y-0 disabled:opacity-100',
                             buttonTone.idle,
                             isActive && buttonTone.active,
                             isActive && 'pointer-events-none',
@@ -531,7 +531,7 @@ export default function ReportRequests() {
                     value={adminNotes}
                     onChange={(e) => setAdminNotes(e.target.value)}
                     rows={4}
-                    className="max-h-44 min-h-28 resize-y rounded-2xl border-border dark:border-white/10 bg-background/70 dark:bg-background/70 text-sm leading-6 text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                    className="max-h-44 min-h-28 resize-y rounded-2xl border-border dark:border-white/10 bg-background/70 dark:bg-background/70 text-sm leading-6 text-foreground dark:text-foreground shadow-inner shadow-sm dark:shadow-black/30 placeholder:text-muted-foreground dark:placeholder:text-muted-foreground transition-all duration-200 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/20 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   />
                 </div>
               </div>

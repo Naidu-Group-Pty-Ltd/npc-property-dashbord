@@ -90,7 +90,7 @@ const premiumSearchInput = "h-11 rounded-2xl border-border dark:border-white/10 
 const premiumActiveFilterBadge = "rounded-full border border-brand-300/35 bg-brand-300/10 px-2.5 py-1 text-xs font-medium text-brand-100 shadow-sm shadow-brand-500/10";
 const premiumActionBase = "min-h-10 justify-center rounded-full border px-3.5 font-medium shadow-sm transition-all duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black active:translate-y-0 disabled:pointer-events-none disabled:opacity-50";
 const premiumReportAction = `${premiumActionBase} border-brand-300/50 bg-gradient-to-r from-brand-300/95 to-brand-500/90 text-brand-950 shadow-brand-500/20 hover:border-brand-100 hover:from-brand-200 hover:to-brand-400 hover:text-brand-950 hover:shadow-lg hover:shadow-brand-500/25 focus-visible:ring-brand-300`;
-const premiumUtilityAction = `${premiumActionBase} border-sky-300/45 bg-sky-950/45 text-sky-50 shadow-sky-500/10 hover:border-sky-300/65 hover:bg-sky-900/55 hover:text-white hover:shadow-lg hover:shadow-sky-500/15 focus-visible:ring-sky-300`;
+const premiumUtilityAction = `${premiumActionBase} border-info/40 bg-info/10 text-info shadow-info/10 hover:border-info/60 hover:bg-info/15 hover:shadow-lg hover:shadow-info/15 focus-visible:ring-info`;
 const premiumQualityAction = `${premiumActionBase} border-success/25 bg-success/10 text-success-foreground hover:border-success/45 hover:bg-success/15 hover:text-success-foreground focus-visible:ring-success`;
 const premiumAlertAction = `${premiumActionBase} border-brand-300/30 bg-brand-400/10 text-brand-100 hover:border-brand-300/55 hover:bg-brand-400/15 hover:text-brand-50 focus-visible:ring-brand-300`;
 const premiumDangerAction = `${premiumActionBase} border-destructive/35 bg-destructive/10 text-destructive hover:border-destructive/55 hover:bg-destructive/15 hover:text-destructive-foreground focus-visible:ring-destructive`;
@@ -676,7 +676,7 @@ const CallLogs = () => {
           <CardContent className="p-4">
             <div className="mb-4 flex items-center justify-between gap-3">
               <span className={premiumMetricLabel}>Avg</span>
-              <div className={cn(premiumMetricIcon, "border-border/25 bg-zinc-400/10 text-muted-foreground dark:text-foreground")}>
+              <div className={cn(premiumMetricIcon, "border-border/25 bg-muted/40 text-muted-foreground dark:text-foreground")}>
                 <Clock className="h-4 w-4" />
               </div>
             </div>
@@ -1356,7 +1356,7 @@ const CallLogs = () => {
                   <TabsTrigger value="transcript" className={cn(detailTabTrigger, "data-[state=active]:bg-brand-300/15 data-[state=active]:text-brand-100", isMobile ? "text-xs" : "")}>Transcript</TabsTrigger>
                   <TabsTrigger value="tool-calls" className={cn(detailTabTrigger, "data-[state=active]:bg-info/15 data-[state=active]:text-info-foreground", isMobile ? "text-xs" : "")}>{isMobile ? "Tools" : "Tool Calls"}</TabsTrigger>
                   <TabsTrigger value="analysis" className={cn(detailTabTrigger, "data-[state=active]:bg-success/15 data-[state=active]:text-success-foreground", isMobile ? "text-xs" : "")}>Analysis</TabsTrigger>
-                  <TabsTrigger value="metadata" className={cn(detailTabTrigger, "data-[state=active]:bg-zinc-700/70 data-[state=active]:text-zinc-100", isMobile ? "text-xs" : "")}>{isMobile ? "Meta" : "Metadata"}</TabsTrigger>
+                  <TabsTrigger value="metadata" className={cn(detailTabTrigger, "data-[state=active]:bg-muted data-[state=active]:text-foreground", isMobile ? "text-xs" : "")}>{isMobile ? "Meta" : "Metadata"}</TabsTrigger>
                 </TabsList>
               </div>
 
