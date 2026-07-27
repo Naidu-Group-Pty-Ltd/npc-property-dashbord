@@ -130,38 +130,45 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
         <FitBounds markers={markers} />
-        {markers.map(({ listing, point }) => (
-          <Marker key={listing.id} position={[point.lat, point.lng]}>
-            <Popup>
-              <div className="min-w-[220px] space-y-1.5">
-                <div className="text-sm font-semibold text-foreground">
-                  {listing.address || 'Unknown Address'}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {[listing.suburb, listing.state, listing.zipCode]
-                    .filter(Boolean)
-                    .join(' ')}
-                </div>
-                {listing.price ? (
-                  <div className="text-sm font-semibold tabular-nums text-primary">
-                    {new Intl.NumberFormat('en-AU', {
-                      style: 'currency',
-                      currency: 'AUD',
-                      maximumFractionDigits: 0,
-                    }).format(listing.price)}
+        <MarkerClusterGroup
+          chunkedLoading
+          showCoverageOnHover={false}
+          spiderfyOnMaxZoom
+          maxClusterRadius={55}
+        >
+          {markers.map(({ listing, point }) => (
+            <Marker key={listing.id} position={[point.lat, point.lng]}>
+              <Popup>
+                <div className="min-w-[220px] space-y-1.5">
+                  <div className="text-sm font-semibold text-foreground">
+                    {listing.address || 'Unknown Address'}
                   </div>
-                ) : null}
-                <Button
-                  size="sm"
-                  className="mt-1 w-full"
-                  onClick={() => onSelectListing(listing)}
-                >
-                  Open details
-                </Button>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+                  <div className="text-xs text-muted-foreground">
+                    {[listing.suburb, listing.state, listing.zipCode]
+                      .filter(Boolean)
+                      .join(' ')}
+                  </div>
+                  {listing.price ? (
+                    <div className="text-sm font-semibold tabular-nums text-primary">
+                      {new Intl.NumberFormat('en-AU', {
+                        style: 'currency',
+                        currency: 'AUD',
+                        maximumFractionDigits: 0,
+                      }).format(listing.price)}
+                    </div>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    className="mt-1 w-full"
+                    onClick={() => onSelectListing(listing)}
+                  >
+                    Open details
+                  </Button>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+        </MarkerClusterGroup>
       </MapContainer>
     </div>
   );
