@@ -188,7 +188,7 @@ export default function Listings() {
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const isMobile = useIsMobile();
-  const [viewMode, setViewMode] = useState<'list' | 'table'>(isMobile ? 'list' : 'table');
+  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(isMobile ? 'list' : 'table');
   
   // Listings are locked to the Property Intake Master Airtable base — no other datasets should be exposed here.
   const PROPERTY_INTAKE_TABLE = 'Property Intake Master';
