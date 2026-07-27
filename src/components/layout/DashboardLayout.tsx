@@ -11,6 +11,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
 import { TokenBalanceBanner } from '@/components/billing/TokenBalanceBanner';
+import { GlobalCommandPalette } from './GlobalCommandPalette';
 
 export function DashboardLayout() {
   const breakpoint = useBreakpoint();
