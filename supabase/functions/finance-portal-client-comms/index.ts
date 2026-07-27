@@ -11,6 +11,7 @@
  */
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
+import { canAccessFinanceClient } from '../_shared/financePortalObjectAuthz.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 
@@ -204,8 +205,9 @@ async function sendMessage(supabase: any, partner: any, body: any) {
   const { client_id, purchase_file_id, channel, body: text, subject, template_id } = body;
   if (!client_id || !channel || !text) return json({ error: 'missing_required' }, 400);
   if (!['sms','whatsapp','email','portal'].includes(channel)) return json({ error: 'invalid_channel' }, 400);
-  const denied = await authorizeClientMessages(supabase, partner, client_id, 'edit', purchase_file_id);
-  if (denied) return denied;
+  if (!await canAccessFinanceClient(supabase, partner.id, client_id, purchase_file_id)) {
+    return json({ error: 'client_access_denied' }, 403);
+  }
 
   // Lookup client recipient info
   const { data: client } = await supabase
@@ -389,13 +391,31 @@ async function translate(supabase: any, partner: any, body: any) {
   return json({ cached: false, translated_text: translated, target_lang, model });
 }
 
-async function markRead(supabase: any, _partner: any, body: any) {
+async function markRead(supabase: any, partner: any, body: any) {
   const { kind, id } = body;
   if (!kind || !id) return json({ error: 'missing_required' }, 400);
+  const table = kind === 'portal'
+    ? 'client_portal_messages'
+    : kind === 'outbound'
+      ? 'finance_outbound_messages'
+      : null;
+  if (!table) return json({ error: 'invalid_kind' }, 400);
+
+  const { data: message, error } = await supabase
+    .from(table)
+    .select('client_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (error) return json({ error: 'message_lookup_failed' }, 500);
+  if (!message) return json({ error: 'message_not_found' }, 404);
+  if (!await canAccessFinanceClient(supabase, partner.id, message.client_id)) {
+    return json({ error: 'client_access_denied' }, 403);
+  }
+
   if (kind === 'portal') {
-    await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id);
+    await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id).eq('client_id', message.client_id);
   } else if (kind === 'outbound') {
-    await supabase.from('finance_outbound_messages').update({ read_at: new Date().toISOString(), status: 'read' }).eq('id', id);
+    await supabase.from('finance_outbound_messages').update({ read_at: new Date().toISOString(), status: 'read' }).eq('id', id).eq('client_id', message.client_id);
   }
   return json({ ok: true });
 }
