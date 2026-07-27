@@ -141,6 +141,13 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
+function cssString(s: unknown): string {
+  return esc(s)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\r\n|\r|\n|\f/g, "\\A ");
+}
+
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
 }
@@ -3104,12 +3111,12 @@ export async function buildHtml(
         font-variant-numeric: oldstyle-nums proportional-nums;
       }
       @top-right {
-        content: "${esc(address)}";
+        content: "${cssString(address)}";
         font-family: 'Cormorant Garamond', serif;
         font-style: italic; font-size: 9pt; color: ${THEME.inkMuted};
       }
       @bottom-left {
-        content: "${esc(brandName)}";
+        content: "${cssString(brandName)}";
         font-family: 'Inter', sans-serif;
         font-size: 7.5pt; color: ${THEME.inkMuted};
         letter-spacing: .14em; text-transform: uppercase;
@@ -4555,7 +4562,7 @@ ${(() => {
       margin: 18mm 16mm 16mm 16mm;
       background: ${palette.paper};
       @top-left { content: string(chapter); }
-      @top-right { content: "${esc(address)}"; font-style: italic; }
+      @top-right { content: "${cssString(address)}"; font-style: italic; }
       @bottom-right { content: counter(page) " · " counter(pages); }
     }
     .landscape-spread {
@@ -4836,14 +4843,14 @@ ${(() => {
         color: var(--ed-ink-soft);
       }
       @top-right {
-        content: "${esc(address)}";
+        content: "${cssString(address)}";
         font-family: 'IBM Plex Mono', monospace;
         font-size: 7.6pt; font-weight: 400;
         color: var(--ed-ink-soft);
         font-style: normal; letter-spacing: 0.08em;
       }
       @bottom-left {
-        content: "${esc(brandName)}";
+        content: "${cssString(brandName)}";
         font-family: 'IBM Plex Mono', monospace;
         font-size: 7.4pt; font-weight: 500;
         text-transform: uppercase; letter-spacing: 0.22em;
