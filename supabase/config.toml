@@ -943,6 +943,11 @@ verify_jwt = false
 # Authoritative sanitised read contract; authentication and module access are enforced in-function.
 verify_jwt = false
 
+[functions.market-updates-curate]
+# Operator curation (hide/restore a published update). Matches the read contract above:
+# authentication and the market_updates can_edit check are enforced in-function.
+verify_jwt = false
+
 [functions.market-updates-feed]
 verify_jwt = false
 # Auth is verified in-function to support authenticated RSS clients and ETag responses.
