@@ -411,6 +411,16 @@ export async function listTopupPacks(
 // that carries the initiating command-center user server-to-server. The
 // browser only ever sees the opaque `?h=<uuid>` token.
 
+/** Buyer details forwarded to Stripe so the payment page arrives prefilled. */
+export interface BillingContactArgs {
+  email?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  fullName?: string | null;
+  phone?: string | null;
+  company?: string | null;
+}
+
 export interface HandoffArgs {
   originUserId: string;
   originUsername?: string | null;
@@ -418,6 +428,10 @@ export interface HandoffArgs {
   intent?: string;
   /** Absolute https URL back into this app for the post-checkout return CTA. */
   returnUrl?: string;
+  /** Buyer contact block. Travels server-to-server under the clone API key —
+   *  the browser only ever receives the opaque handoff URL, so these details
+   *  cannot be read or forged from the link. */
+  contact?: BillingContactArgs | null;
 }
 
 export interface HandoffResult {
@@ -427,6 +441,18 @@ export interface HandoffResult {
 }
 
 export async function createBillingHandoff(args: HandoffArgs): Promise<HandoffResult> {
+  const contact = args.contact
+    ? {
+        email: args.contact.email ?? undefined,
+        first_name: args.contact.firstName ?? undefined,
+        last_name: args.contact.lastName ?? undefined,
+        full_name: args.contact.fullName ?? undefined,
+        phone: args.contact.phone ?? undefined,
+        company: args.contact.company ?? undefined,
+      }
+    : undefined;
+  const hasContact = contact && Object.values(contact).some((v) => v !== undefined);
+
   const payload: Record<string, unknown> = {
     tenant_ref: AGENCY_TENANT_REF,
     display_name: AGENCY_DISPLAY_NAME,
@@ -434,6 +460,9 @@ export async function createBillingHandoff(args: HandoffArgs): Promise<HandoffRe
     origin_username: args.originUsername ?? undefined,
     intent: args.intent,
     return_url: args.returnUrl,
+    // Omitted entirely when we know nothing, so an older Mission Control that
+    // doesn't understand the field is never sent a stray empty object.
+    ...(hasContact ? { contact } : {}),
   };
 
   let res = await mcFetch("/api/public/billing/handoff", {
@@ -545,6 +574,9 @@ export interface PaymentMethodRecord {
   expMonth: number | null;
   expYear: number | null;
   funding: string | null;
+  /** Cardholder name/email captured by Stripe on the card-save page. */
+  billingName: string | null;
+  billingEmail: string | null;
   priority: number;
   role: string;
   originUsername: string | null;
@@ -566,6 +598,8 @@ function mapPaymentMethods(body: any): PaymentMethodsResult {
           expMonth: m.exp_month ?? null,
           expYear: m.exp_year ?? null,
           funding: m.funding ?? null,
+          billingName: m.billing_name ?? null,
+          billingEmail: m.billing_email ?? null,
           priority: Number(m.priority ?? 0),
           role: String(m.role ?? ""),
           originUsername: m.origin_username ?? null,

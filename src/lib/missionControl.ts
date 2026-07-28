@@ -337,6 +337,9 @@ export interface PaymentMethodRecord {
   expMonth: number | null;
   expYear: number | null;
   funding: string | null;
+  /** Cardholder name/email as entered on Stripe's page. Display only. */
+  billingName: string | null;
+  billingEmail: string | null;
   /** 1 = primary, 2 = secondary, 3 = backup. */
   priority: number;
   role: string;

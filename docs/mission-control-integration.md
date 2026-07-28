@@ -74,6 +74,43 @@ simply expire, having never been debited.
 Setting: **`MC_RESERVATION_TTL_SECONDS`** (optional Supabase secret, default
 `7200`).
 
+## Stripe checkout prefill
+
+Stripe Checkout takes the email it shows from the **Customer attached to the
+session** — `customer_email` is rejected alongside `customer` — and in
+payment/subscription mode it also prefills the saved card's name and address.
+So a smooth checkout is not a session parameter; it is a properly populated
+Stripe Customer. Mission Control's Customer used to be created with a name and
+nothing else, which is why every buyer retyped their email on every visit.
+
+What now flows, and from where:
+
+| Field | Source | Lands as |
+|---|---|---|
+| Email | `custom_users.email` of the signed-in user | Stripe Customer `email` (seeded if blank) + this purchase's `receipt_email` |
+| First / last name | `custom_users.first_name` / `last_name` (Settings → Profile & Credentials) | Customer metadata `buyer_*`, session + invoice metadata |
+| Phone | `custom_users.phone` | Stripe Customer `phone` (seeded if blank) |
+| Billing address | typed once on Stripe's page | written back to the Customer via `customer_update`, so the **next** checkout prefills it |
+| Cardholder name/email | Stripe's card-save page | `payment_methods.billing_name` / `billing_email`, shown on the card row |
+
+The details travel `mission-control-handoff` → the handoff's `contact` block →
+Mission Control → Stripe, entirely server-to-server. The browser still only
+ever carries the opaque `?h=<uuid>`, so nothing here can be read or forged from
+the URL.
+
+**Ownership rule.** A tenant is an organisation and its Stripe Customer is the
+organisation's billing account, shared by every staff member. So
+`Customer.name` stays the ORG name (invoices must not read whoever clicked
+Buy), and `Customer.email` is *seeded* from the first buyer and then left
+alone — silently repointing an org's billing email because a colleague made a
+purchase would misdirect their invoices. The individual buyer is still
+captured: on Customer metadata, and per purchase as `receipt_email`, so nobody
+loses their own receipt to the shared address.
+
+Users fill their name and phone in under **Settings → Profile & Credentials →
+Contact Details**. All three fields are optional; leaving them blank simply
+gives the previous email-only behaviour.
+
 ## Manual rotation
 
 UI lives under **Settings → Mission Control Key** (superadmin only).
