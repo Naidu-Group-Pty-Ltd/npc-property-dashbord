@@ -697,7 +697,7 @@ export default function Listings() {
               Property Intelligence
             </div>
             <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-              <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Listings</h1>
+              <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Opportunity Marketplace</h1>
               <div className="mb-1 inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm backdrop-blur dark:border-white/10 dark:bg-background/45">
                 <Building2 className="h-4 w-4 text-primary" />
                 <span className="tabular-nums">{filteredListings.length} of {listings.length}</span>
