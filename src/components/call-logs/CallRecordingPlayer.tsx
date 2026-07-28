@@ -17,7 +17,7 @@ export interface CallRecordingPlayerHandle {
 }
 
 export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRecordingPlayerProps>(
-  ({ recordingUrl, duration }, ref) => {
+  ({ recordingUrl, duration, callLogId }, ref) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const isInitializedRef = useRef(false);
@@ -29,6 +29,8 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
   const [isMuted, setIsMuted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isReady, setIsReady] = useState(false);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Expose stop method to parent
   useImperativeHandle(ref, () => ({
