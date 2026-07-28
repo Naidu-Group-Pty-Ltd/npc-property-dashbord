@@ -4,8 +4,10 @@
 // 400/403 once the signature ages out. Fetching /call/{vapi_call_id} on demand
 // returns a new signed URL every time.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { checkModuleView } from "../_shared/permissions.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { fetchAllowedRecording, isAllowedRecordingUrl } from "./recordingUrlPolicy.ts";
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -24,8 +26,13 @@ Deno.serve(async (req) => {
     let body: any = {};
     try { body = await req.json(); } catch { /* ignore */ }
 
-    const { error: authError, userId, username } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, username, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+    const permission = await checkModuleView(supabase, userId!, 'call_logs', authMethod);
+    if (!permission.allowed) {
+      return createForbiddenResponse(permission.reason || 'Call logs view permission required', corsHeaders);
+    }
 
     const callLogId: string | undefined = body.callLogId || body.id;
     const mode: 'url' | 'stream' = body.mode === 'stream' ? 'stream' : 'url';
@@ -74,6 +81,13 @@ Deno.serve(async (req) => {
       });
     }
 
+    if (!isAllowedRecordingUrl(url)) {
+      console.warn('[get-call-recording] Rejected untrusted recording URL for call log:', row.id);
+      return new Response(JSON.stringify({ error: 'Recording URL is not allowed' }), {
+        status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // Persist the freshest URL for cheap subsequent access.
     if (freshUrl && freshUrl !== row.recording_url) {
       supabase.from('vapi_call_logs').update({ recording_url: freshUrl }).eq('id', row.id)
@@ -82,7 +96,7 @@ Deno.serve(async (req) => {
 
     if (mode === 'stream') {
       // Server-side fetch of the signed URL and stream bytes back with CORS.
-      const upstream = await fetch(url);
+      const upstream = await fetchAllowedRecording(url);
       if (!upstream.ok || !upstream.body) {
         return new Response(JSON.stringify({ error: `Upstream ${upstream.status}` }), {
           status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
