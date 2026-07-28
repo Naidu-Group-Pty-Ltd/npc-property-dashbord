@@ -704,6 +704,7 @@ export default function Listings() {
                 <span className="font-medium text-muted-foreground">properties</span>
               </div>
             </div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">Off-Market · On Market · Builder Opportunities</p>
           </div>
           
           <div className="flex w-full flex-wrap items-stretch justify-start gap-3 rounded-[1.35rem] sm:items-center lg:w-auto border border-border/60 bg-background/65 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur dark:border-white/10 dark:bg-background/40 dark:shadow-black/20 lg:justify-end">
