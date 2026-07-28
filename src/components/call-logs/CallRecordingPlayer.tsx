@@ -308,7 +308,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
               asChild
               className="flex-shrink-0 rounded-2xl border-brand-300/25 bg-brand-500/10 text-brand-100 hover:bg-brand-500/20"
             >
-              <a href={recordingUrl} download target="_blank" rel="noopener noreferrer">
+              <a href={resolvedUrl || recordingUrl} download target="_blank" rel="noopener noreferrer">
                 <Download className="w-4 h-4 mr-1" />
                 <span className="hidden sm:inline">Download</span>
                 <span className="sm:hidden">DL</span>
