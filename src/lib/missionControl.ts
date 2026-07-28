@@ -34,6 +34,8 @@ export interface TokenBalance {
   lifetimeGranted?: number;
   lifetimeSpent?: number;
   planName?: string | null;
+  /** Plan slug (launch/growth/scale) — what plan-tier gating keys on. */
+  planSlug?: string | null;
   overagePolicy?: string | null;
   currentPeriodEnd?: string | null;
   /** Mission Control marked this tenant billing-exempt (no plan, never

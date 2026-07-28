@@ -60,6 +60,8 @@ export interface BalanceResult {
   lifetimeGranted: number;
   lifetimeSpent: number;
   planName: string | null;
+  /** Plan slug (launch/growth/scale). Drives plan-tier feature gating. */
+  planSlug: string | null;
   overagePolicy: string | null;
   currentPeriodEnd: string | null;
   /** True when Mission Control marks this tenant billing-exempt (no plan,
@@ -371,6 +373,7 @@ export async function getBalance(): Promise<BalanceResult> {
     lifetimeGranted,
     lifetimeSpent,
     planName: plan?.name ?? null,
+    planSlug: plan?.slug ?? null,
     overagePolicy: plan?.overage_policy ?? null,
     currentPeriodEnd: tenant?.current_period_end ?? null,
     exempt: Boolean(tenant?.billing_exempt),
