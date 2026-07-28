@@ -457,3 +457,53 @@ export function formatMoney(cents: number | null | undefined, currency?: string 
     return `${(cents / 100).toFixed(2)} ${currency ?? ""}`.trim();
   }
 }
+
+/**
+ * A billing plan change the workspace has not been shown yet.
+ *
+ * Announced once. A record with an acknowledgement rather than anything
+ * derived from the current plan, because current state can say which plan you
+ * are on and never whether you have been told you moved to it — and two
+ * changes in a month would collapse into one.
+ */
+export interface PlanChangeNotice {
+  id: string;
+  fromPlanSlug: string | null;
+  fromPlanName: string | null;
+  toPlanSlug: string;
+  toPlanName: string;
+  /** Credits added by the change. Zero when the period was already credited. */
+  creditsGranted: number;
+  creditsExpireAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * The newest unseen plan change, or null.
+ *
+ * Never throws. This drives a banner, and a workspace must not fail to load
+ * because a banner lookup did.
+ */
+export async function fetchPlanChange(): Promise<PlanChangeNotice | null> {
+  try {
+    const { invokeSecureFunction } = await import("@/lib/secureInvoke");
+    const { data, error } = await invokeSecureFunction<{ changes?: PlanChangeNotice[] }>(
+      "mission-control-plan-change",
+      {},
+    );
+    if (error) return null;
+    return data?.changes?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Retires a notice so it is never shown again. */
+export async function acknowledgePlanChange(id: string): Promise<void> {
+  try {
+    const { invokeSecureFunction } = await import("@/lib/secureInvoke");
+    await invokeSecureFunction("mission-control-plan-change", { id });
+  } catch {
+    // Worst case it shows once more. Not worth surfacing.
+  }
+}

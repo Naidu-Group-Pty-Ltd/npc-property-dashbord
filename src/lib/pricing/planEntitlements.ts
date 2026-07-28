@@ -114,11 +114,28 @@ export function planEnablesSubModule(planSlug: string | null | undefined, key: s
   return row[planSlug];
 }
 
-/** Whether a plan includes an add-on module without buying it separately. */
+/**
+ * Whether a plan includes an add-on module without buying it separately.
+ *
+ * Note what an EMPTY tier list means. `intelligence-hub`, `email-copilot`,
+ * `call-logs`, `lenders`, `integrations` and `aurixa-agent` are included in no
+ * tier — they are add-ons, bought on top of whatever plan a workspace is on.
+ * That is the opposite of "no plan may have this", and reading it the second
+ * way denies the module to everybody.
+ *
+ * It mattered the moment tier allowances shipped. Until then no tenant carried
+ * a `plan_id`, so `planSlug` was always null and this function always returned
+ * true; the first workspace to be put on Launch would have lost Integrations —
+ * and with it Report QA's agent-model management — with nothing to explain it.
+ *
+ * Plan is the wrong question for an add-on. Whether one has been PURCHASED is
+ * a separate fact this matrix does not carry, so it is not answered here.
+ */
 export function planIncludesModule(planSlug: string | null | undefined, moduleSlug: string): boolean {
   if (!isKnownPlan(planSlug)) return true;
   const tiers = MODULE_TIERS[moduleSlug];
   if (!tiers) return true; // not a priced module
+  if (tiers.length === 0) return true; // an add-on, not a denial
   return tiers.includes(planSlug);
 }
 

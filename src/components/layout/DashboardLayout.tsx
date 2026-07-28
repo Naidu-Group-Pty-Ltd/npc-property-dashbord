@@ -11,6 +11,7 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
 import { TokenBalanceBanner } from '@/components/billing/TokenBalanceBanner';
+import { PlanChangeBanner } from '@/components/billing/PlanChangeBanner';
 import { GlobalCommandPalette } from './GlobalCommandPalette';
 
 export function DashboardLayout() {
@@ -34,6 +35,7 @@ export function DashboardLayout() {
           <div className="dashboard-content">
             <ErrorBoundary>
               <DashboardPageShell>
+                <PlanChangeBanner />
                 <TokenBalanceBanner />
                 <Outlet />
               </DashboardPageShell>
@@ -65,6 +67,7 @@ export function DashboardLayout() {
             <div className="dashboard-content">
               <ErrorBoundary>
                 <DashboardPageShell>
+                  <PlanChangeBanner />
                   <TokenBalanceBanner />
                   <Outlet />
                 </DashboardPageShell>

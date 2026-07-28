@@ -15,8 +15,10 @@ import { cn } from "@/lib/utils";
 import {
   RefreshCw, Search, Coins, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Activity, Clock3, ShieldCheck, UserRound, Building2, AlertTriangle,
+  Zap,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { TokenEventDetailsDrawer } from "@/components/billing/TokenEventDetailsDrawer";
 
 interface UsageRow {
@@ -125,6 +127,13 @@ export function TokenUsagePanel() {
     );
   }, [rows, search]);
 
+  // The plan's included allowance, so this panel answers "how much do I get"
+  // as well as "how much have I used". Only meaningful once the workspace is
+  // on a plan that includes credits — a workspace running on top-up packs
+  // alone has an allowance of zero and gets no tile rather than a "0".
+  const { balance } = useTokenBalance();
+  const includedMonthly = balance?.allowance ?? 0;
+
   const totals = useMemo(() => {
     const used = filtered.reduce((s, r) => s + (r.actual_tokens || 0), 0);
     return { used, count: filtered.length };
@@ -138,6 +147,21 @@ export function TokenUsagePanel() {
   const scopeLabel = scope === "agency" ? "Agency-wide" : "My usage";
 
   const kpis = [
+    ...(includedMonthly > 0
+      ? [
+          {
+            label: "Included Monthly",
+            value: includedMonthly.toLocaleString(),
+            icon: Zap,
+            helper: balance?.planName
+              ? `Credits included with ${balance.planName}, every month`
+              : "Credits included with your plan, every month",
+            accent: "from-primary/15 via-card to-muted/30",
+            iconClass: "border-primary/25 bg-primary/10 text-primary",
+            valueClass: "text-primary",
+          },
+        ]
+      : []),
     {
       label: "Generations",
       value: totals.count.toLocaleString(),
@@ -160,7 +184,7 @@ export function TokenUsagePanel() {
 
   return (
     <div className="min-w-0 space-y-5">
-      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(15rem,1fr))]">
         {kpis.map(({ label, value, icon: Icon, helper, accent, iconClass, valueClass }) => (
           <DashboardThemeFrame key={label} variant="premiumCard" className={cn("group p-0 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-[0_20px_55px_rgba(15,23,42,0.12)] dark:hover:shadow-[0_20px_55px_rgba(0,0,0,0.34)]", `bg-gradient-to-br ${accent}`)}>
             <div className="flex min-h-[9.5rem] min-w-0 flex-col justify-between gap-5 p-5">
