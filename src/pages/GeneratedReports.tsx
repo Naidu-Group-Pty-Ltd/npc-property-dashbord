@@ -996,7 +996,7 @@ export default function GeneratedReports() {
               icon={showArchived ? Archive : activeInvestmentFiltersCount > 0 ? Search : TrendingUp}
               title={showArchived ? 'No archived reports' : activeInvestmentFiltersCount > 0 ? 'No reports match these filters' : 'No investment reports yet'}
               description={showArchived ? 'Archived investment reports will appear here when available.' : activeInvestmentFiltersCount > 0 ? 'Try clearing filters or broadening your search to see more reports.' : 'Generate your first investment report from a property listing.'}
-              actionLabel={!showArchived && activeInvestmentFiltersCount === 0 ? 'Go to Listings' : undefined}
+              actionLabel={!showArchived && activeInvestmentFiltersCount === 0 ? 'Go to Opportunity Marketplace' : undefined}
               actionIcon={!showArchived && activeInvestmentFiltersCount === 0 ? <TrendingUp className="h-4 w-4" /> : undefined}
               onAction={!showArchived && activeInvestmentFiltersCount === 0 ? () => navigate('/listings') : undefined}
               secondaryActionLabel={activeInvestmentFiltersCount > 0 ? 'Clear Filters' : undefined}

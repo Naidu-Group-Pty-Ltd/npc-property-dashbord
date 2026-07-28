@@ -314,7 +314,7 @@ export default function UserGuide() {
       description: 'View and manage property listings',
       items: [
         {
-          title: 'Listings Page',
+          title: 'Opportunity Marketplace',
           description: 'View and manage all property listings with advanced filtering and search capabilities.',
           features: [
             'Search by address, suburb, or postcode',
