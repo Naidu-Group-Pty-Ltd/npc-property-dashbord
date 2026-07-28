@@ -665,8 +665,8 @@ export default function Listings() {
               <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_14px_rgba(245,158,11,0.55)]" />
               Property Intelligence
             </div>
-            <h1 className="text-3xl font-semibold tracking-[-0.045em] text-foreground md:text-4xl">Listings</h1>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">Manage and review property listings</p>
+            <h1 className="text-3xl font-semibold tracking-[-0.045em] text-foreground md:text-4xl">Opportunity Marketplace</h1>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">Off-Market · On Market · Builder Opportunities</p>
           </div>
           <Button onClick={loadListings} variant="outline" className={`${LISTINGS_REFRESH_ACTION} gap-2`}>
             <RefreshCw className="h-4 w-4" />
