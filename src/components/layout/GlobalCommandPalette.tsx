@@ -115,7 +115,7 @@ const ENTRIES: NavEntry[] = [
 ];
 
 const ADMIN_ENTRIES: NavEntry[] = [
-  { title: 'Automation', url: '/automation', icon: Zap, moduleKey: 'automation', group: 'Admin' },
+  { title: 'Auto Report Generation', url: '/automation', icon: Zap, moduleKey: 'automation', group: 'Admin', keywords: ['automation'] },
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates', group: 'Admin' },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label', group: 'Admin' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations', group: 'Admin' },

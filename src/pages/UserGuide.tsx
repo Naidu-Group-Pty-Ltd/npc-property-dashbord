@@ -467,7 +467,7 @@ export default function UserGuide() {
     },
     {
       id: 'automation',
-      title: 'Automation',
+      title: 'Auto Report Generation',
       icon: Zap,
       description: 'Automated report generation and workflows',
       items: [
@@ -482,7 +482,7 @@ export default function UserGuide() {
             'Master toggle for all automation',
           ],
           steps: [
-            'Navigate to "Automation" in the sidebar',
+            'Navigate to "Auto Report Generation" in the sidebar',
             'Click "Add Switch" to create a new automation',
             'Configure trigger criteria (state, price range, property type)',
             'Set priority order for switch evaluation',
