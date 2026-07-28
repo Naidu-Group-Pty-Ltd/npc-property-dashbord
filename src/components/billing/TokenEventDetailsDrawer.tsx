@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 interface AuditEvent {
   id: string;
   created_at: string;
-  event: "reserve" | "commit" | "cancel" | string;
+  event: "reserve" | "commit" | "hold" | "release" | "cancel" | string;
   user_id: string | null;
   function_name: string | null;
   kind: string | null;
@@ -54,6 +54,28 @@ interface Payload {
 
 function getEventTone(event: string, status?: string | null, error?: string | null) {
   const normalized = `${event} ${status ?? ""}`.toLowerCase();
+  // `hold` = a chunk of a multi-call generation landed; the reservation stays
+  // open and nothing is charged yet. `release` = the run failed and the job was
+  // canceled or refunded, so the caller pays nothing. Both are matched before
+  // the generic rules below, which would otherwise mis-tone them.
+  if (event === "hold" && !error) {
+    return {
+      badge: "border-primary/25 bg-primary/10 text-primary",
+      rail: "bg-primary/55",
+      dot: "border-primary/30 bg-primary/10 text-primary",
+      Icon: Clock3,
+      label: "Held",
+    };
+  }
+  if (event === "release" && !error) {
+    return {
+      badge: "border-success/25 bg-success/10 text-success dark:text-success",
+      rail: "bg-success/55",
+      dot: "border-success/30 bg-success/10 text-success dark:text-success",
+      Icon: CheckCircle2,
+      label: "Released",
+    };
+  }
   if (error || normalized.includes("error") || normalized.includes("fail") || normalized.includes("cancel")) {
     return {
       badge: "border-destructive/25 bg-destructive/10 text-destructive",

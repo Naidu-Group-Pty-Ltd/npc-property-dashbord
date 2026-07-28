@@ -21,15 +21,58 @@ from this dashboard at any time.
 ## Metering flow
 
 ```
-reserveTokens(estimate) → run generator → commitTokens(actual)
-                                        ↘ on error → cancelTokens()
+reserveTokens(estimate) → run generator ─┬─ finished OK ──→ commitTokens(actual)
+                                         ├─ chunk done ───→ hold (reservation stays open)
+                                         └─ failed ───────→ releaseTokens()  (cancel, or refund
+                                                                              if already committed)
 ```
 
-- Wrapper: `withTokenReservation()` in `_shared/missionControl.ts`.
+- Wrapper: `withReportMetering()` in `_shared/reportMetering.ts` (the older
+  `withTokenReservation()` in `_shared/missionControl.ts` is the same
+  reserve/commit/cancel shape for non-HTTP callers).
+- The commit/hold/release decision is pure and unit-tested:
+  `_shared/reportMeteringOutcome.pure.ts` (spec:
+  `src/lib/tokens/__tests__/reportMeteringOutcome.pure.spec.ts`).
 - Every reservation includes a stable client-generated `idempotency_key` so
   retries don't double-spend.
 - Errors are typed: `InsufficientTokensError` (402), `RateLimitedError` (429),
   generic `MissionControlError`.
+
+### Billing invariant: a failed report costs nothing
+
+Report generation is **chunked** — the browser calls
+`generate-investment-report` / `regenerate-report-qualitative` once per section
+(`singleSection: true`), and each intermediate call answers HTTP 200 with
+`isComplete: false`. Three rules keep a run that never finishes free:
+
+1. **Hold, don't commit.** Intermediate chunk responses leave the Mission
+   Control job `reserved`. Committing on them closed the job after section 1,
+   after which a failure in any later section could no longer be canceled —
+   `cancel_token_reservation` is a no-op on a `completed` job — so the report
+   ended up `failed` with the tokens spent.
+2. **Release on any failure.** Non-2xx, a `success: false` body (even with a
+   2xx status), or a thrown handler all call `releaseTokens()`, which cancels a
+   live reservation *or* refunds one an earlier call already committed
+   (`refund_if_committed` on `POST /api/public/tokens/cancel` → Mission
+   Control's `release_token_job` RPC).
+3. **Reservations outlive the run.** `MC_RESERVATION_TTL_SECONDS` (default
+   7200s, clamped to MC's 30…86 400s) is passed on reserve so a held
+   reservation can't expire mid-generation. Only the call that *creates* the
+   job sets the TTL — later chunks reserve idempotently against the same key.
+
+Failures that happen **between** edge calls (a section exhausted its retries,
+the tab closed, the operator hit *Stop generation*) never reach the wrapper.
+`manage-investment-reports` therefore calls
+`releaseInvestmentReportRunTokens()` whenever a report is updated to
+`status: 'failed'`. That helper is scoped to the report's **current version** —
+`investment_reports.current_version` only advances when a report *completes*,
+so a previously finished and legitimately paid version can never be refunded by
+a later failure. Qualitative-regen (`regen-qual:…`) keys carry no version and
+are deliberately out of scope for the out-of-band path; their held reservations
+simply expire, having never been debited.
+
+Setting: **`MC_RESERVATION_TTL_SECONDS`** (optional Supabase secret, default
+`7200`).
 
 ## Manual rotation
 

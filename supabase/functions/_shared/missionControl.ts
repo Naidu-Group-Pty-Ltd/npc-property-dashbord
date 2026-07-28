@@ -242,18 +242,78 @@ export async function commitTokens(jobId: string, actualTokens: number, resultMe
   }
 }
 
-export async function cancelTokens(jobId: string, reason?: string): Promise<void> {
-  try {
-    const res = await mcFetchRaw("/api/public/tokens/cancel", {
-      method: "POST",
-      body: JSON.stringify({ job_id: jobId, reason: reason?.slice(0, 280) ?? "generation_failed" }),
-    });
-    await res.text();
-  } catch (e) {
-    // Best effort — never let cancel failure mask the original error.
-    // Reservations auto-expire after TTL anyway.
-    console.error("[missionControl] cancel failed", e);
+export interface ReleaseResult {
+  /** True when Mission Control confirmed the job is no longer billable. */
+  ok: boolean;
+  /** 'canceled' (reservation released), 'refunded' (charge reversed),
+   *  'noop' (already released), or 'unknown' against an older Mission Control. */
+  outcome: "canceled" | "refunded" | "noop" | "unknown";
+  releasedTokens: number;
+  error?: string;
+}
+
+/**
+ * Release a job so it costs the tenant nothing.
+ *
+ * `refundIfCommitted` is the important flag: `cancel_token_reservation` is a
+ * no-op on a job that already reached `completed`, so without it a generation
+ * that failed AFTER an earlier chunk was committed stayed charged. Mission
+ * Control's cancel endpoint branches to `refund_job` when the flag is set.
+ * Older Mission Control deployments simply ignore the unknown field (their Zod
+ * schema strips it) and fall back to cancel-only semantics, so this is safe to
+ * ship ahead of the Mission Control release.
+ */
+export async function releaseTokens(
+  jobId: string,
+  reason?: string,
+  opts: { refundIfCommitted?: boolean } = {},
+): Promise<ReleaseResult> {
+  const payload = JSON.stringify({
+    job_id: jobId,
+    reason: reason?.slice(0, 280) ?? "generation_failed",
+    refund_if_committed: opts.refundIfCommitted !== false,
+  });
+
+  // Releasing is the difference between "the customer paid for a failed report"
+  // and "they didn't", so unlike the old fire-and-forget cancel this retries
+  // transient failures and reports whether it actually landed.
+  let lastError = "release_failed";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await mcFetchRaw("/api/public/tokens/cancel", {
+        method: "POST",
+        body: payload,
+      });
+      const text = await res.text();
+      let body: any = {};
+      try { body = text ? JSON.parse(text) : {}; } catch { /* keep raw */ }
+
+      if (res.ok && body?.ok !== false) {
+        return {
+          ok: true,
+          outcome: (body?.outcome as ReleaseResult["outcome"]) ?? "unknown",
+          releasedTokens: Number(body?.released_tokens ?? body?.refunded_tokens ?? 0),
+        };
+      }
+
+      lastError = String(body?.error ?? body?.message ?? `mc_${res.status}`);
+      // 4xx is terminal (job_not_found / forbidden / invalid) — retrying cannot help.
+      if (res.status < 500 && res.status !== 429) break;
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : "release_threw";
+    }
+    if (attempt < 2) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
   }
+
+  // Never let a release failure mask the original error; the reservation still
+  // expires with its TTL, and the caller logs this outcome to the audit trail.
+  console.error("[missionControl] release failed", { jobId, reason, lastError });
+  return { ok: false, outcome: "unknown", releasedTokens: 0, error: lastError };
+}
+
+/** Back-compat alias — cancel a reservation without refunding a committed job. */
+export async function cancelTokens(jobId: string, reason?: string): Promise<ReleaseResult> {
+  return await releaseTokens(jobId, reason, { refundIfCommitted: false });
 }
 
 export async function getBalance(): Promise<BalanceResult> {

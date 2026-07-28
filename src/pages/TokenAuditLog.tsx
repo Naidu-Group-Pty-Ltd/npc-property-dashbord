@@ -16,7 +16,7 @@ import { TokenEventDetailsDrawer } from "@/components/billing/TokenEventDetailsD
 interface AuditRow {
   id: string;
   created_at: string;
-  event: "reserve" | "commit" | "cancel" | string;
+  event: "reserve" | "commit" | "hold" | "release" | "cancel" | string;
   user_id: string | null;
   function_name: string | null;
   kind: string | null;
@@ -37,9 +37,14 @@ function EventBadge({ event }: { event: string }) {
       ? "border-brand-500/25 bg-brand-500/10 text-brand-700 dark:text-brand-300"
       : event === "commit"
         ? "border-success/25 bg-success/10 text-success dark:text-success"
-        : event === "cancel"
-          ? "border-destructive/25 bg-destructive/10 text-destructive"
-          : "border-border/70 bg-muted/60 text-muted-foreground";
+        // A chunk of a multi-call generation landed; the reservation is still
+        // open and nothing has been charged.
+        : event === "hold"
+          ? "border-primary/25 bg-primary/10 text-primary"
+          // The run failed: reservation canceled, or an earlier commit refunded.
+          : event === "release" || event === "cancel"
+            ? "border-destructive/25 bg-destructive/10 text-destructive"
+            : "border-border/70 bg-muted/60 text-muted-foreground";
 
   return (
     <Badge variant="outline" className={cn("max-w-full rounded-full px-2.5 py-0.5 capitalize", className)} title={event}>
@@ -185,11 +190,15 @@ export default function TokenAuditLog() {
   const eventCounts = useMemo(() => {
     return rows.reduce(
       (acc, row) => {
-        if (row.event === "reserve" || row.event === "commit" || row.event === "cancel") acc[row.event] += 1;
+        if (row.event === "reserve") acc.reserve += 1;
+        else if (row.event === "commit") acc.commit += 1;
+        else if (row.event === "hold") acc.hold += 1;
+        // `cancel` is the pre-release event name; both mean "not charged".
+        else if (row.event === "release" || row.event === "cancel") acc.released += 1;
         if (row.error_message) acc.errors += 1;
         return acc;
       },
-      { reserve: 0, commit: 0, cancel: 0, errors: 0 },
+      { reserve: 0, commit: 0, hold: 0, released: 0, errors: 0 },
     );
   }, [rows]);
 
@@ -280,7 +289,9 @@ export default function TokenAuditLog() {
                       <SelectItem value="all">All events</SelectItem>
                       <SelectItem value="reserve">Reserve</SelectItem>
                       <SelectItem value="commit">Commit</SelectItem>
-                      <SelectItem value="cancel">Cancel</SelectItem>
+                      <SelectItem value="hold">Held (chunk)</SelectItem>
+                      <SelectItem value="release">Released</SelectItem>
+                      <SelectItem value="cancel">Cancel (legacy)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -315,11 +326,12 @@ export default function TokenAuditLog() {
               </div>
             </DashboardThemeFrame>
 
-            <div className="grid min-w-0 gap-3 md:grid-cols-4" aria-label="Token audit event totals">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 md:grid-cols-5" aria-label="Token audit event totals">
               {[
                 { label: "Reserve", value: eventCounts.reserve, className: "border-brand-500/20 bg-brand-500/10 text-brand-700 dark:text-brand-300" },
                 { label: "Commit", value: eventCounts.commit, className: "border-success/20 bg-success/10 text-success dark:text-success" },
-                { label: "Cancel", value: eventCounts.cancel, className: "border-destructive/20 bg-destructive/10 text-destructive" },
+                { label: "Held", value: eventCounts.hold, className: "border-primary/20 bg-primary/10 text-primary" },
+                { label: "Released", value: eventCounts.released, className: "border-destructive/20 bg-destructive/10 text-destructive" },
                 { label: "Errors", value: eventCounts.errors, className: "border-primary/20 bg-primary/10 text-primary" },
               ].map((item) => (
                 <div key={item.label} className={cn("rounded-3xl border px-4 py-3 shadow-sm", item.className)}>
@@ -483,7 +495,7 @@ export default function TokenAuditLog() {
                           ? "amber"
                           : r.event === "commit"
                             ? "emerald"
-                            : r.event === "cancel"
+                            : r.event === "release" || r.event === "cancel"
                               ? "destructive"
                               : "primary";
                         return (
