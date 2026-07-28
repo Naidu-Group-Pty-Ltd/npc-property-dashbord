@@ -43,19 +43,56 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
     }
   }), []);
 
-  // Initialize WaveSurfer
+  // Resolve a playable URL: if we have the call log id, ask the backend for a
+  // freshly-signed Vapi recording URL (R2 signed URLs expire), otherwise fall
+  // back to the stored URL.
   useEffect(() => {
-    // Prevent double initialization
-    if (!waveformRef.current || isInitializedRef.current) return;
-    
+    let cancelled = false;
+    setErrorMessage(null);
+    setIsLoading(true);
+    setIsReady(false);
+    setResolvedUrl(null);
+
+    (async () => {
+      if (!callLogId) {
+        if (!cancelled) setResolvedUrl(recordingUrl || null);
+        return;
+      }
+      try {
+        const { data, error } = await invokeSecureFunction('get-call-recording', {
+          callLogId,
+          mode: 'url',
+        });
+        if (cancelled) return;
+        if (error || !data?.url) {
+          console.warn('[CallRecordingPlayer] Falling back to stored URL:', error);
+          setResolvedUrl(recordingUrl || null);
+          if (!recordingUrl) setErrorMessage('Recording is unavailable.');
+        } else {
+          setResolvedUrl(data.url as string);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        console.error('[CallRecordingPlayer] resolve failed', e);
+        setResolvedUrl(recordingUrl || null);
+        if (!recordingUrl) setErrorMessage('Recording is unavailable.');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [callLogId, recordingUrl]);
+
+  // Initialize WaveSurfer once we have a resolved URL
+  useEffect(() => {
+    if (!waveformRef.current || !resolvedUrl) return;
+
     // Clear any existing content in the container
     waveformRef.current.innerHTML = '';
-    
     isInitializedRef.current = true;
 
     // Check if dark mode is active
     const isDarkMode = document.documentElement.classList.contains('dark');
-    
+
     const wavesurfer = WaveSurfer.create({
       container: waveformRef.current,
       waveColor: isDarkMode ? '#6b7280' : '#000000',
@@ -79,7 +116,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
     wavesurferRef.current = wavesurfer;
 
     // Load audio
-    wavesurfer.load(recordingUrl);
+    wavesurfer.load(resolvedUrl);
 
     // Event handlers
     wavesurfer.on('ready', () => {
@@ -111,6 +148,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
     wavesurfer.on('error', (error) => {
       console.error('WaveSurfer error:', error);
       setIsLoading(false);
+      setErrorMessage('Could not decode recording. It may have expired — try reopening the call.');
     });
 
     return () => {
@@ -120,7 +158,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
       }
       isInitializedRef.current = false;
     };
-  }, [recordingUrl]);
+  }, [resolvedUrl]);
 
   const handlePlayPause = useCallback(() => {
     if (!wavesurferRef.current || !isReady) return;
