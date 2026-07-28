@@ -180,9 +180,26 @@ Deno.serve(async (req) => {
         break;
       }
       case "tokens.key.revoked":
-      case "tokens.alert":
+      case "tokens.alert": {
+        // Mission Control cascading a report-cost reprice. Drop this
+        // instance's catalog cache so the next report it prices reads the new
+        // index immediately instead of waiting out the TTL. Other warm
+        // instances pick it up on their own 5-minute refresh — the catalog is
+        // pull-based, so the cascade makes propagation prompt, not atomic.
+        if (event === "tokens.alert" && data?.alert === "report_cost_index_updated") {
+          try {
+            const { invalidateCatalogCache } = await import("../_shared/missionControlCatalog.ts");
+            invalidateCatalogCache();
+            console.log("[mission-control-webhook] report cost index updated", {
+              version: data?.version ?? null,
+              changed: Array.isArray(data?.changed_slugs) ? data.changed_slugs : [],
+            });
+          } catch (e) {
+            console.warn("[mission-control-webhook] catalog invalidate failed", e);
+          }
+        }
         if (client) {
-          await client.from("token_audit_log").insert({
+          const { error: auditError } = await client.from("token_audit_log").insert({
             event: `webhook:${event}`,
             agency_ref: data?.tenant?.external_ref ?? null,
             status: event.endsWith("revoked") ? "error" : "ok",
@@ -190,11 +207,13 @@ Deno.serve(async (req) => {
             error_message: event === "tokens.key.revoked"
               ? `MC key ${data?.key_id ?? "?"} revoked`
               : null,
-          }).then(({ error }) => {
-            if (error) console.warn("[mission-control-webhook] audit insert", error.message);
           });
+          if (auditError) {
+            console.warn("[mission-control-webhook] audit insert", auditError.message);
+          }
         }
         break;
+      }
 
       // ── Seat events ──
       case "seats.reserved":

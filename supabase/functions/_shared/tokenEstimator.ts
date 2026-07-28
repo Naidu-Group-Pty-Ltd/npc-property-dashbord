@@ -1,4 +1,10 @@
-// Token estimation heuristics. Reserve generously — commit reconciles.
+// Token estimation heuristics — the FALLBACK price list.
+//
+// Mission Control's report cost index is authoritative: `reportMetering.ts`
+// resolves the reserve amount from it by metering kind, so an operator can
+// reprice a report without a deploy here. These numbers are what we charge
+// when Mission Control is unreachable or a kind is unlisted, and they are the
+// values the index is seeded with — keep the two in step when adding a kind.
 //
 // UNIT: these are billing credits (the same unit as the token balance, plan
 // allowances and top-up packs), NOT raw LLM tokens. One report costs a handful
@@ -11,6 +17,7 @@ const BASE: Record<TokenKind, number> = {
   "report.investment.compass": 12,
   "report.investment.executive": 8,
   "report.investment.snapshot": 4,
+  "report.investment.financial": 5,
   "report.suburb.compass": 10,
   "report.postcode.compass": 10,
   "report.market-intelligence": 6,

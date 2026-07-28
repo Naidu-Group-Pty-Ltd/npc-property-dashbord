@@ -158,28 +158,55 @@ export function withReportMetering(
       catch { return "unknown"; }
     })();
 
-    // Catalog override: if the caller forwarded a `__catalog.report_slug`, look
-    // up the canonical credit_cost in Mission Control's pricing catalog. The
-    // token balance is already denominated in billing credits, so a report's
-    // credit_cost maps 1:1 to reserved balance. MC_TOKENS_PER_CREDIT stays a
-    // knob (default 1) in case the balance is ever re-scaled to raw tokens —
-    // it must NOT re-inflate credits back into thousands of LLM tokens.
+    // ── What does this report cost? ────────────────────────────────────────
+    // Mission Control's report cost index is the price list, and it has a row
+    // for EVERY kind this repo meters — so an operator repricing a report
+    // there changes what we charge with no deploy here.
+    //
+    // Resolution order, and why:
+    //   1. the index, keyed by the metering `kind` we resolved server-side.
+    //      Keyed by kind rather than a caller-supplied slug so it applies to
+    //      every report automatically and cannot be steered from the request.
+    //   2. an explicit `__catalog.report_slug`, for callers that price a
+    //      specific catalogue product rather than a generic kind. The slug is
+    //      still resolved AGAINST the index — a `credit_cost` in the request
+    //      body is ignored, because the browser must not be able to name its
+    //      own price.
+    //   3. the local heuristic in tokenEstimator.ts, when Mission Control is
+    //      unreachable or the kind is unlisted. Pricing must never be able to
+    //      block a report.
+    //
+    // The balance is denominated in billing credits, so a credit_cost maps 1:1
+    // onto reserved balance. MC_TOKENS_PER_CREDIT stays a knob (default 1) in
+    // case the balance is ever re-scaled to raw tokens — it must NOT re-inflate
+    // credits back into thousands of LLM tokens.
     let catalogTokens: number | null = null;
-    const catalogHint = body?.__catalog;
-    if (catalogHint?.report_slug) {
-      try {
-        const { getReportCreditCost } = await import("./missionControlCatalog.ts");
-        const credits =
-          (typeof catalogHint?.credit_cost === "number" && catalogHint.credit_cost > 0)
-            ? catalogHint.credit_cost
-            : await getReportCreditCost(String(catalogHint.report_slug));
-        if (credits && credits > 0) {
-          const perCredit = Number(Deno.env.get("MC_TOKENS_PER_CREDIT") ?? "1");
-          catalogTokens = Math.max(1, Math.ceil(credits * (isFinite(perCredit) ? perCredit : 1)));
-        }
-      } catch (e) {
-        console.warn("[reportMetering] catalog lookup failed", e);
+    let priceSource = "heuristic";
+    let indexVersion = "";
+    try {
+      const { getCreditCostForKind, getReportCreditCost, getReportCostIndexVersion } =
+        await import("./missionControlCatalog.ts");
+
+      const slugHint = body?.__catalog?.report_slug;
+      let credits = await getCreditCostForKind(plan.kind);
+      if (credits != null) priceSource = "index:kind";
+
+      if (credits == null && slugHint) {
+        credits = await getReportCreditCost(String(slugHint));
+        if (credits != null) priceSource = "index:slug";
       }
+
+      if (credits != null && credits > 0) {
+        const perCredit = Number(Deno.env.get("MC_TOKENS_PER_CREDIT") ?? "1");
+        catalogTokens = Math.max(1, Math.ceil(credits * (isFinite(perCredit) ? perCredit : 1)));
+      } else if (credits === 0) {
+        // A deliberate zero-cost report. Distinct from "unpriced": reserve
+        // nothing rather than falling through to the heuristic.
+        catalogTokens = 0;
+      }
+      indexVersion = await getReportCostIndexVersion();
+    } catch (e) {
+      console.warn("[reportMetering] cost index lookup failed", e);
     }
 
     const estimated =
@@ -187,6 +214,13 @@ export function withReportMetering(
       (plan.estimatedTokensOverride && plan.estimatedTokensOverride > 0
         ? plan.estimatedTokensOverride
         : estimateTokens(plan.kind, plan.estimateOptions));
+
+    console.log("[reportMetering] priced", {
+      kind: plan.kind,
+      estimated,
+      source: catalogTokens != null ? priceSource : priceSource,
+      indexVersion,
+    });
 
     const startedAt = Date.now();
     let reservation: ReserveResult | null = null;

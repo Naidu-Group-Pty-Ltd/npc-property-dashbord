@@ -185,6 +185,60 @@ Units: pack `tokens`, plan `monthly_allowance` and the balance are all **billing
 credits**, the same unit `_shared/tokenEstimator.ts` reserves in. A 500-credit
 pack raises `available` by exactly 500.
 
+## Per-report token cost index
+
+What a report costs is Mission Control's `report_credit_costs` table — one row
+per metering `kind` this repo can send, seeded with every report type:
+
+| Kind | Credits |
+|---|---|
+| `report.investment.compass` | 12 |
+| `report.investment.executive` | 8 |
+| `report.investment.financial` | 5 |
+| `report.investment.snapshot` | 4 |
+| `report.suburb.compass` / `report.postcode.compass` | 10 |
+| `report.market-intelligence` | 6 |
+| `report.portfolio-review` | 8 |
+| `report.bulk-item` | 8 |
+| `report.chart-analysis` | 2 |
+| `report.qualitative-regen` | 3 |
+| `aml_identity_check` / `aml_screening_check` | 4 |
+
+`withReportMetering` resolves the reserve amount in this order:
+
+1. **the index, keyed by the metering `kind`** we already resolve server-side.
+   Keying on kind rather than a caller-supplied slug is what makes it apply to
+   every report automatically — and means the price cannot be steered from the
+   request body.
+2. an explicit `__catalog.report_slug`, still resolved *against the index*. A
+   `credit_cost` sent in the request is ignored: the browser must not be able
+   to name its own price.
+3. `_shared/tokenEstimator.ts`, when Mission Control is unreachable or a kind
+   is unlisted. Its numbers are the values the index is seeded with — keep the
+   two in step when adding a kind. Pricing must never block a report.
+
+A cost of exactly `0` is honoured as a deliberately free report, distinct from
+"unpriced" (which falls through to the heuristic).
+
+`report.investment.financial` is worth calling out: `generate-investment-report`
+has always emitted that kind, but it appeared in no union and no cost table, so
+it silently used the generic `?? 5` fallback. It is now explicit at 5 — same
+price, now visible and adjustable.
+
+### Changing a price
+
+Super admins and the High King edit the index in Mission Control under
+**Billing → Catalog → Report token cost index** and hit **Publish & cascade**.
+Publishing records who changed what, then notifies every clone and this
+repository.
+
+Propagation is **pull-based with a prompt nudge**, not atomic: the cascade
+drops the catalog cache on the edge instance that receives the webhook, and
+every other warm instance picks the new price up on its own 5-minute catalog
+refresh. So the guaranteed bound is ≤5 minutes everywhere, usually immediate.
+Reports already generated are unaffected — a new price applies to the next
+reservation.
+
 ## Manual rotation
 
 UI lives under **Settings → Mission Control Key** (superadmin only).

@@ -9,6 +9,7 @@ export type TokenKind =
   | "report.investment.compass"
   | "report.investment.executive"
   | "report.investment.snapshot"
+  | "report.investment.financial"
   | "report.suburb.compass"
   | "report.postcode.compass"
   | "report.market-intelligence"
@@ -79,6 +80,7 @@ const BASE: Record<TokenKind, number> = {
   "report.investment.compass": 12,
   "report.investment.executive": 8,
   "report.investment.snapshot": 4,
+  "report.investment.financial": 5,
   "report.suburb.compass": 10,
   "report.postcode.compass": 10,
   "report.market-intelligence": 6,

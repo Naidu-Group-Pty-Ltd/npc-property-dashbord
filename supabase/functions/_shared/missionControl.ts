@@ -22,6 +22,7 @@ export type TokenKind =
   | "report.investment.compass"
   | "report.investment.executive"
   | "report.investment.snapshot"
+  | "report.investment.financial"
   | "report.suburb.compass"
   | "report.postcode.compass"
   | "report.market-intelligence"
