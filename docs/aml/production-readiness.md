@@ -29,7 +29,7 @@ Directive: *Aurixa AML/CTF Tri-Portal Product Completion Report v2.0*, Phase 13
 
 | Gate | Result |
 | --- | --- |
-| AML unit + contract suites (`src/lib/aml`, `src/pages/aml`) | **112 / 112 pass** (9 files) |
+| AML unit + contract suites (`src/lib/aml`, `src/pages/aml`) | **130 / 130 pass** (9 files) |
 | `npm run build` | Pass |
 | `npm run security:static` | Pass — 511 files |
 | `npm run security:edd-boundary` | Pass |
@@ -81,12 +81,12 @@ previously-NULL columns.
 
 | Function | Version |
 | --- | --- |
-| `aml-client-portal` | 183 |
-| `aml-cases` | 188 |
+| `aml-client-portal` | 241 |
+| `aml-cases` | 245 |
 | `aml-entities` | 181 |
 | `aml-finance` | 181 |
 | `aml-transactions` | 180 |
-| `aml-risk` | 207 |
+| `aml-risk` | 240 |
 | `aml-monitoring` | 202 |
 | `aml-records` | 202 |
 | `finance-portal-aml-requests` | 1 (new) |
@@ -205,23 +205,23 @@ external sync can overwrite the deployed functions, production hardening is not
 durable regardless of what this branch contains. That should be resolved before
 any flag is switched on.
 
-## 8. Deployment status — activation fix + AUSTRAC consent (2026-07-27)
+## 8. Deployment status — activation fix + AUSTRAC consent
 
-| Component | State |
-|---|---|
-| `20260727090000_aml_consent_catalogue.sql` | **Applied live.** 5 documents seeded at v2026.1; `document_id` + `document_hash` present on `aml.consents`. |
-| `aml-client-portal` | **Deployed, v231.** Content verified against branch source. Consent gate live. |
-| `aml-cases` | **Not yet deployed.** Contains the `search_clients` activation fix, the portal notification on activation, and `consent_status`. |
-| `aml-risk` | **Not yet deployed.** Contains the restored `tenantCaseAccess` helper. |
+Merged to `main` in PR #1571 and deployed by the main-sync pipeline.
+Verified against the live project on 2026-07-28.
 
-`aml-cases` and `aml-risk` both import `_shared/auth.ts`, the authentication
-trust boundary. The only deployment channel available in this session requires
-transmitting every bundle file by hand, and a transcription error in that file
-would take the AML command centre down. Deployment of these two was therefore
-left to the repository's main-sync pipeline, which redeploys functions from
-`main` from the committed sources with no transcription step.
+| Component | State | Verification |
+|---|---|---|
+| `20260727090000_aml_consent_catalogue.sql` | **Applied live** | 5 documents seeded at v2026.1; `document_id` + `document_hash` present on `aml.consents` |
+| `aml-cases` | **Deployed, v245** | `index.ts` SHA-256 identical to the merged source (45,434 bytes); `search_clients`, `consent_status`, the `/client/aml` notification and `has_portal_access` all present |
+| `aml-client-portal` | **Deployed, v241** | Bundle hash unchanged from the verified v231 deploy; consent gate live on all four collection ops |
+| `aml-risk` | **Deployed, v240** | `tenantCaseAccess` defined once against four call sites — the `ReferenceError` on `recommend` / `set_service_gate` / `gate_contract` is closed |
 
-Consequence while they are pending: activation from the AML page still fails
-(unchanged from before this work), and the consent panel in the case workspace
-shows its unavailable state. Nothing is in a worse position than before —
-there are zero AML cases, so the newly-live consent gate blocks nobody.
+Deployment of `aml-cases` and `aml-risk` was deliberately left to the
+main-sync pipeline rather than performed by hand. Both bundle
+`_shared/auth.ts`, the authentication trust boundary, and the interactive
+deployment channel requires transmitting every bundle file verbatim; a
+transcription error there would have taken the AML command centre down. The
+pipeline deploys from committed sources with no transcription step, and the
+byte comparison above confirms the deployed bundle matches the merged source
+exactly.
