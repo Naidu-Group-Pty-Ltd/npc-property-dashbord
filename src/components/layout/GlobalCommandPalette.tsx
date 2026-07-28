@@ -79,7 +79,7 @@ const ENTRIES: NavEntry[] = [
   // Main
   { title: 'Overview', url: '/', icon: Home, moduleKey: 'overview', group: 'Main', keywords: ['home', 'dashboard'] },
   { title: 'Market Updates', url: '/market-updates', icon: Newspaper, moduleKey: '__always__', group: 'Main', keywords: ['news', 'market'] },
-  { title: 'Listings', url: '/listings', icon: Building2, moduleKey: 'listings', group: 'Main', keywords: ['property'] },
+  { title: 'Opportunity Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings', group: 'Main', keywords: ['property'] },
   { title: 'Commercial / Industrial', url: '/commercial', icon: Building2, moduleKey: '__always__', group: 'Main' },
   { title: 'Calendar', url: '/calendar', icon: Calendar, moduleKey: 'calendar' , group: 'Main' },
 
@@ -88,7 +88,7 @@ const ENTRIES: NavEntry[] = [
   { title: 'Quantitative Reports', url: '/quantitative-reports', icon: BarChart3, moduleKey: 'generated_reports', group: 'Reports' },
   { title: 'Generated Reports', url: '/generated-reports', icon: FileText, moduleKey: 'generated_reports', group: 'Reports' },
   { title: 'Cash Flow Analysis', url: '/cash-flow-analysis', icon: Activity, moduleKey: 'cash_flow', group: 'Reports' },
-  { title: 'Report Q&A', url: '/report-qa', icon: MessageSquareText, moduleKey: 'report_qa', group: 'Reports', keywords: ['ai', 'ask'] },
+  { title: 'Aurixa Intelligence Hub', url: '/report-qa', icon: MessageSquareText, moduleKey: 'report_qa', group: 'Reports', keywords: ['ai', 'ask'] },
   { title: 'Portfolio Reports', url: '/portfolio-reports', icon: FileText, moduleKey: 'portfolio_reports', group: 'Reports' },
   { title: 'Report Requests', url: '/report-requests', icon: Send, moduleKey: 'report_requests', group: 'Reports' },
   { title: 'Charts', url: '/charts', icon: BarChart3, moduleKey: 'charts', group: 'Reports' },
