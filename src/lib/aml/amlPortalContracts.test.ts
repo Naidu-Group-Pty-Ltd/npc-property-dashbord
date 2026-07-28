@@ -849,3 +849,74 @@ describe("AUSTRAC consent contract", () => {
     expect(branch).toContain("history:");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Identity verification — owner decisions of 2026-07-28              */
+/* ------------------------------------------------------------------ */
+
+describe("verification checks encode the owner's decisions", () => {
+  const vcMigration = readFileSync(
+    join(repo, "supabase/migrations/20260728120000_aml_verification_checks.sql"), "utf8");
+
+  it("is per party, not per case — a trust needs several verifications", () => {
+    expect(vcMigration).toContain("party_id uuid");
+    expect(vcMigration).toContain("party_label text NOT NULL");
+    expect(vcMigration).toContain(
+      "ON aml.verification_checks(case_id, COALESCE(party_id, case_id), check_type, attempt_number)");
+  });
+
+  it("decision 4 — three attempts total, enforced by the database", () => {
+    expect(vcMigration).toContain("CHECK (attempt_number BETWEEN 1 AND 3)");
+    // The third failure is terminal for the automated path.
+    expect(vcMigration).toMatch(/CHECK \(status IN \([^)]*'exhausted'/s);
+  });
+
+  it("decision 3 — no calendar expiry is introduced", () => {
+    // Comments explain the deliberate absence, so assert against code only.
+    const code = vcMigration.split("\n").filter((l) => !/^\s*--/.test(l)).join("\n");
+    expect(code).not.toMatch(/\bexpires_at\b/);
+    expect(code).not.toMatch(/\bnext_verification_due\b/);
+    expect(code).not.toMatch(/\bre_verification_due\b/);
+  });
+
+  it("decision 2 — a retained biometric cannot exist without its consent", () => {
+    expect(vcMigration).toContain("biometric_consent_id uuid REFERENCES aml.consents(id)");
+    expect(vcMigration).toContain("CONSTRAINT biometric_requires_consent");
+    // Storage path present ⇒ consent, kind and capture time must all be present.
+    const c = vcMigration.slice(vcMigration.indexOf("CONSTRAINT biometric_requires_consent"));
+    expect(c).toContain("biometric_consent_id IS NOT NULL");
+    expect(c).toContain("biometric_kind IS NOT NULL");
+    expect(c).toContain("biometric_captured_at IS NOT NULL");
+  });
+
+  it("publishes a separate biometric consent — APP 3.3 needs its own", () => {
+    expect(vcMigration).toContain("'biometric_collection', '2026.2', 'consent'");
+    expect(vcMigration).toContain(
+      "Privacy Act 1988 (Cth), section 6 — biometric information is sensitive information");
+    expect(vcMigration).toContain("Australian Privacy Principle 3.3");
+    // The client must be told retention happens, and offered the way out.
+    expect(vcMigration).toContain("We retain your facial image");
+    expect(vcMigration).toContain("You do not have to consent to this");
+    expect(vcMigration).toContain("up to three attempts");
+  });
+
+  it("carries the whole catalogue forward — a version must be self-complete", () => {
+    // The gate reads acceptance as version-specific, so publishing only the new
+    // document at 2026.2 would leave the AUSTRAC consents reading as outstanding.
+    expect(vcMigration).toMatch(/SELECT code, '2026\.2'[\s\S]*WHERE version = '2026\.1'/);
+  });
+
+  it("is deny-by-default and reversible", () => {
+    expect(vcMigration).toContain("ALTER TABLE aml.verification_checks ENABLE ROW LEVEL SECURITY;");
+    expect(vcMigration).toContain("GRANT ALL ON aml.verification_checks TO service_role;");
+    expect(vcMigration).not.toMatch(/GRANT .* ON aml\.verification_checks TO authenticated/);
+    expect(vcMigration).toContain("-- ROLLBACK:");
+  });
+
+  it("keeps the provider swappable — no vendor baked into the schema", () => {
+    // Decision 1 is a self-hosted open-source stack; the schema must not
+    // hard-code it, since the DVS layer will come from a commercial gateway.
+    expect(vcMigration).toContain("provider text");
+    expect(vcMigration).not.toMatch(/CHECK \(provider IN/);
+  });
+});

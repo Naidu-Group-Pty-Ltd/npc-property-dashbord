@@ -1,184 +1,203 @@
-# KYC / identity verification — integration options
+# KYC / identity verification — decisions and open-source vendor evaluation
 
-Status: **proposal, not implemented.** Written in response to the request for
-"a KYC factor integrated for the client to complete … coupled with the main
-command centre receiving the confirmation … trackable."
-
-Everything below assumes the consent layer shipped alongside this document
-(`aml.consent_documents`, server-enforced consent gate). Electronic
-verification must not run before the `identity_verification` consent is
-recorded — that consent is what authorises it.
+Supersedes the proposal of 2026-07-27. The four open decisions have been made
+by the owner and are recorded in §1. §2 evaluates open-source, self-hostable
+options with biometric capability. §3 states plainly what open source cannot
+supply. §4 is the recommended stack. §5 covers what the decisions change in
+the build.
 
 ---
 
-## 1. What the regulation actually requires
+## 1. Decisions (owner, 2026-07-28)
 
-Verification is not a single "KYC check". Under the AML/CTF Act and Rules a
-reporting entity must, before providing a designated service:
+| # | Question | Decision |
+|---|---|---|
+| 1 | Vendor | **Open-source, self-hosted, with biometrics.** Evaluation in §2. |
+| 2 | Retain biometrics? | **Yes — biometric data is retained.** |
+| 3 | Re-verification interval | **None.** Verification does not expire on a clock. |
+| 4 | Failed check | **Two retries — three attempts in total.** |
 
-| Requirement | What it means here |
-|---|---|
-| Collect KYC information | Name, date of birth, residential address (individuals); name, ABN/ACN, registered address (entities) |
-| **Verify** that information | From reliable and independent documentation, electronic data, or a combination |
-| Identify beneficial owners | Anyone owning/controlling ≥25%, or controlling a trust — and verify them too |
-| Identify the person acting | Anyone acting on behalf of the customer, plus their authority to do so |
-| Screen | Sanctions, PEP, and (risk-based) adverse media, on the customer and connected parties |
-| Keep records | Seven years from the relevant trigger event |
+### Note on decision 2
 
-Two practical consequences for the design:
+Biometric information is **sensitive information** under s 6 of the *Privacy
+Act 1988* (Cth). Two consequences follow automatically and are not optional:
 
-- **A selfie-and-licence check is not sufficient on its own** for a company or
-  trust purchase. The flow must branch on the purchasing structure the client
-  already declares in the questionnaire.
-- **The check result is evidence, not a status flag.** What matters at audit is
-  the verification *report* — which sources were matched, at what confidence,
-  at what time — not a green tick in our database.
+- **APP 3.3** — sensitive information may only be collected with the
+  individual's *consent*, and that consent must be specific to the biometric
+  collection. The existing `identity_verification` consent covers electronic
+  verification generally; it does not cover retaining a face image or template.
+  A dedicated biometric consent document is therefore required before any
+  retention occurs (implemented at catalogue v2026.2 — see §5).
+- **APP 11** — the security obligation is proportionate to sensitivity. A
+  retained biometric corpus is a materially higher-value breach target than the
+  document set we hold today, and it cannot be reissued the way a licence number
+  can.
 
----
+Retention is implemented as decided. Recorded here so the basis is on file:
+self-hosting makes this decision considerably safer than it would be with a
+SaaS vendor, because the biometric never leaves infrastructure we control.
+That is the main argument in favour of the open-source direction, and §4 leans
+on it.
 
-## 2. Three viable integration options
+### Note on decision 3
 
-### Option A — Managed IDV provider (recommended)
-
-Use a single Australian IDV vendor covering document capture, liveness/face
-match, DVS (Document Verification Service) checks, and sanctions/PEP screening
-behind one API. Candidates in this market include FrankieOne, Trulioo,
-Sumsub, Onfido and the identity arms of Equifax and illion. FrankieOne and the
-credit-bureau options are the usual fit for an Australian real-estate reporting
-entity because they bundle DVS, credit-header matching and PEP/sanctions.
-
-**Flow.** Portal creates a verification session → client is redirected (or
-shown an embedded widget) → provider captures documents and biometrics →
-provider posts a signed webhook to a new `aml-provider-webhook` handler → we
-store the outcome, the reference, and a copy of the report.
-
-| | |
-|---|---|
-| **Pros** | Fastest to a compliant result. Liveness and document authenticity are genuinely hard to build. One contract, one audit trail. Vendor keeps pace with DVS and sanctions-list changes. |
-| **Cons** | Per-check cost (typically a few dollars). Vendor lock-in. Client data leaves our systems — needs an APP 8 cross-border assessment and must be named in the collection notice (the shipped `privacy_notice` already discloses this). |
-| **Effort** | ~2–3 weeks including webhook hardening, retries and the fallback path. |
-
-**This is the recommendation.** The alternatives below are worth building only
-in addition to it, not instead.
-
-### Option B — Direct DVS via a gateway
-
-Connect to the Attorney-General's Department **Document Verification Service**
-through an accredited gateway. DVS confirms an identity document matches the
-issuing authority's record. It does **not** confirm the person presenting it is
-the document holder, so it must be paired with either a face match or a
-document-sighting workflow.
-
-| | |
-|---|---|
-| **Pros** | Authoritative source. Lower per-check cost. Data stays in Australia. |
-| **Cons** | No liveness — an impersonation risk you must close another way. Accreditation and onboarding with a gateway takes time. Doesn't cover PEP/sanctions, so you still need a second vendor. |
-| **Effort** | ~3–4 weeks, plus gateway onboarding lead time. |
-
-### Option C — Assisted / manual verification (required regardless)
-
-A staff member verifies from certified copies or an in-person/video sighting,
-and records who verified, what they saw, and when.
-
-This is not really an "option" — **you need it whatever else you build**, as
-the fallback for clients who fail electronic verification, refuse it, or have a
-thin data footprint (recent migrants, young adults, some trusts). Building only
-the automated path guarantees a dead end for a real slice of customers.
-
-The existing document-requirement and evidence machinery already covers most of
-this; what's missing is an explicit *verification record* rather than just an
-uploaded file.
+No fixed expiry is implemented. This is a legitimate policy position, but it is
+not the same as "never re-verify": ongoing customer due diligence still
+requires customer information to be kept current, and a **material change**
+(new beneficial owner, change of name, a monitoring trigger) must still prompt
+re-verification. That path already exists in the Phase 10 monitoring work and
+stays available as a manual action. What decision 3 removes is only the
+calendar-driven re-check.
 
 ---
 
-## 3. Recommended shape
+## 2. Open-source options with biometric capability
 
-**Option A as the primary path, Option C as the mandatory fallback.** Skip
-Option B unless per-check cost becomes material at volume.
+Assessed on: licence (code **and** pretrained weights), maintenance status,
+self-hostability, and fitness for a regulated Australian reporting entity.
 
-### Data model
+### 2.1 Full platforms
 
-One new table, mirroring the pattern already used for consents:
+| Project | Licence | Stars | Status | Verdict |
+|---|---|---|---|---|
+| [Ballerine](https://github.com/ballerine-io/ballerine) | Apache-2.0 | 2.4k | **OSS repo "undergoing a major rebuild and is not actively supported at this time"** | **Do not depend on it.** The feature list (liveness, face match, OCR, KYC flows) is the closest match to our needs, but an unsupported repo underneath a compliance obligation is not defensible. Revisit if the rebuild lands. |
+| [Self-Hosted-KYC-Verification-Platform](https://github.com/PetrJoe/Self-Hosted-KYC-Verification-Platform) | see repo | small | hobby-scale | Useful as a reference implementation of the flow. Not a dependency. |
+| [ai-kyc-platform](https://github.com/JhashankKumar/ai-kyc-platform) | see repo | small | hobby-scale | Same. Demonstrates DeepFace + MediaPipe wiring. |
 
-```
-aml.verification_checks
-  id, case_id, party_id            -- party_id: the customer OR a beneficial owner
-  check_type                       -- 'electronic_idv' | 'document_sighting' | 'dvs' | 'screening'
-  provider, provider_reference     -- vendor + their session id, for reconciliation
-  status                           -- 'pending' | 'in_progress' | 'passed' | 'failed'
-                                   -- | 'referred' | 'expired' | 'abandoned'
-  outcome_detail  jsonb            -- sources matched, confidence, reasons
-  report_storage_path              -- the vendor's PDF/JSON report, retained as evidence
-  verified_by, verified_by_type    -- staff member for manual checks
-  requested_at, completed_at
-  retention_trigger_recorded       -- feeds the existing §18 trigger clock
-```
+**Conclusion: there is no maintained, production-grade open-source KYC
+platform to adopt wholesale.** The viable path is to assemble components.
 
-Critically: **one row per party, not per case.** A trust purchase can need four
-verifications, and a case-level flag cannot represent "two of four passed".
+### 2.2 Face match / biometric verification
 
-`referred` matters as much as `passed`/`failed` — most real IDV outcomes that
-need human attention are neither a clean pass nor a clean fail.
+| Project | Code licence | Weights licence | Stars | Verdict |
+|---|---|---|---|---|
+| [CompreFace](https://github.com/exadel-inc/CompreFace) (Exadel) | Apache-2.0 | see caveat | 8.2k | **Recommended.** Self-hosted REST service, Docker-deployed, does detection / verification / recognition. Service boundary is clean — we call an HTTP API we host, so it drops into the existing edge-function architecture without embedding ML in our stack. |
+| [DeepFace](https://github.com/serengil/deepface) | MIT | **inherited per model** | 23.2k | Strong library, actively maintained, includes an `anti_spoofing` flag. **Trap:** the repo states "license types will be inherited when you intend to utilize those models" — the MIT wrapper does not make the weights commercially usable. A model must be pinned and its licence documented. |
+| [InsightFace](https://github.com/deepinsight/insightface) | MIT | **non-commercial research only** | 29.4k | **Reject for production.** The repo is explicit: "the training data containing the annotation (and the models trained with these data) are available for non-commercial research purposes only." Most tutorials and several downstream projects default to InsightFace weights, so this is the easiest licence breach to commit by accident. Any component we adopt must be audited for whether it pulls InsightFace weights underneath. |
 
-### Client portal
+### 2.3 Liveness / presentation-attack detection
 
-Add a **Verify your identity** step after Documents in the existing stepper:
+| Project | Licence | Stars | Verdict |
+|---|---|---|---|
+| [Silent-Face-Anti-Spoofing](https://github.com/minivision-ai/Silent-Face-Anti-Spoofing) (MiniVision) | Apache-2.0 | 1.8k | Passive liveness via Fourier-spectrum analysis — no user interaction needed. Apache-2.0 covers commercial use. **Caveat: effectively unmaintained since 2020.** Presentation attacks have moved on considerably, particularly generative/deepfake attacks that did not exist when it was trained. Usable, but treat its output as one signal, not a verdict. |
+| DeepFace `anti_spoofing` | MIT wrapper | 23.2k | Convenient if DeepFace is already in the stack; same weights-licence caveat. |
 
-- Shows one card per party requiring verification, derived from the declared
-  structure and the ownership data already captured in Phase 6.
-- Each card launches the provider session and reflects live status.
-- Explicit "verify from documents instead" escape hatch, which raises a staff
-  task rather than dead-ending the client.
-- `submit_for_review` gains a verification gate alongside the consent gate.
+**This is the weakest link in the open-source stack.** Liveness is adversarial
+— it degrades as attackers improve, and it needs ongoing model investment that
+no maintained permissive-licence project currently provides. Commercial vendors
+compete specifically on this. Plan for a human-review fallback on any borderline
+result rather than treating passive liveness as authoritative.
 
-### Command centre
+### 2.4 Document capture and MRZ
 
-- **Case workspace → Identity section**: per-party verification status, provider
-  reference, outcome detail, and a link to the stored report.
-- **Timeline**: every state change appends to the existing hash-chained
-  `aml.case_events`, so verification history is tamper-evident like everything
-  else.
-- **Re-verify** action for MLRO/analyst when a check expires or circumstances
-  change, preserving the prior result rather than overwriting it.
-- Verification status feeds the **service gate** as an input — never as an
-  automatic approval. A passed IDV is evidence for a decision, not the decision.
+| Project | Licence | Verdict |
+|---|---|---|
+| [docTR](https://github.com/mindee/doctr) (Mindee) | Apache-2.0 | Actively maintained OCR. Good for extracting fields from a licence or passport image. |
+| [PassportEye](https://github.com/konstantint/PassportEye) / [mrz](https://github.com/Arg0s1080/mrz) | MIT | Machine-readable-zone parsing and checksum validation. Cheap, high-value: a failed MRZ checksum is a strong forgery signal on its own. |
 
-### Trackability
+### 2.5 Sanctions / PEP screening
 
-The request specifically asked for this. Four layers:
+| Project | Code | Data | Verdict |
+|---|---|---|---|
+| [OpenSanctions](https://github.com/opensanctions/opensanctions) | MIT | **CC-BY-NC 4.0** | Best open option, actively maintained, self-hostable via Docker. **Trap: the data is non-commercial.** A reporting entity screening its own customers is commercial use, so a paid data licence from OpenSanctions is required. The engine is free; the list is not. |
 
-1. **Per-party rows** with explicit lifecycle states — you can always answer
-   "who is outstanding and why".
-2. **Provider reference stored on every row** — reconcilable against the
-   vendor's own console during a dispute or an audit.
-3. **Hash-chained case events** for every transition — already built, already
-   independently verifiable via the Phase 11 chain-recomputation tooling.
-4. **A verification ageing view** in the command centre: outstanding checks by
-   age, so nothing sits silently.
+Primary-source lists (DFAT Consolidated List, UN, OFAC) are freely
+redistributable, but aggregation, name normalisation, transliteration and
+deduplication are the hard part — which is exactly what the licensed layer
+provides.
 
 ---
 
-## 4. Decisions needed before implementation
+## 3. What open source cannot supply
 
-1. **Vendor.** Needs a commercial call plus a privacy assessment. If any
-   processing is offshore, the `privacy_notice` consent document (v2026.1)
-   already discloses cross-border disclosure in general terms, but the vendor
-   should be named once chosen.
-2. **Biometric handling.** Whether face-match images are retained by us at all,
-   or only by the provider. Recommendation: **do not retain them** — they are
-   sensitive information under the Privacy Act and add breach exposure for
-   little evidentiary gain over the provider's report.
-3. **Re-verification interval.** Whether verification expires (commonly 12–24
-   months) and re-runs on the existing ongoing-CDD review cycle.
-4. **Failure policy.** What a `failed` outcome does to the service gate.
-   Recommendation: it should *inform* the gate and require a human decision —
-   never auto-block, never auto-approve.
+**Document Verification Service (DVS).** This is the binding constraint, and no
+amount of open source substitutes for it. DVS confirms an identity document
+matches the *issuing authority's* record. Access requires an accredited
+**Gateway Service Provider** under a Participation Agreement with the
+Attorney-General's Department. As at September 2025 a base connection to the DVS
+hub costs **$24,610.40**, plus **$454.55 per document type**. Becoming our own
+GSP is not proportionate; going through an existing one is a commercial
+contract.
+
+Without DVS we are matching a document against its own printed contents and a
+face — not against the issuer. For tranche-2 obligations that is below the
+expected standard.
+
+Also unavailable from open source: liability and indemnity, accreditation
+status, and independent bias/accuracy auditing of the biometric models.
 
 ---
 
-## 5. What this does not change
+## 4. Recommended stack
 
-The protected baseline holds: verification results are **internal AML
-information**. The client portal shows a party's own status and what is
-outstanding; it never shows screening detail, PEP or adverse-media findings,
-risk ratings, or reviewer commentary. The finance portal sees none of it.
+**Hybrid — self-host the biometric layer, buy the authoritative layer.**
+
+| Layer | Choice | Why |
+|---|---|---|
+| Face match | **CompreFace** (Apache-2.0), self-hosted via Docker | Clean REST boundary; biometrics never leave our infrastructure — which is what makes decision 2 defensible |
+| Liveness | **Silent-Face-Anti-Spoofing** (Apache-2.0) as a signal, **plus mandatory human review** on borderline scores | No maintained permissive alternative; do not treat as authoritative |
+| Document OCR / MRZ | **docTR** + **mrz** (Apache-2.0 / MIT) | MRZ checksum failure is a strong, cheap forgery signal |
+| Document authenticity | **DVS via a Gateway Service Provider** — commercial | No open-source path exists (§3) |
+| Sanctions / PEP | **OpenSanctions** self-hosted, **with a commercial data licence** | Code is MIT; the data is not free for our use |
+| Orchestration | **Ours** — `aml.verification_checks` (§5) | Avoids depending on the unmaintained Ballerine repo; keeps provider swappable |
+
+**Weights-licence audit is a release gate.** Before any biometric component
+goes to production, its actual downloaded model weights must be identified and
+their licence recorded. The MIT/Apache badge on a repository says nothing about
+the weights it pulls at runtime, and InsightFace weights — non-commercial only
+— are the common default underneath several of these projects.
+
+---
+
+## 5. What the decisions change in the build
+
+### Consent — catalogue v2026.2 (required by decision 2)
+
+A new `biometric_collection` consent document, separate from
+`identity_verification`, covering: what is captured (facial image and derived
+template), that it is **retained**, where it is stored, how long it is kept,
+that it is processed on infrastructure we control rather than sent to a third
+party, and the right to request document-based verification instead. Consent is
+recorded through the existing versioned catalogue, so the acceptance is pinned
+to a hash of the exact wording — same evidence model as the AUSTRAC consents.
+
+Publishing v2026.2 re-asks every consent, by design: the existing gate treats
+acceptance as version-specific.
+
+### Verification records — `aml.verification_checks`
+
+Per **party**, not per case: a trust purchase can require four verifications,
+and a case-level flag cannot express "two of four passed".
+
+Encoding the decisions:
+
+- **Decision 4 — three attempts.** `attempt_number` (1–3) with a database
+  constraint, and `attempts_remaining` derived. The third failure moves the
+  party to `exhausted` and raises a staff task; it does **not** auto-block the
+  service gate. Consistent with the standing rule that the gate is only ever
+  moved by an explicit, reasoned human decision.
+- **Decision 3 — no expiry.** No `expires_at` column and no scheduled
+  re-verification. A manual `re_verify` action stays available and preserves the
+  prior result rather than overwriting it.
+- **Decision 2 — biometrics retained.** `biometric_storage_path`,
+  `biometric_kind` (`face_image` / `face_template`), `biometric_captured_at`.
+  Stored in a dedicated private bucket, separate from `aml-documents`, so its
+  access policy can be tighter. Every read is audited to the hash chain.
+  Retention runs on the existing §18 **trigger-based** clock — measured from
+  the end of the business relationship, never from upload date.
+
+### Still open
+
+Which Gateway Service Provider to contract for DVS, and whether to take the
+OpenSanctions commercial data licence or screen through the same provider.
+Both are commercial decisions, not technical ones.
+
+---
+
+## 6. Unchanged: the disclosure boundary
+
+Verification results are **internal AML information**. The client portal shows a
+party's own status and what is outstanding — including attempts remaining, so
+the client understands the consequence of a third failure. It never shows
+screening detail, PEP or adverse-media findings, risk ratings, model scores, or
+reviewer commentary. The finance portal sees none of it.
