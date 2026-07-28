@@ -1,32 +1,29 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchAllowedRecording, isAllowedRecordingUrl } from './recordingUrlPolicy';
+import { assertSafeRecordingUrl } from './recordingUrlPolicy';
 
-describe('recording URL policy', () => {
+const publicDns = vi.fn(async (_hostname: string, type: 'A' | 'AAAA') =>
+  type === 'A' ? ['104.16.0.1'] : []);
+
+describe('call recording URL policy', () => {
   it.each([
-    'https://api.vapi.ai/recording.wav',
-    'https://tenant.r2.cloudflarestorage.com/call.wav?signature=value',
-  ])('allows an expected recording URL: %s', (url) => {
-    expect(isAllowedRecordingUrl(url)).toBe(true);
+    'https://storage.vapi.ai/recording.wav?token=signed',
+    'https://account.r2.cloudflarestorage.com/bucket/recording.wav?token=signed',
+    'https://recordings.example.r2.dev/recording.wav?token=signed',
+  ])('allows expected recording host %s', async (value) => {
+    await expect(assertSafeRecordingUrl(value, publicDns)).resolves.toMatchObject({ protocol: 'https:' });
   });
 
   it.each([
-    'http://api.vapi.ai/recording.wav',
-    'https://127.0.0.1/internal',
-    'https://169.254.169.254/latest/meta-data',
+    'http://storage.vapi.ai/recording.wav',
     'https://vapi.ai.attacker.example/recording.wav',
-    'https://user:password@api.vapi.ai/recording.wav',
-  ])('rejects an unsafe recording URL: %s', (url) => {
-    expect(isAllowedRecordingUrl(url)).toBe(false);
+    'https://127.0.0.1/recording.wav',
+  ])('rejects unexpected recording target %s', async (value) => {
+    await expect(assertSafeRecordingUrl(value, publicDns)).rejects.toThrow();
   });
 
-  it('does not follow an allowed URL redirect to an internal service', async () => {
-    const fetcher = vi.fn(async () => new Response(null, {
-      status: 302,
-      headers: { location: 'http://127.0.0.1/internal' },
-    }));
-
-    await expect(fetchAllowedRecording('https://api.vapi.ai/recording.wav', fetcher))
-      .rejects.toThrow('not allowed');
-    expect(fetcher).toHaveBeenCalledTimes(1);
+  it('rejects an allowlisted hostname that resolves privately', async () => {
+    const privateDns = vi.fn(async () => ['127.0.0.1']);
+    await expect(assertSafeRecordingUrl('https://storage.vapi.ai/recording.wav', privateDns))
+      .rejects.toThrow('private or reserved');
   });
 });

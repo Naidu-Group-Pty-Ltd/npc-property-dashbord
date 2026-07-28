@@ -5,9 +5,24 @@
 // returns a new signed URL every time.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from "../_shared/auth.ts";
-import { checkModuleView } from "../_shared/permissions.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-import { fetchAllowedRecording, isAllowedRecordingUrl } from "./recordingUrlPolicy.ts";
+import { checkModuleView } from "../_shared/permissions.ts";
+import { assertSafeRecordingUrl } from "./recordingUrlPolicy.ts";
+
+const MAX_RECORDING_REDIRECTS = 3;
+
+async function fetchRecording(value: string): Promise<Response> {
+  let url = await assertSafeRecordingUrl(value, Deno.resolveDns);
+  for (let redirects = 0; redirects <= MAX_RECORDING_REDIRECTS; redirects++) {
+    const response = await fetch(url, { redirect: 'manual' });
+    if (![301, 302, 303, 307, 308].includes(response.status)) return response;
+    if (redirects === MAX_RECORDING_REDIRECTS) throw new Error('Too many recording redirects');
+    const location = response.headers.get('location');
+    if (!location) throw new Error('Recording redirect omitted its location');
+    url = await assertSafeRecordingUrl(location, Deno.resolveDns, url.toString());
+  }
+  throw new Error('Too many recording redirects');
+}
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -29,7 +44,7 @@ Deno.serve(async (req) => {
     const { error: authError, userId, username, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
 
-    const permission = await checkModuleView(supabase, userId!, 'call_logs', authMethod);
+    const permission = await checkModuleView(supabase, userId!, 'call_logs', authMethod, true);
     if (!permission.allowed) {
       return createForbiddenResponse(permission.reason || 'Call logs view permission required', corsHeaders);
     }
@@ -74,29 +89,32 @@ Deno.serve(async (req) => {
       }
     }
 
-    const url = freshUrl || row.recording_url;
-    if (!url) {
+    const candidateUrl = freshUrl || row.recording_url;
+    if (!candidateUrl) {
       return new Response(JSON.stringify({ error: 'No recording available' }), {
         status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    if (!isAllowedRecordingUrl(url)) {
-      console.warn('[get-call-recording] Rejected untrusted recording URL for call log:', row.id);
-      return new Response(JSON.stringify({ error: 'Recording URL is not allowed' }), {
+    let url: string;
+    try {
+      url = (await assertSafeRecordingUrl(candidateUrl, Deno.resolveDns)).toString();
+    } catch (error) {
+      console.warn('[get-call-recording] Rejected unsafe recording URL:', error);
+      return new Response(JSON.stringify({ error: 'Recording URL is not permitted' }), {
         status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
     // Persist the freshest URL for cheap subsequent access.
     if (freshUrl && freshUrl !== row.recording_url) {
-      supabase.from('vapi_call_logs').update({ recording_url: freshUrl }).eq('id', row.id)
+      supabase.from('vapi_call_logs').update({ recording_url: url }).eq('id', row.id)
         .then(() => {}, (e: unknown) => console.error('[get-call-recording] persist failed', e));
     }
 
     if (mode === 'stream') {
       // Server-side fetch of the signed URL and stream bytes back with CORS.
-      const upstream = await fetchAllowedRecording(url);
+      const upstream = await fetchRecording(url);
       if (!upstream.ok || !upstream.body) {
         return new Response(JSON.stringify({ error: `Upstream ${upstream.status}` }), {
           status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' },
