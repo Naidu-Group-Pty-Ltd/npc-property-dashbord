@@ -117,7 +117,7 @@ const navigationGroups = [
 const adminGroup = {
   title: 'Administration',
   itemTitles: [
-    'Automation',
+    'Auto Report Generation',
     'Templates',
     'Branding',
     'Integrations',
@@ -144,7 +144,7 @@ const adminGroup = {
 };
 
 const adminItems = [
-  { title: 'Automation', url: '/automation', icon: Zap, moduleKey: 'automation' },
+  { title: 'Auto Report Generation', url: '/automation', icon: Zap, moduleKey: 'automation' },
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates' },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations' },
