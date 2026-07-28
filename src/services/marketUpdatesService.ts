@@ -147,6 +147,18 @@ export async function clearMarketSourceError(source_id: string): Promise<MarketS
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
+/**
+ * Takes a published update off the dashboard, or puts it back. Hiding sets the
+ * row to `ignored` rather than deleting it so the dedupe hash survives and a
+ * later ingestion run cannot rediscover and republish the same article.
+ */
+export async function setMarketUpdateHidden(updateId: string, hidden: boolean): Promise<void> {
+  try {
+    const { error } = await invokeSecureFunction('market-updates-curate', { action: hidden ? 'hide' : 'restore', updateId });
+    if (error) throw error;
+  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+}
+
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
   const payload = await invokeMarketRead<{ status?: MarketSourceHealth }>({ action:'status' });
   if (!payload.status) throw operationalError('database', new Error('Market Updates status was missing.'), 'market-updates-status');
