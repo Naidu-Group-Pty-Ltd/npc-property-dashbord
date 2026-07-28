@@ -7,7 +7,7 @@ import { MobileSidebar } from './MobileSidebar';
 
 const mobileNavItems = [
   { title: 'Overview', url: '/', icon: Home },
-  { title: 'Opportunity Marketplace', url: '/listings', icon: Building2 },
+  { title: 'Marketplace', url: '/listings', icon: Building2 },
   { title: 'Clients', url: '/clients', icon: UserCircle },
   { title: 'Reports', url: '/reports', icon: BarChart3 },
   { title: 'Generated', url: '/generated-reports', icon: FileText },
