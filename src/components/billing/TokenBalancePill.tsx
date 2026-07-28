@@ -35,7 +35,6 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
   const available = balance?.available ?? 0;
   const allowance = balance?.allowance ?? 0;
   const used = balance?.used ?? 0;
-  const reserved = balance?.reserved ?? 0;
 
   const pct = allowance > 0 ? Math.max(0, Math.min(100, (available / allowance) * 100)) : 0;
   const critical = criticalBalance;
@@ -149,14 +148,13 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-px bg-border text-center text-xs">
+        {/* Used only. A reservation is a transient hold the metering layer
+            takes and releases within one generation — surfacing it just made
+            the balance look like it moved twice for a single report. */}
+        <div className="bg-border text-center text-xs">
           <div className="bg-popover px-3 py-2">
             <p className="text-muted-foreground">Used</p>
             <p className="font-semibold tabular-nums">{used.toLocaleString()}</p>
-          </div>
-          <div className="bg-popover px-3 py-2">
-            <p className="text-muted-foreground">Reserved</p>
-            <p className="font-semibold tabular-nums">{reserved.toLocaleString()}</p>
           </div>
         </div>
 

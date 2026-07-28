@@ -256,17 +256,16 @@ export async function invokeSecureFunction<T = any>(
 
     // Surface token usage for metered generators.
     if (isReportGenerator(functionName)) {
+      // Only what was actually charged. The reservation and the pre-flight
+      // estimate are metering mechanics — the server still needs both, but
+      // nothing in the UI reports on them.
       const headerUsed = Number(response.headers.get('x-tokens-used') || 0);
-      const headerReserved = Number(response.headers.get('x-tokens-reserved') || 0);
-      const headerEstimated = Number(response.headers.get('x-tokens-estimated') || 0);
       const headerDuration = Number(response.headers.get('x-duration-ms') || 0);
       const bodyUsed = Number((data as any)?.tokensUsed || 0);
       const used = bodyUsed > 0 ? bodyUsed : headerUsed;
       if (used > 0) {
         emitTokensUsed({
           tokensUsed: used,
-          tokensReserved: headerReserved || (data as any)?.tokensReserved,
-          estimatedTokens: headerEstimated || (data as any)?.estimatedTokens,
           durationMs: headerDuration || (data as any)?.durationMs,
           functionName,
         });

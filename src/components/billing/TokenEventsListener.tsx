@@ -42,8 +42,6 @@ export function TokenEventsListener() {
     const COALESCE_MS = 2500;
     const buckets = new Map<string, {
       tokensUsed: number;
-      tokensReserved: number;
-      estimatedTokens: number;
       durationMs: number;
       count: number;
       timer: ReturnType<typeof setTimeout>;
@@ -55,10 +53,6 @@ export function TokenEventsListener() {
       buckets.delete(functionName);
       const label = FUNCTION_LABELS[functionName] ?? "Report";
       const parts: string[] = [`Used ${b.tokensUsed.toLocaleString()} tokens`];
-      if (b.tokensReserved) parts.push(`reserved ${b.tokensReserved.toLocaleString()}`);
-      if (b.estimatedTokens && b.estimatedTokens !== b.tokensReserved) {
-        parts.push(`est. ${b.estimatedTokens.toLocaleString()}`);
-      }
       if (b.durationMs > 0) {
         const s = (b.durationMs / 1000).toFixed(b.durationMs < 10_000 ? 1 : 0);
         parts.push(`${s}s`);
@@ -70,14 +64,11 @@ export function TokenEventsListener() {
       });
     };
 
-    const offUsed = onTokensUsed(({ tokensUsed, tokensReserved, estimatedTokens, durationMs, functionName }) => {
+    const offUsed = onTokensUsed(({ tokensUsed, durationMs, functionName }) => {
       const existing = buckets.get(functionName);
       if (existing) clearTimeout(existing.timer);
       const next = {
         tokensUsed: (existing?.tokensUsed ?? 0) + (tokensUsed || 0),
-        // Reserved/estimated aren't additive across chunks — track the max seen.
-        tokensReserved: Math.max(existing?.tokensReserved ?? 0, tokensReserved ?? 0),
-        estimatedTokens: Math.max(existing?.estimatedTokens ?? 0, estimatedTokens ?? 0),
         durationMs: (existing?.durationMs ?? 0) + (durationMs || 0),
         count: (existing?.count ?? 0) + 1,
         timer: setTimeout(() => flush(functionName), COALESCE_MS),

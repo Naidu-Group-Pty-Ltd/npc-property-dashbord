@@ -22,8 +22,6 @@ interface AuditRow {
   kind: string | null;
   idempotency_key: string;
   job_id: string | null;
-  requested_tokens: number;
-  reserved_tokens: number;
   used_tokens: number;
   available_tokens: number;
   status: string | null;
@@ -70,20 +68,17 @@ function OutcomeBadge({ status, error }: { status: string | null; error: string 
 }
 
 function TokenSummary({ row }: { row: AuditRow }) {
+  // Only what was charged. The requested amount and the reservation are
+  // internal metering mechanics — they told an operator nothing they could act
+  // on, and three near-identical numbers per row made the real one hard to find.
   return (
-    <div className="grid min-w-0 grid-cols-3 gap-1 text-right text-[11px]" aria-label={`Requested ${row.requested_tokens.toLocaleString()}, reserved ${row.reserved_tokens.toLocaleString()}, used ${row.used_tokens.toLocaleString()} tokens`}>
-      <div className="min-w-0 rounded-lg bg-muted/35 px-1.5 py-1">
-        <span className="block truncate text-muted-foreground">Req</span>
-        <span className="block truncate font-medium tabular-nums text-foreground" title={`${row.requested_tokens}`}>{row.requested_tokens.toLocaleString()}</span>
-      </div>
-      <div className="min-w-0 rounded-lg bg-brand-500/10 px-1.5 py-1">
-        <span className="block truncate text-brand-700/80 dark:text-brand-300/80">Res</span>
-        <span className="block truncate font-semibold tabular-nums text-brand-700 dark:text-brand-300" title={`${row.reserved_tokens}`}>{row.reserved_tokens.toLocaleString()}</span>
-      </div>
-      <div className="min-w-0 rounded-lg bg-success/10 px-1.5 py-1">
-        <span className="block truncate text-success/80 dark:text-success/80">Used</span>
-        <span className="block truncate font-semibold tabular-nums text-success dark:text-success" title={`${row.used_tokens}`}>{row.used_tokens.toLocaleString()}</span>
-      </div>
+    <div
+      className="text-right text-sm"
+      aria-label={`Used ${row.used_tokens.toLocaleString()} tokens`}
+    >
+      <span className="font-semibold tabular-nums text-foreground" title={`${row.used_tokens}`}>
+        {row.used_tokens.toLocaleString()}
+      </span>
     </div>
   );
 }
@@ -146,7 +141,7 @@ function AuditEventMobileCard({ row, userLabel, isOpen, onOpen }: { row: AuditRo
 const PREMIUM_SCROLLBAR = "[scrollbar-color:hsl(var(--primary)/0.35)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-primary/35 [&::-webkit-scrollbar-track]:bg-transparent";
 
 const EVENT_STATES = [
-  { label: "Reserve", description: "Holds estimated Mission Control tokens before a job runs.", icon: RotateCcw, tone: "border-brand-500/20 bg-brand-500/10 text-brand-700 dark:text-brand-300" },
+  { label: "Reserve", description: "Holds Mission Control tokens before a job runs.", icon: RotateCcw, tone: "border-brand-500/20 bg-brand-500/10 text-brand-700 dark:text-brand-300" },
   { label: "Commit", description: "Finalises actual token usage after successful completion.", icon: CheckCircle2, tone: "border-success/20 bg-success/10 text-success dark:text-success" },
   { label: "Cancel", description: "Releases a reservation when work is cancelled or fails safely.", icon: XCircle, tone: "border-destructive/20 bg-destructive/10 text-destructive" },
 ] as const;
@@ -483,7 +478,7 @@ export default function TokenAuditLog() {
                         <TableHead className="w-[210px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">User</TableHead>
                         <TableHead className="w-[230px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Function / kind</TableHead>
                         <TableHead className="w-[280px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Idempotency key</TableHead>
-                        <TableHead className="w-[180px] py-3 text-right text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Tokens</TableHead>
+                        <TableHead className="w-[120px] py-3 text-right text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Used</TableHead>
                         <TableHead className="w-[120px] py-3 text-right text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Available</TableHead>
                         <TableHead className="w-[220px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Status / outcome</TableHead>
                       </TableRow>

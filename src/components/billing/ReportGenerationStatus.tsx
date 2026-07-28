@@ -71,7 +71,7 @@ export function ReportGenerationStatus({
   const openBilling = () =>
     void openMissionControlWithAttribution("seat_plan", AURIXA_PRICING_URL);
 
-  // Hard block: estimated cost exceeds available
+  // Hard block: the report costs more than the balance holds
   if (insufficient) {
     const short = Math.max(0, need - available);
     return (
@@ -89,7 +89,7 @@ export function ReportGenerationStatus({
         </AlertTitle>
         <AlertDescription className="flex flex-col gap-4 text-sm text-foreground/90">
           <span className="leading-relaxed">
-            This report is estimated at{" "}
+            This report costs{" "}
             <span className="font-semibold tabular-nums">{need.toLocaleString()}</span> tokens but
             only <span className="font-semibold tabular-nums">{available.toLocaleString()}</span>{" "}
             are available — short by{" "}
