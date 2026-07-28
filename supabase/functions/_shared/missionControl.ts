@@ -769,3 +769,62 @@ export async function withTokenReservation<T>(
     throw err;
   }
 }
+
+// ── Plan changes ────────────────────────────────────────────────────────────
+// A billing plan change is worth telling the workspace about exactly once: the
+// tier moved and an allowance landed in the balance. Both are things the team
+// will otherwise discover by noticing a different number.
+
+export interface PlanChangeEvent {
+  id: string;
+  fromPlanSlug: string | null;
+  fromPlanName: string | null;
+  toPlanSlug: string;
+  toPlanName: string;
+  /** Credits added by the change. Zero when the period was already credited. */
+  creditsGranted: number;
+  creditsExpireAt: string | null;
+  createdAt: string;
+}
+
+/**
+ * Plan changes this workspace has not been shown yet, newest first.
+ *
+ * Reading deliberately does not acknowledge — see acknowledgePlanChange. A
+ * notice retired on fetch is lost to anyone whose page failed to render, and
+ * this is the only time it is shown.
+ */
+export async function getPlanChanges(): Promise<PlanChangeEvent[]> {
+  const q = new URLSearchParams({
+    tenant_ref: AGENCY_TENANT_REF,
+    display_name: AGENCY_DISPLAY_NAME,
+  });
+  const res = await mcFetch(`/api/public/tokens/plan-change?${q.toString()}`, { method: "GET" });
+  const body = await parseOrThrow(res);
+  const rows = Array.isArray(body?.changes) ? body.changes : [];
+  // deno-lint-ignore no-explicit-any
+  return rows.map((c: any) => ({
+    id: String(c.id),
+    fromPlanSlug: c.from_plan_slug ?? null,
+    fromPlanName: c.from_plan_name ?? null,
+    toPlanSlug: String(c.to_plan_slug ?? ""),
+    toPlanName: String(c.to_plan_name ?? ""),
+    creditsGranted: Number(c.credits_granted ?? 0),
+    creditsExpireAt: c.credits_expire_at ?? null,
+    createdAt: c.created_at ?? null,
+  }));
+}
+
+/** Retires a notice, so the workspace is told once and not again. */
+export async function acknowledgePlanChange(id: string): Promise<boolean> {
+  const res = await mcFetch(`/api/public/tokens/plan-change`, {
+    method: "POST",
+    body: JSON.stringify({
+      id,
+      tenant_ref: AGENCY_TENANT_REF,
+      display_name: AGENCY_DISPLAY_NAME,
+    }),
+  });
+  const body = await parseOrThrow(res);
+  return body?.acknowledged === true;
+}
