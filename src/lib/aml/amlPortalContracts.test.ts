@@ -954,3 +954,39 @@ describe("KYC vendor documentation stays internally consistent", () => {
     expect(investigation).toMatch(/risk evaluation never moves the service gate/);
   });
 });
+
+describe("zero-cost KYC solution keeps its licence evidence", () => {
+  const zeroCost = readFileSync(join(repo, "docs/aml/kyc-zero-cost-solution.md"), "utf8");
+  const options = readFileSync(join(repo, "docs/aml/kyc-integration-options.md"), "utf8");
+
+  it("names the model whose weights are actually permissive", () => {
+    // SFace is the only face-match model found with Apache-2.0 *weights*.
+    // If this is ever swapped for ArcFace/InsightFace the stack stops being free.
+    expect(zeroCost).toContain("face_recognition_sface");
+    expect(zeroCost).toMatch(/Apache-2\.0,? weights included|Apache-2\.0 \*including\* its weights/);
+    // Apache-2.0 obliges us to retain the attribution; assert it survives,
+    // tolerating the line wrapping in the prose.
+    expect(zeroCost.replace(/\s+/g, " "))
+      .toContain("Shenzhen Institute of Artificial Intelligence and Robotics for Society");
+  });
+
+  it("takes sanctions data from DFAT directly, not via the CC-BY-NC aggregator", () => {
+    expect(zeroCost).toContain("DFAT Consolidated List");
+    expect(zeroCost).toMatch(/OpenSanctions[\s\S]{0,200}CC-BY-NC/);
+  });
+
+  it("states the DVS gap rather than implying parity with a paid stack", () => {
+    expect(zeroCost).toContain("No DVS");
+    expect(zeroCost).toMatch(/not checking against the issuing authority/i);
+    expect(zeroCost).toContain("compensating control");
+  });
+
+  it("keeps the upgrade path open — no schema rework to add DVS later", () => {
+    expect(zeroCost).toMatch(/check_type = 'dvs'/);
+    expect(zeroCost).toContain("no schema change");
+  });
+
+  it("cross-links from the paid evaluation so neither is read alone", () => {
+    expect(options).toContain("kyc-zero-cost-solution.md");
+  });
+});
