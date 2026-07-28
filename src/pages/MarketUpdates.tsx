@@ -480,7 +480,6 @@ export default function MarketUpdates() {
               <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
               <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
               {(sourceHealth.candidates ?? 0) > 0 && <Button variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
-              {sourceHealth.latestRun && <Button variant="ghost" onClick={() => setRunSummary(sourceHealth.latestRun!)}>View latest run</Button>}
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
           </div>
@@ -719,9 +718,15 @@ export default function MarketUpdates() {
                     </div>
 
                     <h3 className="mt-3 text-lg font-semibold leading-snug">
-                      <button type="button" onClick={() => setSelectedUpdate(update)} className="rounded text-left text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-primary">
+                      <a
+                        href={update.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-primary"
+                      >
                         {update.title}
-                      </button>
+                        <span className="sr-only"> (opens the original article in a new tab)</span>
+                      </a>
                     </h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       <span className="font-medium text-foreground/80">{update.source_name}</span> · {dateLabel(update.source_published_at ?? update.ingested_at)}
