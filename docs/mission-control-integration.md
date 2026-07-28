@@ -83,13 +83,16 @@ So a smooth checkout is not a session parameter; it is a properly populated
 Stripe Customer. Mission Control's Customer used to be created with a name and
 nothing else, which is why every buyer retyped their email on every visit.
 
-What now flows, and from where:
+What now flows, and from where — two sources, the **person** and the
+**workspace**:
 
 | Field | Source | Lands as |
 |---|---|---|
 | Email | `custom_users.email` of the signed-in user | Stripe Customer `email` (seeded if blank) + this purchase's `receipt_email` |
 | First / last name | `custom_users.first_name` / `last_name` (Settings → Profile & Credentials) | Customer metadata `buyer_*`, session + invoice metadata |
 | Phone | `custom_users.phone` | Stripe Customer `phone` (seeded if blank) |
+| **Company name** | `global_report_settings.contact_details.company_name` (Templates → Global Report Settings) | Stripe Customer `name` — the billing name on every tax invoice |
+| **ABN** | `global_report_settings.contact_details.abn` | pre-attached to the Stripe Customer as an `au_abn` tax ID |
 | Billing address | typed once on Stripe's page | written back to the Customer via `customer_update`, so the **next** checkout prefills it |
 | Cardholder name/email | Stripe's card-save page | `payment_methods.billing_name` / `billing_email`, shown on the card row |
 
@@ -109,7 +112,41 @@ loses their own receipt to the shared address.
 
 Users fill their name and phone in under **Settings → Profile & Credentials →
 Contact Details**. All three fields are optional; leaving them blank simply
-gives the previous email-only behaviour.
+gives the previous email-only behaviour. Company name and ABN are not per-user
+— they are the workspace's, already configured once under **Templates → Global
+Report Settings → Contact Details**.
+
+### ABN capture
+
+Purchase sessions enable Stripe's `tax_id_collection`, so buyers in a supported
+country get a business tax ID + legal entity name form and the collected ID
+lands on the Stripe Customer (and therefore on the invoice). It is **optional**,
+not `required: 'if_supported'` — a buyer without an ABN must still be able to
+pay.
+
+In practice most buyers never see the form: the workspace's ABN is forwarded on
+the handoff and pre-attached to the Customer, and Stripe hides the tax-ID form
+once a Customer has any tax ID. That cuts both ways, which is why Mission
+Control validates the **ATO checksum** before attaching — an invalid ABN would
+be both permanent and unfixable by the buyer, so a value that fails is dropped
+and Checkout asks instead.
+
+`Customer.name` is *not* written back from the checkout form
+(`customer_update.name` stays at its `never` default). Outside the tax-ID form
+Checkout would save the **cardholder's personal name** onto an organisation's
+billing account; the workspace name is the right value and Mission Control owns
+that field. It re-syncs on a workspace rename but leaves a name an operator
+edited by hand in Stripe alone, tracked via the Customer's `workspace_name`
+metadata key. The legal entity name a buyer declares on the tax-ID form is
+recorded separately on `tenants.tax_id_business_name`.
+
+Whatever Stripe collects is mirrored back by the checkout webhook onto
+`tenants.tax_id_type` / `tax_id_value` / `tax_id_business_name` /
+`tax_id_captured_at`, so operators can see the ABN without opening the Stripe
+dashboard. Stripe stays authoritative.
+
+Tax ID collection is deliberately **not** enabled on the card-save (setup-mode)
+flow — an ABN belongs to an invoice, not to vaulting a card.
 
 ## Manual rotation
 

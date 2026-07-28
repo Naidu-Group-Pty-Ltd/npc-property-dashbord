@@ -419,6 +419,11 @@ export interface BillingContactArgs {
   fullName?: string | null;
   phone?: string | null;
   company?: string | null;
+  /** Business tax ID (ABN). Mission Control validates the checksum and drops
+   *  anything malformed, so Stripe asks the buyer rather than recording junk. */
+  taxId?: string | null;
+  /** Stripe tax ID type; defaults to 'au_abn' at Mission Control. */
+  taxIdType?: string | null;
 }
 
 export interface HandoffArgs {
@@ -449,6 +454,8 @@ export async function createBillingHandoff(args: HandoffArgs): Promise<HandoffRe
         full_name: args.contact.fullName ?? undefined,
         phone: args.contact.phone ?? undefined,
         company: args.contact.company ?? undefined,
+        tax_id: args.contact.taxId ?? undefined,
+        tax_id_type: args.contact.taxIdType ?? undefined,
       }
     : undefined;
   const hasContact = contact && Object.values(contact).some((v) => v !== undefined);
