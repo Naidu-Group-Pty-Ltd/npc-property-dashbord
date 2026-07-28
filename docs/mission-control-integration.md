@@ -148,6 +148,43 @@ dashboard. Stripe stays authoritative.
 Tax ID collection is deliberately **not** enabled on the card-save (setup-mode)
 flow — an ABN belongs to an invoice, not to vaulting a card.
 
+## Top-up purchases → token balance
+
+A top-up pack bought through Stripe credits the workspace's token balance like
+this:
+
+```
+Stripe checkout.session.completed (payment_status: paid)
+  → apply_topup(tenant, pack)            adds a `topup` row to token_ledger
+  → AFTER INSERT trigger                 recompute_token_balance(tenant)
+  → tokens.balance.updated webhook       mission-control-webhook → token_balance_cache
+  → dashboard pill                       refreshes on focus, and polls every 3 min
+```
+
+Three things make it land on the balance the workspace actually spends from:
+
+1. **The right tenant.** A clone meters under `prime:<supabase-project-ref>` —
+   that `tenant_ref` is baked into `_shared/missionControl.ts`. Mission Control
+   resolves a clone-scoped purchase to a tenant the clone *already has* rather
+   than provisioning a parallel `clone:<slug>` one, which used to split the
+   workspace across two balances: money taken, dashboard unchanged.
+2. **Only paid sessions.** `checkout.session.completed` fires for delayed
+   payment methods while still `unpaid`; those credit on
+   `checkout.session.async_payment_succeeded` instead. `apply_topup` is
+   idempotent on `stripe:<session_id>`, so a replay or both events firing
+   credits exactly once.
+3. **The clone is told.** Fulfilment fires `tokens.balance.updated`, so the
+   pill reflects the purchase instead of waiting for the next poll.
+
+The storefront's success page polls `fulfilled` — which for a top-up means the
+`token_ledger` row keyed on `stripe:<session_id>` exists — before offering the
+"back to your dashboard" link, so by the time a buyer returns the credits are
+real.
+
+Units: pack `tokens`, plan `monthly_allowance` and the balance are all **billing
+credits**, the same unit `_shared/tokenEstimator.ts` reserves in. A 500-credit
+pack raises `available` by exactly 500.
+
 ## Manual rotation
 
 UI lives under **Settings → Mission Control Key** (superadmin only).
