@@ -1185,7 +1185,7 @@ export const userGuideKnowledge: GuideSection[] = [
         ],
       },
       {
-        title: 'Portal Configuration',
+        title: 'Client Portal',
         description: 'Configure branding and settings for the client-facing portal.',
         features: [
           'Custom branding and logos',
@@ -1195,7 +1195,7 @@ export const userGuideKnowledge: GuideSection[] = [
           'Auto-email notifications for portal events',
         ],
         steps: [
-          'Navigate to "Portal Config" in the sidebar',
+          'Navigate to "Client Portal" in the sidebar',
           'Configure branding, colors, and logos',
           'Enable the features you want clients to access',
           'Test the portal by logging in as a client',
