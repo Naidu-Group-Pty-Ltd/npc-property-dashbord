@@ -632,15 +632,29 @@ export function VownetPDFGenerator({
           const _bWeb = __brandSettings?.contactDetails?.website || '';
           const footerDiv = document.createElement('div');
           footerDiv.style.cssText = 'position:absolute;left:-9999px;top:0;width:794px;background:#f8f9fa;padding:4px 40px;font-family:Arial,sans-serif;display:flex;justify-content:space-between;align-items:center;';
-          footerDiv.innerHTML = `
-            <div style="display:flex;gap:18px;font-size:7.5pt;color:#4a5568;">
-              ${_bPhone ? `<span>\u{1F4DE} ${_bPhone}</span>` : ''}
-              ${_bEmail ? `<span>\u{2709}\u{FE0F} ${_bEmail}</span>` : ''}
-              ${_bWeb ? `<span>\u{1F310} ${_bWeb}</span>` : ''}
-            </div>
-            <div style="font-size:6pt;color:#b48c32;font-weight:700;letter-spacing:1.5px;">CONFIDENTIAL</div>
-            <div style="font-size:7.5pt;color:#4a5568;">Page ${pdfPageIndex + 1}</div>
-          `;
+
+          const contactDetails = document.createElement('div');
+          contactDetails.style.cssText = 'display:flex;gap:18px;font-size:7.5pt;color:#4a5568;';
+          [
+            [_bPhone, '\u{1F4DE}'],
+            [_bEmail, '\u{2709}\u{FE0F}'],
+            [_bWeb, '\u{1F310}'],
+          ].forEach(([value, icon]) => {
+            if (!value) return;
+            const detail = document.createElement('span');
+            detail.textContent = `${icon} ${value}`;
+            contactDetails.appendChild(detail);
+          });
+
+          const confidentiality = document.createElement('div');
+          confidentiality.style.cssText = 'font-size:6pt;color:#b48c32;font-weight:700;letter-spacing:1.5px;';
+          confidentiality.textContent = 'CONFIDENTIAL';
+
+          const pageNumber = document.createElement('div');
+          pageNumber.style.cssText = 'font-size:7.5pt;color:#4a5568;';
+          pageNumber.textContent = `Page ${pdfPageIndex + 1}`;
+
+          footerDiv.append(contactDetails, confidentiality, pageNumber);
           document.body.appendChild(footerDiv);
           try {
             const footerCanvas = await html2canvas(footerDiv, { scale: 2, backgroundColor: '#f8f9fa', useCORS: true });
