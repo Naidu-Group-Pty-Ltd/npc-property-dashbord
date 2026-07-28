@@ -221,11 +221,19 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
             ref={waveformRef} 
             className="w-full min-h-[80px]"
           />
-          {isLoading && (
+          {isLoading && !errorMessage && (
             <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background dark:bg-black/80 backdrop-blur-sm">
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 animate-pulse rounded-full bg-brand-300" />
                 <span className="text-sm text-muted-foreground dark:text-muted-foreground">Loading audio...</span>
+              </div>
+            </div>
+          )}
+          {errorMessage && (
+            <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background dark:bg-black/80 backdrop-blur-sm p-3">
+              <div className="flex items-center gap-2 text-center">
+                <AlertCircle className="h-4 w-4 text-destructive" />
+                <span className="text-sm text-muted-foreground">{errorMessage}</span>
               </div>
             </div>
           )}
