@@ -506,7 +506,61 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           },
           userId, userEmail);
 
-        return jsonResponse({ case: created, activation });
+        // Hand the client the way in. Activation is meaningless to them until
+        // something in their portal points at the screening flow, so post a
+        // notification carrying the deep link, and report back whether they
+        // can actually reach it — a client with no portal login needs an
+        // invite, and the operator should learn that here rather than a week
+        // later when nothing has been submitted.
+        let portalAccess: { has_portal_access: boolean; notified: boolean; note: string };
+        const { data: portalUsers } = await admin
+          .from('client_portal_users')
+          .select('id, status')
+          .eq('client_id', clientId)
+          .eq('status', 'active')
+          .limit(1);
+        const hasPortalAccess = (portalUsers ?? []).length > 0;
+
+        let notified = false;
+        // Portal-safe by construction (Appendix C.1): reference and next step
+        // only — no risk, screening or internal state.
+        const { error: notifyErr } = await admin
+          .from('client_portal_notifications')
+          .insert({
+            client_id: clientId,
+            title: 'Identity verification required',
+            message:
+              'Your identity and compliance check is ready to complete. It takes about 10 minutes ' +
+              'and covers the consents and documents we are required to collect before we can act for you.',
+            type: 'action',
+            category: 'document',
+            action_url: '/client/aml',
+            metadata: { aml_case_reference: created.case_reference, source: 'aml_activation' },
+          });
+        if (notifyErr) {
+          // A failed notification must not roll back a recorded activation —
+          // surface it instead so it can be re-sent.
+          console.error('aml-cases: portal notification insert failed', notifyErr);
+        } else {
+          notified = true;
+        }
+
+        portalAccess = {
+          has_portal_access: hasPortalAccess,
+          notified,
+          note: hasPortalAccess
+            ? 'The client has been notified in their portal with a link to the compliance check.'
+            : 'This client has no active portal login yet. Send them a portal invitation so they can complete the compliance check.',
+        };
+
+        await appendEvent(admin, created.id, 'client_portal_invited',
+          hasPortalAccess
+            ? 'Client notified in portal — compliance check available'
+            : 'Portal notification queued — client has no active portal login yet',
+          { client_portal: portalAccess, action_url: '/client/aml' },
+          userId, userEmail);
+
+        return jsonResponse({ case: created, activation, client_portal: portalAccess });
       }
 
       case 'update': {
@@ -622,6 +676,103 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .order('created_at', { ascending: false }).limit(limit);
         if (error) throw error;
         return jsonResponse({ events: data ?? [] });
+      }
+
+      case 'consent_status': {
+        // Command-centre confirmation that the client accepted the current
+        // AUSTRAC-referenced consent set, and exactly which wording they saw.
+        if (!body.case_id) return jsonResponse({ error: 'case_id is required' }, 400);
+        const { data: docs, error: docErr } = await admin.schema('aml').from('consent_documents')
+          .select('id, code, version, title, acknowledgement_type, required, sort_order, effective_from')
+          .is('retired_at', null)
+          .lte('effective_from', new Date().toISOString())
+          .order('version', { ascending: false })
+          .order('sort_order', { ascending: true });
+        if (docErr) return jsonResponse({ error: docErr.message }, 400);
+        const currentVersion = (docs ?? [])[0]?.version ?? null;
+        const current = (docs ?? []).filter((d: any) => d.version === currentVersion);
+
+        const { data: accepted, error: accErr } = await admin.schema('aml').from('consents')
+          .select('kind, version, accepted_at, actor_type, actor_label, document_hash, ip_address')
+          .eq('case_id', body.case_id)
+          .order('accepted_at', { ascending: true });
+        if (accErr) return jsonResponse({ error: accErr.message }, 400);
+
+        const acceptedCurrent = new Map(
+          (accepted ?? []).filter((a: any) => a.version === currentVersion)
+            .map((a: any) => [a.kind, a]));
+        const outstanding = current
+          .filter((d: any) => d.required && !acceptedCurrent.has(d.code))
+          .map((d: any) => ({ code: d.code, title: d.title }));
+
+        return jsonResponse({
+          version: currentVersion,
+          satisfied: Boolean(currentVersion) && current.length > 0 && outstanding.length === 0,
+          outstanding,
+          documents: current.map((d: any) => {
+            const a: any = acceptedCurrent.get(d.code);
+            return {
+              code: d.code, title: d.title, required: d.required,
+              acknowledgement_type: d.acknowledgement_type,
+              accepted_at: a?.accepted_at ?? null,
+              accepted_by: a?.actor_label ?? null,
+              actor_type: a?.actor_type ?? null,
+              // Ties the acceptance to the exact text presented.
+              document_hash: a?.document_hash ?? null,
+            };
+          }),
+          // Superseded acceptances are retained, never overwritten.
+          history: (accepted ?? []).filter((a: any) => a.version !== currentVersion),
+        });
+      }
+
+      case 'search_clients': {
+        // Client picker for activation (directive §13.4: no raw-UUID entry).
+        //
+        // The general client-data broker only returns the full client list to
+        // superadmins — a compliance officer who created none of the clients
+        // and is assigned to none would see an empty picker. Activation is an
+        // AML-role action, so this op provides its own minimal, AML-gated
+        // lookup instead of widening that broker.
+        //
+        // Deliberately narrow: active clients only, name match only, capped
+        // result set, and a projection carrying no financial or contact data.
+        if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
+        const q = String(body.query ?? '').trim();
+        if (q.length < 2) return jsonResponse({ clients: [] });
+
+        const safe = q.replace(/[%,()]/g, ' ').trim();
+        if (!safe) return jsonResponse({ clients: [] });
+
+        const { data: rows, error: searchErr } = await admin
+          .from('clients')
+          .select('id, primary_first_name, primary_surname, is_active')
+          .eq('is_active', true)
+          .or(`primary_first_name.ilike.%${safe}%,primary_surname.ilike.%${safe}%`)
+          .order('primary_surname', { ascending: true })
+          .limit(20);
+        if (searchErr) return jsonResponse({ error: searchErr.message }, 400);
+
+        // Flag clients that already hold an open case so the operator does not
+        // start a duplicate (the unique index would reject it at 409 anyway).
+        const ids = (rows ?? []).map((r: any) => r.id);
+        let openCaseIds = new Set<string>();
+        if (ids.length > 0) {
+          const { data: openCases } = await admin.schema('aml').from('cases')
+            .select('client_id')
+            .in('client_id', ids)
+            .not('status', 'in', '("cleared","blocked","closed")');
+          openCaseIds = new Set((openCases ?? []).map((c: any) => String(c.client_id)));
+        }
+
+        return jsonResponse({
+          clients: (rows ?? []).map((r: any) => ({
+            id: r.id,
+            label: [r.primary_first_name, r.primary_surname].filter(Boolean).join(' ').trim() || 'Unnamed client',
+            is_active: r.is_active,
+            has_open_case: openCaseIds.has(String(r.id)),
+          })),
+        });
       }
 
       case 'client_summary': {

@@ -518,7 +518,89 @@ function CaseOverviewSection({
           </CardContent>
         </Card>
       </div>
+
+      <ConsentEvidenceCard caseId={caseRow.id} />
     </div>
+  );
+}
+
+/**
+ * Confirmation, in the command centre, that the client accepted the
+ * AUSTRAC-referenced consents — and evidence of which wording they saw.
+ * The hash ties each acceptance to the exact document revision presented,
+ * so this stands up as evidence even after the catalogue is republished.
+ */
+function ConsentEvidenceCard({ caseId }: { caseId: string }) {
+  const [state, setState] = useState<Awaited<ReturnType<typeof amlCasesApi.consentStatus>> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    amlCasesApi.consentStatus(caseId)
+      .then(res => { if (alive) setState(res); })
+      .catch((e: any) => { if (alive) setError(e?.message ?? "Unable to load consent status."); });
+    return () => { alive = false; };
+  }, [caseId]);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center justify-between gap-3">
+          <span>Client consents &amp; disclosures</span>
+          {state && (
+            <Badge variant="outline" className={state.satisfied ? "text-success" : "text-warning"}>
+              {state.satisfied ? "Accepted" : "Outstanding"}
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2 text-sm">
+        {error ? (
+          <p className="text-muted-foreground">{error}</p>
+        ) : !state ? (
+          <p className="text-muted-foreground">Loading…</p>
+        ) : state.documents.length === 0 ? (
+          <p className="text-muted-foreground">
+            No consent document set is currently published. The client portal will not collect
+            information until one is in force.
+          </p>
+        ) : (
+          <>
+            <p className="text-xs text-muted-foreground">
+              Document set version {state.version}
+              {state.history.length > 0 && ` · ${state.history.length} superseded acceptance(s) retained`}
+            </p>
+            <ul className="divide-y divide-border/60">
+              {state.documents.map(d => (
+                <li key={d.code} className="flex items-start justify-between gap-3 py-2">
+                  <div>
+                    <div>{d.title}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {d.acknowledgement_type === "notice" ? "Disclosure — acknowledged as read" : "Consent"}
+                      {d.document_hash && ` · evidence ${d.document_hash.slice(0, 12)}`}
+                    </div>
+                  </div>
+                  <div className="shrink-0 text-right text-xs">
+                    {d.accepted_at ? (
+                      <>
+                        <div className="text-success">
+                          {new Date(d.accepted_at).toLocaleString()}
+                        </div>
+                        {d.accepted_by && (
+                          <div className="text-muted-foreground">{d.accepted_by}</div>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-warning">Not yet accepted</span>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

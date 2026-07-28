@@ -103,9 +103,12 @@ export const amlCasesApi = {
     reason: string;
     human_confirmed: true;
     purchase_file_id?: string;
-  }) => invoke<{ case: AmlCase; activation: Record<string, any> }>({
-    op: "activate_client", ...params,
-  }),
+  }) => invoke<{
+    case: AmlCase;
+    activation: Record<string, any>;
+    /** Whether the client can actually reach the screening link we just posted. */
+    client_portal?: { has_portal_access: boolean; notified: boolean; note: string };
+  }>({ op: "activate_client", ...params }),
 
   update: (case_id: string, patch: Partial<AmlCase>) =>
     invoke<{ case: AmlCase }>({ op: "update", case_id, patch }),
@@ -120,6 +123,26 @@ export const amlCasesApi = {
     invoke<{ events: AmlCaseEvent[] }>({ op: "list_events", case_id, limit }),
 
   /** Phase 4 — persistent AML summary for the master client record. */
+  /** Command-centre view of the client's AUSTRAC consent acceptances. */
+  consentStatus: (case_id: string) =>
+    invoke<{
+      version: string | null;
+      satisfied: boolean;
+      outstanding: Array<{ code: string; title: string }>;
+      documents: Array<{
+        code: string; title: string; required: boolean;
+        acknowledgement_type: "consent" | "notice";
+        accepted_at: string | null; accepted_by: string | null;
+        actor_type: string | null; document_hash: string | null;
+      }>;
+      history: Array<{ kind: string; version: string; accepted_at: string }>;
+    }>({ op: "consent_status", case_id }),
+
+  /** Activation client picker — AML-role-gated, active clients only (§13.4). */
+  searchClients: (query: string) =>
+    invoke<{ clients: Array<{ id: string; label: string; is_active: boolean; has_open_case: boolean }> }>(
+      { op: "search_clients", query }),
+
   clientSummary: (client_id: string) =>
     invoke<{
       case: AmlCase | null;

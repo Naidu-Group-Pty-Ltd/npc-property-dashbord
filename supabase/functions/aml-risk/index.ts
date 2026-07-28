@@ -158,6 +158,36 @@ async function clearanceBlockReasons(admin: any, caseId: string, assessment: any
   return Array.from(new Set(reasons));
 }
 
+/**
+ * Tenant-scoped authorization for the recommendation and service-gate ops.
+ *
+ * Restored: commit 1044a4e (a CORS header fix) removed this definition while
+ * leaving all four call sites intact, so `recommend`, `list_recommendations`,
+ * `set_service_gate` and `gate_contract` threw a ReferenceError instead of
+ * authorizing. Roles are matched against the case's own tenant — a role held
+ * in one tenant must not authorize a decision in another.
+ */
+async function tenantCaseAccess(admin: any, userId: string, caseId: string) {
+  const { data: caseRow } = await admin.schema("aml").from("cases")
+    .select("id, tenant_id, service_gate_status").eq("id", caseId).maybeSingle();
+  if (!caseRow) return null;
+
+  const tenantId = String(caseRow.tenant_id || "default");
+  const [{ data: roleRows }, { data: isSuperadmin }] = await Promise.all([
+    admin.schema("aml").from("role_assignments")
+      .select("role").eq("user_id", userId).eq("tenant_id", tenantId).is("revoked_at", null),
+    admin.schema("aml").rpc("is_superadmin", { _user_id: userId }),
+  ]);
+  const roles = new Set<string>((roleRows ?? []).map((r: any) => r.role));
+  return {
+    caseRow,
+    canRead: Boolean(isSuperadmin) || roles.size > 0,
+    canWrite: Boolean(isSuperadmin) || roles.has("analyst") || roles.has("reviewer") || roles.has("mlro"),
+    canReview: Boolean(isSuperadmin) || roles.has("reviewer") || roles.has("mlro"),
+    isMlro: Boolean(isSuperadmin) || roles.has("mlro"),
+  };
+}
+
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 

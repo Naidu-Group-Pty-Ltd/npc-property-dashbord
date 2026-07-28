@@ -173,7 +173,11 @@ describe("activation dialog has no raw-UUID entry (Phase 4, §13.4)", () => {
   });
 
   it("loads only a slim, non-sensitive client projection for the picker", () => {
-    expect(dialogSource).toContain("id, primary_first_name, primary_surname, is_active");
+    // The projection now lives on the server (aml-cases `search_clients`) —
+    // the dialog receives a name-only shape and never a client record.
+    expect(casesSource).toContain("select('id, primary_first_name, primary_surname, is_active')");
+    expect(dialogSource).toMatch(/label: string;\s*\n?\s*is_active: boolean;/);
+    expect(dialogSource).not.toMatch(/total_portfolio_value|email|phone/);
   });
 
   it("does not surface internal model vocabulary in the options", () => {
@@ -699,5 +703,149 @@ describe("workflow-dimension migration invariants", () => {
     expect(migrationSource).toContain("ALTER TABLE aml.field_provenance ENABLE ROW LEVEL SECURITY;");
     expect(migrationSource).toContain("GRANT ALL ON aml.field_provenance TO service_role;");
     expect(migrationSource).not.toMatch(/GRANT .* ON aml\.field_provenance TO authenticated/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Activation → client portal → AUSTRAC consent                        */
+/* ------------------------------------------------------------------ */
+
+describe("activation client picker", () => {
+  const dialog = readFileSync(
+    join(repo, "src/components/aml/ActivateClientDialog.tsx"), "utf8");
+
+  it("looks clients up through the AML-gated op, not the general client broker", () => {
+    // get-client-data listMode narrows to created_by/assigned_team_user_id for
+    // anyone who is not a superadmin, which left the picker empty for the
+    // compliance officers who actually perform activation.
+    expect(dialog).not.toContain("get-client-data");
+    expect(dialog).toContain("amlCasesApi.searchClients");
+  });
+
+  it("surfaces search failures instead of showing an empty result", () => {
+    expect(dialog).toContain('setSearchState("error")');
+    expect(dialog).toContain("searchError");
+    expect(dialog).not.toContain(".catch(() => setClients([]))");
+  });
+
+  it("keeps the search narrow and AML-role-gated on the server", () => {
+    const branch = casesSource.slice(
+      casesSource.indexOf("case 'search_clients':"),
+      casesSource.indexOf("case 'client_summary':"));
+    expect(branch).toContain("if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403)");
+    expect(branch).toContain(".eq('is_active', true)");
+    expect(branch).toContain(".limit(20)");
+    // Projection must not leak financial or contact data into the picker.
+    expect(branch).toContain("select('id, primary_first_name, primary_surname, is_active')");
+    expect(branch).not.toMatch(/email|phone|portfolio|income/i);
+    // This file's response helper is jsonResponse; `jr` belongs to other
+    // functions and would be a ReferenceError at runtime here.
+    expect(casesSource).not.toMatch(/\bjr\(/);
+  });
+});
+
+describe("activation hands the client a portal link", () => {
+  const branch = casesSource.slice(
+    casesSource.indexOf("case 'activate_client':"),
+    casesSource.indexOf("case 'update':"));
+
+  it("posts a portal notification deep-linking the compliance check", () => {
+    expect(branch).toContain("client_portal_notifications");
+    expect(branch).toContain("action_url: '/client/aml'");
+  });
+
+  it("reports back whether the client can actually reach the link", () => {
+    expect(branch).toContain("client_portal_users");
+    expect(branch).toContain("has_portal_access");
+    expect(branch).toContain("no active portal login yet");
+  });
+
+  it("keeps the notification portal-safe — no risk or screening content", () => {
+    const notify = branch.slice(branch.indexOf("client_portal_notifications"));
+    expect(notify).not.toMatch(/risk_rating|risk_score|screening|reviewer_notes|mlro/i);
+  });
+
+  it("does not fail a recorded activation because a notification failed", () => {
+    expect(branch).toContain("portal notification insert failed");
+    expect(branch).toContain("notified = true");
+  });
+});
+
+describe("AUSTRAC consent contract", () => {
+  const consentMigration = readFileSync(
+    join(repo, "supabase/migrations/20260727090000_aml_consent_catalogue.sql"), "utf8");
+  const portalAml = readFileSync(join(repo, "src/pages/portal/PortalAml.tsx"), "utf8");
+
+  it("publishes a versioned, server-owned catalogue rather than hard-coded text", () => {
+    expect(consentMigration).toContain("CREATE TABLE IF NOT EXISTS aml.consent_documents");
+    expect(consentMigration).toContain("UNIQUE (code, version)");
+    expect(consentMigration).toContain("-- ROLLBACK:");
+    // Wording must not live in the frontend bundle any more.
+    expect(portalAml).not.toContain("in line with the AUSTRAC AML/CTF Act 2006 and Rules");
+    expect(portalAml).toContain("amlPortalApi.getConsents");
+  });
+
+  it("references AUSTRAC and the statutory basis for each disclosure", () => {
+    expect(consentMigration).toContain("statutory_basis");
+    expect(consentMigration).toContain("Anti-Money Laundering and Counter-Terrorism Financing Act 2006 (Cth)");
+    expect(consentMigration).toContain("Privacy Act 1988 (Cth)");
+    expect(consentMigration).toContain("https://www.austrac.gov.au/about-us/privacy-policy");
+    for (const code of [
+      "privacy_notice", "identity_verification", "aml_ctf_program",
+      "regulatory_reporting", "record_keeping",
+    ]) {
+      expect(consentMigration).toContain(`'${code}', '2026.1'`);
+    }
+  });
+
+  it("does not ask the customer to accept terms that bind the reporting entity", () => {
+    // The AUSTRAC Online terms are between AUSTRAC and us. They may be linked
+    // for context; they must never be presented as a customer consent item.
+    const acceptanceRows = consentMigration.slice(consentMigration.indexOf("INSERT INTO aml.consent_documents"));
+    expect(acceptanceRows).not.toMatch(/'austrac_online[^']*',\s*'2026\.1',\s*'consent'/);
+    expect(consentMigration).toContain("AUSTRAC Online (how we lodge reports)");
+  });
+
+  it("binds each acceptance to the exact wording presented", () => {
+    expect(consentMigration).toContain("document_hash");
+    expect(portalSource).toContain("consentCanonicalText");
+    expect(portalSource).toContain("document_hash: documentHash");
+  });
+
+  it("enforces the consent gate on the server for every collection op", () => {
+    for (const op of [
+      "case 'save_questionnaire':", "case 'request_upload_url':",
+      "case 'confirm_upload':", "case 'submit_for_review':",
+    ]) {
+      const idx = portalSource.indexOf(op);
+      expect(idx).toBeGreaterThan(-1);
+      expect(portalSource.slice(idx, idx + 700)).toContain("consentRequiredResponse");
+    }
+  });
+
+  it("fails closed when no catalogue is in force", () => {
+    expect(portalSource).toContain("satisfied: Boolean(version) && documents.length > 0 && outstanding.length === 0");
+  });
+
+  it("rejects acceptances against unknown or superseded wording", () => {
+    const branch = portalSource.slice(
+      portalSource.indexOf("case 'record_consent':"),
+      portalSource.indexOf("case 'list_requirements':"));
+    expect(branch).toContain("consent_document_unknown");
+    expect(branch).toContain("consent_version_stale");
+  });
+
+  it("drives the portal gate from the server, not a browser-local flag", () => {
+    expect(portalAml).toContain("data?.consent?.satisfied");
+    expect(portalAml).not.toContain("aml_portal_consent:");
+  });
+
+  it("gives the command centre trackable confirmation of acceptance", () => {
+    const branch = casesSource.slice(
+      casesSource.indexOf("case 'consent_status':"),
+      casesSource.indexOf("case 'search_clients':"));
+    expect(branch).toContain("document_hash");
+    expect(branch).toContain("outstanding");
+    expect(branch).toContain("history:");
   });
 });

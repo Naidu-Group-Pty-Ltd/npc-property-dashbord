@@ -15,7 +15,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import {
-  amlPortalApi, uploadAmlDocument, type AmlPortalOverview, type AmlSection,
+  amlPortalApi, uploadAmlDocument,
+  type AmlPortalOverview, type AmlSection, type AmlConsentDocument,
 } from '@/lib/aml/amlPortalApi';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
@@ -53,19 +54,14 @@ function buildSteps(sections: { section: AmlSection }[] | undefined): PortalStep
   ];
 }
 
-const CONSENT_VERSION = '1.0';
-
-const CONSENT_STORAGE_PREFIX = 'aml_portal_consent:';
 const RESUME_STORAGE_PREFIX = 'aml_portal_resume:';
 
-function consentKey(caseId: string) { return `${CONSENT_STORAGE_PREFIX}${caseId}`; }
 function resumeKey(caseId: string) { return `${RESUME_STORAGE_PREFIX}${caseId}`; }
 
 export default function PortalAml() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AmlPortalOverview | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
-  const [consentedCaseId, setConsentedCaseId] = useState<string | null>(null);
   const resumedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -84,16 +80,11 @@ export default function PortalAml() {
 
   const caseObj = data?.case ?? null;
 
-  // Consent wall: consented if locally recorded OR any section has moved past not_started
-  // (server-side gate enforces this; we mirror it in the UI to prevent bypass via stepper clicks).
-  const consented = useMemo(() => {
-    if (!caseObj) return false;
-    if (consentedCaseId === caseObj.id) return true;
-    try {
-      if (localStorage.getItem(consentKey(caseObj.id)) === '1') return true;
-    } catch { /* ignore */ }
-    return (data?.sections ?? []).some(s => s.status && s.status !== 'not_started');
-  }, [caseObj, consentedCaseId, data?.sections]);
+  // Consent wall. The server owns this: every op that collects client data
+  // re-checks acceptance of the current catalogue version, so this flag is a
+  // mirror for navigation only, never the control itself. It used to be a
+  // localStorage flag, which meant the wall was decoration.
+  const consented = data?.consent?.satisfied ?? false;
 
   // Phase 5: the step list is derived from the server's applicable-section
   // list, so it can grow/shrink when the client changes purchasing structure
@@ -203,8 +194,10 @@ export default function PortalAml() {
               <ShieldCheck className="h-4 w-4" />
               <AlertTitle>Consent required to continue</AlertTitle>
               <AlertDescription>
-                Please review and confirm the consents below before completing the rest of the onboarding.
-                Your progress is saved automatically as you go.
+                We are required to give you a collection notice and obtain your consent before we
+                collect and verify your identity information for AUSTRAC anti-money laundering
+                purposes. Please review and confirm the items below. Your progress is saved
+                automatically as you go.
               </AlertDescription>
             </Alert>
           )}
@@ -221,11 +214,7 @@ export default function PortalAml() {
             {step.key === 'consent' && (
               <ConsentStep
                 caseId={caseObj.id}
-                onDone={() => {
-                  try { localStorage.setItem(consentKey(caseObj.id), '1'); } catch { /* ignore */ }
-                  setConsentedCaseId(caseObj.id);
-                  setStepIdx(1);
-                }}
+                onDone={async () => { await load(); setStepIdx(1); }}
               />
             )}
             {step.section && consented && (
@@ -321,21 +310,56 @@ function Stepper({
 
 /* ─────────────────────────  Consent  ──────────────────────── */
 
-function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void }) {
-  const [checked, setChecked] = useState({ identity: false, aml: false, privacy: false });
+/**
+ * The wording, statutory basis and AUSTRAC references are served from
+ * `aml.consent_documents` — they are NOT hard-coded here. That is deliberate:
+ * an acceptance is only evidence if we can show the exact text the client saw,
+ * and compliance wording has to be revisable without a frontend deploy.
+ *
+ * Items typed `consent` require an affirmative tick. Items typed `notice` are
+ * disclosures the client acknowledges having read (for example the tipping-off
+ * limitation, which is our obligation, not their choice).
+ */
+function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void | Promise<void> }) {
+  const [docs, setDocs] = useState<AmlConsentDocument[] | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
-  const allChecked = checked.identity && checked.aml && checked.privacy;
+
+  useEffect(() => {
+    let alive = true;
+    amlPortalApi.getConsents(caseId)
+      .then(res => {
+        if (!alive) return;
+        setDocs(res.documents ?? []);
+        setVersion(res.version);
+        // Anything already accepted at this version stays ticked and locked.
+        setChecked(Object.fromEntries(
+          (res.documents ?? []).map(d => [d.code, Boolean(d.accepted_at)])));
+      })
+      .catch((e: any) => { if (alive) setLoadError(e?.message ?? 'Unable to load the consents.'); });
+    return () => { alive = false; };
+  }, [caseId]);
+
+  const outstanding = (docs ?? []).filter(d => d.required && !checked[d.code]);
+  const allChecked = docs !== null && docs.length > 0 && outstanding.length === 0;
 
   const submit = async () => {
+    if (!docs) return;
     setSaving(true);
     try {
-      await Promise.all([
-        amlPortalApi.recordConsent(caseId, 'identity_verification', CONSENT_VERSION, checked),
-        amlPortalApi.recordConsent(caseId, 'aml_ctf_program', CONSENT_VERSION, checked),
-        amlPortalApi.recordConsent(caseId, 'privacy_notice', CONSENT_VERSION, checked),
-      ]);
-      toast.success('Consents recorded');
-      onDone();
+      // Record each acceptance separately so the audit trail names the exact
+      // document, not a single blanket "consented" flag.
+      for (const d of docs) {
+        if (d.accepted_at) continue;
+        await amlPortalApi.recordConsent(caseId, d.code, version ?? undefined, {
+          acknowledged: true,
+          presented_version: version,
+        });
+      }
+      toast.success('Consents and acknowledgements recorded');
+      await onDone();
     } catch (e: any) {
       toast.error(e?.message ?? 'Failed to record consent');
     } finally {
@@ -343,30 +367,101 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void })
     }
   };
 
+  if (loadError) {
+    return (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Consents unavailable</AlertTitle>
+        <AlertDescription>{loadError} Please refresh, or contact your adviser if this continues.</AlertDescription>
+      </Alert>
+    );
+  }
+  if (docs === null) {
+    return <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-64" /></div>;
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Consents & disclosures</CardTitle>
-        <CardDescription>Please read and confirm each item before continuing.</CardDescription>
+        <CardTitle>Consents and disclosures</CardTitle>
+        <CardDescription>
+          We are a reporting entity regulated by AUSTRAC. Before we collect your identity
+          information, the law requires us to tell you what we collect, why, and who we may
+          give it to. Please read each item and confirm.
+          {version && <span className="block mt-1 text-xs">Document set version {version}</span>}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {[
-          { key: 'identity' as const, title: 'Identity verification', body: 'You consent to your identity being verified electronically or via certified documents in line with the AUSTRAC AML/CTF Act 2006 and Rules.' },
-          { key: 'aml' as const, title: 'AML/CTF program', body: 'You acknowledge that additional questions and documents may be requested to satisfy customer due diligence and ongoing monitoring obligations.' },
-          { key: 'privacy' as const, title: 'Privacy notice', body: 'You consent to the collection, use and disclosure of your personal information for AML/CTF and related regulatory purposes, in accordance with our Privacy Policy.' },
-        ].map(item => (
-          <label key={item.key} className="flex items-start gap-3 rounded-md border p-3 cursor-pointer">
-            <Checkbox
-              checked={checked[item.key]}
-              onCheckedChange={(v) => setChecked(prev => ({ ...prev, [item.key]: !!v }))}
-              className="mt-1"
-            />
-            <div>
-              <div className="text-sm font-medium">{item.title}</div>
-              <p className="text-xs text-muted-foreground mt-1">{item.body}</p>
+        {docs.map(doc => (
+          <div key={doc.code} className="rounded-md border p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">{doc.title}</div>
+                <p className="text-xs text-muted-foreground mt-1">{doc.summary}</p>
+              </div>
+              <Badge variant="outline" className="shrink-0 text-[10px]">
+                {doc.acknowledgement_type === 'notice' ? 'Please read' : 'Your consent'}
+              </Badge>
             </div>
-          </label>
+
+            <div className="mt-3 max-h-56 overflow-y-auto rounded bg-muted/40 p-3 text-xs leading-relaxed whitespace-pre-line">
+              {doc.body}
+            </div>
+
+            {doc.statutory_basis.length > 0 && (
+              <div className="mt-3">
+                <div className="text-[11px] font-medium text-muted-foreground">Legal basis</div>
+                <ul className="mt-1 space-y-0.5 text-[11px] text-muted-foreground list-disc pl-4">
+                  {doc.statutory_basis.map(b => <li key={b}>{b}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {doc.reference_links.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+                {doc.reference_links.map(link => (
+                  <a
+                    key={link.url}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-[11px] underline underline-offset-2 hover:text-foreground text-muted-foreground"
+                  >
+                    {link.label}
+                  </a>
+                ))}
+              </div>
+            )}
+
+            <label className="mt-4 flex items-start gap-3 cursor-pointer">
+              <Checkbox
+                checked={Boolean(checked[doc.code])}
+                disabled={Boolean(doc.accepted_at)}
+                onCheckedChange={(v) => setChecked(prev => ({ ...prev, [doc.code]: !!v }))}
+                className="mt-0.5"
+                aria-label={doc.acknowledgement_type === 'notice'
+                  ? `I have read: ${doc.title}`
+                  : `I consent: ${doc.title}`}
+              />
+              <span className="text-xs">
+                {doc.acknowledgement_type === 'notice'
+                  ? 'I have read and understood this disclosure.'
+                  : 'I have read this and I consent.'}
+                {doc.accepted_at && (
+                  <span className="ml-2 text-muted-foreground">
+                    Recorded {new Date(doc.accepted_at).toLocaleDateString()}
+                  </span>
+                )}
+              </span>
+            </label>
+          </div>
         ))}
+
+        <p className="text-[11px] text-muted-foreground">
+          A record of what you accepted, and the exact wording shown to you, is kept as part of
+          your compliance file.
+        </p>
+
         <div className="flex justify-end">
           <Button onClick={submit} disabled={!allChecked || saving}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}

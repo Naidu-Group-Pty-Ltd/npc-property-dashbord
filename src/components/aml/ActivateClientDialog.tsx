@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -15,18 +15,14 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, ShieldCheck, AlertTriangle } from "lucide-react";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlTenantApi, type AmlActivationProgram } from "@/lib/aml/amlTenantApi";
-import { invokeSecureFunction } from "@/lib/secureInvoke";
 import { toast } from "@/hooks/use-toast";
 
+/** Projection returned by the AML-gated `search_clients` op — name only. */
 interface PickerClient {
   id: string;
-  primary_first_name: string | null;
-  primary_surname: string | null;
-  is_active: boolean | null;
-}
-
-function pickerLabel(c: PickerClient): string {
-  return [c.primary_first_name, c.primary_surname].filter(Boolean).join(" ").trim() || "Unnamed client";
+  label: string;
+  is_active: boolean;
+  has_open_case: boolean;
 }
 
 /**
@@ -61,8 +57,13 @@ export function ActivateClientDialog({
   const [submitting, setSubmitting] = useState(false);
 
   // Client picker (no raw UUID entry in the ordinary workflow — directive §13.4).
-  const [clients, setClients] = useState<PickerClient[] | null>(null);
+  // Search runs server-side through the AML-role-gated `search_clients` op:
+  // the general client-data broker only returns the full list to superadmins,
+  // so a compliance officer would otherwise see an empty picker.
   const [clientSearch, setClientSearch] = useState("");
+  const [clientMatches, setClientMatches] = useState<PickerClient[]>([]);
+  const [searchState, setSearchState] = useState<"idle" | "searching" | "ready" | "error">("idle");
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedClientLabel, setSelectedClientLabel] = useState<string | null>(null);
 
   const modelBReady = Boolean(program?.legal_approval && program?.program_version?.trim());
@@ -77,6 +78,9 @@ export function ActivateClientDialog({
     setReason("");
     setConfirmed(false);
     setClientSearch("");
+    setClientMatches([]);
+    setSearchState("idle");
+    setSearchError(null);
     setSelectedClientLabel(clientId ? clientName ?? null : null);
 
     let alive = true;
@@ -86,32 +90,46 @@ export function ActivateClientDialog({
       .catch(() => { if (alive) setProgram(null); })
       .finally(() => { if (alive) setLoadingProgram(false); });
 
-    // Load a slim client list for the picker only when not prefilled.
-    if (!clientId) {
-      invokeSecureFunction<{ success: boolean; clients: PickerClient[] }>("get-client-data", {
-        listMode: true,
-        listOptions: { select: "id, primary_first_name, primary_surname, is_active", orderBy: "primary_surname", orderAsc: true },
-      })
-        .then(({ data }) => { if (alive && data?.success) setClients(data.clients ?? []); })
-        .catch(() => { if (alive) setClients([]); });
-    }
     return () => { alive = false; };
   }, [open, clientId, clientName]);
 
-  const clientMatches = useMemo(() => {
-    if (!clients || clientIdInput) return [];
-    const q = clientSearch.trim().toLowerCase();
-    if (q.length < 2) return [];
-    return clients
-      .filter((c) => pickerLabel(c).toLowerCase().includes(q))
-      .slice(0, 8);
-  }, [clients, clientSearch, clientIdInput]);
+  // Debounced server-side lookup. Failures surface to the operator rather than
+  // being swallowed into a silent "no matches".
+  useEffect(() => {
+    if (!open || clientIdInput) return;
+    const q = clientSearch.trim();
+    if (q.length < 2) {
+      setClientMatches([]);
+      setSearchState("idle");
+      setSearchError(null);
+      return;
+    }
+    let alive = true;
+    setSearchState("searching");
+    const timer = setTimeout(() => {
+      amlCasesApi.searchClients(q)
+        .then(({ clients: found }) => {
+          if (!alive) return;
+          setClientMatches(found ?? []);
+          setSearchState("ready");
+          setSearchError(null);
+        })
+        .catch((e: any) => {
+          if (!alive) return;
+          setClientMatches([]);
+          setSearchState("error");
+          setSearchError(e?.message ?? "Client search is unavailable.");
+        });
+    }, 250);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [open, clientSearch, clientIdInput]);
 
   const selectClient = (c: PickerClient) => {
     setClientIdInput(c.id);
-    setSelectedClientLabel(pickerLabel(c));
-    if (!displayName.trim()) setDisplayName(pickerLabel(c));
+    setSelectedClientLabel(c.label);
+    if (!displayName.trim()) setDisplayName(c.label);
     setClientSearch("");
+    setClientMatches([]);
   };
 
   const canSubmit =
@@ -127,7 +145,7 @@ export function ActivateClientDialog({
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      const { case: created } = await amlCasesApi.activateClient({
+      const { case: created, client_portal } = await amlCasesApi.activateClient({
         client_id: clientIdInput.trim(),
         subject_display_name: displayName.trim(),
         subject_type: subjectType,
@@ -136,9 +154,15 @@ export function ActivateClientDialog({
         reason: reason.trim(),
         human_confirmed: true,
       });
+      // A client who cannot reach their portal will never complete screening,
+      // so make that the headline rather than a quiet success toast.
       toast({
         title: "Client activated for AML",
-        description: `${created.case_reference} opened.`,
+        description: client_portal?.note
+          ? `${created.case_reference} opened. ${client_portal.note}`
+          : `${created.case_reference} opened.`,
+        variant: client_portal && client_portal.has_portal_access === false
+          ? "destructive" : undefined,
       });
       onActivated?.(created);
       onOpenChange(false);
@@ -200,8 +224,11 @@ export function ActivateClientDialog({
                       aria-label="Matching clients"
                     >
                       {clientMatches.length === 0 ? (
-                        <li className="px-3 py-2 text-muted-foreground">
-                          {clients === null ? "Loading clients…" : "No matching clients."}
+                        <li className="px-3 py-2 text-muted-foreground" role="status">
+                          {searchState === "searching" ? "Searching…"
+                            : searchState === "error"
+                              ? (searchError ?? "Client search is unavailable.")
+                              : "No active client matches that name."}
                         </li>
                       ) : (
                         clientMatches.map((c) => (
@@ -211,9 +238,9 @@ export function ActivateClientDialog({
                               className="flex w-full items-center justify-between px-3 py-2 text-left hover:bg-accent focus:outline-none focus-visible:bg-accent"
                               onClick={() => selectClient(c)}
                             >
-                              <span className="truncate">{pickerLabel(c)}</span>
-                              {c.is_active === false && (
-                                <span className="ml-2 shrink-0 text-xs text-muted-foreground">Inactive</span>
+                              <span className="truncate">{c.label}</span>
+                              {c.has_open_case && (
+                                <span className="ml-2 shrink-0 text-xs text-warning">Open case</span>
                               )}
                             </button>
                           </li>
