@@ -1523,12 +1523,13 @@ const CallLogs = () => {
                     </Card>
                   )}
 
-                  {selectedCall.recording_url && (
+                  {(selectedCall.recording_url || selectedCall.vapi_call_id) && (
                     <CallRecordingPlayer
                       ref={recordingPlayerRef}
                       key={selectedCall.id}
                       recordingUrl={selectedCall.recording_url}
                       duration={selectedCall.duration_seconds}
+                      callLogId={selectedCall.id}
                     />
                   )}
                 </TabsContent>

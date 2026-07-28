@@ -390,6 +390,9 @@ request_timeout = 300
 [functions.get-call-logs]
 verify_jwt = true
 
+[functions.get-call-recording]
+verify_jwt = true
+
 [functions.manage-call-logs]
 verify_jwt = true
 
