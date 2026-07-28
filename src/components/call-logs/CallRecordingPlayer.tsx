@@ -2,12 +2,14 @@ import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardR
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Download } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Download, AlertCircle } from 'lucide-react';
 import WaveSurfer from 'wavesurfer.js';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 interface CallRecordingPlayerProps {
   recordingUrl: string;
   duration?: number | null;
+  callLogId?: string;
 }
 
 export interface CallRecordingPlayerHandle {
