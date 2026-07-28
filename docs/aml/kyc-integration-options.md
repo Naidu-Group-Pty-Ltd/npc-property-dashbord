@@ -71,7 +71,7 @@ platform to adopt wholesale.** The viable path is to assemble components.
 
 | Project | Code licence | Weights licence | Stars | Verdict |
 |---|---|---|---|---|
-| [CompreFace](https://github.com/exadel-inc/CompreFace) (Exadel) | Apache-2.0 | see caveat | 8.2k | **Recommended.** Self-hosted REST service, Docker-deployed, does detection / verification / recognition. Service boundary is clean — we call an HTTP API we host, so it drops into the existing edge-function architecture without embedding ML in our stack. |
+| [CompreFace](https://github.com/exadel-inc/CompreFace) (Exadel) | Apache-2.0 | **InsightFace-ArcFace — non-commercial; licence required** | 8.2k | **Recommended, with a weights licence (see §4 correction).** Self-hosted REST service, Docker-deployed, does detection / verification / recognition. Service boundary is clean — we call an HTTP API we host, so it drops into the existing edge-function architecture without embedding ML in our stack. |
 | [DeepFace](https://github.com/serengil/deepface) | MIT | **inherited per model** | 23.2k | Strong library, actively maintained, includes an `anti_spoofing` flag. **Trap:** the repo states "license types will be inherited when you intend to utilize those models" — the MIT wrapper does not make the weights commercially usable. A model must be pinned and its licence documented. |
 | [InsightFace](https://github.com/deepinsight/insightface) | MIT | **non-commercial research only** | 29.4k | **Reject for production.** The repo is explicit: "the training data containing the annotation (and the models trained with these data) are available for non-commercial research purposes only." Most tutorials and several downstream projects default to InsightFace weights, so this is the easiest licence breach to commit by accident. Any component we adopt must be audited for whether it pulls InsightFace weights underneath. |
 
@@ -134,12 +134,24 @@ status, and independent bias/accuracy auditing of the biometric models.
 
 | Layer | Choice | Why |
 |---|---|---|
-| Face match | **CompreFace** (Apache-2.0), self-hosted via Docker | Clean REST boundary; biometrics never leave our infrastructure — which is what makes decision 2 defensible |
+| Face match | **CompreFace** (Apache-2.0), self-hosted via Docker, **plus a commercial InsightFace weights licence** — see the correction below | Clean REST boundary; biometrics never leave our infrastructure — which is what makes decision 2 defensible |
 | Liveness | **Silent-Face-Anti-Spoofing** (Apache-2.0) as a signal, **plus mandatory human review** on borderline scores | No maintained permissive alternative; do not treat as authoritative |
 | Document OCR / MRZ | **docTR** + **mrz** (Apache-2.0 / MIT) | MRZ checksum failure is a strong, cheap forgery signal |
 | Document authenticity | **DVS via a Gateway Service Provider** — commercial | No open-source path exists (§3) |
 | Sanctions / PEP | **OpenSanctions** self-hosted, **with a commercial data licence** | Code is MIT; the data is not free for our use |
 | Orchestration | **Ours** — `aml.verification_checks` (§5) | Avoids depending on the unmaintained Ballerine repo; keeps provider swappable |
+
+> **Correction (2026-07-28).** The weights audit below was run early, during the
+> investigation in [`kyc-repo-investigation.md`](./kyc-repo-investigation.md),
+> and it lands on this recommendation. CompreFace's highest-accuracy model is
+> **InsightFace-ArcFace**, whose pretrained weights are non-commercial research
+> only; InsightFace directs commercial users of its open-sourced packages to
+> `recognition-oss-pack@insightface.ai`. The Apache-2.0 badge on CompreFace does
+> not make its default model commercially usable by us. This is structural
+> rather than a CompreFace defect — there is no high-accuracy, genuinely
+> commercially-licensed, free face recognition model. The recommended resolution
+> is to licence the weights and keep self-hosting, which preserves everything
+> that made decision 2 defensible. See §4 of the investigation.
 
 **Weights-licence audit is a release gate.** Before any biometric component
 goes to production, its actual downloaded model weights must be identified and

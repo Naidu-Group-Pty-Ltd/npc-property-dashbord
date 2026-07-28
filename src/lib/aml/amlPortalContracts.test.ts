@@ -920,3 +920,37 @@ describe("verification checks encode the owner's decisions", () => {
     expect(vcMigration).not.toMatch(/CHECK \(provider IN/);
   });
 });
+
+describe("KYC vendor documentation stays internally consistent", () => {
+  const options = readFileSync(join(repo, "docs/aml/kyc-integration-options.md"), "utf8");
+  const investigation = readFileSync(join(repo, "docs/aml/kyc-repo-investigation.md"), "utf8");
+
+  it("does not recommend CompreFace without flagging the weights licence", () => {
+    // The Apache-2.0 badge covers the code, not the InsightFace-ArcFace weights.
+    // A future edit that drops this caveat would reintroduce a licence breach.
+    const row = options.split("\n").find(l => l.includes("exadel-inc/CompreFace"));
+    expect(row).toBeDefined();
+    expect(row).toMatch(/non-commercial|licence required/i);
+    expect(options).toContain("Correction (2026-07-28)");
+    expect(options).toContain("recognition-oss-pack@insightface.ai");
+  });
+
+  it("records why each investigated repo was rejected", () => {
+    for (const repoName of [
+      "FaceOnLive/ID-Verification-OpenKYC",
+      "vyayasan/kyc-analyst",
+      "DoubangoTelecom/KYC-Documents-Verif-SDK",
+    ]) {
+      expect(investigation).toContain(repoName);
+    }
+    // The load-bearing findings, so a later summariser cannot soften them.
+    expect(investigation).toContain("all rights reserved");
+    expect(investigation).toContain("must not be used in commercial products");
+    expect(investigation).toMatch(/cannot activate on standard VMs/);
+  });
+
+  it("keeps the no-LLM-in-the-determination-path line explicit", () => {
+    expect(investigation).toContain("conflicts with our protected baseline");
+    expect(investigation).toMatch(/risk evaluation never moves the service gate/);
+  });
+});
