@@ -130,6 +130,14 @@ status, and independent bias/accuracy auditing of the biometric models.
 
 ## 4. Recommended stack
 
+> **Superseded for the current direction (2026-07-28).** The owner asked for a
+> zero-cost integration. See
+> [`kyc-zero-cost-solution.md`](./kyc-zero-cost-solution.md), which resolves the
+> weights problem below: OpenCV Zoo's **SFace** model is Apache-2.0 *including
+> its weights*, so a lawful face match is possible at no licence cost. The
+> section below remains the reference for the paid options.
+
+
 **Hybrid — self-host the biometric layer, buy the authoritative layer.**
 
 | Layer | Choice | Why |
