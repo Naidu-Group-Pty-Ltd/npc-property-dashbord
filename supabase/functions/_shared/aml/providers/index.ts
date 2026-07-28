@@ -175,17 +175,268 @@ const SIMULATOR_SCREENING: ScreeningProvider = {
   },
 };
 
+// ---------- zero-cost self-hosted adapters ----------
+//
+// docs/aml/kyc-zero-cost-solution.md. These two are what make the stack free
+// AND lawful: the face models are Apache-2.0 *including weights*, and the
+// sanctions data comes from official primary sources rather than an
+// aggregator whose data is CC-BY-NC.
+
+/**
+ * IDV via the self-hosted verification service (services/aml-verification-service).
+ *
+ * Returns `manual_review` far more readily than a commercial provider would.
+ * That is deliberate: passive liveness here is a heuristic, and the honest
+ * response to "probably fine" is a human, not a pass.
+ */
+function makeSelfHostedIdvProvider(): IdvProvider {
+  const baseUrl = (Deno.env.get("AML_VERIFICATION_SERVICE_URL") || "").replace(/\/+$/, "");
+  const token = Deno.env.get("AML_VERIFICATION_SERVICE_TOKEN") || "";
+
+  return {
+    name: "selfhosted",
+    mode: "live",
+    async runIdv(req) {
+      if (!baseUrl || !token) {
+        // Fail loudly. A misconfigured verification service must never look
+        // like a customer who failed verification.
+        throw new Error(
+          "[aml/providers] selfhosted IDV is active but AML_VERIFICATION_SERVICE_URL / " +
+          "AML_VERIFICATION_SERVICE_TOKEN are not set.",
+        );
+      }
+
+      const meta = (req.metadata ?? {}) as Record<string, string>;
+      const documentImage = meta.document_image_b64 ?? "";
+      const selfieImage = meta.selfie_image_b64 ?? "";
+      if (!documentImage) throw new Error("document image is required for self-hosted IDV");
+
+      const call = async (path: string, body: Record<string, unknown>) => {
+        const res = await fetch(`${baseUrl}${path}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          throw new Error(`verification service ${path} returned ${res.status}`);
+        }
+        return await res.json();
+      };
+
+      const mrz = await call("/doc/mrz", { document_image: documentImage });
+
+      let face: Record<string, any> | null = null;
+      let liveness: Record<string, any> | null = null;
+      if (req.method !== "document_only" && selfieImage) {
+        face = await call("/face/compare", {
+          document_image: documentImage, selfie_image: selfieImage,
+        });
+        liveness = await call("/face/liveness", { selfie_image: selfieImage });
+      }
+
+      const checks: IdvResult["checks"] = [];
+
+      // An unreadable MRZ is NOT a failure: most Australian driver licences
+      // carry no ICAO MRZ at all. A FAILED check digit is a different thing.
+      if (mrz.found && mrz.valid) {
+        checks.push({ name: "mrz_check_digits", status: "pass" });
+      } else if (mrz.found && !mrz.valid) {
+        checks.push({
+          name: "mrz_check_digits", status: "fail",
+          detail: (mrz.errors ?? []).join(", "),
+        });
+      } else {
+        checks.push({
+          name: "mrz_check_digits", status: "warn",
+          detail: "no machine-readable zone found on this document type",
+        });
+      }
+
+      if (face) {
+        checks.push({
+          name: "face_match",
+          status: face.verdict === "match" ? "pass" : face.verdict === "review" ? "warn" : "fail",
+          detail: face.verdict === "unusable"
+            ? `capture unusable: ${(face.problems ?? []).join(", ")}`
+            : `similarity ${face.similarity} (threshold ${face?.thresholds?.match})`,
+        });
+      }
+      if (liveness) {
+        checks.push({
+          name: "liveness",
+          status: liveness.is_real === true ? "warn" : "fail",
+          // Never "pass": this is a heuristic, and recording it as a pass
+          // would overstate what was actually established.
+          detail: liveness.advisory ?? "heuristic signal only",
+        });
+      }
+
+      // Document authenticity is explicitly NOT established: without DVS we
+      // never checked the document against its issuing authority.
+      checks.push({
+        name: "document_authenticity",
+        status: "warn",
+        detail: "not verified against the issuing authority — no DVS connection",
+      });
+
+      const failed = checks.some((c) => c.status === "fail");
+      const faceMatched = face?.verdict === "match";
+      const captureUnusable = face?.verdict === "unusable";
+
+      const status: IdvResult["status"] =
+        captureUnusable ? "pending"
+        : failed ? "failed"
+        : faceMatched ? "manual_review"
+        : "manual_review";
+
+      const overallScore = typeof face?.similarity === "number"
+        ? Math.max(0, Math.min(1, Number(face.similarity)))
+        : 0;
+
+      return {
+        provider: "selfhosted",
+        providerReference: `SELF-${crypto.randomUUID().slice(0, 12).toUpperCase()}`,
+        status,
+        overallScore,
+        checks,
+        raw: {
+          mrz, face, liveness,
+          method: req.method,
+          // Carried into the case record so the limitation is never lost.
+          limitations: [
+            "no_issuing_authority_check",
+            "liveness_is_heuristic_only",
+          ],
+          generated_at: new Date().toISOString(),
+        },
+      };
+    },
+  };
+}
+
+/**
+ * Screening against `aml.sanctions_entries` — our own copy of the official
+ * DFAT / UN / OFAC lists.
+ *
+ * Candidate selection is a cheap token overlap in the database; the actual
+ * scoring happens in the shared matcher so it stays unit-testable.
+ */
+function makeLocalListsScreeningProvider(
+  admin: any,
+  config?: Record<string, unknown>,
+): ScreeningProvider {
+  return {
+    name: "local_lists",
+    mode: "live",
+    async runScreening(req) {
+      if (!admin) throw new Error("[aml/providers] local_lists screening requires a service-role client");
+
+      const { normaliseName, screenSubject, DEFAULT_MATCH_THRESHOLD } =
+        await import("../matching.ts");
+
+      const threshold = Number(config?.match_threshold ?? DEFAULT_MATCH_THRESHOLD);
+      const tokens = normaliseName(req.subjectLabel);
+      if (tokens.length === 0) {
+        return {
+          provider: "local_lists",
+          providerReference: `LOCAL-${crypto.randomUUID().slice(0, 12).toUpperCase()}`,
+          status: "clear", matches: [],
+          summary: { scope: req.scope, match_count: 0, reason: "no_usable_name_tokens" },
+          raw: { threshold, generated_at: new Date().toISOString() },
+        };
+      }
+
+      // Overlap on ANY token, then score properly in code. Recall first:
+      // requiring all tokens would miss exactly the partial-name cases the
+      // matcher exists to catch.
+      const { data: rows, error } = await admin.schema("aml").from("sanctions_entries")
+        .select("external_id, list_code, primary_name, aliases, date_of_birth, entry_type, listing_reference, listing_detail")
+        .overlaps("normalised_names", tokens)
+        .limit(2000);
+      if (error) throw error;
+
+      const dob = (req.metadata ?? {})["date_of_birth"];
+      const hits = screenSubject(
+        { name: req.subjectLabel, dateOfBirth: typeof dob === "string" ? dob : null },
+        (rows ?? []).map((r: any) => ({
+          externalId: String(r.external_id),
+          listCode: String(r.list_code),
+          primaryName: String(r.primary_name),
+          aliases: (r.aliases ?? []) as string[],
+          dateOfBirth: r.date_of_birth ?? null,
+          entryType: r.entry_type ?? "unknown",
+          listingReference: r.listing_reference ?? null,
+          detail: r.listing_detail ?? {},
+        })),
+        threshold,
+      );
+
+      const LIST_LABELS: Record<string, string> = {
+        dfat: "DFAT Consolidated List (Australia)",
+        un: "UN Consolidated List",
+        ofac: "OFAC SDN (United States)",
+      };
+
+      const matches: ScreeningMatch[] = hits.map((h) => ({
+        matchType: "sanctions",
+        listName: LIST_LABELS[h.listCode] ?? h.listCode,
+        matchedName: h.matchedName,
+        score: h.score,
+        jurisdiction: h.listCode === "dfat" ? "AU" : h.listCode === "ofac" ? "US" : "UN",
+        details: {
+          external_id: h.externalId,
+          listing_reference: h.listingReference,
+          match_basis: h.basis,
+          dob_agreement: h.dobAgreement,
+          matched_tokens: h.matchedTokens,
+          threshold,
+        },
+      }));
+
+      // Everything above the threshold goes to a human. There is no
+      // auto-clear on a match: the point of the low threshold is that a
+      // person adjudicates, not that the machine decides.
+      const status: ScreeningResult["status"] = matches.length === 0 ? "clear" : "review";
+
+      return {
+        provider: "local_lists",
+        providerReference: `LOCAL-${crypto.randomUUID().slice(0, 12).toUpperCase()}`,
+        status,
+        matches,
+        summary: {
+          scope: req.scope,
+          match_count: matches.length,
+          candidates_considered: (rows ?? []).length,
+          threshold,
+          // Adverse media is not covered by list data. Say so rather than
+          // letting a "clear" imply a check we did not run.
+          scopes_not_covered: req.scope.filter((s) => s === "adverse_media"),
+        },
+        raw: {
+          threshold,
+          lists: [...new Set((rows ?? []).map((r: any) => r.list_code))],
+          generated_at: new Date().toISOString(),
+        },
+      };
+    },
+  };
+}
+
 // ---------- live adapter stubs (throw until wired) ----------
 //
 // Real adapters (Frankie, Trulioo, ComplyAdvantage, Refinitiv, Dow Jones…)
 // will be added here one by one. Each stub throws a clearly-labelled error so
 // that "live" mode never silently falls back to simulator results.
 
-const LIVE_IDV_ADAPTERS: Record<string, () => IdvProvider> = {
+const LIVE_IDV_ADAPTERS: Record<string, (opts: FactoryOptions) => IdvProvider> = {
+  // Zero-cost self-hosted stack — see docs/aml/kyc-zero-cost-solution.md.
+  "selfhosted": () => makeSelfHostedIdvProvider(),
   // "frankie":       () => makeFrankieIdvProvider(),
   // "trulioo":       () => makeTruliooIdvProvider(),
 };
-const LIVE_SCREENING_ADAPTERS: Record<string, () => ScreeningProvider> = {
+const LIVE_SCREENING_ADAPTERS: Record<string, (opts: FactoryOptions) => ScreeningProvider> = {
+  // Screening against lists we hold, downloaded from official primary sources.
+  "local_lists": (opts) => makeLocalListsScreeningProvider(opts.admin, opts.resolved?.config),
   // "complyadvantage": () => makeComplyAdvantageProvider(),
   // "refinitiv":       () => makeRefinitivProvider(),
   // "dowjones":        () => makeDowJonesProvider(),
@@ -245,6 +496,11 @@ export interface FactoryOptions {
   resolved?: ResolvedProvider | null;
   /** Free-form hint from caller; only used when no tenant config exists. */
   preferred?: string;
+  /**
+   * Service-role client. Required by adapters that read data we host
+   * ourselves — the local sanctions lists in particular.
+   */
+  admin?: any;
 }
 
 export function getIdvProvider(opts: FactoryOptions = {}): IdvProvider {
@@ -260,7 +516,7 @@ export function getIdvProvider(opts: FactoryOptions = {}): IdvProvider {
       `Configure the adapter or switch this provider back to simulator mode in AML › Configuration › Providers.`,
     );
   }
-  return build();
+  return build(opts);
 }
 
 export function getScreeningProvider(opts: FactoryOptions = {}): ScreeningProvider {
@@ -276,7 +532,7 @@ export function getScreeningProvider(opts: FactoryOptions = {}): ScreeningProvid
       `Configure the adapter or switch this provider back to simulator mode in AML › Configuration › Providers.`,
     );
   }
-  return build();
+  return build(opts);
 }
 
 /** Adverse media resolves to the same screening adapter, restricted to that scope. */

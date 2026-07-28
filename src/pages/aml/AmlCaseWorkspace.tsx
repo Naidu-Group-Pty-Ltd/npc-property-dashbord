@@ -40,6 +40,7 @@ import {
   amlMonitoringApi, type AmlCaseMonitoring, type AmlReview, type AmlReviewTriggerKind,
 } from "@/lib/aml/amlMonitoringApi";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
+import { VerificationSection } from "@/components/aml/VerificationSection";
 import {
   CASE_STAGE_LABELS, caseStage, clientPortalStatus, CLIENT_PORTAL_STATUS_LABELS,
   serviceGateStatus, progressRail, type ProgressRailState,
@@ -360,6 +361,9 @@ export default function AmlCaseWorkspace() {
           )}
           {section === "identity" && (
             <div className="space-y-4">
+              {/* Self-hosted verification: per-party attempts, document
+                  sightings and audited biometric access. */}
+              <VerificationSection caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
               <VerificationTab caseId={caseRow.id} canWrite={canWrite} onChanged={load} />
               <ScreeningTab caseId={caseRow.id} canWrite={canInvestigate} onChanged={load} />
             </div>

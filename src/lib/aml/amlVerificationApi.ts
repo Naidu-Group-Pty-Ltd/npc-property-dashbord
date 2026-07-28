@@ -49,4 +49,75 @@ export const amlVerificationApi = {
     invoke<{ matches: ScreeningMatch[] }>({ op: "list_matches", ...params }),
   resolveMatch: (match_id: string, disposition: "confirmed" | "dismissed" | "escalated", rationale: string) =>
     invoke<{ resolution: any; match: ScreeningMatch }>({ op: "resolve_match", match_id, disposition, rationale }),
+
+  /* ── self-hosted verification (zero-cost stack) ────────────────────────── */
+
+  listVerificationChecks: (case_id: string) =>
+    invoke<{ checks: AmlVerificationCheck[]; max_attempts: number }>(
+      { op: "list_verification_checks", case_id }),
+
+  /** Adjudicate a pending portal submission through the self-hosted service. */
+  runVerification: (check_id: string) =>
+    invoke<{ check: AmlVerificationCheck }>({ op: "run_verification", check_id }),
+
+  recordDocumentSighting: (params: {
+    case_id: string; party_id?: string | null; party_label: string;
+    document_type: string; sighting_kind: "original" | "certified_copy";
+    certifier_name?: string; certifier_capacity?: string; notes: string;
+  }) => invoke<{ check: AmlVerificationCheck }>({ op: "record_document_sighting", ...params }),
+
+  /** Returns a 120-second URL and writes an entry to the biometric access log. */
+  getBiometricUrl: (check_id: string, reason: string) =>
+    invoke<{ url: string; expires_in_seconds: number }>(
+      { op: "get_biometric_url", check_id, reason }),
+
+  listBiometricAccess: (case_id: string) =>
+    invoke<{ access_log: AmlBiometricAccessEntry[] }>({ op: "list_biometric_access", case_id }),
+
+  sanctionsListStatus: () =>
+    invoke<{ syncs: AmlSanctionsSync[]; entry_count: number }>({ op: "sanctions_list_status" }),
 };
+
+export type AmlVerificationStatusValue =
+  | "pending" | "in_progress" | "passed" | "failed" | "referred" | "exhausted" | "abandoned";
+
+export interface AmlVerificationCheck {
+  id: string;
+  case_id: string;
+  party_id: string | null;
+  party_label: string;
+  check_type: "electronic_idv" | "document_sighting" | "dvs" | "screening";
+  attempt_number: number;
+  status: AmlVerificationStatusValue;
+  provider: string | null;
+  provider_reference: string | null;
+  outcome_detail: Record<string, any>;
+  failure_reason: string | null;
+  biometric_kind: string | null;
+  /** The storage path itself is never sent to the browser. */
+  has_biometric?: boolean;
+  verified_by: string | null;
+  verified_by_type: string | null;
+  requested_at: string;
+  completed_at: string | null;
+}
+
+export interface AmlBiometricAccessEntry {
+  id: string;
+  verification_check_id: string;
+  actor_label: string | null;
+  action: string;
+  reason: string | null;
+  created_at: string;
+}
+
+export interface AmlSanctionsSync {
+  id: string;
+  list_code: string;
+  source_url: string;
+  entry_count: number;
+  status: string;
+  error_detail: string | null;
+  started_at: string;
+  completed_at: string | null;
+}

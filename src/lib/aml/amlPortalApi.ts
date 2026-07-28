@@ -62,6 +62,23 @@ export interface AmlConsentState {
   required_count?: number;
 }
 
+/** Portal-safe verification view — deliberately carries no score or threshold. */
+export interface AmlVerificationParty {
+  party_id: string | null;
+  label: string;
+  status: 'not_started' | 'in_review' | 'verified' | 'action_required' | 'contact_adviser';
+  attempts_used: number;
+  attempts_remaining: number;
+  can_attempt: boolean;
+}
+
+export interface AmlVerificationStatus {
+  enabled: boolean;
+  max_attempts: number;
+  biometric_consent_accepted: boolean;
+  parties: AmlVerificationParty[];
+}
+
 export interface AmlConsentDocument {
   code: string;
   title: string;
@@ -81,6 +98,21 @@ export const amlPortalApi = {
     call<{ response: any }>('get_questionnaire', { case_id, section }),
   saveQuestionnaire: (case_id: string, section: AmlSection, payload: Record<string, any>, submit = false) =>
     call<{ response: any }>('save_questionnaire', { case_id, section, payload, submit }),
+  /** Identity-verification state per party (portal-safe: no scores). */
+  verificationStatus: (case_id: string) =>
+    call<AmlVerificationStatus>('verification_status', { case_id }),
+  /** Signed upload URL. Selfies are routed to the biometrics bucket. */
+  requestVerificationUpload: (case_id: string, kind: 'document' | 'selfie') =>
+    call<{ upload_url: string; token: string; path: string; bucket: string }>(
+      'request_verification_upload_url', { case_id, kind }),
+  submitVerification: (case_id: string, params: {
+    party_id?: string | null; party_label?: string;
+    document_storage_path: string; selfie_storage_path: string;
+  }) => call<{
+    submitted: boolean; attempt_number: number; attempts_remaining: number;
+    status: string; message: string;
+  }>('submit_verification', { case_id, ...params }),
+
   /** Current consent catalogue + what this case has already accepted. */
   getConsents: (case_id: string) =>
     call<AmlConsentState & { documents: AmlConsentDocument[] }>('get_consents', { case_id }),

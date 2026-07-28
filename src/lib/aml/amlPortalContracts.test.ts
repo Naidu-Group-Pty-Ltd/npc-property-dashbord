@@ -990,3 +990,148 @@ describe("zero-cost KYC solution keeps its licence evidence", () => {
     expect(options).toContain("kyc-zero-cost-solution.md");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Zero-cost verification stack                                        */
+/* ------------------------------------------------------------------ */
+
+describe("self-hosted verification stack", () => {
+  const providers = readFileSync(
+    join(repo, "supabase/functions/_shared/aml/providers/index.ts"), "utf8");
+  const verifySource = readFileSync(
+    join(repo, "supabase/functions/aml-verification/index.ts"), "utf8");
+  const vcMigration2 = readFileSync(
+    join(repo, "supabase/migrations/20260728160000_aml_selfhosted_verification.sql"), "utf8");
+  const service = readFileSync(
+    join(repo, "services/aml-verification-service/app/main.py"), "utf8");
+  const notice = readFileSync(
+    join(repo, "services/aml-verification-service/NOTICE"), "utf8");
+  const fetchModels = readFileSync(
+    join(repo, "services/aml-verification-service/scripts/fetch_models.sh"), "utf8");
+
+  it("uses only Apache-2.0 weights and says so where it matters", () => {
+    expect(fetchModels).toContain("face_recognition_sface_2021dec.onnx");
+    expect(fetchModels).toContain("face_detection_yunet_2023mar.onnx");
+    // Apache-2.0 obliges the licence to travel with the model.
+    expect(fetchModels).toContain("LICENSE.sface");
+    expect(notice).toContain("Apache License 2.0");
+    expect(notice).toContain("Shenzhen Institute of Artificial Intelligence and Robotics");
+  });
+
+  it("warns against substituting non-commercial weights", () => {
+    // The single easiest way to turn this free stack into a licence breach.
+    for (const src of [notice, fetchModels]) {
+      expect(src).toMatch(/InsightFace/);
+      expect(src.toLowerCase()).toMatch(/non-commercial|not.*commercial/);
+    }
+  });
+
+  it("never records the liveness heuristic as a pass", () => {
+    const branch = providers.slice(providers.indexOf("makeSelfHostedIdvProvider"));
+    expect(branch).toContain('name: "liveness"');
+    // Best case is 'warn' — claiming a pass would overstate what was established.
+    expect(branch).toMatch(/liveness[\s\S]{0,220}is_real === true \? "warn" : "fail"/);
+    expect(service).toContain('"confidence": "low"');
+    expect(service).toMatch(/advisory/);
+  });
+
+  it("states that document authenticity was not established", () => {
+    const branch = providers.slice(providers.indexOf("makeSelfHostedIdvProvider"));
+    expect(branch).toContain("not verified against the issuing authority");
+    expect(branch).toContain("no_issuing_authority_check");
+  });
+
+  it("treats an absent MRZ as a warning, not a failure", () => {
+    // Australian driver licences carry no ICAO MRZ; failing them would be wrong.
+    const branch = providers.slice(providers.indexOf("makeSelfHostedIdvProvider"));
+    expect(branch).toContain("no machine-readable zone found on this document type");
+  });
+
+  it("fails loudly when the verification service is unconfigured", () => {
+    const branch = providers.slice(providers.indexOf("makeSelfHostedIdvProvider"));
+    expect(branch).toContain("AML_VERIFICATION_SERVICE_URL");
+    expect(branch).toMatch(/throw new Error/);
+  });
+
+  it("screens against our own copies of the official lists", () => {
+    const branch = providers.slice(providers.indexOf("makeLocalListsScreeningProvider"));
+    expect(branch).toContain("sanctions_entries");
+    expect(branch).toContain("DFAT Consolidated List (Australia)");
+    // OpenSanctions data is CC-BY-NC; we must not be reading it.
+    expect(branch).not.toMatch(/opensanctions/i);
+  });
+
+  it("never auto-clears a screening match", () => {
+    const branch = providers.slice(providers.indexOf("makeLocalListsScreeningProvider"));
+    expect(branch).toContain('matches.length === 0 ? "clear" : "review"');
+    expect(branch).toContain("scopes_not_covered");
+  });
+
+  it("keeps the biometric storage path off the wire", () => {
+    const branch = verifySource.slice(verifySource.indexOf('case "list_verification_checks"'));
+    expect(branch).toContain("const { biometric_storage_path, ...safe } = c");
+    expect(branch).toContain("has_biometric");
+  });
+
+  it("requires a recorded reason before a biometric can be viewed", () => {
+    const branch = verifySource.slice(
+      verifySource.indexOf('case "get_biometric_url"'),
+      verifySource.indexOf('case "list_biometric_access"'));
+    expect(branch).toContain("reason.length < 10");
+    expect(branch).toContain("biometric_access_log");
+    expect(branch).toContain("expires_in_seconds: 120");
+  });
+
+  it("does not consume an attempt when our own service fails", () => {
+    const branch = verifySource.slice(verifySource.indexOf('case "run_verification"'));
+    expect(branch).toContain("service_unavailable");
+    expect(branch).toMatch(/status: "pending"[\s\S]{0,200}service_error/);
+  });
+
+  it("requires certifier details for a certified copy", () => {
+    const branch = verifySource.slice(verifySource.indexOf('case "record_document_sighting"'));
+    expect(branch).toContain("certifier_name and certifier_capacity are required");
+    expect(branch).toContain('["original", "certified_copy"]');
+  });
+
+  it("enforces the three-attempt ceiling in the portal too", () => {
+    expect(portalSource).toContain("MAX_VERIFICATION_ATTEMPTS = 3");
+    const branch = portalSource.slice(
+      portalSource.indexOf("case 'submit_verification':"),
+      portalSource.indexOf("case 'request_verification_upload_url':"));
+    expect(branch).toContain("attempts_exhausted");
+    // Biometric consent must precede collection — consent after is not consent.
+    expect(branch).toContain("biometric_consent_required");
+    expect(branch).toContain("biometric_consent_id: bioConsent.id");
+  });
+
+  it("routes selfies to the biometrics bucket, never to aml-documents", () => {
+    const branch = portalSource.slice(portalSource.indexOf("case 'request_verification_upload_url':"));
+    expect(branch).toContain("kind === 'selfie' ? 'aml-biometrics' : 'aml-documents'");
+  });
+
+  it("keeps the portal verification view free of scores and thresholds", () => {
+    const helper = portalSource.slice(
+      portalSource.indexOf("async function verificationParties"),
+      portalSource.indexOf("function consentRequiredResponse"));
+    expect(helper).toContain("CLIENT_VISIBLE");
+    // Comments describe what is withheld; assert against code only.
+    const codeOnly = helper.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(codeOnly).not.toMatch(/similarity|threshold|score|outcome_detail/);
+    // The staff ownership model must stay out of the portal entirely.
+    expect(codeOnly).not.toContain("beneficial_owners");
+  });
+
+  it("keeps the biometric bucket private with no direct client policy", () => {
+    expect(vcMigration2).toContain("'aml-biometrics', 'aml-biometrics', false");
+    expect(vcMigration2).not.toMatch(/CREATE POLICY[^;]*storage\.objects/);
+    expect(vcMigration2).toContain("-- ROLLBACK:");
+  });
+
+  it("puts biometrics on the trigger-based retention clock, hard-deleted", () => {
+    expect(vcMigration2).toContain("'biometric', 7");
+    expect(vcMigration2).toContain("hard_delete");
+    expect(vcMigration2).toContain("trigger-based, never from upload");
+  });
+});

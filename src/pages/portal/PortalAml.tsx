@@ -18,6 +18,7 @@ import {
   amlPortalApi, uploadAmlDocument,
   type AmlPortalOverview, type AmlSection, type AmlConsentDocument,
 } from '@/lib/aml/amlPortalApi';
+import { IdentityVerificationStep } from '@/components/portal/IdentityVerificationStep';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -50,6 +51,7 @@ function buildSteps(sections: { section: AmlSection }[] | undefined): PortalStep
       section: s,
     })),
     { key: 'documents', label: 'Documents' },
+    { key: 'verify', label: 'Verify identity' },
     { key: 'review', label: 'Review & submit' },
   ];
 }
@@ -236,6 +238,14 @@ export default function PortalAml() {
                 onChange={load}
                 onNext={() => setStepIdx(i => i + 1)}
                 onBack={() => setStepIdx(i => i - 1)}
+              />
+            )}
+            {step.key === 'verify' && consented && (
+              <IdentityVerificationStep
+                caseId={caseObj.id}
+                onBack={() => setStepIdx(i => i - 1)}
+                onNext={() => setStepIdx(i => i + 1)}
+                onNeedsConsent={() => setStepIdx(0)}
               />
             )}
             {step.key === 'review' && consented && (
