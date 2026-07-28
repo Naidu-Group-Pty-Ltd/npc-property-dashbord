@@ -480,7 +480,6 @@ export default function MarketUpdates() {
               <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
               <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
               {(sourceHealth.candidates ?? 0) > 0 && <Button variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
-              {sourceHealth.latestRun && <Button variant="ghost" onClick={() => setRunSummary(sourceHealth.latestRun!)}>View latest run</Button>}
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
           </div>
@@ -708,15 +707,27 @@ export default function MarketUpdates() {
                       <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', IMPACT_STYLE[update.impact_level])}>
                         {update.impact_level} impact
                       </span>
-                      <Badge variant="outline" className="text-[10px]">{titleCase(update.category)}</Badge>
-                      {update.source_authority && <Badge variant="outline" className="text-[10px]">{titleCase(update.source_authority)}</Badge>}
-                      {update.source_perspective && <Badge variant="secondary" className="text-[10px]">{titleCase(update.source_perspective)}</Badge>}
-                      {update.legal_status && update.legal_status !== 'not_applicable' && <Badge variant="outline" className="text-[10px]">{titleCase(update.legal_status)}</Badge>}
-                      {update.geography.slice(0, 3).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
+                      {/* Category is omitted when the segment chips below already carry it,
+                          and provenance/legal badges live in the analysis dialog — the card
+                          keeps only what a reader scans by. */}
+                      {!update.segments.includes(update.category as MarketSegment) && (
+                        <Badge variant="outline" className="text-[10px]">{titleCase(update.category)}</Badge>
+                      )}
+                      {update.geography.slice(0, 2).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
                       <div className="ml-auto"><ConfidenceBar score={update.confidence_score} /></div>
                     </div>
 
-                    <h3 className="mt-3 text-lg font-semibold leading-snug text-foreground group-hover:text-primary">{update.title}</h3>
+                    <h3 className="mt-3 text-lg font-semibold leading-snug">
+                      <a
+                        href={update.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-primary"
+                      >
+                        {update.title}
+                        <span className="sr-only"> (opens the original article in a new tab)</span>
+                      </a>
+                    </h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       <span className="font-medium text-foreground/80">{update.source_name}</span> · {dateLabel(update.source_published_at ?? update.ingested_at)}
                     </p>
@@ -804,21 +815,6 @@ export default function MarketUpdates() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Source Health</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-xs">
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-lg border border-border/60 bg-background/50 p-2"><div className="text-lg font-semibold">{sourceHealth.totalSources}</div><p className="text-[10px] text-muted-foreground">Total</p></div>
-                  <div className="rounded-lg border border-success/30 bg-success/10 p-2"><div className="text-lg font-semibold text-success">{sourceHealth.enabledSources}</div><p className="text-[10px] text-muted-foreground">Enabled</p></div>
-                  <div className={cn('rounded-lg border p-2', sourceHealth.failedSources > 0 ? 'border-destructive/30 bg-destructive/10' : 'border-border/60 bg-background/50')}>
-                    <div className={cn('text-lg font-semibold', sourceHealth.failedSources > 0 && 'text-destructive')}>{sourceHealth.failedSources}</div>
-                    <p className="text-[10px] text-muted-foreground">Failed</p>
-                  </div>
-                </div>
-                <p className="text-muted-foreground">Last success: {dateLabel(sourceHealth.lastSuccessAt)}</p>
-                {sourceHealth.lastError && <p className="text-destructive"><AlertTriangle className="mr-1 inline h-3 w-3" />{sourceHealth.lastError}</p>}
-              </CardContent>
-            </Card>
           </aside>
         </section>
 
@@ -835,6 +831,18 @@ export default function MarketUpdates() {
               </div>
               <DialogTitle className="text-2xl leading-snug lg:text-3xl">{selectedUpdate?.title}</DialogTitle>
               <p className="text-sm text-muted-foreground">{selectedUpdate?.source_name} · {dateLabel(selectedUpdate?.source_published_at)}</p>
+              {selectedUpdate && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  {selectedUpdate.segments.map(s => (
+                    <button key={s} type="button" onClick={() => { setActiveSegment(s); setSelectedUpdate(null); }} className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      {titleCase(s)}
+                    </button>
+                  ))}
+                  {selectedUpdate.source_authority && <Badge variant="outline" className="text-[10px]">{titleCase(selectedUpdate.source_authority)}</Badge>}
+                  {selectedUpdate.source_perspective && <Badge variant="secondary" className="text-[10px]">{titleCase(selectedUpdate.source_perspective)}</Badge>}
+                  {selectedUpdate.legal_status && selectedUpdate.legal_status !== 'not_applicable' && <Badge variant="outline" className="text-[10px]">{titleCase(selectedUpdate.legal_status)}</Badge>}
+                </div>
+              )}
             </DialogHeader>
             {selectedUpdate && (
               <div className="space-y-5 text-base leading-relaxed">
