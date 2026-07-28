@@ -66,7 +66,23 @@ than surfacing the failure.
 The underlying data is intact: 45 sources (all 20 approved canonical keys present, 13 enabled and
 healthy), 354 `market_updates` rows (33 published, 26 candidate), 19 digests, 68 ingestion runs.
 
-## Applying the fix
+## Resolution
+
+All nine migrations plus `20260728063000_market_updates_automation_dispatch_hardening` were
+applied to the project on 2026-07-28. Post-apply state:
+
+- `market_sources`: 20 canonical (13 enabled), 25 unresolved legacy, all carrying
+  `legal_storage_policy`.
+- `market_digests`: all 19 rows keyed; unique index on `(period, period_key)` live.
+- `agent_model_assignments`: four active `market_updates_*` assignments.
+- `market_updates_automation_status()` resolves; 9 `market-updates-%` cron jobs scheduled.
+
+A verification ingestion run (`trigger_type = 'cron'`) completed in 28s: 13 sources considered,
+7 succeeded, **184 items discovered, 6 published, 15 candidates** — the first published items
+since 26 July. Its post-run trigger then generated the `24h:2026-07-28T00:00:00.000Z` digest,
+which is `published` with `update_count = 6` via `openrouter`.
+
+### Applying the fix (for reference / other environments)
 
 Apply the nine migrations in filename order. Before applying `20260726210000`, note two hazards
 addressed by `20260728063000_market_updates_automation_dispatch_hardening`:
@@ -104,3 +120,37 @@ select jobname, schedule from cron.job where jobname like 'market-updates-%';   
 
 Then use **Refresh View** in the UI: the header should report live source counts and the digest
 route, and **Generate 24 Hours Digest** should return 200.
+
+## Outstanding items
+
+These are separate from the outage and were not introduced by it.
+
+### 1. Mirror `MARKET_INGESTION_CRON_SECRET` into Vault (ops action)
+
+`market-updates-digest` accepts only a matching `x-cron-secret` header or an interactive Bearer
+token; it rejects the signed internal-header envelope with `401 unauthorized`. Because
+`market_ingestion_cron_secret` is absent from Vault, the scheduled **weekly / bi-weekly / monthly /
+quarterly / annual** digest jobs cannot authenticate. This predates the outage — the previous cron
+command also sent an empty `x-cron-secret` — and `market_updates_automation_status()` now reports
+it honestly as `required_secrets_present: false`, which surfaces the `automation_secrets_missing`
+warning to admins.
+
+The 24-hour digest is unaffected: `market-updates-ingest` triggers it directly after any run that
+publishes, using its own `MARKET_INGESTION_CRON_SECRET` environment variable.
+
+Fix: copy the `MARKET_INGESTION_CRON_SECRET` value already configured on the Edge Functions into
+Vault under the name `market_ingestion_cron_secret`. `dispatch_market_updates_automation()` prefers
+it as soon as it exists, with no further code change.
+
+```sql
+select vault.create_secret('<same value as the Edge Function env var>', 'market_ingestion_cron_secret');
+```
+
+### 2. Six source adapters yield no metadata
+
+In the verification run, ABC News Business, Broker Daily, FBAA, MFAA, Mortgage Professional
+Australia and The Adviser all failed with `Listing layout yielded no public article metadata` —
+their listing selectors no longer match the sites' markup. Ingestion succeeds without them, but
+they contribute nothing until their `adapter_config` selectors are refreshed. Five further
+canonical sources (AFCA, Property Council, Banking Code Compliance Committee, Reuters, Domain)
+remain disabled because their origins require a licensed feed.
