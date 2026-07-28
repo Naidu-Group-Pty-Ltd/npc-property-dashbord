@@ -1529,6 +1529,7 @@ const CallLogs = () => {
                       key={selectedCall.id}
                       recordingUrl={selectedCall.recording_url}
                       duration={selectedCall.duration_seconds}
+                      callLogId={selectedCall.id}
                     />
                   )}
                 </TabsContent>
