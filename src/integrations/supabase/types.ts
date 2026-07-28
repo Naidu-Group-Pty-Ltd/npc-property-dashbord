@@ -859,8 +859,12 @@ export type Database = {
           created_at: string
           fallback_chain: Json
           id: string
+          is_active: boolean
           is_locked: boolean
           last_error: string | null
+          last_test_result: string | null
+          last_test_success: boolean | null
+          last_tested_at: string | null
           last_used_at: string | null
           max_tokens: number | null
           model_id: string
@@ -878,8 +882,12 @@ export type Database = {
           created_at?: string
           fallback_chain?: Json
           id?: string
+          is_active?: boolean
           is_locked?: boolean
           last_error?: string | null
+          last_test_result?: string | null
+          last_test_success?: boolean | null
+          last_tested_at?: string | null
           last_used_at?: string | null
           max_tokens?: number | null
           model_id: string
@@ -897,8 +905,12 @@ export type Database = {
           created_at?: string
           fallback_chain?: Json
           id?: string
+          is_active?: boolean
           is_locked?: boolean
           last_error?: string | null
+          last_test_result?: string | null
+          last_test_success?: boolean | null
+          last_tested_at?: string | null
           last_used_at?: string | null
           max_tokens?: number | null
           model_id?: string
@@ -13234,81 +13246,129 @@ export type Database = {
       }
       market_digests: {
         Row: {
+          ai_failure_reason: string | null
+          ai_latency_ms: number | null
           broker_adviser_implications: string | null
           buyer_implications: string | null
+          candidate_count: number
           client_advisory_implications: Json
+          completed_at: string | null
           confidence_score: number | null
           construction_supply_highlights: Json
+          correlation_id: string | null
           created_at: string
+          error_code: string | null
           executive_summary: string
+          fallback_used: boolean
           finance_lending_highlights: Json
           generated_at: string
           id: string
           investor_implications: string | null
+          last_published_update_at: string | null
+          model_used: string | null
           period: string
           period_end: string
+          period_key: string
           period_start: string
           policy_regulation_highlights: Json
           political_economic_watchpoints: Json
           property_market_highlights: Json
+          provider_attempts: Json
+          queued_at: string | null
           recommended_watchlist_for_tomorrow: Json
+          route_used: string | null
+          safe_error_message: string | null
           segment_breakdown: Json
           social_watchpoints: Json
           source_urls: Json
+          started_at: string | null
           status: string
           top_update_ids: Json
+          update_count: number
           updated_at: string
         }
         Insert: {
+          ai_failure_reason?: string | null
+          ai_latency_ms?: number | null
           broker_adviser_implications?: string | null
           buyer_implications?: string | null
+          candidate_count?: number
           client_advisory_implications?: Json
+          completed_at?: string | null
           confidence_score?: number | null
           construction_supply_highlights?: Json
+          correlation_id?: string | null
           created_at?: string
+          error_code?: string | null
           executive_summary: string
+          fallback_used?: boolean
           finance_lending_highlights?: Json
           generated_at?: string
           id?: string
           investor_implications?: string | null
+          last_published_update_at?: string | null
+          model_used?: string | null
           period?: string
           period_end: string
+          period_key: string
           period_start: string
           policy_regulation_highlights?: Json
           political_economic_watchpoints?: Json
           property_market_highlights?: Json
+          provider_attempts?: Json
+          queued_at?: string | null
           recommended_watchlist_for_tomorrow?: Json
+          route_used?: string | null
+          safe_error_message?: string | null
           segment_breakdown?: Json
           social_watchpoints?: Json
           source_urls?: Json
+          started_at?: string | null
           status?: string
           top_update_ids?: Json
+          update_count?: number
           updated_at?: string
         }
         Update: {
+          ai_failure_reason?: string | null
+          ai_latency_ms?: number | null
           broker_adviser_implications?: string | null
           buyer_implications?: string | null
+          candidate_count?: number
           client_advisory_implications?: Json
+          completed_at?: string | null
           confidence_score?: number | null
           construction_supply_highlights?: Json
+          correlation_id?: string | null
           created_at?: string
+          error_code?: string | null
           executive_summary?: string
+          fallback_used?: boolean
           finance_lending_highlights?: Json
           generated_at?: string
           id?: string
           investor_implications?: string | null
+          last_published_update_at?: string | null
+          model_used?: string | null
           period?: string
           period_end?: string
+          period_key?: string
           period_start?: string
           policy_regulation_highlights?: Json
           political_economic_watchpoints?: Json
           property_market_highlights?: Json
+          provider_attempts?: Json
+          queued_at?: string | null
           recommended_watchlist_for_tomorrow?: Json
+          route_used?: string | null
+          safe_error_message?: string | null
           segment_breakdown?: Json
           social_watchpoints?: Json
           source_urls?: Json
+          started_at?: string | null
           status?: string
           top_update_ids?: Json
+          update_count?: number
           updated_at?: string
         }
         Relationships: []
@@ -13316,6 +13376,7 @@ export type Database = {
       market_ingestion_runs: {
         Row: {
           completed_at: string | null
+          correlation_id: string | null
           duration_ms: number | null
           error_summary: string | null
           id: string
@@ -13323,8 +13384,10 @@ export type Database = {
           items_classified: number
           items_deduplicated: number
           items_discovered: number
+          items_failed: number
           items_ignored: number
           items_published: number
+          items_rejected: number
           metadata: Json
           requested_by: string | null
           sources_considered: number
@@ -13337,6 +13400,7 @@ export type Database = {
         }
         Insert: {
           completed_at?: string | null
+          correlation_id?: string | null
           duration_ms?: number | null
           error_summary?: string | null
           id?: string
@@ -13344,8 +13408,10 @@ export type Database = {
           items_classified?: number
           items_deduplicated?: number
           items_discovered?: number
+          items_failed?: number
           items_ignored?: number
           items_published?: number
+          items_rejected?: number
           metadata?: Json
           requested_by?: string | null
           sources_considered?: number
@@ -13358,6 +13424,7 @@ export type Database = {
         }
         Update: {
           completed_at?: string | null
+          correlation_id?: string | null
           duration_ms?: number | null
           error_summary?: string | null
           id?: string
@@ -13365,8 +13432,10 @@ export type Database = {
           items_classified?: number
           items_deduplicated?: number
           items_discovered?: number
+          items_failed?: number
           items_ignored?: number
           items_published?: number
+          items_rejected?: number
           metadata?: Json
           requested_by?: string | null
           sources_considered?: number
@@ -13594,11 +13663,15 @@ export type Database = {
           adapter_used: string | null
           completed_at: string | null
           consecutive_failure_count: number
+          correlation_id: string | null
           feed_url_used: string | null
           http_status: number | null
           id: string
           ingestion_run_id: string
+          items_candidate: number
           items_discovered: number
+          items_failed: number
+          items_ignored: number
           items_published: number
           latency_ms: number | null
           safe_error_message: string | null
@@ -13610,11 +13683,15 @@ export type Database = {
           adapter_used?: string | null
           completed_at?: string | null
           consecutive_failure_count?: number
+          correlation_id?: string | null
           feed_url_used?: string | null
           http_status?: number | null
           id?: string
           ingestion_run_id: string
+          items_candidate?: number
           items_discovered?: number
+          items_failed?: number
+          items_ignored?: number
           items_published?: number
           latency_ms?: number | null
           safe_error_message?: string | null
@@ -13626,11 +13703,15 @@ export type Database = {
           adapter_used?: string | null
           completed_at?: string | null
           consecutive_failure_count?: number
+          correlation_id?: string | null
           feed_url_used?: string | null
           http_status?: number | null
           id?: string
           ingestion_run_id?: string
+          items_candidate?: number
           items_discovered?: number
+          items_failed?: number
+          items_ignored?: number
           items_published?: number
           latency_ms?: number | null
           safe_error_message?: string | null
@@ -13655,10 +13736,65 @@ export type Database = {
           },
         ]
       }
+      market_source_reconciliation_audits: {
+        Row: {
+          archived_rows: number
+          canonical_count: number
+          completed_at: string | null
+          disabled_canonical_count: number
+          enabled_canonical_count: number
+          fetch_run_references_reassigned: number
+          id: string
+          matched_legacy_rows: number
+          merged_rows: number
+          metadata: Json
+          reconciliation_key: string
+          started_at: string
+          starting_count: number
+          unresolved_rows: number
+          update_references_reassigned: number
+        }
+        Insert: {
+          archived_rows?: number
+          canonical_count?: number
+          completed_at?: string | null
+          disabled_canonical_count?: number
+          enabled_canonical_count?: number
+          fetch_run_references_reassigned?: number
+          id?: string
+          matched_legacy_rows?: number
+          merged_rows?: number
+          metadata?: Json
+          reconciliation_key: string
+          started_at?: string
+          starting_count?: number
+          unresolved_rows?: number
+          update_references_reassigned?: number
+        }
+        Update: {
+          archived_rows?: number
+          canonical_count?: number
+          completed_at?: string | null
+          disabled_canonical_count?: number
+          enabled_canonical_count?: number
+          fetch_run_references_reassigned?: number
+          id?: string
+          matched_legacy_rows?: number
+          merged_rows?: number
+          metadata?: Json
+          reconciliation_key?: string
+          started_at?: string
+          starting_count?: number
+          unresolved_rows?: number
+          update_references_reassigned?: number
+        }
+        Relationships: []
+      }
       market_sources: {
         Row: {
           adapter_config: Json
           adapter_type: string | null
+          archived_at: string | null
           category: string
           consecutive_failures: number
           copyright_mode: string | null
@@ -13679,23 +13815,28 @@ export type Database = {
           last_items_published: number
           last_latency_ms: number | null
           last_success_at: string | null
+          legal_storage_policy: string
           listing_urls: Json
           name: string
           perspective: string | null
           primary_url: string | null
+          reconciliation_reason: string | null
           refresh_frequency_hours: number
           refresh_frequency_minutes: number
+          registry_status: string | null
           reliability_tier: string
           source_authority: string | null
           source_key: string | null
           source_type: string
           source_weight: number
+          superseded_by_source_id: string | null
           updated_at: string
           url: string
         }
         Insert: {
           adapter_config?: Json
           adapter_type?: string | null
+          archived_at?: string | null
           category: string
           consecutive_failures?: number
           copyright_mode?: string | null
@@ -13716,23 +13857,28 @@ export type Database = {
           last_items_published?: number
           last_latency_ms?: number | null
           last_success_at?: string | null
+          legal_storage_policy?: string
           listing_urls?: Json
           name: string
           perspective?: string | null
           primary_url?: string | null
+          reconciliation_reason?: string | null
           refresh_frequency_hours?: number
           refresh_frequency_minutes?: number
+          registry_status?: string | null
           reliability_tier?: string
           source_authority?: string | null
           source_key?: string | null
           source_type: string
           source_weight?: number
+          superseded_by_source_id?: string | null
           updated_at?: string
           url: string
         }
         Update: {
           adapter_config?: Json
           adapter_type?: string | null
+          archived_at?: string | null
           category?: string
           consecutive_failures?: number
           copyright_mode?: string | null
@@ -13753,21 +13899,33 @@ export type Database = {
           last_items_published?: number
           last_latency_ms?: number | null
           last_success_at?: string | null
+          legal_storage_policy?: string
           listing_urls?: Json
           name?: string
           perspective?: string | null
           primary_url?: string | null
+          reconciliation_reason?: string | null
           refresh_frequency_hours?: number
           refresh_frequency_minutes?: number
+          registry_status?: string | null
           reliability_tier?: string
           source_authority?: string | null
           source_key?: string | null
           source_type?: string
           source_weight?: number
+          superseded_by_source_id?: string | null
           updated_at?: string
           url?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "market_sources_superseded_by_source_id_fkey"
+            columns: ["superseded_by_source_id"]
+            isOneToOne: false
+            referencedRelation: "market_sources"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       market_update_qa_shares: {
         Row: {
@@ -13818,52 +13976,70 @@ export type Database = {
       }
       market_update_questions: {
         Row: {
+          ai_failure_reason: string | null
+          ai_latency_ms: number | null
           answer: string
           citation_urls: Json
           confidence_score: number | null
           conversation_id: string | null
+          correlation_id: string | null
           created_at: string
           created_by: string | null
+          fallback_used: boolean
           follow_up_questions: Json
           id: string
           key_figures: Json
           metadata: Json
           model_used: string | null
+          provider_attempts: Json
           question: string
+          route_used: string | null
           sentiment: string | null
           source_update_ids: Json
           time_horizon: string | null
         }
         Insert: {
+          ai_failure_reason?: string | null
+          ai_latency_ms?: number | null
           answer: string
           citation_urls?: Json
           confidence_score?: number | null
           conversation_id?: string | null
+          correlation_id?: string | null
           created_at?: string
           created_by?: string | null
+          fallback_used?: boolean
           follow_up_questions?: Json
           id?: string
           key_figures?: Json
           metadata?: Json
           model_used?: string | null
+          provider_attempts?: Json
           question: string
+          route_used?: string | null
           sentiment?: string | null
           source_update_ids?: Json
           time_horizon?: string | null
         }
         Update: {
+          ai_failure_reason?: string | null
+          ai_latency_ms?: number | null
           answer?: string
           citation_urls?: Json
           confidence_score?: number | null
           conversation_id?: string | null
+          correlation_id?: string | null
           created_at?: string
           created_by?: string | null
+          fallback_used?: boolean
           follow_up_questions?: Json
           id?: string
           key_figures?: Json
           metadata?: Json
           model_used?: string | null
+          provider_attempts?: Json
           question?: string
+          route_used?: string | null
           sentiment?: string | null
           source_update_ids?: Json
           time_horizon?: string | null
@@ -13872,15 +14048,22 @@ export type Database = {
       }
       market_updates: {
         Row: {
+          ai_failure_code: string | null
+          ai_failure_reason: string | null
+          ai_latency_ms: number | null
+          ai_status: string | null
           ai_summary: string | null
           audience_tags: Json
           author: string | null
+          candidate_reason: string | null
           canonical_url: string | null
           category: string
           citation_urls: Json
           classification_version: string | null
           confidence_score: number | null
+          correlation_id: string | null
           created_at: string
+          decisioned_at: string | null
           dedupe_hash: string
           economic_topics: Json
           effective_date: string | null
@@ -13888,6 +14071,7 @@ export type Database = {
           embedding_generated_at: string | null
           external_id: string | null
           failure_reason: string | null
+          fallback_used: boolean
           finance_implications: string | null
           freshness_tier: string | null
           geography: Json
@@ -13903,11 +14087,14 @@ export type Database = {
           policy_implications: string | null
           primary_source_urls: Json
           property_implications: string | null
+          provider_attempts: Json
           public_excerpt: string | null
+          publication_reason: string | null
           raw_content_hash: string | null
           raw_excerpt: string | null
           relevance_score: number
           risk_flags: Json
+          route_used: string | null
           search_tsv: unknown
           segments: Json
           slug: string | null
@@ -13922,18 +14109,26 @@ export type Database = {
           summarisation_version: string | null
           title: string
           updated_at: string
+          validation_failures: Json
           why_it_matters: string | null
         }
         Insert: {
+          ai_failure_code?: string | null
+          ai_failure_reason?: string | null
+          ai_latency_ms?: number | null
+          ai_status?: string | null
           ai_summary?: string | null
           audience_tags?: Json
           author?: string | null
+          candidate_reason?: string | null
           canonical_url?: string | null
           category: string
           citation_urls?: Json
           classification_version?: string | null
           confidence_score?: number | null
+          correlation_id?: string | null
           created_at?: string
+          decisioned_at?: string | null
           dedupe_hash: string
           economic_topics?: Json
           effective_date?: string | null
@@ -13941,6 +14136,7 @@ export type Database = {
           embedding_generated_at?: string | null
           external_id?: string | null
           failure_reason?: string | null
+          fallback_used?: boolean
           finance_implications?: string | null
           freshness_tier?: string | null
           geography?: Json
@@ -13956,11 +14152,14 @@ export type Database = {
           policy_implications?: string | null
           primary_source_urls?: Json
           property_implications?: string | null
+          provider_attempts?: Json
           public_excerpt?: string | null
+          publication_reason?: string | null
           raw_content_hash?: string | null
           raw_excerpt?: string | null
           relevance_score?: number
           risk_flags?: Json
+          route_used?: string | null
           search_tsv?: unknown
           segments?: Json
           slug?: string | null
@@ -13975,18 +14174,26 @@ export type Database = {
           summarisation_version?: string | null
           title: string
           updated_at?: string
+          validation_failures?: Json
           why_it_matters?: string | null
         }
         Update: {
+          ai_failure_code?: string | null
+          ai_failure_reason?: string | null
+          ai_latency_ms?: number | null
+          ai_status?: string | null
           ai_summary?: string | null
           audience_tags?: Json
           author?: string | null
+          candidate_reason?: string | null
           canonical_url?: string | null
           category?: string
           citation_urls?: Json
           classification_version?: string | null
           confidence_score?: number | null
+          correlation_id?: string | null
           created_at?: string
+          decisioned_at?: string | null
           dedupe_hash?: string
           economic_topics?: Json
           effective_date?: string | null
@@ -13994,6 +14201,7 @@ export type Database = {
           embedding_generated_at?: string | null
           external_id?: string | null
           failure_reason?: string | null
+          fallback_used?: boolean
           finance_implications?: string | null
           freshness_tier?: string | null
           geography?: Json
@@ -14009,11 +14217,14 @@ export type Database = {
           policy_implications?: string | null
           primary_source_urls?: Json
           property_implications?: string | null
+          provider_attempts?: Json
           public_excerpt?: string | null
+          publication_reason?: string | null
           raw_content_hash?: string | null
           raw_excerpt?: string | null
           relevance_score?: number
           risk_flags?: Json
+          route_used?: string | null
           search_tsv?: unknown
           segments?: Json
           slug?: string | null
@@ -14028,6 +14239,7 @@ export type Database = {
           summarisation_version?: string | null
           title?: string
           updated_at?: string
+          validation_failures?: Json
           why_it_matters?: string | null
         }
         Relationships: [
@@ -14039,6 +14251,75 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      market_updates_automation_runs: {
+        Row: {
+          correlation_id: string | null
+          dispatch_status: string
+          id: string
+          job_name: string
+          payload: Json
+          request_id: number | null
+          safe_error_code: string | null
+          scheduled_at: string
+          target_function: string
+        }
+        Insert: {
+          correlation_id?: string | null
+          dispatch_status: string
+          id?: string
+          job_name: string
+          payload?: Json
+          request_id?: number | null
+          safe_error_code?: string | null
+          scheduled_at?: string
+          target_function: string
+        }
+        Update: {
+          correlation_id?: string | null
+          dispatch_status?: string
+          id?: string
+          job_name?: string
+          payload?: Json
+          request_id?: number | null
+          safe_error_code?: string | null
+          scheduled_at?: string
+          target_function?: string
+        }
+        Relationships: []
+      }
+      market_updates_operational_alerts: {
+        Row: {
+          alert_key: string
+          first_detected_at: string
+          id: string
+          last_detected_at: string
+          metadata: Json
+          resolved_at: string | null
+          safe_message: string
+          severity: string
+        }
+        Insert: {
+          alert_key: string
+          first_detected_at?: string
+          id?: string
+          last_detected_at?: string
+          metadata?: Json
+          resolved_at?: string | null
+          safe_message: string
+          severity: string
+        }
+        Update: {
+          alert_key?: string
+          first_detected_at?: string
+          id?: string
+          last_detected_at?: string
+          metadata?: Json
+          resolved_at?: string | null
+          safe_message?: string
+          severity?: string
+        }
+        Relationships: []
       }
       marketing_intelligence_reports: {
         Row: {
@@ -20808,6 +21089,7 @@ export type Database = {
         }
         Returns: {
           completed_at: string | null
+          correlation_id: string | null
           duration_ms: number | null
           error_summary: string | null
           id: string
@@ -20815,8 +21097,10 @@ export type Database = {
           items_classified: number
           items_deduplicated: number
           items_discovered: number
+          items_failed: number
           items_ignored: number
           items_published: number
+          items_rejected: number
           metadata: Json
           requested_by: string | null
           sources_considered: number
@@ -21030,6 +21314,19 @@ export type Database = {
           method: string
         }
         Returns: Json
+      }
+      dispatch_market_updates_automation: {
+        Args: {
+          p_completed_window?: boolean
+          p_job_name: string
+          p_payload?: Json
+          p_target_function: string
+        }
+        Returns: number
+      }
+      evaluate_market_updates_automation_alerts: {
+        Args: never
+        Returns: undefined
       }
       extract_email_address: { Args: { raw_text: string }; Returns: string }
       finalize_ghl_cutover: { Args: { p_job_id: string }; Returns: Json }
@@ -21342,6 +21639,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      market_updates_automation_status: { Args: never; Returns: Json }
       match_agent_memories: {
         Args: {
           p_match_count?: number

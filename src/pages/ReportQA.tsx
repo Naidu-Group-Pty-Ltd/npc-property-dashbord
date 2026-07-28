@@ -168,8 +168,8 @@ function ReportQAModelSlotSelector({
           size="sm"
           className="report-qa-toolbar-control h-9 min-w-9 max-w-full gap-2 px-3 text-xs font-semibold shadow-sm sm:px-3.5"
           disabled={disabled || isLoading || slots.length === 0}
-          title={`Active Report Q&A slot: ${selected?.slotLabel ?? 'Loading'}`}
-          aria-label={`Select active Report Q&A model slot. Current slot: ${selected?.slotLabel ?? 'Loading'}`}
+          title={`Active Aurixa Intelligence Hub slot: ${selected?.slotLabel ?? 'Loading'}`}
+          aria-label={`Select active Aurixa Intelligence Hub model slot. Current slot: ${selected?.slotLabel ?? 'Loading'}`}
         >
           <span
             aria-hidden
@@ -2215,7 +2215,7 @@ export default function ReportQA() {
         as="main"
         variant="page"
         className="report-qa-premium report-qa-density-shell flex min-h-0 min-w-0 flex-col gap-2 overflow-y-auto overflow-x-hidden p-2 pb-14 sm:gap-2.5 sm:p-3 sm:pb-16 md:h-[calc(100dvh-5.25rem)] md:max-h-[calc(100dvh-5.25rem)] md:gap-2.5 md:overflow-hidden md:p-3 md:pb-0 xl:h-[calc(100dvh-5.75rem)] xl:max-h-[calc(100dvh-5.75rem)]"
-        aria-label="Report Q&A Chat"
+        aria-label="Aurixa Intelligence Hub Chat"
       >
       {/* Header - compact on mobile */}
       <DashboardThemeFrame as="header" variant="hero" className="report-qa-hero flex shrink-0 flex-col items-stretch justify-between gap-2 px-3 py-2 sm:px-4 sm:py-2.5 md:flex-row md:items-center md:gap-3 md:px-5 md:py-2.5">
@@ -2225,7 +2225,7 @@ export default function ReportQA() {
               <Sparkles className="h-3 w-3" />
               AI Report Intelligence
             </span>
-            <h1 className="text-lg sm:text-xl md:text-[1.5rem] font-bold text-foreground truncate tracking-tight">Report Q&A</h1>
+            <h1 className="text-lg sm:text-xl md:text-[1.5rem] font-bold text-foreground truncate tracking-tight">Aurixa Intelligence Hub</h1>
           </div>
           <p className="report-qa-subtitle max-w-2xl text-[11px] leading-[1.35] text-muted-foreground sm:text-xs">
             Upload investment reports and ask questions to generate summaries, comparisons and citation-backed insights.
@@ -2676,7 +2676,7 @@ export default function ReportQA() {
               <div className="report-qa-toolbar flex min-w-0 flex-wrap items-center justify-start gap-1 rounded-xl border border-border/50 bg-background/40 px-2 py-1 sm:justify-start">
                 <ReportQAModelSlotSelector selectedAgentKey={selectedAgentKey} onAgentKeyChange={setSelectedAgentKey} disabled={isProcessing} />
                 <Separator orientation="vertical" className="mx-1 hidden h-7 bg-primary/20 md:block" />
-                <div className="hidden min-w-0 items-center gap-2 md:flex" aria-label="Live model assignments for Report Q&A">
+                <div className="hidden min-w-0 items-center gap-2 md:flex" aria-label="Live model assignments for Aurixa Intelligence Hub">
                   <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">Live</span>
                   <LiveModelChipGroup surfaceId="reportQa" size="sm" />
                   {canManageAgentModels && <ModelUpgradeButton surfaceId="reportQa" />}
@@ -2714,7 +2714,7 @@ export default function ReportQA() {
           </CardHeader>
           <CardContent id="chat-main" className="report-qa-chat-content flex min-h-0 flex-1 flex-col overflow-hidden px-2 pb-2 sm:px-3 sm:pb-3">
             {/* Messages */}
-            <ScrollArea ref={scrollAreaRef} className={cn("report-qa-message-area mb-2 min-h-0 flex-1 basis-0 pr-1 sm:mb-2 sm:pr-2", messages.length === 0 && !restoringConversationId && "report-qa-message-area-empty")} aria-label="Report Q&A conversation" role="log" aria-live="polite" aria-busy={!!restoringConversationId}>
+            <ScrollArea ref={scrollAreaRef} className={cn("report-qa-message-area mb-2 min-h-0 flex-1 basis-0 pr-1 sm:mb-2 sm:pr-2", messages.length === 0 && !restoringConversationId && "report-qa-message-area-empty")} aria-label="Aurixa Intelligence Hub conversation" role="log" aria-live="polite" aria-busy={!!restoringConversationId}>
               {conversationRestoreError && (
                 <div className="mb-3 flex items-start gap-2 rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive" role="alert">
                   <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -3546,7 +3546,7 @@ export default function ReportQA() {
                 variant="ghost"
                 size="sm"
                 className="h-9 shrink-0 text-xs"
-                aria-label="Start a new Report Q&A chat"
+                aria-label="Start a new Aurixa Intelligence Hub chat"
                 onClick={handleNewChat}
               >
                 <Plus className="h-3 w-3 mr-1" />
