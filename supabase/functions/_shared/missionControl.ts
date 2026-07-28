@@ -66,6 +66,14 @@ export interface BalanceResult {
    * never funds-gated). Set per-tenant in MC, so clone installs of this same
    * code keep normal plan enforcement. */
   exempt: boolean;
+  /** Credits lapse this many days after they are issued (platform policy). */
+  expiryPolicyDays: number;
+  /** Credit lapsing inside Mission Control's warning window. */
+  expiringSoon: number;
+  /** When the next credit lapses, or null if nothing on file is dated. */
+  nextExpiryAt: string | null;
+  /** Width of the warning window, in days. */
+  expiryWarningDays: number;
 }
 
 export interface TopupPack {
@@ -350,6 +358,11 @@ export async function getBalance(): Promise<BalanceResult> {
       ? Math.min(derivedUsed, allowance)
       : 0;
 
+  // Expiry. Credits live 30 days from issue, so a balance can shrink without
+  // anyone spending anything — the UI needs to be able to say so in advance.
+  // Absent on an older Mission Control, which degrades to "no warning".
+  const expiry = body?.expiry ?? {};
+
   return {
     available,
     reserved,
@@ -361,6 +374,10 @@ export async function getBalance(): Promise<BalanceResult> {
     overagePolicy: plan?.overage_policy ?? null,
     currentPeriodEnd: tenant?.current_period_end ?? null,
     exempt: Boolean(tenant?.billing_exempt),
+    expiryPolicyDays: Number(expiry?.policy_days ?? 0),
+    expiringSoon: Number(expiry?.expiring_soon ?? 0),
+    nextExpiryAt: expiry?.next_expiry_at ?? null,
+    expiryWarningDays: Number(expiry?.warning_days ?? 7),
   };
 }
 

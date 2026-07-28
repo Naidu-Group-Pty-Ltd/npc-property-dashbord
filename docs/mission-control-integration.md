@@ -239,6 +239,63 @@ refresh. So the guaranteed bound is ≤5 minutes everywhere, usually immediate.
 Reports already generated are unaffected — a new price applies to the next
 reservation.
 
+## Token expiry and rollover
+
+Credits live **30 days from the moment they are issued**. Plan allowances,
+top-up packs and operator gifts all obey it; only a gift can override, via the
+expiry date `grant_tokens` already accepts — a blank date now means 30 days,
+not "never".
+
+Rollover falls out of that: nothing is wiped at a period boundary, so unused
+credits carry across it and lapse on their own clock. `billing_plans.rollover_cap`
+stays unused.
+
+| Source | Expiry | Overridable |
+|---|---|---|
+| Plan allowance (`issue_plan_allowance`) | 30 days from issue | no |
+| Top-up pack (`apply_topup`) | 30 days, or the pack's own shorter window | no |
+| Operator gift (`grant_tokens`) | 30 days by default | **yes** — the expiry date field |
+
+### Credits are lots
+
+Expiry forced the balance function to change. The old one netted the ledger and
+skipped credit rows whose `expires_at` had passed — which silently under-counts,
+because the debits taken against an expired credit stay in the sum while the
+credit that funded them disappears:
+
+```
+grant  +100 (lapsed)   skipped
+topup   +50 (live)     +50
+debit   -30            -30    ⇒ 20
+```
+
+The honest answer is 50: the 30 was already paid for out of the grant, and only
+the grant's unspent 70 should have lapsed.
+
+So each credit is a **lot**. Spend consumes lots soonest-expiry-first — the
+use-it-or-lose-it order, which also leaves the customer the most usable balance
+— and expiry forfeits only a lot's *unconsumed* remainder. The rules are pinned
+by tests in `src/server/token-lots.server.test.ts` (Mission Control); the
+authoritative implementation is `recompute_token_balance` in SQL.
+
+### What this repo sees
+
+`getBalance()` gains `expiringSoon`, `nextExpiryAt`, `expiryPolicyDays` and
+`expiryWarningDays` from the balance endpoint, and the header pill warns when
+credit is about to lapse. Against an older Mission Control the fields are
+absent and the pill simply shows no warning.
+
+**Plan allowances are now real credits.** Until this change `monthly_allowance`
+was only a number on a page — nothing ever credited it, so a paid tier granted
+no spendable tokens at all. An hourly job issues it once per tenant per period.
+It deliberately does **not** back-fill: only periods starting after the feature
+shipped are credited, so deploying it hands nobody a windfall for a month they
+have already been using.
+
+**Credits already on the ledger keep their terms.** Existing rows have no
+expiry and are left that way — nobody loses a balance they were told they had.
+The rule applies from deploy forward.
+
 ## Manual rotation
 
 UI lives under **Settings → Mission Control Key** (superadmin only).

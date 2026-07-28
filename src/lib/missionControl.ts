@@ -19,6 +19,13 @@ export type TokenKind =
   | "report.qualitative-regen";
 
 export interface TokenBalance {
+  /** Credit lapsing inside the warning window (0 when nothing is due). */
+  expiringSoon?: number;
+  /** When the next credit lapses. */
+  nextExpiryAt?: string | null;
+  /** Platform token lifetime in days. */
+  expiryPolicyDays?: number;
+  expiryWarningDays?: number;
   available: number;
   allowance: number;
   used: number;

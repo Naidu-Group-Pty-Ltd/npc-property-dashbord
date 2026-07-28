@@ -108,6 +108,16 @@ export function TokenBalancePill({ compact = false }: TokenBalancePillProps) {
                   ? `of ${allowance.toLocaleString()} allowance${balance.planName ? ` · ${balance.planName}` : ""}`
                   : "Top-up credits · no plan allowance"}
               </p>
+              {/* Credits lapse 30 days after they are issued, so a balance can
+                  shrink without anyone spending anything. Say so before it does. */}
+              {!!balance?.expiringSoon && balance.expiringSoon > 0 && (
+                <p className="text-xs text-warning">
+                  {balance.expiringSoon.toLocaleString()} expiring
+                  {balance.nextExpiryAt
+                    ? ` ${new Date(balance.nextExpiryAt).toLocaleDateString()}`
+                    : ` within ${balance.expiryWarningDays ?? 7} days`}
+                </p>
+              )}
             </div>
             <Coins
               className={cn(
