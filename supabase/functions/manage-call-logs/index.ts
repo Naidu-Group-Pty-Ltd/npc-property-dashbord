@@ -5,6 +5,7 @@ import { checkPermission } from "../_shared/permissions.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const VAPI_BASE_URL = 'https://api.vapi.ai';
 const VAPI_FETCH_TIMEOUT_MS = 5000;
+const CALL_LOG_UPDATE_FIELDS = new Set(['resolution_status', 'resolution_notes', 'reviewed_at']);
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -75,6 +76,11 @@ Deno.serve(async (req) => {
         );
       }
 
+      const permission = await checkPermission(supabase, userId!, 'vapi_call_logs', 'update', authMethod);
+      if (!permission.allowed) {
+        return createForbiddenResponse(permission.reason || 'Call logs edit permission required', corsHeaders);
+      }
+
       console.log(`[manage-call-logs] Updating tags for call: ${callId}`);
       
       const { error } = await supabase
@@ -105,11 +111,33 @@ Deno.serve(async (req) => {
         );
       }
 
+      if (typeof data !== 'object' || Array.isArray(data)) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'data must be an object' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const permission = await checkPermission(supabase, userId!, 'vapi_call_logs', 'update', authMethod);
+      if (!permission.allowed) {
+        return createForbiddenResponse(permission.reason || 'Call logs edit permission required', corsHeaders);
+      }
+
+      const updateData = Object.fromEntries(
+        Object.entries(data).filter(([field]) => CALL_LOG_UPDATE_FIELDS.has(field)),
+      );
+      if (Object.keys(updateData).length !== Object.keys(data).length || Object.keys(updateData).length === 0) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'One or more update fields are not allowed' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
       console.log(`[manage-call-logs] Updating call: ${callId}`);
       
       const { error } = await supabase
         .from('vapi_call_logs')
-        .update(data)
+        .update(updateData)
         .eq('id', callId);
 
       if (error) {
