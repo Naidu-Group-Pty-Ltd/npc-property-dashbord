@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { normaliseSegmentBreakdown } from '@/lib/marketDigestSegments';
+import { interleaveBySource } from '@/lib/marketFeedOrder';
 import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, followMarketIngestionRun, generateMarketDigest, setMarketUpdateHidden, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
@@ -171,7 +172,9 @@ export default function MarketUpdates() {
   }, []);
   useEffect(() => { void loadDigest(period); }, [period]);
 
-  const filteredUpdates = useMemo(() => updates.filter((u) => {
+  // Recency alone let the highest-volume masthead take most of the first screen, so the
+  // filtered feed is interleaved across publishers before it renders.
+  const filteredUpdates = useMemo(() => interleaveBySource(updates.filter((u) => {
     if (filters.category !== 'all' && u.category !== filters.category) return false;
     if (filters.geography !== 'all' && !u.geography.includes(filters.geography as MarketGeography)) return false;
     if (filters.impact !== 'all' && u.impact_level !== filters.impact) return false;
@@ -180,7 +183,7 @@ export default function MarketUpdates() {
     if (activeFreshness !== 'all' && u.freshness_tier !== activeFreshness) return false;
     if (search && !`${u.title} ${u.ai_summary ?? ''} ${u.source_name}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
-  }), [updates, filters, activeSegment, activeFreshness, search]);
+  }), (u) => u.source_name), [updates, filters, activeSegment, activeFreshness, search]);
   const hasActiveFilters = Boolean(search.trim()) || activeSegment !== 'all' || activeFreshness !== 'all' || Object.values(filters).some(value => value !== 'all');
   const clearFilters = () => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); };
 
@@ -741,6 +744,21 @@ export default function MarketUpdates() {
                       </div>
                     )}
 
+                    {/* The classifier already writes a property read for every item; it was
+                        only visible inside the dialog, so the feed never answered "what does
+                        this mean for property?" without a click. */}
+                    {update.property_implications && (
+                      <div className="mt-2 rounded-lg border-l-2 border-info/60 bg-info/5 py-2 pl-3 pr-2">
+                        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-info">
+                          <Building2 className="h-3 w-3" />Property impact
+                          <span className="rounded-full border border-info/30 px-1.5 py-0 text-[9px] font-medium normal-case tracking-normal">
+                            {update.geography.some(g => g === 'Australia') ? 'Macro · national' : `Local · ${update.geography.slice(0, 2).join(', ') || 'regional'}`}
+                          </span>
+                        </p>
+                        <p className="mt-0.5 text-sm text-foreground/90">{update.property_implications}</p>
+                      </div>
+                    )}
+
                     {update.segments.length > 0 && (
                       <div className="mt-3 flex flex-wrap gap-1">
                         {update.segments.map(s => (
@@ -822,14 +840,17 @@ export default function MarketUpdates() {
 
         {/* Analysis Dialog */}
         <Dialog open={Boolean(selectedUpdate)} onOpenChange={(open) => !open && setSelectedUpdate(null)}>
-          <DialogContent className="max-h-[92vh] w-[96vw] max-w-[96vw] overflow-y-auto lg:max-w-5xl xl:max-w-6xl">
-            <DialogHeader>
+          {/* Fixed header over a scrolling body: at 6xl the prose ran to ~130 characters
+              a line and the implications grid was clipped below the fold with the title
+              scrolled out of view. 4xl keeps a readable measure on any screen. */}
+          <DialogContent className="flex max-h-[90vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden p-0 sm:max-w-2xl lg:max-w-4xl">
+            <DialogHeader className="shrink-0 space-y-2 border-b border-border/60 px-6 pb-4 pt-6 text-left">
               <div className="flex flex-wrap items-center gap-2">
                 {selectedUpdate && <FreshnessBadge tier={selectedUpdate.freshness_tier} />}
                 {selectedUpdate && <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase', IMPACT_STYLE[selectedUpdate.impact_level])}>{selectedUpdate.impact_level} impact</span>}
                 {selectedUpdate && <ConfidenceBar score={selectedUpdate.confidence_score} />}
               </div>
-              <DialogTitle className="text-2xl leading-snug lg:text-3xl">{selectedUpdate?.title}</DialogTitle>
+              <DialogTitle className="pr-8 text-xl leading-snug lg:text-2xl">{selectedUpdate?.title}</DialogTitle>
               <p className="text-sm text-muted-foreground">{selectedUpdate?.source_name} · {dateLabel(selectedUpdate?.source_published_at)}</p>
               {selectedUpdate && (
                 <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -845,7 +866,7 @@ export default function MarketUpdates() {
               )}
             </DialogHeader>
             {selectedUpdate && (
-              <div className="space-y-5 text-base leading-relaxed">
+              <div className="flex-1 space-y-5 overflow-y-auto px-6 pb-6 pt-5 text-base leading-relaxed">
                 {selectedUpdate.ai_summary && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">AI Summary</h4><p className="mt-1.5">{selectedUpdate.ai_summary}</p></div>}
                 {selectedUpdate.key_points.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Key Points</h4><ul className="mt-1.5 list-disc space-y-1.5 pl-5">{selectedUpdate.key_points.map((p, i) => <li key={i}>{p}</li>)}</ul></div>}
                 {selectedUpdate.why_it_matters && <div className="rounded-lg border-l-2 border-primary/60 bg-primary/5 py-3 pl-4 pr-3"><h4 className="text-sm font-semibold uppercase tracking-wide text-primary">Why it matters</h4><p className="mt-1.5">{selectedUpdate.why_it_matters}</p></div>}
