@@ -26,6 +26,7 @@ const SEGMENT_LABEL_OVERRIDES: Record<string, string> = {
   'quantitative-reports': 'Quantitative Reports',
   'cash-flow-analysis': 'Cash Flow',
   'report-qa': 'Aurixa Intelligence Hub',
+  listings: 'Opportunity Marketplace',
   'email-copilot': 'Email Copilot',
   'call-logs': 'Call Logs',
   'client-tracker': 'Client Tracker',
