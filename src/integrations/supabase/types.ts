@@ -20325,6 +20325,7 @@ export type Database = {
           lifetime_spent: number
           monthly_allowance: number
           plan_name: string | null
+          plan_slug: string | null
           reserved: number
           tenant_ref: string
           updated_at: string
@@ -20336,6 +20337,7 @@ export type Database = {
           lifetime_spent?: number
           monthly_allowance?: number
           plan_name?: string | null
+          plan_slug?: string | null
           reserved?: number
           tenant_ref: string
           updated_at?: string
@@ -20347,6 +20349,7 @@ export type Database = {
           lifetime_spent?: number
           monthly_allowance?: number
           plan_name?: string | null
+          plan_slug?: string | null
           reserved?: number
           tenant_ref?: string
           updated_at?: string
