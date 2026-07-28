@@ -9,6 +9,7 @@ export type TokenKind =
   | "report.investment.compass"
   | "report.investment.executive"
   | "report.investment.snapshot"
+  | "report.investment.financial"
   | "report.suburb.compass"
   | "report.postcode.compass"
   | "report.market-intelligence"
@@ -18,6 +19,13 @@ export type TokenKind =
   | "report.qualitative-regen";
 
 export interface TokenBalance {
+  /** Credit lapsing inside the warning window (0 when nothing is due). */
+  expiringSoon?: number;
+  /** When the next credit lapses. */
+  nextExpiryAt?: string | null;
+  /** Platform token lifetime in days. */
+  expiryPolicyDays?: number;
+  expiryWarningDays?: number;
   available: number;
   allowance: number;
   used: number;
@@ -79,6 +87,7 @@ const BASE: Record<TokenKind, number> = {
   "report.investment.compass": 12,
   "report.investment.executive": 8,
   "report.investment.snapshot": 4,
+  "report.investment.financial": 5,
   "report.suburb.compass": 10,
   "report.postcode.compass": 10,
   "report.market-intelligence": 6,
@@ -337,6 +346,9 @@ export interface PaymentMethodRecord {
   expMonth: number | null;
   expYear: number | null;
   funding: string | null;
+  /** Cardholder name/email as entered on Stripe's page. Display only. */
+  billingName: string | null;
+  billingEmail: string | null;
   /** 1 = primary, 2 = secondary, 3 = backup. */
   priority: number;
   role: string;

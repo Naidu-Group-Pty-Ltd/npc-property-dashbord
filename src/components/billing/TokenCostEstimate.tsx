@@ -57,8 +57,8 @@ export function TokenCostEstimate({
       )}
       title={
         available != null
-          ? `Estimated cost: ${need.toLocaleString()} tokens · ${available.toLocaleString()} available`
-          : `Estimated cost: ${need.toLocaleString()} tokens`
+          ? `Cost: ${need.toLocaleString()} tokens · ${available.toLocaleString()} available`
+          : `Cost: ${need.toLocaleString()} tokens`
       }
     >
       <Coins className="h-3.5 w-3.5 opacity-80" />
