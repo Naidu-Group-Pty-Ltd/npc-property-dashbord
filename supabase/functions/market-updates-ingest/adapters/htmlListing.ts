@@ -1,6 +1,6 @@
 import { DOMParser } from 'npm:linkedom@0.18.12';
 import type { MarketSourceAdapter, NormalisedSourceBatch, NormalisedSourceItem, SourceConfig, SourceValidationResult } from './types.ts';
-import { boundedFetch, normaliseUrl, sourceDomains } from './security.ts';
+import { boundedFetch, normaliseUrl, safeSourceExcerpt, sourceDomains } from './security.ts';
 import { compileAnchorPatterns, MAX_ANCHOR_MATCH_LENGTH } from './anchorPatterns.ts';
 
 const DEFAULT_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -154,7 +154,15 @@ export class HtmlListingAdapter implements MarketSourceAdapter {
 
     const unique = [...new Map(out.filter((x) => x.title && x.canonicalUrl).map((x) => [x.canonicalUrl, x])).values()]
       .slice(0, Number(Deno.env.get('MARKET_UPDATES_MAX_ITEMS_PER_SOURCE') || 40));
-    if (!unique.length) throw new Error('Listing layout yielded no public article metadata');
+    if (!unique.length) {
+      // compileAnchorPatterns silently drops patterns that fail the safety rules,
+      // which otherwise reads identically to a source that simply changed layout.
+      const configured = Array.isArray(cfg.anchor_patterns) ? cfg.anchor_patterns.length : 0;
+      if (configured && !compileAnchorPatterns(cfg.anchor_patterns).length) {
+        throw new Error(`Listing yielded no metadata and all ${configured} configured anchor pattern(s) were rejected as unsafe`);
+      }
+      throw new Error('Listing layout yielded no public article metadata');
+    }
     return {
       items: unique,
       validation: { valid: true, format: 'html_listing', itemCount: unique.length, endpoint: url, httpStatus: response.status, latencyMs: latency },

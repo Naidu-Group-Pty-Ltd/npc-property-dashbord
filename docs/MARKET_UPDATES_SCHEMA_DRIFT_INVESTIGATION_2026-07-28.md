@@ -146,11 +146,72 @@ it as soon as it exists, with no further code change.
 select vault.create_secret('<same value as the Edge Function env var>', 'market_ingestion_cron_secret');
 ```
 
-### 2. Six source adapters yield no metadata
+### 2. Six source adapters yielding no metadata — resolved
 
-In the verification run, ABC News Business, Broker Daily, FBAA, MFAA, Mortgage Professional
-Australia and The Adviser all failed with `Listing layout yielded no public article metadata` —
-their listing selectors no longer match the sites' markup. Ingestion succeeds without them, but
-they contribute nothing until their `adapter_config` selectors are refreshed. Five further
-canonical sources (AFCA, Property Council, Banking Code Compliance Committee, Reuters, Domain)
-remain disabled because their origins require a licensed feed.
+Fixed in `20260728071500_market_source_adapter_repair` and the accompanying
+`adapters/htmlListing.ts` change. Details in the next section. Five further canonical sources
+(AFCA, Property Council, Banking Code Compliance Committee, Reuters, Domain) remain disabled
+because their origins require a licensed feed.
+
+## Source adapter repair
+
+The six sources that reported `Listing layout yielded no public article metadata` were not
+suffering from stale selectors. Two independent defects were responsible.
+
+### Defect A — every configured anchor pattern was rejected as unsafe
+
+`compileAnchorPatterns` (`adapters/anchorPatterns.ts`) silently drops any pattern that fails
+`isSafeAnchorPattern`, which enforces three rules: at most 128 characters, at most one unbounded
+quantifier (`+`, `*`, `{n,}`), and no lookarounds. Every seeded pattern broke at least one:
+
+| Source | Length | Unbounded quantifiers | Lookaround | Verdict |
+| --- | --- | --- | --- | --- |
+| The Adviser / Broker Daily | 139 | 2 (`\d+`, `[a-z0-9-]+`) | no | rejected |
+| Mortgage Professional Australia | 30 / 41 | 2 / 3 (`[^/]+`, `[0-9]+`) | no | rejected |
+| FBAA | 276 | 1 | `(?!…)` | rejected |
+
+With no compiled pattern the anchor fallback could not run, and because these listings are
+client-rendered (zero `<article>` elements, no article-typed JSON-LD) the earlier extraction
+steps had nothing to work with either.
+
+### Defect B — `safeSourceExcerpt` was used but never imported
+
+`adapters/htmlListing.ts` called `safeSourceExcerpt` at lines 43 and 75 without importing it from
+`./security.ts`. Both call sites sit inside `try { … } catch { }` blocks that swallow the
+resulting `ReferenceError`, so **JSON-LD extraction (step 1) and the configured selector sweep
+(step 2) discarded every item they built, for every `html_listing` source**. Only the anchor
+pattern and sitemap fallbacks could ever produce results. The missing import is now added.
+
+### Replacements
+
+All patterns and endpoints below were validated on 2026-07-28 against live markup using a
+faithful port of the adapter's own parsing and pattern-safety code.
+
+| Source | Change | Verified yield |
+| --- | --- | --- |
+| ABC News Business | → `rss`, feed `/news/feed/51892/rss.xml` | 25 items, all dated |
+| MFAA | → `rss`, feed `/feed` | 12 items, all dated |
+| Mortgage Professional Australia | → `rss_with_html_fallback`, feed `/au/rss`; fallback pattern `^/au/[a-z0-9/-]{10,90}/[0-9]{4,8}$` (no unbounded quantifier — bounded `{n,m}` is not counted) | 36 via feed, 7 via fallback |
+| The Adviser | pattern `^/(lender\|…\|aggregator)/[0-9]{3,8}-[a-z0-9-]+$` (114 chars, 1 unbounded); listing URLs reordered richest-first | 20 items |
+| Broker Daily | same pattern; `primary_url` corrected off the dead `/feed/`; listing URLs reordered | 15 items |
+| FBAA | disabled | — |
+
+`HtmlListingAdapter.fetch` returns on the first listing URL that yields items rather than
+aggregating, so listing URLs are ordered richest-first (`/breaking-news` for both Momentum Media
+titles).
+
+FBAA is disabled rather than repaired: its newshub publishes no first-party articles. Every
+headline links to a third-party outlet — theadviser.com.au, brokerdaily.au, mpamag.com,
+brokernews.com.au and roughly twenty others — which `normaliseUrl` rejects as a disallowed source
+domain, and its sitemap contains only navigation pages. The outlets it aggregates are already
+canonical sources in their own right.
+
+### Result
+
+The first hourly cron run after the repair: **12/12 sources succeeded, 0 failed, 263 items
+discovered, 7 published** (previously 7/13 succeeded, 184 discovered). All five repaired sources
+report `health_status = 'healthy'` with `consecutive_failures = 0`.
+
+The `htmlListing.ts` changes (the missing import, plus a distinct error message when every
+configured anchor pattern is rejected) take effect on the next deployment of
+`market-updates-ingest`; the source configuration changes were live immediately.
