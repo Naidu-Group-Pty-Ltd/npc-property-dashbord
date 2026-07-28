@@ -19,7 +19,7 @@ const SEGMENT_LABEL_OVERRIDES: Record<string, string> = {
   qa: 'Q&A',
   crm: 'CRM',
   'finance-portal': 'Finance Portal',
-  'portal-config': 'Portal Config',
+  'portal-config': 'Client Portal',
   'model-hub': 'Model Hub',
   'market-updates': 'Market Updates',
   'generated-reports': 'Generated Reports',
