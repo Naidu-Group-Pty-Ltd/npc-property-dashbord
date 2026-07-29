@@ -828,3 +828,63 @@ export async function acknowledgePlanChange(id: string): Promise<boolean> {
   const body = await parseOrThrow(res);
   return body?.acknowledged === true;
 }
+
+// ── Product feedback prompts ────────────────────────────────────────────────
+// The cadence — first 30 days, then quarterly — is decided by Mission Control
+// rather than here, so a clone created next year inherits it without the rule
+// being copied into code that deploys separately and drifts.
+
+export interface FeedbackPrompt {
+  due: boolean;
+  campaignKey: string | null;
+  reason: "onboarding" | "quarterly" | null;
+  rewardAvailable: boolean;
+  rewardTokens: number;
+  /** Where to send them. Carries an attributed handoff when we know who asked. */
+  feedbackUrl: string | null;
+}
+
+const NOT_DUE: FeedbackPrompt = {
+  due: false,
+  campaignKey: null,
+  reason: null,
+  rewardAvailable: false,
+  rewardTokens: 0,
+  feedbackUrl: null,
+};
+
+/**
+ * Should this workspace be asked for feedback, and where do they go?
+ *
+ * The URL is minted by Mission Control, not built here: the feedback form
+ * lives on a marketing domain with no login, so the workspace and the person
+ * have to be carried across in a handoff created server-to-server. Passing the
+ * user makes the response attributable; without it the answer is still
+ * recorded against the workspace, just with no author.
+ */
+export async function getFeedbackPrompt(
+  opts: { originUserId?: string | null; originUsername?: string | null } = {},
+): Promise<FeedbackPrompt> {
+  const q = new URLSearchParams({
+    tenant_ref: AGENCY_TENANT_REF,
+    display_name: AGENCY_DISPLAY_NAME,
+  });
+  if (opts.originUserId) {
+    q.set("origin_user_id", opts.originUserId.slice(0, 200));
+    if (opts.originUsername) q.set("origin_username", opts.originUsername.slice(0, 200));
+    q.set("origin_source", "prime_dashboard");
+  }
+  const res = await mcFetch(`/api/public/tokens/feedback-prompt?${q.toString()}`, {
+    method: "GET",
+  });
+  const body = await parseOrThrow(res);
+  if (body?.due !== true) return NOT_DUE;
+  return {
+    due: true,
+    campaignKey: body.campaign_key ?? null,
+    reason: body.reason === "onboarding" ? "onboarding" : "quarterly",
+    rewardAvailable: body.reward_available !== false,
+    rewardTokens: Number(body.reward_tokens ?? 100),
+    feedbackUrl: typeof body.feedback_url === "string" ? body.feedback_url : null,
+  };
+}

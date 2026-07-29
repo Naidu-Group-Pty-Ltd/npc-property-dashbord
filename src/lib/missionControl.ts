@@ -507,3 +507,33 @@ export async function acknowledgePlanChange(id: string): Promise<void> {
     // Worst case it shows once more. Not worth surfacing.
   }
 }
+
+/**
+ * Whether this workspace is due to be asked for feedback.
+ *
+ * The cadence lives in Mission Control — first 30 days, then quarterly — so
+ * every clone inherits it. Never throws: a prompt is the least important thing
+ * on a dashboard.
+ */
+export interface FeedbackPrompt {
+  due: boolean;
+  campaignKey: string | null;
+  reason: "onboarding" | "quarterly" | null;
+  rewardAvailable: boolean;
+  rewardTokens: number;
+  feedbackUrl: string | null;
+}
+
+export async function fetchFeedbackPrompt(): Promise<FeedbackPrompt | null> {
+  try {
+    const { invokeSecureFunction } = await import("@/lib/secureInvoke");
+    const { data, error } = await invokeSecureFunction<FeedbackPrompt>(
+      "mission-control-feedback-prompt",
+      {},
+    );
+    if (error || !data?.due || !data.feedbackUrl) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
