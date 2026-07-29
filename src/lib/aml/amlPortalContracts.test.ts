@@ -214,6 +214,12 @@ describe("conditional questionnaire engine (Phase 5, §14.2–14.4)", () => {
   it("blocks final submission until every applicable section is submitted", () => {
     expect(portalSource).toContain("Cannot submit — some sections are incomplete");
     expect(portalSource).toContain("missing_sections");
+    expect(portalSource).toContain("validateQuestionnaireSection(");
+  });
+
+  it("validates submitted payloads at the server boundary", () => {
+    expect(portalSource).toMatch(/validateQuestionnaireSection\(\s*body\.section,\s*payload,/);
+    expect(portalSource).toContain("invalid_fields: invalidFields");
   });
 
   it("freezes the engine version and applicable list into the submission snapshot", () => {
@@ -241,6 +247,11 @@ describe("questionnaire reconciliation into canonical parties (Phase 6)", () => 
     // …and a disagreement becomes a flagged conflict, not an update.
     expect(importBranch).toContain("report.conflicts.push");
     expect(importBranch).not.toContain("upsert(row)");
+  });
+
+  it("never resolves a case entity from client-supplied ABN or ACN", () => {
+    expect(importBranch).toContain('from("entity_case_links")');
+    expect(importBranch).not.toContain('.or([declaredAbn');
   });
 
   it("records every source value in field_provenance with client-portal attribution", () => {

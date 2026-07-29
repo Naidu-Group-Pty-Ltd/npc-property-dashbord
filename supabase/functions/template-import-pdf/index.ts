@@ -18,6 +18,7 @@ import {
   isTemplateImportArtifactPathOwnedByImport,
 } from '../_shared/templateImportArtifactAuthorization.pure.ts';
 import { authorizeTemplateResync } from '../_shared/templateResyncAuthorization.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -1121,6 +1122,30 @@ Deno.serve(async (req) => {
 
     if (operation === 'finalize') {
       const importId = body.import_id as string;
+      if (!importId) return json({ error: 'import_id required' }, 400);
+
+      // This function writes with service-role privileges, so reproduce both
+      // authorization boundaries that RLS would otherwise enforce: template
+      // edit permission and ownership of the import being finalized.
+      const permission = await requireModulePermission(
+        admin,
+        { userId: auth.userId, authMethod: auth.authMethod },
+        'templates',
+        'can_edit',
+      );
+      if (!permission.ok) return json({ error: permission.error, code: permission.reason_code }, 403);
+
+      const { data: importRecord, error: importError } = await admin
+        .from('template_imports')
+        .select('id,user_id')
+        .eq('id', importId)
+        .maybeSingle();
+      if (importError) return json({ error: importError.message }, 400);
+      if (!importRecord) return json({ error: 'Import record not found' }, 404);
+      if (auth.userId !== 'service_role' && importRecord.user_id !== authedUserId) {
+        return json({ error: 'forbidden' }, 403);
+      }
+
       const name = (body.name as string) ?? 'Imported template';
       const schema = body.schema;
       const validationError = schemaValidationErrorResponse(json, schema);

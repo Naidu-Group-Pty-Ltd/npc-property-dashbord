@@ -12,37 +12,16 @@ const baseOverlay = {
 };
 
 describe('HTML overlay rendering', () => {
-  it('escapes bound values inside designer-authored rich text', () => {
+  it('does not emit hidden overlay content', () => {
     const html = renderOverlay({
       ...baseOverlay,
+      id: 'hidden-text',
       type: 'text',
-      id: 'rich-bound-text',
-      rich: true,
-      content: '<strong>Description:</strong> {{property.description}}',
-    } as any, {
-      data: {
-        property: {
-          description: '<img src="http://169.254.169.254/latest/meta-data/">',
-        },
-      },
-      tokens: {},
-    } as any);
-
-    expect(html).toContain('<strong>Description:</strong>');
-    expect(html).toContain('&lt;img src=&quot;http://169.254.169.254/latest/meta-data/&quot;&gt;');
-    expect(html).not.toContain('<img');
-  });
-
-  it('preserves literal designer-authored rich text', () => {
-    const html = renderOverlay({
-      ...baseOverlay,
-      type: 'text',
-      id: 'rich-literal-text',
-      rich: true,
-      content: '<strong>Trusted formatting</strong>',
+      content: 'CONFIDENTIAL_OVERLAY_CONTENT',
+      hidden: true,
     } as any, ctx);
 
-    expect(html).toContain('<strong>Trusted formatting</strong>');
+    expect(html).toBe('');
   });
 
   it('escapes text-on-path ids before writing SVG attributes', () => {
