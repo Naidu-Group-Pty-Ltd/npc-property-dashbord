@@ -54,6 +54,7 @@ import { AlignmentGrid } from './AlignmentGrid';
 import { TextRhythmControl } from './TextRhythmControl';
 import { PalettePresets } from './PalettePresets';
 import { Badge } from '@/components/ui/badge';
+import { createEmptyListRow, updateListRowValue, type ListRow } from './listRows';
 
 
 // Template, active page, selection, and mutators come straight from
@@ -937,6 +938,7 @@ function BlockEditor({
               key={f.key}
               field={f}
               value={props[f.key]}
+              sampleValue={def.defaultProps()[f.key]}
               template={template}
               onChange={(v) => setProp(f.key, v)}
             />
@@ -987,10 +989,11 @@ function BlockEditor({
 
 
 function BlockFieldInput({
-  field, value, onChange, template,
+  field, value, sampleValue, onChange, template,
 }: {
   field: BlockField;
   value: unknown;
+  sampleValue?: unknown;
   onChange: (v: unknown) => void;
   template: ReportTemplate;
 }) {
@@ -1052,7 +1055,8 @@ function BlockFieldInput({
       return (
         <ListRowsField
           label={field.label}
-          rows={Array.isArray(value) ? (value as Array<{ cells: string[] }>) : []}
+          rows={Array.isArray(value) ? (value as ListRow[]) : []}
+          sampleRow={Array.isArray(sampleValue) ? (sampleValue[0] as ListRow | undefined) : undefined}
           onChange={onChange}
         />
       );
@@ -1092,34 +1096,57 @@ function ListStringsField({
 }
 
 function ListRowsField({
-  label, rows, onChange,
-}: { label: string; rows: Array<{ cells: string[] }>; onChange: (v: Array<{ cells: string[] }>) => void }) {
-  const colCount = rows[0]?.cells?.length ?? 2;
+  label, rows, sampleRow, onChange,
+}: { label: string; rows: ListRow[]; sampleRow?: ListRow; onChange: (v: ListRow[]) => void }) {
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
         <Label className="text-xs">{label}</Label>
         <Button size="icon" variant="ghost" className="h-6 w-6"
-          onClick={() => onChange([...rows, { cells: Array(colCount).fill('') }])} title="Add row">
+          onClick={() => onChange([...rows, createEmptyListRow(rows[0] ?? sampleRow)])} title="Add row">
           <Plus className="h-3 w-3" />
         </Button>
       </div>
       {rows.map((row, i) => (
         <div key={i} className="flex items-start gap-1">
           <div className="flex-1 grid grid-cols-2 gap-1">
-            {(row.cells || []).map((cell, j) => (
-              <Input
-                key={j}
-                value={cell}
-                onChange={(e) => {
-                  const next = rows.map((r, ri) => ri === i
-                    ? { ...r, cells: r.cells.map((c, ci) => ci === j ? e.target.value : c) }
-                    : r);
-                  onChange(next);
-                }}
-                className="h-7 text-xs font-mono"
-              />
-            ))}
+            {Object.entries(row).flatMap(([key, rowValue]) => {
+              const values = Array.isArray(rowValue) ? rowValue : [rowValue];
+              return values.map((item, valueIndex) => {
+                const fieldLabel = Array.isArray(rowValue) ? `${key} ${valueIndex + 1}` : key;
+                if (typeof item === 'boolean') {
+                  return (
+                    <label key={`${key}-${valueIndex}`} className="flex h-7 items-center gap-2 text-xs text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={item}
+                        onChange={(e) => onChange(updateListRowValue(rows, i, key, e.target.checked))}
+                      />
+                      {fieldLabel}
+                    </label>
+                  );
+                }
+                return (
+                  <div key={`${key}-${valueIndex}`}>
+                    <Label className="sr-only" htmlFor={`${label}-${i}-${key}-${valueIndex}`}>{fieldLabel}</Label>
+                    <Input
+                      id={`${label}-${i}-${key}-${valueIndex}`}
+                      type={typeof item === 'number' ? 'number' : 'text'}
+                      value={String(item ?? '')}
+                      placeholder={fieldLabel}
+                      onChange={(e) => onChange(updateListRowValue(
+                        rows,
+                        i,
+                        key,
+                        typeof item === 'number' ? Number(e.target.value) : e.target.value,
+                        Array.isArray(rowValue) ? valueIndex : undefined,
+                      ))}
+                      className="h-7 text-xs font-mono"
+                    />
+                  </div>
+                );
+              });
+            })}
           </div>
           <Button size="icon" variant="ghost" className="h-6 w-6 text-destructive"
             onClick={() => onChange(rows.filter((_, idx) => idx !== i))} title="Remove row">
