@@ -243,6 +243,11 @@ describe("questionnaire reconciliation into canonical parties (Phase 6)", () => 
     expect(importBranch).not.toContain("upsert(row)");
   });
 
+  it("never resolves a case entity from client-supplied ABN or ACN", () => {
+    expect(importBranch).toContain('from("entity_case_links")');
+    expect(importBranch).not.toContain('.or([declaredAbn');
+  });
+
   it("records every source value in field_provenance with client-portal attribution", () => {
     expect(importBranch).toContain('from("field_provenance").insert(');
     expect(importBranch).toContain('source_type: "client_portal"');
