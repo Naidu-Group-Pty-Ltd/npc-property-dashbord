@@ -249,6 +249,7 @@ export function ExportPipelineDialog({
         data: sampleData,
         title: templateName || 'Template Export',
         customCss: customCss || undefined,
+        includeBookmarks,
       });
 
       // 3) Call edge function
