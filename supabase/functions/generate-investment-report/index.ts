@@ -4570,14 +4570,14 @@ ${sourceSpecificInstructions}
     // Area reports (suburb/postcode/statewide) do NOT use property-level overrides
     // isAreaReport already defined at top of function
     const manualOverrides = isAreaReport ? null : (propertyDetails?.manualOverrides || null);
-    // Compass-40 is a NON-financial location/property-fit report. Injecting
+    // Compass is a NON-financial location/property-fit report. Injecting
     // financial labels (Purchase Price: $X, Interest Rate: 6.5%, Capital Growth:
     // 5% p.a.) caused the model to regurgitate them verbatim into narrative
-    // prose. For Compass-40 we strip every financial override line at the
+    // prose. For every Compass tier we strip every financial override line at the
     // source so the LLM never sees them.
-    // Only strip financial overrides when the user explicitly picks the
-    // Compass-40 engine. Legacy engine keeps all overrides available.
-    const __compass40Mode = propertyDetails?.generationEngine === 'compass-40';
+    // Use the report tier rather than the caller-selected generation engine:
+    // omitted tiers default to Compass and the legacy engine remains selectable.
+    const __compassReport = ['compass', 'compass-40'].includes(propertyDetails?.reportTier || 'compass');
     const __FINANCIAL_OVERRIDE_KEYS = new Set<string>([
       'purchasePrice','landPrice','buildPrice','weeklyRent','depositValue',
       'loanToValueRatio','interestRate','loanType','loanTermYears','loanAmount',
@@ -4589,14 +4589,14 @@ ${sourceSpecificInstructions}
       'propertyManagementFees','repairsMaintenance','lettingFees',
       'depreciation','taxRate','occupancyRate','marketValueNow',
     ]);
-    if (__compass40Mode && manualOverrides) {
+    if (__compassReport && manualOverrides) {
       const filtered: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(manualOverrides)) {
         if (!__FINANCIAL_OVERRIDE_KEYS.has(k)) filtered[k] = v;
       }
       const dropped = Object.keys(manualOverrides).length - Object.keys(filtered).length;
       if (dropped > 0) {
-        console.log(`🛡️ Compass-40: stripped ${dropped} financial override keys from prompt context`);
+        console.log(`🛡️ Compass: stripped ${dropped} financial override keys from prompt context`);
       }
       Object.keys(manualOverrides).forEach((k) => {
         if (!filtered.hasOwnProperty(k)) delete (manualOverrides as Record<string, unknown>)[k];
