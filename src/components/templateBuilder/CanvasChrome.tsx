@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Toggle } from '@/components/ui/toggle';
 import { Input } from '@/components/ui/input';
 import { Grid3x3, Ruler as RulerIcon, Crop, Shield, Magnet, AlignJustify } from 'lucide-react';
+import { toRendererHex } from '@/lib/reportTemplate/cssColor';
 import type { Page, ReportTemplate } from '@/lib/reportTemplate/templateSchema';
 
 interface Props {
@@ -33,6 +34,7 @@ export function CanvasChrome({ page, canvas, onChangeCanvas }: Props) {
   const h = page.size?.height ?? 842;
   const bleed = page.bleed ?? 0;
   const safe = page.safeArea ?? 0;
+  const baselineGridColor = toRendererHex(page.baselineGrid?.color) ?? '#BF9B504D';
 
   return (
     <>
@@ -77,7 +79,7 @@ export function CanvasChrome({ page, canvas, onChangeCanvas }: Props) {
           className="pointer-events-none absolute inset-0 z-[6]"
           style={{
             backgroundImage:
-              `repeating-linear-gradient(to bottom, transparent 0, transparent ${(page.baselineGrid.size) - 1}px, ${page.baselineGrid.color || 'rgba(191,155,80,0.30)'} ${(page.baselineGrid.size) - 1}px, ${page.baselineGrid.color || 'rgba(191,155,80,0.30)'} ${page.baselineGrid.size}px)`,
+              `repeating-linear-gradient(to bottom, transparent 0, transparent ${(page.baselineGrid.size) - 1}px, ${baselineGridColor} ${(page.baselineGrid.size) - 1}px, ${baselineGridColor} ${page.baselineGrid.size}px)`,
             backgroundPosition: `0 ${page.baselineGrid.offset ?? 0}px`,
           }}
         />

@@ -34,6 +34,19 @@ describe('bindingResolver — filters', () => {
   it('fallback filter falls back when empty', () => {
     expect(resolveBindable('{{missing | fallback:"n/a"}}', ctx({}))).toBe('n/a');
   });
+  it.each([
+    ['currency', '999999'],
+    ['number', '-1'],
+    ['percent', '101'],
+    ['fixed', '101'],
+    ['fixed', 'Infinity'],
+    ['fixed', 'not-a-number'],
+  ])('uses the default precision for an invalid %s argument', (filter, decimals) => {
+    const context = ctx({ n: 12.345 });
+    expect(resolveBindable(`{{n | ${filter}:${decimals}}}`, context)).toBe(
+      resolveBindable(`{{n | ${filter}}}`, context),
+    );
+  });
 });
 
 describe('bindingResolver — numbers', () => {

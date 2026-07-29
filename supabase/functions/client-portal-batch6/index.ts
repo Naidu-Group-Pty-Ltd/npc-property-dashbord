@@ -146,12 +146,15 @@ Deno.serve(async (req) => {
         const weekday = day.getDay();
         for (const w of (windows || [])) {
           if (w.weekday !== weekday) continue;
+          const slotDurationMin = Number(w.slot_duration_min);
+          if (!Number.isInteger(slotDurationMin) || slotDurationMin < 1) continue;
+          const slotDurationMs = slotDurationMin * 60000;
           const [sh, sm] = w.start_time.split(':').map(Number);
           const [eh, em] = w.end_time.split(':').map(Number);
           const dayStart = new Date(day); dayStart.setHours(sh, sm, 0, 0);
           const dayEnd = new Date(day); dayEnd.setHours(eh, em, 0, 0);
-          for (let t = dayStart.getTime(); t + w.slot_duration_min * 60000 <= dayEnd.getTime(); t += w.slot_duration_min * 60000) {
-            const s = new Date(t); const e = new Date(t + w.slot_duration_min * 60000);
+          for (let t = dayStart.getTime(); t + slotDurationMs <= dayEnd.getTime(); t += slotDurationMs) {
+            const s = new Date(t); const e = new Date(t + slotDurationMs);
             if (s.getTime() < now.getTime() + 2 * 3600000) continue; // 2h buffer
             const clash = (existing || []).some((b: any) =>
               new Date(b.start_at).getTime() < e.getTime() && new Date(b.end_at).getTime() > s.getTime());
