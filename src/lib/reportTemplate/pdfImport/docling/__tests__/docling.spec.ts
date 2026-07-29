@@ -169,6 +169,32 @@ describe('docling adapter', () => {
     expect(table.meta?.glyphArtifacts).toBe(true);
   });
 
+  it('bounds untrusted table dimensions and clamps invalid cell offsets', () => {
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      tables: [
+        {
+          data: {
+            num_rows: 1_000_000,
+            num_cols: 1_000_000,
+            table_cells: [
+              { text: 'clamped', start_row_offset_idx: -10, start_col_offset_idx: -20 },
+            ],
+          },
+          prov: [{ page_no: 1, bbox: { l: 60, t: 250, r: 535, b: 360, coord_origin: 'TOPLEFT' } }],
+        },
+      ],
+    };
+
+    const table = mapDoclingToRawBlocks(doc).byPage[1][0];
+    expect(table.meta?.tableData?.numRows).toBe(1_000);
+    expect(table.meta?.tableData?.numCols).toBe(10);
+    expect(table.meta?.tableData?.rows).toHaveLength(1_000);
+    expect(table.meta?.tableData?.rows[0][0]).toBe('clamped');
+    expect(table.meta?.tableData?.cells?.[0]).toMatchObject({ row: 0, col: 0 });
+    expect(table.text).toBe('clamped');
+  });
+
   it('single-line text overlays get whiteSpace:nowrap; multi-line paragraphs keep wrapping', () => {
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
