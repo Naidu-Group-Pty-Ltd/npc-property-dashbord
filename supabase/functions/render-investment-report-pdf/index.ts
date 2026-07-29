@@ -21,6 +21,8 @@ const MAX_RENDER_WAIT_MS = EDGE_FUNCTION_TIMEOUT_MS - RENDER_SAFETY_BUFFER_MS;
 // (Hero-image generation is now offloaded to `prepare-report-hero-images`.)
 const API2PDF_REQUEST_TIMEOUT_MS = 600_000;
 const WEASYPRINT_REQUEST_TIMEOUT_MS = 600_000;
+const MAX_CHART_INJECTION_HTML_CHARS = 2_000_000;
+const MAX_CHART_INJECTION_TABLES = 100;
 
 // Dark-gold theme tokens mirrored from the app.
 const THEME = {
@@ -2354,7 +2356,17 @@ function applyFootnotesAndXrefs(html: string): string {
 
 /** Detect numeric markdown tables in rendered HTML, prepend a chart visualisation. */
 async function injectTableCharts(html: string): Promise<string> {
-  const tables = Array.from(html.matchAll(/<table[\s\S]*?<\/table>/gi));
+  // Chart decoration is optional. Keep rendering the original report when the
+  // generated HTML is too large or table-heavy to process within a bounded cost.
+  if (html.length > MAX_CHART_INJECTION_HTML_CHARS) return html;
+
+  const tablePattern = /<table[\s\S]*?<\/table>/gi;
+  const tables: RegExpExecArray[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = tablePattern.exec(html)) !== null) {
+    if (tables.length >= MAX_CHART_INJECTION_TABLES) return html;
+    tables.push(match);
+  }
   if (tables.length === 0) return html;
 
   // Pre-compute the nearest preceding heading (h2 preferred, h3 fallback) for
@@ -2371,10 +2383,13 @@ async function injectTableCharts(html: string): Promise<string> {
 
   const replacements = new Array<string>(tables.length);
   let chartAttempts = 0;
-  const queue = tables.map((match, index) => ({ tbl: match[0], index, sectionTitle: sectionTitles[index] }));
-  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
-    while (queue.length) {
-      const { tbl, index, sectionTitle } = queue.shift()!;
+  let nextTableIndex = 0;
+  const workers = Array.from({ length: Math.min(4, tables.length) }, async () => {
+    while (true) {
+      const index = nextTableIndex++;
+      if (index >= tables.length) return;
+      const tbl = tables[index][0];
+      const sectionTitle = sectionTitles[index];
       const theadMatch = tbl.match(/<thead[\s\S]*?<\/thead>/i);
       const headerSource = theadMatch?.[0] || tbl.match(/<tr[\s\S]*?<\/tr>/i)?.[0] || "";
       const headers = Array.from(headerSource.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi))

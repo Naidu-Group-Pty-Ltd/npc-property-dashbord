@@ -20,4 +20,11 @@ describe('render-investment-report-pdf authorization contract', () => {
     expect(denial).toBeGreaterThan(clientOwnershipCheck);
     expect(contentLookup).toBeGreaterThan(denial);
   });
+
+  it('bounds table chart injection without shifting a worker queue', () => {
+    expect(functionSource).toContain('if (html.length > MAX_CHART_INJECTION_HTML_CHARS) return html');
+    expect(functionSource).toContain('if (tables.length >= MAX_CHART_INJECTION_TABLES) return html');
+    expect(functionSource).toContain('const index = nextTableIndex++');
+    expect(functionSource).not.toContain('queue.shift()');
+  });
 });
