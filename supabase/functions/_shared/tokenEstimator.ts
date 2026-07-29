@@ -35,14 +35,19 @@ export interface EstimateOptions {
   multiplier?: number;          // arbitrary multiplier (e.g. bulk count)
 }
 
-export function estimateTokens(kind: TokenKind, opts: EstimateOptions = {}): number {
-  let n = BASE[kind] ?? 5;
+/** Apply server-resolved workload modifiers to a base report price. */
+export function applyEstimateOptions(base: number, opts: EstimateOptions = {}): number {
+  let n = base;
   if (opts.extraSections && opts.extraSections > 0) {
     n = n * (1 + 0.2 * opts.extraSections);
   }
   if (opts.aiNarrative) n = n * 1.5;
   if (opts.multiplier && opts.multiplier > 0) n = n * opts.multiplier;
   return Math.ceil(n);
+}
+
+export function estimateTokens(kind: TokenKind, opts: EstimateOptions = {}): number {
+  return applyEstimateOptions(BASE[kind] ?? 5, opts);
 }
 
 export function estimateBulk(items: Array<{ kind: TokenKind; opts?: EstimateOptions }>): number {

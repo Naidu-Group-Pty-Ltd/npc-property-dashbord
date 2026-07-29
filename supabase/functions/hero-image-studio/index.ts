@@ -200,7 +200,14 @@ Deno.serve(async (req) => {
 
   try {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
-    const body = await req.json().catch(() => ({}));
+    const boundedBody = await enforceRawBodyLimit(req, MAX_REQUEST_BYTES);
+    if (!boundedBody.ok) return jsonErr("request too large", corsHeaders, 413);
+    let body: any;
+    try {
+      body = JSON.parse(boundedBody.raw || "{}");
+    } catch {
+      return jsonErr("invalid JSON", corsHeaders);
+    }
 
     const auth = await verifyAuth(supabase, req.headers, body);
     if (auth.error) return createUnauthorizedResponse(auth.error, corsHeaders);
@@ -350,11 +357,11 @@ Deno.serve(async (req) => {
 
     // ── library_upload (raw image, no AI) ────────────────────────────────
     if (action === "library_upload") {
-      const fileBase64 = String(body?.fileBase64 || "");
-      if (!fileBase64) return jsonErr("fileBase64 required", corsHeaders);
-      const contentType = String(body?.contentType || "image/png");
-      const width = Math.max(Number(body?.width) || 0, 1);
-      const height = Math.max(Number(body?.height) || 0, 1);
+      const quota = await enforceActorQuota(supabase, userId, "hero-image-upload", { limit: 30, windowMs: 60 * 60 * 1000 });
+      if (!quota.ok) return jsonErr("upload rate limit exceeded", corsHeaders, 429);
+      const image = validateImageUpload(body?.fileBase64);
+      if (!image) return jsonErr("a valid JPEG, PNG, or WebP image up to 10 MB is required", corsHeaders);
+      const { bytes, contentType, extension: ext, width, height } = image;
       const aspect = (() => {
         const ratio = width / Math.max(height, 1);
         const closest = Object.entries(ASPECT_TO_SIZE).reduce(
@@ -369,15 +376,7 @@ Deno.serve(async (req) => {
       const label = String(body?.prompt || "Uploaded image").slice(0, 240);
       const sourceReportId = body?.sourceReportId ? String(body.sourceReportId) : null;
 
-      let pure = fileBase64;
-      const m = fileBase64.match(/^data:([^;]+);base64,(.+)$/);
-      if (m) pure = m[2];
-      const bin = atob(pure);
-      const bytes = new Uint8Array(bin.length);
-      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-
       const id = crypto.randomUUID();
-      const ext = contentType.includes("jpeg") || contentType.includes("jpg") ? "jpg" : contentType.includes("webp") ? "webp" : "png";
       const path = `${STORAGE_PREFIX}/${userId || "anon"}/${id}.${ext}`;
       const { error: upErr } = await supabase.storage.from(BUCKET).upload(path, bytes, {
         contentType,
