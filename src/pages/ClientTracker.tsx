@@ -1419,7 +1419,7 @@ export default function ClientTracker() {
                         <div className="flex items-center justify-between gap-3">
                           <CardTitle className="flex min-w-0 items-center gap-2.5 text-sm font-semibold tracking-tight text-muted-foreground">
                             <span className="relative flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background/80 shadow-inner">
-                              <span className="h-2.5 w-2.5 rounded-full bg-gray-400 shadow-[0_0_14px_rgba(156,163,175,0.55)]" />
+                              <span className="h-2.5 w-2.5 rounded-full bg-muted-foreground shadow-[0_0_14px_rgba(156,163,175,0.55)]" />
                             </span>
                             <span className="truncate">Unassigned</span>
                           </CardTitle>

@@ -180,7 +180,9 @@ const RATE_LIMIT_DAY = Number(Deno.env.get('MARKET_QA_RATE_LIMIT_DAY') || 200);
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get('origin'));
-  const requestCorrelationId=marketCorrelationId(req.headers);
+  // Provisional id for early error responses; upgraded from the request body
+  // once it is parsed (browsers cannot send the header — see below).
+  let requestCorrelationId=marketCorrelationId(req.headers);
   cors['x-correlation-id']=requestCorrelationId;
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers:{ ...cors, 'content-type':'application/json' } });
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
@@ -189,6 +191,11 @@ Deno.serve(async (req) => {
   if (!csrf.ok) return csrfDenied(cors, csrf);
   const parsed = await enforceJsonBodyLimit<any>(req, 100_000);
   if (!parsed.ok) return new Response(parsed.error.body, { status: parsed.error.status, headers: { ...cors, 'content-type': 'application/json' } });
+  // A browser cannot attach `x-correlation-id` — that would require every
+  // reachable edge function to be redeployed with the header allow-listed
+  // before the preflight would pass — so the client sends it in the body.
+  requestCorrelationId = marketCorrelationId(req.headers, parsed.value);
+  cors['x-correlation-id'] = requestCorrelationId;
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   // Human requests and scheduled work have distinct trust paths. Scheduled
   // callers must present a signed internal envelope and be on this target's

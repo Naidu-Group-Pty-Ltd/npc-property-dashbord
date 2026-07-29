@@ -186,7 +186,7 @@ export default function PortalConfig() {
       <DashboardThemeFrame variant="page" className="flex min-h-[400px] items-center justify-center">
         <div className="flex items-center gap-3 rounded-2xl border border-border/70 bg-card/80 px-5 py-4 text-sm text-muted-foreground shadow-sm dark:border-white/10 dark:bg-background/70">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          <span>Loading portal configuration…</span>
+          <span>Loading client portal settings…</span>
         </div>
       </DashboardThemeFrame>
     );
@@ -213,9 +213,9 @@ export default function PortalConfig() {
             </div>
             <div className="min-w-0 space-y-1">
               <h1 className="break-words text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-                Portal Configuration
+                Client Portal
               </h1>
-              <p className="max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">Manage your client portal settings, modules, and booking configuration</p>
+              <p className="max-w-3xl text-sm leading-6 text-muted-foreground sm:text-base">Configure modules, branding, and booking options for your clients</p>
             </div>
           </div>
         </div>

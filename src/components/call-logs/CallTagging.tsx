@@ -375,7 +375,7 @@ export const CallTagFilter = ({
               <Badge
                 key={tag.id}
                 className={`cursor-pointer transition-all ${getColorClass(tag.color)} ${
-                  selectedTags.includes(tag.name) ? 'ring-2 ring-brand-300/70 ring-offset-1 ring-offset-zinc-950' : 'opacity-65 hover:opacity-100'
+                  selectedTags.includes(tag.name) ? 'ring-2 ring-brand-300/70 ring-offset-1 ring-offset-background' : 'opacity-65 hover:opacity-100'
                 }`}
                 onClick={() => toggleTag(tag.name)}
               >

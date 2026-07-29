@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { PortalPanel, PortalPanelContent, PortalPanelHeader, PortalPanelTitle, portalStatCardClassName } from '@/components/portal/PortalSurface';
+import { AmlComplianceCallout } from '@/components/portal/AmlComplianceCallout';
 
 const quickLinks = [
   { to: '/client/profile', icon: User, label: 'My Profile', desc: 'View and update your personal details' },
@@ -98,6 +99,10 @@ export default function PortalDashboard() {
         </Card>
       ) : (
         <>
+          {/* Persistent entry point into the AML/CTF compliance check —
+              renders only when the client has an open case. */}
+          <AmlComplianceCallout />
+
           {/* Stats Row */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             {[

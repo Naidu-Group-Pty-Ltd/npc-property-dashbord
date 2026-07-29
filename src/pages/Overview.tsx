@@ -4,6 +4,7 @@ import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { Building2, Calendar, AlertTriangle, DollarSign, TrendingUp, Image, FileText, Tag, Ruler, Download, MapPin, RefreshCw, ShieldCheck, Activity, Database, BarChart3, RadioTower } from 'lucide-react';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { KPICard } from '@/components/dashboard/KPICard';
+import { AuroraHero, KpiRow, MetricTile } from '@/components/aurixa';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { FlattenPdfIconButton } from '@/components/common/FlattenPdfIconButton';
@@ -597,19 +598,13 @@ export default function Overview() {
 
   return (
     <div className={`${OVERVIEW_SHELL} space-y-7 md:space-y-9`}>
-      <DashboardThemeFrame variant="hero" className="overview-hero">
-        <div className="relative flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="overview-command-badge mb-3 inline-flex items-center gap-2 rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em]">
-              <RadioTower className="h-3.5 w-3.5" />
-              Command Centre
-            </div>
-            <h1 className="text-3xl font-semibold tracking-[-0.035em] text-foreground md:text-5xl">Overview</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground md:text-base">
-              Property intake dashboard overview and key metrics
-            </p>
-          </div>
-          <DashboardThemeFrame variant="toolbar" className="overview-toolbar lg:w-auto lg:justify-end [&>button]:min-w-[44px] [&>button]:flex-1 sm:[&>button]:flex-none">
+      <AuroraHero
+        eyebrow="Command Centre"
+        icon={<RadioTower className="h-3.5 w-3.5" />}
+        title="Overview"
+        description="Property intake dashboard overview and key metrics"
+        actions={
+          <>
             <Button variant="outline" size="sm" onClick={handleExportSnapshot} disabled={isExporting || isLoading} className={OVERVIEW_SECONDARY_ACTION}>
               {isExporting ? (
                 <>
@@ -634,18 +629,41 @@ export default function Overview() {
               setFilters={setFilters}
               uniqueValues={uniqueValues}
             />
-          </DashboardThemeFrame>
-        </div>
-      </DashboardThemeFrame>
+          </>
+        }
+      />
 
       <OverviewSection eyebrow="Executive snapshot" title="Intake performance" description="Headline operating metrics for the filtered property pipeline." icon={<Activity className="h-4 w-4" />} accent>
-        {/* KPI Cards */}
-        <div className="grid min-w-0 grid-cols-1 gap-3 animate-fade-in min-[520px]:grid-cols-2 md:gap-5 xl:grid-cols-4">
-          <KPICard title="New This Week" value={kpis.newThisWeek} icon={<TrendingUp className="h-4 w-4" />} description="Properties received in last 7 days" className={EXECUTIVE_KPI_CARD} />
-          <KPICard title="With Inspections" value={kpis.withInspections} icon={<Calendar className="h-4 w-4" />} description="Properties with scheduled inspections" className={EXECUTIVE_KPI_CARD} />
-          <KPICard title="Needs Review" value={kpis.needsReview} icon={<AlertTriangle className="h-4 w-4" />} description="Low confidence (<0.7) properties" className={`${EXECUTIVE_KPI_CARD} ${EXECUTIVE_KPI_WARNING_CARD}`} />
-          <KPICard title="Average Price" value={formatCurrency(kpis.averagePrice)} icon={<DollarSign className="h-4 w-4" />} description="Last 30 days" className={EXECUTIVE_KPI_CARD} />
-        </div>
+        {/* KPI Cards — Phase 2 MetricTile row */}
+        <KpiRow columns={4}>
+          <MetricTile
+            title="New This Week"
+            value={kpis.newThisWeek}
+            icon={<TrendingUp className="h-4 w-4" />}
+            description="Properties received in last 7 days"
+            tone="info"
+          />
+          <MetricTile
+            title="With Inspections"
+            value={kpis.withInspections}
+            icon={<Calendar className="h-4 w-4" />}
+            description="Properties with scheduled inspections"
+          />
+          <MetricTile
+            title="Needs Review"
+            value={kpis.needsReview}
+            icon={<AlertTriangle className="h-4 w-4" />}
+            description="Low confidence (<0.7) properties"
+            tone="warning"
+          />
+          <MetricTile
+            title="Average Price"
+            value={formatCurrency(kpis.averagePrice)}
+            icon={<DollarSign className="h-4 w-4" />}
+            description="Last 30 days"
+            tone="success"
+          />
+        </KpiRow>
 
         {/* Content Statistics */}
         <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 border-t border-border/60 dark:border-white/[0.06] pt-4 min-[520px]:grid-cols-2 md:mt-5 md:grid-cols-3 md:gap-5 md:pt-5 xl:grid-cols-5">

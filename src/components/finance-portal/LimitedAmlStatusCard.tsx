@@ -3,31 +3,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { ShieldCheck, Loader2 } from "lucide-react";
 import { amlFinanceApi, type AmlLimitedStatus } from "@/lib/aml/amlFinanceApi";
+import {
+  FINANCE_PORTAL_STATUS_LABELS,
+  type AmlFinancePortalStatus,
+} from "@/lib/aml/caseDimensions";
 
-const STATUS_TONE: Record<string, string> = {
-  not_started: "bg-muted text-muted-foreground",
-  draft: "bg-muted text-muted-foreground",
-  kyc_in_progress: "bg-primary/15 text-primary",
-  kyc_complete: "bg-primary/15 text-primary",
-  edd_required: "bg-warning/15 text-warning",
-  under_review: "bg-warning/15 text-warning",
-  escalated_mlro: "bg-destructive/15 text-destructive",
-  cleared: "bg-success/15 text-success",
-  blocked: "bg-destructive text-destructive-foreground",
-  closed: "bg-muted text-muted-foreground",
-};
-const RATING_TONE: Record<string, string> = {
-  low: "bg-success/15 text-success",
-  medium: "bg-warning/15 text-warning",
-  high: "bg-destructive/15 text-destructive",
-  prohibited: "bg-destructive text-destructive-foreground",
+const FINANCE_STATUS_TONE: Record<string, string> = {
+  not_requested: "bg-muted text-muted-foreground",
+  information_required: "bg-warning/15 text-warning",
+  submitted: "bg-primary/15 text-primary",
+  clarification_required: "bg-warning/15 text-warning",
+  under_review: "bg-primary/15 text-primary",
+  accepted: "bg-success/15 text-success",
+  no_further_action: "bg-muted text-muted-foreground",
 };
 
 /**
- * Phase 7 — Finance-portal-side AML status pill.
- * Purposefully limited: no case detail, no PII, no discrepancy text.
- * Only shows overall status + risk rating + open-count so brokers know when
- * to nudge compliance without gaining visibility into restricted material.
+ * Finance-portal-side AML status pill (Phase 1 finance-safe contract).
+ * Purposefully limited: no case detail, no PII, no discrepancy text and no
+ * internal risk information. Shows the finance task state + service readiness
+ * so brokers know when to act without visibility into restricted material.
  */
 interface Props {
   purchaseFileId?: string;
@@ -56,6 +51,11 @@ export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
     return () => { cancelled = true; };
   }, [purchaseFileId, clientId]);
 
+  const financeLabel = status
+    ? FINANCE_PORTAL_STATUS_LABELS[status.finance_status as AmlFinancePortalStatus] ??
+      status.finance_status.replace(/_/g, " ")
+    : null;
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -65,7 +65,7 @@ export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
               <ShieldCheck className="h-4 w-4" />
             </div>
             <div>
-              <CardTitle className="text-sm">AML/CTF Status</CardTitle>
+              <CardTitle className="text-sm">Compliance readiness</CardTitle>
               <CardDescription className="text-xs">Limited view — compliance team owns the case</CardDescription>
             </div>
           </div>
@@ -80,14 +80,19 @@ export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
           <div className="text-xs text-muted-foreground">Status unavailable</div>
         ) : status ? (
           <div className="flex flex-wrap items-center gap-2">
-            <Badge className={STATUS_TONE[status.status] ?? "bg-muted text-muted-foreground"}>
-              {status.status.replace(/_/g, " ")}
+            <Badge className={FINANCE_STATUS_TONE[status.finance_status] ?? "bg-muted text-muted-foreground"}>
+              {financeLabel}
             </Badge>
-            {status.risk_rating && (
-              <Badge className={RATING_TONE[status.risk_rating] ?? "bg-muted text-muted-foreground"}>
-                Risk: {status.risk_rating}
-              </Badge>
-            )}
+            <Badge
+              variant="outline"
+              className={
+                status.service_readiness === "service_ready"
+                  ? "border-success/40 text-success"
+                  : "border-muted-foreground/30 text-muted-foreground"
+              }
+            >
+              {status.service_readiness === "service_ready" ? "Service ready" : "Service not ready"}
+            </Badge>
             {typeof status.open_finance_discrepancies === "number" && status.open_finance_discrepancies > 0 && (
               <Badge variant="outline" className="border-warning/40 text-warning">
                 {status.open_finance_discrepancies} open discrepancies
@@ -100,7 +105,7 @@ export function LimitedAmlStatusCard({ purchaseFileId, clientId }: Props) {
             )}
           </div>
         ) : (
-          <div className="text-xs text-muted-foreground">No AML case on file</div>
+          <div className="text-xs text-muted-foreground">No compliance record on file</div>
         )}
       </CardContent>
     </Card>

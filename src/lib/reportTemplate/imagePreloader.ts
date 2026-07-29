@@ -85,15 +85,6 @@ export async function preloadImages(template: ReportTemplate): Promise<ReportTem
       tasks.push(fetchAsDataUrl(bgUrl).then((d) => { if (d) page.background.imageUrl = d; }));
     }
     for (const block of page.blocks) {
-      // QR blocks: derive a remote PNG URL from `data` and stash on qrUrl
-      if (block.type === 'qr') {
-        const data = (block.props as any)?.data;
-        if (typeof data === 'string' && data.length > 0) {
-          const size = Number((block.props as any)?.size ?? 120) * 3; // 3x resolution
-          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}`;
-          tasks.push(fetchAsDataUrl(qrUrl).then((d) => { if (d) (block.props as any).qrUrl = d; }));
-        }
-      }
       // Block-level image-bearing props
       for (const key of IMAGE_PROP_KEYS) {
         const v = (block.props as any)?.[key];

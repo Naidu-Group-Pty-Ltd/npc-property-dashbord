@@ -18,6 +18,7 @@ interface RequestBody {
           'assign_role' | 'remove_role' | 'update_permissions' | 'send_invite' |
           'list_modules' | 'get_user_permissions' | 'get_my_permissions' | 'set_aml_roles' | 'promote_to_superadmin' | 'demote_from_superadmin' |
           'accept_invite' | 'verify_invite' | 'update_mailbox' | 'get_own_profile' |
+          'update_own_profile' |
           'update_own_mailbox' | 'update_own_signature' | 'create_subadmin' | 'update_own_credentials' |
           'reset_user_password' | 'purge_user' | 'force_logout';
   new_username?: string;
@@ -45,6 +46,11 @@ interface RequestBody {
   password?: string;
   personal_mailbox?: string;
   email_signature?: string;
+  // Self-service contact details (update_own_profile). Display + Stripe
+  // billing prefill only — never consulted for authentication.
+  first_name?: string | null;
+  last_name?: string | null;
+  phone?: string | null;
   include_deleted?: boolean;
   restore?: boolean;
   idempotency_key?: string;
@@ -433,11 +439,73 @@ Deno.serve(async (req: Request) => {
             id: currentUser.id,
             username: currentUser.username,
             email: currentUser.email,
+            first_name: currentUser.first_name ?? null,
+            last_name: currentUser.last_name ?? null,
+            phone: currentUser.phone ?? null,
             personal_mailbox: currentUser.personal_mailbox,
             email_signature: currentUser.email_signature || '',
             role: currentUser.role,
           }
         }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Self-service contact details. These feed the Stripe billing prefill (the
+    // command center forwards them on the Mission Control handoff), so they are
+    // deliberately editable by the user themselves rather than admin-only —
+    // nothing here grants any permission.
+    if (action === 'update_own_profile') {
+      const { error: sessionError, user: currentUser } = await verifySession(session_token);
+      if (sessionError || !currentUser) {
+        return new Response(
+          JSON.stringify({ success: false, error: sessionError || 'Not authenticated' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Empty string clears the field; omitting a key leaves it untouched.
+      const text = (value: unknown, max: number): string | null | undefined => {
+        if (value === undefined) return undefined;
+        if (value === null) return null;
+        if (typeof value !== 'string') return undefined;
+        const trimmed = value.trim().slice(0, max);
+        return trimmed === '' ? null : trimmed;
+      };
+
+      const updates: Record<string, any> = {};
+      const firstName = text(body.first_name, 100);
+      const lastName = text(body.last_name, 100);
+      const phone = text(body.phone, 40);
+      if (firstName !== undefined) updates.first_name = firstName;
+      if (lastName !== undefined) updates.last_name = lastName;
+      if (phone !== undefined) updates.phone = phone;
+
+      if (Object.keys(updates).length === 0) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'No profile fields supplied' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      updates.updated_at = new Date().toISOString();
+
+      const { data: updated, error } = await supabase
+        .from('custom_users')
+        .update(updates)
+        .eq('id', currentUser.id)
+        .select('id, username, email, first_name, last_name, phone')
+        .single();
+
+      if (error) {
+        return new Response(
+          JSON.stringify({ success: false, error: error.message }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      console.log(`User ${currentUser.username} updated their contact details`);
+      return new Response(
+        JSON.stringify({ success: true, user: updated }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

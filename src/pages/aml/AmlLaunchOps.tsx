@@ -3,6 +3,7 @@ import { invokeAmlFunction } from "@/lib/aml/invokeAmlFunction";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge, statusLabel, statusTone } from "@/components/ui/status-badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,24 +53,9 @@ type Summary = {
   my_role_is_mlro: boolean;
 };
 
-const badgeFor = (s: string, kind: "scenario" | "risk" | "stage" = "scenario") => {
-  const map: Record<string, string> = {
-    passed: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",
-    failed: "bg-red-500/15 text-red-500 border-red-500/30",
-    blocked: "bg-red-500/15 text-red-500 border-red-500/30",
-    waived: "bg-muted text-muted-foreground border-muted",
-    not_run: "bg-muted text-muted-foreground border-muted",
-    open: "bg-amber-500/15 text-amber-500 border-amber-500/30",
-    mitigated: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",
-    accepted: "bg-blue-500/15 text-blue-500 border-blue-500/30",
-    retired: "bg-muted text-muted-foreground border-muted",
-    high: "bg-red-500/15 text-red-500 border-red-500/30",
-    critical: "bg-red-500/15 text-red-500 border-red-500/30",
-    medium: "bg-amber-500/15 text-amber-500 border-amber-500/30",
-    low: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",
-  };
-  return <Badge variant="outline" className={map[s] ?? ""}>{s.replace(/_/g, " ")}</Badge>;
-};
+const badgeFor = (s: string) => (
+  <StatusBadge tone={statusTone(s)} dot>{statusLabel(s)}</StatusBadge>
+);
 
 async function callOp(op: string, extra: Record<string, unknown> = {}) {
   return invokeAmlFunction<any>("aml-launch-ops", { op, ...extra });
@@ -235,7 +221,7 @@ export default function AmlLaunchOps() {
                   {history.map((h) => (
                     <div key={h.id} className="flex items-center justify-between flex-wrap gap-2 text-sm border rounded-md p-2">
                       <div className="flex items-center gap-2">
-                        {badgeFor(h.to_stage, "stage")}
+                        {badgeFor(h.to_stage)}
                         <span className="text-xs text-muted-foreground">from {h.from_stage ?? "—"} · {h.changed_by_label ?? "system"}</span>
                       </div>
                       <div className="text-xs text-muted-foreground">{new Date(h.created_at).toLocaleString()}</div>
@@ -313,7 +299,7 @@ export default function AmlLaunchOps() {
 function ReadinessRow({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
   return (
     <div className="flex items-start gap-2 border rounded-md p-2">
-      {ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500 mt-0.5" /> : <XCircle className="h-4 w-4 text-red-500 mt-0.5" />}
+      {ok ? <CheckCircle2 className="h-4 w-4 text-success mt-0.5" /> : <XCircle className="h-4 w-4 text-destructive mt-0.5" />}
       <div className="flex-1">
         <div className="font-medium">{label}</div>
         <div className="text-xs text-muted-foreground">{detail}</div>
@@ -463,7 +449,7 @@ function RiskRow({ r, isMlro, onChanged }: { r: Risk; isMlro: boolean; onChanged
       <div className="flex items-start justify-between gap-2 flex-wrap">
         <div>
           <div className="flex items-center gap-2 flex-wrap">
-            {badgeFor(r.status, "risk")}
+            {badgeFor(r.status)}
             <span className="font-mono text-xs text-muted-foreground">{r.code}</span>
             {r.category && <Badge variant="secondary" className="text-xs">{r.category}</Badge>}
             <span className="font-medium">{r.title}</span>
@@ -598,7 +584,7 @@ function LaunchCertificationPanel({
         <CardContent className="space-y-3">
           {activeCert ? (
             <Alert>
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              <CheckCircle2 className="h-4 w-4 text-success" />
               <AlertTitle>Active launch certification</AlertTitle>
               <AlertDescription className="space-y-1">
                 <div>Issued by <span className="font-medium">{activeCert.attested_by_label ?? "—"}</span> on {new Date(activeCert.created_at).toLocaleString()}.</div>
@@ -661,8 +647,8 @@ function LaunchCertificationPanel({
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div className="flex items-center gap-2">
                       {c.status === "issued"
-                        ? <Badge variant="outline" className="bg-emerald-500/15 text-emerald-500 border-emerald-500/30">issued</Badge>
-                        : <Badge variant="outline" className="bg-muted text-muted-foreground">revoked</Badge>}
+                        ? <StatusBadge tone="success" dot>issued</StatusBadge>
+                        : <StatusBadge tone="neutral" dot>revoked</StatusBadge>}
                       <span className="font-medium">{c.attested_by_label ?? "—"}</span>
                       <span className="text-xs text-muted-foreground">{new Date(c.created_at).toLocaleString()}</span>
                     </div>
@@ -679,7 +665,7 @@ function LaunchCertificationPanel({
                   </div>
                   <div className="italic text-xs">"{c.attestation}"</div>
                   {c.status === "revoked" && (
-                    <div className="text-xs text-red-500">
+                    <div className="text-xs text-destructive">
                       Revoked {c.revoked_at ? new Date(c.revoked_at).toLocaleString() : ""} by {c.revoked_by_label ?? "—"} — {c.revoked_reason}
                     </div>
                   )}

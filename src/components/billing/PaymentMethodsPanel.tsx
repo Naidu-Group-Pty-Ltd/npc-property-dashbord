@@ -281,6 +281,7 @@ export function PaymentMethodsPanel() {
                           {cardExpiry(m)}
                         </span>
                         {expiring && " · expiring soon"}
+                        {m.billingName && ` · ${m.billingName}`}
                         {m.originUsername && ` · added by ${m.originUsername}`}
                         {` · ${new Date(m.createdAt).toLocaleDateString()}`}
                       </p>

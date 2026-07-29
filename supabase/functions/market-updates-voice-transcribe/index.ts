@@ -3,7 +3,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { verifyHuman } from '../_shared/auth_v2.ts';
 import { consumeRateLimit, enforceBase64Limit, enforceJsonBodyLimit, getTrustedClientIp, securityJsonError } from '../_shared/requestSecurity.ts';
 
-const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+const corsHeaders = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token', 'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
 const MIME_TO_EXT: Record<string, string> = { 'audio/webm': 'webm', 'audio/mp4': 'mp4', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/ogg': 'ogg' };
 const MAX_REQUEST_BYTES = 6_000_000;
 const MAX_AUDIO_BYTES = 4_000_000;

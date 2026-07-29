@@ -175,12 +175,12 @@ export const userGuideKnowledge: GuideSection[] = [
   },
   {
     id: 'report-qa',
-    title: 'Report Q&A (AI Chat)',
+    title: 'Aurixa Intelligence Hub (AI Chat)',
     description: 'AI-powered assistant for property report analysis',
     items: [
       {
         title: 'AI Chat Overview',
-        description: 'The Report Q&A feature allows you to have natural conversations with an AI assistant that has access to your property reports and market data.',
+        description: 'The Aurixa Intelligence Hub feature allows you to have natural conversations with an AI assistant that has access to your property reports and market data.',
         features: [
           'Natural language queries about properties',
           'Context-aware responses using your report data',
@@ -193,7 +193,7 @@ export const userGuideKnowledge: GuideSection[] = [
         title: 'Using the AI Chat',
         description: 'Ask questions about properties, market trends, and investment analysis.',
         steps: [
-          'Navigate to "Report Q&A" in the sidebar',
+          'Navigate to "Aurixa Intelligence Hub" in the sidebar',
           'Select reports from the sidebar to provide context',
           'Type your question in the message input',
           'Use voice recording for hands-free input',
@@ -238,7 +238,7 @@ export const userGuideKnowledge: GuideSection[] = [
     description: 'View and manage property listings',
     items: [
       {
-        title: 'Listings Page',
+        title: 'Opportunity Marketplace',
         description: 'View and manage all property listings with advanced filtering and search capabilities.',
         features: [
           'Search by address, suburb, or postcode',
@@ -388,7 +388,7 @@ export const userGuideKnowledge: GuideSection[] = [
   },
   {
     id: 'automation',
-    title: 'Automation',
+    title: 'Auto Report Generation',
     description: 'Automated report generation and workflows',
     items: [
       {
@@ -402,7 +402,7 @@ export const userGuideKnowledge: GuideSection[] = [
           'Master toggle for all automation',
         ],
         steps: [
-          'Navigate to "Automation" in the sidebar',
+          'Navigate to "Auto Report Generation" in the sidebar',
           'Click "Add Switch" to create a new automation',
           'Configure trigger criteria (state, price range, property type)',
           'Set priority order for switch evaluation',
@@ -439,7 +439,7 @@ export const userGuideKnowledge: GuideSection[] = [
           'Financial projections with depreciation',
         ],
         steps: [
-          'Go to "Listings" and find your target property',
+          'Go to "Opportunity Marketplace" and find your target property',
           'Click "Generate Report" on the property card',
           'Choose analysis mode (Address/Postcode/State)',
           'Configure financial assumptions',
@@ -564,7 +564,7 @@ export const userGuideKnowledge: GuideSection[] = [
       },
       {
         title: 'Q&A Export Templates',
-        description: 'Customize how Report Q&A conversations are exported to PDF.',
+        description: 'Customize how Aurixa Intelligence Hub conversations are exported to PDF.',
         features: [
           'Cover page design customization',
           'Font and color settings',
@@ -1185,7 +1185,7 @@ export const userGuideKnowledge: GuideSection[] = [
         ],
       },
       {
-        title: 'Portal Configuration',
+        title: 'Client Portal',
         description: 'Configure branding and settings for the client-facing portal.',
         features: [
           'Custom branding and logos',
@@ -1195,7 +1195,7 @@ export const userGuideKnowledge: GuideSection[] = [
           'Auto-email notifications for portal events',
         ],
         steps: [
-          'Navigate to "Portal Config" in the sidebar',
+          'Navigate to "Client Portal" in the sidebar',
           'Configure branding, colors, and logos',
           'Enable the features you want clients to access',
           'Test the portal by logging in as a client',

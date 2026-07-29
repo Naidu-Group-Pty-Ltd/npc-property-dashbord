@@ -42,7 +42,7 @@ export type AgentSurface = {
 export const AGENT_SURFACES = {
   reportQa: {
     id: 'report_qa',
-    label: 'Report Q&A',
+    label: 'Aurixa Intelligence Hub',
     category: 'agent',
     slots: [
       { key: 'report_qa', slotLabel: 'Primary', slotDescription: 'Default model for grounded Q&A over reports.' },

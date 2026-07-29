@@ -29,7 +29,7 @@ const dateLabel = (v?: string | null) => v ? new Date(v).toLocaleString('en-AU',
 const nextEligibleFetch = (source:MarketSource) => source.next_eligible_fetch_at ?? (source.last_fetched_at
   ? new Date(new Date(source.last_fetched_at).getTime() + source.refresh_frequency_minutes * 60_000).toISOString()
   : new Date().toISOString());
-const reasonLabel = (reason?: string | null) => reason ? reason.replaceAll('_', ' ') : 'No reconciliation reason recorded';
+const reasonLabel = (reason?: string | null) => reason ? reason.replace(/_/g, ' ') : 'No reconciliation reason recorded';
 
 export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { open:boolean; onOpenChange:(v:boolean)=>void; onChanged?:()=>void }) {
   const [sources, setSources] = useState<MarketSource[]>([]);

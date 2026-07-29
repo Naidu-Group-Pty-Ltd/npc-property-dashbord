@@ -86,12 +86,21 @@ export default {
 					DEFAULT: 'hsl(var(--card))',
 					foreground: 'hsl(var(--card-foreground))'
 				},
+				/* Categorical accent ramp. Tokens 6–10 are declared in
+				   src/styles/tokens.css alongside 1–5; exposing them here gives
+				   feature UI a full palette of themed accents to reach for
+				   instead of raw Tailwind hues. */
 				chart: {
 					'1': 'hsl(var(--chart-1))',
 					'2': 'hsl(var(--chart-2))',
 					'3': 'hsl(var(--chart-3))',
 					'4': 'hsl(var(--chart-4))',
-					'5': 'hsl(var(--chart-5))'
+					'5': 'hsl(var(--chart-5))',
+					'6': 'hsl(var(--chart-6))',
+					'7': 'hsl(var(--chart-7))',
+					'8': 'hsl(var(--chart-8))',
+					'9': 'hsl(var(--chart-9))',
+					'10': 'hsl(var(--chart-10))'
 				},
 				sidebar: {
 					DEFAULT: 'hsl(var(--sidebar-background))',

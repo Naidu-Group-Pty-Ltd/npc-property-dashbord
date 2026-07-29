@@ -2,12 +2,14 @@ import { useState, useRef, useEffect, useCallback, useImperativeHandle, forwardR
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Download } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Download, AlertCircle } from 'lucide-react';
 import WaveSurfer from 'wavesurfer.js';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 interface CallRecordingPlayerProps {
   recordingUrl: string;
   duration?: number | null;
+  callLogId?: string;
 }
 
 export interface CallRecordingPlayerHandle {
@@ -15,7 +17,7 @@ export interface CallRecordingPlayerHandle {
 }
 
 export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRecordingPlayerProps>(
-  ({ recordingUrl, duration }, ref) => {
+  ({ recordingUrl, duration, callLogId }, ref) => {
   const waveformRef = useRef<HTMLDivElement>(null);
   const wavesurferRef = useRef<WaveSurfer | null>(null);
   const isInitializedRef = useRef(false);
@@ -27,6 +29,8 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
   const [isMuted, setIsMuted] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isReady, setIsReady] = useState(false);
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Expose stop method to parent
   useImperativeHandle(ref, () => ({
@@ -39,19 +43,56 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
     }
   }), []);
 
-  // Initialize WaveSurfer
+  // Resolve a playable URL: if we have the call log id, ask the backend for a
+  // freshly-signed Vapi recording URL (R2 signed URLs expire), otherwise fall
+  // back to the stored URL.
   useEffect(() => {
-    // Prevent double initialization
-    if (!waveformRef.current || isInitializedRef.current) return;
-    
+    let cancelled = false;
+    setErrorMessage(null);
+    setIsLoading(true);
+    setIsReady(false);
+    setResolvedUrl(null);
+
+    (async () => {
+      if (!callLogId) {
+        if (!cancelled) setResolvedUrl(recordingUrl || null);
+        return;
+      }
+      try {
+        const { data, error } = await invokeSecureFunction('get-call-recording', {
+          callLogId,
+          mode: 'url',
+        });
+        if (cancelled) return;
+        if (error || !data?.url) {
+          console.warn('[CallRecordingPlayer] Falling back to stored URL:', error);
+          setResolvedUrl(recordingUrl || null);
+          if (!recordingUrl) setErrorMessage('Recording is unavailable.');
+        } else {
+          setResolvedUrl(data.url as string);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        console.error('[CallRecordingPlayer] resolve failed', e);
+        setResolvedUrl(recordingUrl || null);
+        if (!recordingUrl) setErrorMessage('Recording is unavailable.');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [callLogId, recordingUrl]);
+
+  // Initialize WaveSurfer once we have a resolved URL
+  useEffect(() => {
+    if (!waveformRef.current || !resolvedUrl) return;
+
     // Clear any existing content in the container
     waveformRef.current.innerHTML = '';
-    
     isInitializedRef.current = true;
 
     // Check if dark mode is active
     const isDarkMode = document.documentElement.classList.contains('dark');
-    
+
     const wavesurfer = WaveSurfer.create({
       container: waveformRef.current,
       waveColor: isDarkMode ? '#6b7280' : '#000000',
@@ -75,7 +116,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
     wavesurferRef.current = wavesurfer;
 
     // Load audio
-    wavesurfer.load(recordingUrl);
+    wavesurfer.load(resolvedUrl);
 
     // Event handlers
     wavesurfer.on('ready', () => {
@@ -107,6 +148,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
     wavesurfer.on('error', (error) => {
       console.error('WaveSurfer error:', error);
       setIsLoading(false);
+      setErrorMessage('Could not decode recording. It may have expired — try reopening the call.');
     });
 
     return () => {
@@ -116,7 +158,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
       }
       isInitializedRef.current = false;
     };
-  }, [recordingUrl]);
+  }, [resolvedUrl]);
 
   const handlePlayPause = useCallback(() => {
     if (!wavesurferRef.current || !isReady) return;
@@ -179,11 +221,19 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
             ref={waveformRef} 
             className="w-full min-h-[80px]"
           />
-          {isLoading && (
+          {isLoading && !errorMessage && (
             <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background dark:bg-black/80 backdrop-blur-sm">
               <div className="flex items-center gap-2">
                 <div className="h-2 w-2 animate-pulse rounded-full bg-brand-300" />
                 <span className="text-sm text-muted-foreground dark:text-muted-foreground">Loading audio...</span>
+              </div>
+            </div>
+          )}
+          {errorMessage && (
+            <div className="absolute inset-0 flex items-center justify-center rounded-2xl bg-background dark:bg-black/80 backdrop-blur-sm p-3">
+              <div className="flex items-center gap-2 text-center">
+                <AlertCircle className="h-4 w-4 text-destructive" />
+                <span className="text-sm text-muted-foreground">{errorMessage}</span>
               </div>
             </div>
           )}
@@ -266,7 +316,7 @@ export const CallRecordingPlayer = forwardRef<CallRecordingPlayerHandle, CallRec
               asChild
               className="flex-shrink-0 rounded-2xl border-brand-300/25 bg-brand-500/10 text-brand-100 hover:bg-brand-500/20"
             >
-              <a href={recordingUrl} download target="_blank" rel="noopener noreferrer">
+              <a href={resolvedUrl || recordingUrl} download target="_blank" rel="noopener noreferrer">
                 <Download className="w-4 h-4 mr-1" />
                 <span className="hidden sm:inline">Download</span>
                 <span className="sm:hidden">DL</span>

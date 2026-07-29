@@ -11,6 +11,9 @@ import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
 import { TokenBalanceBanner } from '@/components/billing/TokenBalanceBanner';
+import { PlanChangeBanner } from '@/components/billing/PlanChangeBanner';
+import { FeedbackPromptBanner } from '@/components/billing/FeedbackPromptBanner';
+import { GlobalCommandPalette } from './GlobalCommandPalette';
 
 export function DashboardLayout() {
   const breakpoint = useBreakpoint();
@@ -33,6 +36,8 @@ export function DashboardLayout() {
           <div className="dashboard-content">
             <ErrorBoundary>
               <DashboardPageShell>
+                <PlanChangeBanner />
+                <FeedbackPromptBanner />
                 <TokenBalanceBanner />
                 <Outlet />
               </DashboardPageShell>
@@ -42,6 +47,7 @@ export function DashboardLayout() {
 
         <MobileNav />
         <AgentChatWidget />
+        <GlobalCommandPalette />
       </div>
     );
   }
@@ -63,6 +69,8 @@ export function DashboardLayout() {
             <div className="dashboard-content">
               <ErrorBoundary>
                 <DashboardPageShell>
+                  <PlanChangeBanner />
+                  <FeedbackPromptBanner />
                   <TokenBalanceBanner />
                   <Outlet />
                 </DashboardPageShell>
@@ -72,6 +80,7 @@ export function DashboardLayout() {
         </div>
       </div>
       <AgentChatWidget />
+      <GlobalCommandPalette />
     </SidebarProvider>
   );
 }

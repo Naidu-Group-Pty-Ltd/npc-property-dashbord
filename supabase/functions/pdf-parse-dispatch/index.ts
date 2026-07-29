@@ -30,6 +30,7 @@ import {
   PDF_CACHE_CONTRACT_VERSION,
 } from '../_shared/pdfCacheContract.pure.ts';
 import { assertPdfChunkPlanLimits } from '../_shared/pdfChunkLimits.pure.ts';
+import { resolvePdfDescriptionTier } from '../_shared/pdfDescriptionTier.pure.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -1167,6 +1168,9 @@ Deno.serve(async (req) => {
     const auth = await verifyAuthOrNativeUser(admin, req, body);
     if (auth.error) return createUnauthorizedResponse(auth.error, cors);
     const userId = auth.userId && auth.userId !== 'service_role' ? auth.userId : (body.user_id ?? null);
+    // Picture descriptions are resource intensive. Never trust a user-supplied
+    // premium tier unless the request authenticated with the service role.
+    const descriptionTier = resolvePdfDescriptionTier(body.description_tier, auth.authMethod);
 
     const operation = (body.operation as string) || 'start';
 
@@ -1245,7 +1249,7 @@ Deno.serve(async (req) => {
       // NON-redacted job (or vice versa).
       const idempotencyPolicy = [
         `redact=${Boolean(body.redact_pii) ? 1 : 0}`,
-        `desc=${typeof body.description_tier === 'string' ? body.description_tier : 'auto'}`,
+        `desc=${descriptionTier}`,
         `md=${body.include_markdown === false ? 0 : 1}`,
         `override=${body.allow_mode_override !== false ? 1 : 0}`,
       ].join(':');
@@ -1293,7 +1297,7 @@ Deno.serve(async (req) => {
             has_source_path: Boolean(body.source_path),
             has_source_base64: Boolean(body.source_base64),
             // Phase D passthroughs (consumed by runJob).
-            description_tier: typeof body.description_tier === 'string' ? body.description_tier : 'auto',
+            description_tier: descriptionTier,
             include_markdown: body.include_markdown === false ? false : true,
             redact_pii: Boolean(body.redact_pii),
             pii_redaction_reason: typeof body.pii_redaction_reason === 'string' ? body.pii_redaction_reason.slice(0, 120) : null,

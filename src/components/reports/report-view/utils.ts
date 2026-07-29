@@ -99,18 +99,18 @@ export function resolveInvestmentGrade(reports: readonly GradeReport[]): Resolve
 
 export function getInvestmentGradeTone(grade?: string | null) {
   const normalizedGrade = typeof grade === 'string' ? grade.toUpperCase() : null;
-  if (normalizedGrade === 'A+' || normalizedGrade === 'A') return 'bg-emerald-500 text-foreground dark:text-white';
-  if (normalizedGrade === 'B+' || normalizedGrade === 'B') return 'bg-yellow-500 text-black';
-  if (normalizedGrade === 'C+' || normalizedGrade === 'C') return 'bg-orange-500 text-foreground dark:text-white';
-  if (normalizedGrade) return 'bg-red-500 text-foreground dark:text-white';
+  if (normalizedGrade === 'A+' || normalizedGrade === 'A') return 'bg-success text-success-foreground';
+  if (normalizedGrade === 'B+' || normalizedGrade === 'B') return 'bg-warning text-warning-foreground';
+  if (normalizedGrade === 'C+' || normalizedGrade === 'C') return 'bg-chart-6 text-foreground';
+  if (normalizedGrade) return 'bg-destructive text-destructive-foreground';
   return 'bg-muted text-muted-foreground';
 }
 
 export function getScoreTone(score: number | null) {
   if (score == null) return 'text-muted-foreground';
-  if (score >= 75) return 'text-emerald-600 dark:text-emerald-400';
-  if (score >= 55) return 'text-yellow-600 dark:text-yellow-400';
-  return 'text-red-600 dark:text-red-400';
+  if (score >= 75) return 'text-success';
+  if (score >= 55) return 'text-warning';
+  return 'text-destructive';
 }
 
 export function getOverriddenFields(report: InvestmentReport | null): OverriddenField[] {

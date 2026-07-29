@@ -422,7 +422,19 @@ function CoverPanel({
       type: b.type,
       name: b.name,
       props: (b.props ?? {}) as Record<string, unknown>,
-      overlays: (b.overlays ?? []).map((o: any) => ({ id: crypto.randomUUID(), ...o })) as Overlay[],
+      overlays: (b.overlays ?? []).map((o: any) => ({
+        id: crypto.randomUUID(),
+        type: o.type,
+        x: o.x,
+        y: o.y,
+        width: o.width,
+        height: o.height,
+        content: o.content,
+        fontSize: o.fontSize,
+        fontWeight: o.fontWeight,
+        color: o.color,
+        alt: o.alt,
+      })) as Overlay[],
     }));
     const page: Page = {
       id: crypto.randomUUID(),

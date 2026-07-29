@@ -1,6 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword, verifyPassword } from "../_shared/password.ts"
-import { createCorsHeaders, createSessionCookie, parseCookies } from "../_shared/auth.ts"
+import { createCorsHeaders, createFinanceSessionCookie, parseCookies } from "../_shared/auth.ts"
 
 const SESSION_HOURS = 12;
 
@@ -152,7 +152,7 @@ Deno.serve(async (req) => {
       entity_id: portalUser.id,
     });
 
-    const sessionCookie = createSessionCookie(newSessionToken, expiresAt);
+    const sessionCookie = createFinanceSessionCookie(newSessionToken, expiresAt);
 
     return new Response(
       JSON.stringify({

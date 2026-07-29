@@ -111,7 +111,7 @@ const STATUS_CONFIG: Record<
     variant: "outline",
     icon: FileText,
     toneClassName:
-      "border-border bg-muted text-foreground shadow-slate-900/5 dark:border-border/70 dark:bg-background/70 dark:text-foreground",
+      "border-border bg-muted text-foreground shadow-foreground/5 dark:border-border/70 dark:bg-background/70 dark:text-foreground",
   },
   sent: {
     label: "Sent",
@@ -435,7 +435,7 @@ export default function Agreements() {
     if (["declined", "voided", "expired", "failed"].includes(key || "")) {
       return "border-destructive/55 bg-destructive/[0.07] shadow-destructive/5 dark:border-destructive/30 dark:bg-destructive/[0.08]";
     }
-    return "border-border/70 bg-card/90 shadow-slate-900/5 ring-1 ring-border dark:ring-white/60 dark:bg-background/30 dark:ring-white/5";
+    return "border-border/70 bg-card/90 shadow-foreground/5 ring-1 ring-border dark:ring-white/60 dark:bg-background/30 dark:ring-white/5";
   };
 
   const renderDocuSignTracking = (agreement: AgencyAgreement) => {
@@ -696,7 +696,7 @@ export default function Agreements() {
               placeholder={`Search ${agreements.length} agreements by name, email, status...`}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="h-[3.25rem] rounded-[1.15rem] border-border/70 bg-background/95 py-3 pl-14 pr-4 text-[0.95rem] font-medium text-foreground shadow-[0_16px_42px_rgba(15,23,42,0.10),inset_0_1px_0_hsl(0_0%_100%/0.45)] outline-none transition-all duration-300 placeholder:text-muted-foreground/80 hover:border-brand-300/50 hover:bg-background hover:shadow-[0_18px_48px_rgba(15,23,42,0.13),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_hsl(0_0%_100%/0.55)] focus-visible:border-brand-400/70 focus-visible:ring-2 focus-visible:ring-brand-400/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-white/10 dark:bg-background/75 dark:shadow-[0_16px_42px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.08)] dark:placeholder:text-slate-300/70 dark:hover:border-brand-200/35 dark:hover:bg-background/90 dark:hover:shadow-[0_18px_48px_rgba(0,0,0,0.34),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_rgba(255,255,255,0.10)] dark:focus-visible:border-brand-200/60 dark:focus-visible:ring-brand-300/25"
+              className="h-[3.25rem] rounded-[1.15rem] border-border/70 bg-background/95 py-3 pl-14 pr-4 text-[0.95rem] font-medium text-foreground shadow-[0_16px_42px_rgba(15,23,42,0.10),inset_0_1px_0_hsl(0_0%_100%/0.45)] outline-none transition-all duration-300 placeholder:text-muted-foreground/80 hover:border-brand-300/50 hover:bg-background hover:shadow-[0_18px_48px_rgba(15,23,42,0.13),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_hsl(0_0%_100%/0.55)] focus-visible:border-brand-400/70 focus-visible:ring-2 focus-visible:ring-brand-400/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:border-white/10 dark:bg-background/75 dark:shadow-[0_16px_42px_rgba(0,0,0,0.28),inset_0_1px_0_rgba(255,255,255,0.08)] dark:placeholder:text-muted-foreground dark:hover:border-brand-200/35 dark:hover:bg-background/90 dark:hover:shadow-[0_18px_48px_rgba(0,0,0,0.34),0_0_0_1px_hsl(43_84%_52%/0.12),inset_0_1px_0_rgba(255,255,255,0.10)] dark:focus-visible:border-brand-200/60 dark:focus-visible:ring-brand-300/25"
             />
           </div>
         </div>
