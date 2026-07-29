@@ -9,6 +9,8 @@
 //   - rate-limited:       60 req/min/key, 429 + Retry-After
 //   - idempotent retries: same idempotency_key returns existing job
 
+import { validateFeedbackUrl } from "./feedbackUrlPolicy.ts";
+
 const BASE_URL = (Deno.env.get("MISSION_CONTROL_URL") ?? "").replace(/\/+$/, "");
 const API_KEY = Deno.env.get("MISSION_CONTROL_CLONE_API_KEY") ?? "";
 
@@ -891,6 +893,6 @@ export async function getFeedbackPrompt(
     reason: body.reason === "onboarding" ? "onboarding" : "quarterly",
     rewardAvailable: body.reward_available !== false,
     rewardTokens: Number(body.reward_tokens ?? 100),
-    feedbackUrl: typeof body.feedback_url === "string" ? body.feedback_url : null,
+    feedbackUrl: validateFeedbackUrl(body.feedback_url),
   };
 }

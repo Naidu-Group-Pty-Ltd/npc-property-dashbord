@@ -1,3 +1,5 @@
+import { validateFeedbackUrl } from "@/lib/feedbackUrlPolicy";
+
 /**
  * Frontend client for Mission Control token balance + top-up packs.
  * All requests go through the `mission-control-*` edge functions so the clone API key
@@ -533,8 +535,10 @@ export async function fetchFeedbackPrompt(
       "mission-control-feedback-prompt",
       opts.force ? { force: true } : {},
     );
-    if (error || !data?.due || !data.feedbackUrl) return null;
-    return data;
+    if (error || !data?.due) return null;
+    const feedbackUrl = validateFeedbackUrl(data.feedbackUrl);
+    if (!feedbackUrl) return null;
+    return { ...data, feedbackUrl };
   } catch {
     return null;
   }
