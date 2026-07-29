@@ -80,9 +80,13 @@ function normaliseTemplateSchema(schema: any): any {
   s.tokens.fonts = s.tokens.fonts && typeof s.tokens.fonts === 'object' ? s.tokens.fonts : {};
   s.tokens.spacing = s.tokens.spacing && typeof s.tokens.spacing === 'object' ? s.tokens.spacing : {};
   s.slots = s.slots && typeof s.slots === 'object' ? s.slots : {};
-  s.pages = Array.isArray(s.pages) ? s.pages : [];
+  s.pages = Array.isArray(s.pages)
+    ? s.pages.filter((page: unknown) => page !== null && typeof page === 'object' && !Array.isArray(page))
+    : [];
   for (const page of s.pages) {
-    page.blocks = Array.isArray(page.blocks) ? page.blocks : [];
+    page.blocks = Array.isArray(page.blocks)
+      ? page.blocks.filter((block: unknown) => block !== null && typeof block === 'object' && !Array.isArray(block))
+      : [];
     for (const block of page.blocks) {
       block.overlays = Array.isArray(block.overlays) ? block.overlays : [];
       for (const overlay of block.overlays) {
