@@ -352,20 +352,16 @@ Deno.serve(async (req) => {
         provenance_rows_added: 0,
       };
 
-      // 1) Resolve the canonical entity: existing subject link first, then an
-      //    ABN/ACN match, then create — but only for entity-type structures.
+      // 1) Resolve the canonical entity from this case's existing links. Never
+      //    match a global entity using client-supplied registration numbers:
+      //    an unverified questionnaire must not link to or mutate another
+      //    client's canonical ownership records. If this case has no entity,
+      //    create one — but only for entity-type structures.
       let entity: any = null;
       const { data: links } = await aml.from("entity_case_links")
         .select("id, entity_id, link_role, entity:entities(*)").eq("case_id", caseId);
       const subjectLink = (links ?? []).find((l: any) => l.link_role === "subject") ?? (links ?? [])[0];
       if (subjectLink?.entity) entity = subjectLink.entity;
-      if (!entity && (declaredAbn || declaredAcn)) {
-        const { data: matched } = await aml.from("entities").select("*")
-          .or([declaredAbn ? `abn.eq.${declaredAbn}` : null, declaredAcn ? `acn.eq.${declaredAcn}` : null]
-            .filter(Boolean).join(","))
-          .limit(1).maybeSingle();
-        if (matched) entity = matched;
-      }
       if (!entity && entityType && declaredName) {
         const { data: created, error: createErr } = await aml.from("entities").insert({
           entity_type: entityType, legal_name: declaredName,
