@@ -221,6 +221,33 @@ describe('docling adapter', () => {
     expect(img?.name).toContain('Line chart');
   });
 
+  it('bounds proximity caption matching while preserving explicit references', () => {
+    const captions = Array.from({ length: 300 }, (_, index) => ({
+      self_ref: `#/texts/${index}`,
+      label: 'caption' as const,
+      text: `Figure ${index}`,
+      prov: [{ page_no: 1, bbox: { l: 10, t: 100, r: 100, b: 110, coord_origin: 'TOPLEFT' as const } }],
+    }));
+    const pictures = Array.from({ length: 300 }, (_, index) => ({
+      prov: [{ page_no: 1, bbox: { l: 10, t: 112, r: 100, b: 150, coord_origin: 'TOPLEFT' as const } }],
+      ...(index === 299 ? { captions: [{ $ref: '#/texts/299' }] } : {}),
+    }));
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      texts: captions,
+      pictures,
+    };
+
+    const mapped = mapDoclingToRawBlocks(doc);
+    const mappedPictures = mapped.byPage[1].filter((block) => block.type === 'image');
+    const explicitlyReferencedCaption = mapped.byPage[1].find((block) => block.text === 'Figure 299');
+
+    expect(mappedPictures).toHaveLength(300);
+    expect(mappedPictures[298].meta?.groupId).toBeUndefined();
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBe(mappedPictures[299].meta?.groupId);
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBeTruthy();
+  });
+
   it('Phase B: page headers/footers always lock and carry a master groupId', () => {
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },

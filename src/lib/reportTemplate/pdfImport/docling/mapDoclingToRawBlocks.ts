@@ -475,6 +475,13 @@ export interface MappedDoclingBlocks {
   outline: Array<{ title: string; level: number; page_no?: number | null }>;
 }
 
+// Docling output is derived from untrusted PDFs. Keep the optional proximity
+// heuristic bounded so caption-heavy documents cannot turn figure mapping into
+// quadratic work on the browser's main thread. Explicit caption refs do not use
+// this budget and remain authoritative.
+const MAX_PROXIMITY_CAPTIONS_PER_PAGE = 256;
+const MAX_PROXIMITY_CAPTION_COMPARISONS = 16_384;
+
 export function mapDoclingToRawBlocks(
   doc: DoclingDocument,
   opts: MapOptions = {},
@@ -528,7 +535,10 @@ export function mapDoclingToRawBlocks(
       byPage[page.page_no]?.push(block);
       if (text.self_ref) textBlocksBySelfRef.set(text.self_ref, block);
       if (text.label === 'caption') {
-        (captionPool[page.page_no] ??= []).push({ block, text });
+        const pageCaptionPool = (captionPool[page.page_no] ??= []);
+        if (pageCaptionPool.length < MAX_PROXIMITY_CAPTIONS_PER_PAGE) {
+          pageCaptionPool.push({ block, text });
+        }
       }
     }
     textIdx += 1;
@@ -537,6 +547,7 @@ export function mapDoclingToRawBlocks(
   /** Resolve a figure's caption refs (or fall back to the nearest caption-labeled text). */
   const PROXIMITY_PT = 36;
   let captionGroupSeq = 0;
+  let remainingProximityComparisons = MAX_PROXIMITY_CAPTION_COMPARISONS;
   function pairCaption(
     refs: Array<DoclingRef | string> | undefined,
     pageNo: number,
@@ -562,6 +573,8 @@ export function mapDoclingToRawBlocks(
     const pool = captionPool[pageNo] ?? [];
     let best: { block: RawImportBlock; dist: number } | null = null;
     for (const entry of pool) {
+      if (remainingProximityComparisons <= 0) break;
+      remainingProximityComparisons -= 1;
       if (entry.block.meta?.groupId) continue; // already paired
       const cy = entry.block.bbox.y + entry.block.bbox.height / 2;
       const fyTop = figureBBox.y;
