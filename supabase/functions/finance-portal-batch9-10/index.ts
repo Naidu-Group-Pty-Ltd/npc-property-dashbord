@@ -17,6 +17,8 @@
  * Auth: x-finance-session-token (same pattern as batch 6/7/8).
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
+import { canAccessFinanceClient, canAccessPurchaseFile } from '../_shared/financePortalObjectAuthz.ts';
+import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -159,13 +161,51 @@ Deno.serve(async (req) => {
       // persisted here (the browser cannot insert directly as a finance partner).
       const transcript = String(body.transcript || '').trim();
       if (!transcript) return json({ error: 'transcript required' }, 400);
+      if (transcript.length > 20_000) return json({ error: 'transcript too large' }, 413);
+
+      const purchaseFileId = body.purchase_file_id ?? null;
+      const clientId = body.client_id ?? null;
+      if (purchaseFileId !== null && typeof purchaseFileId !== 'string')
+        return json({ error: 'Invalid purchase_file_id' }, 400);
+      if (clientId !== null && typeof clientId !== 'string')
+        return json({ error: 'Invalid client_id' }, 400);
+
+      if (purchaseFileId) {
+        const { data: purchaseFile, error: purchaseFileError } = await supabase
+          .from('purchase_files')
+          .select('id, client_id')
+          .eq('id', purchaseFileId)
+          .maybeSingle();
+        if (purchaseFileError) return json({ error: 'Unable to authorize purchase file' }, 500);
+        if (!purchaseFile || (clientId && purchaseFile.client_id !== clientId))
+          return json({ error: 'Forbidden' }, 403);
+        if (!await canAccessPurchaseFile(supabase, portalUser.id, purchaseFileId))
+          return json({ error: 'Forbidden' }, 403);
+      } else if (clientId && !await canAccessFinanceClient(supabase, portalUser.id, clientId)) {
+        return json({ error: 'Forbidden' }, 403);
+      }
+
+      const quota = await consumeRateLimit(
+        supabase,
+        `finance-voice-memo:user:${portalUser.id}`,
+        30,
+        60,
+      );
+      if (!quota.allowed)
+        return json({ error: 'Too many voice memos', retry_after_seconds: quota.retryAfterSeconds }, 429);
+
+      const summary = body.summary ? String(body.summary) : null;
+      if (summary && summary.length > 4_000) return json({ error: 'summary too large' }, 413);
+      const durationSeconds = body.duration_seconds != null ? Number(body.duration_seconds) : null;
+      if (durationSeconds !== null && (!Number.isFinite(durationSeconds) || durationSeconds < 0 || durationSeconds > 3_600))
+        return json({ error: 'Invalid duration_seconds' }, 400);
       const insert = {
         finance_user_id: portalUser.id,
-        purchase_file_id: body.purchase_file_id || null,
-        client_id: body.client_id || null,
+        purchase_file_id: purchaseFileId || null,
+        client_id: clientId || null,
         transcript,
-        summary: body.summary ? String(body.summary) : null,
-        duration_seconds: body.duration_seconds != null ? Number(body.duration_seconds) : null,
+        summary,
+        duration_seconds: durationSeconds,
         saved_as_note: body.saved_as_note === true,
         model: body.model ? String(body.model) : 'whisper-1',
       };
