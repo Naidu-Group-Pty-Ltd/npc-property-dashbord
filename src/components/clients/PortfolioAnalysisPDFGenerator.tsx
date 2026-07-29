@@ -289,10 +289,10 @@ const safeArray = <T,>(arr: T[] | null | undefined): T[] => {
 
 const getHealthColor = (health: string | null | undefined): string => {
   switch (safeString(health).toLowerCase()) {
-    case 'excellent': return 'text-green-600';
-    case 'good': return 'text-blue-600';
-    case 'fair': return 'text-yellow-600';
-    case 'poor': return 'text-red-600';
+    case 'excellent': return 'text-success';
+    case 'good': return 'text-info';
+    case 'fair': return 'text-warning';
+    case 'poor': return 'text-destructive';
     default: return 'text-muted-foreground';
   }
 };
@@ -3304,7 +3304,7 @@ export function PortfolioAnalysisPDFGenerator({
 
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <p className="text-sm font-medium text-green-700 flex items-center gap-1">
+                        <p className="text-sm font-medium text-success flex items-center gap-1">
                           <CheckCircle className="h-4 w-4" /> Key Strengths
                         </p>
                         <ul className="text-sm space-y-1 mt-1">
@@ -3314,7 +3314,7 @@ export function PortfolioAnalysisPDFGenerator({
                         </ul>
                       </div>
                       <div>
-                        <p className="text-sm font-medium text-amber-700 flex items-center gap-1">
+                        <p className="text-sm font-medium text-warning flex items-center gap-1">
                           <AlertTriangle className="h-4 w-4" /> Key Concerns
                         </p>
                         <ul className="text-sm space-y-1 mt-1">
@@ -3340,7 +3340,7 @@ export function PortfolioAnalysisPDFGenerator({
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Total Equity</p>
-                        <p className="text-xl font-bold text-green-600">{formatCurrency(analysisData.portfolioMetrics.totalEquity)}</p>
+                        <p className="text-xl font-bold text-success">{formatCurrency(analysisData.portfolioMetrics.totalEquity)}</p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Average LVR</p>
@@ -3352,7 +3352,7 @@ export function PortfolioAnalysisPDFGenerator({
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Monthly Cashflow</p>
-                        <p className={`text-xl font-bold ${analysisData.portfolioMetrics.netMonthlyCashflow >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        <p className={`text-xl font-bold ${analysisData.portfolioMetrics.netMonthlyCashflow >= 0 ? 'text-success' : 'text-destructive'}`}>
                           {formatCurrency(analysisData.portfolioMetrics.netMonthlyCashflow)}
                         </p>
                       </div>
@@ -3366,10 +3366,10 @@ export function PortfolioAnalysisPDFGenerator({
 
                 {/* SMSF Properties Summary - Only show if there are SMSF properties */}
                 {(analysisData.portfolioMetrics.smsfCount > 0) && (
-                  <Card className="border-amber-500/30">
+                  <Card className="border-warning/30">
                     <CardHeader className="pb-2">
                       <CardTitle className="text-lg flex items-center gap-2">
-                        <Landmark className="h-5 w-5 text-amber-600" />
+                        <Landmark className="h-5 w-5 text-warning" />
                         SMSF Properties Summary
                       </CardTitle>
                     </CardHeader>
@@ -3385,7 +3385,7 @@ export function PortfolioAnalysisPDFGenerator({
                         </div>
                         <div>
                           <p className="text-sm text-muted-foreground">SMSF Equity</p>
-                          <p className="text-xl font-bold text-green-600">{formatCurrency(analysisData.portfolioMetrics.smsfTotalEquity || 0)}</p>
+                          <p className="text-xl font-bold text-success">{formatCurrency(analysisData.portfolioMetrics.smsfTotalEquity || 0)}</p>
                         </div>
                       </div>
                       
@@ -3393,29 +3393,29 @@ export function PortfolioAnalysisPDFGenerator({
                       
                       <div className="space-y-2">
                         <p className="text-sm font-medium flex items-center gap-2">
-                          <Shield className="h-4 w-4 text-amber-600" />
+                          <Shield className="h-4 w-4 text-warning" />
                           Compliance Overview
                         </p>
                         <div className="grid grid-cols-3 gap-2">
-                          <div className="flex items-center gap-2 p-2 rounded-lg bg-green-50 border border-green-200">
-                            <CheckCircle className="h-4 w-4 text-green-600" />
+                          <div className="flex items-center gap-2 p-2 rounded-lg bg-success/10 border border-success/30">
+                            <CheckCircle className="h-4 w-4 text-success" />
                             <div>
                               <p className="text-xs text-muted-foreground">Compliant</p>
-                              <p className="font-semibold text-green-700">{analysisData.portfolioMetrics.smsfCompliantCount || 0}</p>
+                              <p className="font-semibold text-success">{analysisData.portfolioMetrics.smsfCompliantCount || 0}</p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
-                            <AlertCircle className="h-4 w-4 text-amber-600" />
+                          <div className="flex items-center gap-2 p-2 rounded-lg bg-warning/10 border border-warning/30">
+                            <AlertCircle className="h-4 w-4 text-warning" />
                             <div>
                               <p className="text-xs text-muted-foreground">Pending Audit</p>
-                              <p className="font-semibold text-amber-700">{analysisData.portfolioMetrics.smsfPendingAuditCount || 0}</p>
+                              <p className="font-semibold text-warning">{analysisData.portfolioMetrics.smsfPendingAuditCount || 0}</p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 p-2 rounded-lg bg-red-50 border border-red-200">
-                            <AlertTriangle className="h-4 w-4 text-red-600" />
+                          <div className="flex items-center gap-2 p-2 rounded-lg bg-destructive/10 border border-destructive/30">
+                            <AlertTriangle className="h-4 w-4 text-destructive" />
                             <div>
                               <p className="text-xs text-muted-foreground">Non-Compliant</p>
-                              <p className="font-semibold text-red-700">{analysisData.portfolioMetrics.smsfNonCompliantCount || 0}</p>
+                              <p className="font-semibold text-destructive">{analysisData.portfolioMetrics.smsfNonCompliantCount || 0}</p>
                             </div>
                           </div>
                         </div>

@@ -18,9 +18,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-token, x-session-token, x-command-centre-session-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-cron-token, x-session-token, x-command-centre-session-token",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const jr = (d: unknown, s = 200) =>
@@ -40,7 +42,7 @@ async function appendCaseEvent(admin: any, caseId: string, category: string, sum
   await admin.schema("aml").from("case_events").insert({ case_id: caseId, category, summary, payload, actor_id: actorId, actor_label: actorLabel, prev_hash: prevHash, row_hash: rowHash, created_at: now });
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -78,6 +80,24 @@ Deno.serve(async (req) => {
     const canWrite = roles.has("analyst") || roles.has("reviewer") || roles.has("mlro");
     const isMlro = roles.has("mlro");
     const requireWrite = () => { if (!canWrite) throw new Response(JSON.stringify({ error: "Insufficient permissions" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); };
+    const hasTenantAccess = async (tenantId: string, allowedRoles?: string[]) => {
+      if (!tenantId) return false;
+      if (!allowedRoles) {
+        const { data } = await aml.rpc("has_any_tenant_aml_role", {
+          _user_id: userId, _tenant_id: tenantId,
+        });
+        return data === true;
+      }
+      const checks = await Promise.all(allowedRoles.map(async (role) => {
+        const { data } = await aml.rpc("has_tenant_aml_role", {
+          _user_id: userId, _tenant_id: tenantId, _role: role,
+        });
+        return data === true;
+      }));
+      return checks.some(Boolean);
+    };
+    const WRITE_ROLES = ["analyst", "reviewer", "mlro"];
+    const REVIEW_ROLES = ["reviewer", "mlro"];
 
     // ── RULES ─────────────────────────────────────────
     if (op === "list_rules") {
@@ -301,7 +321,32 @@ Deno.serve(async (req) => {
       }).eq("id", String(body.id)).select("*").single();
       if (error) return jr({ error: error.message }, 400);
       if (data?.case_id) await appendCaseEvent(admin, data.case_id, "system", `Existing-customer review ${data.status} → ${data.outcome ?? "n/a"}`, { review_id: data.id }, userId, userLabel);
-      return jr({ review: data });
+      // Phase 10: completing a periodic review closes the cycle and books the
+      // next one from the case's current risk rating, so ongoing CDD never
+      // lapses silently. Ended relationships are left alone.
+      let next_review_at: string | null = null;
+      if (data?.case_id && data.classification === "periodic" && data.status === "complete") {
+        const { data: caseRow } = await aml.from("cases")
+          .select("id, tenant_id, risk_rating, monitoring_status").eq("id", data.case_id).maybeSingle();
+        if (caseRow && caseRow.monitoring_status !== "ended") {
+          const { data: tenant } = await aml.from("tenant_settings")
+            .select("review_interval_config").eq("tenant_id", (caseRow.tenant_id as string) || "default").maybeSingle();
+          const defaults: Record<string, number> = { prohibited: 3, high: 12, medium: 24, low: 36, unrated: 12 };
+          const cfg = { ...defaults, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
+          const months = Number(cfg[String(caseRow.risk_rating ?? "") || "unrated"] ?? 12) || 12;
+          const next = new Date();
+          next.setUTCMonth(next.getUTCMonth() + months);
+          next_review_at = next.toISOString();
+          await aml.from("cases").update({
+            last_periodic_review_at: new Date().toISOString(),
+            next_periodic_review_at: next_review_at,
+          }).eq("id", data.case_id);
+          await appendCaseEvent(admin, data.case_id, "system",
+            `Next periodic review booked for ${next_review_at.slice(0, 10)} (${months}-month cycle)`,
+            { previous_review_id: data.id, interval_months: months }, userId, userLabel);
+        }
+      }
+      return jr({ review: data, next_review_at });
     }
     if (op === "seed_pre_commencement") {
       requireWrite();
@@ -319,6 +364,330 @@ Deno.serve(async (req) => {
         inserted += 1;
       }
       return jr({ inserted });
+    }
+
+    // ── ONGOING CDD (Phase 10, directive §12.9) ───────
+    // Reviews are scheduled from the internal risk rating, raised by material
+    // trigger events, assigned with deadlines, and stop when the business
+    // relationship formally ends. Every state change is audited; nothing is
+    // inferred and no monitoring history is removed.
+    const DEFAULT_REVIEW_INTERVALS: Record<string, number> = {
+      prohibited: 3, high: 12, medium: 24, low: 36, unrated: 12,
+    };
+    const TRIGGER_KINDS: Record<string, { label: string; days: number; priority: string }> = {
+      risk_increase:            { label: "Risk rating increased",            days: 14, priority: "high" },
+      screening_match:          { label: "New screening match",              days: 7,  priority: "urgent" },
+      adverse_media:            { label: "Adverse media identified",         days: 14, priority: "high" },
+      ownership_change:         { label: "Ownership or control changed",     days: 30, priority: "normal" },
+      transaction_change:       { label: "Material transaction change",      days: 30, priority: "normal" },
+      counterparty_uncooperative: { label: "Counterparty uncooperative",     days: 14, priority: "high" },
+      client_circumstances:     { label: "Client circumstances changed",     days: 30, priority: "normal" },
+      other:                    { label: "Other trigger",                    days: 30, priority: "normal" },
+    };
+    const OPEN_REVIEW_STATUSES = ["queued", "in_progress", "remediation_required"];
+
+    async function reviewIntervalMonths(caseRow: any): Promise<number> {
+      const { data: tenant } = await aml.from("tenant_settings")
+        .select("review_interval_config").eq("tenant_id", (caseRow?.tenant_id as string) || "default").maybeSingle();
+      const cfg = { ...DEFAULT_REVIEW_INTERVALS, ...((tenant?.review_interval_config as Record<string, number>) ?? {}) };
+      const rating = String(caseRow?.risk_rating ?? "") || "unrated";
+      const months = Number(cfg[rating] ?? cfg.unrated ?? 12);
+      return Number.isFinite(months) && months > 0 ? months : 12;
+    }
+
+    function addMonths(from: Date, months: number): Date {
+      const d = new Date(from.getTime());
+      d.setUTCMonth(d.getUTCMonth() + months);
+      return d;
+    }
+
+    if (op === "schedule_periodic_review") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, client_id, tenant_id, risk_rating, monitoring_status").eq("id", caseId).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (caseRow.monitoring_status === "ended") {
+        return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
+      }
+
+      const { data: existing } = await aml.from("existing_customer_reviews")
+        .select("id, status, due_at").eq("case_id", caseId).eq("classification", "periodic")
+        .in("status", OPEN_REVIEW_STATUSES).limit(1).maybeSingle();
+      if (existing) return jr({ review: existing, already_scheduled: true });
+
+      const months = await reviewIntervalMonths(caseRow);
+      const dueAt = (body.due_at ? new Date(String(body.due_at)) : addMonths(new Date(), months)).toISOString();
+      const { data: review, error } = await aml.from("existing_customer_reviews").insert({
+        case_id: caseId, client_id: caseRow.client_id ?? null,
+        classification: "periodic", status: "queued",
+        priority: caseRow.risk_rating === "high" || caseRow.risk_rating === "prohibited" ? "high" : "normal",
+        due_at: dueAt, original_due_at: dueAt,
+        assigned_to: body.assigned_to ? String(body.assigned_to) : null,
+      }).select("*").single();
+      if (error) return jr({ error: error.message }, 400);
+
+      await aml.from("cases").update({ next_periodic_review_at: dueAt }).eq("id", caseId);
+      await appendCaseEvent(admin, caseId, "system",
+        `Periodic review scheduled for ${new Date(dueAt).toISOString().slice(0, 10)} (${months}-month cycle)`,
+        { review_id: review.id, interval_months: months, risk_rating: caseRow.risk_rating ?? null },
+        userId, userLabel);
+      return jr({ review, interval_months: months });
+    }
+
+    if (op === "record_trigger_review") {
+      const caseId = String(body.case_id ?? "");
+      const triggerKind = String(body.trigger_kind ?? "");
+      const detail = String(body.detail ?? "").trim();
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      if (!TRIGGER_KINDS[triggerKind]) return jr({ error: "trigger_kind invalid" }, 400);
+      if (detail.length < 10) return jr({ error: "detail must be at least 10 characters" }, 400);
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, client_id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (caseRow.monitoring_status === "ended") {
+        return jr({ error: "The business relationship has ended — ongoing CDD is closed for this case", code: "relationship_ended" }, 409);
+      }
+
+      const spec = TRIGGER_KINDS[triggerKind];
+      const dueAt = new Date(Date.now() + spec.days * 24 * 3600 * 1000).toISOString();
+      const { data: review, error } = await aml.from("existing_customer_reviews").insert({
+        case_id: caseId, client_id: caseRow.client_id ?? null,
+        classification: "trigger_based", status: "queued", priority: spec.priority,
+        due_at: dueAt, original_due_at: dueAt,
+        trigger_kind: triggerKind,
+        trigger_event_id: body.trigger_event_id ? String(body.trigger_event_id) : null,
+        assigned_to: body.assigned_to ? String(body.assigned_to) : null,
+        reviewer_notes: detail,
+      }).select("*").single();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCaseEvent(admin, caseId, "system",
+        `Trigger-event review raised: ${spec.label}`,
+        { review_id: review.id, trigger_kind: triggerKind, detail, due_at: dueAt }, userId, userLabel);
+      return jr({ review });
+    }
+
+    if (op === "assign_review") {
+      const id = String(body.id ?? "");
+      const assignee = body.assigned_to ? String(body.assigned_to) : userId;
+      if (!id) return jr({ error: "id required" }, 400);
+      const { data: existing } = await aml.from("existing_customer_reviews")
+        .select("id, case_id").eq("id", id).maybeSingle();
+      if (!existing) return jr({ error: "Review not found" }, 404);
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      const { data, error } = await aml.from("existing_customer_reviews")
+        .update({ assigned_to: assignee, status: body.status ? String(body.status) : "in_progress" })
+        .eq("id", id).select("*").single();
+      if (error) return jr({ error: error.message }, 400);
+      if (data?.case_id) {
+        await appendCaseEvent(admin, data.case_id, "system",
+          `Review assigned (${data.classification})`,
+          { review_id: data.id, assigned_to: assignee, status: data.status }, userId, userLabel);
+      }
+      return jr({ review: data });
+    }
+
+    // Deadlines never move silently: the original date is preserved, each
+    // extension is counted, and the reason is recorded on the case timeline.
+    if (op === "extend_review_deadline") {
+      const id = String(body.id ?? "");
+      const newDue = String(body.due_at ?? "");
+      const reason = String(body.reason ?? "").trim();
+      if (!id || !newDue) return jr({ error: "id and due_at required" }, 400);
+      if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
+      const parsed = new Date(newDue);
+      if (Number.isNaN(parsed.getTime())) return jr({ error: "due_at must be a valid date" }, 400);
+      const { data: existing } = await aml.from("existing_customer_reviews")
+        .select("id, case_id, due_at, original_due_at, extension_count, classification, status").eq("id", id).maybeSingle();
+      if (!existing) return jr({ error: "Review not found" }, 404);
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, tenant_id").eq("id", existing.case_id).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) return jr({ error: "Insufficient permissions" }, 403);
+      if (!OPEN_REVIEW_STATUSES.includes(String(existing.status))) {
+        return jr({ error: "Only an open review can have its deadline extended" }, 400);
+      }
+      if (existing.due_at && parsed.getTime() <= new Date(existing.due_at).getTime()) {
+        return jr({ error: "The new deadline must be later than the current one" }, 400);
+      }
+
+      const { data, error } = await aml.from("existing_customer_reviews").update({
+        due_at: parsed.toISOString(),
+        original_due_at: existing.original_due_at ?? existing.due_at,
+        extension_count: Number(existing.extension_count ?? 0) + 1,
+        extension_reason: reason,
+      }).eq("id", id).select("*").single();
+      if (error) return jr({ error: error.message }, 400);
+      if (data?.case_id) {
+        await appendCaseEvent(admin, data.case_id, "system",
+          `Review deadline extended to ${parsed.toISOString().slice(0, 10)}`,
+          {
+            review_id: id, previous_due_at: existing.due_at,
+            original_due_at: data.original_due_at, extension_count: data.extension_count, reason,
+          }, userId, userLabel);
+      }
+      if (data?.classification === "periodic" && data?.case_id) {
+        await aml.from("cases").update({ next_periodic_review_at: parsed.toISOString() }).eq("id", data.case_id);
+      }
+      return jr({ review: data });
+    }
+
+    // Relationship end (§18 retention trigger): terminal, reasoned and
+    // audited. Scheduled ongoing-CDD work is cancelled, never deleted — the
+    // completed history and evidence stay exactly as recorded.
+    if (op === "end_relationship") {
+      const caseId = String(body.case_id ?? "");
+      const reason = String(body.reason ?? "").trim();
+      const endedAt = body.ended_at ? new Date(String(body.ended_at)) : new Date();
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
+      if (Number.isNaN(endedAt.getTime())) return jr({ error: "ended_at must be a valid date" }, 400);
+
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id, REVIEW_ROLES)) return jr({ error: "Reviewer/MLRO required" }, 403);
+      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
+      if (caseRow.monitoring_status === "ended") return jr({ error: "The relationship is already recorded as ended" }, 400);
+
+      // Outstanding regulatory work must be resolved before the relationship
+      // is closed off — otherwise obligations would be silently abandoned.
+      const [{ count: openEdd }, { count: openAlerts }] = await Promise.all([
+        aml.from("edd_cases").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).in("status", ["open", "in_progress", "awaiting_client", "awaiting_mlro"]),
+        aml.from("alerts").select("id", { count: "exact", head: true })
+          .eq("case_id", caseId).in("status", ["open", "investigating"]),
+      ]);
+      if (((openEdd ?? 0) > 0 || (openAlerts ?? 0) > 0) && !tenantIsMlro) {
+        return jr({
+          error: "Outstanding enhanced due diligence or alerts must be resolved, or an MLRO must record the end",
+          code: "open_obligations",
+          open_edd: openEdd ?? 0, open_alerts: openAlerts ?? 0,
+        }, 409);
+      }
+
+      const { data: cancelled } = await aml.from("existing_customer_reviews")
+        .update({ status: "exited", outcome: "relationship_ended", outcome_at: new Date().toISOString(), outcome_by: userId })
+        .eq("case_id", caseId).in("status", OPEN_REVIEW_STATUSES).select("id");
+
+      const { data: updated, error } = await aml.from("cases").update({
+        monitoring_status: "ended",
+        monitoring_status_reason: reason,
+        relationship_ended_at: endedAt.toISOString(),
+        relationship_end_reason: reason,
+        relationship_end_recorded_by: userId,
+        next_periodic_review_at: null,
+      }).eq("id", caseId).select("id, monitoring_status, relationship_ended_at").maybeSingle();
+      if (error) return jr({ error: error.message }, 400);
+
+      await appendCaseEvent(admin, caseId, "system",
+        `Business relationship ended ${endedAt.toISOString().slice(0, 10)} — ongoing CDD closed`,
+        {
+          reason, ended_at: endedAt.toISOString(),
+          reviews_cancelled: (cancelled ?? []).length,
+          open_edd_at_close: openEdd ?? 0, open_alerts_at_close: openAlerts ?? 0,
+        }, userId, userLabel);
+      return jr({ case: updated, reviews_cancelled: (cancelled ?? []).length });
+    }
+
+    if (op === "set_monitoring_status") {
+      const caseId = String(body.case_id ?? "");
+      const status = String(body.status ?? "");
+      const reason = String(body.reason ?? "").trim();
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      if (!["active", "paused"].includes(status)) {
+        return jr({ error: "status must be active or paused — ending a relationship uses end_relationship" }, 400);
+      }
+      if (reason.length < 10) return jr({ error: "reason must be at least 10 characters" }, 400);
+      const { data: caseRow } = await aml.from("cases")
+        .select("id, tenant_id, monitoring_status").eq("id", caseId).maybeSingle();
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      const tenantIsMlro = await hasTenantAccess(caseRow.tenant_id, ["mlro"]);
+      // Reinstating monitoring on an ended relationship reverses a regulatory
+      // record — MLRO only.
+      if (caseRow.monitoring_status === "ended" && !tenantIsMlro) {
+        return jr({ error: "Only the MLRO can reinstate monitoring on an ended relationship" }, 403);
+      }
+      if (caseRow.monitoring_status !== "ended" && !await hasTenantAccess(caseRow.tenant_id, WRITE_ROLES)) {
+        return jr({ error: "Insufficient permissions" }, 403);
+      }
+
+      const patch: Record<string, unknown> = { monitoring_status: status, monitoring_status_reason: reason };
+      if (caseRow.monitoring_status === "ended" && status === "active") {
+        patch.relationship_ended_at = null;
+        patch.relationship_end_reason = null;
+        patch.relationship_end_recorded_by = null;
+      }
+      const { data, error } = await aml.from("cases").update(patch)
+        .eq("id", caseId).select("id, monitoring_status").maybeSingle();
+      if (error) return jr({ error: error.message }, 400);
+      await appendCaseEvent(admin, caseId, "system",
+        `Ongoing monitoring ${status === "paused" ? "paused" : "resumed"}`,
+        { previous_status: caseRow.monitoring_status, status, reason }, userId, userLabel);
+      return jr({ case: data });
+    }
+
+    // Per-case ongoing-CDD rollup for the Command Centre workspace.
+    if (op === "case_monitoring_summary") {
+      const caseId = String(body.case_id ?? "");
+      if (!caseId) return jr({ error: "case_id required" }, 400);
+      const nowIso = new Date().toISOString();
+      const caseRes = await aml.from("cases").select(
+          "id, risk_rating, tenant_id, monitoring_status, monitoring_status_reason, relationship_ended_at, relationship_end_reason, next_periodic_review_at, last_periodic_review_at",
+        ).eq("id", caseId).maybeSingle();
+      const caseRow = caseRes.data;
+      if (!caseRow) return jr({ error: "Case not found" }, 404);
+      if (!await hasTenantAccess(caseRow.tenant_id)) return jr({ error: "AML role required for case tenant" }, 403);
+      const [reviewsRes, alertsRes, eddRes, screenRes] = await Promise.all([
+        aml.from("existing_customer_reviews").select("*").eq("case_id", caseId)
+          .order("due_at", { ascending: true, nullsFirst: false }).limit(50),
+        aml.from("alerts").select("id, title, severity, status, created_at, assigned_to")
+          .eq("case_id", caseId).in("status", ["open", "investigating"]).order("created_at", { ascending: false }).limit(20),
+        aml.from("edd_cases").select("id, reason, status, opened_at, assigned_to")
+          .eq("case_id", caseId).in("status", ["open", "in_progress", "awaiting_client", "awaiting_mlro"]).limit(20),
+        aml.from("screening_checks").select("completed_at").eq("case_id", caseId)
+          .not("completed_at", "is", null).order("completed_at", { ascending: false }).limit(1).maybeSingle(),
+      ]);
+
+      const reviews = reviewsRes.data ?? [];
+      const openReviews = reviews.filter((r: any) => OPEN_REVIEW_STATUSES.includes(String(r.status)));
+      const overdueReviews = openReviews.filter((r: any) => r.due_at && r.due_at < nowIso);
+
+      // Rescreening cadence follows the enabled rescreen rule, defaulting to
+      // an annual cycle when no rule is configured.
+      const { data: rescreenRule } = await aml.from("monitoring_rules")
+        .select("criteria").eq("trigger_kind", "rescreen_due").eq("is_enabled", true).limit(1).maybeSingle();
+      const rescreenDays = Number((rescreenRule?.criteria as any)?.interval_days ?? 365);
+      const lastScreened = screenRes.data?.completed_at ?? null;
+      const rescreenDueAt = lastScreened
+        ? new Date(new Date(lastScreened).getTime() + rescreenDays * 24 * 3600 * 1000).toISOString()
+        : null;
+
+      return jr({
+        monitoring: {
+          monitoring_status: caseRow.monitoring_status ?? "active",
+          monitoring_status_reason: caseRow.monitoring_status_reason ?? null,
+          relationship_ended_at: caseRow.relationship_ended_at ?? null,
+          relationship_end_reason: caseRow.relationship_end_reason ?? null,
+          risk_rating: caseRow.risk_rating ?? null,
+          review_interval_months: await reviewIntervalMonths(caseRow),
+          next_periodic_review_at: caseRow.next_periodic_review_at ?? null,
+          last_periodic_review_at: caseRow.last_periodic_review_at ?? null,
+          last_screened_at: lastScreened,
+          rescreen_due_at: rescreenDueAt,
+          rescreen_overdue: Boolean(rescreenDueAt && rescreenDueAt < nowIso),
+          open_reviews: openReviews,
+          overdue_review_count: overdueReviews.length,
+          recent_reviews: reviews.slice(0, 10),
+          open_alerts: alertsRes.data ?? [],
+          open_edd: eddRes.data ?? [],
+        },
+      });
     }
 
     // ── Dashboard summary ─────────────────────────────
@@ -401,6 +770,14 @@ async function runScheduledScans(admin: any) {
   const now = Date.now();
   const created: any[] = [];
 
+  // Phase 10: ongoing CDD runs for the applicable relationship period only.
+  // Cases whose relationship has ended must not keep generating monitoring
+  // work — their history stays intact, but no new obligations are raised.
+  const { data: endedCases } = await aml.from("cases")
+    .select("id").eq("monitoring_status", "ended").limit(2000);
+  const endedIds = new Set<string>((endedCases ?? []).map((c: any) => String(c.id)));
+  const isEnded = (caseId: unknown) => endedIds.has(String(caseId));
+
   const { data: rules } = await aml.from("monitoring_rules").select("*").eq("is_enabled", true);
   const rescreen = (rules ?? []).find((r: any) => r.trigger_kind === "rescreen_due");
   const staleIdv = (rules ?? []).find((r: any) => r.trigger_kind === "stale_verification");
@@ -410,6 +787,7 @@ async function runScheduledScans(admin: any) {
     const cutoff = new Date(now - days * 24 * 3600 * 1000).toISOString();
     const { data: stale } = await aml.from("screening_checks").select("case_id, completed_at").lt("completed_at", cutoff).order("completed_at").limit(200);
     for (const s of stale ?? []) {
+      if (isEnded(s.case_id)) continue;
       const { count } = await aml.from("alerts").select("id", { count: "exact", head: true }).eq("case_id", s.case_id).eq("status", "open").eq("rule_id", rescreen.id);
       if ((count ?? 0) > 0) continue;
       const { data: alert } = await aml.from("alerts").insert({
@@ -426,6 +804,7 @@ async function runScheduledScans(admin: any) {
     const cutoff = new Date(now - days * 24 * 3600 * 1000).toISOString();
     const { data: stale } = await aml.from("identity_checks").select("case_id, completed_at").lt("completed_at", cutoff).order("completed_at").limit(200);
     for (const s of stale ?? []) {
+      if (isEnded(s.case_id)) continue;
       const { count } = await aml.from("alerts").select("id", { count: "exact", head: true }).eq("case_id", s.case_id).eq("status", "open").eq("rule_id", staleIdv.id);
       if ((count ?? 0) > 0) continue;
       const { data: alert } = await aml.from("alerts").insert({
@@ -448,5 +827,38 @@ async function runScheduledScans(admin: any) {
     }).eq("id", r.id);
   }
 
-  return { alerts_created: created.length, reviews_escalated: (overdue ?? []).length };
+  // Phase 10: raise the periodic review when its scheduled date arrives, so
+  // the risk-based cycle keeps running without manual scheduling.
+  const nowIso = new Date().toISOString();
+  const { data: dueCases } = await aml.from("cases")
+    .select("id, client_id, risk_rating, next_periodic_review_at")
+    .eq("monitoring_status", "active")
+    .not("next_periodic_review_at", "is", null)
+    .lte("next_periodic_review_at", nowIso)
+    .limit(200);
+  let periodicRaised = 0;
+  for (const c of dueCases ?? []) {
+    const { count } = await aml.from("existing_customer_reviews")
+      .select("id", { count: "exact", head: true })
+      .eq("case_id", c.id).eq("classification", "periodic")
+      .in("status", ["queued", "in_progress", "remediation_required"]);
+    if ((count ?? 0) > 0) continue;
+    const { error } = await aml.from("existing_customer_reviews").insert({
+      case_id: c.id, client_id: c.client_id ?? null,
+      classification: "periodic", status: "queued",
+      priority: c.risk_rating === "high" || c.risk_rating === "prohibited" ? "high" : "normal",
+      due_at: c.next_periodic_review_at, original_due_at: c.next_periodic_review_at,
+    });
+    if (!error) periodicRaised += 1;
+  }
+
+  return {
+    alerts_created: created.length,
+    reviews_escalated: (overdue ?? []).length,
+    periodic_reviews_raised: periodicRaised,
+  };
 }
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));

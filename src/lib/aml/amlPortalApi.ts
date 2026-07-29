@@ -27,20 +27,52 @@ async function call<T = any>(op: string, payload: Record<string, any> = {}): Pro
   return json as T;
 }
 
-export type AmlSection = 'purchasing_structure' | 'personal_details' | 'purchase_profile' | 'funding';
+export type AmlSection =
+  | 'purchasing_structure' | 'personal_details' | 'purchase_profile' | 'funding'
+  // Phase 5 — conditional sections; the server decides which apply per case.
+  | 'entity_details' | 'related_parties';
 
 export interface AmlPortalOverview {
   case: {
     id: string; reference: string; subject: string;
-    opened_at: string; status: string; status_label: string;
+    opened_at: string;
+    /** Portal-safe status token (Phase 1 contract) — never the internal case state. */
+    status: string; portal_status?: string;
+    status_label: string;
     status_tone: 'neutral'|'progress'|'positive'|'caution';
   } | null;
   message?: string;
+  /** Phase 5 — versioned conditional engine metadata (server-driven). */
+  questionnaire_version?: string;
+  structure_type?: string | null;
   sections?: { section: AmlSection; status: string; updated_at: string | null }[];
   requirements?: any[];
   requirement_progress?: { completed: number; total: number };
   open_requests?: any[];
   recent_submissions?: any[];
+  /** Server-owned consent gate — the stepper mirrors this, never a local flag. */
+  consent?: AmlConsentState;
+}
+
+/** Acceptance state for the current AUSTRAC-referenced consent catalogue. */
+export interface AmlConsentState {
+  version: string | null;
+  satisfied: boolean;
+  outstanding: string[];
+  required_count?: number;
+}
+
+export interface AmlConsentDocument {
+  code: string;
+  title: string;
+  summary: string;
+  body: string;
+  /** `consent` must be agreed to; `notice` must be acknowledged as read. */
+  acknowledgement_type: 'consent' | 'notice';
+  statutory_basis: string[];
+  reference_links: { label: string; url: string }[];
+  required: boolean;
+  accepted_at: string | null;
 }
 
 export const amlPortalApi = {
@@ -49,8 +81,13 @@ export const amlPortalApi = {
     call<{ response: any }>('get_questionnaire', { case_id, section }),
   saveQuestionnaire: (case_id: string, section: AmlSection, payload: Record<string, any>, submit = false) =>
     call<{ response: any }>('save_questionnaire', { case_id, section, payload, submit }),
-  recordConsent: (case_id: string, kind: string, version: string, payload: Record<string, any> = {}) =>
-    call<{ consent: any }>('record_consent', { case_id, kind, version, payload }),
+  /** Current consent catalogue + what this case has already accepted. */
+  getConsents: (case_id: string) =>
+    call<AmlConsentState & { documents: AmlConsentDocument[] }>('get_consents', { case_id }),
+  /** `version` is optional — the server pins the acceptance to the live revision. */
+  recordConsent: (case_id: string, kind: string, version?: string, payload: Record<string, any> = {}) =>
+    call<{ consent: any; consent_state: AmlConsentState }>(
+      'record_consent', { case_id, kind, version, payload, accepted: true }),
   listRequirements: (case_id: string) => call<{ requirements: any[] }>('list_requirements', { case_id }),
   requestUploadUrl: (case_id: string, params: {
     filename: string; mime_type: string; size_bytes: number; requirement_id?: string | null;

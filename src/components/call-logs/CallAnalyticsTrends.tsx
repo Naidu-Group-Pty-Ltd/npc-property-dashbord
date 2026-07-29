@@ -39,7 +39,7 @@ const trendControl =
 const chartCardClass =
   'relative overflow-hidden rounded-3xl border border-border dark:border-white/10 bg-gradient-to-br from-card dark:from-background/95 via-card dark:via-background/80 to-background dark:to-black/90 shadow-xl shadow-sm dark:shadow-black/25 transition-all duration-300 before:pointer-events-none before:absolute before:inset-x-8 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-brand-200/45 before:to-transparent hover:border-brand-300/30 hover:shadow-brand-500/10';
 const chartContainerClass =
-  'h-[240px] w-full rounded-2xl border border-border dark:border-white/10 bg-background dark:bg-black/20 p-2 [&_.recharts-cartesian-grid_line]:stroke-white/10 [&_.recharts-cartesian-axis-tick_text]:fill-zinc-500 [&_.recharts-cartesian-axis-line]:stroke-white/10 [&_.recharts-cartesian-axis-tick-line]:stroke-white/10 [&_.recharts-tooltip-cursor]:fill-brand-300/5 [&_.recharts-tooltip-cursor]:stroke-brand-300/20';
+  'h-[240px] w-full rounded-2xl border border-border dark:border-white/10 bg-background dark:bg-black/20 p-2 [&_.recharts-cartesian-grid_line]:stroke-white/10 [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-axis-line]:stroke-white/10 [&_.recharts-cartesian-axis-tick-line]:stroke-white/10 [&_.recharts-tooltip-cursor]:fill-brand-300/5 [&_.recharts-tooltip-cursor]:stroke-brand-300/20';
 const tooltipClass =
   'rounded-2xl border-border dark:border-white/10 bg-background dark:bg-background/95 text-foreground dark:text-foreground shadow-2xl shadow-sm dark:shadow-black/40 backdrop-blur-xl';
 

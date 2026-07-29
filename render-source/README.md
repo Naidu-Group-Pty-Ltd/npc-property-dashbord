@@ -20,8 +20,8 @@ SSRF/auth-guarded Supabase edge function (`supabase/functions/render-source`).
   - **C3 (jsx):** a single-file React component (default export or `App`) is mounted in a
     Babel-standalone harness (React via CDN); `entry` overrides the component name.
   - **C4 (zipBase64):** the archive is extracted (zip-slip-guarded, size-capped) and served
-    statically; if no `index.html` is present and `RENDER_SOURCE_ALLOW_BUILD=1`, it runs
-    `npm install && npm run build` first and serves `dist`/`build`/`out`/`public`.
+    statically from its root or `dist`/`build`/`out`/`public`. Uploads must already contain
+    an `index.html`; the service never installs dependencies or executes project scripts.
 
 ## Local run
 
@@ -68,7 +68,6 @@ surfaces cleanly (raw-codebase ingestion stays "pending" until deployed).
 - **Fail-closed auth:** no `RENDER_SOURCE_TOKEN` ⇒ every request is `401`.
 - **SSRF:** private/reserved hosts are blocked in *both* the edge function and here.
 - Runs Chromium with `--no-sandbox` as the non-root `pwuser`; deploy on an isolated service.
-- **C4 builds run untrusted code and are OFF by default** — the default serves only static/
-  exported zips. Set `RENDER_SOURCE_ALLOW_BUILD=1` **only** on an isolated, egress-restricted
-  sandbox (the build runs `npm install` + the project's build script). Caps:
-  `MAX_UNZIP_BYTES` (200 MB), `BUILD_TIMEOUT_MS` (180 s).
+- **C4 uploads are data, never code:** only prebuilt static/exported zips are served. The
+  service does not install dependencies or run package lifecycle/build scripts, regardless
+  of environment configuration. Expanded archives are capped by `MAX_UNZIP_BYTES` (200 MB).

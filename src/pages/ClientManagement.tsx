@@ -651,7 +651,7 @@ export default function ClientManagement() {
             variant="default" 
             size="sm"
             disabled={isImportingFromGHL}
-            className="h-10 flex-1 rounded-xl border border-brand-300/35 bg-[linear-gradient(135deg,rgba(245,158,11,0.18),rgba(120,53,15,0.12))] px-4 text-xs font-bold text-brand-100 shadow-lg shadow-brand-950/25 transition-all hover:-translate-y-0.5 hover:border-brand-200/55 hover:bg-brand-500/25 hover:text-brand-50 hover:shadow-[0_14px_38px_rgba(245,158,11,0.18)] focus-visible:ring-2 focus-visible:ring-brand-300/55 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:text-sm"
+            className="h-10 flex-1 rounded-xl border border-brand-300/35 bg-[linear-gradient(135deg,rgba(245,158,11,0.18),rgba(120,53,15,0.12))] px-4 text-xs font-bold text-brand-100 shadow-lg shadow-brand-950/25 transition-all hover:-translate-y-0.5 hover:border-brand-200/55 hover:bg-brand-500/25 hover:text-brand-50 hover:shadow-[0_14px_38px_rgba(245,158,11,0.18)] focus-visible:ring-2 focus-visible:ring-brand-300/55 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:text-sm"
           >
             {isImportingFromGHL ? (
               <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
@@ -669,7 +669,7 @@ export default function ClientManagement() {
             onClick={() => setShowExportDialog(true)}
             variant="outline"
             size="sm"
-            className="h-10 flex-1 rounded-xl border-border/60 bg-background/70 px-4 text-xs font-semibold text-foreground dark:border-white/15 dark:bg-white/[0.04] dark:text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:text-sm"
+            className="h-10 flex-1 rounded-xl border-border/60 bg-background/70 px-4 text-xs font-semibold text-foreground dark:border-white/15 dark:bg-white/[0.04] dark:text-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 sm:flex-none sm:text-sm"
             disabled={displayClients.length === 0}
           >
             <Download className="h-3.5 w-3.5 mr-1.5" />
@@ -681,7 +681,7 @@ export default function ClientManagement() {
               onClick={() => setShowAddClientModal(true)} 
               variant="default" 
               size="sm"
-              className="h-11 flex-1 rounded-xl border border-brand-200/50 bg-gradient-to-r from-brand-300 via-brand-400 to-brand-500 px-4 text-xs font-bold text-black shadow-xl shadow-brand-500/30 transition-all hover:-translate-y-0.5 hover:from-brand-200 hover:via-brand-300 hover:to-brand-400 hover:shadow-[0_18px_46px_rgba(251,191,36,0.32)] focus-visible:ring-2 focus-visible:ring-brand-200/75 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 sm:flex-none sm:text-sm"
+              className="h-11 flex-1 rounded-xl border border-brand-200/50 bg-gradient-to-r from-brand-300 via-brand-400 to-brand-500 px-4 text-xs font-bold text-black shadow-xl shadow-brand-500/30 transition-all hover:-translate-y-0.5 hover:from-brand-200 hover:via-brand-300 hover:to-brand-400 hover:shadow-[0_18px_46px_rgba(251,191,36,0.32)] focus-visible:ring-2 focus-visible:ring-brand-200/75 focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:flex-none sm:text-sm"
             >
               <UserPlus className="h-3.5 w-3.5 mr-1.5" />
               <span className="hidden sm:inline">Add Client</span>
@@ -692,7 +692,7 @@ export default function ClientManagement() {
           {/* More actions in dropdown on mobile */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-10 flex-1 rounded-xl border-border/60 bg-background/70 px-3 text-foreground dark:border-white/15 dark:bg-white/[0.04] dark:text-foreground transition-all hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 data-[state=open]:border-brand-300/50 data-[state=open]:bg-brand-500/15 data-[state=open]:text-brand-100 sm:flex-none" aria-label="More actions">
+              <Button variant="outline" size="sm" className="h-10 flex-1 rounded-xl border-border/60 bg-background/70 px-3 text-foreground dark:border-white/15 dark:bg-white/[0.04] dark:text-foreground transition-all hover:-translate-y-0.5 hover:border-brand-400/45 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-brand-300/50 data-[state=open]:bg-brand-500/15 data-[state=open]:text-brand-100 sm:flex-none" aria-label="More actions">
                 <MoreHorizontal className="h-3.5 w-3.5" />
               </Button>
             </DropdownMenuTrigger>
@@ -748,7 +748,7 @@ export default function ClientManagement() {
       {/* Main Content */}
       <Tabs defaultValue="clients" className="space-y-4 rounded-2xl border border-border/70 bg-card/70 p-2.5 shadow-xl shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 backdrop-blur md:p-3">
         <div className="-mx-3 overflow-x-auto px-3 pb-1 md:mx-0 md:px-0">
-          <TabsList aria-label="Client management sections" className="inline-flex h-auto min-h-11 w-auto min-w-max gap-1 rounded-2xl border border-brand-500/20 bg-muted p-1 shadow-inner shadow-stone-200/70 backdrop-blur dark:bg-[linear-gradient(135deg,rgba(24,24,27,0.86),rgba(3,7,18,0.78))] dark:shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30">
+          <TabsList aria-label="Client management sections" className="inline-flex h-auto min-h-11 w-auto min-w-max gap-1 rounded-2xl border border-brand-500/20 bg-muted p-1 shadow-inner shadow-foreground/70 backdrop-blur dark:bg-[linear-gradient(135deg,rgba(24,24,27,0.86),rgba(3,7,18,0.78))] dark:shadow-[0_18px_48px_rgba(15,23,42,0.12)] dark:shadow-black/30">
             <TabsTrigger value="clients" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Clients</TabsTrigger>
             <TabsTrigger value="portfolio-reports" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Portfolio</TabsTrigger>
             <TabsTrigger value="analytics" className="min-h-10 rounded-xl px-4 py-2 text-[13px] font-semibold text-muted-foreground transition-all duration-200 hover:bg-brand-500/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=active]:bg-gradient-to-r data-[state=active]:from-brand-300 data-[state=active]:to-brand-500 data-[state=active]:text-black data-[state=active]:shadow-lg data-[state=active]:shadow-brand-500/25">Analytics</TabsTrigger>
@@ -775,7 +775,7 @@ export default function ClientManagement() {
                 aria-label="Search clients"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-11 rounded-xl border-brand-500/20 bg-background/75 pl-10 pr-4 text-sm shadow-sm shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 placeholder:text-muted-foreground/75 transition-all hover:border-brand-400/35 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-400/35 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="h-11 rounded-xl border-brand-500/20 bg-background/75 pl-10 pr-4 text-sm shadow-sm shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 placeholder:text-muted-foreground/75 transition-all hover:border-brand-400/35 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-400/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               />
             </div>
             <Button
@@ -783,7 +783,7 @@ export default function ClientManagement() {
               size="sm"
               onClick={() => setShowActiveOnly(!showActiveOnly)}
               aria-pressed={showActiveOnly}
-              className={`h-11 gap-2 rounded-xl px-4 font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/50 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${
+              className={`h-11 gap-2 rounded-xl px-4 font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/50 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                 showActiveOnly
                   ? 'border-brand-300/40 bg-brand-400 text-black shadow-brand-500/20 hover:bg-brand-300 hover:text-black'
                   : 'border-brand-500/25 bg-background/70 text-muted-foreground hover:bg-brand-500/10 hover:text-brand-100'
@@ -913,7 +913,7 @@ export default function ClientManagement() {
                 variant="default"
                 size="sm"
                 onClick={() => window.location.href = '/portfolio-reports'}
-                className="h-11 rounded-2xl bg-gradient-to-r from-brand-300 to-brand-500 px-5 font-semibold text-black shadow-lg shadow-brand-950/25 transition-all duration-200 hover:-translate-y-0.5 hover:from-brand-200 hover:to-brand-400 hover:shadow-brand-500/20 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="h-11 rounded-2xl bg-gradient-to-r from-brand-300 to-brand-500 px-5 font-semibold text-black shadow-lg shadow-brand-950/25 transition-all duration-200 hover:-translate-y-0.5 hover:from-brand-200 hover:to-brand-400 hover:shadow-brand-500/20 focus-visible:ring-2 focus-visible:ring-brand-300/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               >
                 <ExternalLink className="mr-2 h-4 w-4" />
                 Full Reports Page

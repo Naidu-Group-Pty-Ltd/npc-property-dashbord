@@ -35,6 +35,7 @@ import GeneratedReports from "./pages/GeneratedReports";
 import ReportViewer from "./pages/ReportViewer";
 import Settings from "./pages/Settings";
 import UserGuide from "./pages/UserGuide";
+import Feedback from "./pages/Feedback";
 import DataImport from './pages/DataImport';
 import Monitoring from './pages/Monitoring';
 import QualityAssurance from './pages/QualityAssurance';
@@ -82,6 +83,7 @@ import MarketQAQuality from "./pages/admin/MarketQAQuality";
 import ReclassifyPropertyAdmin from "./pages/admin/ReclassifyPropertyAdmin";
 import AgentQuality from "./pages/admin/AgentQuality";
 import AmlCases from "./pages/aml/AmlCases";
+import AmlCaseWorkspace from "./pages/aml/AmlCaseWorkspace";
 import AmlOverview from "./pages/aml/AmlOverview";
 import {
   AmlIntakeQueue, AmlVerification, AmlScreening, AmlRisk, AmlCounterparty,
@@ -343,6 +345,7 @@ const App = () => (
                 <Route path="generated-reports" element={<ModuleGuard moduleKey="generated_reports"><GeneratedReports /></ModuleGuard>} />
                 <Route path="generated-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
                 <Route path="user-guide" element={<UserGuide />} />
+                <Route path="feedback" element={<Feedback />} />
                 <Route path="monitoring" element={<ModuleGuard moduleKey="monitoring"><Monitoring /></ModuleGuard>} />
                 <Route path="quality-assurance" element={<ModuleGuard moduleKey="quality_assurance"><QualityAssurance /></ModuleGuard>} />
                 <Route path="data-import" element={<ModuleGuard moduleKey="data_import"><DataImport /></ModuleGuard>} />
@@ -377,13 +380,14 @@ const App = () => (
                 <Route path="admin/template-import-quality" element={<ModuleGuard moduleKey="templates"><TemplateImportQuality /></ModuleGuard>} />
                 <Route path="admin/pdf-golden-regression" element={<ModuleGuard moduleKey="templates"><PdfGoldenRegression /></ModuleGuard>} />
                 <Route path="admin/market-qa-quality" element={<ModuleGuard moduleKey="activity_logs"><MarketQAQuality /></ModuleGuard>} />
-                <Route path="admin/bc-segment-engine" element={<BcSegmentEngineAdmin />} />
+                <Route path="admin/bc-segment-engine" element={<ModuleGuard moduleKey="__superadmin_only__"><BcSegmentEngineAdmin /></ModuleGuard>} />
                 <Route path="admin/reclassify-property" element={<ReclassifyPropertyAdmin />} />
                 <Route path="admin/agent-quality" element={<ModuleGuard moduleKey="activity_logs"><AgentQuality /></ModuleGuard>} />
                 <Route path="admin/aml" element={<AmlLayout />}>
                   <Route index element={<AmlGuard capability="aml.view"><AmlOverview /></AmlGuard>} />
                   <Route path="intake" element={<AmlGuard capability="aml.view"><AmlIntakeQueue /></AmlGuard>} />
                   <Route path="cases" element={<AmlGuard capability="aml.view"><AmlCases /></AmlGuard>} />
+                  <Route path="cases/:caseId" element={<AmlGuard capability="aml.view"><AmlCaseWorkspace /></AmlGuard>} />
                   <Route path="verification" element={<AmlGuard capability="aml.view"><AmlVerification /></AmlGuard>} />
                   <Route path="screening" element={<AmlGuard capability="aml.view"><AmlScreening /></AmlGuard>} />
                   <Route path="risk" element={<AmlGuard capability="aml.view"><AmlRisk /></AmlGuard>} />
@@ -423,7 +427,7 @@ const App = () => (
                 <Route path="portal-config" element={<ModuleGuard moduleKey="portal_config"><PortalConfig /></ModuleGuard>} />
                 <Route path="marketing-analytics" element={<ModuleGuard moduleKey="marketing_analytics"><MarketingAnalytics /></ModuleGuard>} />
                 <Route path="conversations" element={<ModuleGuard moduleKey="conversations"><Conversations /></ModuleGuard>} />
-                <Route path="messages" element={<Messages />} />
+                <Route path="messages" element={<ModuleGuard moduleKey="conversations"><Messages /></ModuleGuard>} />
                 <Route path="lenders" element={<ModuleGuard moduleKey="lenders"><Lenders /></ModuleGuard>} />
                 <Route path="commissions" element={<Commissions />} />
                 <Route path="reports/analytics" element={<ReportsAnalytics />} />

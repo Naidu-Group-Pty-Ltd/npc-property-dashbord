@@ -64,13 +64,14 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'update') {
-      const { agent_key, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort } = body;
+      const { agent_key, route, model_id, fallback_chain, temperature, max_tokens, reasoning_effort, is_active } = body;
       if (!agent_key || !route || !model_id) return json({ success: false, error: 'agent_key, route, model_id required' }, 400, corsHeaders);
       const patch: any = { route, model_id, updated_at: new Date().toISOString() };
       if (fallback_chain !== undefined) patch.fallback_chain = fallback_chain;
       if (temperature !== undefined) patch.temperature = temperature;
       if (max_tokens !== undefined) patch.max_tokens = max_tokens;
       if (reasoning_effort !== undefined) patch.reasoning_effort = reasoning_effort;
+      if (typeof is_active === 'boolean') patch.is_active = is_active;
       const { data, error } = await sb.from('agent_model_assignments').update(patch).eq('agent_key', agent_key).select().single();
       if (error) throw error;
       return json({ success: true, assignment: data }, 200, corsHeaders);
@@ -80,7 +81,8 @@ Deno.serve(async (req) => {
       const updates: any[] = body.updates ?? [];
       const results = [];
       for (const u of updates) {
-        const { data, error } = await sb.from('agent_model_assignments').update({ route: u.route, model_id: u.model_id, fallback_chain: u.fallback_chain ?? [] }).eq('agent_key', u.agent_key).select().single();
+        const patch = { route: u.route, model_id: u.model_id, fallback_chain: u.fallback_chain ?? [], ...(typeof u.is_active === 'boolean' ? { is_active:u.is_active } : {}) };
+        const { data, error } = await sb.from('agent_model_assignments').update(patch).eq('agent_key', u.agent_key).select().single();
         results.push({ agent_key: u.agent_key, ok: !error, error: error?.message, data });
       }
       return json({ success: true, results }, 200, corsHeaders);
@@ -97,8 +99,18 @@ Deno.serve(async (req) => {
           messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
           maxTokens: 8,
         });
+        await sb.from('agent_model_assignments').update({
+          last_tested_at: new Date().toISOString(),
+          last_test_success: true,
+          last_test_result: JSON.stringify({ route: res.routeUsed, model_id: res.modelUsed, latency_ms: Date.now() - t0 }).slice(0, 500),
+        }).eq('agent_key', agent_key);
         return json({ success: true, latencyMs: Date.now() - t0, modelUsed: res.modelUsed, routeUsed: res.routeUsed, sample: res.content?.slice(0, 80), attempts: res.attempts }, 200, corsHeaders);
       } catch (e: any) {
+        await sb.from('agent_model_assignments').update({
+          last_tested_at: new Date().toISOString(),
+          last_test_success: false,
+          last_test_result: JSON.stringify({ status: Number(e?.status) || 503, attempts: Array.isArray(e?.attempts) ? e.attempts.length : 0 }).slice(0, 500),
+        }).eq('agent_key', agent_key);
         return json({ success: false, latencyMs: Date.now() - t0, error: e?.message, attempts: e?.attempts ?? [] }, 200, corsHeaders);
       }
     }

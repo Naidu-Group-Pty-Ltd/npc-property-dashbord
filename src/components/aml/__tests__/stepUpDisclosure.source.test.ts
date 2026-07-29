@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-const dialogSource = readFileSync(new URL("../StepUpAuthDialog.tsx", import.meta.url), "utf8");
-const functionSource = readFileSync(
-  new URL("../../../../supabase/functions/aml-step-up/index.ts", import.meta.url),
-  "utf8",
-);
+// Vitest runs from the repo root; jsdom rewrites import.meta.url to an http
+// scheme, so resolve the sources from the working directory instead.
+const repo = process.cwd();
+const dialogSource = readFileSync(join(repo, "src/components/aml/StepUpAuthDialog.tsx"), "utf8");
+const functionSource = readFileSync(join(repo, "supabase/functions/aml-step-up/index.ts"), "utf8");
 
 describe("AML step-up challenge confidentiality", () => {
   it("does not read or render a challenge code in the browser", () => {

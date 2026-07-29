@@ -3,7 +3,7 @@
  * Routing + payload contracts are locked here with an injected invoke.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { classifyReferenceFile, runReferenceImport, withLocalRenderFallback } from '../ingestion/importOrchestrator';
+import { classifyReferenceFile, runReferenceImport } from '../ingestion/importOrchestrator';
 import type { DomBoxTree } from '../codeGrounding';
 
 const BOX_TREE: DomBoxTree = {
@@ -59,6 +59,22 @@ describe('runReferenceImport — code', () => {
     await expect(runReferenceImport({ kind: 'code', text: '  ' }, { invoke: vi.fn() }))
       .rejects.toThrow(/Paste a URL, HTML, CSS/);
   });
+
+  it('does not execute code locally when the render service is unconfigured', async () => {
+    const invoke = vi.fn().mockResolvedValue({
+      data: {
+        code: 'render_source_unconfigured',
+        message: 'Raw-codebase rendering is not configured on this deployment.',
+      },
+      error: null,
+    });
+
+    await expect(runReferenceImport(
+      { kind: 'code', text: '<script>fetch("http://internal.example")</script>', filename: 'index.html' },
+      { invoke },
+    )).rejects.toThrow(/not configured/i);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('runReferenceImport — url', () => {
@@ -79,21 +95,5 @@ describe('runReferenceImport — url', () => {
     const invoke = vi.fn();
     await expect(runReferenceImport({ kind: 'url', url: 'not-a-url' }, { invoke })).rejects.toThrow(/valid http/);
     expect(invoke).not.toHaveBeenCalled();
-  });
-});
-
-describe('withLocalRenderFallback', () => {
-  it('passes successful service responses through untouched', async () => {
-    const invoke = vi.fn().mockResolvedValue({ data: { raster: 'AAAA', boxTree: BOX_TREE }, error: null });
-    const wrapped = withLocalRenderFallback(invoke);
-    const res = await wrapped('render-source', { html: '<h1>x</h1>' });
-    expect(res.data.raster).toBe('AAAA');
-  });
-
-  it('only intercepts render-source calls', async () => {
-    const invoke = vi.fn().mockResolvedValue({ data: { code: 'render_source_unconfigured' }, error: null });
-    const wrapped = withLocalRenderFallback(invoke);
-    const res = await wrapped('template-design-agent', { x: 1 });
-    expect(res.data.code).toBe('render_source_unconfigured'); // untouched
   });
 });

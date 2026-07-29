@@ -16,29 +16,68 @@ function safeKey(k: string): string {
   return k.replace(/[^a-zA-Z0-9_-]/g, '-');
 }
 
+/**
+ * Keep template-controlled custom-property values inside their declaration and
+ * prevent PDF renderers from treating them as resource-bearing CSS. Backslash
+ * escapes are rejected as well so forbidden syntax cannot be obfuscated.
+ */
+function safeTokenValue(value: unknown): string | null {
+  const candidate = String(value);
+  if (
+    /[\\;{}<>\u0000-\u001f\u007f]/.test(candidate)
+    || /(?:url|image-set|src)\s*\(/i.test(candidate)
+    || /@import|(?:https?|file):|\/\//i.test(candidate)
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+export function tokenCssDeclaration(prefix: string, key: string, value: unknown, suffix = ''): string | null {
+  const safeValue = safeTokenValue(value);
+  return safeValue === null ? null : `  --${prefix}-${safeKey(key)}: ${safeValue}${suffix};`;
+}
+
+function escapeCssString(value: unknown): string {
+  return String(value).replace(/[\\'\n\r\f<>]/g, (character) => `\\${character.charCodeAt(0).toString(16)} `);
+}
+
+function isRemoteFontUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isFontSource(value: string): boolean {
+  return isRemoteFontUrl(value)
+    || /^data:font\/(?:woff2?|ttf|otf|opentype);base64,[a-z0-9+/]+={0,2}$/i.test(value);
+}
+
+function safeFontWeight(value: unknown): string {
+  const weight = String(value ?? 'normal');
+  return /^(?:normal|bold|bolder|lighter|[1-9]\d{0,2}|1000)(?: (?:[1-9]\d{0,2}|1000))?$/.test(weight)
+    ? weight
+    : 'normal';
+}
+
 export function tokensToCssVariables(tokens: Tokens): string {
   const lines: string[] = [':root {'];
-  for (const [k, v] of Object.entries(tokens.colors || {})) {
-    lines.push(`  --color-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.fonts || {})) {
-    lines.push(`  --font-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.spacing || {})) {
-    lines.push(`  --space-${safeKey(k)}: ${v}px;`);
-  }
-  for (const [k, v] of Object.entries(tokens.radii || {})) {
-    lines.push(`  --radius-${safeKey(k)}: ${v}px;`);
-  }
-  for (const [k, v] of Object.entries(tokens.shadows || {})) {
-    lines.push(`  --shadow-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.gradients || {})) {
-    lines.push(`  --gradient-${safeKey(k)}: ${v};`);
-  }
-  for (const [k, v] of Object.entries(tokens.typeScale || {})) {
-    lines.push(`  --text-${safeKey(k)}: ${v}pt;`);
-  }
+  const push = (prefix: string, values: Record<string, unknown>, suffix = '') => {
+    for (const [key, value] of Object.entries(values || {})) {
+      const declaration = tokenCssDeclaration(prefix, key, value, suffix);
+      if (declaration) lines.push(declaration);
+    }
+  };
+  push('color', tokens.colors);
+  push('font', tokens.fonts);
+  push('space', tokens.spacing, 'px');
+  push('radius', tokens.radii, 'px');
+  push('shadow', tokens.shadows);
+  push('gradient', tokens.gradients);
+  push('text', tokens.typeScale, 'pt');
   lines.push('}');
   return lines.join('\n');
 }
@@ -54,21 +93,23 @@ export function tokensToFontFaceCss(tokens: Tokens): string {
   const declarations: string[] = [];
   for (const f of faces) {
     if (f?.cssUrl) {
-      imports.push(`@import url('${f.cssUrl}');`);
+      const cssUrl = String(f.cssUrl);
+      if (isRemoteFontUrl(cssUrl)) imports.push(`@import url('${escapeCssString(cssUrl)}');`);
       continue;
     }
     if (f?.src && f?.family) {
       // Match both file extensions (.woff2) and data: MIME types (data:font/woff2)
       // so embedded/captured fonts (R0, data: src) get the right format() hint.
       const src = String(f.src);
+      if (!isFontSource(src)) continue;
       const fmt = /woff2/i.test(src) ? 'woff2'
         : /woff/i.test(src) ? 'woff'
         : /(otf|opentype)/i.test(src) ? 'opentype'
         : /(ttf|truetype)/i.test(src) ? 'truetype' : '';
       declarations.push(`@font-face {
-  font-family: '${f.family}';
-  src: url('${f.src}')${fmt ? ` format('${fmt}')` : ''};
-  font-weight: ${f.weight ?? 'normal'};
+  font-family: '${escapeCssString(f.family)}';
+  src: url('${escapeCssString(src)}')${fmt ? ` format('${fmt}')` : ''};
+  font-weight: ${safeFontWeight(f.weight)};
   font-style: ${f.style ?? 'normal'};
   font-display: ${f.display ?? 'swap'};
 }`);

@@ -20,7 +20,8 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { verifyAuth, createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { actorIsSuperadmin, requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   normaliseStructuralHeading,
@@ -173,6 +174,44 @@ async function loadComposite(supabase: any, id: string) {
   return data;
 }
 
+/**
+ * The service-role client bypasses RLS, so a caller-selected report must be
+ * scoped explicitly before any report content is loaded or changed.
+ */
+async function canForkComposite(
+  supabase: any,
+  id: string,
+  userId: string,
+  authMethod?: string,
+): Promise<boolean> {
+  if (authMethod === 'service_role' || userId === 'service_role') return true;
+  if (await actorIsSuperadmin(supabase, userId)) return true;
+
+  const { data: report, error } = await supabase
+    .from('investment_reports')
+    .select('generated_by, client_property_id')
+    .eq('id', id)
+    .maybeSingle();
+  if (error || !report) return false;
+  if (report.generated_by === userId) return true;
+  if (!report.client_property_id) return false;
+
+  const { data: clientProperty } = await supabase
+    .from('client_properties')
+    .select('client_id')
+    .eq('id', report.client_property_id)
+    .maybeSingle();
+  if (!clientProperty?.client_id) return false;
+
+  const { data: client } = await supabase
+    .from('clients')
+    .select('id')
+    .eq('id', clientProperty.client_id)
+    .or(`created_by.eq.${userId},assigned_team_user_id.eq.${userId}`)
+    .maybeSingle();
+  return !!client;
+}
+
 type PersistedVariant = 'financial' | 'strategic';
 
 async function findExistingFork(supabase: any, parentId: string, variant: PersistedVariant) {
@@ -283,6 +322,20 @@ Deno.serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
+    }
+
+    const permission = await requireModulePermission(
+      supabase,
+      { userId, authMethod },
+      'generated_reports',
+      'can_edit',
+    );
+    if (!permission.ok) {
+      return createForbiddenResponse('Generated reports edit permission required', corsHeaders);
+    }
+
+    if (!await canForkComposite(supabase, compositeId, userId!, authMethod)) {
+      return createForbiddenResponse('You are not authorised to fork this report', corsHeaders);
     }
 
     console.log('[fork-investment-report] Authenticated fork request', {

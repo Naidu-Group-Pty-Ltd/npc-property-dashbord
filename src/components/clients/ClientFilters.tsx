@@ -61,7 +61,7 @@ export function ClientFilters({ filters, onFiltersChange }: ClientFiltersProps) 
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="h-11 gap-2 rounded-xl border-brand-500/25 bg-background/70 px-4 font-semibold text-muted-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/50 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-400/35 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 data-[state=open]:border-brand-300/55 data-[state=open]:bg-brand-500/15 data-[state=open]:text-brand-100">
+        <Button variant="outline" size="sm" className="h-11 gap-2 rounded-xl border-brand-500/25 bg-background/70 px-4 font-semibold text-muted-foreground shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/50 hover:bg-brand-500/10 hover:text-brand-100 hover:shadow-[0_12px_30px_rgba(245,158,11,0.12)] focus-visible:ring-2 focus-visible:ring-brand-400/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background data-[state=open]:border-brand-300/55 data-[state=open]:bg-brand-500/15 data-[state=open]:text-brand-100">
           <Filter className="h-4 w-4 text-brand-200/80" />
           Filters
           {activeFilterCount > 0 && (

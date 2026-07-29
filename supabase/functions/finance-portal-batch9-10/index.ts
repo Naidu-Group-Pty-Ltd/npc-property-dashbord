@@ -17,12 +17,15 @@
  * Auth: x-finance-session-token (same pattern as batch 6/7/8).
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
+import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+// Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
+// echo the request Origin (never `*`) with `Allow-Credentials: true`.
+let corsHeaders: Record<string, string> = {
+  ...__createCorsHeaders(null),
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 const json = (d: unknown, s = 200) =>
@@ -32,6 +35,7 @@ const json = (d: unknown, s = 200) =>
   });
 
 Deno.serve(async (req) => {
+  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const supabase = createClient(
@@ -48,7 +52,7 @@ Deno.serve(async (req) => {
 
     const { data: portalUser } = await supabase
       .from('finance_portal_users')
-      .select('id, finance_contact_id, email, is_active, revoked_at, session_expires_at')
+      .select('id, finance_contact_id, email, is_active, revoked_at, session_expires_at, global_permissions')
       .eq('session_token', token)
       .maybeSingle();
     if (!portalUser || !portalUser.is_active || portalUser.revoked_at)
@@ -57,6 +61,39 @@ Deno.serve(async (req) => {
       return json({ error: 'Session expired' }, 401);
 
     const partnerName = portalUser.email?.split('@')[0] ?? 'Finance Partner';
+
+    async function getAssignment(clientId: string, purchaseFileId?: string) {
+      const { data } = await supabase
+        .from('finance_portal_client_assignments')
+        .select('permissions, purchase_file_id')
+        .eq('finance_user_id', portalUser.id)
+        .eq('client_id', clientId)
+        .maybeSingle();
+      if (!data || (data.purchase_file_id && data.purchase_file_id !== purchaseFileId)) return null;
+      return data;
+    }
+
+    async function authorizePurchaseFile(
+      fileId: string,
+      permissionKey: 'purchase_files' | 'notes' | 'messages',
+      action: 'view' | 'edit' = 'view',
+    ) {
+      const { data: file } = await supabase
+        .from('purchase_files')
+        .select('id, client_id')
+        .eq('id', fileId)
+        .maybeSingle();
+      if (!file?.client_id) return null;
+      const assignment = await getAssignment(file.client_id, file.id);
+      if (!assignment || !hasFinancePortalPermission(
+        portalUser.global_permissions,
+        assignment.permissions,
+        permissionKey,
+        action,
+        true,
+      )) return null;
+      return file;
+    }
 
     /* ───────────── Batch 9 ───────────── */
 
@@ -183,10 +220,12 @@ Deno.serve(async (req) => {
     if (operation === 'comments_list') {
       const pfId = body.purchase_file_id;
       if (!pfId) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await authorizePurchaseFile(pfId, 'notes')) return json({ error: 'Forbidden' }, 403);
       let q = supabase
         .from('purchase_file_entity_comments')
         .select('*')
         .eq('purchase_file_id', pfId)
+        .eq('visibility', 'shared')
         .is('deleted_at', null)
         .order('created_at', { ascending: true })
         .limit(500);
@@ -198,13 +237,15 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'comment_post') {
+      if (!body.purchase_file_id || !await authorizePurchaseFile(body.purchase_file_id, 'notes', 'edit'))
+        return json({ error: 'Forbidden' }, 403);
       const row: any = {
         purchase_file_id: body.purchase_file_id,
         entity_type: body.entity_type ?? 'purchase_file',
         entity_id: body.entity_id ?? null,
         parent_id: body.parent_id ?? null,
         body: String(body.body || '').slice(0, 4000),
-        visibility: body.visibility === 'internal_npc' ? 'internal_npc' : 'shared',
+        visibility: 'shared',
         author_type: 'finance_partner',
         author_id: portalUser.id,
         author_name: partnerName,
@@ -224,6 +265,14 @@ Deno.serve(async (req) => {
     if (operation === 'comment_delete') {
       const id = body.id;
       if (!id) return json({ error: 'id required' }, 400);
+      const { data: comment } = await supabase
+        .from('purchase_file_entity_comments')
+        .select('purchase_file_id, author_id')
+        .eq('id', id)
+        .maybeSingle();
+      if (!comment || comment.author_id !== portalUser.id ||
+          !await authorizePurchaseFile(comment.purchase_file_id, 'notes', 'edit'))
+        return json({ error: 'Forbidden' }, 403);
       const { error } = await supabase
         .from('purchase_file_entity_comments')
         .update({ deleted_at: new Date().toISOString() })
@@ -237,19 +286,50 @@ Deno.serve(async (req) => {
       const channel = body.channel; // 'finance_portal' | 'client_portal'
       const ids: string[] = Array.isArray(body.message_ids) ? body.message_ids : [];
       if (!ids.length) return json({ ok: true });
+      if (channel !== 'client_portal' && channel !== 'finance_portal')
+        return json({ error: 'Invalid channel' }, 400);
       if (channel === 'client_portal') {
-        await supabase
+        const { data: messages, error: messageError } = await supabase
+          .from('client_portal_messages')
+          .select('id, client_id, is_internal, visibility_scope, finance_allocated, allocated_finance_user_id')
+          .in('id', ids);
+        if (messageError) return json({ error: messageError.message }, 500);
+        if ((messages ?? []).length !== new Set(ids).size) return json({ error: 'Forbidden' }, 403);
+        for (const message of messages ?? []) {
+          const assignment = await getAssignment(message.client_id);
+          if (!assignment || message.is_internal || !message.finance_allocated ||
+              message.allocated_finance_user_id !== portalUser.id ||
+              message.visibility_scope !== 'command_client_with_finance_allocated' ||
+              !hasFinancePortalPermission(portalUser.global_permissions, assignment.permissions, 'messages', 'view', true))
+            return json({ error: 'Forbidden' }, 403);
+        }
+        const { error } = await supabase
           .from('client_portal_messages')
           .update({ is_read: true, read_at: new Date().toISOString() })
           .in('id', ids);
+        if (error) return json({ error: error.message }, 500);
       } else {
-        await supabase
+        const { data: messages, error: messageError } = await supabase
+          .from('finance_portal_messages')
+          .select('id, client_id, finance_user_id, visibility_scope')
+          .in('id', ids);
+        if (messageError) return json({ error: messageError.message }, 500);
+        if ((messages ?? []).length !== new Set(ids).size) return json({ error: 'Forbidden' }, 403);
+        for (const message of messages ?? []) {
+          const assignment = await getAssignment(message.client_id);
+          if (!assignment || message.finance_user_id !== portalUser.id ||
+              !['command_finance_private', 'finance_client_with_command_visibility'].includes(message.visibility_scope) ||
+              !hasFinancePortalPermission(portalUser.global_permissions, assignment.permissions, 'messages', 'view', true))
+            return json({ error: 'Forbidden' }, 403);
+        }
+        const { error } = await supabase
           .from('finance_portal_messages')
           .update({
             is_read_by_partner: true,
             read_by_partner_at: new Date().toISOString(),
           })
           .in('id', ids);
+        if (error) return json({ error: error.message }, 500);
       }
       return json({ ok: true, marked: ids.length });
     }
@@ -257,12 +337,21 @@ Deno.serve(async (req) => {
     if (operation === 'npc_handoff_info') {
       const fid = body.purchase_file_id;
       if (!fid) return json({ error: 'purchase_file_id required' }, 400);
+      if (!await authorizePurchaseFile(fid, 'purchase_files')) return json({ error: 'Forbidden' }, 403);
       const { data: pf } = await supabase
         .from('purchase_files')
         .select('id, client_id, client_deal_id, title')
         .eq('id', fid)
         .maybeSingle();
       if (!pf) return json({ error: 'PF not found' }, 404);
+
+      const { data: assignment } = await supabase
+        .from('finance_portal_client_assignments')
+        .select('client_id')
+        .eq('finance_user_id', portalUser.id)
+        .eq('client_id', pf.client_id)
+        .maybeSingle();
+      if (!assignment) return json({ error: 'PF not found' }, 404);
 
       let deal: any = null;
       let owner: any = null;
@@ -328,6 +417,8 @@ Deno.serve(async (req) => {
       const messageText = String(body.message || '').slice(0, 2000);
       if (!fid || !messageText)
         return json({ error: 'purchase_file_id and message required' }, 400);
+      if (!await authorizePurchaseFile(fid, 'messages', 'edit'))
+        return json({ error: 'Forbidden' }, 403);
       const { data: pf } = await supabase
         .from('purchase_files')
         .select('id, client_id')

@@ -13,6 +13,10 @@ import { resolveDataPath, toArray, toNumber, formatCell, colorFromPalette } from
 
 type Series = { label: string; value: number; color?: string };
 
+function safeChartColor(input: unknown, ctx: HtmlBlockContext, fallback = '#BF9B50'): string {
+  return resolveBindableColor(input, ctx, fallback);
+}
+
 function readSeries(p: Record<string, unknown>, ctx: HtmlBlockContext): Series[] {
   const raw = p.dataPath ? resolveDataPath(p.dataPath, ctx) : p.data;
   const items = toArray(raw);
@@ -65,7 +69,7 @@ export function renderBarChartHtml(block: Block, ctx: HtmlBlockContext): string 
 
   const bars = series.map((s, i) => {
     const v = (s.value / max) * (horizontal ? innerW - 60 : innerH);
-    const color = s.color ?? colorFromPalette(i, palette) ?? accent;
+    const color = safeChartColor(s.color ?? colorFromPalette(i, palette), ctx, accent);
     if (horizontal) {
       const rowH = innerH / series.length;
       const yPos = i * rowH + 4;
@@ -173,7 +177,7 @@ function renderPieOrDonutHtml(block: Block, ctx: HtmlBlockContext, innerRatio: n
     const y0 = cy + r * Math.sin(a0);
     const x1 = cx + r * Math.cos(a1);
     const y1 = cy + r * Math.sin(a1);
-    const color = s.color ?? colorFromPalette(i, palette);
+    const color = safeChartColor(s.color ?? colorFromPalette(i, palette), ctx);
     if (innerRatio > 0) {
       const ix0 = cx + ri * Math.cos(a0);
       const iy0 = cy + ri * Math.sin(a0);
@@ -185,7 +189,7 @@ function renderPieOrDonutHtml(block: Block, ctx: HtmlBlockContext, innerRatio: n
   }).join('');
 
   const legend = series.map((s, i) => {
-    const color = s.color ?? colorFromPalette(i, palette);
+    const color = safeChartColor(s.color ?? colorFromPalette(i, palette), ctx);
     const pct = ((s.value / total) * 100).toFixed(1);
     return `<div style="display:flex;align-items:center;gap:6pt;font-size:8pt;color:#1A1A1A;">
       <span style="width:9pt;height:9pt;background:${color};border-radius:2pt;display:inline-block;"></span>
@@ -354,7 +358,7 @@ export function renderLegendHtml(block: Block, ctx: HtmlBlockContext): string {
   const box = chartBox(p, ctx);
   const dir = p.direction === 'vertical' ? 'column' : 'row';
   const swatches = items.map((it: any, i: number) => {
-    const color = it?.color ?? colorFromPalette(i, palette);
+    const color = safeChartColor(it?.color ?? colorFromPalette(i, palette), ctx);
     return `<div style="display:flex;align-items:center;gap:6pt;font-size:8pt;color:#1A1A1A;">
       <span style="width:10pt;height:10pt;background:${color};border-radius:2pt;display:inline-block;"></span>
       <span>${esc(it?.label ?? it)}</span>
@@ -387,7 +391,7 @@ export function renderStackedBarChartHtml(block: Block, ctx: HtmlBlockContext): 
       const v = toNumber(row?.[k]);
       const h = (v / max) * innerH;
       yAcc -= h;
-      const color = colorFromPalette(si, palette);
+      const color = safeChartColor(colorFromPalette(si, palette), ctx);
       return `<rect x="${xPos}" y="${yAcc}" width="${bw}" height="${h}" fill="${color}"/>`;
     }).join('');
     return `<g>
@@ -395,7 +399,7 @@ export function renderStackedBarChartHtml(block: Block, ctx: HtmlBlockContext): 
       <text x="${xPos + bw / 2}" y="${innerH + 12}" text-anchor="middle" style="font-size:7pt;fill:#666;">${esc(String(row?.[labelKey] ?? ''))}</text>
     </g>`;
   }).join('');
-  const legend = stackKeys.map((k, si) => `<div style="display:flex;align-items:center;gap:4pt;font-size:8pt;"><span style="width:8pt;height:8pt;background:${colorFromPalette(si, palette)};border-radius:1pt;"></span>${esc(k)}</div>`).join('');
+  const legend = stackKeys.map((k, si) => `<div style="display:flex;align-items:center;gap:4pt;font-size:8pt;"><span style="width:8pt;height:8pt;background:${safeChartColor(colorFromPalette(si, palette), ctx)};border-radius:1pt;"></span>${esc(k)}</div>`).join('');
 
   return `<div style="${box.style}">${meta.titleHtml}
     <svg viewBox="0 0 ${innerW} ${innerH + 16}" style="width:100%;height:${innerH + 16}pt;display:block;">${bars}</svg>

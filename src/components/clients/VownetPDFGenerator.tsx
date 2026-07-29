@@ -12,6 +12,8 @@ import { fetchGlobalReportSettings, type ContactDetails, type ProfessionalDiscla
 import { getBrandPdfPalette } from '@/branding/brandPalette';
 import { useBrand } from '@/branding/BrandProvider';
 import { smartCapitalize } from '@/lib/nameUtils';
+import { escapeHtml } from '@/utils/escapeHtml';
+import { sanitizePdfHtml } from '@/utils/sanitizePdfHtml';
 import {
   buildHouseholdIncome,
   buildPropertyExpenditure,
@@ -498,9 +500,12 @@ export function VownetPDFGenerator({
       // Fetch white-label brand settings for the contact/disclaimer page
       const __brandSettings = await fetchGlobalReportSettings();
       // Generate HTML content (with dynamic brand)
-      const htmlContent = generateHTMLContent(data, includeOwnerOccupied, __brandSettings?.contactDetails, __brandSettings?.disclaimer);
+      const htmlContent = sanitizePdfHtml(
+        generateHTMLContent(data, includeOwnerOccupied, __brandSettings?.contactDetails, __brandSettings?.disclaimer),
+      );
 
-      // Write the full HTML into the iframe's clean document
+      // Parse only sanitized HTML in this same-origin document. html2canvas needs
+      // DOM access, so an opaque-origin iframe sandbox cannot be used here.
       iframeDoc.open();
       iframeDoc.write(htmlContent);
       iframeDoc.close();
@@ -627,15 +632,29 @@ export function VownetPDFGenerator({
           const _bWeb = __brandSettings?.contactDetails?.website || '';
           const footerDiv = document.createElement('div');
           footerDiv.style.cssText = 'position:absolute;left:-9999px;top:0;width:794px;background:#f8f9fa;padding:4px 40px;font-family:Arial,sans-serif;display:flex;justify-content:space-between;align-items:center;';
-          footerDiv.innerHTML = `
-            <div style="display:flex;gap:18px;font-size:7.5pt;color:#4a5568;">
-              ${_bPhone ? `<span>\u{1F4DE} ${_bPhone}</span>` : ''}
-              ${_bEmail ? `<span>\u{2709}\u{FE0F} ${_bEmail}</span>` : ''}
-              ${_bWeb ? `<span>\u{1F310} ${_bWeb}</span>` : ''}
-            </div>
-            <div style="font-size:6pt;color:#b48c32;font-weight:700;letter-spacing:1.5px;">CONFIDENTIAL</div>
-            <div style="font-size:7.5pt;color:#4a5568;">Page ${pdfPageIndex + 1}</div>
-          `;
+
+          const contactDetails = document.createElement('div');
+          contactDetails.style.cssText = 'display:flex;gap:18px;font-size:7.5pt;color:#4a5568;';
+          [
+            [_bPhone, '\u{1F4DE}'],
+            [_bEmail, '\u{2709}\u{FE0F}'],
+            [_bWeb, '\u{1F310}'],
+          ].forEach(([value, icon]) => {
+            if (!value) return;
+            const detail = document.createElement('span');
+            detail.textContent = `${icon} ${value}`;
+            contactDetails.appendChild(detail);
+          });
+
+          const confidentiality = document.createElement('div');
+          confidentiality.style.cssText = 'font-size:6pt;color:#b48c32;font-weight:700;letter-spacing:1.5px;';
+          confidentiality.textContent = 'CONFIDENTIAL';
+
+          const pageNumber = document.createElement('div');
+          pageNumber.style.cssText = 'font-size:7.5pt;color:#4a5568;';
+          pageNumber.textContent = `Page ${pdfPageIndex + 1}`;
+
+          footerDiv.append(contactDetails, confidentiality, pageNumber);
           document.body.appendChild(footerDiv);
           try {
             const footerCanvas = await html2canvas(footerDiv, { scale: 2, backgroundColor: '#f8f9fa', useCORS: true });
@@ -2557,12 +2576,12 @@ function generateHTMLContent(
                       return '<span style="color:#6b7280;font-style:italic;">Same as primary</span>';
                     }
                     const sec = formatAUAddress(client.secondary_current_address, client.secondary_current_suburb, client.secondary_current_state, client.secondary_current_postcode);
-                    if (sec !== '-') return sec;
+                    if (sec !== '-') return escapeHtml(sec);
                     return '<span style="color:#9ca3af;font-style:italic;">Not recorded</span>';
                   })()}</td></tr>
-                  <tr><td class="label">Country</td><td class="value">${formatCountry(client.secondary_country || client.country)}</td></tr>
-                  <tr><td class="label">Living Situation</td><td class="value">${enumOrNotRecorded(client.secondary_living_situation || client.living_situation)}</td></tr>
-                  <tr><td class="label">Residential status</td><td class="value">${enumOrNotRecorded(client.secondary_residential_status)}</td></tr>
+                  <tr><td class="label">Country</td><td class="value">${escapeHtml(formatCountry(client.secondary_country || client.country))}</td></tr>
+                  <tr><td class="label">Living Situation</td><td class="value">${escapeHtml(enumOrNotRecorded(client.secondary_living_situation || client.living_situation))}</td></tr>
+                  <tr><td class="label">Residential status</td><td class="value">${escapeHtml(enumOrNotRecorded(client.secondary_residential_status))}</td></tr>
                 </table>
               </div>
               ` : ''}

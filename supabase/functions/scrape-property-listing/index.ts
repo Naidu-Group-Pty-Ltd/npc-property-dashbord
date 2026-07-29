@@ -2,10 +2,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
+import { normalizePropertyListingUrl } from './urlPolicy.ts';
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
 };
 
 type PerplexityListingExtraction = {
@@ -76,16 +78,6 @@ type PerplexityListingExtraction = {
   truck_access: string | null;
   vendor_advised_yield_pct: number | null;
 };
-
-function normalizeUrl(input: string): string {
-  let formattedUrl = input.trim();
-  if (!formattedUrl.startsWith("http://") && !formattedUrl.startsWith("https://")) {
-    formattedUrl = `https://${formattedUrl}`;
-  }
-  // Throws if invalid
-  new URL(formattedUrl);
-  return formattedUrl;
-}
 
 function safeJsonParse<T>(s: string): T | null {
   try {
@@ -1009,7 +1001,7 @@ Deno.serve(async (req) => {
 
     let formattedUrl: string;
     try {
-      formattedUrl = normalizeUrl(url);
+      formattedUrl = normalizePropertyListingUrl(url);
     } catch {
       return new Response(JSON.stringify({ success: false, error: "Invalid URL" }), {
         status: 400,

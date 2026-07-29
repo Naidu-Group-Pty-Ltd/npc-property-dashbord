@@ -206,6 +206,7 @@ export async function checkModuleView(
   userId: string,
   moduleKey: string,
   authMethod?: string,
+  requireRegistered = false,
 ): Promise<PermissionCheckResult> {
   if (authMethod === 'service_role' || userId === 'service_role') {
     return { allowed: true };
@@ -226,6 +227,9 @@ export async function checkModuleView(
     .eq('is_active', true)
     .maybeSingle();
   if (!moduleData) {
+    if (requireRegistered) {
+      return { allowed: false, reason: `Module "${moduleKey}" is not registered`, moduleKey };
+    }
     // Unregistered module → allow (don't break reads for modules not yet in the registry)
     return { allowed: true };
   }

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
-import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, Radio } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, EyeOff, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Undo2, Zap, Clock, Radio, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,8 +11,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketSources, fetchMarketUpdates, generateMarketDigest, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
-import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketQAMessage, MarketSegment, MarketSource, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import { normaliseSegmentBreakdown } from '@/lib/marketDigestSegments';
+import { interleaveBySource } from '@/lib/marketFeedOrder';
+import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, followMarketIngestionRun, generateMarketDigest, setMarketUpdateHidden, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
+import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
@@ -94,7 +96,6 @@ function SegmentChip({ seg, active, onClick }: { seg: MarketSegment | 'all'; act
 export default function MarketUpdates() {
   const navigate = useNavigate();
   const [updates, setUpdates] = useState<MarketUpdate[]>([]);
-  const [sources, setSources] = useState<MarketSource[]>([]);
   const [sourceHealth, setSourceHealth] = useState<MarketSourceHealth>({ totalSources:0, enabledSources:0, healthySources:0, degradedSources:0, failedSources:0 });
   const [loading, setLoading] = useState(true);
   const [ingesting, setIngesting] = useState(false);
@@ -102,13 +103,20 @@ export default function MarketUpdates() {
   const [period, setPeriod] = useState<MarketDigestPeriod>('24h');
   const [digest, setDigest] = useState<MarketDigest24h | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [operationalIssue, setOperationalIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [dataIssue, setDataIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [digestIssue, setDigestIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const [actionIssue, setActionIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
+  const operationalIssue = actionIssue ?? dataIssue ?? digestIssue;
   const [selectedUpdate, setSelectedUpdate] = useState<MarketUpdate | null>(null);
+  const [hidingId, setHidingId] = useState<string | null>(null);
+  const [lastHidden, setLastHidden] = useState<MarketUpdate | null>(null);
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
   const [question, setQuestion] = useState('');
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
   const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; confidence_score?: number | null; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null }>>([]);
   const [asking, setAsking] = useState(false);
+  const qaAbortRef = useRef<AbortController | null>(null);
+  const qaRequestRef = useRef(0);
   const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
   const [dialogConversationId, setDialogConversationId] = useState<string>(() => crypto.randomUUID());
   const [search, setSearch] = useState('');
@@ -117,26 +125,56 @@ export default function MarketUpdates() {
   const [filters, setFilters] = useState({ category: 'all', geography: 'all', impact: 'all', audience: 'all' });
   const [sourcesAdminOpen, setSourcesAdminOpen] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<'updates' | 'ask-ai'>('updates');
+  const [runSummary, setRunSummary] = useState<MarketIngestionRun | null>(null);
+  const [candidateReview, setCandidateReview] = useState<MarketUpdate[] | null>(null);
+
+  const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
+    ? error.issue
+    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
   const loadUpdates = async () => {
     setLoading(true);
-    try {
-      const [u, s, h] = await Promise.all([fetchMarketUpdates({ limit: 200 }), fetchMarketSources(), fetchMarketSourceHealth()]);
-      setUpdates(u); setSources(s); setSourceHealth(h); setOperationalIssue(null);
-    } catch (error) {
-      if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue);
-      else setOperationalIssue({ stage:'database', code:'unknown', message:'Market Updates data could not be loaded.', remediation:'Retry; if it persists, ask an administrator to review the connected environment.', retryable:true });
-    } finally { setLoading(false); }
+    const [updatesResult, healthResult] = await Promise.allSettled([
+      fetchMarketUpdates({ limit:200 }),
+      fetchMarketSourceHealth(),
+    ]);
+    if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
+    if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
+    setDataIssue(failure ? issueFrom(failure.reason) : null);
+    setLoading(false);
+    return {
+      updates: updatesResult.status === 'fulfilled' ? updatesResult.value : null,
+      health: healthResult.status === 'fulfilled' ? healthResult.value : null,
+    };
   };
-  const loadDigest = async (p: MarketDigestPeriod) => { try { setDigest(await fetchLatestMarketDigest(p)); } catch (error) { if (error instanceof MarketUpdatesOperationalError) setOperationalIssue(error.issue); } };
+  const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
+    try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
+    catch (error) { setDigestIssue(issueFrom(error)); }
+  };
 
   useEffect(() => {
-    let cancelled=false;
-    const start=async()=>{ setLoading(true); try { const [u,src,h]=await Promise.all([fetchMarketUpdates({limit:200}),fetchMarketSources(),fetchMarketSourceHealth()]); if(cancelled)return; setUpdates(u);setSources(src);setSourceHealth(h);setOperationalIssue(null); const result=await ensureMarketUpdatesFresh(h,u.length); if(!cancelled&&result){setMessage(result.active?'Checking for newer market intelligence…':`Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);await loadUpdates();} } catch(error){if(!cancelled&&error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue);} finally {if(!cancelled)setLoading(false);}}; void start(); return()=>{cancelled=true};
+    let cancelled = false;
+    const start = async () => {
+      const loaded = await loadUpdates();
+      if (cancelled || !loaded.updates || !loaded.health) return;
+      try {
+        setActionIssue(null);
+        const result = await ensureMarketUpdatesFresh(loaded.health, loaded.updates.length);
+        if (!cancelled && result) {
+          setMessage(result.active ? 'Checking for newer market intelligence…' : `Market intelligence refreshed: ${result.ingested} items reviewed, ${result.published} new updates published.`);
+          await loadUpdates();
+        }
+      } catch (error) { if (!cancelled) setActionIssue(issueFrom(error)); }
+    };
+    void start();
+    return () => { cancelled = true; };
   }, []);
   useEffect(() => { void loadDigest(period); }, [period]);
 
-  const filteredUpdates = useMemo(() => updates.filter((u) => {
+  // Recency alone let the highest-volume masthead take most of the first screen, so the
+  // filtered feed is interleaved across publishers before it renders.
+  const filteredUpdates = useMemo(() => interleaveBySource(updates.filter((u) => {
     if (filters.category !== 'all' && u.category !== filters.category) return false;
     if (filters.geography !== 'all' && !u.geography.includes(filters.geography as MarketGeography)) return false;
     if (filters.impact !== 'all' && u.impact_level !== filters.impact) return false;
@@ -145,7 +183,9 @@ export default function MarketUpdates() {
     if (activeFreshness !== 'all' && u.freshness_tier !== activeFreshness) return false;
     if (search && !`${u.title} ${u.ai_summary ?? ''} ${u.source_name}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
-  }), [updates, filters, activeSegment, activeFreshness, search]);
+  }), (u) => u.source_name), [updates, filters, activeSegment, activeFreshness, search]);
+  const hasActiveFilters = Boolean(search.trim()) || activeSegment !== 'all' || activeFreshness !== 'all' || Object.values(filters).some(value => value !== 'all');
+  const clearFilters = () => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); };
 
   const freshnessCounts = useMemo(() => ({
     all: updates.length,
@@ -171,19 +211,76 @@ export default function MarketUpdates() {
   ], [freshnessCounts, updates, segmentCounts]);
 
   const highImpact = updates.filter(u => u.impact_level === 'high').slice(0, 5);
+  const feedEmptyState = useMemo(() => {
+    if (loading) return null;
+    if (updates.length > 0 && filteredUpdates.length === 0 && hasActiveFilters) return { title:'Published updates hidden by filters', description:'Clear the active filters to restore the complete published feed.', kind:'filters' as const };
+    if (updates.length > 0) return null;
+    if (dataIssue && sourceHealth.totalSources === 0) return { title:'Market Updates data is unavailable', description:'Previously loaded content is not available in this session. Retry the authoritative status and feed requests.', kind:'failure' as const };
+    if (sourceHealth.totalSources === 0) return { title:'No canonical source registry', description:'Apply the canonical registry migration, then open Sources to verify the approved feeds.', kind:'registry' as const };
+    if (sourceHealth.enabledSources === 0) return { title:'Sources are configured but none are enabled', description:'Open Sources and enable at least one approved canonical source.', kind:'disabled' as const };
+    if (sourceHealth.activeRun) return { title:'Ingestion is running', description:'The active run is discovering and classifying source-backed items. Progress is shown above.', kind:'running' as const };
+    if ((sourceHealth.candidates ?? 0) > 0) return { title:'Items are awaiting review', description:`${sourceHealth.candidates} candidate item(s) were discovered but did not meet automatic publication criteria.`, kind:'candidates' as const };
+    if (!sourceHealth.latestRun) return { title:'Sources are enabled and ready for their first run', description:'Sync the latest news to retrieve, classify and publish eligible source-backed updates.', kind:'never-run' as const };
+    if ((sourceHealth.latestRun.items_discovered ?? 0) > 0 && (sourceHealth.latestRun.items_classified ?? 0) < sourceHealth.latestRun.items_discovered) return { title:'Discovered items are awaiting AI classification', description:'Review the latest run and test the configured Market Updates classifier route.', kind:'classification' as const };
+    return { title:'No published updates yet', description:'The latest run completed without an eligible publication. Review candidates, source health and AI readiness.', kind:'no-published' as const };
+  }, [loading, updates.length, filteredUpdates.length, hasActiveFilters, dataIssue, sourceHealth]);
 
   const handleGenerateDigest = async () => {
     setDigestLoading(true);
-    try { const result = await generateMarketDigest(period); setMessage(result.message || null); setDigest(result.digest); }
-    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    try { setActionIssue(null); const result = await generateMarketDigest(period); setMessage(result.message || null); setDigest(result.digest); }
+    catch(error) { setActionIssue(issueFrom(error)); }
     finally { setDigestLoading(false); }
   };
 
   const handleIngest = async () => {
     setIngesting(true);
-    try { const summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' }); setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`); await loadUpdates(); }
-    catch(error) { if(error instanceof MarketUpdatesOperationalError)setOperationalIssue(error.issue); }
+    try {
+      setActionIssue(null);
+      let summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' });
+      if (summary.runId) {
+        setRunSummary({ id:summary.runId, trigger_type:'manual', started_at:new Date().toISOString(), status:summary.active ? 'running' : summary.status ?? 'completed', sources_considered:summary.sourcesConsidered ?? 0, sources_processed:summary.sourcesProcessed ?? 0, sources_succeeded:summary.sourcesSucceeded ?? 0, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored });
+        if (summary.active) summary = await followMarketIngestionRun(summary.runId);
+      }
+      setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`);
+      await loadUpdates();
+      setRunSummary((current) => current ? { ...current, status:summary.status ?? 'completed', completed_at:new Date().toISOString(), sources_processed:summary.sourcesProcessed ?? current.sources_processed, sources_succeeded:summary.sourcesSucceeded ?? current.sources_succeeded, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_deduplicated:summary.skippedDuplicates, items_classified:summary.classified ?? 0, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored, items_rejected:summary.rejected ?? 0, items_failed:summary.persistenceFailed ?? 0 } : current);
+    }
+    catch(error) { setActionIssue(issueFrom(error)); }
     finally { setIngesting(false); }
+  };
+
+  const reviewCandidates = async () => {
+    try { setActionIssue(null); setCandidateReview(await fetchMarketUpdates({ status:'candidate', limit:100 })); }
+    catch (error) { setActionIssue(issueFrom(error)); }
+  };
+
+  // Removal is reversible: the row is marked ignored rather than deleted, so the
+  // feed drops it immediately and a later ingestion run cannot republish it.
+  const hideUpdate = async (update: MarketUpdate) => {
+    if (hidingId) return;
+    setHidingId(update.id);
+    setActionIssue(null);
+    try {
+      await setMarketUpdateHidden(update.id, true);
+      setUpdates(current => current.filter(u => u.id !== update.id));
+      setLastHidden(update);
+      setMessage(`Removed “${update.title}” from the dashboard.`);
+    } catch (error) { setActionIssue(issueFrom(error)); }
+    finally { setHidingId(null); }
+  };
+
+  const restoreLastHidden = async () => {
+    const update = lastHidden;
+    if (!update || hidingId) return;
+    setHidingId(update.id);
+    setActionIssue(null);
+    try {
+      await setMarketUpdateHidden(update.id, false);
+      setUpdates(current => current.some(u => u.id === update.id) ? current : [update, ...current]);
+      setLastHidden(null);
+      setMessage(`Restored “${update.title}”.`);
+    } catch (error) { setActionIssue(issueFrom(error)); }
+    finally { setHidingId(null); }
   };
 
   const handleAsk = async (overrideQuestion?: string) => {
@@ -193,6 +290,10 @@ export default function MarketUpdates() {
     const priorHistory = qaThread.map((t) => ({ role: t.role, content: t.content }));
     const inDialog = Boolean(qaUpdate);
     const convId = inDialog ? dialogConversationId : conversationId;
+    qaAbortRef.current?.abort();
+    const controller = new AbortController();
+    qaAbortRef.current = controller;
+    const requestId = ++qaRequestRef.current;
     setQaThread((t) => [...t, { role: 'user', content: q }, { role: 'assistant', content: '', streaming: true }]);
     setQuestion('');
     try {
@@ -202,7 +303,9 @@ export default function MarketUpdates() {
         history: priorHistory,
         segment: seg,
         conversation_id: convId,
+        signal: controller.signal,
         onDelta: (acc) => {
+          if (qaRequestRef.current !== requestId) return;
           setQaThread((t) => {
             const next = [...t];
             const last = next[next.length - 1];
@@ -211,6 +314,7 @@ export default function MarketUpdates() {
           });
         },
       });
+      if (qaRequestRef.current !== requestId) return;
       setQaMessage(answer);
       setQaThread((t) => {
         const next = [...t];
@@ -231,14 +335,23 @@ export default function MarketUpdates() {
         return next;
       });
     } catch (err) {
+      if (qaRequestRef.current !== requestId || (err instanceof DOMException && err.name === 'AbortError')) return;
       setQaThread((t) => {
         const next = [...t];
         next[next.length - 1] = { role: 'assistant', content: err instanceof Error ? err.message : 'Failed to get an answer. Please try again.', streaming: false };
         return next;
       });
     } finally {
-      setAsking(false);
+      if (qaRequestRef.current === requestId) { setAsking(false); qaAbortRef.current = null; }
     }
+  };
+
+  const cancelAsk = () => {
+    qaRequestRef.current += 1;
+    qaAbortRef.current?.abort();
+    qaAbortRef.current = null;
+    setAsking(false);
+    setQaThread((thread) => thread.filter((turn) => !turn.streaming));
   };
 
 
@@ -263,7 +376,7 @@ export default function MarketUpdates() {
             <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market updates. Threaded — follow-ups keep prior context.</p>
           </div>
           {qaThread.length > 0 && (
-            <Button size="sm" variant="ghost" onClick={() => { setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
+            <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
           )}
         </div>
       </CardHeader>
@@ -334,6 +447,7 @@ export default function MarketUpdates() {
             <Button className="flex-1" onClick={() => handleAsk()} disabled={asking || !question.trim()}>
               {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
             </Button>
+            {asking && <Button variant="outline" onClick={cancelAsk}><XCircle className="mr-2 h-4 w-4" />Cancel</Button>}
           </div>
         </div>
       </CardContent>
@@ -350,8 +464,8 @@ export default function MarketUpdates() {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge className="bg-primary/15 text-primary hover:bg-primary/20">AI Market Intelligence</Badge>
                 <Badge variant="outline">Australia · RBA · APRA · Treasury</Badge>
-                <LiveModelBadge agentKey="market_qa" size="sm" showSlot={false} />
-                <LiveModelBadge agentKey="market_digest" size="sm" showSlot={false} />
+                <LiveModelBadge agentKey="market_updates_classifier" size="sm" showSlot={false} />
+                <LiveModelBadge agentKey="market_updates_digest" size="sm" showSlot={false} />
               </div>
               <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market Updates</h1>
               <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
@@ -359,6 +473,7 @@ export default function MarketUpdates() {
               </p>
               <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                 <Badge variant="outline">Last ingest: {dateLabel(sourceHealth.lastSuccessAt)}</Badge>
+                <Badge variant="outline" className={sourceHealth.automation?.cronStale ? 'text-destructive' : undefined}>Automation: {sourceHealth.automation?.cronStale ? 'stale' : dateLabel(sourceHealth.automation?.lastIngestionDispatchAt)}</Badge>
                 <Badge variant="outline">{sourceHealth.enabledSources}/{sourceHealth.totalSources} sources live</Badge>
                 {sourceHealth.failedSources > 0 && <Badge variant="outline" className="text-destructive"><AlertTriangle className="mr-1 h-3 w-3" />{sourceHealth.failedSources} failing</Badge>}
               </div>
@@ -367,6 +482,7 @@ export default function MarketUpdates() {
               <Button onClick={loadUpdates} variant="outline"><RefreshCw className="mr-2 h-4 w-4" />Refresh View</Button>
               <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
               <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
+              {(sourceHealth.candidates ?? 0) > 0 && <Button variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
           </div>
@@ -376,7 +492,14 @@ export default function MarketUpdates() {
           <Card className="border-primary/25 bg-primary/5">
             <CardContent className="flex items-start justify-between gap-4 p-4">
               <p className="text-sm text-foreground">{message}</p>
-              <Button size="sm" variant="ghost" onClick={() => setMessage(null)}>Dismiss</Button>
+              <div className="flex shrink-0 items-center gap-1">
+                {lastHidden && (
+                  <Button size="sm" variant="outline" disabled={Boolean(hidingId)} onClick={restoreLastHidden}>
+                    {hidingId ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Undo2 className="mr-1.5 h-3.5 w-3.5" />}Undo
+                  </Button>
+                )}
+                <Button size="sm" variant="ghost" onClick={() => { setMessage(null); setLastHidden(null); }}>Dismiss</Button>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -387,20 +510,15 @@ export default function MarketUpdates() {
               <div className="space-y-1">
                 <p className="font-semibold text-destructive">Market Updates requires attention</p>
                 <p className="text-sm text-foreground">{operationalIssue.message}</p>
-                <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}</p>
+                <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}{operationalIssue.correlationId ? ` · Correlation: ${operationalIssue.correlationId}` : ''} · {operationalIssue.retryable ? 'Retryable' : 'Administrator action required'}</p>
                 <p className="text-sm text-muted-foreground">{operationalIssue.remediation}</p>
               </div>
-              <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={loadUpdates}>Retry</Button><Button size="sm" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button></div>
+              <div className="flex shrink-0 gap-2"><Button size="sm" variant="outline" onClick={operationalIssue.stage === 'digest' ? handleGenerateDigest : loadUpdates}>{operationalIssue.stage === 'digest' ? 'Retry digest' : 'Retry page data'}</Button><Button size="sm" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button></div>
             </CardContent>
           </Card>
         )}
 
-        <button type="button" onClick={() => setSourcesAdminOpen(true)} className="grid w-full grid-cols-2 gap-3 rounded-xl border border-border/60 bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:grid-cols-4 lg:grid-cols-7" aria-label="Open market source health administration">
-          {[
-            ['Configured', sourceHealth.totalSources], ['Enabled', sourceHealth.enabledSources], ['Healthy', sourceHealth.healthySources], ['Degraded', sourceHealth.degradedSources], ['Failed', sourceHealth.failedSources],
-            ['Last successful run', dateLabel(sourceHealth.lastSuccessAt)], ['Latest duration', sourceHealth.latestRun?.duration_ms ? `${Math.round(sourceHealth.latestRun.duration_ms / 1000)}s` : 'Not available'],
-          ].map(([name,value]) => <span key={String(name)} className="min-w-0"><span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{name}</span><strong className="mt-1 block truncate text-sm">{value}</strong></span>)}
-        </button>
+        {(runSummary || sourceHealth.activeRun) && (() => { const run = runSummary ?? sourceHealth.activeRun!; return <Card aria-live="polite" className="border-primary/20"><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">Ingestion run <span className="font-mono text-xs">{run.id.slice(0,8)}</span></p><p className="text-xs text-muted-foreground">{titleCase(run.status)} · {run.sources_processed}/{run.sources_considered} sources processed</p></div>{['queued','running'].includes(run.status) && <Loader2 className="h-4 w-4 animate-spin text-primary" />}</div><div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{[['Discovered',run.items_discovered],['Deduplicated',run.items_deduplicated ?? 0],['Classified',run.items_classified ?? 0],['Published',run.items_published],['Candidates',run.items_candidate ?? 0],['Ignored',run.items_ignored ?? 0],['Failed items',run.items_failed ?? 0],['Failed sources',run.sources_failed]].map(([label,value]) => <div key={String(label)} className="rounded border border-border/60 p-2"><span className="block text-muted-foreground">{label}</span><strong>{value}</strong></div>)}</div></CardContent></Card>; })()}
 
         {/* KPIs */}
         <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -451,24 +569,28 @@ export default function MarketUpdates() {
                       <>
                         <p className="text-sm leading-relaxed text-foreground">{digest.executive_summary}</p>
 
-                        {Object.keys(digest.segment_breakdown ?? {}).length > 0 && (
-                          <div className="grid gap-3 md:grid-cols-2">
-                            {Object.entries(digest.segment_breakdown).map(([seg, data]) => (
-                              <div key={seg} className="rounded-xl border border-border/60 bg-background/50 p-3">
-                                <div className="mb-1 flex items-center justify-between">
-                                  <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{titleCase(seg)}</h4>
+                        {(() => {
+                          const segments = normaliseSegmentBreakdown(digest.segment_breakdown);
+                          if (!segments.length) return null;
+                          return (
+                            <div className="grid gap-3 md:grid-cols-2">
+                              {segments.map(({ seg, headline, highlights, implications }) => (
+                                <div key={seg} className="rounded-xl border border-border/60 bg-background/50 p-3">
+                                  <button type="button" onClick={() => setActiveSegment(seg as MarketSegment)} className="mb-1 rounded text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Filter the feed by ${titleCase(seg)}`}>
+                                    {titleCase(seg)}
+                                  </button>
+                                  {headline && <p className="text-sm leading-relaxed">{headline}</p>}
+                                  {highlights.length > 0 && (
+                                    <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                                      {highlights.slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
+                                    </ul>
+                                  )}
+                                  {implications && <p className="mt-2 text-xs italic text-foreground/80">{implications}</p>}
                                 </div>
-                                {data.headline && <p className="text-sm font-medium">{data.headline}</p>}
-                                {Array.isArray(data.highlights) && data.highlights.length > 0 && (
-                                  <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-                                    {data.highlights.slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
-                                  </ul>
-                                )}
-                                {data.implications && <p className="mt-2 text-xs italic text-foreground/80">{data.implications}</p>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                              ))}
+                            </div>
+                          );
+                        })()}
 
                         {digest.client_advisory_implications.length > 0 && (
                           <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
@@ -564,15 +686,19 @@ export default function MarketUpdates() {
                 <div className="space-y-3">
                   {[1,2,3].map(i => <Card key={i} className="animate-pulse"><CardContent className="h-40 p-6" /></Card>)}
                 </div>
-              ) : filteredUpdates.length === 0 ? (
+              ) : feedEmptyState ? (
                 <Card className="border-dashed">
                   <CardContent className="p-10 text-center">
                     <Globe2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
-                    <h3 className="text-lg font-semibold">Filters exclude available updates</h3>
-                    <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Filters are hiding available updates. Clear all filters to restore the complete published feed.</p>
-                    <div className="mt-4 flex justify-center gap-2">
-                      <Button size="sm" variant="outline" onClick={() => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); }}>Clear filters</Button>
+                    <h3 className="text-lg font-semibold">{feedEmptyState.title}</h3>
+                    <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{feedEmptyState.description}</p>
+                    <div className="mt-4 flex flex-wrap justify-center gap-2">
+                      {feedEmptyState.kind === 'filters' && <Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button>}
+                      <Button size="sm" variant="outline" onClick={loadUpdates}><RefreshCw className="mr-2 h-4 w-4" />Retry page data</Button>
                       <Button size="sm" onClick={handleIngest} disabled={ingesting}>{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
+                      {['registry','disabled'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button>}
+                      {['candidates','classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
+                      {feedEmptyState.kind === 'classification' && <Button size="sm" variant="outline" onClick={() => setWorkspaceTab('ask-ai')}>Test AI route</Button>}
                     </div>
                   </CardContent>
                 </Card>
@@ -584,15 +710,27 @@ export default function MarketUpdates() {
                       <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide', IMPACT_STYLE[update.impact_level])}>
                         {update.impact_level} impact
                       </span>
-                      <Badge variant="outline" className="text-[10px]">{titleCase(update.category)}</Badge>
-                      {update.source_authority && <Badge variant="outline" className="text-[10px]">{titleCase(update.source_authority)}</Badge>}
-                      {update.source_perspective && <Badge variant="secondary" className="text-[10px]">{titleCase(update.source_perspective)}</Badge>}
-                      {update.legal_status && update.legal_status !== 'not_applicable' && <Badge variant="outline" className="text-[10px]">{titleCase(update.legal_status)}</Badge>}
-                      {update.geography.slice(0, 3).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
+                      {/* Category is omitted when the segment chips below already carry it,
+                          and provenance/legal badges live in the analysis dialog — the card
+                          keeps only what a reader scans by. */}
+                      {!update.segments.includes(update.category as MarketSegment) && (
+                        <Badge variant="outline" className="text-[10px]">{titleCase(update.category)}</Badge>
+                      )}
+                      {update.geography.slice(0, 2).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
                       <div className="ml-auto"><ConfidenceBar score={update.confidence_score} /></div>
                     </div>
 
-                    <h3 className="mt-3 text-lg font-semibold leading-snug text-foreground group-hover:text-primary">{update.title}</h3>
+                    <h3 className="mt-3 text-lg font-semibold leading-snug">
+                      <a
+                        href={update.source_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="rounded text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-hover:text-primary"
+                      >
+                        {update.title}
+                        <span className="sr-only"> (opens the original article in a new tab)</span>
+                      </a>
+                    </h3>
                     <p className="mt-1 text-xs text-muted-foreground">
                       <span className="font-medium text-foreground/80">{update.source_name}</span> · {dateLabel(update.source_published_at ?? update.ingested_at)}
                     </p>
@@ -603,6 +741,21 @@ export default function MarketUpdates() {
                       <div className="mt-3 rounded-lg border-l-2 border-primary/60 bg-primary/5 py-2 pl-3 pr-2">
                         <p className="text-xs font-semibold uppercase tracking-wide text-primary">Why it matters</p>
                         <p className="mt-0.5 text-sm text-foreground/90">{update.why_it_matters}</p>
+                      </div>
+                    )}
+
+                    {/* The classifier already writes a property read for every item; it was
+                        only visible inside the dialog, so the feed never answered "what does
+                        this mean for property?" without a click. */}
+                    {update.property_implications && (
+                      <div className="mt-2 rounded-lg border-l-2 border-info/60 bg-info/5 py-2 pl-3 pr-2">
+                        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-info">
+                          <Building2 className="h-3 w-3" />Property impact
+                          <span className="rounded-full border border-info/30 px-1.5 py-0 text-[9px] font-medium normal-case tracking-normal">
+                            {update.geography.some(g => g === 'Australia') ? 'Macro · national' : `Local · ${update.geography.slice(0, 2).join(', ') || 'regional'}`}
+                          </span>
+                        </p>
+                        <p className="mt-0.5 text-sm text-foreground/90">{update.property_implications}</p>
                       </div>
                     )}
 
@@ -621,6 +774,9 @@ export default function MarketUpdates() {
                     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
                       <Button size="sm" onClick={() => setSelectedUpdate(update)}>Open Analysis</Button>
                       <Button size="sm" variant="outline" onClick={() => { setQaUpdate(update); setQaMessage(null); setQaThread([]); setQuestion(''); setDialogConversationId(crypto.randomUUID()); }}>Ask AI</Button>
+                      <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive" disabled={hidingId === update.id} onClick={() => hideUpdate(update)} aria-label={`Remove ${update.title} from the dashboard`}>
+                        {hidingId === update.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <EyeOff className="mr-1.5 h-3.5 w-3.5" />}Remove
+                      </Button>
                       <div className="ml-auto flex flex-wrap items-center gap-1">
                         {update.citation_urls.slice(0, 3).map((url, i) => (
                           <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-primary">
@@ -677,21 +833,6 @@ export default function MarketUpdates() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="pb-2"><CardTitle className="text-sm">Source Health</CardTitle></CardHeader>
-              <CardContent className="space-y-2 text-xs">
-                <div className="grid grid-cols-3 gap-2 text-center">
-                  <div className="rounded-lg border border-border/60 bg-background/50 p-2"><div className="text-lg font-semibold">{sourceHealth.totalSources}</div><p className="text-[10px] text-muted-foreground">Total</p></div>
-                  <div className="rounded-lg border border-success/30 bg-success/10 p-2"><div className="text-lg font-semibold text-success">{sourceHealth.enabledSources}</div><p className="text-[10px] text-muted-foreground">Enabled</p></div>
-                  <div className={cn('rounded-lg border p-2', sourceHealth.failedSources > 0 ? 'border-destructive/30 bg-destructive/10' : 'border-border/60 bg-background/50')}>
-                    <div className={cn('text-lg font-semibold', sourceHealth.failedSources > 0 && 'text-destructive')}>{sourceHealth.failedSources}</div>
-                    <p className="text-[10px] text-muted-foreground">Failed</p>
-                  </div>
-                </div>
-                <p className="text-muted-foreground">Last success: {dateLabel(sourceHealth.lastSuccessAt)}</p>
-                {sourceHealth.lastError && <p className="text-destructive"><AlertTriangle className="mr-1 inline h-3 w-3" />{sourceHealth.lastError}</p>}
-              </CardContent>
-            </Card>
           </aside>
         </section>
 
@@ -699,32 +840,50 @@ export default function MarketUpdates() {
 
         {/* Analysis Dialog */}
         <Dialog open={Boolean(selectedUpdate)} onOpenChange={(open) => !open && setSelectedUpdate(null)}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
+          {/* Fixed header over a scrolling body: at 6xl the prose ran to ~130 characters
+              a line and the implications grid was clipped below the fold with the title
+              scrolled out of view. 4xl keeps a readable measure on any screen. */}
+          <DialogContent className="flex max-h-[90vh] w-[96vw] max-w-[96vw] flex-col overflow-hidden p-0 sm:max-w-2xl lg:max-w-4xl">
+            <DialogHeader className="shrink-0 space-y-2 border-b border-border/60 px-6 pb-4 pt-6 text-left">
               <div className="flex flex-wrap items-center gap-2">
                 {selectedUpdate && <FreshnessBadge tier={selectedUpdate.freshness_tier} />}
                 {selectedUpdate && <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase', IMPACT_STYLE[selectedUpdate.impact_level])}>{selectedUpdate.impact_level} impact</span>}
                 {selectedUpdate && <ConfidenceBar score={selectedUpdate.confidence_score} />}
               </div>
-              <DialogTitle className="text-xl leading-snug">{selectedUpdate?.title}</DialogTitle>
-              <p className="text-xs text-muted-foreground">{selectedUpdate?.source_name} · {dateLabel(selectedUpdate?.source_published_at)}</p>
+              <DialogTitle className="pr-8 text-xl leading-snug lg:text-2xl">{selectedUpdate?.title}</DialogTitle>
+              <p className="text-sm text-muted-foreground">{selectedUpdate?.source_name} · {dateLabel(selectedUpdate?.source_published_at)}</p>
+              {selectedUpdate && (
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  {selectedUpdate.segments.map(s => (
+                    <button key={s} type="button" onClick={() => { setActiveSegment(s); setSelectedUpdate(null); }} className="rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                      {titleCase(s)}
+                    </button>
+                  ))}
+                  {selectedUpdate.source_authority && <Badge variant="outline" className="text-[10px]">{titleCase(selectedUpdate.source_authority)}</Badge>}
+                  {selectedUpdate.source_perspective && <Badge variant="secondary" className="text-[10px]">{titleCase(selectedUpdate.source_perspective)}</Badge>}
+                  {selectedUpdate.legal_status && selectedUpdate.legal_status !== 'not_applicable' && <Badge variant="outline" className="text-[10px]">{titleCase(selectedUpdate.legal_status)}</Badge>}
+                </div>
+              )}
             </DialogHeader>
             {selectedUpdate && (
-              <div className="space-y-4 text-sm">
-                {selectedUpdate.ai_summary && <div><h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Summary</h4><p className="mt-1">{selectedUpdate.ai_summary}</p></div>}
-                {selectedUpdate.key_points.length > 0 && <div><h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Key Points</h4><ul className="mt-1 list-disc space-y-1 pl-5">{selectedUpdate.key_points.map((p, i) => <li key={i}>{p}</li>)}</ul></div>}
-                {selectedUpdate.why_it_matters && <div className="rounded-lg border-l-2 border-primary/60 bg-primary/5 py-2 pl-3"><h4 className="text-xs font-semibold uppercase tracking-wide text-primary">Why it matters</h4><p className="mt-1">{selectedUpdate.why_it_matters}</p></div>}
-                <div className="grid gap-3 md:grid-cols-3">
-                  {selectedUpdate.property_implications && <div className="rounded-lg border border-border/60 p-3"><h4 className="text-xs font-semibold uppercase text-info">Property</h4><p className="mt-1 text-xs">{selectedUpdate.property_implications}</p></div>}
-                  {selectedUpdate.finance_implications && <div className="rounded-lg border border-border/60 p-3"><h4 className="text-xs font-semibold uppercase text-primary">Finance</h4><p className="mt-1 text-xs">{selectedUpdate.finance_implications}</p></div>}
-                  {selectedUpdate.policy_implications && <div className="rounded-lg border border-border/60 p-3"><h4 className="text-xs font-semibold uppercase text-success">Policy</h4><p className="mt-1 text-xs">{selectedUpdate.policy_implications}</p></div>}
+              <div className="flex-1 space-y-5 overflow-y-auto px-6 pb-6 pt-5 text-base leading-relaxed">
+                {selectedUpdate.ai_summary && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">AI Summary</h4><p className="mt-1.5">{selectedUpdate.ai_summary}</p></div>}
+                {selectedUpdate.key_points.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Key Points</h4><ul className="mt-1.5 list-disc space-y-1.5 pl-5">{selectedUpdate.key_points.map((p, i) => <li key={i}>{p}</li>)}</ul></div>}
+                {selectedUpdate.why_it_matters && <div className="rounded-lg border-l-2 border-primary/60 bg-primary/5 py-3 pl-4 pr-3"><h4 className="text-sm font-semibold uppercase tracking-wide text-primary">Why it matters</h4><p className="mt-1.5">{selectedUpdate.why_it_matters}</p></div>}
+                <div className="grid gap-4 md:grid-cols-3">
+                  {selectedUpdate.property_implications && <div className="rounded-lg border border-border/60 p-4"><h4 className="text-sm font-semibold uppercase text-info">Property</h4><p className="mt-1.5 text-sm">{selectedUpdate.property_implications}</p></div>}
+                  {selectedUpdate.finance_implications && <div className="rounded-lg border border-border/60 p-4"><h4 className="text-sm font-semibold uppercase text-primary">Finance</h4><p className="mt-1.5 text-sm">{selectedUpdate.finance_implications}</p></div>}
+                  {selectedUpdate.policy_implications && <div className="rounded-lg border border-border/60 p-4"><h4 className="text-sm font-semibold uppercase text-success">Policy</h4><p className="mt-1.5 text-sm">{selectedUpdate.policy_implications}</p></div>}
                 </div>
-                {selectedUpdate.risk_flags.length > 0 && <div><h4 className="text-xs font-semibold uppercase tracking-wide text-destructive">Risk Flags</h4><div className="mt-1 flex flex-wrap gap-1">{selectedUpdate.risk_flags.map(r => <Badge key={r} variant="outline" className="border-destructive/30 text-destructive">{r}</Badge>)}</div></div>}
-                <div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
+                {selectedUpdate.risk_flags.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-destructive">Risk Flags</h4><div className="mt-1.5 flex flex-wrap gap-1.5">{selectedUpdate.risk_flags.map(r => <Badge key={r} variant="outline" className="border-destructive/30 text-destructive">{r}</Badge>)}</div></div>}
+                <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
                   <a href={selectedUpdate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/20"><ExternalLink className="h-3 w-3" />Original source</a>
                   {selectedUpdate.citation_urls.map((url, i) => (
                     <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary"><ExternalLink className="h-3 w-3" />Citation {i + 1}</a>
                   ))}
+                  <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-destructive" disabled={hidingId === selectedUpdate.id} onClick={() => { const target = selectedUpdate; setSelectedUpdate(null); hideUpdate(target); }}>
+                    {hidingId === selectedUpdate.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <EyeOff className="mr-1.5 h-3.5 w-3.5" />}Remove from dashboard
+                  </Button>
                 </div>
               </div>
             )}
@@ -732,7 +891,7 @@ export default function MarketUpdates() {
         </Dialog>
 
         {/* Q&A Dialog */}
-        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
+        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Ask AI about this update</DialogTitle>
@@ -789,7 +948,17 @@ export default function MarketUpdates() {
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>
                   {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
                 </Button>
+                {asking && <Button variant="outline" onClick={cancelAsk}><XCircle className="mr-2 h-4 w-4" />Cancel</Button>}
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={candidateReview !== null} onOpenChange={(open) => { if (!open) setCandidateReview(null); }}>
+          <DialogContent className="max-h-[90vh] max-w-3xl overflow-hidden p-0">
+            <DialogHeader className="border-b border-border/60 px-5 py-4 pr-12"><DialogTitle>Candidate review</DialogTitle><p className="text-xs text-muted-foreground">Admin-only items awaiting a publication decision. Reasons and source links remain visible for review.</p></DialogHeader>
+            <div className="max-h-[70vh] space-y-3 overflow-y-auto overflow-x-hidden px-5 py-4">
+              {candidateReview?.length ? candidateReview.map(candidate => <article key={candidate.id} className="rounded-lg border border-border/60 p-3"><div className="flex flex-wrap items-center gap-2"><Badge variant="outline">Candidate</Badge><span className="text-xs text-muted-foreground">{candidate.source_name}</span></div><h3 className="mt-2 font-semibold">{candidate.title}</h3><p className="mt-2 text-sm text-muted-foreground">{candidate.candidate_reason ? titleCase(candidate.candidate_reason) : 'Publication criteria were not met.'}</p><div className="mt-3 flex flex-wrap gap-2"><a href={candidate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline"><ExternalLink className="h-3 w-3" />Open source</a>{candidate.model_used && <Badge variant="secondary">{candidate.route_used ?? 'route'} · {candidate.model_used}</Badge>}</div></article>) : <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No candidate items require review.</div>}
             </div>
           </DialogContent>
         </Dialog>

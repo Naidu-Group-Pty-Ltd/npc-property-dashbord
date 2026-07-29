@@ -45,11 +45,12 @@ function extractPrimaryName(payload: Record<string, any>) {
   return [payload.primary_first_name, payload.primary_surname].filter(Boolean).join(' ').trim() || 'New client';
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token, x-session-id',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { createCorsHeaders } from "../_shared/auth.ts";
+// Per-request CORS: the frontend calls this function with `credentials: 'include'`,
+// so we must echo the request Origin (never `*`) and set `Allow-Credentials: true`.
+// The previous wildcard ACAO caused browsers to block every response, resulting in
+// "no client data loading" on the finance portal.
+let corsHeaders: Record<string, string> = createCorsHeaders(null);
 
 const TABLE_MAP: Record<string, string> = {
   properties: 'client_properties',
@@ -396,6 +397,7 @@ async function prepareFinanceNotePayload(supabase: any, clientId: string, payloa
 }
 
 Deno.serve(async (req) => {
+  corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -457,11 +459,11 @@ Deno.serve(async (req) => {
         return jsonResponse({ error: 'Primary first name and surname are required' }, 400);
       }
 
-      // Owner-created clients: grant the creating partner full edit/delete on every
-      // permission key, regardless of org-wide defaults. They originated the file,
-      // so they need to be able to add secondary contacts, properties, etc.
+      // Owner-created clients receive full access to their client data. Purchase files
+      // are limited to view/edit because delete authorizes archive/cancellation, including
+      // for files that staff may later create under the same client.
       const assignmentPermissions = CREATE_CLIENT_PERMISSION_TABLES.reduce((acc, key) => {
-        acc[key] = { view: true, edit: true, delete: true };
+        acc[key] = { view: true, edit: true, delete: key !== 'purchase_files' };
         return acc;
       }, {} as Record<string, { view: boolean; edit: boolean; delete: boolean }>);
       const provenance = buildProvenance({
@@ -602,8 +604,6 @@ Deno.serve(async (req) => {
             source: 'finance_portal',
             sourceActorId: portalUser.id,
           };
-          if (body?.pipeline_ghl_id) syncBody.pipelineGhlId = body.pipeline_ghl_id;
-          if (body?.pipeline_stage_ghl_id) syncBody.pipelineStageGhlId = body.pipeline_stage_ghl_id;
 
           const _anon = Deno.env.get('SUPABASE_ANON_KEY') || '';
           const _internalSecret = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
@@ -643,28 +643,6 @@ Deno.serve(async (req) => {
         ghl_sync: ghlSync,
       });
     }
-
-    // ── list_ghl_pipelines ── (for client creation pipeline picker)
-    if (operation === 'list_ghl_pipelines') {
-      const { data: pipelines, error } = await supabase
-        .from('ghl_pipelines')
-        .select('id, ghl_id, name, position')
-        .eq('is_active', true)
-        .order('position', { ascending: true });
-      if (error) return jsonResponse({ error: error.message }, 400);
-      return jsonResponse({ success: true, pipelines: pipelines || [] });
-    }
-
-    // ── list_ghl_pipeline_stages ──
-    if (operation === 'list_ghl_pipeline_stages') {
-      const { data: stages, error } = await supabase
-        .from('ghl_pipeline_stages')
-        .select('id, ghl_id, name, position, pipeline_id')
-        .order('position', { ascending: true });
-      if (error) return jsonResponse({ error: error.message }, 400);
-      return jsonResponse({ success: true, stages: stages || [] });
-    }
-
 
     // ── list_assigned_clients ──
     if (operation === 'list_assigned_clients') {
@@ -1088,20 +1066,23 @@ Deno.serve(async (req) => {
       if (!record_id) return jsonResponse({ error: 'record_id required' }, 400);
       if (!permissions[table_key]?.delete) return jsonResponse({ error: 'No delete permission for ' + table_key }, 403);
 
-      const { error } = await supabase
+      const { data: deletedRecord, error } = await supabase
         .from(dbTable)
         .delete()
         .eq('id', record_id)
-        .eq('client_id', client_id);
+        .eq('client_id', client_id)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!deletedRecord) return jsonResponse({ error: 'Record not found' }, 404);
       if (dbTable === 'client_income_sources') {
-        await syncClientRollups(supabase, client_id, dbTable, { id: record_id });
-        await logIncomeSourceSyncEvent(supabase, { clientId: client_id, recordId: record_id, operation: 'delete', portalUser });
+        await syncClientRollups(supabase, client_id, dbTable, deletedRecord);
+        await logIncomeSourceSyncEvent(supabase, { clientId: client_id, recordId: deletedRecord.id, operation: 'delete', portalUser });
       }
       if (dbTable === 'client_address_history') {
-        await logAddressSyncEvent(supabase, { clientId: client_id, record: { id: record_id }, operation: 'delete', portalUser });
+        await logAddressSyncEvent(supabase, { clientId: client_id, record: deletedRecord, operation: 'delete', portalUser });
       }
-      await audit('delete_record', table_key, record_id);
+      await audit('delete_record', table_key, deletedRecord.id);
       return jsonResponse({ success: true });
     }
 

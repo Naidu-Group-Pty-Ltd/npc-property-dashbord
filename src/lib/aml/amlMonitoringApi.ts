@@ -40,6 +40,39 @@ export interface AmlReview {
   status: AmlReviewStatus; priority: string; due_at: string | null; assigned_to: string | null;
   reviewer_notes: string | null; outcome: string | null; outcome_at: string | null; outcome_by: string | null;
   metadata: Record<string, any>; created_at: string; updated_at: string;
+  // Phase 10 — trigger provenance + deadline history
+  trigger_kind?: string | null;
+  trigger_event_id?: string | null;
+  original_due_at?: string | null;
+  extension_count?: number;
+  extension_reason?: string | null;
+}
+
+/** Phase 10 — trigger events that raise an out-of-cycle review (§12.9). */
+export type AmlReviewTriggerKind =
+  | "risk_increase" | "screening_match" | "adverse_media" | "ownership_change"
+  | "transaction_change" | "counterparty_uncooperative" | "client_circumstances" | "other";
+
+export type AmlMonitoringStatus = "active" | "paused" | "ended";
+
+/** Phase 10 — per-case ongoing-CDD rollup. */
+export interface AmlCaseMonitoring {
+  monitoring_status: AmlMonitoringStatus;
+  monitoring_status_reason: string | null;
+  relationship_ended_at: string | null;
+  relationship_end_reason: string | null;
+  risk_rating: string | null;
+  review_interval_months: number;
+  next_periodic_review_at: string | null;
+  last_periodic_review_at: string | null;
+  last_screened_at: string | null;
+  rescreen_due_at: string | null;
+  rescreen_overdue: boolean;
+  open_reviews: AmlReview[];
+  overdue_review_count: number;
+  recent_reviews: AmlReview[];
+  open_alerts: Array<{ id: string; title: string; severity: string; status: string; created_at: string; assigned_to: string | null }>;
+  open_edd: Array<{ id: string; reason: string; status: string; opened_at: string; assigned_to: string | null }>;
 }
 export interface AmlMonitoringSummary {
   open_alerts: number; critical_alerts: number; unprocessed_events: number;
@@ -92,4 +125,21 @@ export const amlMonitoringApi = {
   completeReview: (id: string, outcome?: string, status?: AmlReviewStatus, reviewer_notes?: string) =>
     invoke<{ review: AmlReview }>({ op: "complete_review", id, outcome, status, reviewer_notes }),
   seedPreCommencement: () => invoke<{ inserted: number }>({ op: "seed_pre_commencement" }),
+
+  // Phase 10 — ongoing CDD: risk-based cycle, trigger reviews, deadlines,
+  // relationship lifecycle (§12.9, §18)
+  caseMonitoringSummary: (case_id: string) =>
+    invoke<{ monitoring: AmlCaseMonitoring }>({ op: "case_monitoring_summary", case_id }),
+  schedulePeriodicReview: (p: { case_id: string; due_at?: string; assigned_to?: string }) =>
+    invoke<{ review: AmlReview; interval_months?: number; already_scheduled?: boolean }>({ op: "schedule_periodic_review", ...p }),
+  recordTriggerReview: (p: { case_id: string; trigger_kind: AmlReviewTriggerKind; detail: string; assigned_to?: string; trigger_event_id?: string }) =>
+    invoke<{ review: AmlReview }>({ op: "record_trigger_review", ...p }),
+  assignReview: (p: { id: string; assigned_to?: string; status?: AmlReviewStatus }) =>
+    invoke<{ review: AmlReview }>({ op: "assign_review", ...p }),
+  extendReviewDeadline: (p: { id: string; due_at: string; reason: string }) =>
+    invoke<{ review: AmlReview }>({ op: "extend_review_deadline", ...p }),
+  endRelationship: (p: { case_id: string; reason: string; ended_at?: string }) =>
+    invoke<{ case: { id: string; monitoring_status: string; relationship_ended_at: string | null }; reviews_cancelled: number }>({ op: "end_relationship", ...p }),
+  setMonitoringStatus: (p: { case_id: string; status: "active" | "paused"; reason: string }) =>
+    invoke<{ case: { id: string; monitoring_status: string } }>({ op: "set_monitoring_status", ...p }),
 };

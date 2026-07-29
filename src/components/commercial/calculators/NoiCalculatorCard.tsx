@@ -120,7 +120,8 @@ export function NoiCalculatorCard() {
   const [saveConfirmOpen, setSaveConfirmOpen] = useState(false);
   const [expensesOpen, setExpensesOpen] = useState(false);
   const [bridgeOpen, setBridgeOpen] = useState(false);
-  const { prefill, property, pushBack } = useCalculatorPrefill();
+  const { domain, prefill, property, pushBack } = useCalculatorPrefill();
+  const canSaveBack = domain === 'commercial';
   const audit = (action: string, field: string, previousValue: unknown, newValue: unknown, source = 'NOI Calculator') => console.info('NOI audit', { action, field, previousValue, newValue, source, originalScrapedValue: originalScrapedValues[field], timestamp: new Date().toISOString(), user: (property as any)?.user_id ?? 'current-user', propertyId: prefill?.propertyId ?? '', dealId: prefill?.propertyId ?? '', scenarioId: undefined });
 
   const setters: Record<string, (v: string) => void> = { grossRent: setGrossRent, recovered: setRecovered, other: setOther, vacancy: setVacancy, marketRent: setMarketRent, incentiveAdjustment: setIncentiveAdjustment, tenantRiskHaircut: setTenantRiskHaircut, totalOperatingExpenses: setTotalOperatingExpenses, leaseType: v => setLeaseType(v as LeaseType), noiBasis: v => setNoiBasis(v as NoiBasis) };
@@ -275,7 +276,7 @@ export function NoiCalculatorCard() {
   });
   const userOverrideValues = Object.fromEntries(allFields.filter(field => sources[field] === 'User Override').map(field => [field, currentRawValue(field)]));
   const saveBack = async () => {
-    if (!prefill) return;
+    if (!prefill || !canSaveBack) return;
     setSaving(true);
     try {
       const values = Object.fromEntries(allFields.map(field => [field, currentRawValue(field)]));
@@ -317,16 +318,18 @@ export function NoiCalculatorCard() {
           {prefill ? <Badge variant="outline" className="border-success/40 text-success max-w-[260px] truncate" title={prefill.address}>Anchored: {prefill.address}</Badge> : <Badge variant="outline" className="border-brand-500/40 text-brand-400">No property selected</Badge>}
           <Button size="sm" variant="outline" onClick={requestEstimate} disabled={estimating}>{estimating ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Sparkles className="h-3.5 w-3.5 mr-1" />}Estimate for me</Button>
           <Button size="sm" variant="outline" onClick={applyAccepted} disabled={!aiEstimate}>Accept AI estimate</Button>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button size="sm" variant="outline" onClick={() => setSaveConfirmOpen(true)} disabled={!prefill || !hasSavableValue || saving}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}Save back to property</Button>
-                </span>
-              </TooltipTrigger>
-              {!prefill && <TooltipContent>Select or link a property before saving assumptions.</TooltipContent>}
-            </Tooltip>
-          </TooltipProvider>
+          {canSaveBack && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span>
+                    <Button size="sm" variant="outline" onClick={() => setSaveConfirmOpen(true)} disabled={!prefill || !hasSavableValue || saving}>{saving ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}Save back to property</Button>
+                  </span>
+                </TooltipTrigger>
+                {!prefill && <TooltipContent>Select or link a property before saving assumptions.</TooltipContent>}
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
         {readiness.compactWarnings.length > 0 && (
           <div className="mt-3 rounded-xl border border-brand-500/40 bg-brand-500/10 p-3 text-xs text-brand-100 shadow-sm space-y-2">

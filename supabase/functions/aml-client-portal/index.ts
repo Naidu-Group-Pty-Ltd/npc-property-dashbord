@@ -9,7 +9,8 @@
  *   - overview                     { case_id? }         → landing payload
  *   - get_questionnaire            { case_id, section } → current draft
  *   - save_questionnaire           { case_id, section, payload, submit? }
- *   - record_consent               { case_id, kind, version, payload? }
+ *   - get_consents                 { case_id }          → current AUSTRAC-referenced catalogue + acceptance state
+ *   - record_consent               { case_id, kind, version?, payload? }
  *   - list_requirements            { case_id }
  *   - request_upload_url           { case_id, requirement_id?, filename, mime_type, size_bytes }
  *   - confirm_upload               { case_id, requirement_id?, storage_path, filename, mime_type, size_bytes, checksum? }
@@ -22,27 +23,94 @@
  * no MLRO commentary. Only completion + acceptance state.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-portal-session-token, x-session-token',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-portal-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const CLIENT_SAFE_STATUSES: Record<string, { label: string; tone: 'neutral'|'progress'|'positive'|'caution' }> = {
-  draft:              { label: 'Not started',               tone: 'neutral'  },
-  kyc_in_progress:    { label: 'In progress',               tone: 'progress' },
-  kyc_complete:       { label: 'Received — under review',   tone: 'progress' },
-  edd_required:       { label: 'Additional information required', tone: 'caution' },
-  under_review:       { label: 'Under review',              tone: 'progress' },
-  escalated_mlro:     { label: 'Under review',              tone: 'progress' },
-  cleared:            { label: 'Cleared',                   tone: 'positive' },
-  blocked:            { label: 'On hold — please contact us', tone: 'caution' },
-  closed:             { label: 'Closed',                    tone: 'neutral'  },
+// Phase 1 portal-safe contract (directive Appendix C.1). Internal case state
+// never reaches the wire: the case is presented through the client-portal
+// dimension only. Legacy statuses map onto that dimension for rows created
+// before the workflow-dimension migration (mirror of
+// src/lib/aml/caseDimensions.ts — keep in sync).
+const PORTAL_STATUSES = [
+  'not_started', 'action_required', 'in_progress', 'submitted', 'under_review',
+  'additional_info_required', 'complete', 'contact_adviser',
+] as const;
+
+const LEGACY_TO_PORTAL_STATUS: Record<string, string> = {
+  draft: 'not_started',
+  kyc_in_progress: 'in_progress',
+  kyc_complete: 'submitted',
+  edd_required: 'additional_info_required',
+  under_review: 'under_review',
+  escalated_mlro: 'under_review',
+  cleared: 'complete',
+  blocked: 'contact_adviser',
+  closed: 'complete',
 };
 
-const SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
+const PORTAL_STATUS_PRESENTATION: Record<string, { label: string; tone: 'neutral'|'progress'|'positive'|'caution' }> = {
+  not_started:              { label: 'Not started',                     tone: 'neutral'  },
+  action_required:          { label: 'Action required',                 tone: 'caution'  },
+  in_progress:              { label: 'In progress',                     tone: 'progress' },
+  submitted:                { label: 'Received — under review',         tone: 'progress' },
+  under_review:             { label: 'Under review',                    tone: 'progress' },
+  additional_info_required: { label: 'Additional information required', tone: 'caution'  },
+  complete:                 { label: 'Complete',                        tone: 'positive' },
+  contact_adviser:          { label: 'Please contact your adviser',     tone: 'caution'  },
+};
+
+function portalStatusFor(caseRow: any): string {
+  const explicit = caseRow?.client_portal_status;
+  if (typeof explicit === 'string' && (PORTAL_STATUSES as readonly string[]).includes(explicit)) {
+    return explicit;
+  }
+  return LEGACY_TO_PORTAL_STATUS[caseRow?.status] ?? 'in_progress';
+}
+
+// Phase 5 — versioned conditional questionnaire engine (directive §14.2).
+// The section list is SERVER-DRIVEN: `overview` computes the applicable
+// sections for this case from the declared purchasing structure and funding
+// sources, and the portal renders whatever the server returns. Existing
+// version-1 submissions (the four base sections) remain valid unchanged.
+const QUESTIONNAIRE_VERSION = '2';
+
+const BASE_SECTIONS = ['purchasing_structure', 'personal_details', 'purchase_profile', 'funding'] as const;
+const CONDITIONAL_SECTIONS = ['entity_details', 'related_parties'] as const;
+const ALL_SECTIONS: readonly string[] = [...BASE_SECTIONS, ...CONDITIONAL_SECTIONS];
+
+const ENTITY_STRUCTURES = new Set(['Company', 'Trust', 'SMSF', 'Partnership']);
+const MULTI_PARTY_STRUCTURES = new Set(['Joint', 'Company', 'Trust', 'SMSF', 'Partnership']);
+
+/**
+ * Compute the ordered applicable sections for a case from its questionnaire
+ * payloads. Sections already answered but no longer applicable (e.g. the
+ * client switches structure from Company to Individual) are retained in
+ * storage — never deleted — but drop out of the active checklist.
+ */
+function applicableSections(
+  structurePayload: Record<string, unknown> | null,
+  fundingPayload: Record<string, unknown> | null,
+): string[] {
+  const entityType = String(structurePayload?.entity_type ?? '');
+  const fundingSources = Array.isArray(fundingPayload?.sources)
+    ? (fundingPayload!.sources as unknown[]).map((s) => String(s))
+    : [];
+  const giftFunded = fundingSources.includes('Gift');
+
+  const out: string[] = ['purchasing_structure', 'personal_details'];
+  if (ENTITY_STRUCTURES.has(entityType)) out.push('entity_details');
+  if (MULTI_PARTY_STRUCTURES.has(entityType) || giftFunded) out.push('related_parties');
+  out.push('purchase_profile', 'funding');
+  return out;
+}
+
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
 function jsonResponse(data: any, status = 200) {
@@ -53,6 +121,107 @@ function jsonResponse(data: any, status = 200) {
 
 function sanitiseFilename(name: string): string {
   return String(name || 'upload').replace(/[^\w.\-]+/g, '_').slice(0, 180);
+}
+
+/* ───────────────────────── Consent (AUSTRAC-referenced) ─────────────────────
+ * Consent used to be three hard-coded checkboxes gated by localStorage, which
+ * is not evidence: nothing recorded what the client was actually shown, and
+ * the gate could be stepped around client-side. The catalogue in
+ * aml.consent_documents is now the single source of truth, and the gate below
+ * is enforced on the server for every op that collects client data.
+ *
+ * If the catalogue table is unreachable we FAIL CLOSED — a portal that
+ * silently collects identity data without a recorded consent is worse than
+ * one that is briefly unavailable.
+ * ------------------------------------------------------------------------- */
+
+type ConsentDocument = {
+  id: string;
+  code: string;
+  version: string;
+  acknowledgement_type: 'consent' | 'notice';
+  title: string;
+  summary: string;
+  body: string;
+  statutory_basis: string[];
+  reference_links: Array<{ label: string; url: string }>;
+  required: boolean;
+  sort_order: number;
+};
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Text the acceptance hash is taken over — the exact wording presented. */
+function consentCanonicalText(doc: ConsentDocument): string {
+  return [doc.code, doc.version, doc.title, doc.summary, doc.body,
+    (doc.statutory_basis ?? []).join('|')].join('\n');
+}
+
+/** Current (non-retired, in-force) catalogue, ordered for presentation. */
+async function loadConsentCatalogue(admin: any): Promise<{ version: string | null; documents: ConsentDocument[] }> {
+  const { data, error } = await admin.schema('aml').from('consent_documents')
+    .select('*')
+    .is('retired_at', null)
+    .lte('effective_from', new Date().toISOString())
+    .order('version', { ascending: false })
+    .order('sort_order', { ascending: true });
+  if (error) throw error;
+  const rows = (data ?? []) as ConsentDocument[];
+  if (rows.length === 0) return { version: null, documents: [] };
+  // Highest in-force version wins; a partially-published newer version never
+  // mixes with an older one.
+  const version = rows[0].version;
+  return {
+    version,
+    documents: rows.filter((r) => r.version === version)
+      .sort((a, b) => a.sort_order - b.sort_order),
+  };
+}
+
+type ConsentState = {
+  version: string | null;
+  documents: ConsentDocument[];
+  accepted: Array<{ code: string; version: string; accepted_at: string }>;
+  outstanding: string[];
+  satisfied: boolean;
+};
+
+async function loadConsentState(admin: any, caseId: string): Promise<ConsentState> {
+  const { version, documents } = await loadConsentCatalogue(admin);
+  const { data: rows, error } = await admin.schema('aml').from('consents')
+    .select('kind, version, accepted_at').eq('case_id', caseId);
+  if (error) throw error;
+  const accepted = (rows ?? []).map((r: any) => ({
+    code: String(r.kind), version: String(r.version), accepted_at: r.accepted_at,
+  }));
+  // Acceptance is version-specific: republishing the catalogue re-asks.
+  const acceptedCurrent = new Set(
+    accepted.filter((a) => a.version === version).map((a) => a.code));
+  const outstanding = documents
+    .filter((d) => d.required && !acceptedCurrent.has(d.code))
+    .map((d) => d.code);
+  return {
+    version, documents, accepted, outstanding,
+    // No published catalogue → nothing can be satisfied. Fail closed.
+    satisfied: Boolean(version) && documents.length > 0 && outstanding.length === 0,
+  };
+}
+
+function consentRequiredResponse(state: ConsentState) {
+  return jsonResponse({
+    error: state.version
+      ? 'Please review and accept the consents and disclosures before continuing.'
+      : 'Consents and disclosures are being updated. Please try again shortly or contact your adviser.',
+    code: 'consent_required',
+    consent: {
+      version: state.version,
+      outstanding: state.outstanding,
+      satisfied: state.satisfied,
+    },
+  }, 403);
 }
 
 Deno.serve(async (req) => {
@@ -103,27 +272,46 @@ Deno.serve(async (req) => {
         if (!c) return jsonResponse({ case: null, message: 'No AML onboarding case yet.' });
         const [{ data: sections }, { data: requirements }, { data: openRequests }, { data: submissions }] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses')
-            .select('section,status,updated_at').eq('case_id', c.id),
+            .select('section,status,updated_at,payload').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements')
             .select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
           admin.schema('aml').from('client_requests')
             .select('*').eq('case_id', c.id).in('status', ['open','responded'])
             .order('created_at', { ascending: false }),
           admin.schema('aml').from('submission_versions')
-            .select('version_number,status,submitted_at,reviewer_notes,reviewed_at')
+            .select('version_number,status,submitted_at,reviewed_at')
             .eq('case_id', c.id).order('version_number', { ascending: false }).limit(3),
         ]);
         const reqs = requirements ?? [];
         const totalReq = reqs.filter((r: any) => r.required).length;
         const completedReq = reqs.filter((r: any) => r.required && ['uploaded','accepted'].includes(r.status)).length;
         const sectionMap = new Map((sections ?? []).map((s: any) => [s.section, s]));
-        const status = CLIENT_SAFE_STATUSES[c.status] ?? { label: 'In progress', tone: 'progress' as const };
+        const active = applicableSections(
+          sectionMap.get('purchasing_structure')?.payload ?? null,
+          sectionMap.get('funding')?.payload ?? null,
+        );
+        const portalStatus = portalStatusFor(c);
+        const presentation = PORTAL_STATUS_PRESENTATION[portalStatus] ?? { label: 'In progress', tone: 'progress' as const };
+        // Server-owned consent state — the portal stepper mirrors this rather
+        // than trusting a browser-local flag.
+        const consentState = await loadConsentState(admin, c.id);
         return jsonResponse({
           case: {
             id: c.id, reference: c.case_reference, subject: c.subject_display_name,
-            opened_at: c.opened_at, status: c.status, status_label: status.label, status_tone: status.tone,
+            opened_at: c.opened_at,
+            // Portal-safe dimension token — internal case state is not shipped.
+            status: portalStatus, portal_status: portalStatus,
+            status_label: presentation.label, status_tone: presentation.tone,
           },
-          sections: SECTIONS.map((s) => ({
+          questionnaire_version: QUESTIONNAIRE_VERSION,
+          consent: {
+            version: consentState.version,
+            satisfied: consentState.satisfied,
+            outstanding: consentState.outstanding,
+            required_count: consentState.documents.filter((d) => d.required).length,
+          },
+          structure_type: String(sectionMap.get('purchasing_structure')?.payload?.entity_type ?? '') || null,
+          sections: active.map((s) => ({
             section: s, status: sectionMap.get(s)?.status ?? 'not_started',
             updated_at: sectionMap.get(s)?.updated_at ?? null,
           })),
@@ -143,7 +331,7 @@ Deno.serve(async (req) => {
       case 'get_questionnaire': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
+        if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
         const { data } = await admin.schema('aml').from('questionnaire_responses')
           .select('*').eq('case_id', c.id).eq('section', body.section).maybeSingle();
         return jsonResponse({ response: data ?? null });
@@ -152,8 +340,34 @@ Deno.serve(async (req) => {
       case 'save_questionnaire': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
-        const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+        // Consent precedes collection (Privacy Act 1988, APP 3/5). Enforced
+        // here, not only in the UI stepper.
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
+        // Validated against the full catalogue (not the currently-applicable
+        // subset) so an in-flight save is never rejected by a concurrent
+        // structure change; superseded answers are retained, never deleted.
+        if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
+        const payload = body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
+          ? body.payload
+          : {};
+        if (body.submit) {
+          const { data: structureResponse } = body.section === 'entity_details'
+            ? await admin.schema('aml').from('questionnaire_responses')
+              .select('payload').eq('case_id', c.id).eq('section', 'purchasing_structure').maybeSingle()
+            : { data: null };
+          const invalidFields = validateQuestionnaireSection(
+            body.section,
+            payload,
+            structureResponse?.payload,
+          );
+          if (invalidFields.length > 0) {
+            return jsonResponse({
+              error: 'Cannot submit — section contains invalid or missing fields',
+              invalid_fields: invalidFields,
+            }, 400);
+          }
+        }
         const row: Record<string, any> = {
           case_id: c.id, section: body.section, payload,
           status: body.submit ? 'submitted' : 'draft',
@@ -166,19 +380,91 @@ Deno.serve(async (req) => {
         return jsonResponse({ response: data });
       }
 
+      case 'get_consents': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const state = await loadConsentState(admin, c.id);
+        const acceptedAt = new Map(
+          state.accepted.filter((a) => a.version === state.version).map((a) => [a.code, a.accepted_at]));
+        return jsonResponse({
+          version: state.version,
+          satisfied: state.satisfied,
+          outstanding: state.outstanding,
+          documents: state.documents.map((d) => ({
+            code: d.code,
+            title: d.title,
+            summary: d.summary,
+            body: d.body,
+            acknowledgement_type: d.acknowledgement_type,
+            statutory_basis: d.statutory_basis ?? [],
+            reference_links: d.reference_links ?? [],
+            required: d.required,
+            accepted_at: acceptedAt.get(d.code) ?? null,
+          })),
+        });
+      }
+
       case 'record_consent': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
-        if (!body.kind || !body.version) return jsonResponse({ error: 'kind + version required' }, 400);
+        const code = String(body.kind ?? body.code ?? '').trim();
+        if (!code) return jsonResponse({ error: 'kind is required' }, 400);
+        if (body.accepted === false) {
+          return jsonResponse({ error: 'Acceptance is required to record a consent' }, 400);
+        }
+
+        // The acceptance must name a document that is actually published and
+        // current — otherwise the record could not be tied back to wording.
+        const { version, documents } = await loadConsentCatalogue(admin);
+        const doc = documents.find((d) => d.code === code);
+        if (!doc) {
+          return jsonResponse({
+            error: 'Unknown or superseded consent document', code: 'consent_document_unknown',
+            current_version: version,
+          }, 400);
+        }
+        if (body.version && String(body.version) !== doc.version) {
+          return jsonResponse({
+            error: 'This consent has been updated. Please reload and review the current wording.',
+            code: 'consent_version_stale', current_version: doc.version,
+          }, 409);
+        }
+
         const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null;
         const ua = req.headers.get('user-agent') ?? null;
-        const { data, error } = await admin.schema('aml').from('consents').insert({
-          case_id: c.id, kind: String(body.kind).slice(0, 80), version: String(body.version).slice(0, 40),
+        // Hash of the exact text presented, so the acceptance stays meaningful
+        // even if the catalogue row is later corrected or retired.
+        const documentHash = await sha256Hex(consentCanonicalText(doc));
+        const row = {
+          case_id: c.id, kind: doc.code, version: doc.version,
           actor_type: 'client', actor_id: portalUserId, actor_label: actorLabel,
-          ip_address: ip, user_agent: ua, payload: body.payload ?? {},
-        }).select('*').single();
+          ip_address: ip, user_agent: ua,
+          document_id: doc.id, document_hash: documentHash,
+          payload: {
+            ...(body.payload && typeof body.payload === 'object' ? body.payload : {}),
+            acknowledgement_type: doc.acknowledgement_type,
+            title: doc.title,
+            statutory_basis: doc.statutory_basis ?? [],
+          },
+        };
+        let { data, error } = await admin.schema('aml').from('consents')
+          .upsert(row, { onConflict: 'case_id,kind,version' }).select('*').single();
+        if (error && /document_id|document_hash|no unique|constraint/i.test(error.message ?? '')) {
+          // Catalogue migration not applied yet — record the acceptance rather
+          // than losing it, and let the state read decide the gate.
+          const { document_id: _d, document_hash: _h, ...legacy } = row as any;
+          ({ data, error } = await admin.schema('aml').from('consents')
+            .insert(legacy).select('*').single());
+        }
         if (error) throw error;
-        return jsonResponse({ consent: data });
+
+        const state = await loadConsentState(admin, c.id);
+        return jsonResponse({
+          consent: data,
+          consent_state: {
+            version: state.version, satisfied: state.satisfied, outstanding: state.outstanding,
+          },
+        });
       }
 
       case 'list_requirements': {
@@ -192,6 +478,8 @@ Deno.serve(async (req) => {
       case 'request_upload_url': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const uploadConsent = await loadConsentState(admin, c.id);
+        if (!uploadConsent.satisfied) return consentRequiredResponse(uploadConsent);
         const filename = sanitiseFilename(body.filename);
         const mime = String(body.mime_type ?? 'application/octet-stream');
         const size = Number(body.size_bytes ?? 0);
@@ -210,6 +498,8 @@ Deno.serve(async (req) => {
       case 'confirm_upload': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const confirmConsent = await loadConsentState(admin, c.id);
+        if (!confirmConsent.satisfied) return consentRequiredResponse(confirmConsent);
         if (!body.storage_path || !body.filename) return jsonResponse({ error: 'storage_path + filename required' }, 400);
         const storagePath = String(body.storage_path);
         const pathParts = storagePath.split('/');
@@ -281,11 +571,14 @@ Deno.serve(async (req) => {
       case 'submit_for_review': {
         const c = await resolveCase(body.case_id);
         if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const submitConsent = await loadConsentState(admin, c.id);
+        if (!submitConsent.satisfied) return consentRequiredResponse(submitConsent);
         const [{ data: sections }, { data: reqs }, { data: docs }, { data: consents }] = await Promise.all([
           admin.schema('aml').from('questionnaire_responses').select('*').eq('case_id', c.id),
           admin.schema('aml').from('document_requirements').select('*').eq('case_id', c.id),
           admin.schema('aml').from('documents').select('*').eq('case_id', c.id).neq('status', 'deleted'),
-          admin.schema('aml').from('consents').select('kind, version, accepted_at').eq('case_id', c.id),
+          admin.schema('aml').from('consents')
+            .select('kind, version, accepted_at, document_hash').eq('case_id', c.id),
         ]);
         const missingRequired = (reqs ?? []).filter((r: any) => r.required && !['uploaded','accepted'].includes(r.status));
         if (missingRequired.length > 0) {
@@ -294,11 +587,36 @@ Deno.serve(async (req) => {
             missing: missingRequired.map((r: any) => ({ code: r.code, label: r.label })),
           }, 400);
         }
+        // Phase 5: every currently-applicable section must be submitted before
+        // the client can finalise (the checklist itself is conditional).
+        const bySection = new Map((sections ?? []).map((s: any) => [s.section, s]));
+        const active = applicableSections(
+          bySection.get('purchasing_structure')?.payload ?? null,
+          bySection.get('funding')?.payload ?? null,
+        );
+        const missingSections = active.filter((s) => {
+          const response = bySection.get(s);
+          return !['submitted', 'accepted', 'complete'].includes(response?.status ?? '') ||
+            validateQuestionnaireSection(
+              s,
+              response?.payload,
+              bySection.get('purchasing_structure')?.payload,
+            ).length > 0;
+        });
+        if (missingSections.length > 0) {
+          return jsonResponse({
+            error: 'Cannot submit — some sections are incomplete',
+            missing_sections: missingSections,
+          }, 400);
+        }
         const { data: lastSub } = await admin.schema('aml').from('submission_versions')
           .select('version_number').eq('case_id', c.id).order('version_number', { ascending: false }).limit(1);
         const nextVersion = ((lastSub ?? [])[0]?.version_number ?? 0) + 1;
         const snapshot = {
           case: { id: c.id, reference: c.case_reference, subject: c.subject_display_name },
+          questionnaire_version: QUESTIONNAIRE_VERSION,
+          consent_version: submitConsent.version,
+          applicable_sections: active,
           sections: sections ?? [], requirements: reqs ?? [], documents: docs ?? [], consents: consents ?? [],
           submitted_by: { id: portalUserId, label: actorLabel },
         };
@@ -307,9 +625,16 @@ Deno.serve(async (req) => {
           submitted_by_type: 'client', submitted_by: portalUserId,
         }).select('*').single();
         if (error) throw error;
-        // Push case status forward (draft → kyc_in_progress → kyc_complete for review).
+        // Push case status forward (draft → kyc_in_progress → kyc_complete for
+        // review) and keep the Phase 1 dimension columns coherent; retry
+        // without them when the workflow-dimension migration is not applied.
         if (['draft','kyc_in_progress'].includes(c.status)) {
-          await admin.schema('aml').from('cases').update({ status: 'kyc_complete' }).eq('id', c.id);
+          const { error: upErr } = await admin.schema('aml').from('cases')
+            .update({ status: 'kyc_complete', case_stage: 'client_submitted', client_portal_status: 'submitted' })
+            .eq('id', c.id);
+          if (upErr) {
+            await admin.schema('aml').from('cases').update({ status: 'kyc_complete' }).eq('id', c.id);
+          }
         }
         return jsonResponse({ submission: sub, next_version: nextVersion });
       }

@@ -3,6 +3,7 @@ import { invokeAmlFunction } from "@/lib/aml/invokeAmlFunction";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { StatusBadge, statusLabel, statusTone } from "@/components/ui/status-badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
@@ -36,30 +37,14 @@ type Drill = {
 type StepUpSession = { id: string; capability: string; expires_at: string; revoked_at: string | null; created_at: string; ip?: string | null };
 type Runbook = { id: string; title: string; body_md: string };
 
-const statusBadge = (s: string) => {
-  const map: Record<string, string> = {
-    pass: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",
-    warn: "bg-amber-500/15 text-amber-500 border-amber-500/30",
-    fail: "bg-red-500/15 text-red-500 border-red-500/30",
-    running: "bg-blue-500/15 text-blue-500 border-blue-500/30",
-    pending: "bg-amber-500/15 text-amber-500 border-amber-500/30",
-    approved: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",
-    rejected: "bg-red-500/15 text-red-500 border-red-500/30",
-    executed: "bg-primary/15 text-primary border-primary/30",
-    expired: "bg-muted text-muted-foreground border-muted",
-    completed: "bg-emerald-500/15 text-emerald-500 border-emerald-500/30",
-    failed: "bg-red-500/15 text-red-500 border-red-500/30",
-    in_progress: "bg-blue-500/15 text-blue-500 border-blue-500/30",
-    planned: "bg-muted text-muted-foreground border-muted",
-    cancelled: "bg-muted text-muted-foreground border-muted",
-  };
-  return <Badge variant="outline" className={map[s] ?? ""}>{s.replace(/_/g, " ")}</Badge>;
-};
+const statusBadge = (s: string) => (
+  <StatusBadge tone={statusTone(s)} dot>{statusLabel(s)}</StatusBadge>
+);
 
 function CheckIcon({ status }: { status: string }) {
-  if (status === "pass") return <CheckCircle2 className="h-4 w-4 text-emerald-500" />;
-  if (status === "warn") return <AlertTriangle className="h-4 w-4 text-amber-500" />;
-  return <XCircle className="h-4 w-4 text-red-500" />;
+  if (status === "pass") return <CheckCircle2 className="h-4 w-4 text-success" />;
+  if (status === "warn") return <AlertTriangle className="h-4 w-4 text-warning" />;
+  return <XCircle className="h-4 w-4 text-destructive" />;
 }
 
 export default function AmlGovernance() {

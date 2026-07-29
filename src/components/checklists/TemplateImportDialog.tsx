@@ -348,11 +348,11 @@ export function TemplateImportDialog({ open, onOpenChange, onImport }: TemplateI
 
         <DialogFooter className="flex-col gap-2 sm:flex-row">
           {step === 'input' && (
-            <Button variant="ghost" className="min-h-10 w-full text-muted-foreground dark:text-foreground transition-all sm:w-auto duration-200 hover:bg-white/5 hover:text-zinc-50 focus-visible:ring-2 focus-visible:ring-brand-300/55 motion-reduce:transition-none" onClick={() => handleClose(false)}>Cancel</Button>
+            <Button variant="ghost" className="min-h-10 w-full text-muted-foreground dark:text-foreground transition-all sm:w-auto duration-200 hover:bg-white/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/55 motion-reduce:transition-none" onClick={() => handleClose(false)}>Cancel</Button>
           )}
           {step === 'preview' && (
             <>
-              <Button variant="ghost" className="min-h-10 w-full text-muted-foreground dark:text-foreground transition-all sm:w-auto duration-200 hover:bg-white/5 hover:text-zinc-50 focus-visible:ring-2 focus-visible:ring-brand-300/55 motion-reduce:transition-none" onClick={() => { setStep('input'); setParsedTemplate(null); }}>
+              <Button variant="ghost" className="min-h-10 w-full text-muted-foreground dark:text-foreground transition-all sm:w-auto duration-200 hover:bg-white/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/55 motion-reduce:transition-none" onClick={() => { setStep('input'); setParsedTemplate(null); }}>
                 ← Back
               </Button>
               <Button onClick={handleImport} className="min-h-10 w-full bg-gradient-to-r from-brand-500 to-brand-400 sm:w-auto font-semibold text-black transition-all duration-200 hover:-translate-y-0.5 hover:from-brand-400 hover:to-brand-300 hover:shadow-[0_14px_30px_rgba(245,158,11,0.24)] focus-visible:ring-2 focus-visible:ring-brand-300/70 motion-reduce:transition-none">

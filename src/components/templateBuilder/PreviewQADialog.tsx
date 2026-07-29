@@ -101,7 +101,7 @@ export function PreviewQADialog({ open, onOpenChange, template, sampleData, cust
                 {rendering ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
               </Button>
             </div>
-            <iframe title="html-preview" srcDoc={htmlSrc} className="flex-1 w-full bg-background" />
+            <iframe title="html-preview" sandbox="" srcDoc={htmlSrc} className="flex-1 w-full bg-background" />
           </div>
 
           {/* PDF preview */}

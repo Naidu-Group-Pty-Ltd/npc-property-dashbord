@@ -2,13 +2,15 @@
 // Actions: summarize_pf | draft_reply | classify_document | prefill_loan_app
 //          | recommend_lenders | scan_risk | coach_insights | transcribe_voice
 //          | list_summary | list_alerts | dismiss_alert | dismiss_insight
-import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { hasCopilotObjectPermission } from "../_shared/finance-portal-copilot-auth.ts";
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-finance-session-token",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+// Dynamic per-request CORS (frontend uses credentials: 'include').
+let corsHeaders: Record<string, string> = {
+  ...__createCorsHeaders(null),
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
 };
 
 const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
@@ -16,6 +18,50 @@ const MODEL = "google/gemini-2.5-flash";
 
 function json(body: any, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+}
+
+class HttpError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+async function authorizeObject(
+  supabase: any,
+  portalUser: any,
+  purchaseFileId: unknown,
+  clientId: unknown,
+  action: "view" | "edit",
+) {
+  if (purchaseFileId != null && typeof purchaseFileId !== "string") throw new HttpError("Invalid purchase_file_id", 400);
+  if (clientId != null && typeof clientId !== "string") throw new HttpError("Invalid client_id", 400);
+
+  let resolvedClientId = clientId as string | null;
+  if (purchaseFileId) {
+    const { data: file, error } = await supabase
+      .from("purchase_files")
+      .select("id, client_id")
+      .eq("id", purchaseFileId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!file) throw new HttpError("Purchase file not found", 404);
+    if (resolvedClientId && resolvedClientId !== file.client_id) throw new HttpError("Forbidden", 403);
+    resolvedClientId = file.client_id;
+  }
+
+  if (!resolvedClientId) return;
+  const { data: assignments, error } = await supabase
+    .from("finance_portal_client_assignments")
+    .select("permissions, purchase_file_id")
+    .eq("finance_user_id", portalUser.id)
+    .eq("client_id", resolvedClientId);
+  if (error) throw error;
+  if (!hasCopilotObjectPermission(
+    portalUser.global_permissions,
+    assignments ?? [],
+    (purchaseFileId as string | null) ?? null,
+    action,
+  )) throw new HttpError("Forbidden", 403);
 }
 
 async function callAI(systemPrompt: string, userPrompt: string, opts?: { tool?: any }) {
@@ -421,6 +467,7 @@ async function transcribeVoice(supabase: any, userId: string, pfId: string | nul
 
 /* ─────────────── Router ─────────────── */
 Deno.serve(async (req) => {
+  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), "Access-Control-Allow-Headers": corsHeaders["Access-Control-Allow-Headers"], "Access-Control-Expose-Headers": corsHeaders["Access-Control-Expose-Headers"] };
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
@@ -432,6 +479,35 @@ Deno.serve(async (req) => {
     if (auth.error) return json({ error: auth.error }, auth.status);
     const userId = auth.portalUser!.id;
     const action = body.action as string;
+
+    const objectActions: Record<string, "view" | "edit"> = {
+      summarize_pf: "edit",
+      list_summary: "view",
+      draft_reply: "view",
+      classify_document: "edit",
+      prefill_loan_app: "edit",
+      recommend_lenders: "edit",
+      transcribe_voice: "edit",
+    };
+    const purchaseFileActions = new Set([
+      "summarize_pf",
+      "list_summary",
+      "classify_document",
+      "prefill_loan_app",
+      "recommend_lenders",
+    ]);
+    if (purchaseFileActions.has(action) && !body.purchase_file_id) {
+      throw new HttpError("purchase_file_id required", 400);
+    }
+    if (objectActions[action]) {
+      await authorizeObject(
+        supabase,
+        auth.portalUser,
+        body.purchase_file_id ?? null,
+        body.client_id ?? null,
+        objectActions[action],
+      );
+    }
 
     switch (action) {
       case "summarize_pf": {
@@ -492,7 +568,7 @@ Deno.serve(async (req) => {
   } catch (e: any) {
     console.error("[finance-portal-ai-copilot]", e);
     const msg = String(e?.message ?? e);
-    const status = msg.includes("429") ? 429 : msg.includes("402") ? 402 : 500;
+    const status = e instanceof HttpError ? e.status : msg.includes("429") ? 429 : msg.includes("402") ? 402 : 500;
     return json({ error: msg }, status);
   }
 });

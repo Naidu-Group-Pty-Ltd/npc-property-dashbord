@@ -6,8 +6,8 @@ import {
   FileSignature,
   Gauge,
   Info,
+  ListChecks,
   Lock,
-  PlayCircle,
   ShieldCheck,
   Settings2,
   Users,
@@ -21,27 +21,29 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlMonitoringApi, type AmlMonitoringSummary } from "@/lib/aml/amlMonitoringApi";
+import { amlFinanceApi } from "@/lib/aml/amlFinanceApi";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { suggestAmlLanding } from "@/lib/aml/defaultLanding";
+import { CASE_STAGE_LABELS, caseStage } from "@/lib/aml/caseDimensions";
 
 /**
- * AML V3 — Phase 3 Compliance Home (Directives 5 & 6).
+ * AML V3 — Compliance Home (directive §8, completed in tri-portal Phase 2).
  *
- * Action-led, role-adaptive landing. Rendered when
- * `feature_flags.aml_v3_compliance_home = true`. Otherwise the legacy
- * V2 overview continues to render (byte-identical).
+ * Operational, role-adaptive landing rendered when
+ * `feature_flags.aml_v3_compliance_home = true`; otherwise the legacy V2
+ * overview renders unchanged.
  *
- * Rules honoured (AGENTS.md):
- *  - No role chips, no dev metadata.
- *  - Landing recommendation derived from **effective capabilities**
- *    (`useAmlAccess`), never from a client-side role string.
- *  - Restricted metrics (reporting SLA, configuration health) are hidden
- *    entirely for users lacking the underlying capability — no blurred
- *    placeholder, no count leak (tipping-off protection).
- *  - "Open AUSTRAC Hub" affordance is always surfaced to holders of
- *    `aml.report` and never to anyone else.
- *  - Empty states are actionable (explain + next step).
+ * Answers the four §8 questions directly:
+ *  1. What requires attention?   → priority work queue
+ *  2. Which clients are blocked? → queue reasons + stage badges
+ *  3. What is approaching a deadline? → reviews due / overdue metrics
+ *  4. What should I do next?     → next-best-action header
+ *
+ * Rules honoured (AGENTS.md): no role chips or dev metadata; everything is
+ * derived from effective capabilities; restricted metrics are omitted from
+ * render entirely for users without the capability (their server payloads are
+ * already scoped); empty states are actionable.
  */
 
 interface ActionEntry {
@@ -77,7 +79,7 @@ const ACTION_CATALOG: ActionEntry[] = [
   {
     key: "transactions",
     label: "Transactions",
-    description: "Investigate flagged transactions, TTR and IFTI triggers.",
+    description: "Investigate flagged transactions and reporting triggers.",
     to: "/admin/aml/transactions",
     cta: "Open transactions",
     icon: Gauge,
@@ -86,7 +88,7 @@ const ACTION_CATALOG: ActionEntry[] = [
   {
     key: "austrac",
     label: "AUSTRAC Hub",
-    description: "SMR / TTR / IFTI drafting, MLRO approval and lodgement.",
+    description: "Regulatory report drafting, approval and lodgement.",
     to: "/admin/aml/austrac",
     cta: "Open AUSTRAC Hub",
     icon: FileSignature,
@@ -96,7 +98,7 @@ const ACTION_CATALOG: ActionEntry[] = [
   {
     key: "finance",
     label: "Funding & Finance",
-    description: "Service-entitlement gate and downstream finance handoff.",
+    description: "Funding reconciliation and finance discrepancies.",
     to: "/admin/aml/finance",
     cta: "Open Funding & Finance",
     icon: Wallet,
@@ -105,13 +107,52 @@ const ACTION_CATALOG: ActionEntry[] = [
   {
     key: "configuration",
     label: "Organisation Settings",
-    description: "Tenant, thresholds, provider keys and program version.",
+    description: "Program, thresholds, providers and terminology.",
     to: "/admin/aml/configuration",
     cta: "Open settings",
     icon: Settings2,
     capability: "aml.configure",
   },
 ];
+
+/** Priority queue entry derived from an actionable case. */
+interface QueueEntry {
+  caseRow: AmlCase;
+  reason: string;
+  action: string;
+  urgency: 1 | 2 | 3; // 1 = highest
+}
+
+function queueEntriesFrom(
+  escalated: AmlCase[],
+  awaitingReview: AmlCase[],
+  enhancedCdd: AmlCase[],
+): QueueEntry[] {
+  const entries: QueueEntry[] = [
+    ...escalated.map((c): QueueEntry => ({
+      caseRow: c,
+      reason: "Awaiting decision",
+      action: "Decide",
+      urgency: 1,
+    })),
+    ...enhancedCdd.map((c): QueueEntry => ({
+      caseRow: c,
+      reason: "Additional information required",
+      action: "Review requirements",
+      urgency: 2,
+    })),
+    ...awaitingReview.map((c): QueueEntry => ({
+      caseRow: c,
+      reason: "Client submission awaiting review",
+      action: "Start review",
+      urgency: 3,
+    })),
+  ];
+  return entries.sort((a, b) =>
+    a.urgency - b.urgency ||
+    (b.caseRow.updated_at ?? "").localeCompare(a.caseRow.updated_at ?? ""),
+  );
+}
 
 export default function AmlComplianceHomeV3() {
   const { roles, loading: accessLoading } = useAmlAccess();
@@ -122,12 +163,18 @@ export default function AmlComplianceHomeV3() {
   const canConfigure = hasAmlCapability(roles, "aml.configure");
 
   const [loadingCases, setLoadingCases] = useState(true);
-  const [cases, setCases] = useState<AmlCase[]>([]);
-  const [totalCases, setTotalCases] = useState(0);
   const [caseError, setCaseError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<AmlCase[]>([]);
+  const [escalated, setEscalated] = useState<AmlCase[]>([]);
+  const [awaitingReview, setAwaitingReview] = useState<AmlCase[]>([]);
+  const [enhancedCdd, setEnhancedCdd] = useState<AmlCase[]>([]);
+  const [counts, setCounts] = useState<{
+    onboarding: number; awaitingReview: number; enhancedCdd: number; escalated: number;
+  } | null>(null);
 
   const [monitoring, setMonitoring] = useState<AmlMonitoringSummary | null>(null);
   const [loadingMonitoring, setLoadingMonitoring] = useState(false);
+  const [openDiscrepancies, setOpenDiscrepancies] = useState<number | null>(null);
 
   useEffect(() => {
     if (!canView) return;
@@ -135,10 +182,24 @@ export default function AmlComplianceHomeV3() {
     (async () => {
       try {
         setLoadingCases(true);
-        const res = await amlCasesApi.list({ limit: 5 });
+        const [recentRes, escalatedRes, reviewRes, eddRes, onboardingRes] = await Promise.all([
+          amlCasesApi.list({ limit: 5 }),
+          amlCasesApi.list({ status: "escalated_mlro", limit: 5 }),
+          amlCasesApi.list({ status: "kyc_complete", limit: 5 }),
+          amlCasesApi.list({ status: "edd_required", limit: 5 }),
+          amlCasesApi.list({ status: "kyc_in_progress", limit: 1 }),
+        ]);
         if (!alive) return;
-        setCases(res.cases ?? []);
-        setTotalCases(res.total ?? 0);
+        setRecent(recentRes.cases ?? []);
+        setEscalated(escalatedRes.cases ?? []);
+        setAwaitingReview(reviewRes.cases ?? []);
+        setEnhancedCdd(eddRes.cases ?? []);
+        setCounts({
+          onboarding: onboardingRes.total ?? 0,
+          awaitingReview: reviewRes.total ?? 0,
+          enhancedCdd: eddRes.total ?? 0,
+          escalated: escalatedRes.total ?? 0,
+        });
       } catch (e: any) {
         if (alive) setCaseError(e?.message ?? "Unable to load cases");
       } finally {
@@ -154,10 +215,13 @@ export default function AmlComplianceHomeV3() {
     (async () => {
       try {
         setLoadingMonitoring(true);
-        const s = await amlMonitoringApi.summary();
-        if (alive) setMonitoring(s);
-      } catch {
-        if (alive) setMonitoring(null);
+        const [summary, discrepancies] = await Promise.all([
+          amlMonitoringApi.summary().catch(() => null),
+          amlFinanceApi.listDiscrepancies({ status: "open" }).catch(() => null),
+        ]);
+        if (!alive) return;
+        setMonitoring(summary);
+        setOpenDiscrepancies(discrepancies ? (discrepancies.discrepancies ?? []).length : null);
       } finally {
         if (alive) setLoadingMonitoring(false);
       }
@@ -165,13 +229,9 @@ export default function AmlComplianceHomeV3() {
     return () => { alive = false; };
   }, [canInvestigate]);
 
-  const openCount = useMemo(
-    () => cases.filter((c) => !["cleared", "closed", "blocked"].includes(c.status)).length,
-    [cases],
-  );
-  const escalated = useMemo(
-    () => cases.filter((c) => c.status === "escalated_mlro").length,
-    [cases],
+  const queue = useMemo(
+    () => queueEntriesFrom(escalated, awaitingReview, enhancedCdd).slice(0, 8),
+    [escalated, awaitingReview, enhancedCdd],
   );
 
   const landing = useMemo(() => suggestAmlLanding(roles), [roles]);
@@ -179,6 +239,29 @@ export default function AmlComplianceHomeV3() {
     () => ACTION_CATALOG.filter((a) => hasAmlCapability(roles, a.capability)),
     [roles],
   );
+
+  // Next best action: the top of the priority queue wins; otherwise the
+  // capability-derived landing suggestion.
+  const nextBest = useMemo(() => {
+    const top = queue[0];
+    if (top) {
+      return {
+        title: `${top.reason} — ${top.caseRow.subject_display_name}`,
+        detail: top.caseRow.case_reference,
+        to: `/admin/aml/cases?open=${top.caseRow.id}`,
+        cta: top.action,
+      };
+    }
+    if (landing) {
+      return {
+        title: "Nothing urgent in your queues",
+        detail: landing.reason,
+        to: landing.path,
+        cta: landing.label,
+      };
+    }
+    return null;
+  }, [queue, landing]);
 
   // Actionable no-access state.
   if (!accessLoading && roles.size === 0) {
@@ -189,9 +272,9 @@ export default function AmlComplianceHomeV3() {
             <Lock className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">No AML role assigned</h2>
+            <h2 className="text-lg font-semibold">You don't have access yet</h2>
             <p className="text-sm text-muted-foreground">
-              You can see the AML/CTF workspace but do not yet have a role that lets you act.
+              The AML/CTF workspace is visible, but acting in it needs an access grant.
             </p>
           </div>
         </div>
@@ -199,9 +282,9 @@ export default function AmlComplianceHomeV3() {
           <Info className="h-4 w-4" />
           <AlertTitle>Request access</AlertTitle>
           <AlertDescription>
-            Ask a superadmin to assign an AML role — analyst, reviewer, MLRO or auditor —
-            from <Link className="underline" to="/admin/users">User Management</Link>. Access
-            is granted per capability, so restricted queues stay hidden until you are cleared.
+            Ask your compliance administrator to grant you AML access from{" "}
+            <Link className="underline" to="/admin/users">User Management</Link>. Queues and
+            restricted areas appear automatically once access is granted.
           </AlertDescription>
         </Alert>
       </div>
@@ -210,27 +293,27 @@ export default function AmlComplianceHomeV3() {
 
   return (
     <div className="space-y-6">
-      {/* Neutral continuation banner — no role labels, only capability-derived recommendation. */}
-      {landing && (
+      {/* Next best action — operational, not generic. */}
+      {nextBest && (
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary/10 text-primary shrink-0">
-                <PlayCircle className="h-5 w-5" />
+                <ListChecks className="h-5 w-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-sm font-medium">Continue where you work most</div>
-                <div className="text-xs text-muted-foreground">{landing.reason}</div>
+                <div className="truncate text-sm font-medium">{nextBest.title}</div>
+                <div className="text-xs text-muted-foreground">{nextBest.detail}</div>
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button asChild size="sm">
-                <Link to={landing.path}>
-                  {landing.label}
+                <Link to={nextBest.to}>
+                  {nextBest.cta}
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Link>
               </Button>
-              {canReport && landing.path !== "/admin/aml/austrac" && (
+              {canReport && nextBest.to !== "/admin/aml/austrac" && (
                 <Button asChild size="sm" variant="outline">
                   <Link to="/admin/aml/austrac">
                     Open AUSTRAC Hub
@@ -243,34 +326,45 @@ export default function AmlComplianceHomeV3() {
         </Card>
       )}
 
-      {/* Case tiles — always visible for aml.view */}
-      <div className="grid gap-4 md:grid-cols-3">
+      {/* Operational metrics — customer pipeline (aml.view) */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricTile
-          title="Total cases"
+          title="Onboarding in progress"
           icon={Users}
           loading={loadingCases}
-          value={totalCases}
-          hint="Across all statuses in this tenant."
+          value={counts?.onboarding ?? "—"}
+          hint="Clients currently completing onboarding."
+          to="/admin/aml/cases"
         />
         <MetricTile
-          title="Open (recent)"
-          icon={Gauge}
+          title="Submissions to review"
+          icon={ListChecks}
           loading={loadingCases}
-          value={openCount}
-          hint={`Of the latest ${cases.length || 0} cases, still under investigation.`}
+          value={counts?.awaitingReview ?? "—"}
+          hint="Client submissions awaiting staff review."
+          to="/admin/aml/cases"
         />
         <MetricTile
-          title="Escalated → MLRO"
+          title="Enhanced CDD"
           icon={ShieldCheck}
           loading={loadingCases}
-          value={escalated}
-          hint="Awaiting MLRO decision."
+          value={counts?.enhancedCdd ?? "—"}
+          hint="Cases needing additional information."
+          to="/admin/aml/cases"
+        />
+        <MetricTile
+          title="Awaiting decision"
+          icon={Gauge}
+          loading={loadingCases}
+          value={counts?.escalated ?? "—"}
+          hint="Escalated cases awaiting a decision."
+          to="/admin/aml/cases"
         />
       </div>
 
-      {/* Investigate tiles */}
+      {/* Operational metrics — monitoring and finance (aml.investigate) */}
       {canInvestigate && (
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <MetricTile
             title="Open alerts"
             icon={Bell}
@@ -288,12 +382,20 @@ export default function AmlComplianceHomeV3() {
             to="/admin/aml/monitoring"
           />
           <MetricTile
-            title="Periodic reviews"
+            title="Reviews due"
             icon={ShieldCheck}
             loading={loadingMonitoring}
             value={monitoring?.pending_reviews ?? "—"}
             hint={monitoring ? `${monitoring.overdue_reviews} overdue` : "Awaiting first data refresh."}
             to="/admin/aml/monitoring"
+          />
+          <MetricTile
+            title="Funding discrepancies"
+            icon={Wallet}
+            loading={loadingMonitoring}
+            value={openDiscrepancies ?? "—"}
+            hint="Open finance discrepancies to resolve."
+            to="/admin/aml/finance"
           />
         </div>
       )}
@@ -305,18 +407,67 @@ export default function AmlComplianceHomeV3() {
         </Alert>
       )}
 
+      {/* Priority work queue — what requires attention, with a direct action. */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Priority work queue</CardTitle>
+            <Button asChild size="sm" variant="outline">
+              <Link to="/admin/aml/cases">Open case register →</Link>
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Escalations first, then additional-information cases, then submissions to review.
+          </p>
+        </CardHeader>
+        <CardContent>
+          {loadingCases ? (
+            <div className="space-y-2">
+              <Skeleton className="h-10 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : queue.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border/60 p-4 text-center">
+              <p className="text-sm text-muted-foreground">
+                Nothing needs attention right now. New client submissions, additional-information
+                cases and escalations will appear here the moment they need someone.
+              </p>
+            </div>
+          ) : (
+            <ul className="divide-y divide-border/60 text-sm">
+              {queue.map(({ caseRow: c, reason, action }) => (
+                <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate font-medium">{c.subject_display_name}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {c.case_reference} · {reason}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{CASE_STAGE_LABELS[caseStage(c)]}</Badge>
+                    <Button asChild size="sm" variant="outline">
+                      <Link to={`/admin/aml/cases?open=${c.id}`}>{action}</Link>
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Action-led "Do next" — only capabilities the user actually holds. */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Do next</CardTitle>
+          <CardTitle className="text-base">Your workspaces</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Actions available to you right now, based on your assigned capabilities.
+            Areas available to you right now.
           </p>
         </CardHeader>
         <CardContent>
           {visibleActions.length === 0 ? (
             <p className="text-sm text-muted-foreground">
-              No actionable queues yet — request an AML role to get started.
+              No workspaces yet — ask your compliance administrator for access to get started.
             </p>
           ) : (
             <ul className="grid gap-3 sm:grid-cols-2">
@@ -357,9 +508,6 @@ export default function AmlComplianceHomeV3() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">Latest cases</CardTitle>
-            <Button asChild size="sm" variant="outline">
-              <Link to="/admin/aml/cases">Open case register →</Link>
-            </Button>
           </div>
         </CardHeader>
         <CardContent>
@@ -369,19 +517,19 @@ export default function AmlComplianceHomeV3() {
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-10 w-full" />
             </div>
-          ) : cases.length === 0 ? (
+          ) : recent.length === 0 ? (
             <div className="rounded-md border border-dashed border-border/60 p-4 text-center">
               <p className="text-sm text-muted-foreground">
-                No cases yet. Cases are only created after a human-confirmed client
-                activation — nothing is auto-generated from marketing leads.
+                No cases yet. Cases open when a client is activated for compliance from their
+                client record — nothing is generated automatically from marketing leads.
               </p>
               <Button asChild size="sm" variant="outline" className="mt-3">
-                <Link to="/admin/aml/cases">Go to Case register</Link>
+                <Link to="/clients">Find a client to activate</Link>
               </Button>
             </div>
           ) : (
             <ul className="divide-y divide-border/60 text-sm">
-              {cases.map((c) => (
+              {recent.map((c) => (
                 <li key={c.id} className="flex items-center justify-between py-2">
                   <div className="min-w-0">
                     <div className="truncate font-medium">{c.subject_display_name}</div>
@@ -393,9 +541,7 @@ export default function AmlComplianceHomeV3() {
                         {c.risk_rating}
                       </Badge>
                     )}
-                    <Badge variant="secondary" className="capitalize">
-                      {c.status.replace(/_/g, " ")}
-                    </Badge>
+                    <Badge variant="secondary">{CASE_STAGE_LABELS[caseStage(c)]}</Badge>
                   </div>
                 </li>
               ))}
@@ -403,13 +549,6 @@ export default function AmlComplianceHomeV3() {
           )}
         </CardContent>
       </Card>
-
-      {/* Nothing more leaks below for users without report/configure capability. */}
-      {!canReport && !canConfigure && (
-        <p className="text-xs text-muted-foreground">
-          Reporting and configuration surfaces are restricted and only appear for MLRO users.
-        </p>
-      )}
     </div>
   );
 }

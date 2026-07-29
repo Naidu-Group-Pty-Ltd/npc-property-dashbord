@@ -16,13 +16,11 @@ import { cn } from "@/lib/utils";
 interface AuditEvent {
   id: string;
   created_at: string;
-  event: "reserve" | "commit" | "cancel" | string;
+  event: "reserve" | "commit" | "hold" | "release" | "cancel" | string;
   user_id: string | null;
   function_name: string | null;
   kind: string | null;
   job_id: string | null;
-  requested_tokens: number;
-  reserved_tokens: number;
   used_tokens: number;
   available_tokens: number;
   status: string | null;
@@ -36,8 +34,6 @@ interface Outcome {
   user_id: string | null;
   function_name: string;
   kind: string;
-  estimated_tokens: number;
-  reserved_tokens: number;
   actual_tokens: number;
   duration_ms: number;
   status: string;
@@ -54,6 +50,28 @@ interface Payload {
 
 function getEventTone(event: string, status?: string | null, error?: string | null) {
   const normalized = `${event} ${status ?? ""}`.toLowerCase();
+  // `hold` = a chunk of a multi-call generation landed; the reservation stays
+  // open and nothing is charged yet. `release` = the run failed and the job was
+  // canceled or refunded, so the caller pays nothing. Both are matched before
+  // the generic rules below, which would otherwise mis-tone them.
+  if (event === "hold" && !error) {
+    return {
+      badge: "border-primary/25 bg-primary/10 text-primary",
+      rail: "bg-primary/55",
+      dot: "border-primary/30 bg-primary/10 text-primary",
+      Icon: Clock3,
+      label: "Held",
+    };
+  }
+  if (event === "release" && !error) {
+    return {
+      badge: "border-success/25 bg-success/10 text-success dark:text-success",
+      rail: "bg-success/55",
+      dot: "border-success/30 bg-success/10 text-success dark:text-success",
+      Icon: CheckCircle2,
+      label: "Released",
+    };
+  }
   if (error || normalized.includes("error") || normalized.includes("fail") || normalized.includes("cancel")) {
     return {
       badge: "border-destructive/25 bg-destructive/10 text-destructive",
@@ -170,7 +188,7 @@ export function TokenEventDetailsDrawer({
           )}
           <SheetTitle className={cn("text-xl", premiumTimeline && "tracking-tight")}>Generation Trail</SheetTitle>
           <SheetDescription>
-            Reserve / commit / cancel events and final outcome for this idempotency key.
+            Event timeline and tokens used for this idempotency key.
           </SheetDescription>
           {idempotencyKey && (
             <div className="flex min-w-0 items-center gap-2 pt-1">
@@ -218,9 +236,7 @@ export function TokenEventDetailsDrawer({
                         {o.user_id && data.users[o.user_id] && <> · {data.users[o.user_id]}</>}
                       </div>
                       <Separator />
-                      <div className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
-                        <div><p className="text-muted-foreground">Estimated</p><p className="font-semibold tabular-nums">{o.estimated_tokens.toLocaleString()}</p></div>
-                        <div><p className="text-muted-foreground">Reserved</p><p className="font-semibold tabular-nums text-primary">{o.reserved_tokens.toLocaleString()}</p></div>
+                      <div className="grid grid-cols-2 gap-3 text-xs">
                         <div><p className="text-muted-foreground">Used</p><p className="font-semibold tabular-nums text-success dark:text-success">{o.actual_tokens.toLocaleString()}</p></div>
                         <div><p className="text-muted-foreground">Duration</p><p className="font-semibold tabular-nums">{fmtMs(o.duration_ms)}</p></div>
                       </div>
@@ -268,9 +284,7 @@ export function TokenEventDetailsDrawer({
                             {e.user_id && data.users[e.user_id] && (
                               <p className="truncate text-muted-foreground" title={data.users[e.user_id]}>User: {data.users[e.user_id]}</p>
                             )}
-                            <div className="grid min-w-0 grid-cols-2 gap-2 pt-1 sm:grid-cols-4">
-                              <div><p className="text-muted-foreground">Requested</p><p className="font-medium tabular-nums">{e.requested_tokens.toLocaleString()}</p></div>
-                              <div><p className="text-muted-foreground">Reserved</p><p className="font-medium tabular-nums text-primary">{e.reserved_tokens.toLocaleString()}</p></div>
+                            <div className="grid min-w-0 grid-cols-2 gap-2 pt-1">
                               <div><p className="text-muted-foreground">Used</p><p className="font-medium tabular-nums text-success dark:text-success">{e.used_tokens.toLocaleString()}</p></div>
                               <div><p className="text-muted-foreground">Available</p><p className="font-medium tabular-nums">{e.available_tokens.toLocaleString()}</p></div>
                             </div>
@@ -298,9 +312,7 @@ export function TokenEventDetailsDrawer({
                           {e.user_id && data.users[e.user_id] && (
                             <p className="truncate text-muted-foreground" title={data.users[e.user_id]}>User: {data.users[e.user_id]}</p>
                           )}
-                          <div className="grid min-w-0 grid-cols-2 gap-2 pt-1 sm:grid-cols-4">
-                            <div><p className="text-muted-foreground">Requested</p><p className="font-medium tabular-nums">{e.requested_tokens.toLocaleString()}</p></div>
-                            <div><p className="text-muted-foreground">Reserved</p><p className="font-medium tabular-nums">{e.reserved_tokens.toLocaleString()}</p></div>
+                          <div className="grid min-w-0 grid-cols-2 gap-2 pt-1">
                             <div><p className="text-muted-foreground">Used</p><p className="font-medium tabular-nums">{e.used_tokens.toLocaleString()}</p></div>
                             <div><p className="text-muted-foreground">Available</p><p className="font-medium tabular-nums">{e.available_tokens.toLocaleString()}</p></div>
                           </div>

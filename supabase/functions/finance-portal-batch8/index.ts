@@ -10,12 +10,18 @@
  * Auth: finance partner via x-finance-session-token.
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
+import {
+  canAccessPurchaseFile,
+  listAccessiblePurchaseFileIds,
+} from '../_shared/financePortalObjectAuthz.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+// Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
+// echo the request Origin (never `*`) with `Allow-Credentials: true`.
+let corsHeaders: Record<string, string> = {
+  ...__createCorsHeaders(null),
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 const json = (d: unknown, s = 200) =>
@@ -102,6 +108,7 @@ function refiCompute(input: any) {
 }
 
 Deno.serve(async (req) => {
+  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
@@ -120,9 +127,13 @@ Deno.serve(async (req) => {
     if (!portalUser.session_expires_at || new Date(portalUser.session_expires_at) < new Date())
       return json({ error: 'Session expired' }, 401);
 
+    const requireFileAccess = async (purchaseFileId: string) =>
+      canAccessPurchaseFile(supabase, portalUser.id, purchaseFileId);
+
     /* ===== Scenarios CRUD (#44, #46, others) ===== */
     if (operation === 'scenarios_list') {
       const fid = body.purchase_file_id;
+      if (fid && !await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
       let q = supabase
         .from('purchase_file_calculator_scenarios')
         .select('*')
@@ -137,6 +148,7 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'scenario_save') {
+      if (body.purchase_file_id && !await requireFileAccess(body.purchase_file_id)) return json({ error: 'Not authorised' }, 403);
       const row: any = {
         purchase_file_id: body.purchase_file_id ?? null,
         finance_user_id: portalUser.id,
@@ -164,6 +176,7 @@ Deno.serve(async (req) => {
         .from('purchase_file_calculator_scenarios')
         .update(patch)
         .eq('id', id)
+        .eq('finance_user_id', portalUser.id)
         .select()
         .single();
       if (error) return json({ error: error.message }, 500);
@@ -173,7 +186,8 @@ Deno.serve(async (req) => {
     if (operation === 'scenario_delete') {
       const id = body.id;
       if (!id) return json({ error: 'id required' }, 400);
-      const { error } = await supabase.from('purchase_file_calculator_scenarios').delete().eq('id', id);
+      const { error } = await supabase.from('purchase_file_calculator_scenarios')
+        .delete().eq('id', id).eq('finance_user_id', portalUser.id);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });
     }
@@ -191,25 +205,11 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'lender_card_upsert') {
-      const id = body.id;
-      const row: any = { ...(body.card || {}) };
-      delete row.id;
-      if (id) {
-        const { data, error } = await supabase.from('lender_rate_cards').update(row).eq('id', id).select().single();
-        if (error) return json({ error: error.message }, 500);
-        return json({ card: data });
-      }
-      const { data, error } = await supabase.from('lender_rate_cards').insert(row).select().single();
-      if (error) return json({ error: error.message }, 500);
-      return json({ card: data });
+      return json({ error: 'Lender rate cards are read-only in the Finance Portal' }, 403);
     }
 
     if (operation === 'lender_card_delete') {
-      const id = body.id;
-      if (!id) return json({ error: 'id required' }, 400);
-      const { error } = await supabase.from('lender_rate_cards').delete().eq('id', id);
-      if (error) return json({ error: error.message }, 500);
-      return json({ ok: true });
+      return json({ error: 'Lender rate cards are read-only in the Finance Portal' }, 403);
     }
 
     if (operation === 'lender_compare') {
@@ -270,10 +270,19 @@ Deno.serve(async (req) => {
       const term = Number(body.term_years || 30);
       const fid = body.purchase_file_id || null;
 
-      let q = supabase
+      if (fid && !await requireFileAccess(fid)) return json({ error: 'Not authorised' }, 403);
+      const accessibleIds = fid ? [fid] : await listAccessiblePurchaseFileIds(supabase, portalUser.id);
+      if (!accessibleIds.length) return json({
+        bps_change: bps, baseline_rate_pa: baselineRate,
+        new_rate_pa: Math.round((baselineRate + bps / 100) * 100) / 100,
+        files: [], total_before_monthly: 0, total_after_monthly: 0,
+        total_delta_monthly: 0, total_delta_annual: 0,
+      });
+
+      const q = supabase
         .from('purchase_files')
-        .select('id, address, purchase_price, max_approved_budget, lender, kanban_position, finance_status');
-      if (fid) q = q.eq('id', fid);
+        .select('id, address, purchase_price, max_approved_budget, lender, kanban_position, finance_status')
+        .in('id', accessibleIds);
       const { data: files, error } = await q;
       if (error) return json({ error: error.message }, 500);
 

@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { createCorsHeaders, createClearSessionCookie } from "../_shared/auth.ts"
+import { createCorsHeaders, createClearFinanceSessionCookie } from "../_shared/auth.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-          'Set-Cookie': createClearSessionCookie(),
+          'Set-Cookie': createClearFinanceSessionCookie(),
         }
       }
     )
@@ -67,7 +67,7 @@ Deno.serve(async (req) => {
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-          'Set-Cookie': createClearSessionCookie(),
+          'Set-Cookie': createClearFinanceSessionCookie(),
         }
       }
     )

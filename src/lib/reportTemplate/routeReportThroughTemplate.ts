@@ -28,7 +28,13 @@ function candidateAdapters(reportType?: string | null): ReportTemplateAdapter[] 
 
 export async function routeReportThroughTemplate(
   reportId: string,
-  opts?: { agencyId?: string | null; userId?: string | null; brand?: any; reportType?: string | null },
+  opts?: {
+    agencyId?: string | null;
+    userId?: string | null;
+    brand?: any;
+    reportType?: string | null;
+    allowedReportTypes?: readonly string[];
+  },
 ): Promise<TemplateBuilderRouteResult | null> {
   try {
     for (const adapter of candidateAdapters(opts?.reportType)) {
@@ -36,6 +42,7 @@ export async function routeReportThroughTemplate(
 
       const routing = await adapter.resolveRoutingContext({ reportId });
       if (!routing?.reportType) continue;
+      if (opts?.allowedReportTypes && !opts.allowedReportTypes.includes(routing.reportType.toLowerCase())) continue;
 
       const resolved = await resolveReportTemplate({
         reportType: routing.reportType,
@@ -92,6 +99,3 @@ export async function routeReportThroughTemplate(
     return null;
   }
 }
-
-/** Back-compat alias — the previous compass-only entry point. */
-export const tryRouteThroughTemplateBuilder = routeReportThroughTemplate;

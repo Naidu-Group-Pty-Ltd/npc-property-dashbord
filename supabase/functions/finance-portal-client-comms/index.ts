@@ -10,13 +10,18 @@
  *   - inbox_list:  {} → cross-client unread summary for the partner
  */
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
+import { canAccessFinanceClient } from '../_shared/financePortalObjectAuthz.ts';
 import { getEffectiveGhlCredentials } from '../_shared/ghl-account.ts';
 import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+// Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
+// echo the request Origin (never `*`) with `Allow-Credentials: true`.
+let corsHeaders: Record<string, string> = {
+  ...__createCorsHeaders(null),
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 function json(body: unknown, status = 200) {
@@ -35,7 +40,43 @@ function trackingPixelUrl(token: string): string {
   return `https://${projectRef}.supabase.co/functions/v1/finance-email-track-pixel?t=${token}`;
 }
 
+async function authorizeClientMessages(
+  supabase: any,
+  partner: any,
+  clientId: string,
+  action: 'view' | 'edit',
+) {
+  const { data: assignment, error } = await supabase
+    .from('finance_portal_client_assignments')
+    .select('permissions')
+    .eq('finance_user_id', partner.id)
+    .eq('client_id', clientId)
+    .maybeSingle();
+
+  if (error) return json({ error: 'assignment_lookup_failed' }, 500);
+  if (!assignment) return json({ error: 'client_access_denied' }, 403);
+  if (!hasFinancePortalPermission(partner.global_permissions, assignment.permissions, 'messages', action, true)) {
+    return json({ error: 'messages_permission_denied' }, 403);
+  }
+  return null;
+}
+
+async function validatePurchaseFileScope(supabase: any, purchaseFileId: string | undefined, clientId: string) {
+  if (!purchaseFileId) return null;
+  const { data: purchaseFile, error } = await supabase
+    .from('purchase_files')
+    .select('client_id')
+    .eq('id', purchaseFileId)
+    .maybeSingle();
+  if (error) return json({ error: 'purchase_file_lookup_failed' }, 500);
+  if (!purchaseFile || purchaseFile.client_id !== clientId) {
+    return json({ error: 'purchase_file_access_denied' }, 403);
+  }
+  return null;
+}
+
 Deno.serve(async (req) => {
+  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
@@ -64,9 +105,12 @@ Deno.serve(async (req) => {
   }
 });
 
-async function listInbox(supabase: any, _partner: any, body: any) {
+async function listInbox(supabase: any, partner: any, body: any) {
   const clientId = body.client_id;
   if (!clientId) return json({ error: 'client_id_required' }, 400);
+  const denied = await authorizeClientMessages(supabase, partner, clientId, 'view')
+    || await validatePurchaseFileScope(supabase, body.purchase_file_id, clientId);
+  if (denied) return denied;
   const limit = Math.min(body.limit ?? 100, 300);
   const channels = Array.isArray(body.channels) ? body.channels : null;
 
@@ -166,6 +210,9 @@ async function sendMessage(supabase: any, partner: any, body: any) {
   const { client_id, purchase_file_id, channel, body: text, subject, template_id } = body;
   if (!client_id || !channel || !text) return json({ error: 'missing_required' }, 400);
   if (!['sms','whatsapp','email','portal'].includes(channel)) return json({ error: 'invalid_channel' }, 400);
+  const denied = await authorizeClientMessages(supabase, partner, client_id, 'edit')
+    || await validatePurchaseFileScope(supabase, purchase_file_id, client_id);
+  if (denied) return denied;
 
   // Lookup client recipient info
   const { data: client } = await supabase
@@ -349,13 +396,20 @@ async function translate(supabase: any, partner: any, body: any) {
   return json({ cached: false, translated_text: translated, target_lang, model });
 }
 
-async function markRead(supabase: any, _partner: any, body: any) {
+async function markRead(supabase: any, partner: any, body: any) {
   const { kind, id } = body;
   if (!kind || !id) return json({ error: 'missing_required' }, 400);
+  if (!['portal', 'outbound'].includes(kind)) return json({ error: 'invalid_kind' }, 400);
+  const table = kind === 'portal' ? 'client_portal_messages' : 'finance_outbound_messages';
+  const { data: message, error } = await supabase.from(table).select('client_id').eq('id', id).maybeSingle();
+  if (error) return json({ error: 'message_lookup_failed' }, 500);
+  if (!message) return json({ error: 'message_not_found' }, 404);
+  const denied = await authorizeClientMessages(supabase, partner, message.client_id, 'edit');
+  if (denied) return denied;
   if (kind === 'portal') {
-    await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id);
+    await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id).eq('client_id', message.client_id);
   } else if (kind === 'outbound') {
-    await supabase.from('finance_outbound_messages').update({ read_at: new Date().toISOString(), status: 'read' }).eq('id', id);
+    await supabase.from('finance_outbound_messages').update({ read_at: new Date().toISOString(), status: 'read' }).eq('id', id).eq('client_id', message.client_id);
   }
   return json({ ok: true });
 }
@@ -370,10 +424,9 @@ async function crossClientInbox(supabase: any, partner: any) {
     .eq('finance_user_id', partner.id);
   if (assignmentError) return json({ error: assignmentError.message }, 500);
 
-  const allowedAssignments = (assignments ?? []).filter((a: any) => {
-    const msgPerm = a.permissions?.messages;
-    return !(msgPerm && msgPerm.view === false);
-  });
+  const allowedAssignments = (assignments ?? []).filter((a: any) =>
+    hasFinancePortalPermission(partner.global_permissions, a.permissions, 'messages', 'view', true)
+  );
   const clientIds = [...new Set(allowedAssignments.map((a: any) => a.client_id).filter(Boolean))];
   if (clientIds.length === 0) {
     return json({
@@ -387,10 +440,23 @@ async function crossClientInbox(supabase: any, partner: any) {
     });
   }
 
-  const [clientsRes, portalRes, financeThreadRes, threadRes, outboundRes, ghlConvRes, notesRes, activityRes] = await Promise.all([
+  const noteClientIds = allowedAssignments
+    .filter((a: any) => hasFinancePortalPermission(partner.global_permissions, a.permissions, 'notes', 'view'))
+    .map((a: any) => a.client_id);
+  const contactClientIds = allowedAssignments
+    .filter((a: any) => hasFinancePortalPermission(partner.global_permissions, a.permissions, 'contacts', 'view'))
+    .map((a: any) => a.client_id);
+  const emptyResult = Promise.resolve({ data: [], error: null });
+
+  const [clientsRes, contactsRes, portalRes, financeThreadRes, threadRes, outboundRes, ghlConvRes, notesRes, activityRes] = await Promise.all([
     supabase.from('clients')
-      .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, secondary_first_name, secondary_surname, secondary_email, secondary_mobile, last_note_at, finance_contact_id')
+      .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, last_note_at, finance_contact_id')
       .in('id', clientIds),
+    contactClientIds.length > 0
+      ? supabase.from('clients')
+        .select('id, secondary_first_name, secondary_surname, secondary_email, secondary_mobile')
+        .in('id', contactClientIds)
+      : emptyResult,
     supabase.from('client_portal_messages')
       .select('id, client_id, created_at, message, sender_type, sender_name, is_read, is_internal')
       .in('client_id', clientIds)
@@ -416,20 +482,21 @@ async function crossClientInbox(supabase: any, partner: any) {
       .in('client_id', clientIds)
       .order('last_message_date', { ascending: false, nullsFirst: false })
       .limit(1000),
-    supabase.from('client_notes')
+    noteClientIds.length > 0 ? supabase.from('client_notes')
       .select('id, client_id, note_type, content, visibility, source_surface, source_actor_type, source_actor_name, created_at, updated_at')
-      .in('client_id', clientIds)
+      .in('client_id', noteClientIds)
       .in('visibility', ['shared', 'finance_only'])
       .order('created_at', { ascending: false })
-      .limit(500),
-    supabase.from('client_activities')
+      .limit(500) : emptyResult,
+    noteClientIds.length > 0 ? supabase.from('client_activities')
       .select('id, client_id, activity_type, title, description, source_surface, source_actor_type, source_actor_name, created_at')
-      .in('client_id', clientIds)
+      .in('client_id', noteClientIds)
       .order('created_at', { ascending: false })
-      .limit(500),
+      .limit(500) : emptyResult,
   ]);
 
-  if (clientsRes.error) return json({ error: clientsRes.error.message }, 500);
+  const clientError = clientsRes.error || contactsRes.error;
+  if (clientError) return json({ error: clientError.message }, 500);
 
   const sourceErrors = [
     ['client_portal_messages', portalRes.error],
@@ -442,9 +509,11 @@ async function crossClientInbox(supabase: any, partner: any) {
   ].filter(([, err]: any[]) => !!err).map(([source, err]: any[]) => ({ source, message: err.message }));
 
   const byClient: Record<string, any> = {};
+  const contactsByClient = new Map((contactsRes.data ?? []).map((contact: any) => [contact.id, contact]));
   for (const c of clientsRes.data ?? []) {
+    const contact: any = contactsByClient.get(c.id);
     const primary = [c.primary_first_name, c.primary_surname].filter(Boolean).join(' ').trim();
-    const secondary = [c.secondary_first_name, c.secondary_surname].filter(Boolean).join(' ').trim();
+    const secondary = [contact?.secondary_first_name, contact?.secondary_surname].filter(Boolean).join(' ').trim();
     byClient[c.id] = {
       id: `client:${c.id}`,
       thread_key: `client:${c.id}`,
@@ -453,9 +522,9 @@ async function crossClientInbox(supabase: any, partner: any) {
       name: primary || 'Unknown client',
       secondary_name: secondary || null,
       email: c.primary_email || '',
-      secondary_email: c.secondary_email || '',
+      secondary_email: contact?.secondary_email || '',
       phone: c.primary_mobile || '',
-      secondary_phone: c.secondary_mobile || '',
+      secondary_phone: contact?.secondary_mobile || '',
       assigned_finance_partner: partner.full_name || partner.email || null,
       assigned_finance_partner_email: partner.email || null,
       sources: [] as string[],

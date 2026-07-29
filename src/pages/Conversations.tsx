@@ -916,7 +916,7 @@ export default function Conversations() {
               variant="ghost"
               size="sm"
               aria-label="Back to all conversations"
-              className="h-10 w-10 shrink-0 rounded-full p-0 text-foreground dark:text-foreground hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+              className="h-10 w-10 shrink-0 rounded-full p-0 text-foreground dark:text-foreground hover:bg-white/10 hover:text-white focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               onClick={handleBack}
             >
               <ArrowLeft className="h-4 w-4" />
@@ -953,7 +953,7 @@ export default function Conversations() {
                 size="sm"
                 disabled={isExportingHistory}
                 className={cn(
-                  "h-10 rounded-full px-4 font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:translate-y-0 disabled:cursor-not-allowed",
+                  "h-10 rounded-full px-4 font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:translate-y-0 disabled:cursor-not-allowed",
                   isExportingHistory
                     ? "border-brand-200/45 bg-brand-500/15 text-brand-50 shadow-brand-950/30 disabled:opacity-100"
                     : "border-brand-200/25 bg-background/75 dark:bg-background/75 text-foreground dark:text-foreground hover:border-brand-200/65 hover:bg-brand-300/10 hover:text-brand-50 hover:shadow-[0_0_30px_rgba(245,158,11,0.18)] disabled:opacity-60",
@@ -997,7 +997,7 @@ export default function Conversations() {
             variant="outline"
             size="sm"
             className={cn(
-              "group h-10 rounded-full px-4 font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:translate-y-0 disabled:cursor-not-allowed",
+              "group h-10 rounded-full px-4 font-semibold shadow-[inset_0_1px_0_rgba(255,255,255,0.08)] transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:translate-y-0 disabled:cursor-not-allowed",
               isSyncing || loadingConversations
                 ? "border-brand-200/45 bg-brand-500/15 text-brand-50 shadow-[0_0_28px_rgba(245,158,11,0.16)] disabled:opacity-100"
                 : "border-success/25 bg-success/30 text-success-foreground shadow-[0_0_24px_rgba(16,185,129,0.08)] hover:border-brand-200/55 hover:bg-brand-300/10 hover:text-brand-50 hover:shadow-[0_0_30px_rgba(245,158,11,0.16)] disabled:opacity-65",
@@ -1259,7 +1259,7 @@ export default function Conversations() {
                   aria-label="Search conversations by contact or message"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="h-11 rounded-2xl border-brand-100/10 bg-[linear-gradient(135deg,rgba(0,0,0,0.62),rgba(39,39,42,0.38))] pl-11 pr-4 text-sm font-medium text-foreground dark:text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.055),inset_0_-10px_22px_rgba(0,0,0,0.20)] outline-none transition-all duration-200 placeholder:font-normal placeholder:text-muted-foreground dark:placeholder:text-muted-foreground hover:border-brand-100/24 hover:bg-black/65 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-300/25 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                  className="h-11 rounded-2xl border-brand-100/10 bg-[linear-gradient(135deg,rgba(0,0,0,0.62),rgba(39,39,42,0.38))] pl-11 pr-4 text-sm font-medium text-foreground dark:text-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.055),inset_0_-10px_22px_rgba(0,0,0,0.20)] outline-none transition-all duration-200 placeholder:font-normal placeholder:text-muted-foreground dark:placeholder:text-muted-foreground hover:border-brand-100/24 hover:bg-black/65 focus-visible:border-brand-300/70 focus-visible:ring-2 focus-visible:ring-brand-300/25 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                 />
               </div>
               <div className="flex flex-wrap gap-1.5 rounded-2xl border border-border dark:border-white/10 bg-background/35 dark:bg-black/35 p-1.5 shadow-inner shadow-sm dark:shadow-black/30">
@@ -1269,7 +1269,7 @@ export default function Conversations() {
                     variant={channelFilter === ch ? "default" : "outline"}
                     size="sm"
                     className={cn(
-                      "min-h-8 flex-1 basis-[calc(50%-0.375rem)] rounded-xl px-3 text-xs font-semibold tracking-wide transition-all duration-200 sm:basis-auto sm:flex-none focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950",
+                      "min-h-8 flex-1 basis-[calc(50%-0.375rem)] rounded-xl px-3 text-xs font-semibold tracking-wide transition-all duration-200 sm:basis-auto sm:flex-none focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                       channelFilter === ch
                         ? "border border-brand-200/60 bg-gradient-to-b from-brand-300 to-brand-500 text-black shadow-[0_0_24px_rgba(245,158,11,0.25),inset_0_1px_0_rgba(255,255,255,0.45)] hover:from-brand-200 hover:to-brand-400"
                         : "border border-transparent bg-card/45 dark:bg-background/45 text-muted-foreground/85 dark:text-foreground/85 hover:border-brand-300/35 hover:bg-brand-300/10 hover:text-brand-100",
@@ -1390,7 +1390,7 @@ export default function Conversations() {
                       <button
                         key={conv.id}
                         className={cn(
-                          "group relative flex min-h-[5.6rem] w-full cursor-pointer items-center gap-4 overflow-hidden rounded-[1.55rem] border border-border bg-card/55 px-4 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.055),0_14px_30px_rgba(0,0,0,0.14)] outline-none transition-all duration-200 before:absolute before:inset-y-3 before:left-0 before:w-1 before:rounded-r-full before:bg-primary before:opacity-0 before:transition-opacity after:absolute after:inset-x-6 after:-bottom-[6px] after:h-px after:bg-gradient-to-r after:from-transparent after:via-white/[0.08] after:to-transparent last:after:hidden focus-visible:border-primary/65 focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 hover:-translate-y-0.5 hover:border-border hover:bg-muted/70 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_18px_38px_rgba(0,0,0,0.28)]",
+                          "group relative flex min-h-[5.6rem] w-full cursor-pointer items-center gap-4 overflow-hidden rounded-[1.55rem] border border-border bg-card/55 px-4 py-4 text-left shadow-[inset_0_1px_0_rgba(255,255,255,0.055),0_14px_30px_rgba(0,0,0,0.14)] outline-none transition-all duration-200 before:absolute before:inset-y-3 before:left-0 before:w-1 before:rounded-r-full before:bg-primary before:opacity-0 before:transition-opacity after:absolute after:inset-x-6 after:-bottom-[6px] after:h-px after:bg-gradient-to-r after:from-transparent after:via-white/[0.08] after:to-transparent last:after:hidden focus-visible:border-primary/65 focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background hover:-translate-y-0.5 hover:border-border hover:bg-muted/70 hover:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_18px_38px_rgba(0,0,0,0.28)]",
                           isActive
                             ? "border-primary/65 bg-primary/12 shadow-[inset_4px_0_0_hsl(var(--primary)),0_0_0_1px_hsl(var(--primary)/0.12),0_20px_42px_hsl(var(--primary)/0.13)] before:opacity-100"
                             : "",
@@ -1470,7 +1470,7 @@ export default function Conversations() {
                                 "min-w-0 truncate text-[0.8rem] leading-5 transition-colors",
                                 conv.unread_count > 0
                                   ? "font-medium text-foreground dark:text-foreground"
-                                  : "text-muted-foreground/85 dark:text-muted-foreground/85 group-hover:text-zinc-200/90",
+                                  : "text-muted-foreground/85 dark:text-muted-foreground/85 group-hover:text-foreground/90",
                               )}
                               title={
                                 conv.last_message_body || "No messages yet"
@@ -1856,7 +1856,7 @@ export default function Conversations() {
                         variant="outline"
                         size="sm"
                         aria-label="Choose reply channel"
-                        className="min-h-9 gap-1.5 rounded-full border-brand-300/20 bg-background/35 dark:bg-black/35 px-2.5 text-xs text-brand-100 transition-all hover:border-brand-200/45 hover:bg-brand-400/10 hover:shadow-[0_0_18px_rgba(245,158,11,0.14)] focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                        className="min-h-9 gap-1.5 rounded-full border-brand-300/20 bg-background/35 dark:bg-black/35 px-2.5 text-xs text-brand-100 transition-all hover:border-brand-200/45 hover:bg-brand-400/10 hover:shadow-[0_0_18px_rgba(245,158,11,0.14)] focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                       >
                         {(() => {
                           const I = channelIcons[replyChannel] || MessageSquare;
@@ -1910,7 +1910,7 @@ export default function Conversations() {
                       >
                         <SelectTrigger
                           aria-label="Select email reply mailbox"
-                          className="h-9 min-w-0 flex-1 rounded-full border-brand-100/15 bg-background/35 dark:bg-black/35 text-xs text-foreground dark:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                          className="h-9 min-w-0 flex-1 rounded-full border-brand-100/15 bg-background/35 dark:bg-black/35 text-xs text-foreground dark:text-foreground focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                         >
                           <SelectValue />
                         </SelectTrigger>

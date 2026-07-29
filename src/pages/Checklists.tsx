@@ -22,10 +22,10 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 
 const ChecklistLoadingState = ({ message }: { message: string }) => (
-  <Card className="overflow-hidden border border-brand-500/15 bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.12),transparent_34%),linear-gradient(180deg,rgba(9,9,11,0.96),rgba(3,3,3,0.96))] shadow-inner shadow-brand-950/20">
+  <Card className="overflow-hidden border-brand/20 bg-gradient-to-b from-brand/10 via-card to-card" role="status" aria-live="polite">
     <CardContent className="py-10 text-center">
-      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-brand-300/25 bg-brand-400/10 text-brand-200 shadow-[0_18px_45px_rgba(245,158,11,0.14)]">
-        <Loader2 className="h-7 w-7 animate-spin" />
+      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-brand/25 bg-brand/10 text-brand-700 dark:text-brand">
+        <Loader2 className="h-7 w-7 animate-spin motion-reduce:animate-none" aria-hidden="true" />
       </div>
       <p className="text-sm font-semibold text-foreground dark:text-foreground">{message}</p>
       <p className="mt-1 text-xs text-muted-foreground dark:text-muted-foreground">Preparing the workflow workspace</p>
@@ -231,7 +231,7 @@ export default function Checklists() {
     return (
       <Card
         key={instance.id}
-        className={`group relative cursor-pointer overflow-hidden rounded-2xl border bg-[linear-gradient(145deg,rgba(24,24,27,0.98),rgba(9,9,11,0.98)_46%,rgba(0,0,0,0.98))] shadow-lg shadow-sm dark:shadow-black/30 outline-none transition-all duration-300 hover:-translate-y-1 focus-visible:-translate-y-1 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-black motion-reduce:transition-none ${isSelected ? 'border-cyan-300/80 shadow-[0_0_0_1px_rgba(103,232,249,0.28),0_24px_58px_rgba(34,211,238,0.16)] bg-[linear-gradient(145deg,rgba(22,78,99,0.28),rgba(9,9,11,0.98)_46%,rgba(0,0,0,0.98))]' : cardInteractionClass}`}
+        className={`group relative cursor-pointer overflow-hidden rounded-2xl border bg-card shadow-sm outline-none transition-all duration-300 hover:-translate-y-1 focus-visible:-translate-y-1 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none motion-reduce:hover:translate-y-0 ${isSelected ? 'border-primary bg-gradient-to-br from-primary/10 via-card to-card ring-1 ring-primary/30' : cardInteractionClass}`}
         onClick={() => setSelectedInstance(instance)}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
@@ -253,7 +253,7 @@ export default function Checklists() {
                   checked={isSelected}
                   onCheckedChange={() => toggleChecklistSelection(instance.id)}
                   aria-label={`Select ${actionLabel}`}
-                  className="mt-2 border-brand-300/45 bg-black/40 data-[state=checked]:border-cyan-300 data-[state=checked]:bg-cyan-400 data-[state=checked]:text-black"
+                  className="mt-2 border-border data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
                 />}
                 <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-brand-300/20 bg-background/35 dark:bg-black/35 text-xl shadow-inner shadow-brand-950/20">{instance.icon}</span>
               </div>
@@ -298,16 +298,16 @@ export default function Checklists() {
     return (
       <div className="flex flex-col gap-3 rounded-2xl border border-brand-300/15 bg-[linear-gradient(135deg,rgba(14,116,144,0.18),rgba(0,0,0,0.62)_42%,rgba(0,0,0,0.78))] p-3 shadow-[0_18px_45px_rgba(0,0,0,0.24)] sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3">
-          <label className="flex cursor-pointer items-center gap-2 rounded-full border border-border/45 bg-black/30 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground transition-colors hover:border-cyan-300/45">
+          <label className="flex cursor-pointer items-center gap-2 rounded-full border border-border bg-muted/50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground transition-colors hover:border-primary/45">
             <Checkbox
               checked={allVisibleSelected ? true : someVisibleSelected ? 'indeterminate' : false}
               onCheckedChange={handleSelectAllVisible}
               aria-label="Select all visible checklist cards"
-              className="border-brand-300/45 bg-black/40 data-[state=checked]:border-cyan-300 data-[state=checked]:bg-cyan-400 data-[state=checked]:text-black"
+              className="border-border data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
             />
             <span>{allVisibleSelected ? 'Clear selection' : 'Select all'}</span>
           </label>
-          <span className="rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-2 text-xs font-bold text-cyan-100">
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-2 text-xs font-bold text-foreground">
             {selectedCount} {selectedCount === 1 ? 'selected' : 'selected'}
           </span>
         </div>
@@ -478,7 +478,7 @@ export default function Checklists() {
                     </div>
                   </div>
                   <DialogFooter className="flex-col gap-2 sm:flex-row">
-                    <Button variant="ghost" className="w-full text-muted-foreground dark:text-foreground transition-all duration-200 sm:w-auto hover:bg-white/5 hover:text-zinc-50 focus-visible:ring-2 focus-visible:ring-brand-300/55 motion-reduce:transition-none" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+                    <Button variant="ghost" className="w-full text-muted-foreground dark:text-foreground transition-all duration-200 sm:w-auto hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none" onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
                     <Button className="w-full bg-gradient-to-r from-brand-500 to-brand-400 font-semibold text-black shadow-[0_12px_28px_rgba(245,158,11,0.24)] transition-all duration-200 hover:-translate-y-0.5 hover:from-brand-400 hover:to-brand-300 hover:shadow-[0_16px_34px_rgba(245,158,11,0.3)] focus-visible:ring-2 focus-visible:ring-brand-300/70 motion-reduce:transition-none sm:w-auto" onClick={handleCreateTemplate} disabled={!newName.trim()}>Create Template</Button>
                   </DialogFooter>
                 </DialogContent>
