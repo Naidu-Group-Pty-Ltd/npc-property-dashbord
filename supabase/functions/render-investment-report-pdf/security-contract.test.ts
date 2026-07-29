@@ -20,4 +20,11 @@ describe('render-investment-report-pdf authorization contract', () => {
     expect(denial).toBeGreaterThan(clientOwnershipCheck);
     expect(contentLookup).toBeGreaterThan(denial);
   });
+
+  it('escapes quotes before interpolating metadata into HTML attributes', () => {
+    expect(functionSource).toContain('.replace(/"/g, "&quot;")');
+    expect(functionSource).toContain(".replace(/'/g, \"&#39;\")");
+    expect(functionSource).toContain('content="${esc(docAuthor)}"');
+    expect(functionSource).toContain('content="${esc(docKeywords)}"');
+  });
 });
