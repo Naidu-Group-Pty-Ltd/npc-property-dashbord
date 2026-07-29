@@ -30,6 +30,14 @@ describe('render-investment-report-pdf SVG escaping contract', () => {
   });
 });
 
+describe('render-investment-report-pdf availability contract', () => {
+  it('does not let report-controlled network activity hold PDF rendering open', () => {
+    expect(functionSource).toContain('delay: 0');
+    expect(functionSource).toContain('puppeteerWaitForMethod: "WaitForNavigation"');
+    expect(functionSource).not.toContain('WaitForNetworkIdle0');
+  });
+});
+
 describe('render-investment-report-pdf editorial shortcode escaping contract', () => {
   it.each(['pullquote', 'sidenote'])('escapes %s bodies before inserting them into HTML', (name) => {
     expect(functionSource).toMatch(

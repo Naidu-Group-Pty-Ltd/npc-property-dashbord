@@ -5304,9 +5304,10 @@ async function callApi2Pdf(html: string, fileName: string): Promise<string> {
         marginBottom: 0,
         marginLeft: 0,
         marginRight: 0,
-        // Fonts (Google) + optional GPT-image hero images need a moment to settle.
-        delay: 2500,
-        puppeteerWaitForMethod: "WaitForNetworkIdle0",
+        // Do not wait for network-idle: report HTML can contain remote resources,
+        // so an idle wait can be held open until the Edge Function times out.
+        delay: 0,
+        puppeteerWaitForMethod: "WaitForNavigation",
         puppeteerWaitForValue: "load",
       },
 
