@@ -3,7 +3,7 @@
 // from published, source-cited market updates. Calls the central assignment-based LLM router for the narrative, and persists one row per (period, period_start) in market_digests.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { consumeRateLimit, verifyRequiredCronSecret, securityJsonError } from "../_shared/requestSecurity.ts";
+import { consumeRateLimit, verifyRequiredCronSecret, verifySignedInternal, securityJsonError } from "../_shared/requestSecurity.ts";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { requireModulePermission } from '../_shared/authz.ts';
@@ -119,6 +119,9 @@ Deno.serve(async (req) => {
   const cronSecret = Deno.env.get("MARKET_INGESTION_CRON_SECRET");
   const cronHeader = req.headers.get("x-cron-secret");
   const cronOk = verifyRequiredCronSecret(cronSecret, cronHeader);
+  const rawBody = await req.text();
+  let payload: any = {};
+  try { payload = JSON.parse(rawBody); } catch {}
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -126,19 +129,17 @@ Deno.serve(async (req) => {
   );
 
   let interactiveUserId: string | null = null;
-  if (!cronOk) {
-    let bodyPreview: any = {};
-    try { bodyPreview = await req.clone().json(); } catch {}
-    const auth = await verifyAuth(sb, req.headers, bodyPreview);
+  const signedCronOk = !cronOk && (await verifySignedInternal(sb, req, rawBody, ['pg_cron'])).ok;
+  if (!cronOk && !signedCronOk) {
+    const auth = await verifyAuth(sb, req.headers, payload);
     if (auth.error || !auth.userId) return securityJsonError(401, "unauthorized");
     const permission = await requireModulePermission(sb, { userId: auth.userId, authMethod: auth.authMethod }, 'market_updates', 'can_edit');
     if (!permission.ok) return securityJsonError(403, 'market_digest_admin_required');
     interactiveUserId = auth.userId;
   }
 
-  const payload = await req.json().catch(() => ({}));
   const period: Period = VALID_PERIODS.includes(payload?.period) ? payload.period : "24h";
-  const scheduledReference = cronOk && typeof payload?.reference_at === 'string' ? new Date(payload.reference_at) : null;
+  const scheduledReference = (cronOk || signedCronOk) && typeof payload?.reference_at === 'string' ? new Date(payload.reference_at) : null;
   const reference = scheduledReference && Number.isFinite(scheduledReference.getTime()) ? scheduledReference : new Date();
   const { start, end, key:periodKey } = canonicalPeriodWindow(period, reference);
   logMarketEvent('info',{function:'market-updates-digest',stage:'digest',correlation_id:correlationId,status:'started',period,period_key:periodKey});
