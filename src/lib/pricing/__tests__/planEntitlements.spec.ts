@@ -100,9 +100,7 @@ describe("module inclusion by tier", () => {
     // alternative, not the default.
     //
     // So a workspace on Launch has paid for compliance, and a gate that denied
-    // it would withhold a module they are being billed for. Its empty tier
-    // list means "not in the sheet's tier matrix", which is a statement about
-    // bundling, not about entitlement.
+    // it would withhold a module they are being billed for.
     for (const plan of ["launch", "growth", "scale"]) {
       expect(planIncludesModule(plan, "aml-ctf")).toBe(true);
     }
@@ -133,12 +131,7 @@ describe("GST is contained in the price, not added to it", () => {
   });
 });
 
-describe("a module no tier includes is an add-on, not a denial", () => {
-  // The distinction had no teeth until tier allowances shipped. Before that no
-  // tenant carried a plan_id, so planSlug was always null and every gate
-  // returned true. The first workspace put on Launch would have lost
-  // Integrations — and with it Report QA's agent-model management — on every
-  // plan including Scale, with nothing on screen to explain why.
+describe("a module no tier includes requires a separate add-on entitlement", () => {
   const ADD_ONS = [
     "intelligence-hub",
     "email-copilot",
@@ -146,9 +139,6 @@ describe("a module no tier includes is an add-on, not a denial", () => {
     "lenders",
     "integrations",
     "aurixa-agent",
-    // Listed here for the same reason as the rest, and the most consequential
-    // of them: every tier's headline price already includes AML/CTF.
-    "aml-ctf",
   ];
 
   it("lists exactly the modules that belong to no tier", () => {
@@ -159,10 +149,10 @@ describe("a module no tier includes is an add-on, not a denial", () => {
     expect(empty).toEqual([...ADD_ONS].sort());
   });
 
-  it("does not deny them on any plan", () => {
+  it("does not treat them as included in a known plan", () => {
     for (const slug of ADD_ONS) {
       for (const plan of ["launch", "growth", "scale"]) {
-        expect(planIncludesModule(plan, slug)).toBe(true);
+        expect(planIncludesModule(plan, slug)).toBe(false);
       }
     }
   });
