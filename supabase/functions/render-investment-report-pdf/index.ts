@@ -2357,17 +2357,20 @@ async function injectTableCharts(html: string): Promise<string> {
   const tables = Array.from(html.matchAll(/<table[\s\S]*?<\/table>/gi));
   if (tables.length === 0) return html;
 
-  // Pre-compute the nearest preceding heading (h2 preferred, h3 fallback) for
-  // each table so chart selection can be section-aware.
-  const sectionTitles: string[] = tables.map((m) => {
-    const upto = html.slice(0, m.index ?? 0);
-    // Find last h2 or h3 before this table
-    const h2 = [...upto.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)].pop();
-    const h3 = [...upto.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/gi)].pop();
-    // Prefer h3 if it appears AFTER the last h2 (more specific subsection).
-    const pick = (h3 && h2 && (h3.index ?? 0) > (h2.index ?? 0)) ? h3 : (h2 || h3);
-    return (pick?.[1] || "").replace(/<[^>]+>/g, "").trim();
-  });
+  // Scan headings once in document order so every table gets its nearest
+  // preceding h2/h3 without repeatedly copying and rescanning the HTML prefix.
+  const sectionTitles: string[] = [];
+  const headingPattern = /<h([23])[^>]*>([\s\S]*?)<\/h\1>/gi;
+  let heading = headingPattern.exec(html);
+  let sectionTitle = "";
+  for (const table of tables) {
+    const tableIndex = table.index ?? 0;
+    while (heading && (heading.index ?? 0) < tableIndex) {
+      sectionTitle = (heading[2] || "").replace(/<[^>]+>/g, "").trim();
+      heading = headingPattern.exec(html);
+    }
+    sectionTitles.push(sectionTitle);
+  }
 
   const replacements = new Array<string>(tables.length);
   let chartAttempts = 0;
