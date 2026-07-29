@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MODULE_TIERS,
+  MODULE_KEY_TO_PRICING_SLUG,
   SUB_MODULE_ENTITLEMENTS,
   enabledSubModules,
   isKnownPlan,
@@ -175,31 +176,26 @@ describe("a module no tier includes is an add-on, not a denial", () => {
   });
 });
 
-describe("which of the app's module keys the plan gate actually reaches", () => {
-  // useModulePermissions is called with the app's own module keys, which are
-  // snake_case and mostly do not match the price list's hyphenated slugs. So
-  // most gates are inert: planIncludesModule sees an unrecognised slug and
-  // returns true. That is recorded here rather than left to be discovered,
-  // because it is the difference between "gating is implemented" and "gating
-  // is implemented for one module".
-  const APP_MODULE_KEYS = [
-    "agreements", "automation", "calendar", "call_logs", "cash_flow", "charts",
-    "checklists", "client_tracker", "clients", "data_import", "deal_pipeline",
-    "game_plans", "generated_reports", "integrations", "listings",
-    "marketing_analytics", "monitoring", "overview", "portal_config",
-    "portfolio_reports", "quality_assurance", "reminders", "report_qa",
-    "reports", "settings", "sources", "templates", "white_label",
-  ];
-
-  it("reaches only the keys spelled the same way in the price list", () => {
-    const reached = APP_MODULE_KEYS.filter((k) => MODULE_TIERS[k] !== undefined).sort();
-    expect(reached).toEqual(["agreements", "integrations"]);
+describe("app permission keys reach their pricing entitlements", () => {
+  it("maps every differently-spelled app key to a priced module", () => {
+    for (const pricingSlug of Object.values(MODULE_KEY_TO_PRICING_SLUG)) {
+      expect(MODULE_TIERS[pricingSlug]).toBeDefined();
+    }
   });
 
-  it("means Agreements is the only module a plan can actually withhold", () => {
-    // integrations is an add-on and no longer denied, so after the fix exactly
-    // one app module changes behaviour when a workspace gets a plan.
-    const withheldOnLaunch = APP_MODULE_KEYS.filter((k) => !planIncludesModule("launch", k));
-    expect(withheldOnLaunch).toEqual(["agreements"]);
+  it("withholds tier-restricted modules when called with app keys", () => {
+    expect(planIncludesModule("launch", "deal_pipeline")).toBe(false);
+    expect(planIncludesModule("launch", "portfolio_reports")).toBe(false);
+    expect(planIncludesModule("growth", "portfolio_reports")).toBe(false);
+    expect(planIncludesModule("launch", "marketing_analytics")).toBe(false);
+    expect(planIncludesModule("growth", "marketing_analytics")).toBe(false);
+    expect(planIncludesModule("growth", "api_usage")).toBe(false);
+  });
+
+  it("preserves access once the mapped module is included", () => {
+    expect(planIncludesModule("growth", "deal_pipeline")).toBe(true);
+    expect(planIncludesModule("scale", "portfolio_reports")).toBe(true);
+    expect(planIncludesModule("scale", "marketing_analytics")).toBe(true);
+    expect(planIncludesModule("scale", "api_usage")).toBe(true);
   });
 });

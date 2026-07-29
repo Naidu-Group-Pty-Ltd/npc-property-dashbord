@@ -239,6 +239,16 @@ async function getModulePermissionContext(supabase: any, userId: string, moduleK
 const getTemplatePermissionContext = (supabase: any, userId: string) =>
   getModulePermissionContext(supabase, userId, 'templates');
 
+function applyReportTemplateReadScope(query: any, userId: string, isSuperadmin: boolean) {
+  if (isSuperadmin || userId === 'service_role') return query;
+
+  // There is currently no authoritative user-to-agency membership relation.
+  // Never trust a caller-supplied agency_id: ordinary users may see global
+  // templates and user-scoped templates that they own, while agency templates
+  // remain available only to the authoritative superadmin control plane.
+  return query.or(`scope.eq.global,and(scope.eq.user,owner_user_id.eq.${userId})`);
+}
+
 async function assertTemplatePermission(
   supabase: any,
   userId: string | null,
@@ -505,6 +515,10 @@ Deno.serve(async (req) => {
     const permissionError = await assertTemplatePermission(supabase, userId, authMethod, table, operation, corsHeaders);
     if (permissionError) return permissionError;
 
+    const reportTemplatePermissions = table === 'report_templates'
+      ? await getTemplatePermissionContext(supabase, userId!)
+      : null;
+
     // Recurrence keys are an idempotency boundary owned exclusively by trusted
     // generation flows. This broker uses service-role access, so never allow a
     // caller to reserve an occurrence or impersonate the scheduled runner.
@@ -534,6 +548,9 @@ Deno.serve(async (req) => {
       let query = supabase.from(table).select(select);
 
       if (isComparisonTemplate) query = query.eq('created_by', userId);
+      if (table === 'report_templates') {
+        query = applyReportTemplateReadScope(query, userId!, reportTemplatePermissions!.isSuperadmin);
+      }
       
       // Apply filters
       if (filters) {
@@ -568,11 +585,16 @@ Deno.serve(async (req) => {
 
     // Handle get operation
     if (operation === 'get' && recordId) {
-      const { data: record, error } = await supabase
+      let query = supabase
         .from(table)
         .select('*')
-        .eq('id', recordId)
-        .single();
+        .eq('id', recordId);
+
+      if (table === 'report_templates') {
+        query = applyReportTemplateReadScope(query, userId!, reportTemplatePermissions!.isSuperadmin);
+      }
+
+      const { data: record, error } = await query.single();
       
       if (error) {
         console.error(`[manage-templates] Get error:`, error);
