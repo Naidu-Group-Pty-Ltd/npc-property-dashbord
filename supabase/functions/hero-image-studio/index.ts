@@ -16,6 +16,7 @@ import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse,
 import { actorIsSuperadmin, requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePath, signStoragePaths } from "../_shared/storageSign.ts";
+import { validateReferenceImages } from "./referenceImages.ts";
 
 // investment-reports is private (STOR-005): resolve display URLs by signing each
 // row's storage_path. The signed URL is returned in the same public_url/
@@ -141,10 +142,10 @@ async function generateOne(opts: {
   const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
   try {
     const isGemini = opts.model.startsWith("google/");
-    const refs = (opts.referenceImages || []).slice(0, 4).map((r) => {
-      const url = r.startsWith("data:") ? r : `data:image/png;base64,${r}`;
-      return { type: "image_url", image_url: { url } };
-    });
+    const refs = (opts.referenceImages || []).map((url) => ({
+      type: "image_url",
+      image_url: { url },
+    }));
 
     const body: any = isGemini
       ? {
@@ -227,9 +228,12 @@ Deno.serve(async (req) => {
       const { w, h } = ASPECT_TO_SIZE[aspect];
       const variations = Math.min(Math.max(Number(body?.variations) || 1, 1), 4);
       const sourceReportId = body?.sourceReportId ? String(body.sourceReportId) : null;
-      const referenceImages: string[] = Array.isArray(body?.referenceImages)
-        ? body.referenceImages.map((r: any) => String(r)).filter(Boolean).slice(0, 4)
-        : [];
+      let referenceImages: string[];
+      try {
+        referenceImages = validateReferenceImages(body?.referenceImages);
+      } catch (error) {
+        return jsonErr(error instanceof Error ? error.message : "invalid reference images", corsHeaders);
+      }
 
       const results: any[] = [];
       const errors: string[] = [];
