@@ -68,6 +68,15 @@ export const ComputedFieldSchema = z.object({
 });
 export type ComputedField = z.infer<typeof ComputedFieldSchema>;
 
+// Token extensions were previously unknown keys and therefore stripped. Keep
+// that compatibility contract when an older template contains a placeholder or
+// differently formatted value for an extension, rather than rejecting the
+// complete template.
+const backwardsCompatibleTokenExtension = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(
+  (value) => (value === undefined || schema.safeParse(value).success ? value : undefined),
+  schema.optional(),
+);
+
 // ─── Reusable text styles (Section 3) ─────────────────────────────────────────
 export const ParagraphStyleSchema = z.object({
   id: z.string(),
@@ -123,12 +132,12 @@ export const TokensSchema = z.object({
   colors: z.record(z.string()).default({}),
   fonts: z.record(z.string()).default({}),
   spacing: z.record(z.number()).default({}),
-  radii: z.record(z.number()).optional(),
-  shadows: z.record(z.string()).optional(),
-  gradients: z.record(z.string()).optional(),
-  typeScale: z.record(z.number()).optional(),
-  brandKitId: z.string().uuid().optional(),
-  activeTheme: z.enum(['light','dark','print','custom']).optional(),
+  radii: backwardsCompatibleTokenExtension(z.record(z.number())),
+  shadows: backwardsCompatibleTokenExtension(z.record(z.string())),
+  gradients: backwardsCompatibleTokenExtension(z.record(z.string())),
+  typeScale: backwardsCompatibleTokenExtension(z.record(z.number())),
+  brandKitId: backwardsCompatibleTokenExtension(z.string().uuid()),
+  activeTheme: backwardsCompatibleTokenExtension(z.enum(['light','dark','print','custom'])),
   fontFaces: z.array(FontFaceSchema).optional(),
   computed: z.array(ComputedFieldSchema).optional(),
   // Section 3 — reusable text styles
