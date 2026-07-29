@@ -8,6 +8,7 @@
  * Auth: standard finance portal session token.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { hasFinancePortalPermission } from "../_shared/finance-portal-permissions.ts";
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
@@ -64,7 +65,7 @@ Deno.serve(async (req) => {
 
     const { data: portalUser } = await supabase
       .from('finance_portal_users')
-      .select('id, finance_contact_id, email, last_seen_at, is_active, revoked_at, session_expires_at')
+      .select('id, finance_contact_id, email, last_seen_at, is_active, revoked_at, session_expires_at, global_permissions')
       .eq('session_token', sessionToken)
       .maybeSingle();
 
@@ -149,28 +150,61 @@ Deno.serve(async (req) => {
         .select('client_id, purchase_file_id, permissions')
         .eq('finance_user_id', portalUserId);
 
-      const clientIds = Array.from(new Set((assignments || []).map((a: any) => a.client_id))).filter(Boolean);
-      const canView = (assignment: any, capability: 'documents' | 'messages') =>
-        assignment?.permissions?.[capability]?.view !== false;
-      const documentClientIds = new Set(
-        (assignments || []).filter((a: any) => canView(a, 'documents')).map((a: any) => a.client_id),
+      const purchaseFileAssignments = (assignments || []).filter((assignment: any) =>
+        hasFinancePortalPermission(
+          portalUser.global_permissions,
+          assignment.permissions,
+          'purchase_files',
+          'view',
+          true,
+        )
       );
-      const messageClientIds = Array.from(new Set(
-        (assignments || []).filter((a: any) => canView(a, 'messages')).map((a: any) => a.client_id),
-      )).filter(Boolean);
+      const clientIds = Array.from(new Set(purchaseFileAssignments
+        .filter((assignment: any) => !assignment.purchase_file_id)
+        .map((assignment: any) => assignment.client_id)))
+        .filter(Boolean);
+      const assignedPfIds = Array.from(new Set(purchaseFileAssignments
+        .map((assignment: any) => assignment.purchase_file_id)))
+        .filter(Boolean);
 
-      // Purchase files for those clients
-      const { data: pfs } = clientIds.length
-        ? await supabase
-            .from('purchase_files')
-            .select('id, title, client_id, finance_status, updated_at, created_at')
-            .in('client_id', clientIds)
-        : { data: [] as any[] };
+      // A null purchase_file_id grants client-wide access; otherwise the assignment
+      // is restricted to the explicitly linked purchase file.
+      const [{ data: clientPfs }, { data: assignedPfs }] = await Promise.all([
+        clientIds.length
+          ? supabase
+              .from('purchase_files')
+              .select('id, title, client_id, finance_status, updated_at, created_at')
+              .in('client_id', clientIds)
+          : Promise.resolve({ data: [] as any[] }),
+        assignedPfIds.length
+          ? supabase
+              .from('purchase_files')
+              .select('id, title, client_id, finance_status, updated_at, created_at')
+              .in('id', assignedPfIds)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+      const pfs = Array.from(new Map(
+        [...(clientPfs || []), ...(assignedPfs || [])].map((pf: any) => [pf.id, pf]),
+      ).values());
       const pfIds = (pfs || []).map((p: any) => p.id);
       const documentPfIds = (pfs || [])
         .filter((p: any) => documentClientIds.has(p.client_id))
         .map((p: any) => p.id);
       const pfById = new Map((pfs || []).map((p: any) => [p.id, p]));
+      const documentPfIds = pfs
+        .filter((pf: any) => purchaseFileAssignments.some((assignment: any) =>
+          assignment.client_id === pf.client_id
+          && (!assignment.purchase_file_id || assignment.purchase_file_id === pf.id)
+          && hasFinancePortalPermission(
+            portalUser.global_permissions,
+            assignment.permissions,
+            'documents',
+            'view',
+            true,
+          )
+        ))
+        .map((pf: any) => pf.id);
+      const documentPfIdSet = new Set(documentPfIds);
 
       const changed: Array<{ type: string; label: string; link?: string; at: string }> = [];
 
@@ -196,6 +230,7 @@ Deno.serve(async (req) => {
           .order('created_at', { ascending: false })
           .limit(30);
         for (const ev of events || []) {
+          if (ev.source === 'document' && !documentPfIdSet.has(ev.purchase_file_id)) continue;
           const pf: any = pfById.get(ev.purchase_file_id);
           const verb = String(ev.event_type || 'updated').replace(/_/g, ' ');
           const value = ev.to_value ? ` → ${String(ev.to_value).replace(/_/g, ' ')}` : '';
@@ -208,54 +243,57 @@ Deno.serve(async (req) => {
         }
       }
 
-      if (documentPfIds.length) {
-        // New documents uploaded on assigned PFs where documents.view is allowed
-        const { data: docs } = await supabase
-          .from('finance_portal_documents')
-          .select('id, original_filename, purchase_file_id, created_at')
-          .in('purchase_file_id', documentPfIds)
-          .is('deleted_at', null)
-          .or(`shared_with_finance_user_id.is.null,shared_with_finance_user_id.eq.${portalUserId}`)
-          .gt('created_at', sinceIso)
-          .order('created_at', { ascending: false })
-          .limit(20);
-        for (const d of docs || []) {
-          const pf: any = pfById.get(d.purchase_file_id);
-          changed.push({
-            type: 'document_uploaded',
-            label: `Document uploaded — ${d.original_filename || 'file'} (${pf?.title || ''})`,
-            link: `/finance/purchase-files/${d.purchase_file_id}`,
-            at: d.created_at,
-          });
-        }
-      }
-
-      // Inbound messages in this partner's threads where messages.view is allowed
-      if (messageClientIds.length) {
-        const { data: threads } = await supabase
-          .from('finance_portal_threads')
-          .select('id')
-          .eq('finance_user_id', portalUserId)
-          .in('client_id', messageClientIds);
-        const threadIds = (threads || []).map((thread: any) => thread.id);
-
-        if (threadIds.length) {
-          const { data: msgs } = await supabase
-            .from('finance_portal_messages')
-            .select('id, client_id, sender_type, created_at')
-            .in('thread_id', threadIds)
-            .neq('sender_type', 'partner')
+        if (documentPfIds.length) {
+          const { data: docs } = await supabase
+            .from('finance_portal_documents')
+            .select('id, original_filename, purchase_file_id, created_at')
+            .in('purchase_file_id', documentPfIds)
+            .is('deleted_at', null)
             .gt('created_at', sinceIso)
             .order('created_at', { ascending: false })
             .limit(20);
-          for (const m of msgs || []) {
+          for (const d of docs || []) {
+            const pf: any = pfById.get(d.purchase_file_id);
             changed.push({
-              type: 'message',
-              label: `New ${m.sender_type === 'client' ? 'client' : 'team'} message`,
-              link: `/finance/messages`,
-              at: m.created_at,
+              type: 'document_uploaded',
+              label: `Document uploaded — ${d.original_filename || 'file'} (${pf?.title || ''})`,
+              link: `/finance/purchase-files/${d.purchase_file_id}`,
+              at: d.created_at,
             });
           }
+        }
+      }
+
+      // Client-level messages cannot be safely attributed to a deal-scoped assignment.
+      const messageClientIds = Array.from(new Set((assignments || [])
+        .filter((assignment: any) =>
+          !assignment.purchase_file_id
+          && hasFinancePortalPermission(
+            portalUser.global_permissions,
+            assignment.permissions,
+            'messages',
+            'view',
+            true,
+          )
+        )
+        .map((assignment: any) => assignment.client_id)))
+        .filter(Boolean);
+      if (messageClientIds.length) {
+        const { data: msgs } = await supabase
+          .from('finance_portal_messages')
+          .select('id, client_id, sender_type, created_at')
+          .in('client_id', messageClientIds)
+          .neq('sender_type', 'finance_partner')
+          .gt('created_at', sinceIso)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        for (const m of msgs || []) {
+          changed.push({
+            type: 'message',
+            label: `New ${m.sender_type === 'client' ? 'client' : 'team'} message`,
+            link: `/finance/messages`,
+            at: m.created_at,
+          });
         }
       }
 
