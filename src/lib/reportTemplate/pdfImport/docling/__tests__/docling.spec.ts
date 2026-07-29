@@ -228,23 +228,31 @@ describe('docling adapter', () => {
     expect(img?.name).toContain('Line chart');
   });
 
-  it('bounds untrusted Docling metadata used for overlay names', () => {
-    const oversizedAltText = `  ${'description '.repeat(20)}  `;
+  it('bounds proximity caption matching while preserving explicit references', () => {
+    const captions = Array.from({ length: 300 }, (_, index) => ({
+      self_ref: `#/texts/${index}`,
+      label: 'caption' as const,
+      text: `Figure ${index}`,
+      prov: [{ page_no: 1, bbox: { l: 10, t: 100, r: 100, b: 110, coord_origin: 'TOPLEFT' as const } }],
+    }));
+    const pictures = Array.from({ length: 300 }, (_, index) => ({
+      prov: [{ page_no: 1, bbox: { l: 10, t: 112, r: 100, b: 150, coord_origin: 'TOPLEFT' as const } }],
+      ...(index === 299 ? { captions: [{ $ref: '#/texts/299' }] } : {}),
+    }));
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
-      pictures: [
-        {
-          prov: [{ page_no: 1, bbox: { l: 60, t: 250, r: 535, b: 400, coord_origin: 'TOPLEFT' } }],
-          annotations: [{ kind: 'description', text: oversizedAltText }],
-        } as DoclingDocument['pictures'] extends (infer U)[] ? U : never,
-      ],
+      texts: captions,
+      pictures,
     };
 
-    const plan = mapDoclingToPagePlan(doc, { importId: 'imp-bounded-name', mode: 'semantic' });
-    const image = plan.pages[0].overlays.find((overlay) => overlay.type === 'image');
+    const mapped = mapDoclingToRawBlocks(doc);
+    const mappedPictures = mapped.byPage[1].filter((block) => block.type === 'image');
+    const explicitlyReferencedCaption = mapped.byPage[1].find((block) => block.text === 'Figure 299');
 
-    expect(image?.name).toBe(oversizedAltText.trim().slice(0, 64));
-    expect(image?.name).toHaveLength(64);
+    expect(mappedPictures).toHaveLength(300);
+    expect(mappedPictures[298].meta?.groupId).toBeUndefined();
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBe(mappedPictures[299].meta?.groupId);
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBeTruthy();
   });
 
   it('Phase B: page headers/footers always lock and carry a master groupId', () => {
