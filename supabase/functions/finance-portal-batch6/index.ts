@@ -8,7 +8,7 @@
  *   #37  Self-service booking + finance partner availability windows
  *
  * Auth: finance partner via x-finance-session-token (mirrors finance-portal-client-tasks).
- * Cron auth: `reminders_run_due` accepts service-role/anon-key cron header — no partner token.
+ * Cron auth: `reminders_run_due` requires a dedicated cron secret — no partner token.
  *
  * Operations
  *  applicants_list         { purchase_file_id }
@@ -38,6 +38,7 @@ import {
   canAccessFinanceClient,
 } from '../_shared/financePortalObjectAuthz.ts';
 import { hasFinancePortalPermission, type FinancePortalPermissionAction } from '../_shared/finance-portal-permissions.ts';
+import { constantTimeEqual } from '../_shared/auth_v2.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
@@ -78,9 +79,11 @@ function pick(payload: any, allow: string[]) {
   return out;
 }
 function isCronCall(req: Request) {
-  const auth = req.headers.get('authorization') || '';
-  return auth.includes(Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '__nope__')
-    || auth.includes(Deno.env.get('SUPABASE_ANON_KEY') ?? '__nope__');
+  const configured = Deno.env.get('FINANCE_PORTAL_CRON_SECRET') ?? '';
+  const presented = req.headers.get('x-cron-secret') ?? '';
+  return configured.length >= 16
+    && presented.length === configured.length
+    && constantTimeEqual(configured, presented);
 }
 
 Deno.serve(async (req) => {
