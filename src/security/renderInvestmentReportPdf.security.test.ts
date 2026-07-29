@@ -43,3 +43,20 @@ describe('render-investment-report-pdf editorial shortcode escaping contract', (
     );
   });
 });
+
+describe('render-investment-report-pdf contact link security contract', () => {
+  it('escapes quotes before inserting contact values into href attributes', () => {
+    expect(functionSource).toContain('.replace(/"/g, "&quot;")');
+    expect(functionSource).toContain(".replace(/'/g, \"&#39;\")");
+    expect(functionSource).toContain('href="mailto:${escAttr(v)}"');
+    expect(functionSource).toContain('href="${escAttr(href)}"');
+    expect(functionSource).not.toContain('href="${esc(href)}"');
+  });
+
+  it('only linkifies valid HTTP(S) website URLs without credentials', () => {
+    expect(functionSource).toContain('const href = websiteHref(v);');
+    expect(functionSource).toContain('["http:", "https:"]');
+    expect(functionSource).toContain('!url.hostname || url.username || url.password');
+    expect(functionSource).toContain(': esc(v);');
+  });
+});

@@ -142,6 +142,24 @@ function esc(s: unknown): string {
     .replace(/>/g, "&gt;");
 }
 
+function escAttr(s: unknown): string {
+  return esc(s)
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function websiteHref(value: string): string | null {
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
 function cssString(s: unknown): string {
   return esc(s)
     .replace(/\\/g, "\\\\")
@@ -5176,15 +5194,15 @@ ${(() => {
   const linkifyValue = (label: string, value: string): string => {
     const v = String(value).trim();
     if (label === "Email" && /^[^@\s]+@[^@\s]+$/.test(v)) {
-      return `<a class="contact-link" href="mailto:${esc(v)}">${esc(v)}</a>`;
+      return `<a class="contact-link" href="mailto:${escAttr(v)}">${esc(v)}</a>`;
     }
     if (label === "Phone") {
       const tel = v.replace(/[^\d+]/g, "");
-      return tel ? `<a class="contact-link" href="tel:${esc(tel)}">${esc(v)}</a>` : esc(v);
+      return tel ? `<a class="contact-link" href="tel:${escAttr(tel)}">${esc(v)}</a>` : esc(v);
     }
     if (label === "Website") {
-      const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
-      return `<a class="contact-link" href="${esc(href)}">${esc(v)}</a>`;
+      const href = websiteHref(v);
+      return href ? `<a class="contact-link" href="${escAttr(href)}">${esc(v)}</a>` : esc(v);
     }
     return esc(v);
   };
