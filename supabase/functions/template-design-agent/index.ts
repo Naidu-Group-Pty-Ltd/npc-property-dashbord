@@ -586,7 +586,7 @@ Deno.serve(async (req) => {
     // Diagnostic logging for image/vision flow.
     const imgKb = imageDataUrl ? Math.round(imageDataUrl.length / 1024) : 0;
     const imgValid = !!imageDataUrl && /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(imageDataUrl);
-    console.log(`[design-agent] mode=${mode} pipeline=${useBriefPipeline ? 'brief' : 'ops'} stage=${briefStage} instr="${(userInstruction||'').slice(0,80)}" image=${imageDataUrl ? `${imgKb}KB valid=${imgValid}` : 'no'} activePage=${activePageId || '-'}`);
+    console.log(`[design-agent] mode=${mode} pipeline=${useBriefPipeline ? 'brief' : 'ops'} stage=${briefStage} image=${imageDataUrl ? `${imgKb}KB valid=${imgValid}` : 'no'}`);
 
     if (!userInstruction?.trim() && !imageDataUrl && !incomingBrief && mode !== 'auto_fill') return json({ error: 'empty instruction' }, 400);
     if (imageDataUrl && !imgValid) {
