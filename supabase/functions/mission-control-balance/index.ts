@@ -27,7 +27,7 @@ async function readCachedBalance(supabase: any): Promise<BalancePayload | null> 
     const { data, error } = await supabase
       .from("token_balance_cache")
       .select(
-        "available,reserved,lifetime_granted,lifetime_spent,plan_name,monthly_allowance,current_period_end,updated_at",
+        "available,reserved,lifetime_granted,lifetime_spent,plan_name,plan_slug,monthly_allowance,current_period_end,updated_at",
       )
       .eq("tenant_ref", AGENCY_TENANT_REF)
       .maybeSingle();

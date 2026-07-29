@@ -8,7 +8,8 @@
 //   { action: "status",   reportId }                -> returns progress + assets
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
-import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
+import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
+import { actorIsSuperadmin, requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 
@@ -19,6 +20,25 @@ const BUCKET = "investment-reports";
 const STORAGE_PREFIX = "hero-images";
 const IMAGE_TIMEOUT_MS = 90_000;
 const DEFAULT_BATCH = 3; // images per `process` call
+
+async function canAccessReport(
+  supabase: any,
+  actor: { userId: string; authMethod?: string | null },
+  reportId: string,
+  permission: ModulePerm,
+): Promise<boolean> {
+  const moduleAccess = await requireModulePermission(supabase, actor, "reports", permission);
+  if (!moduleAccess.ok) return false;
+  if (actor.authMethod === "service_role" || await actorIsSuperadmin(supabase, actor.userId)) return true;
+
+  const { data: report } = await supabase
+    .from("investment_reports")
+    .select("id")
+    .eq("id", reportId)
+    .eq("generated_by", actor.userId)
+    .maybeSingle();
+  return Boolean(report);
+}
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
@@ -47,6 +67,7 @@ function cleanReportMarkdown(markdown: string, address: string): string {
 }
 
 const MAX_HERO_IMAGES = 15;
+const MAX_SELECTIONS = MAX_HERO_IMAGES;
 
 function extractChapterTitles(markdown: string, address: string): string[] {
   const cleaned = cleanReportMarkdown(String(markdown || ""), address);
@@ -124,8 +145,10 @@ Deno.serve(async (req) => {
     const supabase = createClient(SUPABASE_URL, SERVICE_ROLE);
     const body = await req.json().catch(() => ({}));
 
-    const { error: authError } = await verifyAuth(supabase, req.headers, body);
-    if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+    const auth = await verifyAuth(supabase, req.headers, body);
+    if (auth.error || !auth.userId) {
+      return createUnauthorizedResponse(auth.error || "Authentication required", corsHeaders);
+    }
 
     const action = String(body?.action || "").toLowerCase();
     const reportId = String(body?.reportId || "");
@@ -133,6 +156,12 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "reportId required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    const actor = { userId: auth.userId, authMethod: auth.authMethod };
+    const permission: ModulePerm = action === "status" || action === "list" ? "can_view" : "can_edit";
+    if (!await canAccessReport(supabase, actor, reportId, permission)) {
+      return createForbiddenResponse(`Report ${permission === "can_view" ? "view" : "edit"} permission required`, corsHeaders);
     }
 
     if (action === "enqueue") {
@@ -212,18 +241,60 @@ Deno.serve(async (req) => {
     }
 
     if (action === "set_selection") {
-      const list: Array<{ sectionKey: string; include: boolean }> = Array.isArray(body?.selections)
+      const permission = await requireModulePermission(
+        supabase,
+        { userId: auth.userId, authMethod: auth.authMethod },
+        "reports",
+        "can_edit",
+      );
+      if (!permission.ok) {
+        return new Response(JSON.stringify({ error: permission.error || "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const requested: unknown[] = Array.isArray(body?.selections)
         ? body.selections
         : (body?.sectionKey != null ? [{ sectionKey: String(body.sectionKey), include: body.include !== false }] : []);
+      if (requested.length === 0 || requested.length > MAX_SELECTIONS) {
+        return new Response(JSON.stringify({ error: `selections must contain between 1 and ${MAX_SELECTIONS} items` }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const selections = new Map<string, boolean>();
+      for (const item of requested) {
+        const sectionKey = typeof (item as any)?.sectionKey === "string" ? (item as any).sectionKey.trim() : "";
+        if (!sectionKey || sectionKey.length > 60 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(sectionKey)) {
+          return new Response(JSON.stringify({ error: "Each selection requires a valid sectionKey" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        selections.set(sectionKey, (item as any).include !== false);
+      }
+
+      const { data: report, error: reportError } = await supabase
+        .from("investment_reports")
+        .select("id")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (reportError || !report) {
+        return new Response(JSON.stringify({ error: reportError?.message || "report not found" }), {
+          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       let updated = 0;
-      for (const sel of list) {
-        if (!sel?.sectionKey) continue;
+      for (const include of [true, false]) {
+        const sectionKeys = [...selections].filter(([, selected]) => selected === include).map(([key]) => key);
+        if (sectionKeys.length === 0) continue;
         const { error: upErr } = await supabase
           .from("report_visual_assets")
-          .update({ include_in_report: sel.include !== false })
+          .update({ include_in_report: include })
           .eq("report_id", reportId)
-          .eq("section_key", sel.sectionKey);
-        if (!upErr) updated++;
+          .in("section_key", sectionKeys);
+        if (upErr) throw upErr;
+        updated += sectionKeys.length;
       }
       const counts = await fetchCounts(supabase, reportId);
       return jsonOk({ updated, ...counts }, corsHeaders);

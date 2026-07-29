@@ -88,6 +88,18 @@ export const MODULE_TIERS: Record<string, readonly string[]> = {
   "aurixa-agent": [],
 };
 
+/** App permission keys whose pricing-catalogue slug is different. */
+export const MODULE_KEY_TO_PRICING_SLUG: Readonly<Record<string, string>> = {
+  api_usage: "api-usage",
+  call_logs: "call-logs",
+  deal_pipeline: "deal-pipeline",
+  email_copilot: "email-copilot",
+  finance_portal_admin: "finance-portal",
+  marketing_analytics: "marketing",
+  portfolio_reports: "portfolio-analysis",
+  agent: "aurixa-agent",
+};
+
 const BY_KEY = new Map(SUB_MODULE_ENTITLEMENTS.map((r) => [r.key, r]));
 
 const KNOWN_PLANS: readonly string[] = ["launch", "growth", "scale"];
@@ -133,7 +145,8 @@ export function planEnablesSubModule(planSlug: string | null | undefined, key: s
  */
 export function planIncludesModule(planSlug: string | null | undefined, moduleSlug: string): boolean {
   if (!isKnownPlan(planSlug)) return true;
-  const tiers = MODULE_TIERS[moduleSlug];
+  const pricingSlug = MODULE_KEY_TO_PRICING_SLUG[moduleSlug] ?? moduleSlug;
+  const tiers = MODULE_TIERS[pricingSlug];
   if (!tiers) return true; // not a priced module
   if (tiers.length === 0) return true; // an add-on, not a denial
   return tiers.includes(planSlug);

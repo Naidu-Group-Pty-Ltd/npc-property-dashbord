@@ -59,7 +59,6 @@ const TableEditorDialog = lazy(() => import('@/components/templateBuilder/TableE
 import { CascadeMapPanel } from '@/components/templateBuilder/CascadeMapPanel';
 import { logTemplateEvent } from '@/lib/reportTemplate/analyticsClient';
 import { logTemplateAudit } from '@/lib/reportTemplate/templateAuditLog';
-import { TemplatePresenceBar, type PresenceUser } from '@/components/templateBuilder/TemplatePresenceBar';
 import { useAuth } from '@/hooks/useAuth';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
@@ -298,7 +297,6 @@ export default function TemplateBuilderEdit() {
   const [saveConflict, setSaveConflict] = useState<{ message: string; serverVersion: number | null } | null>(null);
   const [showConflict, setShowConflict] = useState(false);
   const [dirtySince, setDirtySince] = useState<string | null>(null);
-  const [softLockUsers, setSoftLockUsers] = useState<PresenceUser[]>([]);
   const [commentRows, setCommentRows] = useState<TemplateCommentAnchorRow[]>([]);
   // ── Local draft recovery (Phase 3B) ─────────────────────────────────────────
   const [draftRecovery, setDraftRecovery] = useState<TemplateDraft | null>(null);
@@ -2196,26 +2194,6 @@ export default function TemplateBuilderEdit() {
                 </div>
               </PopoverContent>
             </Popover>
-          )}
-          {id && (
-            <div className="ml-1 mr-1">
-              <TemplatePresenceBar
-                templateId={id}
-                currentUserId={user?.id ?? null}
-                currentUserName={user?.username ?? null}
-                activePageId={activePageId}
-                selectedBlockId={selectedBlockId}
-                selectedOverlayId={selectedOverlayId}
-                workspaceMode={workspaceMode}
-                editingText={false}
-                onSoftLockChange={setSoftLockUsers}
-              />
-            </div>
-          )}
-          {softLockUsers.length > 0 && (
-            <div className="rounded border border-brand-500/30 bg-brand-500/10 px-2 py-1 text-[11px] text-brand-700" title={softLockUsers.map((u) => u.name).join(', ')}>
-              {softLockUsers[0].name} is editing this {selectedOverlayId ? 'overlay' : 'block'}
-            </div>
           )}
           <div className="flex items-center rounded-md border bg-muted/30 p-0.5">
             <Button variant={workspaceMode === 'canvas' ? 'default' : 'ghost'} size="sm" className="h-7 px-2 text-xs" onClick={() => setWorkspaceMode('canvas')}>
