@@ -553,7 +553,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             : 'This client has no active portal login yet. Send them a portal invitation so they can complete the compliance check.',
         };
 
-        await appendEvent(admin, created.id, 'client_portal_invited',
+        await appendEvent(admin, created.id, 'system',
           hasPortalAccess
             ? 'Client notified in portal — compliance check available'
             : 'Portal notification queued — client has no active portal login yet',

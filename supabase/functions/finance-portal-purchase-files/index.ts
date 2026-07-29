@@ -19,7 +19,7 @@ import { insertTargetedNotification } from "../_shared/notify.ts";
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
-let corsHeaders: Record<string, string> = {
+const corsHeaderDefaults: Record<string, string> = {
   ...__createCorsHeaders(null),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
@@ -39,10 +39,10 @@ const PURCHASE_FILE_COLUMNS = [
 
 const CRITICAL_DATE_COLUMNS = ['date_type','due_date','status','notes','completed_at'];
 
-function jsonResponse(data: any, status = 200) {
+function jsonResponseWithHeaders(data: any, responseCorsHeaders: Record<string, string>, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
@@ -106,7 +106,8 @@ async function notifyCommandCentreOfPurchaseFile(supabase: any, input: { clientI
 
 
 Deno.serve(async (req) => {
-  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
+  const corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaderDefaults['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaderDefaults['Access-Control-Expose-Headers'] };
+  const jsonResponse = (data: any, status = 200) => jsonResponseWithHeaders(data, corsHeaders, status);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {

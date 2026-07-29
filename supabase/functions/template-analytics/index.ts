@@ -3,14 +3,13 @@
  *
  * Aggregates `template_events` for the report-template builder.
  *
- * Auth: x-session-token (custom auth) + Bearer (anon/jwt allowed; verify_jwt=false).
- *       Reads service_role table, so we only require a valid staff session.
+ * Auth: x-session-token (custom auth) + a gateway-verified Bearer JWT.
+ *       The service_role table is only accessible with a valid staff session.
  *
  * Ops:
  *   log       { templateId, eventType, templateVersion?, pageId?, blockId?,
  *               shareToken?, metadata? }
- *               → inserts a single event (also accepts unauthenticated calls
- *                 from share-preview pages — those use shareToken only).
+ *               → inserts a single event for an authenticated staff session.
  *   summary   { templateId, days? }      → counts by event_type + KPI cards
  *   timeline  { templateId, days? }      → daily rollup [{date, edits, renders, views}]
  *   heatmap   { templateId, days? }      → per-page edit counts + top blocks
@@ -70,13 +69,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  // ── log: allow unauthenticated calls (e.g. share-preview page) ─────────────
+  // ── log: require an authenticated staff session ─────────────────────────
   if (op === 'log') {
     const eventType = String(body.eventType || '').slice(0, 60);
     if (!templateId || !eventType) return json({ error: 'templateId + eventType required' }, 400);
 
-    let actorId: string | null = null;
-    let actorName: string | null = null;
     const sessionToken = req.headers.get('x-session-token') || body.session_token || null;
     if (sessionToken) {
       const v = await verifySession(supabase, sessionToken);
