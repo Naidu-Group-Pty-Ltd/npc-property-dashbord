@@ -48,6 +48,8 @@ export interface PropertyListing {
   webLinks?: string;
   state?: string;
   zipCode?: string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
   // Enhanced analytics fields
   dataQuality?: number;
   isValidPrice?: boolean;
