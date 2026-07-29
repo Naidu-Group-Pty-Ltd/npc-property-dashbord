@@ -228,6 +228,25 @@ describe('docling adapter', () => {
     expect(img?.name).toContain('Line chart');
   });
 
+  it('bounds untrusted Docling metadata used for overlay names', () => {
+    const oversizedAltText = `  ${'description '.repeat(20)}  `;
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      pictures: [
+        {
+          prov: [{ page_no: 1, bbox: { l: 60, t: 250, r: 535, b: 400, coord_origin: 'TOPLEFT' } }],
+          annotations: [{ kind: 'description', text: oversizedAltText }],
+        } as DoclingDocument['pictures'] extends (infer U)[] ? U : never,
+      ],
+    };
+
+    const plan = mapDoclingToPagePlan(doc, { importId: 'imp-bounded-name', mode: 'semantic' });
+    const image = plan.pages[0].overlays.find((overlay) => overlay.type === 'image');
+
+    expect(image?.name).toBe(oversizedAltText.trim().slice(0, 64));
+    expect(image?.name).toHaveLength(64);
+  });
+
   it('Phase B: page headers/footers always lock and carry a master groupId', () => {
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
