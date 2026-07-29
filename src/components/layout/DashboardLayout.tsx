@@ -12,6 +12,7 @@ import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
 import { TokenBalanceBanner } from '@/components/billing/TokenBalanceBanner';
 import { PlanChangeBanner } from '@/components/billing/PlanChangeBanner';
+import { FeedbackPromptBanner } from '@/components/billing/FeedbackPromptBanner';
 import { GlobalCommandPalette } from './GlobalCommandPalette';
 
 export function DashboardLayout() {
@@ -36,6 +37,7 @@ export function DashboardLayout() {
             <ErrorBoundary>
               <DashboardPageShell>
                 <PlanChangeBanner />
+                <FeedbackPromptBanner />
                 <TokenBalanceBanner />
                 <Outlet />
               </DashboardPageShell>
@@ -68,6 +70,7 @@ export function DashboardLayout() {
               <ErrorBoundary>
                 <DashboardPageShell>
                   <PlanChangeBanner />
+                  <FeedbackPromptBanner />
                   <TokenBalanceBanner />
                   <Outlet />
                 </DashboardPageShell>
