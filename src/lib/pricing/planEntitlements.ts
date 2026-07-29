@@ -61,7 +61,7 @@ export const SUB_MODULE_ENTITLEMENTS: readonly SubModuleEntitlement[] = [
   { key: "clients.ai", module: "Clients", subModule: "AI", launch: false, growth: false, scale: true },
 ];
 
-/** Tiers that include each priced add-on module at no extra cost. */
+/** Tiers that include each priced module at no extra cost. */
 export const MODULE_TIERS: Record<string, readonly string[]> = {
   "market-updates": ["growth", "scale"],
   "commercial-industrial": ["scale"],
@@ -80,7 +80,7 @@ export const MODULE_TIERS: Record<string, readonly string[]> = {
   "agreements": ["scale"],
   "marketing": ["scale"],
   "deal-pipeline": ["growth", "scale"],
-  "aml-ctf": [],
+  "aml-ctf": ["launch", "growth", "scale"],
   "model-hub": ["scale"],
   "finance-portal": ["scale"],
   "integrations": [],
@@ -127,28 +127,17 @@ export function planEnablesSubModule(planSlug: string | null | undefined, key: s
 }
 
 /**
- * Whether a plan includes an add-on module without buying it separately.
+ * Whether a plan includes a module without buying it separately.
  *
- * Note what an EMPTY tier list means. `intelligence-hub`, `email-copilot`,
- * `call-logs`, `lenders`, `integrations` and `aurixa-agent` are included in no
- * tier — they are add-ons, bought on top of whatever plan a workspace is on.
- * That is the opposite of "no plan may have this", and reading it the second
- * way denies the module to everybody.
- *
- * It mattered the moment tier allowances shipped. Until then no tenant carried
- * a `plan_id`, so `planSlug` was always null and this function always returned
- * true; the first workspace to be put on Launch would have lost Integrations —
- * and with it Report QA's agent-model management — with nothing to explain it.
- *
- * Plan is the wrong question for an add-on. Whether one has been PURCHASED is
- * a separate fact this matrix does not carry, so it is not answered here.
+ * An empty tier list identifies an add-on that no plan includes. Purchased
+ * add-on access must come from a separate entitlement source; until one is
+ * consulted by this gate, known plans must not receive add-ons by default.
  */
 export function planIncludesModule(planSlug: string | null | undefined, moduleSlug: string): boolean {
   if (!isKnownPlan(planSlug)) return true;
   const pricingSlug = MODULE_KEY_TO_PRICING_SLUG[moduleSlug] ?? moduleSlug;
   const tiers = MODULE_TIERS[pricingSlug];
   if (!tiers) return true; // not a priced module
-  if (tiers.length === 0) return true; // an add-on, not a denial
   return tiers.includes(planSlug);
 }
 
