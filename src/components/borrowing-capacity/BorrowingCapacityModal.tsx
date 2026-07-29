@@ -1298,6 +1298,9 @@ export function BorrowingCapacityModal({
                     // Invalidate any base recalc still in flight so it can't
                     // resolve afterwards and overwrite the scenario figure.
                     calcGenerationRef.current++;
+                    // Applying the scenario does not start a replacement calc,
+                    // so release the loading state owned by the invalidated one.
+                    setIsLocalCalculating(false);
                     setActiveScenario({
                       ...scenarioPreset,
                       result: appliedResult,
