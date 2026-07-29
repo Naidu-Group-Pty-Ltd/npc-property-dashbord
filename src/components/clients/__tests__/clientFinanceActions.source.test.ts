@@ -37,4 +37,12 @@ describe('client finance action regression guards', () => {
     expect(compose).toContain('await fileToBase64(inlineAttachment.blob)');
     expect(compose).not.toContain('Array.from(new Uint8Array(await inlineAttachment.blob.arrayBuffer()))');
   });
+
+  it('does not count explicitly previous employment as current PDF income', () => {
+    const generator = source('VownetPDFGenerator.tsx');
+
+    expect(generator).toContain('const current = empList.filter(e => e.is_current !== false)');
+    expect(generator).toContain('const totals = current.reduce');
+    expect(generator).not.toContain('current.length ? current : empList');
+  });
 });

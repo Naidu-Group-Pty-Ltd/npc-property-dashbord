@@ -1271,8 +1271,7 @@ function generateHTMLContent(
   const employmentToIncome = (empList: EmploymentData[], contactType: 'primary' | 'secondary'): IncomeData | undefined => {
     if (!empList.length) return undefined;
     const current = empList.filter(e => e.is_current !== false);
-    const pool = current.length ? current : empList;
-    const totals = pool.reduce((acc, e) => {
+    const totals = current.reduce((acc, e) => {
       const annual = e.gross_annual_salary || (e.salary_amount ? (() => {
         const freq = e.salary_frequency || 'annually';
         if (freq === 'weekly') return (e.salary_amount || 0) * 52;
