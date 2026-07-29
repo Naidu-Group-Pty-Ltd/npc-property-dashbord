@@ -2,14 +2,12 @@
 // Cron-triggered worker that picks up bulk_generation_jobs with leftover work
 // (pending items, or processing items whose worker died) and drains them.
 //
-// Auth: accepts requests bearing either the SUPABASE_SERVICE_ROLE_KEY or the
-// SUPABASE_ANON_KEY (cron uses the anon key). External callers without one of
-// those are rejected. There is no per-user data risk because we operate
-// purely on bulk_generation_* tables via service role.
+// Auth: accepts only signed requests from the bulk-generation pg_cron job.
 
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { drainJob } from '../_shared/bulkReportWorker.ts';
+import { enforceRawBodyLimit, securityJsonError, verifySignedInternal } from '../_shared/requestSecurity.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -28,13 +26,22 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const anonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
-
-    // Auth: this function is gated by Supabase JWT verification at the gateway
-    // (verify_jwt=true). Any valid JWT — the cron's anon key, the service role
-    // key, or a logged-in user — can trigger a drain. Operations are limited
-    // to bulk_generation_* tables via service role.
     const supabase = createClient(supabaseUrl, serviceKey);
+    const boundedBody = await enforceRawBodyLimit(req, 1024);
+    if (!boundedBody.ok) return boundedBody.error;
+    const auth = await verifySignedInternal(
+      supabase,
+      req,
+      boundedBody.raw,
+      ['bulk-generation-resume-cron'],
+    );
+    if (!auth.ok) {
+      console.warn('[resume-bulk-generation] rejected unauthorized invocation', {
+        correlationId: auth.correlationId,
+        errorCode: auth.errorCode,
+      });
+      return securityJsonError(401, 'authentication_required', auth.correlationId);
+    }
 
     // Step 1: requeue stale processing items
     const { data: requeueData } = await supabase.rpc('requeue_stale_bulk_items');
