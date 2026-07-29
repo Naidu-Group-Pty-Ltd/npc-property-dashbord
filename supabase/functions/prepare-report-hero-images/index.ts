@@ -8,8 +8,8 @@
 //   { action: "status",   reportId }                -> returns progress + assets
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
-import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
-import { requireModulePermission } from "../_shared/authz.ts";
+import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
+import { actorIsSuperadmin, requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 
@@ -20,6 +20,25 @@ const BUCKET = "investment-reports";
 const STORAGE_PREFIX = "hero-images";
 const IMAGE_TIMEOUT_MS = 90_000;
 const DEFAULT_BATCH = 3; // images per `process` call
+
+async function canAccessReport(
+  supabase: any,
+  actor: { userId: string; authMethod?: string | null },
+  reportId: string,
+  permission: ModulePerm,
+): Promise<boolean> {
+  const moduleAccess = await requireModulePermission(supabase, actor, "reports", permission);
+  if (!moduleAccess.ok) return false;
+  if (actor.authMethod === "service_role" || await actorIsSuperadmin(supabase, actor.userId)) return true;
+
+  const { data: report } = await supabase
+    .from("investment_reports")
+    .select("id")
+    .eq("id", reportId)
+    .eq("generated_by", actor.userId)
+    .maybeSingle();
+  return Boolean(report);
+}
 
 function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60);
@@ -127,7 +146,9 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
 
     const auth = await verifyAuth(supabase, req.headers, body);
-    if (auth.error || !auth.userId) return createUnauthorizedResponse(auth.error || "Missing user", corsHeaders);
+    if (auth.error || !auth.userId) {
+      return createUnauthorizedResponse(auth.error || "Authentication required", corsHeaders);
+    }
 
     const action = String(body?.action || "").toLowerCase();
     const reportId = String(body?.reportId || "");
@@ -135,6 +156,12 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: "reportId required" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    const actor = { userId: auth.userId, authMethod: auth.authMethod };
+    const permission: ModulePerm = action === "status" || action === "list" ? "can_view" : "can_edit";
+    if (!await canAccessReport(supabase, actor, reportId, permission)) {
+      return createForbiddenResponse(`Report ${permission === "can_view" ? "view" : "edit"} permission required`, corsHeaders);
     }
 
     if (action === "enqueue") {
