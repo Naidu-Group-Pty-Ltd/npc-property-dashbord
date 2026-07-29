@@ -857,6 +857,8 @@ describe("AUSTRAC consent contract", () => {
 describe("verification checks encode the owner's decisions", () => {
   const vcMigration = readFileSync(
     join(repo, "supabase/migrations/20260728120000_aml_verification_checks.sql"), "utf8");
+  const optionalBiometricConsentMigration = readFileSync(
+    join(repo, "supabase/migrations/20260729030000_optional_biometric_consent.sql"), "utf8");
 
   it("is per party, not per case — a trust needs several verifications", () => {
     expect(vcMigration).toContain("party_id uuid");
@@ -898,6 +900,14 @@ describe("verification checks encode the owner's decisions", () => {
     expect(vcMigration).toContain("We retain your facial image");
     expect(vcMigration).toContain("You do not have to consent to this");
     expect(vcMigration).toContain("up to three attempts");
+  });
+
+  it("keeps biometric consent outside the portal-wide required consent gate", () => {
+    const biometricRow = vcMigration.slice(vcMigration.indexOf("'biometric_collection', '2026.2'"));
+    expect(biometricRow).toMatch(/false, 25\s*\)/);
+    expect(optionalBiometricConsentMigration).toContain("SET required = false");
+    expect(optionalBiometricConsentMigration).toContain("code = 'biometric_collection'");
+    expect(optionalBiometricConsentMigration).toContain("version = '2026.2'");
   });
 
   it("carries the whole catalogue forward — a version must be self-complete", () => {
