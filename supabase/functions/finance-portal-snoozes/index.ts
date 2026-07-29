@@ -6,6 +6,7 @@
  * parsed via a lightweight natural-language date parser (see parseNaturalDate).
  */
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import { hasFinancePortalPermission } from '../_shared/finance-portal-permissions.ts';
 import { parseNaturalDate } from '../_shared/parse-natural-date.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
@@ -82,7 +83,35 @@ Deno.serve(async (req) => {
     if (auth.error) return json({ error: auth.error }, auth.status);
     const portalUser = auth.portalUser!;
 
+    let assignments: any[] = [];
+    async function loadAssignments(): Promise<Response | null> {
+      const { data, error } = await supabase
+        .from('finance_portal_client_assignments')
+        .select('client_id, purchase_file_id, permissions')
+        .eq('finance_user_id', portalUser.id);
+      if (error) return json({ error: error.message }, 500);
+      assignments = data ?? [];
+      return null;
+    }
+
+    const canAccessClient = (clientId: string) =>
+      assignments.some((assignment: any) => assignment.client_id === clientId);
+
+    const canViewPurchaseFile = (file: { id: string; client_id: string } | null) =>
+      !!file && assignments.some((assignment: any) =>
+        assignment.client_id === file.client_id
+        && (!assignment.purchase_file_id || assignment.purchase_file_id === file.id)
+        && hasFinancePortalPermission(
+          portalUser.global_permissions,
+          assignment.permissions,
+          'purchase_files',
+          'view',
+          true,
+        ));
+
     if (operation === 'list') {
+      const assignmentsError = await loadAssignments();
+      if (assignmentsError) return assignmentsError;
       const includeCleared = !!body.include_cleared;
       let q = supabase
         .from('finance_partner_snoozes')
@@ -92,10 +121,17 @@ Deno.serve(async (req) => {
       if (!includeCleared) q = q.is('cleared_at', null);
       const { data, error } = await q;
       if (error) return json({ error: error.message }, 500);
-      return json({ snoozes: data ?? [] });
+      const authorizedSnoozes = (data ?? []).filter((snooze: any) => {
+        if (snooze.scope === 'general') return true;
+        if (snooze.scope === 'client') return !!snooze.client_id && canAccessClient(snooze.client_id);
+        return canViewPurchaseFile(snooze.purchase_files);
+      });
+      return json({ snoozes: authorizedSnoozes });
     }
 
     if (operation === 'create') {
+      const assignmentsError = await loadAssignments();
+      if (assignmentsError) return assignmentsError;
       const payload = body.payload || {};
       let until: Date | null = null;
       if (payload.snooze_until) {
@@ -114,8 +150,22 @@ Deno.serve(async (req) => {
 
       const scope = ['purchase_file', 'client', 'general'].includes(payload.scope) ? payload.scope : 'purchase_file';
       const ids: any = {};
-      if (scope === 'purchase_file' && payload.purchase_file_id) ids.purchase_file_id = payload.purchase_file_id;
-      if (scope === 'client' && payload.client_id) ids.client_id = payload.client_id;
+      if (scope === 'purchase_file') {
+        if (!payload.purchase_file_id) return json({ error: 'purchase_file_id required' }, 400);
+        const { data: purchaseFile, error: purchaseFileError } = await supabase
+          .from('purchase_files')
+          .select('id, client_id')
+          .eq('id', payload.purchase_file_id)
+          .maybeSingle();
+        if (purchaseFileError) return json({ error: purchaseFileError.message }, 500);
+        if (!canViewPurchaseFile(purchaseFile)) return json({ error: 'Purchase file not found' }, 404);
+        ids.purchase_file_id = purchaseFile.id;
+      }
+      if (scope === 'client') {
+        if (!payload.client_id) return json({ error: 'client_id required' }, 400);
+        if (!canAccessClient(payload.client_id)) return json({ error: 'Client not found' }, 404);
+        ids.client_id = payload.client_id;
+      }
 
       const { data, error } = await supabase
         .from('finance_partner_snoozes')
