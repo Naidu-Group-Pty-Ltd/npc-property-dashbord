@@ -49,6 +49,50 @@ function renderLinkedBlock(link: Record<string, unknown>, bookmark?: Record<stri
 }
 
 describe('HTML renderer security', () => {
+  it('excludes bookmarks from blocks that are not rendered', () => {
+    const template = parseTemplate({
+      version: 1,
+      tokens: { colors: {}, fonts: {}, spacing: {} },
+      pages: [{
+        id: 'p1', name: 'Page 1', size: { width: 595, height: 842 }, background: {},
+        blocks: [
+          { id: 'toc', type: 'auto-toc', props: {} },
+          {
+            id: 'hidden', type: 'text', props: { text: 'hidden body' }, hidden: true,
+            bookmark: { name: 'hidden', label: 'AML review: {{aml.status}}' },
+          },
+          {
+            id: 'conditional', type: 'text', props: { text: 'conditional body' }, conditional: 'showInternal',
+            bookmark: { name: 'conditional', label: 'Risk flag: {{client.riskFlag}}' },
+          },
+          {
+            id: 'visibility', type: 'text', props: { text: 'visibility body' },
+            visibility: { mode: 'when', expr: 'showStaffNotes' },
+            bookmark: { name: 'visibility', label: 'Staff note: {{client.staffNote}}' },
+          },
+          {
+            id: 'visible', type: 'text', props: { text: 'visible body' },
+            bookmark: { name: 'visible', label: 'Visible section' },
+          },
+        ],
+      }],
+    });
+
+    const html = renderTemplateToHtml(template, {
+      data: {
+        aml: { status: 'PEP_REVIEW_REQUIRED' },
+        client: { riskFlag: 'SUSPICIOUS_ACTIVITY', staffNote: 'DECLINE_CLIENT' },
+        showInternal: false,
+        showStaffNotes: false,
+      },
+    }).html;
+
+    expect(html).toContain('Visible section');
+    expect(html).not.toContain('PEP_REVIEW_REQUIRED');
+    expect(html).not.toContain('SUSPICIOUS_ACTIVITY');
+    expect(html).not.toContain('DECLINE_CLIENT');
+  });
+
   it('preserves valid CSS gradient fills', () => {
     const gradient = 'linear-gradient(135deg, #0A2540 0%, #1A3A5A 100%)';
 

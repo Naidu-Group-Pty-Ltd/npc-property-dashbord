@@ -269,6 +269,12 @@ function evalBlockVisibility(v: any, ctx: ResolveContext): boolean {
   return v.mode === 'unless' ? !truthy : truthy;
 }
 
+function shouldRenderBlock(block: Page['blocks'][number], ctx: ResolveContext): boolean {
+  return !block.hidden
+    && evalConditional(block.conditional, ctx)
+    && evalBlockVisibility(block.visibility, ctx);
+}
+
 function decorationBackdrop(block: any, ctx: ResolveContext): string {
   const s = block.style;
   if (!s) return '';
@@ -523,9 +529,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   const blocks: string[] = [];
   if (pageRenderPlan.renderNativeBlocks) {
     for (const block of sortBlocksForPaint(page.blocks)) {
-      if (block.hidden) continue;
-      if (!evalConditional(block.conditional, ctxBase)) continue;
-      if (!evalBlockVisibility(block.visibility, ctxBase)) continue;
+      if (!shouldRenderBlock(block, ctxBase)) continue;
       blocks.push(...renderBlockWithRepeat(block, blockCtxBase, blockCtx, pages, editorMode));
     }
   }
@@ -574,9 +578,7 @@ function collectCascadeIndexEntries(pages: Page[], ctxBase: ResolveContext): Cas
   pages.forEach((page, pageIndex) => {
     if (!evalConditional(page.conditional, ctxBase)) return;
     for (const block of page.blocks) {
-      if (block.hidden) continue;
-      if (!evalConditional(block.conditional, ctxBase)) continue;
-      if (!evalBlockVisibility(block.visibility, ctxBase)) continue;
+      if (!shouldRenderBlock(block, ctxBase)) continue;
       for (const anchor of (((block as any).anchors ?? []) as any[])) {
         entries.push({
           pageIndex,
@@ -671,6 +673,7 @@ export function renderTemplateToHtml(
   const tocEntries: Array<{ label: string; level: number; pageIndex: number; anchor: string }> = [];
   visiblePages.forEach((pg, pi) => {
     for (const b of pg.blocks) {
+      if (!shouldRenderBlock(b, ctxBase)) continue;
       const bm: any = (b as any).bookmark;
       if (!bm?.name) continue;
       if (bm.includeInToc === false) continue;
