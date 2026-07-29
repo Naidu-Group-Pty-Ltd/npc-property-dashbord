@@ -9,11 +9,12 @@
  * in-app notification (which is also routed through the existing notify
  * helper so per-user channel prefs/quiet hours apply).
  *
- * Auth: cron-only — no portal session token. Service-role + anon-key header.
+ * Auth: signed pg_cron requests only — no portal session token.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { enforceJsonBodyLimit, verifySignedInternal } from "../_shared/requestSecurity.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 let corsHeaders: Record<string, string> = {
@@ -43,7 +44,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
-    const body = await req.json().catch(() => ({}));
+    const parsed = await enforceJsonBodyLimit<Record<string, unknown>>(req, 1024);
+    if (!parsed.ok) return parsed.error;
+    const auth = await verifySignedInternal(supabase, req, parsed.raw, ['pg_cron']);
+    if (!auth.ok) return json({ error: 'Unauthorized' }, 401);
+
+    const body = parsed.value;
     const mode: 'morning' | 'eod' = body.mode === 'eod' ? 'eod' : 'morning';
     const today = todaySydney();
     const in3 = addDays(today, 3);
@@ -121,7 +127,7 @@ Deno.serve(async (req) => {
       }
 
       // Direct in-app notification (bypass per-event quiet hours; this is itself a digest)
-      await supabase.from('finance_portal_notifications').insert({
+      const { error: notificationError } = await supabase.from('finance_portal_notifications').insert({
         portal_user_id: p.id,
         notification_type: mode === 'morning' ? 'morning_briefing' : 'eod_wrap',
         title,
@@ -129,14 +135,24 @@ Deno.serve(async (req) => {
         link_path: '/finance',
         metadata: { stats, mode, generated_at: new Date().toISOString() },
       });
+      if (notificationError) {
+        console.error('[finance-portal-briefing-runner] notification insert failed', notificationError.message);
+        results.push({ partner: p.id, sent: false, error: 'notification_failed' });
+        continue;
+      }
 
       // Mark sent
-      await supabase
+      const { error: sentStateError } = await supabase
         .from('finance_portal_users')
         .update({
           [mode === 'morning' ? 'last_briefing_sent_at' : 'last_eod_sent_at']: new Date().toISOString(),
         })
         .eq('id', p.id);
+      if (sentStateError) {
+        console.error('[finance-portal-briefing-runner] sent-state update failed', sentStateError.message);
+        results.push({ partner: p.id, sent: false, error: 'state_update_failed' });
+        continue;
+      }
 
       results.push({ partner: p.id, stats, sent: true });
     }
