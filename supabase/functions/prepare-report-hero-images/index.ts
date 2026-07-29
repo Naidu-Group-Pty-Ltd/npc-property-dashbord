@@ -67,6 +67,7 @@ function cleanReportMarkdown(markdown: string, address: string): string {
 }
 
 const MAX_HERO_IMAGES = 15;
+const MAX_SELECTIONS = MAX_HERO_IMAGES;
 
 function extractChapterTitles(markdown: string, address: string): string[] {
   const cleaned = cleanReportMarkdown(String(markdown || ""), address);
@@ -240,18 +241,60 @@ Deno.serve(async (req) => {
     }
 
     if (action === "set_selection") {
-      const list: Array<{ sectionKey: string; include: boolean }> = Array.isArray(body?.selections)
+      const permission = await requireModulePermission(
+        supabase,
+        { userId: auth.userId, authMethod: auth.authMethod },
+        "reports",
+        "can_edit",
+      );
+      if (!permission.ok) {
+        return new Response(JSON.stringify({ error: permission.error || "Forbidden" }), {
+          status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const requested: unknown[] = Array.isArray(body?.selections)
         ? body.selections
         : (body?.sectionKey != null ? [{ sectionKey: String(body.sectionKey), include: body.include !== false }] : []);
+      if (requested.length === 0 || requested.length > MAX_SELECTIONS) {
+        return new Response(JSON.stringify({ error: `selections must contain between 1 and ${MAX_SELECTIONS} items` }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const selections = new Map<string, boolean>();
+      for (const item of requested) {
+        const sectionKey = typeof (item as any)?.sectionKey === "string" ? (item as any).sectionKey.trim() : "";
+        if (!sectionKey || sectionKey.length > 60 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(sectionKey)) {
+          return new Response(JSON.stringify({ error: "Each selection requires a valid sectionKey" }), {
+            status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        selections.set(sectionKey, (item as any).include !== false);
+      }
+
+      const { data: report, error: reportError } = await supabase
+        .from("investment_reports")
+        .select("id")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (reportError || !report) {
+        return new Response(JSON.stringify({ error: reportError?.message || "report not found" }), {
+          status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       let updated = 0;
-      for (const sel of list) {
-        if (!sel?.sectionKey) continue;
+      for (const include of [true, false]) {
+        const sectionKeys = [...selections].filter(([, selected]) => selected === include).map(([key]) => key);
+        if (sectionKeys.length === 0) continue;
         const { error: upErr } = await supabase
           .from("report_visual_assets")
-          .update({ include_in_report: sel.include !== false })
+          .update({ include_in_report: include })
           .eq("report_id", reportId)
-          .eq("section_key", sel.sectionKey);
-        if (!upErr) updated++;
+          .in("section_key", sectionKeys);
+        if (upErr) throw upErr;
+        updated += sectionKeys.length;
       }
       const counts = await fetchCounts(supabase, reportId);
       return jsonOk({ updated, ...counts }, corsHeaders);

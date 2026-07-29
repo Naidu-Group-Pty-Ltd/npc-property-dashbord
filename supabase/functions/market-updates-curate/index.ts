@@ -60,21 +60,34 @@ Deno.serve(async (req) => {
   const updateId = typeof body.updateId === 'string' ? body.updateId : '';
   if (!UUID.test(updateId)) return json({ error:'Invalid update ID', code:'invalid_request', correlation_id:correlationId }, 400, cors, correlationId);
 
-  const { data: existing, error: readError } = await sb.from('market_updates').select('id,status').eq('id', updateId).maybeSingle();
+  const { data: existing, error: readError } = await sb.from('market_updates').select('id,status,failure_reason').eq('id', updateId).maybeSingle();
   if (readError) {
     console.error(JSON.stringify({ function:'market-updates-curate', stage:action, correlation_id:correlationId, error_class:'database_read_failed' }));
     return json({ error:'Market update could not be loaded.', code:'market_updates_read_failed', correlation_id:correlationId, retryable:true }, 500, cors, correlationId);
   }
   if (!existing) return json({ error:'Market update not found', code:'not_found', correlation_id:correlationId, retryable:false }, 404, cors, correlationId);
 
+  const canTransition = action === 'hide'
+    ? existing.status === 'published'
+    : existing.status === 'ignored' && existing.failure_reason === 'hidden_by_operator';
+  if (!canTransition) {
+    return json({ error:'Market update cannot be changed from its current state.', code:'invalid_state_transition', correlation_id:correlationId, retryable:false }, 409, cors, correlationId);
+  }
+
   const patch = action === 'hide'
     ? { status:'ignored', failure_reason:'hidden_by_operator', decisioned_at:new Date().toISOString(), updated_at:new Date().toISOString() }
     : { status:'published', failure_reason:null, decisioned_at:new Date().toISOString(), updated_at:new Date().toISOString() };
 
-  const { data, error } = await sb.from('market_updates').update(patch).eq('id', updateId).select(UPDATE_COLUMNS).single();
+  const updateQuery = action === 'restore'
+    ? sb.from('market_updates').update(patch).eq('id', updateId).eq('status', 'ignored').eq('failure_reason', 'hidden_by_operator')
+    : sb.from('market_updates').update(patch).eq('id', updateId).eq('status', 'published');
+  const { data, error } = await updateQuery.select(UPDATE_COLUMNS).maybeSingle();
   if (error) {
     console.error(JSON.stringify({ function:'market-updates-curate', stage:action, correlation_id:correlationId, error_class:'database_update_failed' }));
     return json({ error:'Market update visibility could not be changed.', code:'market_updates_write_failed', correlation_id:correlationId, retryable:true }, 500, cors, correlationId);
+  }
+  if (!data) {
+    return json({ error:'Market update changed before the request completed.', code:'invalid_state_transition', correlation_id:correlationId, retryable:false }, 409, cors, correlationId);
   }
 
   logMarketEvent('info', { function:'market-updates-curate', stage:action, correlation_id:correlationId, status:'completed', update_id:updateId, previous_status:existing.status });

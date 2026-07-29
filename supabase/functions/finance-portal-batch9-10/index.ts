@@ -19,22 +19,30 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { canAccessFinanceClient, canAccessPurchaseFile } from '../_shared/financePortalObjectAuthz.ts';
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
+import { createCorsHeaders } from '../_shared/auth.ts';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
+const corsHeaderDefaults = {
+  ...createCorsHeaders(null),
   'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token',
+    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Expose-Headers':
+    'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
-const json = (d: unknown, s = 200) =>
+const jsonWithHeaders = (d: unknown, responseCorsHeaders: Record<string, string>, s = 200) =>
   new Response(JSON.stringify(d), {
     status: s,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
   });
 
 Deno.serve(async (req) => {
-  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
+  const corsHeaders = {
+    ...createCorsHeaders(req.headers.get('origin')),
+    'Access-Control-Allow-Headers': corsHeaderDefaults['Access-Control-Allow-Headers'],
+    'Access-Control-Expose-Headers': corsHeaderDefaults['Access-Control-Expose-Headers'],
+  };
+  const json = (data: unknown, status = 200) => jsonWithHeaders(data, corsHeaders, status);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
     const supabase = createClient(
