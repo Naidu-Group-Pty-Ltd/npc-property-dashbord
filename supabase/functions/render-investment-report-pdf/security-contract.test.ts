@@ -20,4 +20,12 @@ describe('render-investment-report-pdf authorization contract', () => {
     expect(denial).toBeGreaterThan(clientOwnershipCheck);
     expect(contentLookup).toBeGreaterThan(denial);
   });
+
+  it('escapes watermark text before embedding it in the SVG data URI', () => {
+    expect(functionSource).toContain(
+      'const wmText = esc(String(contact.company_name || brandName || "NPC").toUpperCase());',
+    );
+    expect(functionSource).toContain('url("${wmSvg}")');
+    expect(functionSource).not.toContain("url('${wmSvg}')");
+  });
 });
