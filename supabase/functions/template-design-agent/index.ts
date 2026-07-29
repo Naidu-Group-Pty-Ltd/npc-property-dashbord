@@ -15,6 +15,7 @@ import { analyzeReferenceImage, integrateBriefTokens, synthesisSystemAddendum, v
 import { callClaudeReconstruct } from '../_shared/claudeReconstruct.ts';
 import { validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSchemaVersion.ts';
 import { expandIconOverlay, ICON_NAMES } from '../_shared/iconPack.ts';
+import { validateVisionImageDataUrl } from '../_shared/visionImage.ts';
 
 const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY');
@@ -25,6 +26,7 @@ const DEFAULT_MODEL = 'openai/gpt-5.5';
 const SYNTHESIS_MODEL = 'openai/gpt-5';
 const VISION_MODEL = 'openai/gpt-5';
 const CLAUDE_MODEL = Deno.env.get('ANTHROPIC_MODEL') || 'claude-opus-4-8';
+const MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024;
 
 // ─── C9: server-side visual-diff-repair-patch-v1 allowlist ───────────────────
 // Defense-in-depth mirror of the client `validateVisualDiffRepairPatches`. The
@@ -545,7 +547,18 @@ Deno.serve(async (req) => {
     const selectedBlockId: string | undefined = body.selectedBlockId;
     const selectedOverlayId: string | undefined = body.selectedOverlayId;
     const mode: 'design' | 'art_director' | 'screenshot_to_block' | 'inline_text' | 'auto_fill' | 'brief' | 'pdf_document' = body.mode || 'design';
-    const imageDataUrl: string | undefined = body.imageDataUrl; // data:image/...;base64,...
+    const suppliedImage = body.imageDataUrl;
+    const validatedImage = suppliedImage == null
+      ? null
+      : validateVisionImageDataUrl(suppliedImage, MAX_VISION_IMAGE_BYTES);
+    if (validatedImage && !validatedImage.ok) {
+      return json({
+        error: validatedImage.reason === 'too_large'
+          ? 'Attached image exceeds the 10 MB limit.'
+          : 'Attached image must be a base64-encoded PNG, JPEG, WebP, or GIF data URL.',
+      }, validatedImage.reason === 'too_large' ? 413 : 400);
+    }
+    const imageDataUrl = validatedImage?.ok ? validatedImage.dataUrl : undefined;
     const pdfBase64: string | undefined = typeof body.pdfBase64 === 'string' ? body.pdfBase64 : undefined; // §7a native PDF
     const memoryFacts: string[] = Array.isArray(body.memoryFacts) ? body.memoryFacts : [];
     const sampleData: any = body.sampleData ?? null;
@@ -586,12 +599,9 @@ Deno.serve(async (req) => {
     // Diagnostic logging for image/vision flow.
     const imgKb = imageDataUrl ? Math.round(imageDataUrl.length / 1024) : 0;
     const imgValid = !!imageDataUrl && /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(imageDataUrl);
-    console.log(`[design-agent] mode=${mode} pipeline=${useBriefPipeline ? 'brief' : 'ops'} stage=${briefStage} instr="${(userInstruction||'').slice(0,80)}" image=${imageDataUrl ? `${imgKb}KB valid=${imgValid}` : 'no'} activePage=${activePageId || '-'}`);
+    console.log(`[design-agent] mode=${mode} pipeline=${useBriefPipeline ? 'brief' : 'ops'} stage=${briefStage} image=${imageDataUrl ? `${imgKb}KB valid=${imgValid}` : 'no'}`);
 
     if (!userInstruction?.trim() && !imageDataUrl && !incomingBrief && mode !== 'auto_fill') return json({ error: 'empty instruction' }, 400);
-    if (imageDataUrl && !imgValid) {
-      return json({ error: 'Attached image is not a valid data:image/* URL. Re-attach the screenshot.' }, 400);
-    }
     if (useBriefPipeline && !activePageId) {
       return json({ error: 'Brief pipeline needs an active page — select a page first.' }, 400);
     }
@@ -835,7 +845,7 @@ A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as nat
       if (aiResp.status === 429) return json({ error: 'Rate limited — try again shortly.' }, 429);
       if (aiResp.status === 402) return json({ error: 'AI credits exhausted. Add credits in Workspace settings.' }, 402);
       console.error('design agent gateway error', aiResp.status, text);
-      return json({ error: `AI gateway error (${aiResp.status})`, detail: text.slice(0, 500) }, 500);
+      return json({ error: `AI gateway error (${aiResp.status})` }, 500);
     }
     let aiData = await aiResp.json();
     let toolCall = aiData?.choices?.[0]?.message?.tool_calls?.[0];
@@ -876,7 +886,9 @@ A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as nat
       return json({ error: 'AI returned malformed tool arguments', detail: String(e) }, 500);
     }
 
-    console.log(`[design-agent] tool_call ops=${(parsed.operations || []).length} reply="${String(parsed.reply || '').slice(0, 120)}" ops_preview=${JSON.stringify((parsed.operations || []).slice(0, 3)).slice(0, 400)}`);
+    // Log only structural metadata: replies and operation payloads can contain
+    // client or financial data copied from templates and auto-fill sample data.
+    console.log(`[design-agent] tool_call ops=${(parsed.operations || []).length}`);
 
     // ─── Brief-pipeline content validator + auto-retry ──────────────────────
     // The synthesis pass occasionally returns shape-only layouts. Detect and re-prompt.

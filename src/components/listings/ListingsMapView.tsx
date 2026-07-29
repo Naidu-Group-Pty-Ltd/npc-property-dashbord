@@ -34,7 +34,7 @@ interface ListingsMapViewProps {
 
 interface ListingMarker {
   listing: PropertyListing;
-  point: GeoPoint;
+  point: { lat: number; lng: number };
 }
 
 export function getStoredListingPoint(listing: PropertyListing): GeoPoint | null {
@@ -85,6 +85,16 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
           <span className="text-muted-foreground">· {missingCoordinates} need saved coordinates</span>
         )}
       </div>
+
+      {listings.length > 0 && markers.length === 0 && (
+        <div className="absolute inset-x-4 bottom-4 z-[500] rounded-xl border border-border/60 bg-background/90 p-4 text-sm shadow-md backdrop-blur">
+          <p className="font-semibold text-foreground">No listings have map coordinates</p>
+          <p className="mt-1 text-muted-foreground">
+            Add latitude and longitude to listing records to plot them without sharing private
+            addresses with an external geocoding service.
+          </p>
+        </div>
+      )}
 
       <MapContainer
         center={AUSTRALIA_CENTER}

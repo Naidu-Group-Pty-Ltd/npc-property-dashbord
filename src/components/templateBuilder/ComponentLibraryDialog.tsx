@@ -97,7 +97,6 @@ export function ComponentLibraryDialog({ open, onOpenChange, template, activePag
       description: description.trim() || null,
       tags: tagsText.split(',').map(t => t.trim()).filter(Boolean),
       payload: { blocks: JSON.parse(JSON.stringify(blocks)) },
-      created_by: user?.id ?? null,
     });
     setSaving(false);
     if (error) { toast.error(error.message); return; }

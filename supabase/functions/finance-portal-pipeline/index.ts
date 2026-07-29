@@ -20,16 +20,16 @@ import { hasFinancePortalPermission } from '../_shared/finance-portal-permission
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
-let corsHeaders: Record<string, string> = {
+const corsHeaderDefaults: Record<string, string> = {
   ...__createCorsHeaders(null),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token, x-session-id, x-portal-session-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
-const json = (data: unknown, status = 200) =>
+const jsonWithHeaders = (data: unknown, responseCorsHeaders: Record<string, string>, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
   });
 
 function extractToken(req: Request, body: any): string | null {
@@ -102,7 +102,8 @@ function monthStart(d: Date): string {
 }
 
 Deno.serve(async (req) => {
-  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
+  const corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaderDefaults['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaderDefaults['Access-Control-Expose-Headers'] };
+  const json = (data: any, status = 200) => jsonWithHeaders(data, corsHeaders, status);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -430,16 +431,19 @@ Deno.serve(async (req) => {
       since.setUTCDate(since.getUTCDate() - windowDays);
       const sinceIso = since.toISOString();
 
-      // Pull all submissions in window; partner uses finance_user_id, portal-wide for medians.
+      // Pull all submissions in window; partner ownership follows the current purchase file
+      // assignment, while the full result set supplies portal-wide medians.
       const { data: subs } = await supabase
         .from('lender_submissions')
-        .select('id, lender_name, status, submitted_at, approved_at, settled_at, assessed_at, decline_reason, purchase_file_id, finance_user_id, loan_amount')
+        .select('id, lender_name, status, submitted_at, approved_at, settled_at, assessed_at, decline_reason, purchase_file_id, loan_amount, purchase_files!inner(assigned_finance_user_id)')
         .gte('submitted_at', sinceIso)
         .limit(5000);
 
       const APPROVAL_STATES = new Set(['conditional_approval', 'unconditional_approval', 'loan_docs_issued', 'settled']);
 
-      const mine = (subs || []).filter((s: any) => s.finance_user_id === portalUserId);
+      const mine = (subs || []).filter(
+        (s: any) => s.purchase_files?.assigned_finance_user_id === portalUserId,
+      );
 
       const stats = (rows: any[]) => {
         const byLender: Record<string, {

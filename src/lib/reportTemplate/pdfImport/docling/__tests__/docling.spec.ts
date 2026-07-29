@@ -169,6 +169,32 @@ describe('docling adapter', () => {
     expect(table.meta?.glyphArtifacts).toBe(true);
   });
 
+  it('bounds untrusted table dimensions and clamps invalid cell offsets', () => {
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      tables: [
+        {
+          data: {
+            num_rows: 1_000_000,
+            num_cols: 1_000_000,
+            table_cells: [
+              { text: 'clamped', start_row_offset_idx: -10, start_col_offset_idx: -20 },
+            ],
+          },
+          prov: [{ page_no: 1, bbox: { l: 60, t: 250, r: 535, b: 360, coord_origin: 'TOPLEFT' } }],
+        },
+      ],
+    };
+
+    const table = mapDoclingToRawBlocks(doc).byPage[1][0];
+    expect(table.meta?.tableData?.numRows).toBe(1_000);
+    expect(table.meta?.tableData?.numCols).toBe(10);
+    expect(table.meta?.tableData?.rows).toHaveLength(1_000);
+    expect(table.meta?.tableData?.rows[0][0]).toBe('clamped');
+    expect(table.meta?.tableData?.cells?.[0]).toMatchObject({ row: 0, col: 0 });
+    expect(table.text).toBe('clamped');
+  });
+
   it('single-line text overlays get whiteSpace:nowrap; multi-line paragraphs keep wrapping', () => {
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
@@ -228,23 +254,31 @@ describe('docling adapter', () => {
     expect(img?.name).toContain('Line chart');
   });
 
-  it('bounds untrusted Docling metadata used for overlay names', () => {
-    const oversizedAltText = `  ${'description '.repeat(20)}  `;
+  it('bounds proximity caption matching while preserving explicit references', () => {
+    const captions = Array.from({ length: 300 }, (_, index) => ({
+      self_ref: `#/texts/${index}`,
+      label: 'caption' as const,
+      text: `Figure ${index}`,
+      prov: [{ page_no: 1, bbox: { l: 10, t: 100, r: 100, b: 110, coord_origin: 'TOPLEFT' as const } }],
+    }));
+    const pictures = Array.from({ length: 300 }, (_, index) => ({
+      prov: [{ page_no: 1, bbox: { l: 10, t: 112, r: 100, b: 150, coord_origin: 'TOPLEFT' as const } }],
+      ...(index === 299 ? { captions: [{ $ref: '#/texts/299' }] } : {}),
+    }));
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
-      pictures: [
-        {
-          prov: [{ page_no: 1, bbox: { l: 60, t: 250, r: 535, b: 400, coord_origin: 'TOPLEFT' } }],
-          annotations: [{ kind: 'description', text: oversizedAltText }],
-        } as DoclingDocument['pictures'] extends (infer U)[] ? U : never,
-      ],
+      texts: captions,
+      pictures,
     };
 
-    const plan = mapDoclingToPagePlan(doc, { importId: 'imp-bounded-name', mode: 'semantic' });
-    const image = plan.pages[0].overlays.find((overlay) => overlay.type === 'image');
+    const mapped = mapDoclingToRawBlocks(doc);
+    const mappedPictures = mapped.byPage[1].filter((block) => block.type === 'image');
+    const explicitlyReferencedCaption = mapped.byPage[1].find((block) => block.text === 'Figure 299');
 
-    expect(image?.name).toBe(oversizedAltText.trim().slice(0, 64));
-    expect(image?.name).toHaveLength(64);
+    expect(mappedPictures).toHaveLength(300);
+    expect(mappedPictures[298].meta?.groupId).toBeUndefined();
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBe(mappedPictures[299].meta?.groupId);
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBeTruthy();
   });
 
   it('Phase B: page headers/footers always lock and carry a master groupId', () => {
