@@ -12,6 +12,18 @@ function functionSource(name: string, nextName: string): string {
 }
 
 describe('finance portal client communications authorization', () => {
+  it('passes the request-scoped JSON responder to module-scoped action helpers', () => {
+    for (const dispatch of [
+      'listInbox(supabase, partner, body, json)',
+      'sendMessage(supabase, partner, body, json)',
+      'translate(supabase, partner, body, json)',
+      'markRead(supabase, partner, body, json)',
+      'crossClientInbox(supabase, partner, json)',
+    ]) {
+      expect(source).toContain(dispatch);
+    }
+  });
+
   it.each([
     ['listInbox', 'sendMessage'],
     ['sendMessage', 'translate'],

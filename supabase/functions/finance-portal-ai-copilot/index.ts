@@ -8,35 +8,14 @@ import { consumeRateLimit, enforceJsonBodyLimit } from "../_shared/requestSecuri
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS (frontend uses credentials: 'include').
-const corsHeaderDefaults: Record<string, string> = {
-  ...__createCorsHeaders(null),
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token",
-  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
-};
+const ALLOW_HEADERS = "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token";
+const EXPOSE_HEADERS = "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms";
 
 const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
 const MODEL = "google/gemini-2.5-flash";
 const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
 const MAX_VOICE_AUDIO_BYTES = 2 * 1024 * 1024;
 const MAX_VOICE_DURATION_SECONDS = 90;
-
-function validateVoiceMemo(audioBase64: unknown, durationSeconds: unknown) {
-  if (typeof audioBase64 !== "string" || audioBase64.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(audioBase64)) {
-    throw new HttpError("Invalid voice memo audio", 400);
-  }
-  const paddingBytes = audioBase64.endsWith("==") ? 2 : audioBase64.endsWith("=") ? 1 : 0;
-  const decodedBytes = Math.floor(audioBase64.length * 3 / 4) - paddingBytes;
-  if (audioBase64.length % 4 !== 0 || decodedBytes > MAX_VOICE_AUDIO_BYTES) {
-    throw new HttpError("Voice memo audio exceeds the size limit", 413);
-  }
-  if (!Number.isInteger(durationSeconds) || durationSeconds <= 0 || durationSeconds > MAX_VOICE_DURATION_SECONDS) {
-    throw new HttpError("Voice memo duration must be between 1 and 90 seconds", 400);
-  }
-}
-
-function jsonWithHeaders(body: any, responseCorsHeaders: Record<string, string>, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } });
-}
 
 class HttpError extends Error {
   constructor(message: string, readonly status: number) {
@@ -485,8 +464,13 @@ async function transcribeVoice(supabase: any, userId: string, pfId: string | nul
 
 /* ─────────────── Router ─────────────── */
 Deno.serve(async (req) => {
-  const corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), "Access-Control-Allow-Headers": corsHeaderDefaults["Access-Control-Allow-Headers"], "Access-Control-Expose-Headers": corsHeaderDefaults["Access-Control-Expose-Headers"] };
-  const json = (data: any, status = 200) => jsonWithHeaders(data, corsHeaders, status);
+  const corsHeaders = {
+    ...__createCorsHeaders(req.headers.get("origin")),
+    "Access-Control-Allow-Headers": ALLOW_HEADERS,
+    "Access-Control-Expose-Headers": EXPOSE_HEADERS,
+  };
+  const json = (body: any, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 

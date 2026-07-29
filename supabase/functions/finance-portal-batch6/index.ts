@@ -8,7 +8,7 @@
  *   #37  Self-service booking + finance partner availability windows
  *
  * Auth: finance partner via x-finance-session-token (mirrors finance-portal-client-tasks).
- * Cron auth: `reminders_run_due` accepts service-role/anon-key cron header — no partner token.
+ * Cron auth: `reminders_run_due` requires a dedicated cron secret — no partner token.
  *
  * Operations
  *  applicants_list         { purchase_file_id }
@@ -38,6 +38,7 @@ import {
   canAccessFinanceClient,
 } from '../_shared/financePortalObjectAuthz.ts';
 import { hasFinancePortalPermission, type FinancePortalPermissionAction } from '../_shared/finance-portal-permissions.ts';
+import { constantTimeEqual } from '../_shared/auth_v2.ts';
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
@@ -78,9 +79,11 @@ function pick(payload: any, allow: string[]) {
   return out;
 }
 function isCronCall(req: Request) {
-  const auth = req.headers.get('authorization') || '';
-  return auth.includes(Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '__nope__')
-    || auth.includes(Deno.env.get('SUPABASE_ANON_KEY') ?? '__nope__');
+  const configured = Deno.env.get('FINANCE_PORTAL_CRON_SECRET') ?? '';
+  const presented = req.headers.get('x-cron-secret') ?? '';
+  return configured.length >= 16
+    && presented.length === configured.length
+    && constantTimeEqual(configured, presented);
 }
 
 Deno.serve(async (req) => {
@@ -96,7 +99,7 @@ Deno.serve(async (req) => {
     /* ── reminders cron — no partner session required ── */
     if (operation === 'reminders_run_due') {
       if (!isCronCall(req)) return json({ error: 'Cron auth required' }, 401);
-      return await runRemindersDue(supabase);
+      return await runRemindersDue(supabase, json);
     }
 
     /* ── partner auth for everything else ── */
@@ -254,6 +257,9 @@ Deno.serve(async (req) => {
     if (operation === 'availability_upsert') {
       const w = body.window || {};
       if (w.weekday == null || !w.start_time || !w.end_time) return json({ error: 'weekday, start_time, end_time required' }, 400);
+      if (!Number.isInteger(w.slot_duration_min) || w.slot_duration_min < 1 || w.slot_duration_min > 32767) {
+        return json({ error: 'slot_duration_min must be an integer between 1 and 32767' }, 400);
+      }
       const insert = pick(w, AVAIL_COLS);
       if (w.id) {
         const { data, error } = await supabase.from('finance_partner_availability')
@@ -358,7 +364,7 @@ Deno.serve(async (req) => {
  *   broker_notified:  ≥ 48h since last reminder, count ≥ 4        → notify finance partner
  * Only acts on instances with auto_reminder_enabled=true and status in ('requested').
  */
-async function runRemindersDue(supabase: any) {
+async function runRemindersDue(supabase: any, json: (data: unknown, status?: number) => Response) {
   const now = Date.now();
   const cutoff = new Date(now - 48 * 3600 * 1000).toISOString();
   const { data: dueRows, error } = await supabase

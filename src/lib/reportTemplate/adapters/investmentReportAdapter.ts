@@ -49,6 +49,10 @@ async function loadInvestmentReport(reportId: string): Promise<any | null> {
 }
 
 function getReportType(row: any): string {
+  const tier = String(row?.report_tier ?? '').toLowerCase();
+  const variant = String(row?.report_variant ?? '').toLowerCase();
+  if (tier === 'compass' || variant === 'compass') return 'investment_compass';
+
   return String(row?.report_type ?? row?.report_scope ?? 'investment').toLowerCase();
 }
 

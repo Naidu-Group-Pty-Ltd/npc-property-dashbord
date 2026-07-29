@@ -37,6 +37,8 @@ export interface HtmlRenderOptions {
   customCss?: string;
   /** Document title (PDF metadata). */
   title?: string;
+  /** Emit WeasyPrint PDF outline metadata for bookmarked blocks. Defaults to true. */
+  includeBookmarks?: boolean;
   /**
    * Editor mode: wrap each block in a `data-block-id` element, tag pages
    * with `data-page-id`, and inject a small runtime that posts click
@@ -319,12 +321,14 @@ function resolveLinkHref(
 function bookmarkAttrs(bm: any, ctxBase: ResolveContext): string {
   if (!bm?.name) return '';
   const anchorId = `anc-${String(bm.name).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  const idAttr = `id="${escapeHtml(anchorId)}"`;
+  if ((ctxBase as ResolveContext & { _includeBookmarks?: boolean })._includeBookmarks === false) return ` ${idAttr}`;
   const label = bm.label ? resolveBindable(bm.label, ctxBase) : bm.name;
   const level = Number(bm.level ?? 2);
   // WeasyPrint reads `bookmark-label` / `bookmark-level` for the PDF outline.
   const cssLabel = String(label).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n]/g, ' ');
   const style = `bookmark-label:'${cssLabel}';bookmark-level:${level};`;
-  return ` id="${escapeHtml(anchorId)}" style="${escapeHtml(style)}"`;
+  return ` ${idAttr} style="${escapeHtml(style)}"`;
 }
 
 
@@ -659,6 +663,7 @@ export function renderTemplateToHtml(
   const activeTheme = themes && (template as any).activeThemeId ? themes[(template as any).activeThemeId] : null;
   const baseTokens = mergeTokens(template.tokens, activeTheme?.tokens, options.tokenOverrides);
   const ctxBase: ResolveContext = { data: options.data ?? {}, tokens: baseTokens };
+  (ctxBase as ResolveContext & { _includeBookmarks?: boolean })._includeBookmarks = options.includeBookmarks !== false;
 
   const visiblePages = template.pages.filter((p) => evalConditional(p.conditional, ctxBase));
 
@@ -692,6 +697,7 @@ export function renderTemplateToHtml(
         String(!!options.cascadeMetadata),
         String(!!options.cascadeDebug),
         String(!!options.showReferenceUnderlay),
+        String(options.includeBookmarks !== false),
         String(visiblePages.length),
         visiblePages.map((p) => `${p.id}\u0000${p.name}`).join('\u0001'),
         JSON.stringify(tocEntries),

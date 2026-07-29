@@ -3,6 +3,23 @@ import { describe, expect, it } from 'vitest';
 
 const functionSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 
+describe('assigned finance partner lookup', () => {
+  it('uses schema-backed fields and surfaces query failures', () => {
+    const assignedPartnerBranch = functionSource.match(
+      /if \(operation === 'assigned_partner'\) \{([\s\S]*?)\n\s{4}if \(operation === 'onboarding_list'\)/,
+    )?.[1];
+
+    expect(assignedPartnerBranch).toBeDefined();
+    expect(assignedPartnerBranch).toContain(".select('finance_user_id, assigned_at')");
+    expect(assignedPartnerBranch).toContain(".order('assigned_at'");
+    expect(assignedPartnerBranch).toContain("finance_agent_contacts:finance_contact_id(name)");
+    expect(assignedPartnerBranch).toContain('if (assignmentError)');
+    expect(assignedPartnerBranch).toContain('if (partnerError)');
+    expect(assignedPartnerBranch).not.toContain('created_at');
+    expect(assignedPartnerBranch).not.toContain(".select('id, full_name, email')");
+  });
+});
+
 describe('client onboarding completion replay protection', () => {
   it('notifies finance assignees only after an atomic incomplete-to-complete transition', () => {
     const completionBranch = functionSource.match(

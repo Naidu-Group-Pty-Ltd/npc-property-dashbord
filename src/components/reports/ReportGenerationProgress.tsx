@@ -479,7 +479,6 @@ function ReportGenerationProgressInner() {
         for (let i = 0; i < delta; i++) timeline.push(now);
         sectionTimelineRef.current.set(r.id, timeline);
       }
-      lastSectionsRef.current.set(r.id, r.sectionsCompleted);
     });
 
     /* Detect completed/failed jobs that disappeared from the active list -> push to history + toast */
@@ -535,6 +534,8 @@ function ReportGenerationProgressInner() {
       if ((isStuck || isInitiallyStuck || hasFailedMidway) && autoContinueSettings.enabled && !paused) {
         scheduleAutoRetry(report);
       }
+
+      lastSectionsRef.current.set(report.id, report.sectionsCompleted);
     });
   }, [autoContinueSettings.enabled, cleanupRetryState, paused, saveRetryState, scheduleAutoRetry]);
 

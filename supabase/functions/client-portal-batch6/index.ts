@@ -59,13 +59,17 @@ Deno.serve(async (req) => {
     const clientId = portalUser.client_id;
 
     if (operation === 'assigned_partner') {
-      const { data: assigns } = await supabase.from('finance_portal_client_assignments')
-        .select('finance_user_id, created_at').eq('client_id', clientId).order('created_at', { ascending: false }).limit(1);
+      const { data: assigns, error: assignmentError } = await supabase.from('finance_portal_client_assignments')
+        .select('finance_user_id, assigned_at').eq('client_id', clientId).order('assigned_at', { ascending: false }).limit(1);
+      if (assignmentError) return json({ error: assignmentError.message }, 500);
       const fid = assigns?.[0]?.finance_user_id;
       if (!fid) return json({ partner: null });
-      const { data: u } = await supabase.from('finance_portal_users')
-        .select('id, full_name, email').eq('id', fid).maybeSingle();
-      return json({ partner: u || null });
+      const { data: u, error: partnerError } = await supabase.from('finance_portal_users')
+        .select('id, email, finance_agent_contacts:finance_contact_id(name)').eq('id', fid).maybeSingle();
+      if (partnerError) return json({ error: partnerError.message }, 500);
+      return json({
+        partner: u ? { id: u.id, email: u.email, full_name: u.finance_agent_contacts?.name ?? null } : null,
+      });
     }
 
     if (operation === 'onboarding_list') {
@@ -146,12 +150,15 @@ Deno.serve(async (req) => {
         const weekday = day.getDay();
         for (const w of (windows || [])) {
           if (w.weekday !== weekday) continue;
+          const slotDurationMin = Number(w.slot_duration_min);
+          if (!Number.isInteger(slotDurationMin) || slotDurationMin < 1) continue;
+          const slotDurationMs = slotDurationMin * 60000;
           const [sh, sm] = w.start_time.split(':').map(Number);
           const [eh, em] = w.end_time.split(':').map(Number);
           const dayStart = new Date(day); dayStart.setHours(sh, sm, 0, 0);
           const dayEnd = new Date(day); dayEnd.setHours(eh, em, 0, 0);
-          for (let t = dayStart.getTime(); t + w.slot_duration_min * 60000 <= dayEnd.getTime(); t += w.slot_duration_min * 60000) {
-            const s = new Date(t); const e = new Date(t + w.slot_duration_min * 60000);
+          for (let t = dayStart.getTime(); t + slotDurationMs <= dayEnd.getTime(); t += slotDurationMs) {
+            const s = new Date(t); const e = new Date(t + slotDurationMs);
             if (s.getTime() < now.getTime() + 2 * 3600000) continue; // 2h buffer
             const clash = (existing || []).some((b: any) =>
               new Date(b.start_at).getTime() < e.getTime() && new Date(b.end_at).getTime() > s.getTime());

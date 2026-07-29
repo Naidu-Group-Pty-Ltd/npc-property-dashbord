@@ -3,14 +3,13 @@
  *
  * Aggregates `template_events` for the report-template builder.
  *
- * Auth: x-session-token (custom auth) + Bearer (anon/jwt allowed; verify_jwt=false).
- *       Reads service_role table, so we only require a valid staff session.
+ * Auth: x-session-token (custom auth) + a gateway-verified Bearer JWT.
+ *       The service_role table is only accessible with a valid staff session.
  *
  * Ops:
  *   log       { templateId, eventType, templateVersion?, pageId?, blockId?,
  *               shareToken?, metadata? }
- *               → inserts a single event (also accepts unauthenticated calls
- *                 from share-preview pages — those use shareToken only).
+ *               → inserts a single event for an authenticated staff session.
  *   summary   { templateId, days? }      → counts by event_type + KPI cards
  *   timeline  { templateId, days? }      → daily rollup [{date, edits, renders, views}]
  *   heatmap   { templateId, days? }      → per-page edit counts + top blocks
@@ -19,7 +18,12 @@
  */
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
 import { verifySession } from '../_shared/auth.ts';
+import { enforceIpQuota, enforceKeyQuota, getClientIp } from '../_shared/publicAbuseControls.ts';
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+
+const MAX_REQUEST_BYTES = 16 * 1024;
+const MAX_METADATA_BYTES = 4 * 1024;
+const VALID_SHARE_TOKEN = /^[A-Za-z0-9_-]{12,128}$/;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -47,7 +51,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'method not allowed' }, 405);
 
-  const body = await req.json().catch(() => null);
+  const rawBody = await req.text();
+  if (new TextEncoder().encode(rawBody).byteLength > MAX_REQUEST_BYTES) {
+    return json({ error: 'request too large' }, 413);
+  }
+  const body = (() => {
+    try { return JSON.parse(rawBody); } catch { return null; }
+  })();
   if (!body || typeof body !== 'object') return json({ error: 'invalid json' }, 400);
 
   const op = String(body.op || body.operation || '').trim();
@@ -59,18 +69,50 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
   );
 
-  // ── log: allow unauthenticated calls (e.g. share-preview page) ─────────────
+  // ── log: require an authenticated staff session ─────────────────────────
   if (op === 'log') {
     const eventType = String(body.eventType || '').slice(0, 60);
     if (!templateId || !eventType) return json({ error: 'templateId + eventType required' }, 400);
 
-    let actorId: string | null = null;
-    let actorName: string | null = null;
     const sessionToken = req.headers.get('x-session-token') || body.session_token || null;
     if (sessionToken) {
       const v = await verifySession(supabase, sessionToken);
-      actorId = v.userId;
-      actorName = v.username;
+      if (!v.error) {
+        actorId = v.userId;
+        actorName = v.username;
+      }
+    }
+
+    const shareToken = body.shareToken ? String(body.shareToken).trim() : '';
+    if (!actorId) {
+      // Public callers may record only a view of the exact, currently-live share
+      // link they possess. All other event types require a staff session.
+      if (eventType !== 'share_view' || !VALID_SHARE_TOKEN.test(shareToken)) {
+        return json({ error: 'authentication required' }, 401);
+      }
+      const { data: link, error: linkError } = await supabase
+        .from('template_share_links')
+        .select('template_id, expires_at, revoked_at')
+        .eq('token', shareToken)
+        .eq('template_id', templateId)
+        .maybeSingle();
+      if (linkError || !link || link.revoked_at ||
+          (link.expires_at && new Date(link.expires_at).getTime() < Date.now())) {
+        return json({ error: 'share link unavailable' }, 403);
+      }
+
+      const ip = getClientIp(req);
+      if (!(await enforceIpQuota(supabase, ip, 'template_analytics_log', { limit: 60, windowMs: 60_000 })).ok ||
+          !(await enforceKeyQuota(supabase, shareToken, 'template_analytics_share', { limit: 300, windowMs: 60 * 60_000 })).ok) {
+        return json({ error: 'rate_limited' }, 429);
+      }
+    }
+
+    const metadata = (body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata))
+      ? body.metadata
+      : {};
+    if (new TextEncoder().encode(JSON.stringify(metadata)).byteLength > MAX_METADATA_BYTES) {
+      return json({ error: 'metadata too large' }, 413);
     }
 
     const row = {
@@ -79,10 +121,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       template_version: Number.isFinite(body.templateVersion) ? Number(body.templateVersion) : null,
       page_id: body.pageId ? String(body.pageId).slice(0, 200) : null,
       block_id: body.blockId ? String(body.blockId).slice(0, 200) : null,
-      share_token: body.shareToken ? String(body.shareToken).slice(0, 200) : null,
+      share_token: shareToken ? shareToken.slice(0, 200) : null,
       actor_id: actorId,
       actor_name: actorName,
-      metadata: (body.metadata && typeof body.metadata === 'object') ? body.metadata : {},
+      metadata,
     };
     const { error } = await supabase.from('template_events').insert(row);
     if (error) return json({ error: error.message }, 500);

@@ -10,17 +10,19 @@ import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse,
 import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
+import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const API2PDF_KEY = (Deno.env.get("API2PDF_API_KEY") || "").trim();
 const PDF_BUCKET = "investment-reports";
-const EDGE_FUNCTION_TIMEOUT_MS = 1_500_000;
-const RENDER_SAFETY_BUFFER_MS = 45_000;
-const MAX_RENDER_WAIT_MS = EDGE_FUNCTION_TIMEOUT_MS - RENDER_SAFETY_BUFFER_MS;
+// Fail fast rather than letting paid Api2PDF retries consume the full Edge timeout.
+const MAX_RENDER_WAIT_MS = 115_000;
 // (Hero-image generation is now offloaded to `prepare-report-hero-images`.)
-const API2PDF_REQUEST_TIMEOUT_MS = 600_000;
+const API2PDF_REQUEST_TIMEOUT_MS = 45_000;
 const WEASYPRINT_REQUEST_TIMEOUT_MS = 600_000;
+const MAX_CHART_INJECTION_HTML_CHARS = 2_000_000;
+const MAX_CHART_INJECTION_TABLES = 100;
 
 // Dark-gold theme tokens mirrored from the app.
 const THEME = {
@@ -139,7 +141,27 @@ function esc(s: unknown): string {
   return String(s ?? "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escAttr(s: unknown): string {
+  return esc(s)
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function websiteHref(value: string): string | null {
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
 }
 
 function cssString(s: unknown): string {
@@ -216,29 +238,17 @@ function wrapInsightSections(html: string): string {
     },
   );
 
-  // Form 1: h3 / h4 heading captures content until next h1–h4
-  let out = html.replace(
-    /<h([34])[^>]*>([\s\S]*?)<\/h\1>([\s\S]*?)(?=<h[1-4][\s>]|<section|$)/gi,
-    (match, _lvl, rawTitle, content) => {
-      const title = String(rawTitle).replace(/<[^>]+>/g, "").trim().replace(/[:\-—]\s*$/, "");
-      if (!INSIGHT_LABEL_RE.test(title)) return match;
-      return `<div class="insight-box"><div class="insight-label">${esc(title)}</div>${content}</div>`;
-    },
-  );
+  // Form 1: h3 / h4 heading captures content until next h1–h4. This uses a
+  // linear tag scan so malformed stored HTML cannot trigger repeated rescans.
+  let out = wrapInsightHeadingSections(html, (title) => INSIGHT_LABEL_RE.test(title), esc);
 
   // Form 2: <p><strong>Label[:]</strong>[:] rest…</p> + ALL following block siblings
   // (paragraphs, lists, blockquotes, tables) until the next heading, hr,
   // another insight-box, section boundary, or another bold-prefix insight label.
-  out = out.replace(
-    /<p>\s*<(?:strong|b)>\s*([^<:：]+?)\s*[:：]?\s*<\/(?:strong|b)>\s*[:：]?\s*([\s\S]*?)<\/p>((?:\s*(?:<p>(?!\s*<(?:strong|b)>[^<]+[:：]?\s*<\/(?:strong|b)>)[\s\S]*?<\/p>|<ul>[\s\S]*?<\/ul>|<ol>[\s\S]*?<\/ol>|<blockquote>[\s\S]*?<\/blockquote>))*)(?=\s*(?:<h[1-4][\s>]|<hr|<div\s+class="insight-box"|<section|$))/gi,
-    (match, rawLabel, firstRest, restBlocks) => {
-      const label = String(rawLabel).trim();
-      if (!INSIGHT_LABEL_RE.test(label)) return match;
-      const body = String(firstRest).trim();
-      const bodyHtml = body ? `<p>${body}</p>` : "";
-      return `<div class="insight-box"><div class="insight-label">${esc(label)}</div>${bodyHtml}${restBlocks || ""}</div>`;
-    },
-  );
+  out = wrapInlineInsightParagraphs(out, {
+    isInsightLabel: (label) => INSIGHT_LABEL_RE.test(label),
+    escapeLabel: (label) => esc(label),
+  });
 
   // Form 3: list-item bold-prefix form  →  <li><strong>What This Means:</strong> body…</li>
   // Many narrative bullets in the report use this pattern. Style the <li> as an
@@ -1077,6 +1087,16 @@ const VIZ_GOOD     = "#4F7A33";
 const VIZ_WARN     = "#C58A2E";
 const VIZ_RISK     = "#A8401C";
 
+// Editorial shortcodes expand stored markdown into SVG. Keep their render cost
+// predictably small even when report content is attacker-controlled.
+const MAX_VISUAL_SHORTCODE_CHARS = 16_384;
+const MAX_WATERFALL_ITEMS = 50;
+const MAX_HEATMAP_ROWS = 50;
+const MAX_HEATMAP_COLS = 50;
+const MAX_HEATMAP_CELLS = 400;
+const MAX_WHEEL_SCORES = 24;
+const MAX_COMPLEX_VISUAL_UNITS = 800;
+
 function svgEscape(s: string): string {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -1127,7 +1147,7 @@ function renderGaugeSvg(value: number, max = 100, label = "", caption = ""): str
 
 /** Waterfall chart — show cumulative cash-flow build-up (positive + negative bars). */
 function renderWaterfallSvg(items: Array<{ label: string; value: number; total?: boolean }>): string {
-  if (!items.length) return "";
+  if (!items.length || items.length > MAX_WATERFALL_ITEMS) return "";
   const w = 760, h = 360, padL = 70, padR = 24, padT = 30, padB = 70;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   // Compute running totals to find y-range
@@ -1186,8 +1206,19 @@ function renderWaterfallSvg(items: Array<{ label: string; value: number; total?:
 function renderHeatmapSvg(grid: number[][], rowLabels: string[] = [], colLabels: string[] = [], title = ""): string {
   if (!grid.length || !grid[0]?.length) return "";
   const rows = grid.length, cols = grid[0].length;
+  if (
+    rows > MAX_HEATMAP_ROWS ||
+    cols > MAX_HEATMAP_COLS ||
+    rows * cols > MAX_HEATMAP_CELLS ||
+    grid.some((row) => row.length !== cols)
+  ) return "";
   const flat = grid.flat();
-  const lo = Math.min(...flat), hi = Math.max(...flat), span = (hi - lo) || 1;
+  let lo = Infinity, hi = -Infinity;
+  for (const value of flat) {
+    lo = Math.min(lo, value);
+    hi = Math.max(hi, value);
+  }
+  const span = (hi - lo) || 1;
 
   // Approximate text width @ 9pt Inter ≈ 5.2px / char; cap labels and grow cells.
   const charPx = 5.4;
@@ -1228,7 +1259,7 @@ function renderHeatmapSvg(grid: number[][], rowLabels: string[] = [], colLabels:
 
 /** Score wheel — radar/polar for multi-dimensional scoring. */
 function renderScoreWheelSvg(scores: number[], labels: string[] = [], max = 100): string {
-  if (scores.length < 3) return "";
+  if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return "";
   const w = 460, h = 360, cx = w / 2, cy = h / 2 + 8, R = 130;
   const n = scores.length;
   const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
@@ -1958,6 +1989,7 @@ function autoInjectVisualShortcodes(md: string): string {
 
 function applyEditorialMarkdown(md: string): string {
   let out = md;
+  let complexVisualUnits = 0;
 
 
   // Fenced editorial blocks with optional `key=value` attributes on the opening fence.
@@ -2129,7 +2161,11 @@ function applyEditorialMarkdown(md: string): string {
 
   // {{waterfall: Label1 +123, Label2 -45, Total =78}}
   out = out.replace(/\{\{waterfall:\s*([^}]+)\}\}/gi, (_m, args) => {
-    const items = String(args).split(/[,;]/).map((seg) => {
+    const rawArgs = String(args);
+    if (rawArgs.length > MAX_VISUAL_SHORTCODE_CHARS) return _m;
+    const segments = rawArgs.split(/[,;]/);
+    if (segments.length > MAX_WATERFALL_ITEMS) return _m;
+    const items = segments.map((seg) => {
       const m = seg.trim().match(/^(.+?)\s*([=+\-])\s*([\d.,$\s-]+)$/);
       if (!m) return null;
       const label = m[1].trim();
@@ -2138,14 +2174,30 @@ function applyEditorialMarkdown(md: string): string {
       return { label, value, total };
     }).filter(Boolean) as Array<{ label: string; value: number; total?: boolean }>;
     if (!items.length) return _m;
+    if (complexVisualUnits + items.length > MAX_COMPLEX_VISUAL_UNITS) return _m;
+    complexVisualUnits += items.length;
     return vizFigure(renderWaterfallSvg(items), "Cash-flow waterfall");
   });
 
   // {{heatmap: r1c1,r1c2 / r2c1,r2c2 | rows=A,B | cols=X,Y | title=…}}
   out = out.replace(/\{\{heatmap:\s*([^}]+)\}\}/gi, (_m, args) => {
-    const parts = String(args).split("|").map((s) => s.trim());
-    const grid = parts[0].split("/").map((row) => row.split(",").map((v) => Number(v.trim())).filter((n) => Number.isFinite(n)));
-    if (!grid.length || !grid[0].length) return _m;
+    const rawArgs = String(args);
+    if (rawArgs.length > MAX_VISUAL_SHORTCODE_CHARS) return _m;
+    const parts = rawArgs.split("|").map((s) => s.trim());
+    const rawRows = parts[0].split("/");
+    if (rawRows.length > MAX_HEATMAP_ROWS) return _m;
+    const rawGrid = rawRows.map((row) => row.split(","));
+    const cols = rawGrid[0]?.length ?? 0;
+    if (
+      !cols ||
+      cols > MAX_HEATMAP_COLS ||
+      rawGrid.length * cols > MAX_HEATMAP_CELLS ||
+      rawGrid.some((row) => row.length !== cols)
+    ) return _m;
+    const grid = rawGrid.map((row) => row.map((v) => Number(v.trim())).filter((n) => Number.isFinite(n)));
+    if (!grid.length || !grid[0].length || grid.some((row) => row.length !== cols)) return _m;
+    const cellCount = grid.length * cols;
+    if (complexVisualUnits + cellCount > MAX_COMPLEX_VISUAL_UNITS) return _m;
     const opts: Record<string, string> = {};
     for (const p of parts.slice(1)) {
       const m = p.match(/^(rows|cols|title)\s*=\s*(.+)$/i);
@@ -2153,20 +2205,27 @@ function applyEditorialMarkdown(md: string): string {
     }
     const rowLabels = opts.rows ? opts.rows.split(",").map((s) => s.trim()) : [];
     const colLabels = opts.cols ? opts.cols.split(",").map((s) => s.trim()) : [];
+    complexVisualUnits += cellCount;
     return vizFigure(renderHeatmapSvg(grid, rowLabels, colLabels, opts.title || ""), opts.title || "");
   });
 
   // {{wheel: 78,64,82 | labels=Yield,Growth,Risk | max=100 | title=…}}
   out = out.replace(/\{\{wheel:\s*([^}]+)\}\}/gi, (_m, args) => {
-    const parts = String(args).split("|").map((s) => s.trim());
-    const scores = parts[0].split(",").map((v) => Number(v.trim())).filter((n) => Number.isFinite(n));
+    const rawArgs = String(args);
+    if (rawArgs.length > MAX_VISUAL_SHORTCODE_CHARS) return _m;
+    const parts = rawArgs.split("|").map((s) => s.trim());
+    const rawScores = parts[0].split(",");
+    if (rawScores.length > MAX_WHEEL_SCORES) return _m;
+    const scores = rawScores.map((v) => Number(v.trim())).filter((n) => Number.isFinite(n));
     if (scores.length < 3) return _m;
+    if (complexVisualUnits + scores.length > MAX_COMPLEX_VISUAL_UNITS) return _m;
     const opts: Record<string, string> = {};
     for (const p of parts.slice(1)) {
       const m = p.match(/^(labels|max|title)\s*=\s*(.+)$/i);
       if (m) opts[m[1].toLowerCase()] = m[2];
     }
     const labels = opts.labels ? opts.labels.split(",").map((s) => s.trim()) : [];
+    complexVisualUnits += scores.length;
     return vizFigure(renderScoreWheelSvg(scores, labels, Number(opts.max) || 100), opts.title || "");
   });
 
@@ -2354,27 +2413,43 @@ function applyFootnotesAndXrefs(html: string): string {
 
 /** Detect numeric markdown tables in rendered HTML, prepend a chart visualisation. */
 async function injectTableCharts(html: string): Promise<string> {
-  const tables = Array.from(html.matchAll(/<table[\s\S]*?<\/table>/gi));
+  // Chart decoration is optional. Keep rendering the original report when the
+  // generated HTML is too large or table-heavy to process within a bounded cost.
+  if (html.length > MAX_CHART_INJECTION_HTML_CHARS) return html;
+
+  const tablePattern = /<table[\s\S]*?<\/table>/gi;
+  const tables: RegExpExecArray[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = tablePattern.exec(html)) !== null) {
+    if (tables.length >= MAX_CHART_INJECTION_TABLES) return html;
+    tables.push(match);
+  }
   if (tables.length === 0) return html;
 
-  // Pre-compute the nearest preceding heading (h2 preferred, h3 fallback) for
-  // each table so chart selection can be section-aware.
-  const sectionTitles: string[] = tables.map((m) => {
-    const upto = html.slice(0, m.index ?? 0);
-    // Find last h2 or h3 before this table
-    const h2 = [...upto.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)].pop();
-    const h3 = [...upto.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/gi)].pop();
-    // Prefer h3 if it appears AFTER the last h2 (more specific subsection).
-    const pick = (h3 && h2 && (h3.index ?? 0) > (h2.index ?? 0)) ? h3 : (h2 || h3);
-    return (pick?.[1] || "").replace(/<[^>]+>/g, "").trim();
-  });
+  // Scan headings once in document order so every table gets its nearest
+  // preceding h2/h3 without repeatedly copying and rescanning the HTML prefix.
+  const sectionTitles: string[] = [];
+  const headingPattern = /<h([23])[^>]*>([\s\S]*?)<\/h\1>/gi;
+  let heading = headingPattern.exec(html);
+  let sectionTitle = "";
+  for (const table of tables) {
+    const tableIndex = table.index ?? 0;
+    while (heading && (heading.index ?? 0) < tableIndex) {
+      sectionTitle = (heading[2] || "").replace(/<[^>]+>/g, "").trim();
+      heading = headingPattern.exec(html);
+    }
+    sectionTitles.push(sectionTitle);
+  }
 
   const replacements = new Array<string>(tables.length);
   let chartAttempts = 0;
-  const queue = tables.map((match, index) => ({ tbl: match[0], index, sectionTitle: sectionTitles[index] }));
-  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
-    while (queue.length) {
-      const { tbl, index, sectionTitle } = queue.shift()!;
+  let nextTableIndex = 0;
+  const workers = Array.from({ length: Math.min(4, tables.length) }, async () => {
+    while (true) {
+      const index = nextTableIndex++;
+      if (index >= tables.length) return;
+      const tbl = tables[index][0];
+      const sectionTitle = sectionTitles[index];
       const theadMatch = tbl.match(/<thead[\s\S]*?<\/thead>/i);
       const headerSource = theadMatch?.[0] || tbl.match(/<tr[\s\S]*?<\/tr>/i)?.[0] || "";
       const headers = Array.from(headerSource.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi))
@@ -2781,7 +2856,9 @@ export async function buildHtml(
   // are converted into shortcodes (heatmap / bars / gauge / tiles / sparkline) that
   // applyEditorialMarkdown then expands. This makes the renderer self-sufficient
   // even when the LLM emits pure prose + tables.
-  const mdRaw = cleanReportMarkdown(String(report.report_content || ""), address);
+  const mdRaw = escapeRawHtmlInMarkdown(
+    cleanReportMarkdown(String(report.report_content || ""), address),
+  );
   const mdWithVisuals = autoInjectVisualShortcodes(mdRaw);
   console.log("[visuals] shortcodes injected:", {
     heatmaps: (mdWithVisuals.match(/\{\{heatmap:/g) || []).length,
@@ -2792,6 +2869,7 @@ export async function buildHtml(
   });
   const md = applyEditorialMarkdown(mdWithVisuals);
   let bodyHtml = marked.parse(md, { gfm: true, breaks: false }) as string;
+  bodyHtml = removeUnsafeRenderedUrls(bodyHtml);
   bodyHtml = stripBareCitations(bodyHtml);
   // Repair LLM currency artefacts where "$45,872.969" leaks a 3-digit
   // fractional group instead of a thousands separator. Any $-prefixed number
@@ -2822,7 +2900,10 @@ export async function buildHtml(
   }
 
   const sourcesHtml = report.sources_content
-    ? marked.parse(String(report.sources_content), { gfm: true }) as string
+    ? removeUnsafeRenderedUrls(marked.parse(
+      escapeRawHtmlInMarkdown(String(report.sources_content)),
+      { gfm: true },
+    ) as string)
     : "";
   const financialChartsHtml = includeCharts ? await buildFinancialChartsHtml(fin) : "";
 
@@ -2911,7 +2992,7 @@ export async function buildHtml(
 
   const para2Parts: string[] = [];
   if (scoreTxt) {
-    para2Parts.push(`The property carries an overall investment score of <strong>${scoreTxt}</strong>, reflecting the weighted balance of location quality, financial performance, growth drivers, and risk indicators discussed in the chapters that follow.`);
+    para2Parts.push(`The property carries an overall investment score of <strong>${esc(scoreTxt)}</strong>, reflecting the weighted balance of location quality, financial performance, growth drivers, and risk indicators discussed in the chapters that follow.`);
   } else {
     para2Parts.push(`The chapters that follow examine the weighted balance of location quality, financial performance, growth drivers, and risk indicators that underpin our assessment.`);
   }
@@ -2924,7 +3005,7 @@ export async function buildHtml(
   if (priceTxt && rentTxt) editorsNoteBits.push(`at <strong>${priceTxt}</strong> with assessed rent of <strong>${rentTxt}/wk</strong>`);
   else if (priceTxt) editorsNoteBits.push(`at <strong>${priceTxt}</strong>`);
   if (yieldTxt) editorsNoteBits.push(`gross yield <strong>${yieldTxt}</strong>`);
-  if (scoreTxt) editorsNoteBits.push(`investment score <strong>${scoreTxt}</strong>`);
+  if (scoreTxt) editorsNoteBits.push(`investment score <strong>${esc(scoreTxt)}</strong>`);
   const editorsNoteHtml = `
     <aside class="editors-note">
       <div class="en-eyebrow">Editor's Note</div>
@@ -5173,15 +5254,15 @@ ${(() => {
   const linkifyValue = (label: string, value: string): string => {
     const v = String(value).trim();
     if (label === "Email" && /^[^@\s]+@[^@\s]+$/.test(v)) {
-      return `<a class="contact-link" href="mailto:${esc(v)}">${esc(v)}</a>`;
+      return `<a class="contact-link" href="mailto:${escAttr(v)}">${esc(v)}</a>`;
     }
     if (label === "Phone") {
       const tel = v.replace(/[^\d+]/g, "");
-      return tel ? `<a class="contact-link" href="tel:${esc(tel)}">${esc(v)}</a>` : esc(v);
+      return tel ? `<a class="contact-link" href="tel:${escAttr(tel)}">${esc(v)}</a>` : esc(v);
     }
     if (label === "Website") {
-      const href = /^https?:\/\//i.test(v) ? v : `https://${v}`;
-      return `<a class="contact-link" href="${esc(href)}">${esc(v)}</a>`;
+      const href = websiteHref(v);
+      return href ? `<a class="contact-link" href="${escAttr(href)}">${esc(v)}</a>` : esc(v);
     }
     return esc(v);
   };
@@ -5233,9 +5314,10 @@ async function callApi2Pdf(html: string, fileName: string): Promise<string> {
         marginBottom: 0,
         marginLeft: 0,
         marginRight: 0,
-        // Fonts (Google) + optional GPT-image hero images need a moment to settle.
-        delay: 2500,
-        puppeteerWaitForMethod: "WaitForNetworkIdle0",
+        // Do not wait for network-idle: report HTML can contain remote resources,
+        // so an idle wait can be held open until the Edge Function times out.
+        delay: 0,
+        puppeteerWaitForMethod: "WaitForNavigation",
         puppeteerWaitForValue: "load",
       },
 

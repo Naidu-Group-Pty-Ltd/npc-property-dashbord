@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest';
 
 const functionSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 
+function readNumericConstant(name: string): number {
+  const match = functionSource.match(new RegExp(`const ${name} = ([\\d_]+);`));
+  expect(match, `${name} must be a numeric fail-fast limit`).not.toBeNull();
+  return Number(match![1].replaceAll('_', ''));
+}
+
+describe('render-investment-report-pdf resource limits', () => {
+  it('keeps Api2PDF rendering within fail-fast budgets', () => {
+    expect(readNumericConstant('MAX_RENDER_WAIT_MS')).toBeLessThanOrEqual(115_000);
+    expect(readNumericConstant('API2PDF_REQUEST_TIMEOUT_MS')).toBeLessThanOrEqual(45_000);
+  });
+});
+
 describe('render-investment-report-pdf authorization contract', () => {
   it('authorizes object access before loading report content', () => {
     const authResult = functionSource.indexOf('const { error: authError, userId, authMethod }');

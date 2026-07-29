@@ -31,6 +31,8 @@ function jsonWithHeaders(body: unknown, responseCorsHeaders: Record<string, stri
   });
 }
 
+type JsonResponder = (data: unknown, status?: number) => Response;
+
 function publicAppUrl(): string {
   return Deno.env.get('APP_URL') || '';
 }
@@ -45,6 +47,7 @@ async function authorizeClientMessages(
   partner: any,
   clientId: string,
   action: 'view' | 'edit',
+  json: JsonResponder,
 ) {
   const { data: assignment, error } = await supabase
     .from('finance_portal_client_assignments')
@@ -61,7 +64,7 @@ async function authorizeClientMessages(
   return null;
 }
 
-async function validatePurchaseFileScope(supabase: any, purchaseFileId: string | undefined, clientId: string) {
+async function validatePurchaseFileScope(supabase: any, purchaseFileId: string | undefined, clientId: string, json: JsonResponder) {
   if (!purchaseFileId) return null;
   const { data: purchaseFile, error } = await supabase
     .from('purchase_files')
@@ -93,11 +96,11 @@ Deno.serve(async (req) => {
 
   try {
     switch (action) {
-      case 'list':           return await listInbox(supabase, partner, body);
-      case 'send':           return await sendMessage(supabase, partner, body);
-      case 'translate':      return await translate(supabase, partner, body);
-      case 'mark_read':      return await markRead(supabase, partner, body);
-      case 'inbox_list':     return await crossClientInbox(supabase, partner);
+      case 'list':           return await listInbox(supabase, partner, body, json);
+      case 'send':           return await sendMessage(supabase, partner, body, json);
+      case 'translate':      return await translate(supabase, partner, body, json);
+      case 'mark_read':      return await markRead(supabase, partner, body, json);
+      case 'inbox_list':     return await crossClientInbox(supabase, partner, json);
       default:               return json({ error: 'unknown_action', action }, 400);
     }
   } catch (err) {
@@ -106,11 +109,11 @@ Deno.serve(async (req) => {
   }
 });
 
-async function listInbox(supabase: any, partner: any, body: any) {
+async function listInbox(supabase: any, partner: any, body: any, json: JsonResponder) {
   const clientId = body.client_id;
   if (!clientId) return json({ error: 'client_id_required' }, 400);
-  const denied = await authorizeClientMessages(supabase, partner, clientId, 'view')
-    || await validatePurchaseFileScope(supabase, body.purchase_file_id, clientId);
+  const denied = await authorizeClientMessages(supabase, partner, clientId, 'view', json)
+    || await validatePurchaseFileScope(supabase, body.purchase_file_id, clientId, json);
   if (denied) return denied;
   const limit = Math.min(body.limit ?? 100, 300);
   const channels = Array.isArray(body.channels) ? body.channels : null;
@@ -207,12 +210,12 @@ async function listInbox(supabase: any, partner: any, body: any) {
   return json({ messages: filtered.slice(0, limit) });
 }
 
-async function sendMessage(supabase: any, partner: any, body: any) {
+async function sendMessage(supabase: any, partner: any, body: any, json: JsonResponder) {
   const { client_id, purchase_file_id, channel, body: text, subject, template_id } = body;
   if (!client_id || !channel || !text) return json({ error: 'missing_required' }, 400);
   if (!['sms','whatsapp','email','portal'].includes(channel)) return json({ error: 'invalid_channel' }, 400);
-  const denied = await authorizeClientMessages(supabase, partner, client_id, 'edit')
-    || await validatePurchaseFileScope(supabase, purchase_file_id, client_id);
+  const denied = await authorizeClientMessages(supabase, partner, client_id, 'edit', json)
+    || await validatePurchaseFileScope(supabase, purchase_file_id, client_id, json);
   if (denied) return denied;
 
   // Lookup client recipient info
@@ -351,7 +354,7 @@ async function sendMessage(supabase: any, partner: any, body: any) {
   return json({ ok: true, id: logIns.data?.id, tracking_token: trackingToken, provider_message_id: providerMessageId });
 }
 
-async function translate(supabase: any, partner: any, body: any) {
+async function translate(supabase: any, partner: any, body: any, json: JsonResponder) {
   const { source_kind, source_id, text, target_lang } = body;
   if (!text || !target_lang) return json({ error: 'missing_required' }, 400);
 
@@ -397,7 +400,7 @@ async function translate(supabase: any, partner: any, body: any) {
   return json({ cached: false, translated_text: translated, target_lang, model });
 }
 
-async function markRead(supabase: any, partner: any, body: any) {
+async function markRead(supabase: any, partner: any, body: any, json: JsonResponder) {
   const { kind, id } = body;
   if (!kind || !id) return json({ error: 'missing_required' }, 400);
   if (!['portal', 'outbound'].includes(kind)) return json({ error: 'invalid_kind' }, 400);
@@ -405,7 +408,7 @@ async function markRead(supabase: any, partner: any, body: any) {
   const { data: message, error } = await supabase.from(table).select('client_id').eq('id', id).maybeSingle();
   if (error) return json({ error: 'message_lookup_failed' }, 500);
   if (!message) return json({ error: 'message_not_found' }, 404);
-  const denied = await authorizeClientMessages(supabase, partner, message.client_id, 'edit');
+  const denied = await authorizeClientMessages(supabase, partner, message.client_id, 'edit', json);
   if (denied) return denied;
   if (kind === 'portal') {
     await supabase.from('client_portal_messages').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id).eq('client_id', message.client_id);
@@ -415,7 +418,7 @@ async function markRead(supabase: any, partner: any, body: any) {
   return json({ ok: true });
 }
 
-async function crossClientInbox(supabase: any, partner: any) {
+async function crossClientInbox(supabase: any, partner: any, json: JsonResponder) {
   // Safe aggregation layer for the Finance Portal Client Inbox. We only return
   // clients assigned to the signed-in finance partner, but we aggregate activity
   // from the existing source tables instead of creating duplicate inbox records.
