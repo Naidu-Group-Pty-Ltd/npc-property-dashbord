@@ -5909,6 +5909,7 @@ YOUR DEDICATED PROPERTY PARTNER
       sourcesContent,
       propertyAddress,
       success: true,
+      isComplete: true,
       enhancedData: {
         locationIntelligence: enhancedData.locationIntelligence,
         investmentScore: enhancedData.investmentScore,
