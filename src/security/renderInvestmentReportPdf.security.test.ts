@@ -43,3 +43,15 @@ describe('render-investment-report-pdf editorial shortcode escaping contract', (
     );
   });
 });
+
+describe('render-investment-report-pdf investment score escaping contract', () => {
+  it('escapes the stored score band before inserting score text into HTML', () => {
+    expect(functionSource).toContain(
+      'overall investment score of <strong>${esc(scoreTxt)}</strong>',
+    );
+    expect(functionSource).toContain(
+      'investment score <strong>${esc(scoreTxt)}</strong>',
+    );
+    expect(functionSource).not.toMatch(/<strong>\$\{scoreTxt\}<\/strong>/);
+  });
+});
