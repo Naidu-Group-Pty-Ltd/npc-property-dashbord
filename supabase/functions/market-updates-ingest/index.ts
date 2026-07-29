@@ -10,6 +10,7 @@ import type { SourceConfig } from "./adapters/types.ts";
 import { MARKET_AUDIENCES, MARKET_SEGMENTS, normaliseClassification, validateClassification } from "./classification.ts";
 import { callLLM } from "../_shared/llmRouter.ts";
 import { classifyMarketError, logMarketEvent, marketCorrelationId } from "../_shared/marketUpdatesObservability.ts";
+import { verifySignedInternal } from "../_shared/requestSecurity.ts";
 
 const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -195,6 +196,10 @@ Deno.serve(async (req) => {
   const csrf = enforceCsrf(req);
   if (!csrf.ok) return csrfDenied(cors, csrf);
 
+  const rawBody = await req.text();
+  let payload: any = {};
+  try { payload = JSON.parse(rawBody); } catch {}
+
   const secret = Deno.env.get("MARKET_INGESTION_CRON_SECRET");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   const auth = req.headers.get("authorization") ?? "";
@@ -211,7 +216,11 @@ Deno.serve(async (req) => {
   let requestedBy: string | null = null;
 
   if (!authorised) {
-    const verified = await verifyAuth(sb, req.headers, {});
+    authorised = (await verifySignedInternal(sb, req, rawBody, ['pg_cron'])).ok;
+  }
+
+  if (!authorised) {
+    const verified = await verifyAuth(sb, req.headers, payload);
     if (verified.error || !verified.userId) {
       return json({ error: "Unauthorised market ingestion request." }, 401, cors);
     }
@@ -221,7 +230,7 @@ Deno.serve(async (req) => {
   }
 
   const { force = false, sourceIds = null, trigger_type = 'manual', test = false } =
-    await req.json().catch(() => ({} as any));
+    payload;
 
   const { data: run, error: runError } = await sb.rpc('acquire_market_ingestion_run', {
     p_trigger: trigger_type, p_requested_by: requestedBy, p_timeout_seconds: Math.ceil(Number(Deno.env.get('MARKET_UPDATES_RUN_TIMEOUT_MS') ?? 180000) / 1000),
