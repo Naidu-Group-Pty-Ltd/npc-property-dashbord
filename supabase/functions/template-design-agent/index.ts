@@ -835,7 +835,7 @@ A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as nat
       if (aiResp.status === 429) return json({ error: 'Rate limited — try again shortly.' }, 429);
       if (aiResp.status === 402) return json({ error: 'AI credits exhausted. Add credits in Workspace settings.' }, 402);
       console.error('design agent gateway error', aiResp.status, text);
-      return json({ error: `AI gateway error (${aiResp.status})`, detail: text.slice(0, 500) }, 500);
+      return json({ error: `AI gateway error (${aiResp.status})` }, 500);
     }
     let aiData = await aiResp.json();
     let toolCall = aiData?.choices?.[0]?.message?.tool_calls?.[0];
