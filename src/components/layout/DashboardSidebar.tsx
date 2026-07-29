@@ -18,6 +18,7 @@ import {
   Sparkles,
   Phone,
   MessageSquareText,
+  MessageSquareQuote,
   MessageSquare,
   FileStack,
   Palette,
@@ -88,6 +89,7 @@ const navigationItems = [
   { title: 'Charts', url: '/charts', icon: BarChart3, moduleKey: 'charts' },
   { title: 'User Guide', url: '/user-guide', icon: BookOpen, moduleKey: 'user_guide' },
   { title: 'Billing & Usage', url: '/billing', icon: Coins, moduleKey: '__always__' },
+  { title: 'Feedback', url: '/feedback', icon: MessageSquareQuote, moduleKey: '__always__' },
 ];
 
 
@@ -110,7 +112,7 @@ const navigationGroups = [
   },
   {
     title: 'Help & Usage',
-    itemTitles: ['User Guide', 'Billing & Usage'],
+    itemTitles: ['User Guide', 'Billing & Usage', 'Feedback'],
   },
 ];
 
