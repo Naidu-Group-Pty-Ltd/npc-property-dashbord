@@ -549,7 +549,7 @@ Deno.serve(async (req) => {
         const limit = Math.min(Number(body.limit ?? 200), 500);
         const { data, error } = await supabase
           .from('document_chunks')
-          .select('id, chunk_index, content, token_count, metadata')
+          .select('id, chunk_index, chunk_text, metadata')
           .eq('document_name', `template:${tplId}`)
           .order('chunk_index', { ascending: true })
           .limit(limit);
