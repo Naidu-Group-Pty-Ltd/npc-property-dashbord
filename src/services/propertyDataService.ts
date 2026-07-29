@@ -106,13 +106,15 @@ class PropertyDataService {
 
       const processedListings = this.processAndDeduplicateListings(allRecords);
 
-      // Update cache
-      this.cache = {
-        data: processedListings,
-        timestamp: now,
-        ttl: this.cache.ttl,
-        tableKey,
-      };
+      // Only complete table reads are safe to reuse for later unlimited requests.
+      if (!maxRecords) {
+        this.cache = {
+          data: processedListings,
+          timestamp: now,
+          ttl: this.cache.ttl,
+          tableKey,
+        };
+      }
 
 
       console.log(`Processed data: ${processedListings.length} unique records`);
