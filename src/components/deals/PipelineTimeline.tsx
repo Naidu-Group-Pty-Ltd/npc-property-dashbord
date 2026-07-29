@@ -154,7 +154,7 @@ function getDealMilestones(deal: DealWithClient): MilestoneMarker[] {
 const STAGE_STATUS_COLORS: Record<string, string> = {
   complete: 'bg-gradient-to-r from-success to-success shadow-[inset_0_1px_0_rgba(255,255,255,0.35)]',
   in_progress: 'bg-gradient-to-r from-brand-400 to-brand-500 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]',
-  pending: 'bg-muted/80 dark:bg-slate-700/70',
+  pending: 'bg-muted/80 dark:bg-muted-foreground/40',
   skipped: 'bg-muted/70 dark:bg-background/70',
 };
 
@@ -385,7 +385,7 @@ function TimelineLegend() {
   const items = [
     { label: 'Complete', swatch: 'h-2.5 w-5 rounded-full bg-gradient-to-r from-success to-success' },
     { label: 'In progress', swatch: 'h-2.5 w-5 rounded-full bg-gradient-to-r from-brand-400 to-brand-500' },
-    { label: 'Pending', swatch: 'h-2.5 w-5 rounded-full bg-muted ring-1 ring-border dark:bg-slate-700 dark:ring-border' },
+    { label: 'Pending', swatch: 'h-2.5 w-5 rounded-full bg-muted ring-1 ring-border dark:bg-muted-foreground/40 dark:ring-border' },
     { label: 'Skipped', swatch: 'h-2.5 w-5 rounded-full bg-muted ring-1 ring-border dark:bg-background dark:ring-border' },
   ];
 

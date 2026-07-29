@@ -95,7 +95,7 @@ export function MessageComposer({ value, onChange, onSend, isSending, disabled, 
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-7 w-7 rounded-lg text-muted-foreground dark:text-foreground transition-all hover:-translate-y-0.5 hover:bg-brand-300/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950"
+                  className="h-7 w-7 rounded-lg text-muted-foreground dark:text-foreground transition-all hover:-translate-y-0.5 hover:bg-brand-300/10 hover:text-brand-100 focus-visible:ring-2 focus-visible:ring-brand-300/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   onClick={() => insertFormatting(prefix, suffix)}
                 >
                   <Icon className="h-3.5 w-3.5" />
@@ -135,7 +135,7 @@ export function MessageComposer({ value, onChange, onSend, isSending, disabled, 
         />
         <Button
           size="sm"
-          className="mb-0.5 h-8 w-8 shrink-0 rounded-full bg-brand-300 p-0 text-black shadow-[0_0_22px_rgba(251,191,36,0.20)] transition-all hover:-translate-y-0.5 hover:bg-brand-200 hover:shadow-[0_0_30px_rgba(251,191,36,0.32)] focus-visible:ring-2 focus-visible:ring-brand-200/80 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 disabled:translate-y-0 disabled:opacity-50"
+          className="mb-0.5 h-8 w-8 shrink-0 rounded-full bg-brand-300 p-0 text-black shadow-[0_0_22px_rgba(251,191,36,0.20)] transition-all hover:-translate-y-0.5 hover:bg-brand-200 hover:shadow-[0_0_30px_rgba(251,191,36,0.32)] focus-visible:ring-2 focus-visible:ring-brand-200/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:translate-y-0 disabled:opacity-50"
           onClick={onSend}
           disabled={disabled || isSending}
           aria-label={`Send ${channel === 'sms' ? 'SMS' : channel === 'whatsapp' ? 'WhatsApp' : 'email'}`}

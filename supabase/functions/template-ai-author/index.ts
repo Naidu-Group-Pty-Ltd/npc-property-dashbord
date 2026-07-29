@@ -239,7 +239,7 @@ Tier: ${tier}.`;
         background: {
           type: 'object',
           properties: { color: { type: 'string' } },
-          additionalProperties: true,
+          additionalProperties: false,
         },
         blocks: {
           type: 'array',
@@ -266,14 +266,17 @@ Tier: ${tier}.`;
                     alt: { type: 'string' },
                   },
                   required: ['type', 'x', 'y', 'width', 'height'],
+                  additionalProperties: false,
                 },
               },
             },
             required: ['type'],
+            additionalProperties: false,
           },
         },
       },
       required: ['pageName', 'blocks'],
+      additionalProperties: false,
     },
   };
 

@@ -27,6 +27,24 @@ export type ClientPortalNotificationCategory =
   | 'report'
   | 'milestone';
 
+const notificationTypeByInput: Record<ClientPortalNotificationType, string> = {
+  info: 'info',
+  success: 'success',
+  warning: 'warning',
+  critical: 'warning',
+};
+
+const notificationCategoryByInput: Record<ClientPortalNotificationCategory, string> = {
+  general: 'general',
+  message: 'message',
+  document_request: 'document',
+  status_update: 'deal',
+  appointment: 'general',
+  task: 'general',
+  report: 'document',
+  milestone: 'deal',
+};
+
 export interface ClientPortalNotificationInput {
   client_id: string;
   title: string;
@@ -55,6 +73,8 @@ export async function notifyClientPortal(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
+    const notificationType = notificationTypeByInput[input.type ?? 'info'];
+    const notificationCategory = notificationCategoryByInput[input.category ?? 'general'];
 
     // Only write if at least one active portal user exists for the client.
     // Avoids generating dead notifications no one can ever see.
@@ -78,7 +98,7 @@ export async function notifyClientPortal(
         .from('client_portal_notifications')
         .select('id, metadata')
         .eq('client_id', input.client_id)
-        .eq('category', input.category || 'general')
+        .eq('category', notificationCategory)
         .gte('created_at', sinceIso)
         .limit(20);
       const hit = (dupes || []).find(
@@ -91,8 +111,8 @@ export async function notifyClientPortal(
       client_id: input.client_id,
       title: input.title,
       message: input.message ?? null,
-      type: input.type || 'info',
-      category: input.category || 'general',
+      type: notificationType,
+      category: notificationCategory,
       action_url: input.action_url ?? null,
       metadata: {
         ...(input.metadata || {}),

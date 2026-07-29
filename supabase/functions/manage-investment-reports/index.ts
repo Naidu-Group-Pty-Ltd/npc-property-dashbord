@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { releaseInvestmentReportRunTokens } from '../_shared/reportMetering.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 // Dynamic CORS headers for credential-based requests
@@ -19,7 +20,8 @@ function createCorsHeaders(origin: string | null): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': allowedOrigin,
     'Access-Control-Allow-Credentials': 'true',
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-session-token',
+    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token',
+    'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };
 }
@@ -132,8 +134,26 @@ Deno.serve(async (req) => {
           );
         }
 
+        // A failed report must cost nothing. Chunked generation is driven from
+        // the browser, so when the client gives up mid-run this status write is
+        // the only signal the backend gets — release (or refund) the Mission
+        // Control job for this run rather than waiting out its TTL.
+        let tokenRelease = null;
+        if (String(data.status || '').toLowerCase() === 'failed') {
+          tokenRelease = await releaseInvestmentReportRunTokens(
+            reportId,
+            `report_failed:${String(data.error_message || 'generation_failed').slice(0, 120)}`,
+          );
+          if (tokenRelease.jobsReleased > 0 || tokenRelease.failures > 0) {
+            console.log('[manage-investment-reports] token release for failed report', {
+              reportId,
+              ...tokenRelease,
+            });
+          }
+        }
+
         return new Response(
-          JSON.stringify({ success: true, report }),
+          JSON.stringify({ success: true, report, ...(tokenRelease ? { tokenRelease } : {}) }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }

@@ -3,7 +3,86 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-import { getBalance, MissionControlError } from "../_shared/missionControl.ts";
+import {
+  AGENCY_TENANT_REF,
+  getBalance,
+  MissionControlError,
+  type BalanceResult,
+} from "../_shared/missionControl.ts";
+
+type BalancePayload = BalanceResult & {
+  source: "live" | "cache" | "unprovisioned";
+  stale: boolean;
+  updatedAt: string | null;
+  unprovisioned?: boolean;
+};
+
+/**
+ * The cache is deliberately read through the service-role client only after
+ * verifyAuth succeeds. RLS therefore remains closed to browsers and the exact
+ * agency tenant ref prevents one clone from ever receiving another's balance.
+ */
+async function readCachedBalance(supabase: any): Promise<BalancePayload | null> {
+  try {
+    const { data, error } = await supabase
+      .from("token_balance_cache")
+      .select(
+        "available,reserved,lifetime_granted,lifetime_spent,plan_name,monthly_allowance,current_period_end,updated_at",
+      )
+      .eq("tenant_ref", AGENCY_TENANT_REF)
+      .maybeSingle();
+
+    if (error || !data) {
+      if (error) console.warn("[mission-control-balance] cache read failed", error.message);
+      return null;
+    }
+
+    const allowance = Number(data.monthly_allowance ?? 0);
+    const available = Number(data.available ?? 0);
+    const reserved = Number(data.reserved ?? 0);
+    return {
+      available,
+      reserved,
+      allowance,
+      used: allowance > 0 ? Math.min(Math.max(allowance - available - reserved, 0), allowance) : 0,
+      lifetimeGranted: Number(data.lifetime_granted ?? 0),
+      lifetimeSpent: Number(data.lifetime_spent ?? 0),
+      planName: data.plan_name ?? null,
+      planSlug: data.plan_slug ?? null,
+      overagePolicy: null,
+      currentPeriodEnd: data.current_period_end ?? null,
+      // A stale cache entry must never grant a billing exemption. Only a live,
+      // authenticated Mission Control response may make that authorization-relevant decision.
+      exempt: false,
+      source: "cache",
+      stale: true,
+      updatedAt: data.updated_at ?? null,
+    };
+  } catch (error) {
+    console.warn("[mission-control-balance] cache read failed", error);
+    return null;
+  }
+}
+
+async function refreshCache(supabase: any, balance: BalanceResult): Promise<void> {
+  try {
+    const { error } = await supabase.from("token_balance_cache").upsert({
+      tenant_ref: AGENCY_TENANT_REF,
+      available: balance.available,
+      reserved: balance.reserved,
+      lifetime_granted: balance.lifetimeGranted,
+      lifetime_spent: balance.lifetimeSpent,
+      plan_name: balance.planName,
+      plan_slug: balance.planSlug,
+      monthly_allowance: balance.allowance,
+      current_period_end: balance.currentPeriodEnd,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "tenant_ref" });
+    if (error) console.warn("[mission-control-balance] cache refresh failed", error.message);
+  } catch (error) {
+    console.warn("[mission-control-balance] cache refresh failed", error);
+  }
+}
 
 Deno.serve(async (req) => {
   // Credentialed CORS: the app invokes this function with
@@ -20,12 +99,12 @@ Deno.serve(async (req) => {
   const __csrf = enforceCsrf(req);
   if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
 
-  try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
 
+  try {
     let body: any = {};
     try { body = await req.json(); } catch { /* GET / empty */ }
 
@@ -38,8 +117,16 @@ Deno.serve(async (req) => {
     }
 
     const balance = await getBalance();
+    // Await the best-effort write so Edge runtimes do not terminate it early;
+    // failures are contained and never turn a live balance into an error.
+    await refreshCache(supabase, balance);
     // Surface both detailed MC fields and the legacy frontend shape (available/allowance/used/reserved).
-    return new Response(JSON.stringify(balance), {
+    return new Response(JSON.stringify({
+      ...balance,
+      source: "live",
+      stale: false,
+      updatedAt: new Date().toISOString(),
+    } satisfies BalancePayload), {
       status: 200,
       headers: { ...corsHeaders, "content-type": "application/json" },
     });
@@ -50,7 +137,7 @@ Deno.serve(async (req) => {
     // zero-balance placeholder so the header pill and Billing UI can render
     // instead of blank-screening on a 404. Same for the "unconfigured" case
     // (MC secrets missing in a preview environment).
-    if (isMc && (e.status === 404 || e.code === "unconfigured" || e.code === "mc_error")) {
+    if (isMc && (e.status === 404 || e.code === "unconfigured")) {
       const empty = {
         available: 0,
         allowance: 0,
@@ -59,14 +146,40 @@ Deno.serve(async (req) => {
         lifetimeGranted: 0,
         lifetimeSpent: 0,
         planName: null,
+        planSlug: null,
         overagePolicy: null,
         currentPeriodEnd: null,
         exempt: true,
         unprovisioned: true,
+        source: "unprovisioned",
+        stale: false,
+        updatedAt: null,
       };
       return new Response(JSON.stringify(empty), {
         status: 200,
         headers: { ...corsHeaders, "content-type": "application/json" },
+      });
+    }
+
+    // Mission Control can be briefly unavailable or rate limited. Once the
+    // caller has authenticated, prefer the last webhook/live snapshot over an
+    // unusable header. This is display resilience only: cached responses can
+    // never convey billing exemption, while report generation continues to
+    // perform its own authoritative server-side reservation.
+    const cached = await readCachedBalance(supabase);
+    if (cached) {
+      console.warn("[mission-control-balance] serving cached balance", {
+        upstreamStatus: isMc ? e.status : 500,
+        updatedAt: cached.updatedAt,
+      });
+      return new Response(JSON.stringify(cached), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          "content-type": "application/json",
+          "cache-control": "private, no-store",
+          warning: '110 - "Response is stale"',
+        },
       });
     }
     const status = isMc ? e.status : 500;

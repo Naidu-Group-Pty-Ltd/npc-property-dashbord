@@ -5,9 +5,12 @@ const MAX_REDIRECTS = 5;
 function isPrivateIpv4(address: string): boolean {
   const octets = address.split('.').map(Number);
   if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
-  const [a, b] = octets;
-  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  const [a, b, c] = octets;
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 192 && b === 168) || (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113);
 }
 
 function isPrivateAddress(address: string): boolean {
@@ -21,7 +24,7 @@ function isPrivateAddress(address: string): boolean {
     const low = Number.parseInt(mappedHex[2], 16);
     return isPrivateIpv4(`${high >> 8}.${high & 255}.${low >> 8}.${low & 255}`);
   }
-  return value === '::' || value === '::1' || /^f[cd]/.test(value) || /^fe[89ab]/.test(value) || /^ff/.test(value);
+  return value === '::' || value === '::1' || value.startsWith('2001:db8:') || /^f[cd]/.test(value) || /^fe[89ab]/.test(value) || /^ff/.test(value);
 }
 
 function isIpLiteral(hostname: string): boolean {
@@ -69,6 +72,15 @@ export const sourceDomains = (source: { primary_url?: string | null; feed_urls: 
   [source.primary_url, ...source.feed_urls, ...source.listing_urls]
     .filter(Boolean)
     .map((value) => new URL(value!).hostname.toLowerCase().replace(/^\[|\]$/g, ''));
+
+export function safeSourceExcerpt(source:{copyright_mode?:string|null}, value:unknown):string|null {
+  if (String(source.copyright_mode ?? '').includes('link_and_metadata_only')) return null;
+  const text=String(value ?? '').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim();
+  if(!text) return null;
+  const configured=Number(Deno.env.get('MARKET_UPDATES_EXCERPT_MAX_CHARS') ?? 700);
+  const limit=Math.max(120,Math.min(1200,Number.isFinite(configured)?configured:700));
+  return text.slice(0,limit);
+}
 
 export async function boundedFetch(
   value: string,

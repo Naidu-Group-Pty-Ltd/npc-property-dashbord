@@ -71,6 +71,20 @@ function pictureAltText(picture: DoclingPictureItem): string | undefined {
 
 const DEFAULT_FONT_FAMILY = 'Helvetica';
 
+// Imported picture URIs are later emitted into HTML and rendered by WeasyPrint.
+// Keep this boundary deliberately narrow so parser-controlled values cannot
+// trigger network/file fetches, SVG execution, binding resolution, or large
+// data-URI allocations during preview/export.
+const MAX_DOCLING_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_DOCLING_IMAGE_BASE64_LENGTH = Math.ceil(MAX_DOCLING_IMAGE_BYTES / 3) * 4;
+
+function safeDoclingImageUri(uri: unknown): string | undefined {
+  if (typeof uri !== 'string') return undefined;
+  const match = /^data:image\/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]*={0,2})$/i.exec(uri);
+  if (!match || !match[1] || match[1].length > MAX_DOCLING_IMAGE_BASE64_LENGTH) return undefined;
+  return uri;
+}
+
 function nearestDesignFont(family: string | undefined, label?: DoclingTextLabel): string {
   const f = (family ?? '').toLowerCase();
   if (label === 'code' || /mono|courier|consolas|menlo|source code/.test(f)) return 'Menlo, Consolas, monospace';
@@ -287,6 +301,25 @@ type DoclingMappedTableCell = {
   rowHeader?: boolean;
 };
 
+// Docling output is derived from uploaded PDFs, so table dimensions and cell
+// coordinates must be treated as untrusted input. Keep enough cells for useful
+// editing while preventing a malformed document from forcing a huge dense grid.
+const MAX_TABLE_ROWS = 1_000;
+const MAX_TABLE_COLS = 100;
+const MAX_TABLE_CELLS = 10_000;
+
+function boundedTableDimension(value: unknown, maximum: number): number {
+  const dimension = Number(value);
+  if (!Number.isFinite(dimension) || dimension <= 0) return 0;
+  return Math.min(Math.floor(dimension), maximum);
+}
+
+function boundedCellOffset(value: unknown, fallback: number, maximum: number): number {
+  const offset = Number(value);
+  if (!Number.isFinite(offset)) return fallback;
+  return Math.max(0, Math.min(Math.floor(offset), maximum));
+}
+
 /** Build a dense row-major string grid from Docling's sparse `table_cells`. */
 function buildTableGrid(item: DoclingTableItem): {
   rows: string[][];
@@ -297,21 +330,42 @@ function buildTableGrid(item: DoclingTableItem): {
   hadGlyphArtifacts: boolean;
 } {
   let hadGlyphArtifacts = false;
-  const numRows = Math.max(0, item.data?.num_rows ?? 0);
-  const numCols = Math.max(0, item.data?.num_cols ?? 0);
+  const numRows = boundedTableDimension(item.data?.num_rows, MAX_TABLE_ROWS);
+  const requestedCols = boundedTableDimension(item.data?.num_cols, MAX_TABLE_COLS);
+  const numCols = numRows > 0
+    ? Math.min(requestedCols, Math.floor(MAX_TABLE_CELLS / numRows))
+    : requestedCols;
   const grid: string[][] = Array.from({ length: numRows }, () => Array<string>(numCols).fill(''));
-  const cells: DoclingTableCell[] = item.data?.table_cells
-    ?? (item.data?.grid ? item.data.grid.flat() : []);
+  const cells: DoclingTableCell[] = item.data?.table_cells?.slice(0, MAX_TABLE_CELLS)
+    ?? (item.data?.grid
+      ? item.data.grid.slice(0, numRows).flatMap((row) => row.slice(0, numCols))
+      : []);
   const structuralCells: DoclingMappedTableCell[] = [];
 
   for (const [idx, cell] of cells.entries()) {
     const hasExplicitPosition = cell.start_row_offset_idx !== undefined || cell.start_col_offset_idx !== undefined;
     const inferredRow = numCols > 0 ? Math.floor(idx / numCols) : 0;
     const inferredCol = numCols > 0 ? idx % numCols : 0;
-    const r0 = cell.start_row_offset_idx ?? (hasExplicitPosition ? 0 : inferredRow);
-    const c0 = cell.start_col_offset_idx ?? (hasExplicitPosition ? 0 : inferredCol);
-    const r1 = cell.end_row_offset_idx ?? r0 + (cell.row_span ?? 1);
-    const c1 = cell.end_col_offset_idx ?? c0 + (cell.col_span ?? 1);
+    const r0 = boundedCellOffset(
+      cell.start_row_offset_idx,
+      hasExplicitPosition ? 0 : inferredRow,
+      Math.max(0, numRows - 1),
+    );
+    const c0 = boundedCellOffset(
+      cell.start_col_offset_idx,
+      hasExplicitPosition ? 0 : inferredCol,
+      Math.max(0, numCols - 1),
+    );
+    const r1 = boundedCellOffset(
+      cell.end_row_offset_idx,
+      r0 + boundedCellOffset(cell.row_span, 1, numRows),
+      numRows,
+    );
+    const c1 = boundedCellOffset(
+      cell.end_col_offset_idx,
+      c0 + boundedCellOffset(cell.col_span, 1, numCols),
+      numCols,
+    );
     const cellSanitized = sanitizeExtractedText(cell.text ?? '');
     if (cellSanitized.hadGlyphArtifacts) hadGlyphArtifacts = true;
     const text = (cellSanitized.text ?? '').trim();
@@ -366,11 +420,15 @@ function tableItemToBlock(
   const bbox = bboxToTopLeft(prov.bbox, pageInfo.size.height);
   if (bbox.width <= 0 || bbox.height <= 0) return null;
   const { hadGlyphArtifacts, ...tableData } = buildTableGrid(item);
-  const preview = tableData.rows
-    .flat()
-    .filter(Boolean)
-    .slice(0, 12)
-    .join(' · ');
+  const previewCells: string[] = [];
+  for (const row of tableData.rows) {
+    for (const cell of row) {
+      if (cell) previewCells.push(cell);
+      if (previewCells.length === 12) break;
+    }
+    if (previewCells.length === 12) break;
+  }
+  const preview = previewCells.join(' · ');
   return {
     id: blockId('table', pageInfo.page_no, index),
     type: 'table',
@@ -412,7 +470,7 @@ function pictureItemToBlock(
   if (bbox.width <= 0 || bbox.height <= 0) return null;
   const altText = pictureAltText(item);
   const pictureClass = topPictureClass(item);
-  const imageUri = item.image?.uri;
+  const imageUri = safeDoclingImageUri(item.image?.uri);
   const imageDiagnosticsPath = item.image?.diagnostics_path;
   const displayText = altText || item.caption || (pictureClass ? `[${pictureClass}]` : '[image]');
   return {
@@ -475,6 +533,13 @@ export interface MappedDoclingBlocks {
   outline: Array<{ title: string; level: number; page_no?: number | null }>;
 }
 
+// Docling output is derived from untrusted PDFs. Keep the optional proximity
+// heuristic bounded so caption-heavy documents cannot turn figure mapping into
+// quadratic work on the browser's main thread. Explicit caption refs do not use
+// this budget and remain authoritative.
+const MAX_PROXIMITY_CAPTIONS_PER_PAGE = 256;
+const MAX_PROXIMITY_CAPTION_COMPARISONS = 16_384;
+
 export function mapDoclingToRawBlocks(
   doc: DoclingDocument,
   opts: MapOptions = {},
@@ -528,7 +593,10 @@ export function mapDoclingToRawBlocks(
       byPage[page.page_no]?.push(block);
       if (text.self_ref) textBlocksBySelfRef.set(text.self_ref, block);
       if (text.label === 'caption') {
-        (captionPool[page.page_no] ??= []).push({ block, text });
+        const pageCaptionPool = (captionPool[page.page_no] ??= []);
+        if (pageCaptionPool.length < MAX_PROXIMITY_CAPTIONS_PER_PAGE) {
+          pageCaptionPool.push({ block, text });
+        }
       }
     }
     textIdx += 1;
@@ -537,6 +605,7 @@ export function mapDoclingToRawBlocks(
   /** Resolve a figure's caption refs (or fall back to the nearest caption-labeled text). */
   const PROXIMITY_PT = 36;
   let captionGroupSeq = 0;
+  let remainingProximityComparisons = MAX_PROXIMITY_CAPTION_COMPARISONS;
   function pairCaption(
     refs: Array<DoclingRef | string> | undefined,
     pageNo: number,
@@ -562,6 +631,8 @@ export function mapDoclingToRawBlocks(
     const pool = captionPool[pageNo] ?? [];
     let best: { block: RawImportBlock; dist: number } | null = null;
     for (const entry of pool) {
+      if (remainingProximityComparisons <= 0) break;
+      remainingProximityComparisons -= 1;
       if (entry.block.meta?.groupId) continue; // already paired
       const cy = entry.block.bbox.y + entry.block.bbox.height / 2;
       const fyTop = figureBBox.y;

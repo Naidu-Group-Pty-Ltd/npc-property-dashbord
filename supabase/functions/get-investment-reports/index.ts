@@ -1,253 +1,133 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { verifyAuth, createCorsHeaders } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
+import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
-import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 type TableName = 'investment_reports' | 'generated_reports' | 'property_comparisons';
+type Projection = 'library' | 'archivedLibrary' | 'detail' | 'idLookup' | 'multiLookup';
+type ErrorCode = 'UNAUTHENTICATED' | 'FORBIDDEN' | 'REPORT_SCHEMA_MISMATCH' | 'INVALID_REPORT_QUERY' |
+  'REPORT_DATABASE_UNAVAILABLE' | 'REPORT_QUERY_TIMEOUT' | 'REPORT_QUERY_FAILED' | 'REPORT_NOT_FOUND' | 'INTERNAL_REPORT_ERROR';
 
 interface RequestBody {
-  // Table selection (defaults to investment_reports for backwards compatibility)
   table?: TableName;
-  
-  // Single report fetch
+  projection?: Projection;
   reportId?: string;
-  
-  // Multiple reports fetch
   reportIds?: string[];
-  
-  // List mode options
   listMode?: boolean;
   listOptions?: {
+    status?: string | string[]; isArchived?: boolean; isClientReport?: boolean | null;
+    clientPropertyId?: string; clientPropertyIds?: string[]; createdAfter?: string; createdBefore?: string;
+    hasPropertyListingId?: boolean; page?: number; pageSize?: number;
+    /** Deprecated and deliberately ignored: callers cannot define database projections. */
     select?: string;
-    status?: string | string[];
-    isArchived?: boolean;
-    isClientReport?: boolean | null; // null means no filter
-    clientPropertyId?: string;
-    clientPropertyIds?: string[];
-    orderBy?: string;
-    orderAsc?: boolean;
-    limit?: number;
-    offset?: number;
-    createdAfter?: string; // ISO date string
-    createdBefore?: string; // ISO date string
-    hasPropertyListingId?: boolean; // For filtering auto-generated reports
   };
-  
-  session_token?: string;
 }
 
-const DEFAULT_SELECTS: Record<TableName, string> = {
-  investment_reports: 'id, property_address, property_listing_id, canonical_property_key, created_at, current_version, report_scope, report_tier, parent_report_id, status, is_archived, investment_score',
-  // NOTE: do NOT default to '*' on generated_reports — the row contains large
-  // JSONB report content that will trip the Postgres statement timeout.
-  generated_reports: 'id, title, created_at',
-  property_comparisons: 'id, property_count, property_addresses, property_states, report_title, report_ids, created_at, analysis_summary, executive_summary, rankings, recommendations, financial_comparison, location_comparison, risk_comparison, red_flags',
+export const INVESTMENT_LIBRARY_SELECT = 'id,property_address,property_listing_id,client_property_id,canonical_property_key,created_at,current_version,report_scope,report_tier,parent_report_id,status,is_archived,is_client_report,report_variant,derived_from_report_id,investment_score,generated_by';
+const INVESTMENT_DETAIL_SELECT = `${INVESTMENT_LIBRARY_SELECT},report_content,sources_content,manual_overrides,financial_calculations,demographics_data,economic_data,location_intelligence`;
+const TABLE_SELECTS: Record<Exclude<TableName, 'investment_reports'>, string> = {
+  generated_reports: 'id,title,created_at',
+  property_comparisons: 'id,property_count,property_addresses,property_states,report_title,report_ids,created_at,analysis_summary,executive_summary,rankings,recommendations,financial_comparison,location_comparison,risk_comparison,red_flags',
+};
+const FUNCTION_VERSION = '2026-07-26.1';
+const json = (body: unknown, status: number, headers: Record<string, string>, correlationId: string) => new Response(JSON.stringify(body), {
+  status, headers: { ...headers, 'Content-Type': 'application/json', 'x-correlation-id': correlationId },
+});
+const failure = (code: ErrorCode, details: string, retryable: boolean, status: number, headers: Record<string, string>, correlationId: string) =>
+  json({ success: false, code, error: code === 'REPORT_NOT_FOUND' ? 'Investment report was not found.' : 'Investment reports could not be loaded.', details, retryable, correlationId }, status, headers, correlationId);
+const validIso = (value?: string) => !value || (Number.isFinite(Date.parse(value)) && /T/.test(value));
+const schemaField = (message = '') => message.match(/(?:column|field)\s+(?:investment_reports\.)?["']?([a-z_][a-z0-9_]*)/i)?.[1] || 'requested field';
+const classifyDatabaseError = (error: { code?: string; message?: string }) => {
+  const message = error.message || '';
+  if (error.code === '42703' || error.code === 'PGRST204' || /schema cache|column .* does not exist/i.test(message)) return { code: 'REPORT_SCHEMA_MISMATCH' as const, details: `The database contract is missing ${schemaField(message)}.`, retryable: false, status: 500 };
+  if (error.code === '57014' || /statement timeout|canceling statement/i.test(message)) return { code: 'REPORT_QUERY_TIMEOUT' as const, details: 'The report query timed out.', retryable: true, status: 504 };
+  if (/connection|unavailable|gateway/i.test(message)) return { code: 'REPORT_DATABASE_UNAVAILABLE' as const, details: 'The report database is temporarily unavailable.', retryable: true, status: 503 };
+  return { code: 'REPORT_QUERY_FAILED' as const, details: 'The report query could not be completed.', retryable: true, status: 500 };
 };
 
 Deno.serve(async (req) => {
-  // IMPORTANT: Declare corsHeaders BEFORE try block so it's available in catch
-  const origin = req.headers.get('origin') || '';
-  const corsHeaders = createCorsHeaders(origin);
-
-  // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
-  // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
-  // No-op for GET/HEAD/OPTIONS and any request without the session cookie.
-  const __csrf = enforceCsrf(req);
-  if (!__csrf.ok) return csrfDenied(corsHeaders, __csrf);
-
+  const correlationId = req.headers.get('x-correlation-id') || crypto.randomUUID();
+  const corsHeaders = createCorsHeaders(req.headers.get('origin') || '');
+  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  const csrf = enforceCsrf(req); if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+  const started = performance.now();
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    let body: RequestBody;
+    try { body = await req.json(); } catch { return failure('INVALID_REPORT_QUERY', 'The request body must be valid JSON.', false, 400, corsHeaders, correlationId); }
+    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const auth = await verifyAuth(supabase, req.headers, body);
+    if (auth.error || !auth.userId) return failure('UNAUTHENTICATED', 'Authentication is required.', false, 401, corsHeaders, correlationId);
+    const table = body.table || 'investment_reports';
+    if (!['investment_reports', 'generated_reports', 'property_comparisons'].includes(table)) return failure('INVALID_REPORT_QUERY', 'The requested report collection is invalid.', false, 400, corsHeaders, correlationId);
+    // Single report fetch / Multiple reports fetch by IDs / List mode - fetch reports with filters
+    const permission = await requireModulePermission(supabase, { userId: auth.userId, authMethod: auth.authMethod }, table === 'generated_reports' ? 'generated_reports' : 'reports', 'can_view');
+    if (!permission.ok) return failure('FORBIDDEN', 'Report library access is required.', false, 403, corsHeaders, correlationId);
 
-    // Parse body with error handling - session token may be in headers/cookies
-    let body: RequestBody = {};
-    try {
-      body = await req.json();
-    } catch (err) {
-      console.log('[get-investment-reports] Body parsing failed (may be empty), continuing with empty body:', err);
-      // Continue - session token should be in headers/cookies
+    const options = body.listOptions || {};
+    if (!validIso(options.createdAfter) || !validIso(options.createdBefore) || (options.createdAfter && options.createdBefore && Date.parse(options.createdAfter) > Date.parse(options.createdBefore)))
+      return failure('INVALID_REPORT_QUERY', 'Date filters must be valid ISO timestamps in chronological order.', false, 400, corsHeaders, correlationId);
+    const page = options.page ?? 1, pageSize = options.pageSize ?? 50;
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 200)
+      return failure('INVALID_REPORT_QUERY', 'Page must be positive and pageSize must be between 1 and 200.', false, 400, corsHeaders, correlationId);
+    const projection: Projection = body.projection || (body.reportId ? 'detail' : body.reportIds ? 'multiLookup' : options.isArchived ? 'archivedLibrary' : 'library');
+    const allowed: Projection[] = ['library', 'archivedLibrary', 'detail', 'idLookup', 'multiLookup'];
+    if (!allowed.includes(projection)) return failure('INVALID_REPORT_QUERY', 'The requested projection is invalid.', false, 400, corsHeaders, correlationId);
+
+    const select = table === 'investment_reports'
+      ? projection === 'detail' ? INVESTMENT_DETAIL_SELECT : projection === 'idLookup' ? 'id' : INVESTMENT_LIBRARY_SELECT
+      : TABLE_SELECTS[table as Exclude<TableName, 'investment_reports'>];
+    let query = supabase.from(table).select(select, { count: 'exact' });
+    if (body.reportId) query = query.eq('id', body.reportId);
+    if (body.reportIds) {
+      if (!body.reportIds.length || body.reportIds.length > 200 || body.reportIds.some(id => typeof id !== 'string')) return failure('INVALID_REPORT_QUERY', 'reportIds must contain between 1 and 200 IDs.', false, 400, corsHeaders, correlationId);
+      query = query.in('id', body.reportIds);
     }
-
-    // Validate authentication (JWT first, then session token)
-    // IMPORTANT: verifyAuth checks headers/cookies first, then body
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
-    if (authError) {
-      console.log('[get-investment-reports] Auth failed:', authError);
-      return createUnauthorizedResponse(authError, corsHeaders);
+    if (table === 'investment_reports' && !body.reportId && !body.reportIds) {
+      const statuses = typeof options.status === 'string' ? [options.status] : options.status;
+      if (statuses?.length) query = query.in('status', statuses);
+      // Legacy NULL means active/non-client. Explicit archive mode includes only true.
+      query = (projection === 'archivedLibrary' || options.isArchived === true) ? query.eq('is_archived', true) : query.or('is_archived.is.null,is_archived.eq.false');
+      if (options.isClientReport === true) query = query.eq('is_client_report', true);
+      else query = query.or('is_client_report.is.null,is_client_report.eq.false');
+      if (options.clientPropertyId) query = query.eq('client_property_id', options.clientPropertyId);
+      else if (options.clientPropertyIds?.length) query = query.in('client_property_id', options.clientPropertyIds);
+      if (options.createdAfter) query = query.gte('created_at', options.createdAfter);
+      if (options.createdBefore) query = query.lte('created_at', options.createdBefore);
+      if (options.hasPropertyListingId === true) query = query.not('property_listing_id', 'is', null);
+      if (options.hasPropertyListingId === false) query = query.is('property_listing_id', null);
     }
-
-    console.log(`[get-investment-reports] Authenticated user ${userId}`);
-
-    const { table = 'investment_reports', reportId, reportIds, listMode, listOptions = {} } = body;
-
-    // Validate table
-    if (!['investment_reports', 'generated_reports', 'property_comparisons'].includes(table)) {
-      return new Response(
-        JSON.stringify({ error: `Invalid table: ${table}` }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    query = query.order('created_at', { ascending: false });
+    if (!body.reportId && !body.reportIds) query = query.range((page - 1) * pageSize, page * pageSize - 1);
+    const { data, error, count } = await query;
+    if (error) {
+      console.error('[get-investment-reports]', { correlationId, userId: auth.userId, projection, page, pageSize, durationMs: Math.round(performance.now() - started), postgrestCode: error.code, functionVersion: FUNCTION_VERSION, technicalError: error });
+      const mapped = classifyDatabaseError(error); return failure(mapped.code, mapped.details, mapped.retryable, mapped.status, corsHeaders, correlationId);
     }
-
-    // Single report fetch
-    if (reportId) {
-      const selectFields = listOptions.select || (table === 'investment_reports' ? '*' : DEFAULT_SELECTS[table]);
-      
-      const { data: report, error: reportError } = await supabase
-        .from(table)
-        .select(selectFields)
-        .eq('id', reportId)
-        .single();
-
-      if (reportError) {
-        console.error(`[get-investment-reports] Error fetching ${table}:`, reportError);
-        return new Response(
-          JSON.stringify({ error: 'Report not found', details: reportError.message }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+    if (body.reportId && !data?.length) return failure('REPORT_NOT_FOUND', 'No report exists for that ID.', false, 404, corsHeaders, correlationId);
+    // Row pagination must never produce an incomplete visual property package.
+    // Fetch lightweight siblings for keys represented by this page; large payloads
+    // remain detail-only and IDs are de-duplicated below.
+    let responseData = data || [];
+    if (table === 'investment_reports' && !body.reportId && !body.reportIds && responseData.length) {
+      const keys = [...new Set(responseData.map(row => row.canonical_property_key).filter((key): key is string => Boolean(key)))];
+      if (keys.length) {
+        let siblingsQuery = supabase.from('investment_reports').select(INVESTMENT_LIBRARY_SELECT).in('canonical_property_key', keys);
+        siblingsQuery = (projection === 'archivedLibrary' || options.isArchived === true) ? siblingsQuery.eq('is_archived', true) : siblingsQuery.or('is_archived.is.null,is_archived.eq.false');
+        siblingsQuery = options.isClientReport === true ? siblingsQuery.eq('is_client_report', true) : siblingsQuery.or('is_client_report.is.null,is_client_report.eq.false');
+        const siblings = await siblingsQuery;
+        if (siblings.error) {
+          console.error('[get-investment-reports]', { correlationId, postgrestCode: siblings.error.code, functionVersion: FUNCTION_VERSION, technicalError: siblings.error });
+          const mapped = classifyDatabaseError(siblings.error); return failure(mapped.code, mapped.details, mapped.retryable, mapped.status, corsHeaders, correlationId);
+        }
+        responseData = [...new Map([...(data || []), ...(siblings.data || [])].map(row => [row.id, row])).values()];
       }
-
-      return new Response(
-        JSON.stringify({ success: true, report }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
     }
-
-    // Multiple reports fetch by IDs
-    if (reportIds && reportIds.length > 0) {
-      const selectFields = listOptions.select || DEFAULT_SELECTS[table];
-      const safeIds = reportIds.slice(0, 200);
-
-      const { data: reports, error: reportsError } = await supabase
-        .from(table)
-        .select(selectFields)
-        .in('id', safeIds);
-
-
-      if (reportsError) {
-        console.error(`[get-investment-reports] Error fetching ${table}:`, reportsError);
-        return new Response(
-          JSON.stringify({ error: 'Failed to fetch reports', details: reportsError.message }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ success: true, reports, count: reports?.length || 0 }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // List mode - fetch reports with filters
-    if (listMode || !reportId) {
-      const {
-        select = DEFAULT_SELECTS[table],
-        status,
-        isArchived,
-        isClientReport,
-        clientPropertyId,
-        clientPropertyIds,
-        orderBy = 'created_at',
-        orderAsc = false,
-        limit, // No default limit - fetch all by default
-        offset,
-        createdAfter,
-        createdBefore,
-        hasPropertyListingId
-      } = listOptions;
-
-      let query = supabase
-        .from(table)
-        .select(select);
-
-      // Apply filters based on table type
-      if (table === 'investment_reports') {
-        // Apply status filter
-        if (status) {
-          if (Array.isArray(status)) {
-            query = query.in('status', status);
-          } else {
-            query = query.eq('status', status);
-          }
-        }
-
-        // Apply archived filter
-        if (typeof isArchived === 'boolean') {
-          query = query.eq('is_archived', isArchived);
-        }
-
-        // Apply client report filter
-        if (isClientReport === true) {
-          query = query.eq('is_client_report', true);
-        } else if (isClientReport === false) {
-          query = query.or('is_client_report.is.null,is_client_report.eq.false');
-        }
-
-        // Apply client property filter
-        if (clientPropertyId) {
-          query = query.eq('client_property_id', clientPropertyId);
-        } else if (clientPropertyIds && clientPropertyIds.length > 0) {
-          query = query.in('client_property_id', clientPropertyIds);
-        }
-
-        // Apply date filter
-        if (createdAfter) {
-          query = query.gte('created_at', createdAfter);
-        }
-        if (createdBefore) {
-          query = query.lte('created_at', createdBefore);
-        }
-
-        // Filter for auto-generated reports (have property_listing_id)
-        if (hasPropertyListingId === true) {
-          query = query.not('property_listing_id', 'is', null);
-        } else if (hasPropertyListingId === false) {
-          query = query.is('property_listing_id', null);
-        }
-      }
-
-      // Apply ordering
-      query = query.order(orderBy, { ascending: orderAsc });
-
-      // Apply limit / pagination — enforce a hard ceiling to avoid statement timeouts
-      const MAX_LIMIT = 200;
-      const effectiveLimit = Math.min(limit ?? MAX_LIMIT, MAX_LIMIT);
-      if (typeof offset === 'number' && offset > 0) {
-        const rangeEnd = offset + effectiveLimit - 1;
-        query = query.range(offset, rangeEnd);
-      } else {
-        query = query.limit(effectiveLimit);
-      }
-
-      const { data: reports, error: reportsError } = await query;
-
-      if (reportsError) {
-        console.error(`[get-investment-reports] Error fetching ${table} list:`, reportsError);
-        return new Response(
-          JSON.stringify({ error: 'Failed to fetch reports', details: reportsError.message }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      return new Response(
-        JSON.stringify({ success: true, reports, count: reports?.length || 0 }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    return new Response(
-      JSON.stringify({ error: 'Invalid request - provide reportId, reportIds, or use listMode' }),
-      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
+    const totalRows = count || 0, totalPages = Math.ceil(totalRows / pageSize);
+    console.info('[get-investment-reports]', { correlationId, userId: auth.userId, projection, filters: { status: options.status, archived: options.isArchived, client: options.isClientReport, hasDateRange: Boolean(options.createdAfter || options.createdBefore) }, page, pageSize, durationMs: Math.round(performance.now() - started), returnedCount: responseData.length, functionVersion: FUNCTION_VERSION });
+    if (body.reportId) return json({ success: true, report: data[0], correlationId }, 200, corsHeaders, correlationId);
+    return json({ success: true, reports: responseData, count: totalRows, pagination: { page, pageSize, totalRows, totalPages, hasNextPage: page < totalPages, hasPreviousPage: page > 1 }, correlationId }, 200, corsHeaders, correlationId);
   } catch (error) {
-    console.error('[get-investment-reports] Error:', error);
-    return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    console.error('[get-investment-reports]', { correlationId, functionVersion: FUNCTION_VERSION, technicalError: error });
+    return failure('INTERNAL_REPORT_ERROR', 'An unexpected report service error occurred.', true, 500, corsHeaders, correlationId);
   }
 });

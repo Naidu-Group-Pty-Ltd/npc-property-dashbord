@@ -249,13 +249,13 @@ export default function UserGuide() {
     },
     {
       id: 'report-qa',
-      title: 'Report Q&A (AI Chat)',
+      title: 'Aurixa Intelligence Hub (AI Chat)',
       icon: Bot,
       description: 'AI-powered assistant for property report analysis',
       items: [
         {
           title: 'AI Chat Overview',
-          description: 'The Report Q&A feature allows you to have natural conversations with an AI assistant that has access to your property reports and market data.',
+          description: 'The Aurixa Intelligence Hub feature allows you to have natural conversations with an AI assistant that has access to your property reports and market data.',
           features: [
             'Natural language queries about properties',
             'Context-aware responses using your report data',
@@ -268,7 +268,7 @@ export default function UserGuide() {
           title: 'Using the AI Chat',
           description: 'Ask questions about properties, market trends, and investment analysis.',
           steps: [
-            'Navigate to "Report Q&A" in the sidebar',
+            'Navigate to "Aurixa Intelligence Hub" in the sidebar',
             'Select reports from the sidebar to provide context',
             'Type your question in the message input',
             'Use voice recording for hands-free input',
@@ -314,7 +314,7 @@ export default function UserGuide() {
       description: 'View and manage property listings',
       items: [
         {
-          title: 'Listings Page',
+          title: 'Opportunity Marketplace',
           description: 'View and manage all property listings with advanced filtering and search capabilities.',
           features: [
             'Search by address, suburb, or postcode',
@@ -467,7 +467,7 @@ export default function UserGuide() {
     },
     {
       id: 'automation',
-      title: 'Automation',
+      title: 'Auto Report Generation',
       icon: Zap,
       description: 'Automated report generation and workflows',
       items: [
@@ -482,7 +482,7 @@ export default function UserGuide() {
             'Master toggle for all automation',
           ],
           steps: [
-            'Navigate to "Automation" in the sidebar',
+            'Navigate to "Auto Report Generation" in the sidebar',
             'Click "Add Switch" to create a new automation',
             'Configure trigger criteria (state, price range, property type)',
             'Set priority order for switch evaluation',
@@ -521,7 +521,7 @@ export default function UserGuide() {
             'Investment scoring (0-100)',
           ],
           steps: [
-            'Go to "Listings" and find your target property',
+            'Go to "Opportunity Marketplace" and find your target property',
             'Click "Generate Report" on the property card',
             'Choose analysis mode (Address/Postcode/State)',
             'Configure financial assumptions',
@@ -648,7 +648,7 @@ export default function UserGuide() {
         },
         {
           title: 'Q&A Export Templates',
-          description: 'Customize how Report Q&A conversations are exported to PDF.',
+          description: 'Customize how Aurixa Intelligence Hub conversations are exported to PDF.',
           features: [
             'Cover page design customization',
             'Font and color settings',
@@ -1292,7 +1292,7 @@ export default function UserGuide() {
           ],
         },
         {
-          title: 'Portal Configuration',
+          title: 'Client Portal',
           description: 'Configure branding and settings for the client-facing portal.',
           features: [
             'Custom branding and logos',
@@ -1302,7 +1302,7 @@ export default function UserGuide() {
             'Auto-email notifications for portal events',
           ],
           steps: [
-            'Navigate to "Portal Config" in the sidebar',
+            'Navigate to "Client Portal" in the sidebar',
             'Configure branding, colors, and logos',
             'Enable the features you want clients to access',
             'Test the portal by logging in as a client',
@@ -1408,13 +1408,13 @@ export default function UserGuide() {
           description: 'Shortcuts available throughout the application.',
           shortcuts: [
             { keys: ['⌘/Ctrl', 'K'], description: 'Open search / history search' },
-            { keys: ['⌘/Ctrl', 'N'], description: 'New chat (in Report Q&A)' },
+            { keys: ['⌘/Ctrl', 'N'], description: 'New chat (in Aurixa Intelligence Hub)' },
             { keys: ['⌘/Ctrl', '/'], description: 'Focus message input' },
             { keys: ['Esc'], description: 'Close dialogs / Exit full screen' },
           ],
         },
         {
-          title: 'Report Q&A Shortcuts',
+          title: 'Aurixa Intelligence Hub Shortcuts',
           description: 'Shortcuts specific to the AI chat interface.',
           shortcuts: [
             { keys: ['⌘/Ctrl', '⇧', 'C'], description: 'Copy last response' },
@@ -1497,7 +1497,7 @@ export default function UserGuide() {
     { icon: Download, text: 'Download reports in PDF format for offline viewing and sharing' },
     { icon: Eye, text: 'Click on any property card to view detailed information and generate reports' },
     { icon: Target, text: 'Use the Overview dashboard for a quick snapshot of portfolio performance' },
-    { icon: Bot, text: 'Ask the Report Q&A AI natural language questions about your properties' },
+    { icon: Bot, text: 'Ask the Aurixa Intelligence Hub AI natural language questions about your properties' },
   ];
 
   const statusGuide = [
@@ -1580,7 +1580,7 @@ export default function UserGuide() {
     { label: 'Feature Documentation', targetId: 'feature-documentation' },
     { label: 'Getting Started', sectionId: 'getting-started' },
     { label: 'Client Management', sectionId: 'client-management' },
-    { label: 'Report Q&A', sectionId: 'report-qa' },
+    { label: 'Aurixa Intelligence Hub', sectionId: 'report-qa' },
     { label: 'Settings', sectionId: 'settings' },
     { label: 'Need Help', targetId: 'need-help' },
     { label: 'Troubleshooting', sectionId: 'troubleshooting' },
@@ -1598,7 +1598,7 @@ export default function UserGuide() {
     },
     {
       icon: Bot,
-      text: 'Use the Report Q&A AI to ask questions about features',
+      text: 'Use the Aurixa Intelligence Hub AI to ask questions about features',
       className: 'border-primary/25 bg-primary/10 text-primary',
     },
     {

@@ -114,7 +114,7 @@ function getAdminClient() {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-/** Fetch the assignment for an agent_key, falling back to 'default' if missing. */
+/** Fetch the assignment for an agent_key, falling back only when it is missing. */
 async function loadAssignment(agentKey: string): Promise<AgentAssignment> {
   const admin = getAdminClient();
   const { data, error } = await admin
@@ -125,10 +125,18 @@ async function loadAssignment(agentKey: string): Promise<AgentAssignment> {
 
   if (error) throw new Error(`[llmRouter] Failed to load assignment: ${error.message}`);
 
-  const row = data?.find((r) => r.agent_key === agentKey && r.is_active !== false)
-    ?? data?.find((r) => r.agent_key === 'default' && r.is_active !== false);
-  if (!row) {
-    // Hardcoded ultimate fallback if even 'default' is missing
+  const requested = data?.find((r) => r.agent_key === agentKey);
+  if (requested?.is_active === false) {
+    throw new Error(`[llmRouter] Assignment '${agentKey}' is disabled`);
+  }
+  if (requested) return requested as AgentAssignment;
+
+  const fallback = data?.find((r) => r.agent_key === 'default');
+  if (fallback?.is_active === false) {
+    throw new Error("[llmRouter] Default assignment is disabled");
+  }
+  if (!fallback) {
+    // Preserve the legacy hardcoded fallback only when no assignment exists.
     return {
       agent_key: agentKey,
       route: 'gateway',
@@ -140,7 +148,7 @@ async function loadAssignment(agentKey: string): Promise<AgentAssignment> {
       is_active: true,
     };
   }
-  return row as AgentAssignment;
+  return fallback as AgentAssignment;
 }
 
 /** Build the call chain: primary → fallbacks. */

@@ -76,11 +76,11 @@ const scopeOptions = [
 // Canonical values are retained internally; labels intentionally never expose legacy codes.
 const tierOptions = [
   { value: 'all', label: 'All Tiers', icon: ListFilter },
-  { value: 'compass', label: 'Compass', icon: Compass, iconClassName: 'text-violet-400' },
-  { value: 'financial', label: 'Financial', icon: Calculator, iconClassName: 'text-emerald-400' },
-  { value: 'strategic', label: 'Strategic', icon: Target, iconClassName: 'text-amber-400' },
-  { value: 'snapshot', label: 'Snapshot', icon: Zap, iconClassName: 'text-cyan-400' },
-  { value: 'briefing', label: 'Briefing', icon: FileText, iconClassName: 'text-blue-400' },
+  { value: 'compass', label: 'Compass', icon: Compass, iconClassName: 'text-chart-5' },
+  { value: 'financial', label: 'Financial', icon: Calculator, iconClassName: 'text-success' },
+  { value: 'strategic', label: 'Strategic', icon: Target, iconClassName: 'text-warning' },
+  { value: 'snapshot', label: 'Snapshot', icon: Zap, iconClassName: 'text-info' },
+  { value: 'briefing', label: 'Briefing', icon: FileText, iconClassName: 'text-info' },
 ];
 
 const sourceOptions = [

@@ -357,7 +357,7 @@ export function TeamRemindersSection() {
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="truncate text-sm font-semibold tracking-[-0.01em] text-slate-50 transition-colors duration-200 group-hover:text-white sm:text-base">{reminder.title}</span>
+                        <span className="truncate text-sm font-semibold tracking-[-0.01em] text-foreground transition-colors duration-200 group-hover:text-white sm:text-base">{reminder.title}</span>
                         <Badge className={cn('h-6 shrink-0 rounded-full border px-2.5 py-0 text-[10px] font-semibold uppercase tracking-[0.12em]', priorityColors[reminder.priority] || '')}>
                           {reminder.priority}
                         </Badge>

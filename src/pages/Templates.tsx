@@ -522,7 +522,7 @@ export default function Templates() {
                 Q&A Export Templates
               </CardTitle>
               <CardDescription>
-                Upload PDF templates to customize how Report Q&A conversations are exported.
+                Upload PDF templates to customize how Aurixa Intelligence Hub conversations are exported.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">

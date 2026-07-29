@@ -21,4 +21,8 @@ requireText(files.migration,"where route = 'openrouter'",'existing OpenRouter pr
 requireText(files.ingest,'provider_readiness','classifier readiness gate');
 for (const event of ["sseEvent('start'","sseEvent('delta'","sseEvent('metadata'","sseEvent('done'"]) requireText(files.qa,event,'Q&A SSE completion');
 for (const token of ['RETRYABLE_STATUSES','NON_RETRYABLE_STATUSES','deadlineAt','timeoutMs','attempts']) requireText(files.router,token,'shared router fallback contract');
+for (const token of ["requested?.is_active === false", "Assignment '${agentKey}' is disabled", 'fallback?.is_active === false', 'Default assignment is disabled']) {
+  requireText(files.router,token,'disabled assignment fail-closed contract');
+}
+if (files.router.includes("find((r) => r.agent_key === agentKey && r.is_active !== false)")) fail('inactive requested assignments are still treated as missing');
 console.log('Validated four Market agent assignments, central routing, telemetry, fallback controls, readiness gate, and SSE completion.');

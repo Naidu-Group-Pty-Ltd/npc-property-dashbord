@@ -29,6 +29,14 @@ export interface PlaceholderSuggestion {
 }
 
 const AU_STATES = '(?:NSW|VIC|QLD|SA|WA|TAS|NT|ACT)';
+const MAX_ADDRESS_LINE_LENGTH = 256;
+
+// Imported overlay text is attacker-controlled. Keep address matching to a
+// realistic, fixed-size line and use bounded components so near misses cannot
+// trigger unbounded regexp backtracking on the browser's main thread.
+const ADDRESS_PATTERN = new RegExp(
+  String.raw`\b(?:Lot\s+\d{1,8}[A-Za-z]?\s+)?(?:\d{1,6}[A-Za-z]?\s+)?[A-Z][\w'’.-]{0,40}(?:\s+[\w'’.-]{1,40}){0,8}\s+(?:St(?:reet)?|R(?:oa)?d|Ave(?:nue)?|Dr(?:ive)?|C(?:our)?t|Cres(?:cent)?|Pl(?:ace)?|Lane|Ln|Blvd|Way|Terrace|Tce|Estate|Close|Parade|Circuit)\b[^,\n]{0,80},?\s+[A-Z][\w'’.-]{1,40}(?:\s+[\w'’.-]{1,40}){0,5},?\s+${AU_STATES}\s+\d{4}\b`,
+);
 
 interface Rule {
   path: string;
@@ -56,10 +64,12 @@ const RULES: Rule[] = [
     confidence: () => 0.9,
     match: (text) => {
       // "12 Bondi Avenue, Bondi Beach NSW 2026" / "Lot 60941 Cloverton Estate, Kalkallo VIC 3064"
-      const m = new RegExp(
-        String.raw`\b(?:Lot\s+\d+[A-Za-z]?\s+)?\d*[A-Za-z]?\s*[A-Z][\w'’ ]+?(?:\s(?:St(?:reet)?|R(?:oa)?d|Ave(?:nue)?|Dr(?:ive)?|C(?:our)?t|Cres(?:cent)?|Pl(?:ace)?|Lane|Ln|Blvd|Way|Terrace|Tce|Estate|Close|Parade|Circuit))\b[^\n,]*,?\s+[A-Z][\w ]+?,?\s+${AU_STATES}\s+\d{4}\b`,
-      ).exec(text);
-      return m ? { matchText: m[0].trim(), token: '{{property.address}}' } : null;
+      for (const line of text.split(/\r?\n/)) {
+        if (line.length > MAX_ADDRESS_LINE_LENGTH) continue;
+        const m = ADDRESS_PATTERN.exec(line);
+        if (m) return { matchText: m[0].trim(), token: '{{property.address}}' };
+      }
+      return null;
     },
   },
   {

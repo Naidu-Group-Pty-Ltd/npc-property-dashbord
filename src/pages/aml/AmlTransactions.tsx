@@ -31,8 +31,8 @@ const CP_REQ_STATUSES: AmlCpRequestStatus[] = ["pending", "sent", "awaiting_resp
 function statusBadge(status: string) {
   const map: Record<string, string> = {
     draft: "border-muted-foreground/40 text-muted-foreground",
-    under_contract: "border-blue-500/40 text-blue-500",
-    unconditional: "border-yellow-500/40 text-yellow-500",
+    under_contract: "border-info/40 text-info",
+    unconditional: "border-warning/40 text-warning",
     settled: "border-success/40 text-success",
     terminated: "border-destructive/40 text-destructive",
   };
@@ -396,7 +396,7 @@ export default function AmlTransactions() {
                     };
                     const statusTone: Record<string, string> = {
                       pending: "border-destructive/40 text-destructive",
-                      acknowledged: "border-yellow-500/40 text-yellow-500",
+                      acknowledged: "border-warning/40 text-warning",
                       report_created: "border-success/40 text-success",
                       waived: "border-muted-foreground/40 text-muted-foreground",
                     };

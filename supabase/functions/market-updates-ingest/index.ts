@@ -9,6 +9,7 @@ import { adapterFor } from "./adapters/index.ts";
 import type { SourceConfig } from "./adapters/types.ts";
 import { MARKET_AUDIENCES, MARKET_SEGMENTS, normaliseClassification, validateClassification } from "./classification.ts";
 import { callLLM } from "../_shared/llmRouter.ts";
+import { classifyMarketError, logMarketEvent, marketCorrelationId } from "../_shared/marketUpdatesObservability.ts";
 
 const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -179,6 +180,9 @@ async function classifyWithAI(item: any, source: any, runDeadlineAt: number) {
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
+  const correlationId = marketCorrelationId(req.headers);
+  cors['x-correlation-id'] = correlationId;
+  const requestStartedAt = Date.now();
   cors["Access-Control-Allow-Headers"] += ", x-cron-secret";
   if (req.method === "OPTIONS") return new Response(null, { headers: cors });
   if (req.method !== "POST") {
@@ -223,9 +227,13 @@ Deno.serve(async (req) => {
     p_trigger: trigger_type, p_requested_by: requestedBy, p_timeout_seconds: Math.ceil(Number(Deno.env.get('MARKET_UPDATES_RUN_TIMEOUT_MS') ?? 180000) / 1000),
   });
   if (runError) return json({ error: 'Unable to acquire ingestion lock.' }, 503, cors);
+  logMarketEvent('info',{function:'market-updates-ingest',stage:'run',correlation_id:correlationId,status:'started',run_id:run.id});
   if (run?.metadata?.single_flight_reused) {
     return json({ runId: run.id, status: run.status, active: true, message: 'An ingestion run is already active.' }, 202, cors);
   }
+
+  run.metadata={ ...(run.metadata ?? {}), correlation_id:correlationId };
+  await checkedMutation(sb.from('market_ingestion_runs').update({correlation_id:correlationId,metadata:run.metadata}).eq('id',run.id),'run_correlation_update_failed');
 
   let query = sb.from("market_sources").select("*").eq("registry_status", "canonical").eq("enabled", true);
   if (Array.isArray(sourceIds) && sourceIds.length) query = query.in("id", sourceIds);
@@ -273,9 +281,10 @@ Deno.serve(async (req) => {
       const readiness = await callLLM({ agentKey:'market_updates_classifier', messages:[{ role:'user', content:'Reply with: ready' }], maxTokens:8, timeoutMs:12_000, deadlineAt:Date.now()+25_000 });
       await checkedMutation(sb.from('market_ingestion_runs').update({ metadata:{ ...(run.metadata ?? {}), classifier_readiness:{ ok:true, model_used:readiness.modelUsed, route_used:readiness.routeUsed, attempts:safeAttempts(readiness.attempts) } } }).eq('id',run.id), 'run_readiness_update_failed');
     } catch (providerError:any) {
+      const providerCode=classifyMarketError(providerError);
       await checkedMutation(sb.from('market_ingestion_runs').update({ status:'failed', completed_at:new Date().toISOString(), error_summary:'Market Updates classifier route is unavailable.', metadata:{ ...(run.metadata ?? {}), classifier_readiness:{ ok:false, attempts:safeAttempts(providerError?.attempts) } } }).eq('id',run.id), 'run_readiness_failure_update_failed');
-      console.warn(JSON.stringify({ function:'market-updates-ingest', stage:'provider_readiness', run_id:run.id, status:'failed', attempts:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0 }));
-      return json({ runId:run.id, status:'failed', error:'The configured Market Updates classifier route is unavailable.', code:'provider_unavailable' }, 503, cors);
+      logMarketEvent('warn',{ function:'market-updates-ingest', stage:'provider_readiness', correlation_id:correlationId, run_id:run.id, status:'failed', retry_attempt:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0, error_class:classifyMarketError(providerError) });
+      return json({ runId:run.id, status:'failed', error:'The configured Market Updates classifier route is unavailable.', code:providerCode, stage:'classification', correlation_id:correlationId, retryable:!['provider_unauthorised','provider_payment_required'].includes(providerCode) }, 503, cors);
     }
   }
 
@@ -294,7 +303,7 @@ Deno.serve(async (req) => {
       summary.sourcesProcessed++;
 
       const { data: fetchRun } = await checkedMutation(sb.from("market_source_fetch_runs").insert({
-        ingestion_run_id: run.id, source_id: source.id, status: "running",
+        ingestion_run_id: run.id, source_id: source.id, status: "running", correlation_id:correlationId,
       }).select("id").single(), 'fetch_run_insert_failed');
       fetchRunId = fetchRun?.id ?? null;
 
@@ -331,7 +340,7 @@ Deno.serve(async (req) => {
             source_id:source.id, source_name:source.name, source_url:canonicalUrl ?? source.url, canonical_url:canonicalUrl, external_id:item.externalId,
             source_published_at:item.publishedAt, title:itemTitle || 'Rejected source item', category:'other', segments:[], geography:['Australia'], impact_level:'low', audience_tags:[],
             raw_excerpt:item.excerpt, key_points:[], risk_flags:[], citation_urls:canonicalUrl ? [canonicalUrl] : [], relevance_score:0, freshness_tier:freshnessTier(item.publishedAt),
-            status:'rejected', failure_reason:'source_item_validation_failed', ai_status:'not_attempted', ai_failure_code:null, validation_failures:[...(!canonicalUrl ? ['canonical_url_missing'] : []), ...(!itemTitle ? ['title_missing'] : [])], decisioned_at:new Date().toISOString(), dedupe_hash,
+            status:'rejected', failure_reason:'source_item_validation_failed', ai_status:'not_attempted', ai_failure_code:null, validation_failures:[...(!canonicalUrl ? ['canonical_url_missing'] : []), ...(!itemTitle ? ['title_missing'] : [])], decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId,
           };
           const { error:rejectError } = await sb.from('market_updates').insert(rejectedRow);
           if (rejectError) { if (rejectError.code === '23505') { summary.skippedDuplicates++; return; } summary.persistenceFailed++; sourceFailed++; throw safeDatabaseError('database_insert_failed'); }
@@ -343,7 +352,7 @@ Deno.serve(async (req) => {
           const { error:ignoredError } = await sb.from('market_updates').insert({
             source_id:source.id, source_name:source.name, source_url:canonicalUrl, canonical_url:canonicalUrl, original_url:item.originalUrl, external_id:item.externalId, source_published_at:item.publishedAt, title:itemTitle,
             slug:itemTitle.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,180), category:'other', segments:[], geography:['Australia'], impact_level:'low', audience_tags:[], raw_excerpt:item.excerpt, key_points:[], risk_flags:[], citation_urls:[canonicalUrl], relevance_score:relevance, freshness_tier:freshnessTier(item.publishedAt),
-            status:'ignored', publication_reason:null, candidate_reason:null, failure_reason:'relevance_below_threshold', ai_status:'not_required', ai_failure_code:null, validation_failures:[], decisioned_at:new Date().toISOString(), dedupe_hash,
+            status:'ignored', publication_reason:null, candidate_reason:null, failure_reason:'relevance_below_threshold', ai_status:'not_required', ai_failure_code:null, validation_failures:[], decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId,
           });
           if (ignoredError) { if (ignoredError.code === '23505') { summary.skippedDuplicates++; return; } summary.persistenceFailed++; sourceFailed++; throw safeDatabaseError('database_insert_failed'); }
           summary.ingested++; summary.ignored++; sourceIgnored++; return;
@@ -359,7 +368,7 @@ Deno.serve(async (req) => {
             consecutiveProviderFailures++;
             if (consecutiveProviderFailures >= PROVIDER_CIRCUIT_FAILURES) providerCircuitOpen = true;
             aiTelemetry = { ...aiTelemetry, provider_attempts:safeAttempts(providerError?.attempts), fallback_used:Array.isArray(providerError?.attempts) && providerError.attempts.length > 1, ai_failure_reason:'classifier_unavailable_or_invalid' };
-            console.warn(JSON.stringify({ function:'market-updates-ingest', stage:'classification', source_id:source.id, status:'fallback', attempts:aiTelemetry.provider_attempts.length, circuit_open:providerCircuitOpen }));
+            logMarketEvent('warn',{ function:'market-updates-ingest', stage:'classification', correlation_id:correlationId, run_id:run.id, source_id:source.id, status:'fallback', retry_attempt:aiTelemetry.provider_attempts.length, error_class:classifyMarketError(providerError), circuit_open:providerCircuitOpen });
           }
         } else {
           aiTelemetry.ai_failure_reason = 'provider_circuit_open';
@@ -386,7 +395,7 @@ Deno.serve(async (req) => {
           why_it_matters:ai.why_it_matters, property_implications:ai.property_implications ?? null, finance_implications:ai.finance_implications ?? null, policy_implications:ai.policy_implications ?? null, risk_flags:ai.risk_flags ?? [], confidence_score:confidence, citation_urls,
           source_authority:source.source_authority, source_perspective:source.perspective, author:item.author, public_excerpt:item.excerpt, source_payload_hash:await sha256(JSON.stringify({ title:itemTitle,url:canonicalUrl,date:item.publishedAt,excerpt:item.excerpt })), classification_version:'market-v2-router-validated', summarisation_version:'market-v2', ...aiTelemetry,
           lending_criteria_tags:ai.lending_criteria_tags ?? [], legal_topics:ai.legal_topics ?? [], economic_topics:ai.economic_topics ?? [], legal_status:ai.legal_status ?? 'not_applicable', effective_date:ai.effective_date ?? null, primary_source_urls:[], relevance_score:relevance, freshness_tier:freshnessTier(item.publishedAt),
-          status, publication_reason:publicationReason, candidate_reason:candidateReason, failure_reason:null, ai_status:aiStatus, ai_failure_code:aiFailureCode, validation_failures:validationFailures, decisioned_at:new Date().toISOString(), dedupe_hash,
+          status, publication_reason:publicationReason, candidate_reason:candidateReason, failure_reason:null, ai_status:aiStatus, ai_failure_code:aiFailureCode, validation_failures:validationFailures, decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId,
         };
         const { error:insertError } = await sb.from('market_updates').insert(row);
         if (insertError) { if (insertError.code === '23505') { summary.skippedDuplicates++; return; } summary.persistenceFailed++; sourceFailed++; throw safeDatabaseError('database_insert_failed'); }
@@ -402,10 +411,11 @@ Deno.serve(async (req) => {
     } catch (e) {
       summary.failed++;
       const message = String(e?.message ?? e);
+      logMarketEvent('warn',{function:'market-updates-ingest',stage:'source_adapter',correlation_id:correlationId,status:'failed',run_id:run.id,source_id:source.id,error_class:classifyMarketError(e)});
       summary.sourceErrors.push({ sourceId: source.id, message });
-      if (fetchRunId) { const failedFetch = await sb.from("market_source_fetch_runs").update({ status:"failed", completed_at:new Date().toISOString(), items_published:sourcePublished, items_candidate:sourceCandidates, items_ignored:sourceIgnored, items_failed:Math.max(1,sourceFailed), safe_error_message:message.slice(0,240), consecutive_failure_count:(source.consecutive_failures ?? 0)+1 }).eq("id",fetchRunId); if (failedFetch.error) console.error(JSON.stringify({ function:'market-updates-ingest', stage:'fetch_run_failure_persist', source_id:source.id, error_class:'database_update_failed' })); }
+      if (fetchRunId) { const failedFetch = await sb.from("market_source_fetch_runs").update({ status:"failed", completed_at:new Date().toISOString(), items_published:sourcePublished, items_candidate:sourceCandidates, items_ignored:sourceIgnored, items_failed:Math.max(1,sourceFailed), safe_error_message:message.slice(0,240), consecutive_failure_count:(source.consecutive_failures ?? 0)+1 }).eq("id",fetchRunId); if (failedFetch.error) logMarketEvent('error',{ function:'market-updates-ingest', stage:'fetch_run_failure_persist', correlation_id:correlationId, run_id:run.id, source_id:source.id, status:'failed', error_class:'database_insert_failed' }); }
       const failedSource = await sb.from("market_sources").update({ last_error:message.slice(0,240), consecutive_failures:(source.consecutive_failures??0)+1, health_status:(source.consecutive_failures??0)+1>=3?'failed':'degraded' }).eq("id",source.id);
-      if (failedSource.error) console.error(JSON.stringify({ function:'market-updates-ingest', stage:'source_failure_persist', source_id:source.id, error_class:'database_update_failed' }));
+      if (failedSource.error) logMarketEvent('error',{ function:'market-updates-ingest', stage:'source_failure_persist', correlation_id:correlationId, run_id:run.id, source_id:source.id, status:'failed', error_class:'database_insert_failed' });
     }
   });
 
@@ -421,5 +431,6 @@ Deno.serve(async (req) => {
       } catch { summary.warnings.push('post_ingestion_digest_unreachable'); }
     } else summary.warnings.push('digest_cron_secret_missing');
   }
-  return json({...summary,status:finalStatus}, 200, cors);
+  logMarketEvent('info',{function:'market-updates-ingest',stage:'run',correlation_id:correlationId,status:finalStatus,run_id:run.id,duration_ms:Date.now()-requestStartedAt,published:summary.published,candidates:summary.candidates});
+  return json({...summary,status:finalStatus,correlation_id:correlationId}, 200, cors);
 });

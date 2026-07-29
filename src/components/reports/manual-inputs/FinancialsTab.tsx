@@ -525,7 +525,7 @@ export function FinancialsTab({
               </DialogHeader>
               
               <div
-                className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-4 pb-10 [scrollbar-color:rgba(180,180,190,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-400/30 hover:[&::-webkit-scrollbar-thumb]:bg-slate-300/45 [&::-webkit-scrollbar-track]:bg-transparent"
+                className="min-h-0 flex-1 space-y-4 overflow-y-auto overflow-x-hidden overscroll-contain px-6 py-4 pb-10 [scrollbar-color:rgba(180,180,190,0.28)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/30 hover:[&::-webkit-scrollbar-thumb]:bg-muted-foreground/45 [&::-webkit-scrollbar-track]:bg-transparent"
                 role="region"
                 aria-label="Scrollable stamp duty calculator content"
                 tabIndex={0}

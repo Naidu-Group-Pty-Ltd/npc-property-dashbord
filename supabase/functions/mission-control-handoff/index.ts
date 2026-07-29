@@ -4,6 +4,15 @@
 // pricing page — the user's identity travels server-to-server under the clone
 // API key; the browser only ever receives the opaque handoff URL.
 //
+// The handoff also carries the buyer's contact details. Mission Control seeds
+// the tenant's Stripe Customer from them, which is what makes Stripe's hosted
+// checkout and card-save pages arrive prefilled — Checkout takes its email from
+// the attached Customer, so a Customer with no email means every buyer retypes
+// it. Two sources, deliberately:
+//   • the PERSON  — email, first/last name, phone from their `custom_users` row
+//   • the WORKSPACE — company name and ABN from the branding settings, which
+//     are the same for every staff member and already configured once
+//
 // Contract with the frontend: ALWAYS returns 200 with `{ url: string | null }`
 // (plus handoffId/expiresAt on success). A null url tells the caller to fall
 // back to the static storefront pricing URL (AURIXA_PRICING_URL) — a purchase
@@ -12,6 +21,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { createBillingHandoff } from "../_shared/missionControl.ts";
+import { getBrandConfig } from "../_shared/brand-config.ts";
 
 // "save_card" is the wallet flow: the storefront auto-launches a Stripe
 // setup-mode Checkout instead of a purchase (billing & usage page).
@@ -70,12 +80,67 @@ Deno.serve(async (req) => {
       ? `${originHeader}${returnPath}`
       : undefined;
 
+    // Buyer contact details, so Stripe's hosted page arrives prefilled instead
+    // of asking for an email and name we already hold. Best-effort: a lookup
+    // failure degrades to the previous behaviour rather than blocking the CTA.
+    // Nothing here is read from the request body — the identity comes from the
+    // verified session, so a caller cannot inject someone else's details.
+    let contact: {
+      email?: string | null;
+      firstName?: string | null;
+      lastName?: string | null;
+      phone?: string | null;
+      company?: string | null;
+      taxId?: string | null;
+      taxIdType?: string | null;
+    } | undefined;
+    if (auth.userId !== "service_role") {
+      try {
+        const { data: profile } = await supabase
+          .from("custom_users")
+          .select("email, first_name, last_name, phone")
+          .eq("id", auth.userId)
+          .maybeSingle();
+        if (profile) {
+          contact = {
+            email: profile.email ?? null,
+            firstName: profile.first_name ?? null,
+            lastName: profile.last_name ?? null,
+            phone: profile.phone ?? null,
+          };
+        }
+      } catch (e) {
+        console.warn("[mission-control-handoff] contact lookup failed", e);
+      }
+    }
+
+    // Company name and ABN come from the workspace, not the person: they are
+    // the same for every staff member and are already configured once under
+    // Templates → Global Report Settings (`global_report_settings.contact_details`). Sending
+    // them means the buyer never types either — the company name becomes the
+    // Stripe Customer's name on every tax invoice, and a checksum-valid ABN is
+    // pre-attached so Stripe's tax-ID form doesn't even appear.
+    try {
+      const brand = await getBrandConfig(supabase);
+      if (brand.companyName || brand.abn) {
+        contact = {
+          ...(contact ?? {}),
+          company: brand.companyName || null,
+          taxId: brand.abn || null,
+          taxIdType: brand.abn ? "au_abn" : null,
+        };
+      }
+    } catch (e) {
+      console.warn("[mission-control-handoff] brand lookup failed", e);
+    }
+
     try {
       const handoff = await createBillingHandoff({
         originUserId: auth.userId,
         originUsername: auth.username ?? null,
         intent,
         returnUrl,
+        contact,
       });
       return new Response(
         JSON.stringify({

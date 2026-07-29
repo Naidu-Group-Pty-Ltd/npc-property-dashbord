@@ -15,23 +15,26 @@ function operationalError(stage: MarketUpdatesOperationalIssue['stage'], error: 
   if (error instanceof MarketUpdatesOperationalError) return error;
   const status = Number(error?.status || error?.statusCode) || undefined;
   const raw = String(error?.message ?? error ?? '').toLowerCase();
-  const code = error?.network ? 'network_error'
+  const safeCode = typeof error?.code === 'string' ? error.code : null;
+  const code = safeCode ?? (error?.network ? 'network_error'
     : status === 401 ? 'unauthorised'
     : status === 403 || raw.includes('permission denied') || raw.includes('row-level security') ? 'rls_denied'
     : status === 404 ? 'function_missing'
     : raw.includes('does not exist') || raw.includes('schema cache') || raw.includes('pgrst205') || raw.includes('42p01') ? 'migration_missing'
-    : status && status >= 500 ? 'server_error' : 'unknown';
+    : status && status >= 500 ? 'server_error' : 'unknown');
   const messages: Record<string, string> = {
     network_error: 'The Market Updates service could not be reached.', unauthorised: 'Your sign-in session is missing or expired.',
     rls_denied: 'Your account is not authorised to access this Market Updates operation.', function_missing: `The ${functionName ?? 'required'} Edge Function is not deployed.`,
     migration_missing: 'The Market Updates database migration has not been applied in this environment.', server_error: 'The Market Updates service returned an internal error.', unknown: 'Market Updates could not complete this operation.',
+    session_expired:'Your sign-in session has expired.', provider_not_configured:'The assigned Market Updates AI route is not configured.', provider_unauthorised:'The assigned AI provider rejected its credentials.', provider_payment_required:'The assigned AI provider requires billing attention.', provider_rate_limited:'The assigned AI provider is rate limited.', provider_timeout:'The assigned AI provider timed out.', source_fetch_failed:'A configured market source could not be fetched.', source_parse_failed:'A market source response could not be parsed.', source_validation_failed:'A market source response failed validation.', database_insert_failed:'A Market Updates item could not be persisted.', digest_failed:'The Market Updates digest failed.', cron_missing:'Market Updates automation is not configured.', cron_stale:'Market Updates automation is stale.',
   };
   const remediation: Record<string, string> = {
     network_error: 'Check connectivity and retry.', unauthorised: 'Sign in again, then retry.', rls_denied: 'Ask an administrator to verify your role and Market Updates policies.',
     function_missing: 'Deploy the Market Updates Edge Functions to the frontend project.', migration_missing: 'Apply the pending Market Updates migrations and seed migration.',
     server_error: 'Review the function log and latest ingestion run, then retry.', unknown: 'Retry; if it persists, review the connected project and function logs.',
+    session_expired:'Sign in again, then retry.', provider_not_configured:'Configure and test the Market Updates agent in Model Hub.', provider_unauthorised:'An administrator must verify the provider credential.', provider_payment_required:'An administrator must review provider billing.', provider_rate_limited:'Wait briefly and retry; the configured fallback may be used.', provider_timeout:'Retry; if this persists, test the fallback chain.', source_fetch_failed:'Open Sources, test the affected source, and retry.', source_parse_failed:'Open Sources and review the adapter result.', source_validation_failed:'Review the source URL and adapter security validation.', database_insert_failed:'Review the ingestion run and database function logs.', digest_failed:'Retry digest generation and review the digest agent route.', cron_missing:'Apply the automation migration and verify scheduled jobs.', cron_stale:'Inspect cron history and the latest automation dispatch.',
   };
-  return new MarketUpdatesOperationalError({ stage, code: code as MarketUpdatesOperationalIssue['code'], message: messages[code], remediation: remediation[code], httpStatus: status, functionName, retryable: !['rls_denied'].includes(code) }, { cause: error });
+  return new MarketUpdatesOperationalError({ stage:(error?.stage as MarketUpdatesOperationalIssue['stage']) ?? stage, code: code as MarketUpdatesOperationalIssue['code'], message: messages[code] ?? messages.unknown, remediation: remediation[code] ?? remediation.unknown, httpStatus: status, functionName, correlationId:error?.correlationId, retryable:typeof error?.retryable === 'boolean' ? error.retryable : !['rls_denied','provider_unauthorised','provider_payment_required'].includes(code) }, { cause: error });
 }
 
 const mapUpdate = (r: any): MarketUpdate => ({
@@ -144,6 +147,18 @@ export async function clearMarketSourceError(source_id: string): Promise<MarketS
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
+/**
+ * Takes a published update off the dashboard, or puts it back. Hiding sets the
+ * row to `ignored` rather than deleting it so the dedupe hash survives and a
+ * later ingestion run cannot rediscover and republish the same article.
+ */
+export async function setMarketUpdateHidden(updateId: string, hidden: boolean): Promise<void> {
+  try {
+    const { error } = await invokeSecureFunction('market-updates-curate', { action: hidden ? 'hide' : 'restore', updateId });
+    if (error) throw error;
+  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+}
+
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
   const payload = await invokeMarketRead<{ status?: MarketSourceHealth }>({ action:'status' });
   if (!payload.status) throw operationalError('database', new Error('Market Updates status was missing.'), 'market-updates-status');
@@ -210,6 +225,7 @@ export async function answerMarketUpdateQuestion(
     if (error) throw error;
     return {
       id: crypto.randomUUID(),
+      correlation_id:data.correlation_id,
       role: 'assistant',
       content: data.answer,
       citations: safeArray(data.citations),
@@ -247,10 +263,15 @@ export async function streamMarketUpdateQuestion(
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-qa`;
   const session = (await supabase.auth.getSession()).data.session;
   const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const correlationId=crypto.randomUUID();
   try {
     const res = await fetch(url, {
       method: 'POST',
       signal: opts.signal,
+      // `correlation_id` travels in the body, not a header: a custom header
+      // would need every reachable edge function redeployed with it in
+      // `Access-Control-Allow-Headers` before the browser would allow the
+      // request at all. See src/lib/secureInvoke.ts for the full rationale.
       headers: {
         'content-type': 'application/json',
         'authorization': `Bearer ${token}`,
@@ -258,6 +279,7 @@ export async function streamMarketUpdateQuestion(
       },
       body: JSON.stringify({
         question,
+        correlation_id: correlationId,
         updateIds: opts.updateIds,
         history: opts.history,
         segment: opts.segment,
@@ -303,6 +325,7 @@ export async function streamMarketUpdateQuestion(
     if (streamError || !metadata) throw new Error(streamError ?? 'Market Q&A stream ended without metadata.');
     return {
       id: crypto.randomUUID(),
+      correlation_id:metadata?.correlation_id,
       role: 'assistant',
       content: metadata?.answer ?? acc,
       citations: safeArray(metadata?.citations),

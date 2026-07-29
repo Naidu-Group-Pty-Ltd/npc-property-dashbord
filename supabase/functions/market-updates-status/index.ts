@@ -6,13 +6,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
 import { requireAdmin, requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 
-const UPDATE_COLUMNS = 'id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,created_at,updated_at';
-const SOURCE_COLUMNS = 'id,source_key,name,description,source_type,adapter_type,url,primary_url,feed_urls,listing_urls,source_authority,perspective,copyright_mode,category,geography,reliability_tier,enabled,refresh_frequency_hours,refresh_frequency_minutes,consecutive_failures,health_status,registry_status,disabled_reason,last_http_status,last_latency_ms,last_items_discovered,last_items_published,last_fetched_at,last_success_at,created_at,updated_at';
-const DIGEST_COLUMNS = 'id,period,period_key,generated_at,period_start,period_end,queued_at,started_at,completed_at,executive_summary,top_update_ids,finance_lending_highlights,property_market_highlights,construction_supply_highlights,policy_regulation_highlights,political_economic_watchpoints,social_watchpoints,segment_breakdown,buyer_implications,investor_implications,broker_adviser_implications,client_advisory_implications,recommended_watchlist_for_tomorrow,source_urls,confidence_score,status,update_count,candidate_count,last_published_update_at,error_code,safe_error_message,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason';
+const UPDATE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,created_at,updated_at';
+const SOURCE_COLUMNS = 'id,source_key,name,description,source_type,adapter_type,url,primary_url,feed_urls,listing_urls,source_authority,perspective,copyright_mode,legal_storage_policy,category,geography,reliability_tier,enabled,refresh_frequency_hours,refresh_frequency_minutes,consecutive_failures,health_status,registry_status,disabled_reason,last_http_status,last_latency_ms,last_items_discovered,last_items_published,last_fetched_at,last_success_at,created_at,updated_at';
+const DIGEST_COLUMNS = 'id,period,generated_at,period_start,period_end,executive_summary,top_update_ids,finance_lending_highlights,property_market_highlights,construction_supply_highlights,policy_regulation_highlights,political_economic_watchpoints,social_watchpoints,segment_breakdown,buyer_implications,investor_implications,broker_adviser_implications,client_advisory_implications,recommended_watchlist_for_tomorrow,source_urls,confidence_score,status,created_at,updated_at';
 const AGENT_KEYS = ['market_updates_classifier', 'market_updates_digest', 'market_updates_qa_fast', 'market_updates_qa_deep'];
 const PERIODS = new Set(['24h', 'weekly', 'biweekly', 'monthly', 'quarterly', 'annual']);
 const UPDATE_STATUSES = new Set(['published', 'candidate', 'ignored', 'rejected', 'failed']);
+const MAX_REQUEST_BYTES = 16_384;
 
 function json(body: unknown, status: number, cors: Record<string,string>, correlationId: string) {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type':'application/json', 'cache-control':'private, no-store', 'x-correlation-id':correlationId } });
@@ -29,9 +31,20 @@ Deno.serve(async (req) => {
   if (!csrf.ok) return csrfDenied(cors, csrf);
   if (req.method !== 'POST') return json({ error:'Method not allowed', correlation_id:correlationId }, 405, cors, correlationId);
 
-  const body = await req.json().catch(() => ({}));
   const sb = admin();
-  const auth = await verifyAuth(sb, req.headers, body);
+  let auth = await verifyAuth(sb, req.headers, {});
+  const parsed = await enforceJsonBodyLimit<unknown>(req, MAX_REQUEST_BYTES);
+  if (!parsed.ok) {
+    return new Response(parsed.error.body, {
+      status: parsed.error.status,
+      headers: { ...Object.fromEntries(parsed.error.headers), ...cors, 'x-correlation-id':correlationId },
+    });
+  }
+  if (parsed.value === null || typeof parsed.value !== 'object' || Array.isArray(parsed.value)) {
+    return json({ error:'Invalid request', code:'invalid_request', correlation_id:correlationId }, 400, cors, correlationId);
+  }
+  const body = parsed.value as Record<string, unknown>;
+  if (auth.error || !auth.userId) auth = await verifyAuth(sb, req.headers, body);
   if (auth.error || !auth.userId) return json({ error:'Authentication required', code:'market_updates_auth_required', correlation_id:correlationId, retryable:false }, 401, cors, correlationId);
   const permission = await requireModulePermission(sb, { userId:auth.userId, authMethod:auth.authMethod }, 'market_updates', 'can_view');
   if (!permission.ok) return json({ error:'Market Updates view permission required', code:'market_updates_view_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
@@ -39,7 +52,7 @@ Deno.serve(async (req) => {
   const action = String(body.action ?? 'status');
   try {
     if (action === 'updates') {
-      const status = UPDATE_STATUSES.has(body.status) ? body.status : 'published';
+      const status = typeof body.status === 'string' && UPDATE_STATUSES.has(body.status) ? body.status : 'published';
       if (status !== 'published') {
         const adminPermission = await requireAdmin(sb, { userId:auth.userId, authMethod:auth.authMethod });
         if (!adminPermission.ok) return json({ error:'Admin privilege required to review unpublished updates', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
@@ -62,7 +75,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'digest') {
-      const period = PERIODS.has(body.period) ? body.period : '24h';
+      const period = typeof body.period === 'string' && PERIODS.has(body.period) ? body.period : '24h';
       const { data, error } = await sb.from('market_digests').select(DIGEST_COLUMNS)
         .in('status',['published','no_data']).eq('period',period).order('period_start',{ ascending:false }).limit(1).maybeSingle();
       if (error) throw Object.assign(new Error('digest query failed'), { stage:'digest' });
@@ -90,7 +103,7 @@ Deno.serve(async (req) => {
     const [sourcesResult, latestRunResult, latestFetchResult, latestDigestResult, updateRows, assignmentsResult, openRouterResult, latestCronResult, automationResult] = await Promise.all([
       sb.from('market_sources').select(SOURCE_COLUMNS).eq('registry_status','canonical').order('name'),
       sb.from('market_ingestion_runs').select('*').order('started_at',{ ascending:false }).limit(1).maybeSingle(),
-      sb.from('market_source_fetch_runs').select('id,source_id,status,started_at,completed_at,http_status,items_discovered,items_published,safe_error_message').in('status',['completed','degraded']).order('started_at',{ ascending:false }).limit(1).maybeSingle(),
+      sb.from('market_source_fetch_runs').select('id,correlation_id,source_id,status,started_at,completed_at,http_status,items_discovered,items_published,safe_error_message').in('status',['completed','degraded']).order('started_at',{ ascending:false }).limit(1).maybeSingle(),
       sb.from('market_digests').select('id,period,status,generated_at,period_start,period_end').order('generated_at',{ ascending:false }).limit(1).maybeSingle(),
       Promise.all(['published','candidate','ignored'].map(async status => ({ status, result:await sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status',status) }))),
       sb.from('agent_model_assignments').select('agent_key,route,model_id,fallback_chain,last_used_at,last_error,updated_at,is_active').in('agent_key',AGENT_KEYS).eq('is_active',true),

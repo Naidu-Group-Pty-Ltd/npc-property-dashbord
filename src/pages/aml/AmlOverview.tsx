@@ -183,9 +183,9 @@ function AmlOverviewV2() {
             <Lock className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">No AML role assigned</h2>
+            <h2 className="text-lg font-semibold">You don't have access yet</h2>
             <p className="text-sm text-muted-foreground">
-              You can see the AML/CTF workspace but do not yet have a role that lets you act.
+              The AML/CTF workspace is visible, but acting in it needs an access grant.
             </p>
           </div>
         </div>
@@ -193,9 +193,9 @@ function AmlOverviewV2() {
           <Info className="h-4 w-4" />
           <AlertTitle>Request access</AlertTitle>
           <AlertDescription>
-            Ask a superadmin to assign an AML role — analyst, reviewer, MLRO or auditor —
-            from <Link className="underline" to="/admin/users">User Management</Link>. Access
-            is granted per capability, so restricted queues stay hidden until you are cleared.
+            Ask your compliance administrator to grant you AML access from{" "}
+            <Link className="underline" to="/admin/users">User Management</Link>. Queues and
+            restricted areas appear automatically once access is granted.
           </AlertDescription>
         </Alert>
       </div>
@@ -209,7 +209,7 @@ function AmlOverviewV2() {
         <Card className="border-primary/20 bg-primary/5">
           <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <div className="text-sm font-medium">Continue where you work most</div>
+              <div className="text-sm font-medium">Jump back into your queue</div>
               <div className="text-xs text-muted-foreground">{landing.reason}</div>
             </div>
             <Button asChild size="sm">
@@ -239,11 +239,11 @@ function AmlOverviewV2() {
           hint={`Of the latest ${cases.length || 0} cases, still under investigation.`}
         />
         <MetricTile
-          title="Escalated → MLRO"
+          title="Awaiting decision"
           icon={ShieldCheck}
           loading={loadingCases}
           value={escalated}
-          hint="Awaiting MLRO decision."
+          hint="Escalated cases awaiting a decision."
         />
       </div>
 

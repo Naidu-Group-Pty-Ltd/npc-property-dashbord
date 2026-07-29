@@ -31,64 +31,58 @@ interface MetricCardProps {
     | "operations";
 }
 
+/**
+ * Each card carries a categorical accent so the seven metrics stay scannable,
+ * but the surface itself is derived from `--card` rather than a baked-in dark
+ * gradient. The previous styling hardcoded near-black backgrounds with near-white
+ * text, which only ever resolved correctly on the dark theme; on light it painted
+ * a row of black tiles across a cream dashboard.
+ *
+ * Restraint: only the headline card gets a filled brand treatment. The other six
+ * are quiet accent-tinted cards, so the eye lands on total pipeline value first.
+ */
 const metricCardStyles: Record<
   MetricCardProps["variant"],
   {
     card: string;
     iconWrap: string;
     icon: string;
-    value: string;
-    label: string;
   }
 > = {
   headline: {
-    card: "border-brand-200/45 bg-[radial-gradient(circle_at_top_left,rgba(251,191,36,0.38),transparent_44%),linear-gradient(145deg,rgba(180,83,9,0.48),rgba(24,24,27,0.98))] shadow-[0_18px_46px_rgba(0,0,0,0.30),inset_0_1px_0_rgba(255,255,255,0.12)]",
-    iconWrap: "border-brand-200/25 bg-brand-300/15 text-brand-100 shadow-[0_0_24px_rgba(251,191,36,0.22)]",
-    icon: "text-brand-100",
-    value: "text-white drop-shadow-[0_1px_14px_rgba(251,191,36,0.22)]",
-    label: "text-brand-50/90",
+    card: "border-brand/45 bg-gradient-to-br from-brand/25 via-card to-card",
+    iconWrap: "border-brand/30 bg-brand/15",
+    icon: "text-brand-700 dark:text-brand",
   },
   analytical: {
-    card: "border-sky-300/30 bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.26),transparent_42%),linear-gradient(145deg,rgba(8,47,73,0.58),rgba(24,24,27,0.97))] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]",
-    iconWrap: "border-info/20 bg-info/10 text-info",
+    card: "border-info/30 bg-gradient-to-br from-info/12 via-card to-card",
+    iconWrap: "border-info/25 bg-info/10",
     icon: "text-info",
-    value: "text-sky-50 drop-shadow-[0_1px_12px_rgba(56,189,248,0.16)]",
-    label: "text-sky-100/88",
   },
   financial: {
-    card: "border-emerald-300/30 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.26),transparent_42%),linear-gradient(145deg,rgba(6,95,70,0.50),rgba(24,24,27,0.97))] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]",
-    iconWrap: "border-success/20 bg-success/10 text-success shadow-[0_0_20px_rgba(16,185,129,0.18)]",
-    icon: "text-emerald-50 drop-shadow-[0_1px_12px_rgba(16,185,129,0.16)]",
-    value: "text-emerald-50 drop-shadow-[0_1px_12px_rgba(16,185,129,0.16)]",
-    label: "text-emerald-100/88",
+    card: "border-success/30 bg-gradient-to-br from-success/12 via-card to-card",
+    iconWrap: "border-success/25 bg-success/10",
+    icon: "text-success",
   },
   existing: {
-    card: "border-violet-300/28 bg-[radial-gradient(circle_at_top_left,rgba(139,92,246,0.26),transparent_42%),linear-gradient(145deg,rgba(76,29,149,0.42),rgba(24,24,27,0.97))] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]",
-    iconWrap: "border-accent/20 bg-accent/10 text-accent",
+    card: "border-accent/30 bg-gradient-to-br from-accent/12 via-card to-card",
+    iconWrap: "border-accent/25 bg-accent/10",
     icon: "text-accent",
-    value: "text-violet-50 drop-shadow-[0_1px_12px_rgba(139,92,246,0.16)]",
-    label: "text-violet-100/88",
   },
   land: {
-    card: "border-orange-300/30 bg-[radial-gradient(circle_at_top_left,rgba(251,146,60,0.27),transparent_42%),linear-gradient(145deg,rgba(124,45,18,0.46),rgba(24,24,27,0.97))] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]",
-    iconWrap: "border-warning/20 bg-warning/10 text-warning",
+    card: "border-warning/30 bg-gradient-to-br from-warning/12 via-card to-card",
+    iconWrap: "border-warning/25 bg-warning/10",
     icon: "text-warning",
-    value: "text-orange-50 drop-shadow-[0_1px_12px_rgba(251,146,60,0.16)]",
-    label: "text-orange-100/88",
   },
   refinance: {
-    card: "border-cyan-300/30 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.24),transparent_42%),linear-gradient(145deg,rgba(8,47,73,0.52),rgba(24,24,27,0.97))] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]",
-    iconWrap: "border-info/20 bg-info/10 text-info",
-    icon: "text-info",
-    value: "text-sky-50 drop-shadow-[0_1px_12px_rgba(56,189,248,0.16)]",
-    label: "text-cyan-100/88",
+    card: "border-chart-7/30 bg-gradient-to-br from-chart-7/12 via-card to-card",
+    iconWrap: "border-chart-7/25 bg-chart-7/10",
+    icon: "text-chart-7",
   },
   operations: {
-    card: "border-slate-300/22 bg-[radial-gradient(circle_at_top_left,rgba(167,139,250,0.20),transparent_40%),linear-gradient(145deg,rgba(51,65,85,0.48),rgba(24,24,27,0.97))] shadow-[inset_0_1px_0_rgba(255,255,255,0.10)]",
-    iconWrap: "border-border/20 bg-muted/10 text-slate-200",
-    icon: "text-slate-200",
-    value: "text-slate-50 drop-shadow-[0_1px_12px_rgba(148,163,184,0.16)]",
-    label: "text-slate-100/86",
+    card: "border-border bg-card",
+    iconWrap: "border-border bg-muted",
+    icon: "text-muted-foreground",
   },
 };
 
@@ -98,37 +92,26 @@ function MetricCard({ label, value, icon: Icon, variant }: MetricCardProps) {
   return (
     <Card
       className={cn(
-        "group relative overflow-hidden rounded-3xl transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-white/25 hover:shadow-[0_22px_58px_rgba(0,0,0,0.34),0_0_28px_rgba(251,191,36,0.14)]",
-        "before:absolute before:inset-x-5 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/25 before:to-transparent",
-        "after:absolute after:-right-10 after:-top-12 after:h-24 after:w-24 after:rounded-full after:bg-brand-200/0 after:blur-2xl after:transition-colors after:duration-300 hover:after:bg-brand-200/12",
+        "group relative overflow-hidden rounded-3xl border shadow-sm transition-all duration-300 ease-out hover:-translate-y-0.5 hover:shadow-lg motion-reduce:transition-none motion-reduce:hover:translate-y-0",
+        "before:absolute before:inset-x-5 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-foreground/10 before:to-transparent",
         styles.card,
       )}
     >
       <CardContent className="relative z-10 flex min-h-[118px] flex-col justify-between p-5">
         <div className="flex items-start justify-between gap-3">
-          <p
-            className={cn(
-              "max-w-[8.5rem] text-[0.72rem] font-medium uppercase leading-snug tracking-[0.14em]",
-              styles.label,
-            )}
-          >
+          <p className="max-w-[8.5rem] text-[0.72rem] font-medium uppercase leading-snug tracking-[0.14em] text-muted-foreground">
             {label}
           </p>
           <span
             className={cn(
-              "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border backdrop-blur-sm transition-transform duration-300 group-hover:scale-105",
+              "flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border transition-transform duration-300 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:scale-100",
               styles.iconWrap,
             )}
           >
-            <Icon className={cn("h-[18px] w-[18px]", styles.icon)} />
+            <Icon className={cn("h-[18px] w-[18px]", styles.icon)} aria-hidden="true" />
           </span>
         </div>
-        <p
-          className={cn(
-            "mt-6 truncate text-[2rem] font-semibold leading-none tracking-[-0.045em] sm:text-[2.15rem] xl:text-[2.35rem]",
-            styles.value,
-          )}
-        >
+        <p className="mt-6 truncate text-[2rem] font-semibold leading-none tracking-[-0.045em] text-foreground sm:text-[2.15rem] xl:text-[2.35rem]">
           {value}
         </p>
       </CardContent>

@@ -151,7 +151,7 @@ export default function SanitizedEmailHtml({
         <div key={i} dangerouslySetInnerHTML={{ __html: chunk }} />
       ))}
       {rendered < chunks.length && (
-        <div className="mt-2 text-xs text-neutral-500" aria-live="polite">
+        <div className="mt-2 text-xs text-muted-foreground" aria-live="polite">
           Rendering email… ({rendered}/{chunks.length})
         </div>
       )}

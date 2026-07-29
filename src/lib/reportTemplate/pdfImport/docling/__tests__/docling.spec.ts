@@ -4,6 +4,7 @@ import { mapDoclingToRawBlocks } from '../mapDoclingToRawBlocks';
 import { mapDoclingToPagePlan } from '../mapDoclingToPagePlan';
 import { fontLookupKey } from '../../fontResolver';
 import { applyTemplateImportPlan } from '@/lib/reportTemplate/ingestion/reconciliation/applyPlan';
+import { validateTemplateImportPlan } from '@/lib/reportTemplate/ingestion/reconciliation/validatePlan';
 import { parseTemplate } from '@/lib/reportTemplate/templateSchema';
 
 const FIXTURE: DoclingDocument = {
@@ -60,10 +61,16 @@ describe('docling adapter', () => {
     expect(plan.importSummary.visualFidelityMode).toBe('background-first');
   });
 
-  it('semantic mode leaves overlays editable and skips raster background', () => {
-    const plan = mapDoclingToPagePlan(FIXTURE, { importId: 'imp-3', mode: 'semantic' });
+  it('semantic mode leaves overlays editable without retaining the source raster', () => {
+    const plan = mapDoclingToPagePlan(FIXTURE, {
+      importId: 'imp-3',
+      mode: 'semantic',
+      rastersByPage: { 1: { width: 1190, height: 1684, dataUrl: 'data:image/png;base64,RASTER' } },
+    });
     expect(plan.pages[0].overlays.every((o) => o.locked === false)).toBe(true);
     expect(plan.pages[0].background.imageUrl).toBe('');
+    expect(plan.pages[0].background.opacity).toBe(0);
+    expect(validateTemplateImportPlan(plan).ok).toBe(true);
     expect(plan.importSummary.visualFidelityMode).toBe('semantic');
   });
 
@@ -162,6 +169,32 @@ describe('docling adapter', () => {
     expect(table.meta?.glyphArtifacts).toBe(true);
   });
 
+  it('bounds untrusted table dimensions and clamps invalid cell offsets', () => {
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      tables: [
+        {
+          data: {
+            num_rows: 1_000_000,
+            num_cols: 1_000_000,
+            table_cells: [
+              { text: 'clamped', start_row_offset_idx: -10, start_col_offset_idx: -20 },
+            ],
+          },
+          prov: [{ page_no: 1, bbox: { l: 60, t: 250, r: 535, b: 360, coord_origin: 'TOPLEFT' } }],
+        },
+      ],
+    };
+
+    const table = mapDoclingToRawBlocks(doc).byPage[1][0];
+    expect(table.meta?.tableData?.numRows).toBe(1_000);
+    expect(table.meta?.tableData?.numCols).toBe(10);
+    expect(table.meta?.tableData?.rows).toHaveLength(1_000);
+    expect(table.meta?.tableData?.rows[0][0]).toBe('clamped');
+    expect(table.meta?.tableData?.cells?.[0]).toMatchObject({ row: 0, col: 0 });
+    expect(table.text).toBe('clamped');
+  });
+
   it('single-line text overlays get whiteSpace:nowrap; multi-line paragraphs keep wrapping', () => {
     const doc: DoclingDocument = {
       pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
@@ -219,6 +252,33 @@ describe('docling adapter', () => {
     expect(img?.groupId).toBeTruthy();
     expect(cap?.groupId).toBe(img?.groupId);
     expect(img?.name).toContain('Line chart');
+  });
+
+  it('bounds proximity caption matching while preserving explicit references', () => {
+    const captions = Array.from({ length: 300 }, (_, index) => ({
+      self_ref: `#/texts/${index}`,
+      label: 'caption' as const,
+      text: `Figure ${index}`,
+      prov: [{ page_no: 1, bbox: { l: 10, t: 100, r: 100, b: 110, coord_origin: 'TOPLEFT' as const } }],
+    }));
+    const pictures = Array.from({ length: 300 }, (_, index) => ({
+      prov: [{ page_no: 1, bbox: { l: 10, t: 112, r: 100, b: 150, coord_origin: 'TOPLEFT' as const } }],
+      ...(index === 299 ? { captions: [{ $ref: '#/texts/299' }] } : {}),
+    }));
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      texts: captions,
+      pictures,
+    };
+
+    const mapped = mapDoclingToRawBlocks(doc);
+    const mappedPictures = mapped.byPage[1].filter((block) => block.type === 'image');
+    const explicitlyReferencedCaption = mapped.byPage[1].find((block) => block.text === 'Figure 299');
+
+    expect(mappedPictures).toHaveLength(300);
+    expect(mappedPictures[298].meta?.groupId).toBeUndefined();
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBe(mappedPictures[299].meta?.groupId);
+    expect(explicitlyReferencedCaption?.meta?.groupId).toBeTruthy();
   });
 
   it('Phase B: page headers/footers always lock and carry a master groupId', () => {
@@ -308,6 +368,33 @@ describe('docling adapter', () => {
     const plan = mapDoclingToPagePlan(doc, { importId: 'imp-d1', mode: 'semantic' });
     const img = plan.pages[0].overlays.find((o) => o.id.includes('picture')) as { src?: string } | undefined;
     expect(img?.src).toBe('data:image/png;base64,iVBORw0KG');
+  });
+
+  it.each([
+    { kind: 'remote URL', uri: 'https://attacker.example/ssrf.png' },
+    { kind: 'local file URL', uri: 'file:///etc/passwd' },
+    { kind: 'SVG data URI', uri: 'data:image/svg+xml;base64,PHN2Zz4=' },
+    { kind: 'binding URL', uri: '{{scheme}}://127.0.0.1/internal?secret={{secret}}' },
+    {
+      kind: 'oversized raster data URI',
+      uri: `data:image/png;base64,${'A'.repeat(Math.ceil((10 * 1024 * 1024) / 3) * 4 + 1)}`,
+    },
+  ])('rejects unsafe Docling picture URI: $kind', ({ uri }) => {
+    const doc: DoclingDocument = {
+      pages: { '1': { page_no: 1, size: { width: 595, height: 842 } } },
+      pictures: [
+        {
+          prov: [{ page_no: 1, bbox: { l: 60, t: 200, r: 400, b: 400, coord_origin: 'TOPLEFT' } }],
+          image: { uri },
+        } as DoclingDocument['pictures'] extends (infer U)[] ? U : never,
+      ],
+    };
+
+    const mapped = mapDoclingToRawBlocks(doc);
+    expect(mapped.byPage[1][0].meta?.imageUri).toBeUndefined();
+    const plan = mapDoclingToPagePlan(doc, { importId: 'imp-unsafe-image', mode: 'semantic' });
+    const img = plan.pages[0].overlays.find((o) => o.id.includes('picture')) as { src?: string } | undefined;
+    expect(img?.src).toBe('');
   });
 
   it('Wave F3: preserves explicit Docling reading_order for multi-column pages', () => {

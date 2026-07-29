@@ -499,7 +499,7 @@ export default function EmailCopilot() {
                   });
                   setComposeAttachments([file]);
                   
-                  toast.success('PDF attached from Report Q&A', {
+                  toast.success('PDF attached from Aurixa Intelligence Hub', {
                     description: `${attachment.fileName} (${(attachment.fileSize / 1024).toFixed(1)} KB)`,
                     id: 'pdf-download'
                   });
@@ -518,7 +518,7 @@ export default function EmailCopilot() {
                 });
               }
             } else {
-              toast.success('PDF attached from Report Q&A', {
+              toast.success('PDF attached from Aurixa Intelligence Hub', {
                 description: attachment.fileName
               });
             }
@@ -530,7 +530,7 @@ export default function EmailCopilot() {
           } catch (e) {
             console.error('Failed to parse QA attachment:', e);
             toast.error('Failed to load PDF attachment', {
-              description: 'Please try sending from Report Q&A again.'
+              description: 'Please try sending from Aurixa Intelligence Hub again.'
             });
           }
         };
@@ -1592,7 +1592,7 @@ export default function EmailCopilot() {
         }))
       );
 
-      // Handle QA PDF attachment from Report Q&A (fetch from URL and convert to base64)
+      // Handle QA PDF attachment from Aurixa Intelligence Hub (fetch from URL and convert to base64)
       if (qaPDFAttachment) {
         try {
           const pdfResponse = await fetch(qaPDFAttachment.url);
@@ -3545,7 +3545,7 @@ export default function EmailCopilot() {
                     Max 10MB per file
                   </p>
                 </div>
-                {/* QA PDF Attachment Badge (from Report Q&A) */}
+                {/* QA PDF Attachment Badge (from Aurixa Intelligence Hub) */}
                 {qaPDFAttachment && (
                   <div className="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-primary/20 bg-gradient-to-r from-primary/10 to-primary/5 p-3 shadow-sm">
                     <div className="flex items-center justify-between gap-2">

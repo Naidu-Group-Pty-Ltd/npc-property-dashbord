@@ -6,6 +6,7 @@ import { consumeRateLimit, enforceJsonBodyLimit, getTrustedClientIp, requireHuma
 import { callLLM } from '../_shared/llmRouter.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { classifyMarketError, logMarketEvent, marketCorrelationId } from '../_shared/marketUpdatesObservability.ts';
 
 const REFUSAL = 'I do not have enough sourced market updates to answer that yet.';
 
@@ -179,6 +180,10 @@ const RATE_LIMIT_DAY = Number(Deno.env.get('MARKET_QA_RATE_LIMIT_DAY') || 200);
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get('origin'));
+  // Provisional id for early error responses; upgraded from the request body
+  // once it is parsed (browsers cannot send the header — see below).
+  let requestCorrelationId=marketCorrelationId(req.headers);
+  cors['x-correlation-id']=requestCorrelationId;
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers:{ ...cors, 'content-type':'application/json' } });
   if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
   if (req.method !== 'POST') return json({ error: 'Invalid request.' }, 400);
@@ -186,6 +191,11 @@ Deno.serve(async (req) => {
   if (!csrf.ok) return csrfDenied(cors, csrf);
   const parsed = await enforceJsonBodyLimit<any>(req, 100_000);
   if (!parsed.ok) return new Response(parsed.error.body, { status: parsed.error.status, headers: { ...cors, 'content-type': 'application/json' } });
+  // A browser cannot attach `x-correlation-id` — that would require every
+  // reachable edge function to be redeployed with the header allow-listed
+  // before the preflight would pass — so the client sends it in the body.
+  requestCorrelationId = marketCorrelationId(req.headers, parsed.value);
+  cors['x-correlation-id'] = requestCorrelationId;
   const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
   // Human requests and scheduled work have distinct trust paths. Scheduled
   // callers must present a signed internal envelope and be on this target's
@@ -267,7 +277,7 @@ Deno.serve(async (req) => {
         if (added.length && (data?.length ?? 0) > added.length) retrievalMode = 'hybrid';
         else if (added.length) retrievalMode = 'lexical';
       }
-    } catch { console.warn(JSON.stringify({ function:'market-updates-qa', stage:'lexical_supplement', status:'skipped', correlation_id:auth.correlationId })); }
+    } catch { logMarketEvent('warn',{ function:'market-updates-qa', stage:'lexical_supplement', status:'skipped', correlation_id:auth.correlationId }); }
   }
 
   // Semantic fallback: if term-restricted query returned nothing, pull recent high-impact pool.
@@ -299,7 +309,7 @@ Deno.serve(async (req) => {
   }
 
   if (error) {
-    console.warn(JSON.stringify({ function:'market-updates-qa', stage:'retrieval', status:'failed', correlation_id:auth.correlationId }));
+    logMarketEvent('warn',{ function:'market-updates-qa', stage:'retrieval', status:'failed', correlation_id:auth.correlationId, error_class:'unknown' });
     return json({ error:'Published Market Updates context could not be retrieved.', code:'retrieval_failed', retryable:true, correlation_id:auth.correlationId },503);
   }
 
@@ -324,8 +334,9 @@ Deno.serve(async (req) => {
   try {
     ai = await callAI(agentKey, question, context, history);
   } catch (providerError:any) {
-    console.warn(JSON.stringify({ function:'market-updates-qa', stage:'provider', status:'failed', correlation_id:auth.correlationId, attempts:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0 }));
-    return json({ error:'The configured Market Updates Q&A route is unavailable.', code:'provider_unavailable', retryable:true, correlation_id:auth.correlationId }, 503);
+    const providerCode=classifyMarketError(providerError);
+    logMarketEvent('warn',{ function:'market-updates-qa', stage:'provider', status:'failed', correlation_id:auth.correlationId, retry_attempt:Array.isArray(providerError?.attempts) ? providerError.attempts.length : 0, error_class:classifyMarketError(providerError) });
+    return json({ error:'The configured Market Updates Q&A route is unavailable.', code:providerCode, stage:'classification', retryable:!['provider_unauthorised','provider_payment_required'].includes(providerCode), correlation_id:auth.correlationId }, 503);
   }
 
   let answer: string, used_ids: string[], confidence: number, limitations: string[];
@@ -396,7 +407,7 @@ Deno.serve(async (req) => {
 
   // Persist turn and capture inserted row id for "Share answer" affordance.
   const insertRow = {
-    question, answer,
+    question, answer, correlation_id:auth.correlationId,
     source_update_ids: used_ids,
     citation_urls: citations,
     confidence_score: confidence,
@@ -415,7 +426,7 @@ Deno.serve(async (req) => {
     },
   };
   const persistPromise = sb.from('market_update_questions').insert(insertRow).select('id').maybeSingle()
-    .then((res: any) => { if (res?.error) console.warn(JSON.stringify({ function:'market-updates-qa', stage:'persistence', status:'failed', correlation_id:auth.correlationId, error_class:'database_insert_failed' })); return res?.data?.id ?? null; });
+    .then((res: any) => { if (res?.error) logMarketEvent('warn',{ function:'market-updates-qa', stage:'persistence', status:'failed', correlation_id:auth.correlationId, error_class:'database_insert_failed' }); return res?.data?.id ?? null; });
 
   let question_id: string | null = null;
   if (!stream) {
@@ -426,6 +437,7 @@ Deno.serve(async (req) => {
   }
 
   const finalPayload = {
+    correlation_id:auth.correlationId,
     answer,
     citations,
     source_update_ids: used_ids,

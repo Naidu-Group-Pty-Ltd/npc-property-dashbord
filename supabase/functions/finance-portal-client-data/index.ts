@@ -45,11 +45,12 @@ function extractPrimaryName(payload: Record<string, any>) {
   return [payload.primary_first_name, payload.primary_surname].filter(Boolean).join(' ').trim() || 'New client';
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-finance-session-token, x-session-token, x-session-id',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-};
+import { createCorsHeaders } from "../_shared/auth.ts";
+// Per-request CORS: the frontend calls this function with `credentials: 'include'`,
+// so we must echo the request Origin (never `*`) and set `Allow-Credentials: true`.
+// The previous wildcard ACAO caused browsers to block every response, resulting in
+// "no client data loading" on the finance portal.
+let corsHeaders: Record<string, string> = createCorsHeaders(null);
 
 const TABLE_MAP: Record<string, string> = {
   properties: 'client_properties',
@@ -396,6 +397,7 @@ async function prepareFinanceNotePayload(supabase: any, clientId: string, payloa
 }
 
 Deno.serve(async (req) => {
+  corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
@@ -1064,20 +1066,23 @@ Deno.serve(async (req) => {
       if (!record_id) return jsonResponse({ error: 'record_id required' }, 400);
       if (!permissions[table_key]?.delete) return jsonResponse({ error: 'No delete permission for ' + table_key }, 403);
 
-      const { error } = await supabase
+      const { data: deletedRecord, error } = await supabase
         .from(dbTable)
         .delete()
         .eq('id', record_id)
-        .eq('client_id', client_id);
+        .eq('client_id', client_id)
+        .select('id')
+        .maybeSingle();
       if (error) throw error;
+      if (!deletedRecord) return jsonResponse({ error: 'Record not found' }, 404);
       if (dbTable === 'client_income_sources') {
-        await syncClientRollups(supabase, client_id, dbTable, { id: record_id });
-        await logIncomeSourceSyncEvent(supabase, { clientId: client_id, recordId: record_id, operation: 'delete', portalUser });
+        await syncClientRollups(supabase, client_id, dbTable, deletedRecord);
+        await logIncomeSourceSyncEvent(supabase, { clientId: client_id, recordId: deletedRecord.id, operation: 'delete', portalUser });
       }
       if (dbTable === 'client_address_history') {
-        await logAddressSyncEvent(supabase, { clientId: client_id, record: { id: record_id }, operation: 'delete', portalUser });
+        await logAddressSyncEvent(supabase, { clientId: client_id, record: deletedRecord, operation: 'delete', portalUser });
       }
-      await audit('delete_record', table_key, record_id);
+      await audit('delete_record', table_key, deletedRecord.id);
       return jsonResponse({ success: true });
     }
 

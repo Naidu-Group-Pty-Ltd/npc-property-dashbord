@@ -243,9 +243,18 @@ export interface DoclingParseResponse {
 
 /** Optional /raster sidecar envelope (one entry per page). */
 export interface DoclingRasterResponse {
-  format: 'png' | 'jpeg';
+  format?: 'png' | 'jpeg';
   dpi: number;
-  pages: Array<{ page_no: number; width: number; height: number; image_base64: string }>;
+  pages: Array<{
+    page_no: number;
+    mime?: 'image/png' | 'image/jpeg';
+    width?: number;
+    height?: number;
+    image_base64?: string;
+    width_px?: number;
+    height_px?: number;
+    base64?: string;
+  }>;
 }
 
 /** Convenience: page-keyed lookup of rasters. */

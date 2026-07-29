@@ -39,6 +39,10 @@ export interface CatalogReport {
   name: string;
   credit_cost: number;
   description?: string | null;
+  /** Metering kind this row prices. Mission Control seeds it equal to `slug`;
+   *  carrying it separately means a slug can be renamed without silently
+   *  unpricing the report. */
+  metadata?: { token_kind?: string; default_credit_cost?: number } | null;
 }
 
 export interface Catalog {
@@ -46,6 +50,9 @@ export interface Catalog {
   addons: CatalogAddon[];
   setups: CatalogSetup[];
   reports: CatalogReport[];
+  /** Version of the report cost index (Mission Control's max updated_at).
+   *  Changes whenever an operator reprices anything. */
+  reports_version: string;
   fetched_at: string;
 }
 
@@ -54,7 +61,14 @@ let cache: { value: Catalog; expires: number } | null = null;
 let inflight: Promise<Catalog> | null = null;
 
 function emptyCatalog(): Catalog {
-  return { roles: [], addons: [], setups: [], reports: [], fetched_at: new Date(0).toISOString() };
+  return {
+    roles: [],
+    addons: [],
+    setups: [],
+    reports: [],
+    reports_version: "",
+    fetched_at: new Date(0).toISOString(),
+  };
 }
 
 function assertConfigured() {
@@ -101,6 +115,7 @@ async function fetchFromMc(): Promise<Catalog> {
       addons: Array.isArray(body?.addons) ? body.addons : [],
       setups: Array.isArray(body?.setups) ? body.setups : [],
       reports: Array.isArray(body?.reports) ? body.reports : [],
+      reports_version: typeof body?.reports_version === "string" ? body.reports_version : "",
       fetched_at: new Date().toISOString(),
     };
   }
@@ -137,6 +152,38 @@ export async function getReportCreditCost(slug: string): Promise<number | null> 
   const cat = await safeFetchCatalog();
   const hit = cat.reports.find((r) => r.slug === slug);
   return hit ? Number(hit.credit_cost) : null;
+}
+
+
+/**
+ * Credits to reserve for a metering `kind`, per Mission Control's cost index.
+ *
+ * This is THE per-report price: the index has a row for every kind this repo
+ * can meter, so an operator repricing a report in Mission Control changes what
+ * this workspace charges without a deploy here. Returns null when the catalog
+ * is unreachable or the kind is unlisted, and the caller falls back to the
+ * local heuristic — a pricing lookup must never block a report.
+ *
+ * Matches on `metadata.token_kind` first so Mission Control can rename a slug
+ * without unpricing the report, then on the slug itself.
+ */
+export async function getCreditCostForKind(kind: string): Promise<number | null> {
+  if (!kind) return null;
+  const cat = await safeFetchCatalog();
+  const hit =
+    cat.reports.find((r) => r.metadata?.token_kind === kind) ??
+    cat.reports.find((r) => r.slug === kind);
+  if (!hit) return null;
+  const cost = Number(hit.credit_cost);
+  // A negative or non-numeric cost is a data problem, not a free report —
+  // fall back rather than reserving a nonsense amount.
+  return Number.isFinite(cost) && cost >= 0 ? Math.ceil(cost) : null;
+}
+
+/** Version of the cost index currently cached, for audit/logging. */
+export async function getReportCostIndexVersion(): Promise<string> {
+  const cat = await safeFetchCatalog();
+  return cat.reports_version ?? "";
 }
 
 export async function getSeatRole(slug: string): Promise<CatalogRole | null> {
