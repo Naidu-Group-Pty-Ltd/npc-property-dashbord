@@ -146,10 +146,18 @@ Deno.serve(async (req) => {
       // Assigned clients
       const { data: assignments } = await supabase
         .from('finance_portal_client_assignments')
-        .select('client_id, purchase_file_id')
+        .select('client_id, purchase_file_id, permissions')
         .eq('finance_user_id', portalUserId);
 
       const clientIds = Array.from(new Set((assignments || []).map((a: any) => a.client_id))).filter(Boolean);
+      const canView = (assignment: any, capability: 'documents' | 'messages') =>
+        assignment?.permissions?.[capability]?.view !== false;
+      const documentClientIds = new Set(
+        (assignments || []).filter((a: any) => canView(a, 'documents')).map((a: any) => a.client_id),
+      );
+      const messageClientIds = Array.from(new Set(
+        (assignments || []).filter((a: any) => canView(a, 'messages')).map((a: any) => a.client_id),
+      )).filter(Boolean);
 
       // Purchase files for those clients
       const { data: pfs } = clientIds.length
@@ -159,6 +167,9 @@ Deno.serve(async (req) => {
             .in('client_id', clientIds)
         : { data: [] as any[] };
       const pfIds = (pfs || []).map((p: any) => p.id);
+      const documentPfIds = (pfs || [])
+        .filter((p: any) => documentClientIds.has(p.client_id))
+        .map((p: any) => p.id);
       const pfById = new Map((pfs || []).map((p: any) => [p.id, p]));
 
       const changed: Array<{ type: string; label: string; link?: string; at: string }> = [];
@@ -195,13 +206,16 @@ Deno.serve(async (req) => {
             at: ev.created_at,
           });
         }
+      }
 
-        // New documents uploaded on assigned PFs
+      if (documentPfIds.length) {
+        // New documents uploaded on assigned PFs where documents.view is allowed
         const { data: docs } = await supabase
           .from('finance_portal_documents')
           .select('id, original_filename, purchase_file_id, created_at')
-          .in('purchase_file_id', pfIds)
+          .in('purchase_file_id', documentPfIds)
           .is('deleted_at', null)
+          .or(`shared_with_finance_user_id.is.null,shared_with_finance_user_id.eq.${portalUserId}`)
           .gt('created_at', sinceIso)
           .order('created_at', { ascending: false })
           .limit(20);
@@ -216,23 +230,32 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Inbound messages from client (across all assigned clients)
-      if (clientIds.length) {
-        const { data: msgs } = await supabase
-          .from('finance_portal_messages')
-          .select('id, client_id, sender_type, created_at')
-          .in('client_id', clientIds)
-          .neq('sender_type', 'finance_partner')
-          .gt('created_at', sinceIso)
-          .order('created_at', { ascending: false })
-          .limit(20);
-        for (const m of msgs || []) {
-          changed.push({
-            type: 'message',
-            label: `New ${m.sender_type === 'client' ? 'client' : 'team'} message`,
-            link: `/finance/messages`,
-            at: m.created_at,
-          });
+      // Inbound messages in this partner's threads where messages.view is allowed
+      if (messageClientIds.length) {
+        const { data: threads } = await supabase
+          .from('finance_portal_threads')
+          .select('id')
+          .eq('finance_user_id', portalUserId)
+          .in('client_id', messageClientIds);
+        const threadIds = (threads || []).map((thread: any) => thread.id);
+
+        if (threadIds.length) {
+          const { data: msgs } = await supabase
+            .from('finance_portal_messages')
+            .select('id, client_id, sender_type, created_at')
+            .in('thread_id', threadIds)
+            .neq('sender_type', 'partner')
+            .gt('created_at', sinceIso)
+            .order('created_at', { ascending: false })
+            .limit(20);
+          for (const m of msgs || []) {
+            changed.push({
+              type: 'message',
+              label: `New ${m.sender_type === 'client' ? 'client' : 'team'} message`,
+              link: `/finance/messages`,
+              at: m.created_at,
+            });
+          }
         }
       }
 
