@@ -876,7 +876,9 @@ A PDF is attached. Reconstruct it on the active page (id=${activePageId}) as nat
       return json({ error: 'AI returned malformed tool arguments', detail: String(e) }, 500);
     }
 
-    console.log(`[design-agent] tool_call ops=${(parsed.operations || []).length} reply="${String(parsed.reply || '').slice(0, 120)}" ops_preview=${JSON.stringify((parsed.operations || []).slice(0, 3)).slice(0, 400)}`);
+    // Log only structural metadata: replies and operation payloads can contain
+    // client or financial data copied from templates and auto-fill sample data.
+    console.log(`[design-agent] tool_call ops=${(parsed.operations || []).length}`);
 
     // ─── Brief-pipeline content validator + auto-retry ──────────────────────
     // The synthesis pass occasionally returns shape-only layouts. Detect and re-prompt.
