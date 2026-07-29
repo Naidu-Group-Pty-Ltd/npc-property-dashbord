@@ -5,6 +5,34 @@ from unittest.mock import patch
 import app
 
 
+class VersionEndpointTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app.app.test_client()
+
+    @patch.object(app, "EXPECTED_TOKEN", "test-token")
+    def test_rejects_unauthenticated_request(self):
+        response = self.client.get("/version")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json(), {"error": "unauthorized"})
+
+    @patch.object(app, "EXPECTED_TOKEN", "test-token")
+    def test_returns_versions_to_authenticated_request(self):
+        response = self.client.get(
+            "/version", headers={"Authorization": "Bearer test-token"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.get_json(),
+            {
+                "flask": app._package_version("flask"),
+                "pydyf": app._package_version("pydyf"),
+                "weasyprint": app._package_version("weasyprint"),
+            },
+        )
+
+
 class ResourceUrlPolicyTests(unittest.TestCase):
     def test_allows_embedded_data_without_dns(self):
         with patch.object(app.socket, "getaddrinfo") as resolve:
