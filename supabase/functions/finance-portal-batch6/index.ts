@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
     /* ── reminders cron — no partner session required ── */
     if (operation === 'reminders_run_due') {
       if (!isCronCall(req)) return json({ error: 'Cron auth required' }, 401);
-      return await runRemindersDue(supabase);
+      return await runRemindersDue(supabase, json);
     }
 
     /* ── partner auth for everything else ── */
@@ -364,7 +364,7 @@ Deno.serve(async (req) => {
  *   broker_notified:  ≥ 48h since last reminder, count ≥ 4        → notify finance partner
  * Only acts on instances with auto_reminder_enabled=true and status in ('requested').
  */
-async function runRemindersDue(supabase: any) {
+async function runRemindersDue(supabase: any, json: (data: unknown, status?: number) => Response) {
   const now = Date.now();
   const cutoff = new Date(now - 48 * 3600 * 1000).toISOString();
   const { data: dueRows, error } = await supabase
