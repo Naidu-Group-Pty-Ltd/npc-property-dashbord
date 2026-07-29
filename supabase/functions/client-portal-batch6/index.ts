@@ -59,13 +59,17 @@ Deno.serve(async (req) => {
     const clientId = portalUser.client_id;
 
     if (operation === 'assigned_partner') {
-      const { data: assigns } = await supabase.from('finance_portal_client_assignments')
-        .select('finance_user_id, created_at').eq('client_id', clientId).order('created_at', { ascending: false }).limit(1);
+      const { data: assigns, error: assignmentError } = await supabase.from('finance_portal_client_assignments')
+        .select('finance_user_id, assigned_at').eq('client_id', clientId).order('assigned_at', { ascending: false }).limit(1);
+      if (assignmentError) return json({ error: assignmentError.message }, 500);
       const fid = assigns?.[0]?.finance_user_id;
       if (!fid) return json({ partner: null });
-      const { data: u } = await supabase.from('finance_portal_users')
-        .select('id, full_name, email').eq('id', fid).maybeSingle();
-      return json({ partner: u || null });
+      const { data: u, error: partnerError } = await supabase.from('finance_portal_users')
+        .select('id, email, finance_agent_contacts:finance_contact_id(name)').eq('id', fid).maybeSingle();
+      if (partnerError) return json({ error: partnerError.message }, 500);
+      return json({
+        partner: u ? { id: u.id, email: u.email, full_name: u.finance_agent_contacts?.name ?? null } : null,
+      });
     }
 
     if (operation === 'onboarding_list') {
