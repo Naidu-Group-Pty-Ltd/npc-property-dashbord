@@ -1107,7 +1107,7 @@ function StaticPlanTab() {
     loadPendingMapProposals();
   };
 
-  const load = async () => {
+  const load = async (reportIdOverride?: string) => {
     setLoading(true);
     const { data, error } = await invokeSecureFunction<PlanResponse>(
       'report-engine-inspector',
@@ -1116,7 +1116,7 @@ function StaticPlanTab() {
         scope,
         report_tier: reportTier || undefined,
         report_category: reportCategory || undefined,
-        report_id: reportId.trim() || undefined,
+        report_id: (reportIdOverride ?? reportId).trim() || undefined,
       },
     );
     setLoading(false);
@@ -1226,7 +1226,7 @@ function StaticPlanTab() {
               <Input value={reportId} onChange={(e) => setReportId(e.target.value)}
                 placeholder="investment_reports.id"
                 className="text-xs h-8 font-mono" />
-              <Button size="sm" onClick={load} disabled={loading}>
+              <Button size="sm" onClick={() => load()} disabled={loading}>
                 {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Apply'}
               </Button>
             </div>
@@ -1257,7 +1257,11 @@ function StaticPlanTab() {
               {lookupLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Lookup'}
             </Button>
             {lookup?.report?.id && (
-              <Button size="sm" variant="outline" onClick={() => { setReportId(lookup.report.id); load(); }}>
+              <Button size="sm" variant="outline" onClick={() => {
+                const lookedUpReportId = lookup.report.id;
+                setReportId(lookedUpReportId);
+                load(lookedUpReportId);
+              }}>
                 Load as overlay
               </Button>
             )}
