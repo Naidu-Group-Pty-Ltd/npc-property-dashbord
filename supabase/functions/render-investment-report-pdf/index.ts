@@ -2983,7 +2983,7 @@ export async function buildHtml(
 
   const para2Parts: string[] = [];
   if (scoreTxt) {
-    para2Parts.push(`The property carries an overall investment score of <strong>${scoreTxt}</strong>, reflecting the weighted balance of location quality, financial performance, growth drivers, and risk indicators discussed in the chapters that follow.`);
+    para2Parts.push(`The property carries an overall investment score of <strong>${esc(scoreTxt)}</strong>, reflecting the weighted balance of location quality, financial performance, growth drivers, and risk indicators discussed in the chapters that follow.`);
   } else {
     para2Parts.push(`The chapters that follow examine the weighted balance of location quality, financial performance, growth drivers, and risk indicators that underpin our assessment.`);
   }
@@ -2996,7 +2996,7 @@ export async function buildHtml(
   if (priceTxt && rentTxt) editorsNoteBits.push(`at <strong>${priceTxt}</strong> with assessed rent of <strong>${rentTxt}/wk</strong>`);
   else if (priceTxt) editorsNoteBits.push(`at <strong>${priceTxt}</strong>`);
   if (yieldTxt) editorsNoteBits.push(`gross yield <strong>${yieldTxt}</strong>`);
-  if (scoreTxt) editorsNoteBits.push(`investment score <strong>${scoreTxt}</strong>`);
+  if (scoreTxt) editorsNoteBits.push(`investment score <strong>${esc(scoreTxt)}</strong>`);
   const editorsNoteHtml = `
     <aside class="editors-note">
       <div class="en-eyebrow">Editor's Note</div>
