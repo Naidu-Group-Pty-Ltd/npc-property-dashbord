@@ -4801,17 +4801,11 @@ DO NOT default to 0% or any arbitrary value. The capital growth rate is critical
       const rawTier = propertyDetails?.reportTier || 'compass';
       const requestedEngine = propertyDetails?.generationEngine;
       const isCompassTier = rawTier === 'compass' || rawTier === 'compass-40';
-      const generationEngine = requestedEngine === 'legacy'
-        ? 'legacy'
-        : isCompassTier || requestedEngine === 'compass-40'
-          ? 'compass-40'
-          : 'legacy';
-      // Respect explicit frontend engine selection.
-      //  - 'compass-40' → always activate the trimmed canonical overlay.
-      //  - 'legacy'     → always use the full legacy DB template, even on
-      //                   compass-tier reports. (The previous hardening that
-      //                   force-enabled the overlay for any compass tier broke
-      //                   the user-visible Generation Engine selector.)
+      // The report tier is the authoritative data-minimization boundary. An
+      // engine preference must never downgrade a non-financial Compass report.
+      const generationEngine = isCompassTier || requestedEngine === 'compass-40'
+        ? 'compass-40'
+        : 'legacy';
       compass40OverlayActive = generationEngine === 'compass-40';
       if (compass40OverlayActive && propertyDetails?.generationEngine !== 'compass-40') {
         propertyDetails = { ...(propertyDetails || {}), generationEngine: 'compass-40' };
