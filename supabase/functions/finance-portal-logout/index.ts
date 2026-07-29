@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders, createClearFinanceSessionCookie } from "../_shared/auth.ts"
+import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -14,15 +15,12 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    let sessionToken: string | null = null;
+    let body: Record<string, unknown> | undefined;
     try {
-      const body = await req.json();
-      sessionToken = body?.finance_session_token || body?.session_token;
+      body = await req.json();
     } catch { /* ignore */ }
 
-    if (!sessionToken) {
-      sessionToken = req.headers.get('x-finance-session-token') || req.headers.get('x-session-token');
-    }
+    const sessionToken = extractFinanceSessionToken(req.headers, body);
 
     if (sessionToken) {
       const { data: user } = await supabase
@@ -51,11 +49,7 @@ Deno.serve(async (req) => {
       JSON.stringify({ success: true }),
       {
         status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'Set-Cookie': createClearFinanceSessionCookie(),
-        }
+        headers: createLogoutHeaders(corsHeaders),
       }
     )
   } catch (error: any) {
@@ -64,11 +58,7 @@ Deno.serve(async (req) => {
       JSON.stringify({ error: 'Internal server error' }),
       {
         status: 500,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'Set-Cookie': createClearFinanceSessionCookie(),
-        }
+        headers: createLogoutHeaders(corsHeaders),
       }
     )
   }

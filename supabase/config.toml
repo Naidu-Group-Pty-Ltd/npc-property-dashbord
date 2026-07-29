@@ -65,7 +65,7 @@ verify_jwt = false
 request_timeout = 60
 
 [functions.template-analytics]
-verify_jwt = false
+verify_jwt = true
 request_timeout = 60
 
 [functions.template-ai-author]

@@ -46,6 +46,14 @@ interface ScenarioAdjustments {
     lenderMaxLVR?: number;
     allocationStrategy?: 'highest_equity_first' | 'pro_rata';
   } | null;
+  capitalAllocations?: Array<{
+    amount: number;
+    sinkType: 'liability_payoff' | 'offset_deposit' | 'rate_buydown' | 'debt_recycle' | 'acquisition_deposit' | 'holding_reserve' | 'repayment_reduction';
+    sinkTargetId?: string;
+    offsetRatePoints?: number;
+    rateBuydownPoints?: number;
+    repaymentReductionMonthly?: number;
+  }>;
   /** Phase D + F2: Acquisition context driving stamp duty + LMI math.
    *  When set, the engine derives a maximum purchase price for the scenario.
    *  When `targetPurchasePrice` is included, the engine also reports
@@ -214,7 +222,7 @@ function loadPersistedState(clientId?: string): PersistedChatState | null {
   }
 }
 
-function aiAdjustmentsToDeltas(adj: ScenarioAdjustments): ScenarioDelta[] {
+export function aiAdjustmentsToDeltas(adj: ScenarioAdjustments): ScenarioDelta[] {
   const deltas: ScenarioDelta[] = [];
 
   for (const id of adj.consolidatedLiabilityIds || []) {
@@ -262,6 +270,25 @@ function aiAdjustmentsToDeltas(adj: ScenarioAdjustments): ScenarioDelta[] {
     deltas.push({ id: 'dti-cap', label: `DTI cap ${adj.dtiCapOverride.value}x${lenderProfile ? ` (${lenderProfile})` : ''}`, type: 'dti_cap_change', value: adj.dtiCapOverride.value, unit: 'ratio', meta: lenderProfile ? { enabled: true, lenderProfile } : { enabled: true } });
   } else if (lenderProfile) {
     deltas.push({ id: 'dti-cap', label: `Lender flip → ${lenderProfile}`, type: 'dti_cap_change', value: 99, unit: 'ratio', meta: { enabled: false, lenderProfile } });
+  }
+  for (let i = 0; i < (adj.capitalAllocations || []).length; i++) {
+    const allocation = adj.capitalAllocations![i];
+    if (!allocation || !Number.isFinite(allocation.amount) || allocation.amount <= 0 || !allocation.sinkType) continue;
+    deltas.push({
+      id: `cap-alloc-${i}-${allocation.sinkType}`,
+      label: `Allocate $${Math.round(allocation.amount).toLocaleString()} → ${allocation.sinkType.replace(/_/g, ' ')}`,
+      type: 'capital_allocation',
+      value: allocation.amount,
+      unit: 'absolute',
+      meta: {
+        sinkType: allocation.sinkType,
+        sinkTargetId: allocation.sinkTargetId,
+        sourcePool: 'pool-default',
+        offsetRatePoints: allocation.offsetRatePoints,
+        rateBuydownPoints: allocation.rateBuydownPoints,
+        repaymentReductionMonthly: allocation.repaymentReductionMonthly,
+      },
+    });
   }
 
   return deltas;
