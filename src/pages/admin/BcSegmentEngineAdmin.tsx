@@ -113,7 +113,11 @@ export default function BcSegmentEngineAdmin() {
     setHealthLoading(false);
   }, []);
 
-  useEffect(() => { load(); loadHealth(); }, [load, loadHealth]);
+  useEffect(() => {
+    if (!isSuperadmin) return;
+    load();
+    loadHealth();
+  }, [isSuperadmin, load, loadHealth]);
 
   const isDirty = useMemo(() => {
     if (!row) return draft.enabled || draft.allowlist.length > 0 || draft.dragFactorOverride != null;
