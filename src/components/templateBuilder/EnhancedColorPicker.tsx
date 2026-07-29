@@ -246,7 +246,7 @@ export function EnhancedColorPicker({ label, value, onChange, template, allowEmp
 
       {contrast && (
         <div className="flex items-center gap-1.5 text-[10px]">
-          <span className={`rounded px-1.5 py-0.5 font-mono ${contrast.grade === 'aaa' ? 'bg-emerald-500/15 text-emerald-700' : contrast.grade === 'aa' ? 'bg-amber-500/15 text-amber-700' : 'bg-rose-500/15 text-rose-700'}`}>
+          <span className={`rounded px-1.5 py-0.5 font-mono ${contrast.grade === 'aaa' ? 'bg-success/15 text-success' : contrast.grade === 'aa' ? 'bg-warning/15 text-warning' : 'bg-destructive/15 text-destructive'}`}>
             {contrast.ratio.toFixed(2)}:1
           </span>
           <span className="text-muted-foreground">

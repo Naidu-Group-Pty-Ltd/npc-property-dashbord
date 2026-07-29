@@ -289,7 +289,7 @@ const Automation = () => {
               <Zap className="h-6 w-6" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Auto-Generation Switchbot</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Auto Report Generation</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
                 Configure automated investment report generation for incoming listings
               </p>

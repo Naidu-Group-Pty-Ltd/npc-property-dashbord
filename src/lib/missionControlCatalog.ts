@@ -96,9 +96,21 @@ export async function getSeatRole(slug: string): Promise<CatalogRole | null> {
   }
 }
 
+/**
+ * Catalog prices are TAX-INCLUSIVE — the figure already contains GST.
+ *
+ * Cents are kept whenever they are non-zero. Rounding to whole dollars hid
+ * real amounts: a $5,443.20 annual plan rendered as $5,443, and every GST
+ * component (a $699 plan contains $63.55) disappeared entirely.
+ */
 export function formatPriceRange(minCents: number, maxCents: number, currency = "AUD"): string {
   const fmt = (cents: number) =>
-    new Intl.NumberFormat("en-AU", { style: "currency", currency, maximumFractionDigits: 0 }).format(cents / 100);
+    new Intl.NumberFormat("en-AU", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
+      maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
+    }).format(cents / 100);
   if (!minCents && !maxCents) return "—";
   if (minCents === maxCents) return fmt(minCents);
   return `${fmt(minCents)} – ${fmt(maxCents)}`;

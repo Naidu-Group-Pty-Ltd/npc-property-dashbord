@@ -1,14 +1,19 @@
 /** Object-level authorization for service-role-backed Finance Portal functions. */
 
+import { hasFinancePortalPermission, type FinancePortalPermissionAction } from './finance-portal-permissions.ts';
+
 export async function canAccessFinanceClient(
   supabase: any,
   financeUserId: string,
   clientId: string,
   purchaseFileId?: string | null,
+  globalPermissions?: unknown,
+  permissionKey?: string,
+  action?: FinancePortalPermissionAction,
 ): Promise<boolean> {
   let query = supabase
     .from('finance_portal_client_assignments')
-    .select('id, purchase_file_id')
+    .select('id, purchase_file_id, permissions')
     .eq('finance_user_id', financeUserId)
     .eq('client_id', clientId);
 
@@ -17,13 +22,23 @@ export async function canAccessFinanceClient(
   }
 
   const { data, error } = await query.limit(1).maybeSingle();
-  return !error && !!data;
+  if (error || !data) return false;
+  return !permissionKey || !action || hasFinancePortalPermission(
+    globalPermissions,
+    data.permissions,
+    permissionKey,
+    action,
+    true,
+  );
 }
 
 export async function canAccessPurchaseFile(
   supabase: any,
   financeUserId: string,
   purchaseFileId: string,
+  globalPermissions?: unknown,
+  permissionKey?: string,
+  action?: FinancePortalPermissionAction,
 ): Promise<boolean> {
   const { data: file, error } = await supabase
     .from('purchase_files')
@@ -33,7 +48,15 @@ export async function canAccessPurchaseFile(
 
   if (error || !file) return false;
   if (file.assigned_finance_user_id === financeUserId) return true;
-  return canAccessFinanceClient(supabase, financeUserId, file.client_id, purchaseFileId);
+  return canAccessFinanceClient(
+    supabase,
+    financeUserId,
+    file.client_id,
+    purchaseFileId,
+    globalPermissions,
+    permissionKey,
+    action,
+  );
 }
 
 export async function canAccessPurchaseFileResource(
@@ -41,6 +64,9 @@ export async function canAccessPurchaseFileResource(
   financeUserId: string,
   table: string,
   resourceId: string,
+  globalPermissions?: unknown,
+  permissionKey?: string,
+  action?: FinancePortalPermissionAction,
 ): Promise<boolean> {
   const { data: resource, error } = await supabase
     .from(table)
@@ -49,7 +75,14 @@ export async function canAccessPurchaseFileResource(
     .maybeSingle();
 
   return !error && !!resource?.purchase_file_id
-    && canAccessPurchaseFile(supabase, financeUserId, resource.purchase_file_id);
+    && canAccessPurchaseFile(
+      supabase,
+      financeUserId,
+      resource.purchase_file_id,
+      globalPermissions,
+      permissionKey,
+      action,
+    );
 }
 
 export async function listAccessiblePurchaseFileIds(

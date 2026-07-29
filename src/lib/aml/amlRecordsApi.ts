@@ -65,6 +65,47 @@ async function invoke<T>(op: string, args: Record<string, any> = {}): Promise<T>
   return invokeAmlFunction<T>("aml-records", { op, ...args });
 }
 
+
+/** Phase 11 — §18 retention trigger events (the retention clock starts here). */
+export type AmlRetentionTriggerKind =
+  | "relationship_end" | "occasional_transaction_complete" | "transaction_date"
+  | "program_version_obsolete" | "investigation_complete" | "report_complete"
+  | "legal_hold_release";
+
+/** Phase 11 — §18 display contract for a retained record. */
+export interface AmlRetentionRecord {
+  trigger_id: string;
+  entity_type: string;
+  entity_id: string;
+  case_id: string | null;
+  record_category: string;
+  legal_basis: string;
+  trigger_kind: AmlRetentionTriggerKind;
+  trigger_label: string;
+  trigger_date: string;
+  retention_years: number;
+  minimum_retention_date: string;
+  retention_elapsed: boolean;
+  legal_hold: boolean;
+  hold_id: string | null;
+  privacy_restricted: boolean;
+  privacy_restriction_note: string | null;
+  disposal_method: string;
+  recorded_by_label: string | null;
+  recorded_at: string;
+}
+
+/** Phase 11 — §19 independent-review evidence. */
+export interface AmlAuditChainVerification {
+  chain: string;
+  case_id: string | null;
+  event_count: number;
+  verified_count: number;
+  intact: boolean;
+  breaks: Array<{ id: string; created_at?: string; problem: string }>;
+  verified_at: string;
+}
+
 export const amlRecordsApi = {
   summary: () => invoke<AmlRecordsSummary>("summary"),
 
@@ -106,6 +147,24 @@ export const amlRecordsApi = {
   cancelScan: (id: string) => invoke<{ scan: AmlRetentionScan }>("cancel_scan", { id }).then((r) => r.scan),
   executeScan: (id: string, dry_execute = false) =>
     invoke<{ scan_id: string; disposed: number; skipped: number; dry_execute: boolean }>("execute_scan", { id, dry_execute }),
+
+
+  // Phase 11 — trigger-based retention (§18) + audit integrity/export (§19)
+  recordRetentionTrigger: (p: {
+    entity_type: string; entity_id: string; trigger_kind: AmlRetentionTriggerKind;
+    trigger_date?: string; case_id?: string; record_category?: string;
+    legal_basis?: string; retention_years?: number; disposal_method?: string;
+    privacy_restricted?: boolean; privacy_restriction_note?: string; source_note?: string;
+  }) => invoke<{ trigger: any; superseded: number }>("record_retention_trigger", p),
+  syncCaseTriggers: (case_id: string) =>
+    invoke<{ created_count: number; created: Array<{ entity_type: string; entity_id: string; trigger_kind: string }> }>(
+      "sync_case_triggers", { case_id }),
+  listRetentionRecords: (p: { case_id?: string; due_only?: boolean; limit?: number } = {}) =>
+    invoke<{ records: AmlRetentionRecord[] }>("list_retention_records", p).then((r) => r.records),
+  verifyAuditChain: (p: { chain?: "case_events" | "records_audit_events"; case_id?: string } = {}) =>
+    invoke<AmlAuditChainVerification>("verify_audit_chain", p),
+  exportAuditBundle: (p: { case_id: string; reason: string }) =>
+    invoke<{ bundle: Record<string, any> }>("export_audit_bundle", p),
 
   auditTimeline: (limit = 100) =>
     invoke<{ events: AmlRecordsAuditEvent[] }>("audit_timeline", { limit }).then((r) => r.events),

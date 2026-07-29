@@ -15,8 +15,10 @@ import { cn } from "@/lib/utils";
 import {
   RefreshCw, Search, Coins, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Activity, Clock3, ShieldCheck, UserRound, Building2, AlertTriangle,
+  Zap,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { TokenEventDetailsDrawer } from "@/components/billing/TokenEventDetailsDrawer";
 
 interface UsageRow {
@@ -27,8 +29,6 @@ interface UsageRow {
   function_name: string;
   kind: string;
   idempotency_key: string;
-  estimated_tokens: number;
-  reserved_tokens: number;
   actual_tokens: number;
   duration_ms: number;
   status: string;
@@ -127,10 +127,16 @@ export function TokenUsagePanel() {
     );
   }, [rows, search]);
 
+  // The plan's included allowance, so this panel answers "how much do I get"
+  // as well as "how much have I used". Only meaningful once the workspace is
+  // on a plan that includes credits — a workspace running on top-up packs
+  // alone has an allowance of zero and gets no tile rather than a "0".
+  const { balance } = useTokenBalance();
+  const includedMonthly = balance?.allowance ?? 0;
+
   const totals = useMemo(() => {
     const used = filtered.reduce((s, r) => s + (r.actual_tokens || 0), 0);
-    const reserved = filtered.reduce((s, r) => s + (r.reserved_tokens || 0), 0);
-    return { used, reserved, count: filtered.length };
+    return { used, count: filtered.length };
   }, [filtered]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -141,6 +147,21 @@ export function TokenUsagePanel() {
   const scopeLabel = scope === "agency" ? "Agency-wide" : "My usage";
 
   const kpis = [
+    ...(includedMonthly > 0
+      ? [
+          {
+            label: "Included Monthly",
+            value: includedMonthly.toLocaleString(),
+            icon: Zap,
+            helper: balance?.planName
+              ? `Credits included with ${balance.planName}, every month`
+              : "Credits included with your plan, every month",
+            accent: "from-primary/15 via-card to-muted/30",
+            iconClass: "border-primary/25 bg-primary/10 text-primary",
+            valueClass: "text-primary",
+          },
+        ]
+      : []),
     {
       label: "Generations",
       value: totals.count.toLocaleString(),
@@ -159,20 +180,11 @@ export function TokenUsagePanel() {
       iconClass: "border-success/25 bg-success/10 text-success dark:text-success",
       valueClass: "text-success dark:text-success",
     },
-    {
-      label: "Tokens Reserved",
-      value: totals.reserved.toLocaleString(),
-      icon: ShieldCheck,
-      helper: "Reserved token capacity",
-      accent: "from-brand-500/15 via-card to-muted/30",
-      iconClass: "border-brand-500/25 bg-brand-500/10 text-brand-700 dark:text-brand-300",
-      valueClass: "text-brand-700 dark:text-brand-300",
-    },
   ];
 
   return (
     <div className="min-w-0 space-y-5">
-      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-[repeat(auto-fit,minmax(15rem,1fr))]">
         {kpis.map(({ label, value, icon: Icon, helper, accent, iconClass, valueClass }) => (
           <DashboardThemeFrame key={label} variant="premiumCard" className={cn("group p-0 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/25 hover:shadow-[0_20px_55px_rgba(15,23,42,0.12)] dark:hover:shadow-[0_20px_55px_rgba(0,0,0,0.34)]", `bg-gradient-to-br ${accent}`)}>
             <div className="flex min-h-[9.5rem] min-w-0 flex-col justify-between gap-5 p-5">
@@ -334,8 +346,6 @@ export function TokenUsagePanel() {
                             <TableHead className="w-[210px]">Report</TableHead>
                             <TableHead className="w-[128px]">Kind</TableHead>
                             <TableHead className="w-[240px]">Idempotency key</TableHead>
-                            <TableHead className="w-[112px] text-right">Estimated</TableHead>
-                            <TableHead className="w-[112px] text-right">Reserved</TableHead>
                             <TableHead className="w-[112px] text-right">Used</TableHead>
                             <TableHead className="w-[100px] text-right">Duration</TableHead>
                             <TableHead className="w-[135px]">Status</TableHead>
@@ -383,12 +393,6 @@ export function TokenUsagePanel() {
                                   >
                                     <span className="min-w-0 truncate">{r.idempotency_key}</span>
                                   </button>
-                                </TableCell>
-                                <TableCell className="align-top text-right tabular-nums">
-                                  <span className="font-medium text-muted-foreground">{r.estimated_tokens.toLocaleString()}</span>
-                                </TableCell>
-                                <TableCell className="align-top text-right tabular-nums">
-                                  <span className="font-semibold text-brand-700 dark:text-brand-300">{r.reserved_tokens.toLocaleString()}</span>
                                 </TableCell>
                                 <TableCell className="align-top text-right font-semibold tabular-nums">
                                   <span className="text-success dark:text-success">{r.actual_tokens.toLocaleString()}</span>

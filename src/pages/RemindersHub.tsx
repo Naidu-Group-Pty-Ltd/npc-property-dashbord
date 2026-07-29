@@ -635,7 +635,7 @@ export default function RemindersHub() {
                                 <div className="min-w-0 flex-1 space-y-2">
                                   <div className="flex flex-wrap items-start gap-2">
                                     <span className={cn(
-                                      'min-w-0 max-w-full break-words text-[15px] font-semibold leading-5 tracking-[-0.01em] text-slate-50 transition-colors duration-200 group-hover:text-white sm:text-base sm:leading-6',
+                                      'min-w-0 max-w-full break-words text-[15px] font-semibold leading-5 tracking-[-0.01em] text-foreground transition-colors duration-200 group-hover:text-white sm:text-base sm:leading-6',
                                       reminder.status === 'completed' && 'text-success-foreground'
                                     )}>
                                       {reminder.title}

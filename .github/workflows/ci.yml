@@ -50,6 +50,12 @@ jobs:
       - name: Unit tests (Template Builder surface)
         run: npx vitest run src/lib/reportTemplate
 
+      # Billing invariant: a report generation that fails — or that has only
+      # produced some of its chunks — must never consume tokens. Gated on its
+      # own step so a regression is attributed to metering, not to a report test.
+      - name: Unit tests (report token metering)
+        run: npx vitest run src/lib/tokens
+
       - name: Build
         run: npm run build
 

@@ -6,13 +6,15 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 interface InsightDraft {
@@ -128,7 +130,7 @@ async function runForUser(sb: any, userId: string) {
   return results;
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
   try {
@@ -180,3 +182,7 @@ Deno.serve(async (req) => {
     });
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));

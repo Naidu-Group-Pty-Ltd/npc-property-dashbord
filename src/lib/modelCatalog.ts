@@ -22,7 +22,12 @@ export interface ProviderMeta {
   name: string;
   envKey: string; // for native column
   docsUrl: string;
-  brandColor: string; // hsl token reference (text class)
+  /**
+   * Third-party vendor identity colour. Deliberately a fixed Tailwind hue and
+   * NOT a design token: these belong to the model vendors, so they must stay
+   * recognisable and must not re-theme with our white-label brand.
+   */
+  brandColor: string;
 }
 
 export const PROVIDERS: ProviderMeta[] = [
@@ -84,9 +89,9 @@ export function modelsByRoute(route: ModelRoute): ModelEntry[] {
 
 export function statusBadgeColor(status: ModelStatus): string {
   switch (status) {
-    case 'available': return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
-    case 'preview': return 'bg-sky-500/15 text-sky-300 border-sky-500/30';
-    case 'deprecated': return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
-    case 'unavailable': return 'bg-rose-500/15 text-rose-300 border-rose-500/30';
+    case 'available': return 'bg-success/15 text-success border-success/30';
+    case 'preview': return 'bg-info/15 text-info border-info/30';
+    case 'deprecated': return 'bg-warning/15 text-warning border-warning/30';
+    case 'unavailable': return 'bg-destructive/15 text-destructive border-destructive/30';
   }
 }

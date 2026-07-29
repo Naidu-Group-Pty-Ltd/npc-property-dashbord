@@ -19,13 +19,13 @@ export interface AssumptionProvenance {
 }
 
 export const CONFIDENCE_BADGE_CLASS: Record<AssumptionConfidenceTag, string> = {
-  Verified: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40',
-  'Manual Estimate': 'bg-amber-500/15 text-amber-300 border-amber-500/40',
-  'Client Profile Source': 'bg-yellow-500/15 text-yellow-300 border-yellow-500/40',
-  'AI Estimate': 'bg-sky-500/15 text-sky-300 border-sky-500/40',
-  Unknown: 'bg-slate-500/15 text-slate-300 border-slate-500/40',
-  Overridden: 'bg-purple-500/15 text-purple-300 border-purple-500/40',
-  'Specialist Review Required': 'bg-red-500/15 text-red-300 border-red-500/40',
+  Verified: 'bg-success/15 text-success border-success/40',
+  'Manual Estimate': 'bg-warning/15 text-warning border-warning/40',
+  'Client Profile Source': 'bg-warning/15 text-warning border-warning/40',
+  'AI Estimate': 'bg-info/15 text-info border-info/40',
+  Unknown: 'bg-muted text-muted-foreground border-border',
+  Overridden: 'bg-chart-5/15 text-chart-5 border-chart-5/40',
+  'Specialist Review Required': 'bg-destructive/15 text-destructive border-destructive/40',
   Calculated: 'bg-primary/15 text-primary border-primary/40',
 };
 

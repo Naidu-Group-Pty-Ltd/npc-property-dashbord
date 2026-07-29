@@ -33,9 +33,11 @@ describe("StructuredTerminologyEditor", () => {
     fireEvent.change(replacementInput, { target: { value: "Client Review" } });
     fireEvent.change(keyInput, { target: { value: "Customer Compliance" } });
 
-    expect(screen.getByTestId("serialized-value")).toHaveTextContent(
-      JSON.stringify({ "Customer Compliance": "Client Review" }, null, 2),
-    );
+    // Compare parsed JSON rather than text: toHaveTextContent collapses the
+    // element's whitespace, so a pretty-printed expected string never matches.
+    expect(
+      JSON.parse(screen.getByTestId("serialized-value").textContent ?? "{}"),
+    ).toEqual({ "Customer Compliance": "Client Review" });
   });
 
   it("appends a blank override after an existing override", () => {

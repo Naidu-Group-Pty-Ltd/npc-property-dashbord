@@ -228,7 +228,7 @@ export function ChartLightbox({ chart, onClose, onExport, onPrev, onNext, hasPre
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => onExport(chart, { format: 'svg' })} disabled={!canNormaliseChartConfig(chart) && !chart.image_data?.startsWith('data:image/svg+xml')}>
-                    <FileCode2 className="mr-2 h-3.5 w-3.5 text-emerald-500" />
+                    <FileCode2 className="mr-2 h-3.5 w-3.5 text-success" />
                     <div className="flex flex-col"><span className="text-xs font-semibold">SVG · Vector</span><span className="text-[10px] text-muted-foreground">{canNormaliseChartConfig(chart) ? 'Re-rendered live from data' : 'Legacy SVG charts only'}</span></div>
                   </DropdownMenuItem>
                 </DropdownMenuContent>

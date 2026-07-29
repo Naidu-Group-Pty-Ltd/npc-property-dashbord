@@ -27,6 +27,17 @@ const fmtPct = (v: any) => {
   return Math.round(pct);
 };
 
+const getSafeWebUrl = (value: unknown) => {
+  if (typeof value !== 'string') return null;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+};
+
 const Row = ({ label, value, icon: Icon, mono }: { label: string; value: any; icon?: any; mono?: boolean }) => {
   if (value === null || value === undefined || value === '' || value === false) return null;
   const display = typeof value === 'boolean' ? (value ? 'Yes' : 'No') : String(value);
@@ -74,6 +85,8 @@ const SectionCard = ({ icon: Icon, title, tone = 'default', children }: { icon?:
 
 export function PropertyIntakeDetails({ fields }: PropertyIntakeDetailsProps) {
   const f = fields || {};
+  const sourceWebLink = f['Source Web Link'];
+  const safeSourceWebUrl = getSafeWebUrl(sourceWebLink);
 
   // Only render if this looks like a Property Intake Master record.
   const looksLikePIM =
@@ -252,16 +265,18 @@ export function PropertyIntakeDetails({ fields }: PropertyIntakeDetailsProps) {
               <pre className="text-xs mt-1 p-3 rounded-lg bg-muted/60 border border-border/60 whitespace-pre-wrap break-words font-mono max-h-32 overflow-auto">{f['Original Row Text']}</pre>
             </div>
           )}
-          {f['Source Web Link'] && (
+          {safeSourceWebUrl ? (
             <a
-              href={f['Source Web Link']}
+              href={safeSourceWebUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1 text-sm text-primary hover:underline break-all"
             >
-              <Globe className="h-3.5 w-3.5" /> {f['Source Web Link']}
+              <Globe className="h-3.5 w-3.5" /> {sourceWebLink}
             </a>
-          )}
+          ) : sourceWebLink ? (
+            <p className="text-sm break-all">{String(sourceWebLink)}</p>
+          ) : null}
         </SectionCard>
       )}
 

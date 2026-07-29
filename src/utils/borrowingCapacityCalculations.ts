@@ -359,25 +359,25 @@ export function getServiceabilityBandColor(band: ServiceabilityBand): {
   switch (band) {
     case 'green':
       return {
-        bg: 'bg-emerald-500/10',
-        text: 'text-emerald-500',
-        border: 'border-emerald-500/30',
+        bg: 'bg-success/10',
+        text: 'text-success',
+        border: 'border-success/30',
         label: 'Strong',
         description: 'Strong borrowing position',
       };
     case 'amber':
       return {
-        bg: 'bg-amber-500/10',
-        text: 'text-amber-500',
-        border: 'border-amber-500/30',
+        bg: 'bg-warning/10',
+        text: 'text-warning',
+        border: 'border-warning/30',
         label: 'Moderate',
         description: 'Moderate capacity - proceed with caution',
       };
     case 'red':
       return {
-        bg: 'bg-red-500/10',
-        text: 'text-red-500',
-        border: 'border-red-500/30',
+        bg: 'bg-destructive/10',
+        text: 'text-destructive',
+        border: 'border-destructive/30',
         label: 'Limited',
         description: 'Limited capacity - focus on debt reduction',
       };

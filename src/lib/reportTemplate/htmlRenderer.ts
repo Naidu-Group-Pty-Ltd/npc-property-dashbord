@@ -25,7 +25,8 @@ import {
 } from './bindingResolver';
 import { getHtmlBlockRenderer, renderUnsupportedHtml, type HtmlBlockContext } from './blocks/html';
 import { renderOverlay } from './blocks/_shared.html';
-import { tokensToCssVariables, tokensToFontFaceCss } from './cssTokens';
+import { tokensToCssVariables, tokensToFontFaceCss, tokenCssDeclaration } from './cssTokens';
+import { toRendererHex } from './cssColor';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { stableJson, templateMetaKey } from './previewCache';
 
@@ -114,7 +115,8 @@ function themeOverrideCss(pageIndex: number, base: Tokens, merged: Tokens): stri
   const push = (prefix: string, baseMap: any, mergedMap: any, suffix = '') => {
     for (const [k, v] of Object.entries(mergedMap || {})) {
       if ((baseMap || {})[k] !== v) {
-        diffs.push(`  --${prefix}-${String(k).replace(/[^a-zA-Z0-9_-]/g, '-')}: ${v}${suffix};`);
+        const declaration = tokenCssDeclaration(prefix, k, v, suffix);
+        if (declaration) diffs.push(declaration);
       }
     }
   };
@@ -304,6 +306,10 @@ function resolveLinkHref(
     href = idx >= 0 ? `#tpl-page-${idx}` : '#';
   } else if (raw.startsWith('anchor:')) {
     href = `#anc-${raw.slice(7).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+  } else if (!/^(?:https?:|mailto:|tel:)/i.test(raw)) {
+    // Do not pass renderer-capable schemes (for example file: or data:) to
+    // WeasyPrint, and do not emit browser-executable javascript: links.
+    return null;
   }
   const target = link.target ?? (href.startsWith('#') ? '_self' : '_blank');
   const title = link.title ? resolveBindable(link.title, ctxBase) : '';
@@ -316,7 +322,9 @@ function bookmarkAttrs(bm: any, ctxBase: ResolveContext): string {
   const label = bm.label ? resolveBindable(bm.label, ctxBase) : bm.name;
   const level = Number(bm.level ?? 2);
   // WeasyPrint reads `bookmark-label` / `bookmark-level` for the PDF outline.
-  return ` id="${anchorId}" style="bookmark-label:'${String(label).replace(/'/g, "\\'")}';bookmark-level:${level};"`;
+  const cssLabel = String(label).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/[\r\n]/g, ' ');
+  const style = `bookmark-label:'${cssLabel}';bookmark-level:${level};`;
+  return ` id="${escapeHtml(anchorId)}" style="${escapeHtml(style)}"`;
 }
 
 
@@ -366,7 +374,7 @@ function renderBlockOnce(block: any, ctxBase: ResolveContext, blockCtx: HtmlBloc
   const wrap = (inner: string) => {
     if (link) {
       const titleAttr = link.title ? ` title="${escapeHtml(link.title)}"` : '';
-      return `<a href="${link.href}" target="${link.target}"${titleAttr} style="text-decoration:none;color:inherit;display:contents;">${inner}</a>`;
+      return `<a href="${escapeHtml(link.href)}" target="${escapeHtml(link.target)}"${titleAttr} style="text-decoration:none;color:inherit;display:contents;">${inner}</a>`;
     }
     return inner;
   };
@@ -532,7 +540,7 @@ function renderPage(page: Page, ctxBase: ResolveContext, pageIndex: number, temp
   const bg = (page as any).baselineGrid;
   if (bg?.show) {
     const size = Number(bg.size ?? 12);
-    const color = String(bg.color ?? 'rgba(191,155,80,0.20)');
+    const color = toRendererHex(bg.color) ?? '#BF9B5033';
     const offset = Number(bg.offset ?? 0);
     baselineEl = `<div aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;background-image:repeating-linear-gradient(to bottom, transparent 0, transparent ${size - 1}pt, ${color} ${size - 1}pt, ${color} ${size}pt);background-position:0 ${offset}pt;"></div>`;
   }

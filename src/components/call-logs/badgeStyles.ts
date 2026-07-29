@@ -13,23 +13,21 @@ export type CallLogBadgeTone =
 export const callLogBadgeBase =
   'inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium leading-none shadow-sm transition-colors';
 
+/**
+ * Tones read from the semantic + categorical tokens rather than fixed Tailwind
+ * hues, so call-log badges follow white-label branding and stay in step with
+ * <StatusBadge>. `attention` and `squad` have no semantic equivalent (they are
+ * categories, not health signals), so they borrow the categorical chart ramp.
+ */
 const callLogBadgeTones: Record<CallLogBadgeTone, string> = {
-  success:
-    'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 shadow-emerald-500/10 dark:border-emerald-300/30 dark:bg-emerald-500/15 dark:text-emerald-300',
-  danger:
-    'border-red-500/35 bg-red-500/10 text-red-700 shadow-red-500/10 dark:border-red-400/35 dark:bg-red-500/15 dark:text-red-300',
-  warning:
-    'border-amber-500/35 bg-amber-500/10 text-amber-700 shadow-amber-500/10 dark:border-amber-300/30 dark:bg-amber-500/15 dark:text-amber-300',
-  attention:
-    'border-orange-500/35 bg-orange-500/10 text-orange-700 shadow-orange-500/10 dark:border-orange-300/30 dark:bg-orange-500/15 dark:text-orange-300',
-  info:
-    'border-sky-500/30 bg-sky-500/10 text-sky-700 shadow-sky-500/10 dark:border-sky-300/25 dark:bg-sky-400/10 dark:text-sky-200',
-  squad:
-    'border-purple-500/35 bg-purple-500/10 text-purple-700 shadow-purple-500/10 dark:border-purple-300/35 dark:bg-purple-500/15 dark:text-purple-200',
-  neutral:
-    'border-border bg-muted/60 text-muted-foreground dark:border-zinc-500/30 dark:bg-zinc-500/15 dark:text-zinc-300',
-  tag:
-    'border-amber-500/30 bg-amber-500/10 text-amber-700 shadow-amber-500/10 dark:border-amber-300/20 dark:bg-amber-300/10 dark:text-amber-100',
+  success: 'border-success/30 bg-success/10 text-success shadow-success/10',
+  danger: 'border-destructive/35 bg-destructive/10 text-destructive shadow-destructive/10',
+  warning: 'border-warning/35 bg-warning/10 text-warning shadow-warning/10',
+  attention: 'border-chart-6/35 bg-chart-6/10 text-chart-6 shadow-chart-6/10',
+  info: 'border-info/30 bg-info/10 text-info shadow-info/10',
+  squad: 'border-chart-5/35 bg-chart-5/10 text-chart-5 shadow-chart-5/10',
+  neutral: 'border-border bg-muted/60 text-muted-foreground',
+  tag: 'border-brand/30 bg-brand/10 text-brand-700 shadow-brand/10 dark:text-brand',
 };
 
 export const callLogBadgeTone = (tone: CallLogBadgeTone, className?: string) =>

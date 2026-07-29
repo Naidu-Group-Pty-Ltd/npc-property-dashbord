@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Database, Loader2, Mail, ArrowLeft, ShieldCheck, Eye, EyeOff, KeyRound,
-  AlertCircle, CheckCircle, BarChart3, Users, Zap,
+  AlertCircle, CheckCircle, BarChart3, Users, Zap, User as UserIcon, Lock, Sparkles,
 } from 'lucide-react';
 import { validatePassword } from '@/utils/passwordValidation';
 import { PasswordStrengthMeter } from '@/components/ui/password-strength-meter';
@@ -19,6 +19,8 @@ import { OtpInput } from '@/components/finance-portal/OtpInput';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BrandLockup, BrandLogo } from '@/components/branding/BrandAssets';
 import { ManageDevicesDialog } from '@/components/auth/ManageDevicesDialog';
+import { GlassCard } from '@/components/aurixa/GlassCard';
+import { cn } from '@/lib/utils';
 import type { DeviceLimitInfo } from '@/hooks/useAuth';
 
 const FEATURES = [
@@ -34,6 +36,9 @@ const formVariants = {
   center: { opacity: 1, x: 0 },
   exit: { opacity: 0, x: -24 },
 };
+
+/** Shared class for inputs with a leading icon slot. */
+const iconInputCls = 'h-12 pl-10 pr-3 rounded-xl bg-[color:hsl(var(--aurixa-glass-bg)/0.55)] border-[color:var(--glass-hairline)] focus-visible:ring-2 focus-visible:ring-primary/40 transition-shadow';
 
 export default function Auth() {
   const { signIn, user, loading, retryDeviceRegistration, cancelPendingSession } = useAuth();
@@ -66,14 +71,14 @@ export default function Auth() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading authentication">
+      <div className="aurixa-aurora-bg min-h-screen flex items-center justify-center" role="status" aria-label="Loading authentication">
         <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.3 }}>
           <div className="flex flex-col items-center gap-3">
             {settings.authLogo ? (
               <BrandLogo slot="auth" className="h-12 max-w-[200px] object-contain" fallbackClassName="h-12 w-12" />
             ) : (
-              <div className="h-12 w-12 rounded-2xl bg-primary/10 flex items-center justify-center">
-                <Database className="h-6 w-6 text-primary" />
+              <div className="h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center shadow-[var(--elevation-2)]">
+                <Database className="h-7 w-7 text-primary" />
               </div>
             )}
             <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
@@ -198,17 +203,19 @@ export default function Auth() {
   };
 
   const modeTitle: Record<Mode, string> = {
-    login: settings.companyName ? `${settings.companyName} Dashboard` : 'Command Centre',
+    login: 'Welcome back',
     forgot: 'Reset password',
     otp: 'Verify your identity',
-    reset: 'New password',
+    reset: 'Set a new password',
   };
 
   const modeDesc: Record<Mode, string> = {
-    login: 'Sign in to access the dashboard.',
-    forgot: 'Enter your username to receive a reset code.',
-    otp: emailHint ? `Enter the code sent to ${emailHint}` : 'Enter the 6-digit code we sent you.',
-    reset: 'Choose a new secure password.',
+    login: settings.companyName
+      ? `Sign in to the ${settings.companyName} Command Centre.`
+      : 'Sign in to access the Command Centre.',
+    forgot: 'Enter your username and we\'ll send a one-time reset code.',
+    otp: emailHint ? `Enter the 6-digit code sent to ${emailHint}.` : 'Enter the 6-digit code we sent you.',
+    reset: 'Choose a strong new password to secure your account.',
   };
 
   const goBack = () => {
@@ -217,14 +224,18 @@ export default function Auth() {
   };
 
   return (
-    <div className="min-h-screen flex bg-background">
-      {/* ── Left branded panel (desktop only) ── */}
-      <aside className="hidden lg:flex lg:w-[480px] xl:w-[520px] flex-col relative bg-gradient-to-br from-card via-card to-primary/5 border-r border-border overflow-hidden" aria-hidden="true">
-        <div className="absolute top-0 right-0 w-[2px] h-full bg-gradient-to-b from-transparent via-primary/30 to-transparent" />
-        <div className="absolute -top-24 -left-24 w-72 h-72 rounded-full bg-primary/5 blur-3xl" />
-        <div className="absolute -bottom-32 -right-16 w-80 h-80 rounded-full bg-primary/5 blur-3xl" />
+    <div className="aurixa-aurora-bg relative min-h-screen flex bg-background">
+      {/* Decorative floating orbs (respect reduced motion via aurora-bg) */}
+      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute top-[-10%] left-[-10%] h-[420px] w-[420px] rounded-full bg-[hsl(var(--aurixa-aurora-1)/0.10)] blur-3xl" />
+        <div className="absolute bottom-[-15%] right-[-10%] h-[520px] w-[520px] rounded-full bg-[hsl(var(--aurixa-aurora-2)/0.10)] blur-3xl" />
+      </div>
 
-        <div className="flex-1 flex flex-col justify-between p-10 relative">
+      {/* ── Left branded panel (desktop only) ── */}
+      <aside className="hidden lg:flex lg:w-[520px] xl:w-[560px] flex-col relative overflow-hidden border-r border-[color:var(--glass-hairline)]" aria-hidden="true">
+        <div className="absolute top-0 right-0 w-px h-full bg-gradient-to-b from-transparent via-primary/40 to-transparent" />
+
+        <div className="flex-1 flex flex-col justify-between p-10 xl:p-12 relative">
           <div>
             <BrandLockup
               slot="auth"
@@ -236,277 +247,344 @@ export default function Auth() {
             />
           </div>
 
-          <div className="space-y-8">
+          <div className="space-y-10">
             <div>
-              <h2 className="text-3xl font-bold tracking-tight text-foreground leading-tight">
+              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[color:var(--glass-hairline)] bg-[color:hsl(var(--aurixa-glass-bg)/0.55)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-muted-foreground backdrop-blur-md">
+                <Sparkles className="h-3 w-3 text-primary" />
+                <span>Aurixa · Property Intelligence</span>
+              </div>
+              <h2 className="text-[2.35rem] xl:text-5xl font-semibold tracking-[-0.035em] text-foreground leading-[1.05]">
                 Intelligence-driven<br />
-                property <span className="text-primary">advisory</span>.
+                property{' '}
+                <span className="bg-gradient-to-r from-primary via-[hsl(var(--aurixa-aurora-1))] to-[hsl(var(--aurixa-aurora-2))] bg-clip-text text-transparent">
+                  advisory
+                </span>.
               </h2>
-              <p className="text-muted-foreground mt-3 text-sm leading-relaxed max-w-sm">
-                Your centralised command centre for client management, investment analytics, automated workflows, and deal orchestration.
+              <p className="text-muted-foreground mt-4 text-sm leading-relaxed max-w-md">
+                Your centralised command centre for client management, investment analytics,
+                automated workflows, and deal orchestration.
               </p>
             </div>
 
-            <div className="space-y-4">
+            <div className="space-y-3">
               {FEATURES.map((f, i) => (
                 <motion.div
                   key={f.title}
                   initial={{ opacity: 0, x: -16 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.4, delay: 0.3 + i * 0.12 }}
-                  className="flex items-start gap-3"
+                  transition={{ duration: 0.4, delay: 0.25 + i * 0.1 }}
                 >
-                  <div className="flex items-center justify-center h-9 w-9 rounded-xl bg-primary/10 text-primary shrink-0 mt-0.5">
-                    <f.icon className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <div className="text-sm font-semibold text-foreground">{f.title}</div>
-                    <div className="text-xs text-muted-foreground leading-relaxed">{f.desc}</div>
-                  </div>
+                  <GlassCard
+                    elevation={1}
+                    className="flex items-start gap-3.5 px-4 py-3.5"
+                  >
+                    <div className="flex items-center justify-center h-10 w-10 rounded-xl bg-gradient-to-br from-primary/15 to-[hsl(var(--aurixa-aurora-2)/0.15)] text-primary shrink-0 border border-primary/15">
+                      <f.icon className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-foreground">{f.title}</div>
+                      <div className="text-xs text-muted-foreground leading-relaxed mt-0.5">{f.desc}</div>
+                    </div>
+                  </GlassCard>
                 </motion.div>
               ))}
             </div>
           </div>
 
-          <div className="text-[10px] text-muted-foreground/40 flex items-center gap-1.5">
-            <ShieldCheck className="h-3 w-3" />
-            <span>Secured platform · End-to-end encrypted · Audit logged</span>
+          <div className="flex items-center gap-2 text-[10px] text-muted-foreground/60">
+            <ShieldCheck className="h-3.5 w-3.5 text-primary/70" />
+            <span className="tracking-wide">Secured platform · End-to-end encrypted · Audit logged</span>
           </div>
         </div>
       </aside>
 
       {/* ── Right form panel ── */}
-      <main className="flex-1 flex items-center justify-center p-6 md:p-10" role="main" aria-label="Dashboard authentication">
+      <main className="relative flex-1 flex items-center justify-center p-5 sm:p-8 md:p-10" role="main" aria-label="Dashboard authentication">
         <motion.div
-          className="w-full max-w-sm"
+          className="w-full max-w-md"
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
         >
           {/* Mobile logo */}
-          <div className="lg:hidden flex justify-center mb-8">
+          <div className="lg:hidden flex justify-center mb-6">
             {settings.authLogo ? (
               <img src={settings.authLogo} alt={settings.companyName || 'Dashboard'} className="h-14 max-w-[220px] object-contain" />
             ) : (
               <div className="flex flex-col items-center gap-3">
-                <div className="h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-primary/20 to-[hsl(var(--aurixa-aurora-2)/0.20)] border border-primary/25 flex items-center justify-center shadow-[var(--elevation-2)]">
                   <Database className="h-7 w-7 text-primary" aria-hidden="true" />
                 </div>
                 <div className="text-center">
                   <div className="text-lg font-bold tracking-tight">{settings.companyName || 'Dashboard'}</div>
-                  <div className="text-[10px] text-muted-foreground uppercase tracking-[0.2em] font-medium">Command Centre</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-[0.22em] font-medium">Command Centre</div>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Header */}
-          <div className="mb-6">
-            {mode !== 'login' && (
-              <button
-                type="button"
-                onClick={goBack}
-                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mb-4 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
-                aria-label={`Back to ${mode === 'otp' || mode === 'reset' ? 'forgot password' : 'sign in'}`}
+          <GlassCard elevation={3} className="px-6 py-7 sm:px-8 sm:py-8">
+            {/* Header */}
+            <div className="mb-5">
+              {mode !== 'login' && (
+                <button
+                  type="button"
+                  onClick={goBack}
+                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors mb-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
+                  aria-label={`Back to ${mode === 'otp' || mode === 'reset' ? 'forgot password' : 'sign in'}`}
+                >
+                  <ArrowLeft className="h-3 w-3" aria-hidden="true" />
+                  Back
+                </button>
+              )}
+              <h1
+                className="text-2xl sm:text-[1.65rem] font-semibold tracking-[-0.02em] text-foreground"
+                id="form-heading"
               >
-                <ArrowLeft className="h-3 w-3" aria-hidden="true" />
-                Back
-              </button>
-            )}
-            <h1 className="text-2xl font-bold tracking-tight" id="form-heading">{modeTitle[mode]}</h1>
-            <p className="text-sm text-muted-foreground mt-1" id="form-description">{modeDesc[mode]}</p>
-          </div>
+                {modeTitle[mode]}
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1.5 leading-relaxed" id="form-description">
+                {modeDesc[mode]}
+              </p>
+            </div>
 
-          {/* Status messages */}
-          {error && (
-            <Alert variant="destructive" className="mb-4" role="alert">
-              <AlertCircle className="h-4 w-4" aria-hidden="true" />
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-          {success && (
-            <Alert className="mb-4 border-success" role="status">
-              <CheckCircle className="h-4 w-4 text-success" aria-hidden="true" />
-              <AlertDescription>{success}</AlertDescription>
-            </Alert>
-          )}
-
-          {/* Animated form swap */}
-          <div ref={formRef}>
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={mode}
-                variants={formVariants}
-                initial="enter"
-                animate="center"
-                exit="exit"
-                transition={{ duration: 0.2, ease: 'easeInOut' }}
-              >
-                {mode === 'login' && (
-                  <form onSubmit={handleLogin} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="admin-username" className="text-xs font-medium">Username</Label>
-                      <Input
-                        id="admin-username"
-                        value={username}
-                        onChange={e => setUsername(e.target.value)}
-                        placeholder="Enter your username"
-                        autoComplete="username"
-                        required
-                        disabled={isLoading}
-                        className="h-11"
-                        aria-required="true"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="admin-password" className="text-xs font-medium">Password</Label>
-                      <div className="relative">
-                        <Input
-                          id="admin-password"
-                          type={showPassword ? 'text' : 'password'}
-                          value={password}
-                          onChange={e => setPassword(e.target.value)}
-                          autoComplete="current-password"
-                          required
-                          disabled={isLoading}
-                          className="h-11 pr-10"
-                          aria-required="true"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowPassword(v => !v)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                          aria-label={showPassword ? 'Hide password' : 'Show password'}
-                        >
-                          {showPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
-                        </button>
-                      </div>
-                    </div>
-                    <TurnstileWidget onVerify={setTurnstileToken} onExpire={clearTurnstileToken} onError={clearTurnstileToken} />
-                    <Button type="submit" className="w-full h-11 gap-2 font-semibold" disabled={isLoading || !turnstileToken} aria-busy={isLoading}>
-                      {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                      Sign In
-                    </Button>
-                    <div className="text-center">
-                      <button
-                        type="button"
-                        className="text-xs text-muted-foreground hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
-                        onClick={() => changeMode('forgot')}
-                        aria-label="Forgot your password? Request a reset code"
-                      >
-                        Forgot password?
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {mode === 'forgot' && (
-                  <form onSubmit={handleRequestOTP} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="forgot-admin-username" className="text-xs font-medium">Username</Label>
-                      <Input
-                        id="forgot-admin-username"
-                        value={username}
-                        onChange={e => setUsername(e.target.value)}
-                        placeholder="Enter your username"
-                        required
-                        disabled={isLoading}
-                        className="h-11"
-                        aria-required="true"
-                      />
-                    </div>
-                    <Button type="submit" className="w-full h-11 gap-2 font-semibold" disabled={isLoading} aria-busy={isLoading}>
-                      {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                      <Mail className="h-4 w-4" aria-hidden="true" /> Send Reset Code
-                    </Button>
-                  </form>
-                )}
-
-                {mode === 'otp' && (
-                  <form onSubmit={handleVerifyOTP} className="space-y-5" aria-labelledby="form-heading" aria-describedby="form-description">
-                    <div className="space-y-3">
-                      <Label className="text-xs font-medium block text-center">Verification code</Label>
-                      <OtpInput value={otp} onChange={setOtp} length={6} disabled={isLoading} />
-                      {emailHint && (
-                        <p className="text-xs text-muted-foreground text-center" aria-live="polite">
-                          Sent to <span className="font-medium text-foreground">{emailHint}</span>
-                        </p>
-                      )}
-                    </div>
-                    <Button type="submit" className="w-full h-11 gap-2 font-semibold" disabled={otp.length !== 6 || isLoading} aria-busy={isLoading}>
-                      {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                      <KeyRound className="h-4 w-4" aria-hidden="true" /> Verify Code
-                    </Button>
-                  </form>
-                )}
-
-                {mode === 'reset' && (
-                  <form onSubmit={handleResetPassword} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="admin-new-password" className="text-xs font-medium">New password</Label>
-                      <div className="relative">
-                        <Input
-                          id="admin-new-password"
-                          type={showNewPassword ? 'text' : 'password'}
-                          value={newPassword}
-                          onChange={e => setNewPassword(e.target.value)}
-                          className="h-11 pr-10"
-                          required
-                          disabled={isLoading}
-                          autoFocus
-                          aria-required="true"
-                          aria-describedby="admin-pw-strength"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowNewPassword(v => !v)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                          aria-label={showNewPassword ? 'Hide password' : 'Show password'}
-                        >
-                          {showNewPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
-                        </button>
-                      </div>
-                      <div id="admin-pw-strength">
-                        <PasswordStrengthMeter password={newPassword} />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="admin-confirm-password" className="text-xs font-medium">Confirm password</Label>
-                      <div className="relative">
-                        <Input
-                          id="admin-confirm-password"
-                          type={showConfirmPassword ? 'text' : 'password'}
-                          value={confirmPassword}
-                          onChange={e => setConfirmPassword(e.target.value)}
-                          className="h-11 pr-10"
-                          required
-                          disabled={isLoading}
-                          aria-required="true"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setShowConfirmPassword(v => !v)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                          aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
-                        >
-                          {showConfirmPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
-                        </button>
-                      </div>
-                    </div>
-                    <Button type="submit" className="w-full h-11 gap-2 font-semibold" disabled={isLoading} aria-busy={isLoading}>
-                      {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                      Reset Password
-                    </Button>
-                  </form>
-                )}
-              </motion.div>
+            {/* Status messages */}
+            <AnimatePresence>
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                >
+                  <Alert variant="destructive" className="mb-4" role="alert">
+                    <AlertCircle className="h-4 w-4" aria-hidden="true" />
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                </motion.div>
+              )}
+              {success && (
+                <motion.div
+                  initial={{ opacity: 0, y: -6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                >
+                  <Alert className="mb-4 border-success/50 bg-success/5" role="status">
+                    <CheckCircle className="h-4 w-4 text-success" aria-hidden="true" />
+                    <AlertDescription>{success}</AlertDescription>
+                  </Alert>
+                </motion.div>
+              )}
             </AnimatePresence>
-          </div>
 
-          {/* Bottom security note (mobile) */}
-          <div className="lg:hidden mt-8 flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground/40">
+            {/* Animated form swap */}
+            <div ref={formRef}>
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={mode}
+                  variants={formVariants}
+                  initial="enter"
+                  animate="center"
+                  exit="exit"
+                  transition={{ duration: 0.2, ease: 'easeInOut' }}
+                >
+                  {mode === 'login' && (
+                    <form onSubmit={handleLogin} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="admin-username" className="text-xs font-medium">Username</Label>
+                        <div className="relative">
+                          <UserIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="admin-username"
+                            value={username}
+                            onChange={e => setUsername(e.target.value)}
+                            placeholder="Enter your username"
+                            autoComplete="username"
+                            required
+                            disabled={isLoading}
+                            className={iconInputCls}
+                            aria-required="true"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="flex items-baseline justify-between">
+                          <Label htmlFor="admin-password" className="text-xs font-medium">Password</Label>
+                          <button
+                            type="button"
+                            className="text-[11px] text-muted-foreground hover:text-primary transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1"
+                            onClick={() => changeMode('forgot')}
+                            aria-label="Forgot your password? Request a reset code"
+                          >
+                            Forgot password?
+                          </button>
+                        </div>
+                        <div className="relative">
+                          <Lock aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="admin-password"
+                            type={showPassword ? 'text' : 'password'}
+                            value={password}
+                            onChange={e => setPassword(e.target.value)}
+                            placeholder="Enter your password"
+                            autoComplete="current-password"
+                            required
+                            disabled={isLoading}
+                            className={cn(iconInputCls, 'pr-10')}
+                            aria-required="true"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(v => !v)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+                          </button>
+                        </div>
+                      </div>
+                      <TurnstileWidget onVerify={setTurnstileToken} onExpire={clearTurnstileToken} onError={clearTurnstileToken} />
+                      <Button
+                        type="submit"
+                        className="w-full h-12 gap-2 font-semibold text-sm rounded-xl shadow-[var(--elevation-2)] transition-transform active:scale-[0.99]"
+                        disabled={isLoading || !turnstileToken}
+                        aria-busy={isLoading}
+                      >
+                        {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                        Sign In
+                      </Button>
+                    </form>
+                  )}
+
+                  {mode === 'forgot' && (
+                    <form onSubmit={handleRequestOTP} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="forgot-admin-username" className="text-xs font-medium">Username</Label>
+                        <div className="relative">
+                          <UserIcon aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="forgot-admin-username"
+                            value={username}
+                            onChange={e => setUsername(e.target.value)}
+                            placeholder="Enter your username"
+                            required
+                            disabled={isLoading}
+                            className={iconInputCls}
+                            aria-required="true"
+                          />
+                        </div>
+                      </div>
+                      <Button
+                        type="submit"
+                        className="w-full h-12 gap-2 font-semibold rounded-xl shadow-[var(--elevation-2)]"
+                        disabled={isLoading}
+                        aria-busy={isLoading}
+                      >
+                        {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                        <Mail className="h-4 w-4" aria-hidden="true" /> Send reset code
+                      </Button>
+                    </form>
+                  )}
+
+                  {mode === 'otp' && (
+                    <form onSubmit={handleVerifyOTP} className="space-y-5" aria-labelledby="form-heading" aria-describedby="form-description">
+                      <div className="space-y-3">
+                        <Label className="text-xs font-medium block text-center">Verification code</Label>
+                        <OtpInput value={otp} onChange={setOtp} length={6} disabled={isLoading} />
+                        {emailHint && (
+                          <p className="text-xs text-muted-foreground text-center" aria-live="polite">
+                            Sent to <span className="font-medium text-foreground">{emailHint}</span>
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        type="submit"
+                        className="w-full h-12 gap-2 font-semibold rounded-xl shadow-[var(--elevation-2)]"
+                        disabled={otp.length !== 6 || isLoading}
+                        aria-busy={isLoading}
+                      >
+                        {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                        <KeyRound className="h-4 w-4" aria-hidden="true" /> Verify code
+                      </Button>
+                    </form>
+                  )}
+
+                  {mode === 'reset' && (
+                    <form onSubmit={handleResetPassword} className="space-y-4" aria-labelledby="form-heading" aria-describedby="form-description">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="admin-new-password" className="text-xs font-medium">New password</Label>
+                        <div className="relative">
+                          <Lock aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="admin-new-password"
+                            type={showNewPassword ? 'text' : 'password'}
+                            value={newPassword}
+                            onChange={e => setNewPassword(e.target.value)}
+                            className={cn(iconInputCls, 'pr-10')}
+                            placeholder="Create a strong password"
+                            required
+                            disabled={isLoading}
+                            autoFocus
+                            aria-required="true"
+                            aria-describedby="admin-pw-strength"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowNewPassword(v => !v)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                            aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showNewPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+                          </button>
+                        </div>
+                        <div id="admin-pw-strength" className="pt-1">
+                          <PasswordStrengthMeter password={newPassword} />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="admin-confirm-password" className="text-xs font-medium">Confirm password</Label>
+                        <div className="relative">
+                          <Lock aria-hidden className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="admin-confirm-password"
+                            type={showConfirmPassword ? 'text' : 'password'}
+                            value={confirmPassword}
+                            onChange={e => setConfirmPassword(e.target.value)}
+                            className={cn(iconInputCls, 'pr-10')}
+                            placeholder="Re-enter your new password"
+                            required
+                            disabled={isLoading}
+                            aria-required="true"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(v => !v)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
+                            aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                          >
+                            {showConfirmPassword ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
+                          </button>
+                        </div>
+                      </div>
+                      <Button
+                        type="submit"
+                        className="w-full h-12 gap-2 font-semibold rounded-xl shadow-[var(--elevation-2)]"
+                        disabled={isLoading}
+                        aria-busy={isLoading}
+                      >
+                        {isLoading && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+                        Reset password
+                      </Button>
+                    </form>
+                  )}
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </GlassCard>
+
+          {/* Bottom security note */}
+          <div className="mt-6 flex items-center justify-center gap-1.5 text-[10px] text-muted-foreground/60">
             <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-            <span>Secured · End-to-end encrypted</span>
+            <span className="tracking-wide">Secured · End-to-end encrypted · Audit logged</span>
           </div>
         </motion.div>
       </main>

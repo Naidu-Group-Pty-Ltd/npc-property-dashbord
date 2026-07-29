@@ -12,6 +12,18 @@ const baseOverlay = {
 };
 
 describe('HTML overlay rendering', () => {
+  it('does not emit hidden overlay content', () => {
+    const html = renderOverlay({
+      ...baseOverlay,
+      id: 'hidden-text',
+      type: 'text',
+      content: 'CONFIDENTIAL_OVERLAY_CONTENT',
+      hidden: true,
+    } as any, ctx);
+
+    expect(html).toBe('');
+  });
+
   it('escapes text-on-path ids before writing SVG attributes', () => {
     const html = renderOverlay({
       ...baseOverlay,

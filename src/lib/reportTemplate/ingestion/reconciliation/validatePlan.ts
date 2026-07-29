@@ -36,7 +36,9 @@ export function validateTemplateImportPlan(plan: TemplateImportPlan): PlanValida
     if (!isFinitePositive(page.width) || !isFinitePositive(page.height)) {
       errors.push(`Page ${page.id || '(missing id)'} must have positive width and height.`);
     }
-    if (!page.background?.imageUrl) {
+    // Semantic plans intentionally discard the source raster so omitted or
+    // redacted source content cannot survive as a hidden renderable asset.
+    if (plan.importSummary?.visualFidelityMode !== 'semantic' && !page.background?.imageUrl) {
       errors.push(`Page ${page.id || '(missing id)'} must preserve a reference background image.`);
     }
     if (page.background?.opacity !== undefined && (page.background.opacity < 0 || page.background.opacity > 1)) {

@@ -15,33 +15,53 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 import { cn } from '@/lib/utils';
 import {
-  amlPortalApi, uploadAmlDocument, type AmlPortalOverview, type AmlSection,
+  amlPortalApi, uploadAmlDocument,
+  type AmlPortalOverview, type AmlSection, type AmlConsentDocument,
 } from '@/lib/aml/amlPortalApi';
 
-type StepKey = 'consent' | 'personal_details' | 'purchasing_structure' | 'purchase_profile' | 'funding' | 'documents' | 'review';
-const STEPS: { key: StepKey; label: string; section?: AmlSection }[] = [
-  { key: 'consent', label: 'Consent' },
-  { key: 'personal_details', label: 'Personal details', section: 'personal_details' },
-  { key: 'purchasing_structure', label: 'Purchasing structure', section: 'purchasing_structure' },
-  { key: 'purchase_profile', label: 'Purchase profile', section: 'purchase_profile' },
-  { key: 'funding', label: 'Source of funds', section: 'funding' },
-  { key: 'documents', label: 'Documents' },
-  { key: 'review', label: 'Review & submit' },
+type PortalStep = { key: string; label: string; section?: AmlSection };
+
+/**
+ * Phase 5 — the questionnaire step list is SERVER-DRIVEN: `overview.sections`
+ * carries the sections applicable to this case (conditional on the declared
+ * purchasing structure and funding sources). Labels here are presentation
+ * only; unknown future sections fall back to a humanised key.
+ */
+const SECTION_LABELS: Record<string, string> = {
+  purchasing_structure: 'Purchasing structure',
+  personal_details: 'Personal details',
+  entity_details: 'Entity details',
+  related_parties: 'Related parties',
+  purchase_profile: 'Purchase profile',
+  funding: 'Source of funds',
+};
+
+const DEFAULT_SECTION_ORDER: AmlSection[] = [
+  'purchasing_structure', 'personal_details', 'purchase_profile', 'funding',
 ];
 
-const CONSENT_VERSION = '1.0';
+function buildSteps(sections: { section: AmlSection }[] | undefined): PortalStep[] {
+  const sectionList = (sections?.length ? sections.map(s => s.section) : DEFAULT_SECTION_ORDER);
+  return [
+    { key: 'consent', label: 'Consent' },
+    ...sectionList.map((s): PortalStep => ({
+      key: s,
+      label: SECTION_LABELS[s] ?? s.replace(/_/g, ' '),
+      section: s,
+    })),
+    { key: 'documents', label: 'Documents' },
+    { key: 'review', label: 'Review & submit' },
+  ];
+}
 
-const CONSENT_STORAGE_PREFIX = 'aml_portal_consent:';
 const RESUME_STORAGE_PREFIX = 'aml_portal_resume:';
 
-function consentKey(caseId: string) { return `${CONSENT_STORAGE_PREFIX}${caseId}`; }
 function resumeKey(caseId: string) { return `${RESUME_STORAGE_PREFIX}${caseId}`; }
 
 export default function PortalAml() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<AmlPortalOverview | null>(null);
   const [stepIdx, setStepIdx] = useState(0);
-  const [consentedCaseId, setConsentedCaseId] = useState<string | null>(null);
   const resumedRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -60,16 +80,16 @@ export default function PortalAml() {
 
   const caseObj = data?.case ?? null;
 
-  // Consent wall: consented if locally recorded OR any section has moved past not_started
-  // (server-side gate enforces this; we mirror it in the UI to prevent bypass via stepper clicks).
-  const consented = useMemo(() => {
-    if (!caseObj) return false;
-    if (consentedCaseId === caseObj.id) return true;
-    try {
-      if (localStorage.getItem(consentKey(caseObj.id)) === '1') return true;
-    } catch { /* ignore */ }
-    return (data?.sections ?? []).some(s => s.status && s.status !== 'not_started');
-  }, [caseObj, consentedCaseId, data?.sections]);
+  // Consent wall. The server owns this: every op that collects client data
+  // re-checks acceptance of the current catalogue version, so this flag is a
+  // mirror for navigation only, never the control itself. It used to be a
+  // localStorage flag, which meant the wall was decoration.
+  const consented = data?.consent?.satisfied ?? false;
+
+  // Phase 5: the step list is derived from the server's applicable-section
+  // list, so it can grow/shrink when the client changes purchasing structure
+  // or funding sources. The current index is clamped against the live array.
+  const steps = useMemo(() => buildSteps(data?.sections), [data?.sections]);
 
   // Resume: on first load, jump to the last section the user was on, or the first incomplete step.
   useEffect(() => {
@@ -81,10 +101,10 @@ export default function PortalAml() {
       const saved = localStorage.getItem(resumeKey(caseObj.id));
       if (saved != null) {
         const n = Number(saved);
-        if (Number.isFinite(n) && n >= 0 && n < STEPS.length) target = n;
+        if (Number.isFinite(n) && n >= 0 && n < steps.length) target = n;
       } else {
         const sections = data?.sections ?? [];
-        const firstIncompleteIdx = STEPS.findIndex(s => {
+        const firstIncompleteIdx = steps.findIndex(s => {
           if (!s.section) return false;
           const st = sections.find(x => x.section === s.section)?.status;
           return !['submitted', 'accepted', 'complete'].includes(st ?? '');
@@ -93,7 +113,7 @@ export default function PortalAml() {
       }
     } catch { /* ignore */ }
     setStepIdx(target);
-  }, [caseObj, consented, data?.sections, loading]);
+  }, [caseObj, consented, data?.sections, loading, steps]);
 
   // Persist current step for resume
   useEffect(() => {
@@ -109,7 +129,7 @@ export default function PortalAml() {
     setStepIdx(i);
   }, [consented]);
 
-  const step = STEPS[stepIdx];
+  const step = steps[Math.min(stepIdx, steps.length - 1)];
 
   const progressPct = useMemo(() => {
     if (!data?.sections) return 0;
@@ -174,15 +194,17 @@ export default function PortalAml() {
               <ShieldCheck className="h-4 w-4" />
               <AlertTitle>Consent required to continue</AlertTitle>
               <AlertDescription>
-                Please review and confirm the consents below before completing the rest of the onboarding.
-                Your progress is saved automatically as you go.
+                We are required to give you a collection notice and obtain your consent before we
+                collect and verify your identity information for AUSTRAC anti-money laundering
+                purposes. Please review and confirm the items below. Your progress is saved
+                automatically as you go.
               </AlertDescription>
             </Alert>
           )}
 
           <Stepper
-            steps={STEPS}
-            currentIdx={stepIdx}
+            steps={steps}
+            currentIdx={Math.min(stepIdx, steps.length - 1)}
             onSelect={safeSetStep}
             sections={data?.sections ?? []}
             consented={consented}
@@ -192,11 +214,7 @@ export default function PortalAml() {
             {step.key === 'consent' && (
               <ConsentStep
                 caseId={caseObj.id}
-                onDone={() => {
-                  try { localStorage.setItem(consentKey(caseObj.id), '1'); } catch { /* ignore */ }
-                  setConsentedCaseId(caseObj.id);
-                  setStepIdx(1);
-                }}
+                onDone={async () => { await load(); setStepIdx(1); }}
               />
             )}
             {step.section && consented && (
@@ -205,8 +223,9 @@ export default function PortalAml() {
                 caseId={caseObj.id}
                 section={step.section}
                 title={step.label}
+                structureType={data?.structure_type ?? null}
                 onSaved={load}
-                onNext={() => setStepIdx(i => Math.min(STEPS.length - 1, i + 1))}
+                onNext={() => setStepIdx(i => Math.min(steps.length - 1, i + 1))}
                 onBack={() => setStepIdx(i => Math.max(0, i - 1))}
               />
             )}
@@ -243,7 +262,7 @@ export default function PortalAml() {
 function Stepper({
   steps, currentIdx, onSelect, sections, consented,
 }: {
-  steps: typeof STEPS; currentIdx: number; onSelect: (i: number) => void;
+  steps: PortalStep[]; currentIdx: number; onSelect: (i: number) => void;
   sections: { section: AmlSection; status: string }[];
   consented: boolean;
 }) {
@@ -271,7 +290,11 @@ function Stepper({
             >
               <span className={cn(
                 'flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold',
-                done ? 'bg-emerald-500 text-white' : active ? 'bg-brand-500 text-white' : 'bg-muted',
+                done
+                  ? 'bg-success text-success-foreground'
+                  : active
+                    ? 'bg-brand text-brand-foreground'
+                    : 'bg-muted text-muted-foreground',
               )}>
                 {done ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
               </span>
@@ -287,21 +310,56 @@ function Stepper({
 
 /* ─────────────────────────  Consent  ──────────────────────── */
 
-function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void }) {
-  const [checked, setChecked] = useState({ identity: false, aml: false, privacy: false });
+/**
+ * The wording, statutory basis and AUSTRAC references are served from
+ * `aml.consent_documents` — they are NOT hard-coded here. That is deliberate:
+ * an acceptance is only evidence if we can show the exact text the client saw,
+ * and compliance wording has to be revisable without a frontend deploy.
+ *
+ * Items typed `consent` require an affirmative tick. Items typed `notice` are
+ * disclosures the client acknowledges having read (for example the tipping-off
+ * limitation, which is our obligation, not their choice).
+ */
+function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void | Promise<void> }) {
+  const [docs, setDocs] = useState<AmlConsentDocument[] | null>(null);
+  const [version, setVersion] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
-  const allChecked = checked.identity && checked.aml && checked.privacy;
+
+  useEffect(() => {
+    let alive = true;
+    amlPortalApi.getConsents(caseId)
+      .then(res => {
+        if (!alive) return;
+        setDocs(res.documents ?? []);
+        setVersion(res.version);
+        // Anything already accepted at this version stays ticked and locked.
+        setChecked(Object.fromEntries(
+          (res.documents ?? []).map(d => [d.code, Boolean(d.accepted_at)])));
+      })
+      .catch((e: any) => { if (alive) setLoadError(e?.message ?? 'Unable to load the consents.'); });
+    return () => { alive = false; };
+  }, [caseId]);
+
+  const outstanding = (docs ?? []).filter(d => d.required && !checked[d.code]);
+  const allChecked = docs !== null && docs.length > 0 && outstanding.length === 0;
 
   const submit = async () => {
+    if (!docs) return;
     setSaving(true);
     try {
-      await Promise.all([
-        amlPortalApi.recordConsent(caseId, 'identity_verification', CONSENT_VERSION, checked),
-        amlPortalApi.recordConsent(caseId, 'aml_ctf_program', CONSENT_VERSION, checked),
-        amlPortalApi.recordConsent(caseId, 'privacy_notice', CONSENT_VERSION, checked),
-      ]);
-      toast.success('Consents recorded');
-      onDone();
+      // Record each acceptance separately so the audit trail names the exact
+      // document, not a single blanket "consented" flag.
+      for (const d of docs) {
+        if (d.accepted_at) continue;
+        await amlPortalApi.recordConsent(caseId, d.code, version ?? undefined, {
+          acknowledged: true,
+          presented_version: version,
+        });
+      }
+      toast.success('Consents and acknowledgements recorded');
+      await onDone();
     } catch (e: any) {
       toast.error(e?.message ?? 'Failed to record consent');
     } finally {
@@ -309,30 +367,101 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void })
     }
   };
 
+  if (loadError) {
+    return (
+      <Alert variant="destructive">
+        <AlertTriangle className="h-4 w-4" />
+        <AlertTitle>Consents unavailable</AlertTitle>
+        <AlertDescription>{loadError} Please refresh, or contact your adviser if this continues.</AlertDescription>
+      </Alert>
+    );
+  }
+  if (docs === null) {
+    return <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-64" /></div>;
+  }
+
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Consents & disclosures</CardTitle>
-        <CardDescription>Please read and confirm each item before continuing.</CardDescription>
+        <CardTitle>Consents and disclosures</CardTitle>
+        <CardDescription>
+          We are a reporting entity regulated by AUSTRAC. Before we collect your identity
+          information, the law requires us to tell you what we collect, why, and who we may
+          give it to. Please read each item and confirm.
+          {version && <span className="block mt-1 text-xs">Document set version {version}</span>}
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {[
-          { key: 'identity' as const, title: 'Identity verification', body: 'You consent to your identity being verified electronically or via certified documents in line with the AUSTRAC AML/CTF Act 2006 and Rules.' },
-          { key: 'aml' as const, title: 'AML/CTF program', body: 'You acknowledge that additional questions and documents may be requested to satisfy customer due diligence and ongoing monitoring obligations.' },
-          { key: 'privacy' as const, title: 'Privacy notice', body: 'You consent to the collection, use and disclosure of your personal information for AML/CTF and related regulatory purposes, in accordance with our Privacy Policy.' },
-        ].map(item => (
-          <label key={item.key} className="flex items-start gap-3 rounded-md border p-3 cursor-pointer">
-            <Checkbox
-              checked={checked[item.key]}
-              onCheckedChange={(v) => setChecked(prev => ({ ...prev, [item.key]: !!v }))}
-              className="mt-1"
-            />
-            <div>
-              <div className="text-sm font-medium">{item.title}</div>
-              <p className="text-xs text-muted-foreground mt-1">{item.body}</p>
+        {docs.map(doc => (
+          <div key={doc.code} className="rounded-md border p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-medium">{doc.title}</div>
+                <p className="text-xs text-muted-foreground mt-1">{doc.summary}</p>
+              </div>
+              <Badge variant="outline" className="shrink-0 text-[10px]">
+                {doc.acknowledgement_type === 'notice' ? 'Please read' : 'Your consent'}
+              </Badge>
             </div>
-          </label>
+
+            <div className="mt-3 max-h-56 overflow-y-auto rounded bg-muted/40 p-3 text-xs leading-relaxed whitespace-pre-line">
+              {doc.body}
+            </div>
+
+            {doc.statutory_basis.length > 0 && (
+              <div className="mt-3">
+                <div className="text-[11px] font-medium text-muted-foreground">Legal basis</div>
+                <ul className="mt-1 space-y-0.5 text-[11px] text-muted-foreground list-disc pl-4">
+                  {doc.statutory_basis.map(b => <li key={b}>{b}</li>)}
+                </ul>
+              </div>
+            )}
+
+            {doc.reference_links.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+                {doc.reference_links.map(link => (
+                  <a
+                    key={link.url}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="text-[11px] underline underline-offset-2 hover:text-foreground text-muted-foreground"
+                  >
+                    {link.label}
+                  </a>
+                ))}
+              </div>
+            )}
+
+            <label className="mt-4 flex items-start gap-3 cursor-pointer">
+              <Checkbox
+                checked={Boolean(checked[doc.code])}
+                disabled={Boolean(doc.accepted_at)}
+                onCheckedChange={(v) => setChecked(prev => ({ ...prev, [doc.code]: !!v }))}
+                className="mt-0.5"
+                aria-label={doc.acknowledgement_type === 'notice'
+                  ? `I have read: ${doc.title}`
+                  : `I consent: ${doc.title}`}
+              />
+              <span className="text-xs">
+                {doc.acknowledgement_type === 'notice'
+                  ? 'I have read and understood this disclosure.'
+                  : 'I have read this and I consent.'}
+                {doc.accepted_at && (
+                  <span className="ml-2 text-muted-foreground">
+                    Recorded {new Date(doc.accepted_at).toLocaleDateString()}
+                  </span>
+                )}
+              </span>
+            </label>
+          </div>
         ))}
+
+        <p className="text-[11px] text-muted-foreground">
+          A record of what you accepted, and the exact wording shown to you, is kept as part of
+          your compliance file.
+        </p>
+
         <div className="flex justify-end">
           <Button onClick={submit} disabled={!allChecked || saving}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
@@ -347,9 +476,10 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void })
 /* ─────────────────────  Questionnaire  ────────────────────── */
 
 function QuestionnaireStep({
-  caseId, section, title, onSaved, onNext, onBack,
+  caseId, section, title, structureType, onSaved, onNext, onBack,
 }: {
   caseId: string; section: AmlSection; title: string;
+  structureType?: string | null;
   onSaved: () => void; onNext: () => void; onBack: () => void;
 }) {
   const [loading, setLoading] = useState(true);
@@ -461,6 +591,8 @@ function QuestionnaireStep({
           <>
             {section === 'personal_details' && <PersonalDetailsForm value={form} set={set} />}
             {section === 'purchasing_structure' && <PurchasingStructureForm value={form} set={set} />}
+            {section === 'entity_details' && <EntityDetailsForm value={form} set={set} structureType={structureType} />}
+            {section === 'related_parties' && <RelatedPartiesForm value={form} set={set} structureType={structureType} />}
             {section === 'purchase_profile' && <PurchaseProfileForm value={form} set={set} />}
             {section === 'funding' && <FundingForm value={form} set={set} />}
 
@@ -548,6 +680,14 @@ function PurchasingStructureForm({ value, set }: { value: any; set: (k: string, 
             </label>
           ))}
         </RadioGroup>
+        {value.entity_type && value.entity_type !== 'Individual' && (
+          <p className="text-xs text-muted-foreground mt-2" role="status">
+            Based on this choice, extra steps will appear in your checklist
+            {value.entity_type === 'Joint'
+              ? ' to add your co-purchaser(s).'
+              : ' for entity details and the people connected to it.'}
+          </p>
+        )}
       </Field>
       <Field label="Entity legal name (if not individual)">
         <Input value={value.entity_name ?? ''} onChange={e => set('entity_name', e.target.value)} />
@@ -564,6 +704,158 @@ function PurchasingStructureForm({ value, set }: { value: any; set: (k: string, 
       <Field label="Registered address">
         <Textarea rows={2} value={value.registered_address ?? ''} onChange={e => set('registered_address', e.target.value)} />
       </Field>
+    </div>
+  );
+}
+
+/**
+ * Phase 5 — entity specifics for company / trust / SMSF / partnership
+ * purchasers (directive §14.2). Which field groups show depends on the
+ * declared structure; everything is saved into the one section payload.
+ */
+function EntityDetailsForm({ value, set, structureType }: {
+  value: any; set: (k: string, v: any) => void; structureType?: string | null;
+}) {
+  const isTrustLike = structureType === 'Trust' || structureType === 'SMSF';
+  const isSmsf = structureType === 'SMSF';
+  return (
+    <div className="space-y-6">
+      <fieldset className="grid md:grid-cols-2 gap-4">
+        <legend className="text-sm font-medium mb-2">Registration</legend>
+        <Field label="Entity legal name" required>
+          <Input value={value.entity_name ?? ''} onChange={e => set('entity_name', e.target.value)} />
+        </Field>
+        <Field label="ABN / ACN" required>
+          <Input value={value.abn_acn ?? ''} onChange={e => set('abn_acn', e.target.value)} />
+        </Field>
+        <Field label="Country and state of registration" required>
+          <Input value={value.registration_place ?? ''} onChange={e => set('registration_place', e.target.value)} placeholder="e.g. Australia — NSW" />
+        </Field>
+        <Field label="Registered address" required>
+          <Textarea rows={2} value={value.registered_address ?? ''} onChange={e => set('registered_address', e.target.value)} />
+        </Field>
+        <Field label="Nature of business / purpose">
+          <Textarea rows={2} value={value.business_nature ?? ''} onChange={e => set('business_nature', e.target.value)} />
+        </Field>
+      </fieldset>
+
+      {isTrustLike && (
+        <fieldset className="grid md:grid-cols-2 gap-4">
+          <legend className="text-sm font-medium mb-2">{isSmsf ? 'Fund' : 'Trust'} specifics</legend>
+          <Field label={isSmsf ? 'Fund establishment date' : 'Trust deed date'} required>
+            <Input type="date" value={value.deed_date ?? ''} onChange={e => set('deed_date', e.target.value)} />
+          </Field>
+          <Field label="Trustee type" required>
+            <RadioGroup value={value.trustee_type ?? ''} onValueChange={v => set('trustee_type', v)} className="flex gap-4">
+              <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="individual" /> Individual(s)</label>
+              <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="corporate" /> Corporate</label>
+            </RadioGroup>
+          </Field>
+          {value.trustee_type === 'corporate' && (
+            <Field label="Corporate trustee name and ACN" required>
+              <Input value={value.corporate_trustee ?? ''} onChange={e => set('corporate_trustee', e.target.value)} />
+            </Field>
+          )}
+          {!isSmsf && (
+            <Field label="Appointor / protector (if any)">
+              <Input value={value.appointor ?? ''} onChange={e => set('appointor', e.target.value)} />
+            </Field>
+          )}
+          {isSmsf && (
+            <Field label="Is the purchase using a limited recourse borrowing arrangement (LRBA)?" required>
+              <RadioGroup value={value.lrba ?? ''} onValueChange={v => set('lrba', v)} className="flex gap-4">
+                <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="no" /> No</label>
+                <label className="flex items-center gap-2 text-sm"><RadioGroupItem value="yes" /> Yes</label>
+              </RadioGroup>
+            </Field>
+          )}
+        </fieldset>
+      )}
+    </div>
+  );
+}
+
+const PARTY_ROLES = [
+  'Co-purchaser', 'Director', 'Trustee', 'Beneficial owner', 'Beneficiary',
+  'Authorised representative', 'Donor (gift)', 'Private lender', 'Other',
+] as const;
+
+type PartyRow = {
+  role?: string; full_name?: string; dob?: string; email?: string; relationship?: string;
+};
+
+/**
+ * Phase 5 — structured related-party collection (directive §14.3): joint
+ * applicants, directors, trustees, beneficial owners, representatives, donors
+ * and private lenders, captured as repeatable rows the reviewing analyst can
+ * reconcile into canonical party records.
+ */
+function RelatedPartiesForm({ value, set, structureType }: {
+  value: any; set: (k: string, v: any) => void; structureType?: string | null;
+}) {
+  const parties: PartyRow[] = Array.isArray(value.parties) ? value.parties : [];
+  const update = (idx: number, patch: Partial<PartyRow>) => {
+    const next = parties.map((p, i) => (i === idx ? { ...p, ...patch } : p));
+    set('parties', next);
+  };
+  const add = () => set('parties', [...parties, {}]);
+  const remove = (idx: number) => set('parties', parties.filter((_, i) => i !== idx));
+
+  const hint =
+    structureType === 'Joint' ? 'Add each co-purchaser. Everyone named on the contract needs to be listed.'
+    : structureType && structureType !== 'Individual'
+      ? 'Add every director, trustee, beneficiary and anyone who owns or controls 25% or more, plus any authorised representatives.'
+      : 'Add anyone else connected to this purchase — for example the person giving a gift or providing a private loan.';
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{hint}</p>
+
+      {parties.length === 0 && (
+        <p className="text-sm text-muted-foreground border border-dashed rounded-md p-4 text-center">
+          No people added yet. Use “Add person” below.
+        </p>
+      )}
+
+      {parties.map((p, i) => (
+        <fieldset key={i} className="rounded-md border p-4 space-y-4">
+          <legend className="text-sm font-medium px-1">Person {i + 1}</legend>
+          <div className="grid md:grid-cols-2 gap-4">
+            <Field label="Role" required>
+              <select
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm"
+                value={p.role ?? ''}
+                onChange={e => update(i, { role: e.target.value })}
+                aria-label={`Role for person ${i + 1}`}
+              >
+                <option value="" disabled>Select a role…</option>
+                {PARTY_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label="Legal full name" required>
+              <Input value={p.full_name ?? ''} onChange={e => update(i, { full_name: e.target.value })} />
+            </Field>
+            <Field label="Date of birth">
+              <Input type="date" value={p.dob ?? ''} onChange={e => update(i, { dob: e.target.value })} />
+            </Field>
+            <Field label="Email (for identity verification)">
+              <Input type="email" value={p.email ?? ''} onChange={e => update(i, { email: e.target.value })} />
+            </Field>
+            <Field label="Relationship to you / ownership %">
+              <Input value={p.relationship ?? ''} onChange={e => update(i, { relationship: e.target.value })} placeholder="e.g. Spouse · 50% shareholder" />
+            </Field>
+          </div>
+          <div className="flex justify-end">
+            <Button type="button" variant="ghost" size="sm" onClick={() => remove(i)}>
+              Remove person {i + 1}
+            </Button>
+          </div>
+        </fieldset>
+      ))}
+
+      <Button type="button" variant="outline" size="sm" onClick={add}>
+        Add person
+      </Button>
     </div>
   );
 }
@@ -670,7 +962,7 @@ function DocumentsStep({
     <Card>
       <CardHeader>
         <CardTitle>Documents</CardTitle>
-        <CardDescription>Upload the items your advisor has requested. Accepted formats: PDF, JPG, PNG (≤ 20 MB).</CardDescription>
+        <CardDescription>Upload the items your advisor has requested. Accepted formats: PDF, JPG, PNG (≤ 25 MB).</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {requirements.length === 0 ? (
@@ -684,7 +976,7 @@ function DocumentsStep({
                 <li key={r.id} className="py-3 flex items-start gap-3">
                   <div className={cn(
                     'h-8 w-8 rounded-full flex items-center justify-center shrink-0',
-                    done ? 'bg-emerald-500/15 text-emerald-500' :
+                    done ? 'bg-success/15 text-success' :
                     rejected ? 'bg-destructive/15 text-destructive' : 'bg-muted text-muted-foreground',
                   )}>
                     {done ? <CheckCircle2 className="h-4 w-4" /> : rejected ? <AlertTriangle className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
@@ -838,7 +1130,7 @@ function OpenRequestsCard({ requests, onDone }: { requests: any[]; onDone: () =>
   };
 
   return (
-    <Card className="border-amber-500/30 bg-amber-500/5">
+    <Card className="border-warning/30 bg-warning/5">
       <CardHeader className="pb-2">
         <CardTitle className="text-base">Information requests from your advisor</CardTitle>
       </CardHeader>

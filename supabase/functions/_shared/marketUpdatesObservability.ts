@@ -5,9 +5,23 @@ export type MarketErrorCode =
   | 'source_parse_failed' | 'source_validation_failed' | 'database_insert_failed'
   | 'digest_failed' | 'cron_missing' | 'cron_stale' | 'unknown';
 
-export function marketCorrelationId(headers:Headers):string {
-  const supplied=headers.get('x-correlation-id')?.trim();
-  return supplied && /^[a-zA-Z0-9._:-]{8,100}$/.test(supplied) ? supplied : crypto.randomUUID();
+const CORRELATION_ID_RE=/^[a-zA-Z0-9._:-]{8,100}$/;
+
+/**
+ * Resolve the caller's correlation id.
+ *
+ * The BODY (`correlation_id`) is the primary carrier: a custom request header
+ * requires every reachable edge function to have been redeployed with it in
+ * `Access-Control-Allow-Headers` before a browser will even send the request,
+ * so the client cannot rely on one. The `x-correlation-id` header is still
+ * accepted for server-to-server callers (cron, edge-to-edge) that face no
+ * preflight. Falls back to a fresh id so a request is never uncorrelated.
+ */
+export function marketCorrelationId(headers:Headers, body?:{correlation_id?:unknown}):string {
+  const fromBody=typeof body?.correlation_id==='string' ? body.correlation_id.trim() : '';
+  if(CORRELATION_ID_RE.test(fromBody)) return fromBody;
+  const fromHeader=headers.get('x-correlation-id')?.trim();
+  return fromHeader && CORRELATION_ID_RE.test(fromHeader) ? fromHeader : crypto.randomUUID();
 }
 
 export function classifyMarketError(error:unknown, status?:number):MarketErrorCode {

@@ -9,10 +9,13 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+// Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
+// echo the request Origin (never `*`) with `Allow-Credentials: true`.
+let corsHeaders: Record<string, string> = {
+  ...__createCorsHeaders(null),
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
+  'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
 function jsonResponse(data: any, status = 200) {
@@ -23,6 +26,7 @@ function jsonResponse(data: any, status = 200) {
 }
 
 Deno.serve(async (req) => {
+  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {

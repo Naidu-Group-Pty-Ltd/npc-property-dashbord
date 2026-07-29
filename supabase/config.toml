@@ -390,6 +390,9 @@ request_timeout = 300
 [functions.get-call-logs]
 verify_jwt = true
 
+[functions.get-call-recording]
+verify_jwt = true
+
 [functions.manage-call-logs]
 verify_jwt = true
 
@@ -618,6 +621,10 @@ request_timeout = 60
 verify_jwt = false
 request_timeout = 60
 
+[functions.finance-portal-aml-requests]
+verify_jwt = false
+request_timeout = 60
+
 [functions.finance-portal-purchase-files]
 verify_jwt = false
 request_timeout = 60
@@ -754,6 +761,17 @@ verify_jwt = false
 [functions.mission-control-balance]
 verify_jwt = false
 
+# Both verify the session themselves via `verifyAuth`, exactly as
+# mission-control-balance does, so the platform JWT gate stays off. Absent from
+# this file they defaulted to `verify_jwt = true` — and were never deployed at
+# all, which is why the Feedback tab could not mint an attributed link and the
+# form opened with no workspace attached.
+[functions.mission-control-feedback-prompt]
+verify_jwt = false
+
+[functions.mission-control-plan-change]
+verify_jwt = false
+
 [functions.mission-control-key-info]
 verify_jwt = false
 
@@ -773,6 +791,12 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.mission-control-purchases]
+verify_jwt = false
+
+[functions.mission-control-invoices]
+verify_jwt = false
+
+[functions.mission-control-payment-methods]
 verify_jwt = false
 
 [functions.finance-portal-bulk-actions]
@@ -928,6 +952,11 @@ verify_jwt = false
 
 [functions.market-updates-status]
 # Authoritative sanitised read contract; authentication and module access are enforced in-function.
+verify_jwt = false
+
+[functions.market-updates-curate]
+# Operator curation (hide/restore a published update). Matches the read contract above:
+# authentication and the market_updates can_edit check are enforced in-function.
 verify_jwt = false
 
 [functions.market-updates-feed]

@@ -84,6 +84,34 @@ export interface AmlOwnershipSummary {
   missing_ownership_percent: number;
 }
 
+/** Phase 6 — result of reconciling portal questionnaire answers into canonical records. */
+export interface AmlQuestionnaireImportReport {
+  entity_id: string | null;
+  entity_created: boolean;
+  entity_fields_filled: string[];
+  conflicts: Array<{ scope: string; field: string; recorded: unknown; submitted: unknown }>;
+  owners_created: string[];
+  reps_created: string[];
+  parties_already_recorded: string[];
+  parties_needing_review: Array<{ name: string; role: string; reason: string }>;
+  provenance_rows_added: number;
+}
+
+export interface AmlProvenanceRow {
+  id: string;
+  entity_id: string | null;
+  party_id: string | null;
+  field_key: string;
+  value: { v?: unknown } | Record<string, unknown> | null;
+  source_type: string;
+  source_record_id: string | null;
+  submitted_at: string;
+  conflict_status: "none" | "conflict" | "superseded" | "resolved";
+  verification_status: string;
+  is_canonical: boolean;
+  resolution_reason: string | null;
+}
+
 async function invoke<T = any>(payload: Record<string, any>): Promise<T> {
   return invokeAmlFunction<T>("aml-entities", payload);
 }
@@ -114,4 +142,14 @@ export const amlEntitiesApi = {
 
   ownershipSummary: (entity_id: string) =>
     invoke<{ summary: AmlOwnershipSummary }>({ op: "ownership_summary", entity_id }),
+
+  // Phase 6 — questionnaire reconciliation + provenance
+  importFromQuestionnaire: (case_id: string) =>
+    invoke<{ report: AmlQuestionnaireImportReport }>({ op: "import_from_questionnaire", case_id }),
+  listProvenance: (case_id: string) =>
+    invoke<{ provenance: AmlProvenanceRow[] }>({ op: "list_provenance", case_id }),
+  linkVerification: (params: {
+    case_id: string; target: "owner" | "rep"; party_id: string;
+    identity_check_id?: string; screening_check_id?: string;
+  }) => invoke<{ owner?: AmlBeneficialOwner; rep?: AmlAuthorisedRep }>({ op: "link_verification", ...params }),
 };

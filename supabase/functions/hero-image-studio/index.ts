@@ -12,7 +12,8 @@
 //   { action: "placement_clear", reportId, sectionKey }
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
-import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
+import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse, verifyAuth } from "../_shared/auth.ts";
+import { actorIsSuperadmin, requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePath, signStoragePaths } from "../_shared/storageSign.ts";
 
@@ -74,6 +75,25 @@ function jsonErr(msg: string, corsHeaders: Record<string, string>, status = 400)
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function canAccessReport(
+  supabase: any,
+  actor: { userId: string; authMethod?: string | null },
+  reportId: string,
+  permission: ModulePerm,
+): Promise<boolean> {
+  const moduleAccess = await requireModulePermission(supabase, actor, "reports", permission);
+  if (!moduleAccess.ok) return false;
+  if (actor.authMethod === "service_role" || await actorIsSuperadmin(supabase, actor.userId)) return true;
+
+  const { data: report } = await supabase
+    .from("investment_reports")
+    .select("id")
+    .eq("id", reportId)
+    .eq("generated_by", actor.userId)
+    .maybeSingle();
+  return Boolean(report);
 }
 
 async function enhancePrompt(raw: string): Promise<string> {
@@ -185,6 +205,7 @@ Deno.serve(async (req) => {
     if (auth.error) return createUnauthorizedResponse(auth.error, corsHeaders);
 
     const userId = String(auth.userId || "");
+    const actor = { userId, authMethod: auth.authMethod };
     const action = String(body?.action || "").toLowerCase();
 
     // ── enhance_prompt ────────────────────────────────────────────────────
@@ -388,6 +409,9 @@ Deno.serve(async (req) => {
     if (action === "chapters_list") {
       const reportId = String(body?.reportId || "");
       if (!reportId) return jsonErr("reportId required", corsHeaders);
+      if (!await canAccessReport(supabase, actor, reportId, "can_view")) {
+        return createForbiddenResponse("Report view permission required", corsHeaders);
+      }
       const { data: report } = await supabase
         .from("investment_reports")
         .select("id, property_address, report_content")
@@ -407,6 +431,9 @@ Deno.serve(async (req) => {
     if (action === "placements_list") {
       const reportId = String(body?.reportId || "");
       if (!reportId) return jsonErr("reportId required", corsHeaders);
+      if (!await canAccessReport(supabase, actor, reportId, "can_view")) {
+        return createForbiddenResponse("Report view permission required", corsHeaders);
+      }
       const { data: placements, error } = await supabase
         .from("report_hero_placements")
         .select(`
@@ -432,6 +459,16 @@ Deno.serve(async (req) => {
       const libraryImageId = String(body?.libraryImageId || "");
       if (!reportId || !sectionKey || !libraryImageId)
         return jsonErr("reportId, sectionKey, libraryImageId required", corsHeaders);
+      if (!await canAccessReport(supabase, actor, reportId, "can_edit")) {
+        return createForbiddenResponse("Report edit permission required", corsHeaders);
+      }
+      const { data: libraryImage } = await supabase
+        .from("hero_image_library")
+        .select("id")
+        .eq("id", libraryImageId)
+        .eq("owner_user_id", userId)
+        .maybeSingle();
+      if (!libraryImage) return createForbiddenResponse("Library image ownership required", corsHeaders);
 
       const row: any = {
         report_id: reportId,
@@ -459,6 +496,9 @@ Deno.serve(async (req) => {
       const reportId = String(body?.reportId || "");
       const sectionKey = String(body?.sectionKey || "");
       if (!reportId || !sectionKey) return jsonErr("reportId, sectionKey required", corsHeaders);
+      if (!await canAccessReport(supabase, actor, reportId, "can_edit")) {
+        return createForbiddenResponse("Report edit permission required", corsHeaders);
+      }
       const { error } = await supabase
         .from("report_hero_placements")
         .delete()

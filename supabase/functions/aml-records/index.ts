@@ -18,9 +18,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-session-token, x-command-centre-session-token",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-command-centre-session-token",
+  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const jr = (d: unknown, s = 200) =>
@@ -57,6 +59,79 @@ const SCAN_SOURCES: Record<string, { table: string; timestampCol: string; refCol
   edd:          { table: "edd_cases",          timestampCol: "closed_at", caseIdCol: "case_id" },
 };
 
+// Phase 11 (§18): the retention clock starts at a recorded trigger event, not
+// at upload. A record with no operative trigger has not started its clock and
+// is never disposal-eligible.
+const RETENTION_TRIGGER_KINDS: Record<string, string> = {
+  relationship_end: "Business relationship ended",
+  occasional_transaction_complete: "Occasional transaction completed",
+  transaction_date: "Transaction date",
+  program_version_obsolete: "AML program version became obsolete",
+  investigation_complete: "Investigation completed",
+  report_complete: "Regulatory report completed",
+  legal_hold_release: "Legal hold released",
+};
+
+function addYears(from: Date, years: number): Date {
+  const d = new Date(from.getTime());
+  // Whole years shift the calendar date; the fractional remainder is applied
+  // in days so a 7.5-year schedule lands where an operator expects.
+  const whole = Math.trunc(years);
+  d.setUTCFullYear(d.getUTCFullYear() + whole);
+  const remainderDays = (years - whole) * 365.25;
+  if (remainderDays > 0) d.setUTCDate(d.getUTCDate() + Math.round(remainderDays));
+  return d;
+}
+
+/**
+ * §18 dependency check — reasons a record must not be disposed of yet, beyond
+ * legal holds. Evaluated at dry run AND re-evaluated at execution, because
+ * dependencies can appear between approval and disposal.
+ */
+async function dependencyBlockersFor(
+  admin: any, entityType: string, entityId: string, caseId: string | null,
+): Promise<string[]> {
+  const aml = admin.schema("aml");
+  const blockers: string[] = [];
+
+  // A record that still supports an unfinished regulatory report cannot go.
+  if (caseId) {
+    const { count: openReports } = await aml.from("reports")
+      .select("id", { count: "exact", head: true })
+      .eq("case_id", caseId).not("status", "in", '("acknowledged","withdrawn","rejected")');
+    if ((openReports ?? 0) > 0) blockers.push("open_regulatory_report");
+
+    const { count: openObligations } = await aml.from("transaction_obligations")
+      .select("id", { count: "exact", head: true })
+      .eq("case_id", caseId).in("status", ["pending", "acknowledged"]);
+    if ((openObligations ?? 0) > 0) blockers.push("open_reporting_obligation");
+
+    const { count: openEdd } = await aml.from("edd_cases")
+      .select("id", { count: "exact", head: true })
+      .eq("case_id", caseId).in("status", ["open", "in_progress", "awaiting_client", "awaiting_mlro"]);
+    if ((openEdd ?? 0) > 0) blockers.push("open_investigation");
+
+    const { count: openAlerts } = await aml.from("alerts")
+      .select("id", { count: "exact", head: true })
+      .eq("case_id", caseId).in("status", ["open", "investigating"]);
+    if ((openAlerts ?? 0) > 0) blockers.push("open_alert");
+  }
+
+  // Still cited as evidence somewhere.
+  const { count: evidenceRefs } = await aml.from("evidence_references")
+    .select("id", { count: "exact", head: true }).eq("reference_id", entityId);
+  if ((evidenceRefs ?? 0) > 0) blockers.push("referenced_as_evidence");
+
+  // An ongoing relationship keeps the whole case alive.
+  if (entityType === "case") {
+    const { data: caseRow } = await aml.from("cases")
+      .select("monitoring_status, status").eq("id", entityId).maybeSingle();
+    if (caseRow && caseRow.monitoring_status !== "ended") blockers.push("relationship_not_ended");
+  }
+
+  return blockers;
+}
+
 async function activeHoldFor(admin: any, entityType: string, entityId: string, caseId: string | null) {
   const { data, error } = await admin.schema("aml").from("legal_holds")
     .select("id").eq("entity_type", entityType).eq("entity_id", entityId).is("released_at", null).limit(1);
@@ -70,7 +145,7 @@ async function activeHoldFor(admin: any, entityType: string, entityId: string, c
   return caseHolds && caseHolds.length > 0 ? caseHolds[0].id as string : null;
 }
 
-Deno.serve(async (req) => {
+const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -336,46 +411,237 @@ Deno.serve(async (req) => {
         ]);
         return jr({ scan, items: items ?? [] });
       }
+      // ── RETENTION TRIGGERS (Phase 11, §18) ───────────────────
+      // Starts the retention clock for a record from a recorded trigger event.
+      // Re-recording supersedes the previous trigger rather than editing it,
+      // so the basis for every retention decision stays reconstructable.
+      case "record_retention_trigger": {
+        if (!canInvestigate) return jr({ error: "Investigator role required" }, 403);
+        const entityType = String(body.entity_type ?? "");
+        const entityId = String(body.entity_id ?? "");
+        const triggerKind = String(body.trigger_kind ?? "");
+        const triggerDate = body.trigger_date ? new Date(String(body.trigger_date)) : new Date();
+        if (!entityType || !entityId) return jr({ error: "entity_type and entity_id required" }, 400);
+        if (!RETENTION_TRIGGER_KINDS[triggerKind]) return jr({ error: "trigger_kind invalid" }, 400);
+        if (Number.isNaN(triggerDate.getTime())) return jr({ error: "trigger_date must be a valid date" }, 400);
+
+        const { data: sched } = await aml.from("retention_schedules")
+          .select("*").eq("entity_type", entityType).eq("active", true).maybeSingle();
+        const retentionYears = body.retention_years != null
+          ? Number(body.retention_years)
+          : Number(sched?.retention_years ?? 7);
+        if (!Number.isFinite(retentionYears) || retentionYears < 0) {
+          return jr({ error: "retention_years must be a non-negative number" }, 400);
+        }
+        const legalBasis = String(body.legal_basis ?? sched?.legal_basis ?? "").trim();
+        if (!legalBasis) {
+          return jr({ error: "legal_basis is required — record the legal or program basis for the retention period" }, 400);
+        }
+
+        const caseId = body.case_id ? String(body.case_id)
+          : (entityType === "case" ? entityId : null);
+        const minimumRetentionDate = addYears(triggerDate, retentionYears).toISOString();
+
+        // Supersede rather than overwrite.
+        const { data: prior } = await aml.from("retention_triggers")
+          .select("id").eq("entity_type", entityType).eq("entity_id", entityId)
+          .is("superseded_at", null).limit(10);
+
+        const { data: trigger, error: tErr } = await aml.from("retention_triggers").insert({
+          entity_type: entityType, entity_id: entityId, case_id: caseId,
+          record_category: String(body.record_category ?? entityType),
+          trigger_kind: triggerKind, trigger_date: triggerDate.toISOString(),
+          legal_basis: legalBasis, retention_years: retentionYears,
+          minimum_retention_date: minimumRetentionDate,
+          privacy_restricted: Boolean(body.privacy_restricted),
+          privacy_restriction_note: body.privacy_restriction_note ? String(body.privacy_restriction_note) : null,
+          disposal_method: String(body.disposal_method ?? sched?.disposal_method ?? "soft_delete"),
+          source_note: body.source_note ? String(body.source_note) : null,
+          recorded_by: userId, recorded_by_label: userLabel,
+        }).select("*").single();
+        if (tErr) return jr({ error: tErr.message }, 400);
+
+        if ((prior ?? []).length > 0) {
+          await aml.from("retention_triggers")
+            .update({ superseded_at: new Date().toISOString(), superseded_by: trigger.id })
+            .in("id", (prior ?? []).map((p: any) => p.id));
+        }
+
+        await audit(admin, "retention",
+          `Retention trigger recorded: ${RETENTION_TRIGGER_KINDS[triggerKind]} — minimum retention to ${minimumRetentionDate.slice(0, 10)}`,
+          {
+            trigger_id: trigger.id, entity_type: entityType, entity_id: entityId,
+            trigger_kind: triggerKind, trigger_date: trigger.trigger_date,
+            retention_years: retentionYears, minimum_retention_date: minimumRetentionDate,
+            superseded: (prior ?? []).length,
+          }, userId, userLabel);
+        return jr({ trigger, superseded: (prior ?? []).length });
+      }
+
+      // Derives retention triggers from case state already recorded elsewhere
+      // (Phase 10 relationship end, acknowledged reports, closed EDD), so the
+      // clock starts without hand-entry. Idempotent: existing operative
+      // triggers are left alone.
+      case "sync_case_triggers": {
+        if (!canInvestigate) return jr({ error: "Investigator role required" }, 403);
+        const caseId = String(body.case_id ?? "");
+        if (!caseId) return jr({ error: "case_id required" }, 400);
+        const { data: caseRow } = await aml.from("cases")
+          .select("id, relationship_ended_at, monitoring_status").eq("id", caseId).maybeSingle();
+        if (!caseRow) return jr({ error: "Case not found" }, 404);
+
+        const { data: schedules } = await aml.from("retention_schedules").select("*").eq("active", true);
+        const schedFor = (t: string) => (schedules ?? []).find((s: any) => s.entity_type === t);
+        const created: Array<{ entity_type: string; entity_id: string; trigger_kind: string }> = [];
+
+        const ensure = async (
+          entityType: string, entityId: string, kind: string, date: string, category: string,
+        ) => {
+          const { data: existing } = await aml.from("retention_triggers")
+            .select("id").eq("entity_type", entityType).eq("entity_id", entityId)
+            .is("superseded_at", null).limit(1).maybeSingle();
+          if (existing) return;
+          const sched = schedFor(entityType);
+          const years = Number(sched?.retention_years ?? 7);
+          const basis = String(sched?.legal_basis ?? "AML/CTF Act 2006 s107 — 7 year minimum");
+          await aml.from("retention_triggers").insert({
+            entity_type: entityType, entity_id: entityId, case_id: caseId,
+            record_category: category, trigger_kind: kind, trigger_date: date,
+            legal_basis: basis, retention_years: years,
+            minimum_retention_date: addYears(new Date(date), years).toISOString(),
+            disposal_method: String(sched?.disposal_method ?? "soft_delete"),
+            source_note: "Derived from recorded case state",
+            recorded_by: userId, recorded_by_label: userLabel,
+          });
+          created.push({ entity_type: entityType, entity_id: entityId, trigger_kind: kind });
+        };
+
+        if (caseRow.relationship_ended_at) {
+          await ensure("case", caseId, "relationship_end", caseRow.relationship_ended_at, "AML case file");
+        }
+        const { data: doneReports } = await aml.from("reports")
+          .select("id, acknowledged_at").eq("case_id", caseId).not("acknowledged_at", "is", null).limit(50);
+        for (const r of doneReports ?? []) {
+          await ensure("report", r.id, "report_complete", r.acknowledged_at, "Regulatory report");
+        }
+        const { data: closedEdd } = await aml.from("edd_cases")
+          .select("id, completed_at").eq("case_id", caseId).not("completed_at", "is", null).limit(50);
+        for (const e of closedEdd ?? []) {
+          await ensure("edd", e.id, "investigation_complete", e.completed_at, "Investigation file");
+        }
+
+        if (created.length > 0) {
+          await audit(admin, "retention", `Retention triggers derived for case (${created.length})`,
+            { case_id: caseId, created }, userId, userLabel);
+        }
+        return jr({ created_count: created.length, created });
+      }
+
+      // §18 display contract for retained records.
+      case "list_retention_records": {
+        const caseId = body.case_id ? String(body.case_id) : null;
+        const nowIso = new Date().toISOString();
+        let q = aml.from("retention_triggers").select("*").is("superseded_at", null)
+          .order("minimum_retention_date", { ascending: true })
+          .limit(Math.min(Number(body.limit ?? 200), 500));
+        if (caseId) q = q.eq("case_id", caseId);
+        if (body.due_only) q = q.lte("minimum_retention_date", nowIso);
+        const { data, error } = await q;
+        if (error) return jr({ error: error.message }, 400);
+
+        const records = [];
+        for (const t of data ?? []) {
+          const holdId = await activeHoldFor(admin, t.entity_type, t.entity_id, t.case_id ?? null);
+          records.push({
+            trigger_id: t.id,
+            entity_type: t.entity_type,
+            entity_id: t.entity_id,
+            case_id: t.case_id,
+            record_category: t.record_category,
+            legal_basis: t.legal_basis,
+            trigger_kind: t.trigger_kind,
+            trigger_label: RETENTION_TRIGGER_KINDS[t.trigger_kind] ?? t.trigger_kind,
+            trigger_date: t.trigger_date,
+            retention_years: Number(t.retention_years),
+            minimum_retention_date: t.minimum_retention_date,
+            retention_elapsed: t.minimum_retention_date <= nowIso,
+            legal_hold: Boolean(holdId),
+            hold_id: holdId,
+            privacy_restricted: t.privacy_restricted,
+            privacy_restriction_note: t.privacy_restriction_note,
+            disposal_method: t.disposal_method,
+            recorded_by_label: t.recorded_by_label,
+            recorded_at: t.created_at,
+          });
+        }
+        return jr({ records });
+      }
+
       case "dry_run_scan": {
         if (!canInvestigate) return jr({ error: "Investigator role required" }, 403);
         const scope = (body.scope ?? "all").toString();
-        const { data: schedules } = await aml.from("retention_schedules").select("*").eq("active", true);
-        const activeSchedules = (schedules ?? []).filter((s: any) => scope === "all" || s.entity_type === scope);
         const { data: scan, error: sErr } = await aml.from("retention_scans").insert({
           scope, status: "dry_run", requested_by: userId, requested_by_label: userLabel,
         }).select("*").single();
         if (sErr) return jr({ error: sErr.message }, 400);
 
+        // §18: candidates come from recorded retention TRIGGERS whose minimum
+        // retention date has passed — never from "age since upload". Records
+        // with no operative trigger have not started their clock and are not
+        // enumerated at all.
+        const nowIso = new Date().toISOString();
+        let tq = aml.from("retention_triggers").select("*")
+          .is("superseded_at", null)
+          .lte("minimum_retention_date", nowIso)
+          .limit(1000);
+        if (scope !== "all") tq = tq.eq("entity_type", scope);
+        const { data: dueTriggers, error: tErr } = await tq;
+        if (tErr) return jr({ error: tErr.message }, 400);
+
         const perType: Record<string, number> = {};
-        let candidates = 0, held = 0;
+        let candidates = 0, held = 0, blocked = 0;
         const items: any[] = [];
 
-        for (const sched of activeSchedules) {
-          const src = SCAN_SOURCES[sched.entity_type];
-          if (!src) continue;
-          const cutoff = new Date(Date.now() - Number(sched.retention_years) * 365.25 * 24 * 3600 * 1000).toISOString();
-          const selectCols = `id, ${src.timestampCol}${src.refCol ? `, ${src.refCol}` : ""}${src.caseIdCol ? `, ${src.caseIdCol}` : ""}`;
-          const { data: rows, error: rowsError } = await aml.from(src.table).select(selectCols).lt(src.timestampCol, cutoff).limit(500);
-          if (rowsError) return jr({ error: rowsError.message }, 400);
-          for (const row of ((rows ?? []) as any[])) {
-            candidates++;
-            perType[sched.entity_type] = (perType[sched.entity_type] ?? 0) + 1;
-            const caseId = sched.entity_type === "case" ? row.id : (src.caseIdCol ? row[src.caseIdCol] : null);
-            const holdId = await activeHoldFor(admin, sched.entity_type, row.id, caseId);
-            const disposition = holdId ? "held" : "pending";
-            if (holdId) held++;
-            items.push({
-              scan_id: scan.id,
-              entity_type: sched.entity_type,
-              entity_id: row.id,
-              reference_label: src.refCol ? row[src.refCol] : null,
-              eligible_since: row[src.timestampCol],
-              disposition,
-              hold_id: holdId,
-              disposal_method: sched.disposal_method,
-            });
+        for (const t of dueTriggers ?? []) {
+          const src = SCAN_SOURCES[t.entity_type];
+          const caseId = t.case_id ?? (t.entity_type === "case" ? t.entity_id : null);
+
+          // Confirm the record still exists before proposing disposal.
+          if (src) {
+            const { data: row } = await aml.from(src.table)
+              .select(`id${src.refCol ? `, ${src.refCol}` : ""}`).eq("id", t.entity_id).maybeSingle();
+            if (!row) continue;
+            t.__reference_label = src.refCol ? row[src.refCol] : null;
           }
+
+          candidates++;
+          perType[t.entity_type] = (perType[t.entity_type] ?? 0) + 1;
+
+          const holdId = await activeHoldFor(admin, t.entity_type, t.entity_id, caseId);
+          const blockers = await dependencyBlockersFor(admin, t.entity_type, t.entity_id, caseId);
+          let disposition = "pending";
+          if (holdId) { disposition = "held"; held++; }
+          else if (blockers.length > 0) { disposition = "blocked"; blocked++; }
+
+          items.push({
+            scan_id: scan.id,
+            entity_type: t.entity_type,
+            entity_id: t.entity_id,
+            reference_label: t.__reference_label ?? null,
+            eligible_since: t.minimum_retention_date,
+            disposition,
+            hold_id: holdId,
+            disposal_method: t.disposal_method,
+            trigger_id: t.id,
+            trigger_kind: t.trigger_kind,
+            trigger_date: t.trigger_date,
+            minimum_retention_date: t.minimum_retention_date,
+            legal_basis: t.legal_basis,
+            privacy_restricted: t.privacy_restricted,
+            dependency_blockers: blockers,
+          });
         }
+
         if (items.length) {
           const chunks: any[][] = [];
           for (let i = 0; i < items.length; i += 500) chunks.push(items.slice(i, i + 500));
@@ -383,10 +649,12 @@ Deno.serve(async (req) => {
         }
         await aml.from("retention_scans").update({
           candidates_count: candidates, held_count: held,
-          summary: { per_entity_type: perType },
+          summary: { per_entity_type: perType, blocked_count: blocked, basis: "retention_trigger" },
         }).eq("id", scan.id);
-        await audit(admin, "scan", `Dry-run scan created (${candidates} candidates, ${held} held)`, { scan_id: scan.id, scope }, userId, userLabel);
-        return jr({ scan_id: scan.id, candidates, held, per_entity_type: perType });
+        await audit(admin, "scan",
+          `Dry-run scan created (${candidates} candidates, ${held} held, ${blocked} dependency-blocked)`,
+          { scan_id: scan.id, scope, basis: "retention_trigger" }, userId, userLabel);
+        return jr({ scan_id: scan.id, candidates, held, blocked, per_entity_type: perType });
       }
       case "request_approval": {
         if (!canInvestigate) return jr({ error: "Investigator role required" }, 403);
@@ -447,24 +715,92 @@ Deno.serve(async (req) => {
             skipped++;
             continue;
           }
-          if (!dryRun) {
-            if (src) {
-              // Non-destructive by default: mark a `retention_disposed_at` metadata event via records_audit,
-              // then null-out large PII columns if present. We deliberately do NOT hard-delete without a
-              // second explicit signal (`hard_delete=true` on the scan).
-              try {
-                if (it.disposal_method === "hard_delete") {
-                  await aml.from(src.table).delete().eq("id", it.entity_id);
-                } else {
-                  // soft_delete/redact — best-effort common column zeroing; ignore unknown columns
-                  const patch: any = { updated_at: new Date().toISOString() };
-                  await aml.from(src.table).update(patch).eq("id", it.entity_id);
-                }
-              } catch (_e) { /* keep going */ }
+
+          // §18 dependency check, re-run at execution: dependencies can appear
+          // between approval and disposal, and an approved item must not be
+          // disposed of once something else relies on it.
+          const blockers = await dependencyBlockersFor(admin, it.entity_type, it.entity_id, caseId);
+          if (blockers.length > 0) {
+            await aml.from("retention_scan_items").update({
+              disposition: "blocked", dependency_blockers: blockers,
+              processed_at: new Date().toISOString(),
+              note: `Dependency check failed at execution: ${blockers.join(", ")}`,
+            }).eq("id", it.id);
+            skipped++;
+            continue;
+          }
+
+          // The retention clock is re-verified too — an item approved under a
+          // trigger that has since been superseded must not be disposed of.
+          if (it.trigger_id) {
+            const { data: trig } = await aml.from("retention_triggers")
+              .select("id, superseded_at, minimum_retention_date").eq("id", it.trigger_id).maybeSingle();
+            if (!trig || trig.superseded_at || trig.minimum_retention_date > new Date().toISOString()) {
+              await aml.from("retention_scan_items").update({
+                disposition: "blocked",
+                dependency_blockers: ["retention_trigger_no_longer_operative"],
+                processed_at: new Date().toISOString(),
+                note: "Retention trigger superseded or minimum retention date not reached",
+              }).eq("id", it.id);
+              skipped++;
+              continue;
             }
           }
+
+          // Disposal evidence records exactly what was performed — never more
+          // than actually happened.
+          let action = "recorded_only";
+          let actionDetail = "No physical change — disposal recorded against the record only";
+          if (!dryRun && src) {
+            try {
+              if (it.disposal_method === "hard_delete") {
+                const { error: delErr } = await aml.from(src.table).delete().eq("id", it.entity_id);
+                if (delErr) throw delErr;
+                action = "hard_delete";
+                actionDetail = `Row deleted from aml.${src.table}`;
+              } else {
+                const { error: updErr } = await aml.from(src.table)
+                  .update({ updated_at: new Date().toISOString() }).eq("id", it.entity_id);
+                if (updErr) throw updErr;
+                action = "soft_marked";
+                actionDetail = `Row retained in aml.${src.table} and marked; no field-level redaction performed`;
+              }
+            } catch (e: any) {
+              await aml.from("retention_scan_items").update({
+                disposition: "failed", processed_at: new Date().toISOString(),
+                note: `Disposal failed: ${e?.message ?? String(e)}`,
+              }).eq("id", it.id);
+              skipped++;
+              continue;
+            }
+          } else if (dryRun) {
+            action = "dry_execute";
+            actionDetail = "Dry execution — no change attempted";
+          }
+
+          const evidence = {
+            action,
+            detail: actionDetail,
+            disposal_method: it.disposal_method,
+            source_table: src ? `aml.${src.table}` : null,
+            entity_type: it.entity_type,
+            entity_id: it.entity_id,
+            trigger_id: it.trigger_id ?? null,
+            minimum_retention_date: it.minimum_retention_date ?? null,
+            legal_basis: it.legal_basis ?? null,
+            scan_id: id,
+            approved_by: scan.approved_by ?? null,
+            executed_by: userId,
+            executed_by_label: userLabel,
+            executed_at: new Date().toISOString(),
+            dependency_check: "passed",
+            legal_hold_check: "passed",
+          };
+          const evidenceHash = await sha256Hex(JSON.stringify(evidence));
+
           await aml.from("retention_scan_items").update({
             disposition: "disposed", processed_at: new Date().toISOString(),
+            disposal_evidence: { ...evidence, evidence_hash: evidenceHash },
             note: dryRun ? "Dry execute — no physical change" : null,
           }).eq("id", it.id);
           disposed++;
@@ -484,6 +820,135 @@ Deno.serve(async (req) => {
         if (error) return jr({ error: error.message }, 400);
         return jr({ events: data ?? [] });
       }
+
+      // ── AUDIT INTEGRITY + EXPORT (Phase 11, §19) ─────────────
+      // Independent-review evidence: recompute every row hash and confirm the
+      // prev_hash linkage, so a reviewer can establish that the trail has not
+      // been altered rather than taking the stored hashes on trust.
+      case "verify_audit_chain": {
+        const chain = String(body.chain ?? "case_events");
+        if (!["case_events", "records_audit_events"].includes(chain)) {
+          return jr({ error: "chain must be case_events or records_audit_events" }, 400);
+        }
+        const caseId = body.case_id ? String(body.case_id) : null;
+        if (chain === "case_events" && !caseId) return jr({ error: "case_id required for case_events" }, 400);
+
+        let q = aml.from(chain).select("*").order("created_at", { ascending: true }).limit(5000);
+        if (caseId && chain === "case_events") q = q.eq("case_id", caseId);
+        const { data: events, error } = await q;
+        if (error) return jr({ error: error.message }, 400);
+
+        let previousHash: string | null = null;
+        let verified = 0;
+        const breaks: Array<{ id: string; created_at: string; problem: string }> = [];
+        for (const ev of events ?? []) {
+          const recomputed = chain === "case_events"
+            ? await sha256Hex(JSON.stringify({
+                case_id: ev.case_id, category: ev.category, summary: ev.summary, payload: ev.payload,
+                actor_id: ev.actor_id, actor_label: ev.actor_label,
+                prev_hash: ev.prev_hash, created_at: ev.created_at,
+              }))
+            : await sha256Hex(JSON.stringify({
+                category: ev.category, summary: ev.summary, payload: ev.payload,
+                actor_id: ev.actor_id, actor_label: ev.actor_label,
+                prev_hash: ev.prev_hash, created_at: ev.created_at,
+              }));
+          if (recomputed !== ev.row_hash) {
+            breaks.push({ id: ev.id, created_at: ev.created_at, problem: "row_hash_mismatch" });
+          } else if ((ev.prev_hash ?? null) !== previousHash) {
+            breaks.push({ id: ev.id, created_at: ev.created_at, problem: "prev_hash_discontinuity" });
+          } else {
+            verified++;
+          }
+          previousHash = ev.row_hash ?? null;
+        }
+
+        return jr({
+          chain, case_id: caseId,
+          event_count: (events ?? []).length,
+          verified_count: verified,
+          intact: breaks.length === 0,
+          breaks,
+          verified_at: new Date().toISOString(),
+        });
+      }
+
+      // Signed-by-content export for independent review / regulator request.
+      // MLRO-only: an audit export is a disclosure of the full internal trail.
+      case "export_audit_bundle": {
+        if (!isMlro) return jr({ error: "MLRO required" }, 403);
+        const caseId = String(body.case_id ?? "");
+        if (!caseId) return jr({ error: "case_id required" }, 400);
+        const reason = String(body.reason ?? "").trim();
+        if (reason.length < 10) {
+          return jr({ error: "reason must be at least 10 characters — record why the audit trail is being exported" }, 400);
+        }
+
+        const [{ data: caseRow }, { data: events }, { data: triggers }, { data: holds }] = await Promise.all([
+          aml.from("cases").select(
+            "id, case_reference, subject_display_name, status, case_stage, service_gate_status, monitoring_status, opened_at, relationship_ended_at",
+          ).eq("id", caseId).maybeSingle(),
+          aml.from("case_events").select("*").eq("case_id", caseId).order("created_at", { ascending: true }).limit(5000),
+          aml.from("retention_triggers").select("*").eq("case_id", caseId).is("superseded_at", null),
+          aml.from("legal_holds").select("id, reason, created_at, released_at").eq("case_id", caseId),
+        ]);
+        if (!caseRow) return jr({ error: "Case not found" }, 404);
+
+        // Re-verify the chain as part of the export so the bundle carries its
+        // own integrity statement.
+        let previousHash: string | null = null;
+        let verified = 0;
+        const breaks: Array<{ id: string; problem: string }> = [];
+        for (const ev of events ?? []) {
+          const recomputed = await sha256Hex(JSON.stringify({
+            case_id: ev.case_id, category: ev.category, summary: ev.summary, payload: ev.payload,
+            actor_id: ev.actor_id, actor_label: ev.actor_label,
+            prev_hash: ev.prev_hash, created_at: ev.created_at,
+          }));
+          if (recomputed !== ev.row_hash) breaks.push({ id: ev.id, problem: "row_hash_mismatch" });
+          else if ((ev.prev_hash ?? null) !== previousHash) breaks.push({ id: ev.id, problem: "prev_hash_discontinuity" });
+          else verified++;
+          previousHash = ev.row_hash ?? null;
+        }
+
+        const bundle = {
+          bundle_version: 1,
+          generated_at: new Date().toISOString(),
+          generated_by: userId,
+          generated_by_label: userLabel,
+          reason,
+          case: caseRow,
+          integrity: {
+            chain: "aml.case_events",
+            event_count: (events ?? []).length,
+            verified_count: verified,
+            intact: breaks.length === 0,
+            breaks,
+            final_row_hash: previousHash,
+          },
+          events: (events ?? []).map((e: any) => ({
+            id: e.id, created_at: e.created_at, category: e.category, summary: e.summary,
+            actor_id: e.actor_id, actor_label: e.actor_label, payload: e.payload,
+            prev_hash: e.prev_hash, row_hash: e.row_hash,
+          })),
+          retention: (triggers ?? []).map((t: any) => ({
+            entity_type: t.entity_type, entity_id: t.entity_id, record_category: t.record_category,
+            trigger_kind: t.trigger_kind, trigger_date: t.trigger_date, legal_basis: t.legal_basis,
+            retention_years: Number(t.retention_years), minimum_retention_date: t.minimum_retention_date,
+            privacy_restricted: t.privacy_restricted, disposal_method: t.disposal_method,
+          })),
+          legal_holds: holds ?? [],
+        };
+        const bundleHash = await sha256Hex(JSON.stringify(bundle));
+
+        await audit(admin, "export",
+          `Audit bundle exported for case ${caseRow.case_reference}`,
+          {
+            case_id: caseId, reason, bundle_hash: bundleHash,
+            event_count: (events ?? []).length, chain_intact: breaks.length === 0,
+          }, userId, userLabel);
+        return jr({ bundle: { ...bundle, bundle_hash: bundleHash } });
+      }
     }
     return jr({ error: `Unknown op: ${op}` }, 400);
   } catch (e: any) {
@@ -491,3 +956,7 @@ Deno.serve(async (req) => {
     return jr({ error: e?.message ?? String(e) }, 500);
   }
 });
+
+// CORS-CREDENTIALS: rewrite the wildcard origin above into an allowlisted,
+// credential-compatible one. See _shared/corsOrigin.ts.
+Deno.serve(async (req: Request) => withRequestOrigin(req, await __corsWrappedHandler(req)));
