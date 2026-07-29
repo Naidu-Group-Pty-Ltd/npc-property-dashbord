@@ -18,16 +18,16 @@ import { notifyClientPortal } from '../_shared/client-portal-notify.ts';
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
-let corsHeaders: Record<string, string> = {
+const corsHeaderDefaults: Record<string, string> = {
   ...__createCorsHeaders(null),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
-function json(body: unknown, status = 200) {
+function jsonWithHeaders(body: unknown, responseCorsHeaders: Record<string, string>, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
@@ -76,7 +76,8 @@ async function validatePurchaseFileScope(supabase: any, purchaseFileId: string |
 }
 
 Deno.serve(async (req) => {
-  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
+  const corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaderDefaults['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaderDefaults['Access-Control-Expose-Headers'] };
+  const json = (data: any, status = 200) => jsonWithHeaders(data, corsHeaders, status);
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
   if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
 
