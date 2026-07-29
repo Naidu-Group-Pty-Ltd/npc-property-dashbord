@@ -1,20 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import {
-  createCorsHeaders,
-  createClearFinanceSessionCookie,
-  createClearSessionCookie,
-} from "../_shared/auth.ts"
+import { createCorsHeaders, createClearFinanceSessionCookie } from "../_shared/auth.ts"
 import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
-
-function createLogoutHeaders(corsHeaders: Record<string, string>): Headers {
-  const headers = new Headers({
-    ...corsHeaders,
-    'Content-Type': 'application/json',
-  });
-  headers.append('Set-Cookie', createClearFinanceSessionCookie());
-  headers.append('Set-Cookie', createClearSessionCookie());
-  return headers;
-}
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -29,12 +15,12 @@ Deno.serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    let requestBody: Record<string, unknown> | undefined;
+    let body: Record<string, unknown> | undefined;
     try {
-      requestBody = await req.json();
+      body = await req.json();
     } catch { /* ignore */ }
 
-    const sessionToken = extractFinanceSessionToken(req.headers, requestBody);
+    const sessionToken = extractFinanceSessionToken(req.headers, body);
 
     if (sessionToken) {
       const { data: user } = await supabase
