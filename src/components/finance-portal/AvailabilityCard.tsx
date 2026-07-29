@@ -34,6 +34,9 @@ export function AvailabilityCard() {
 
   const add = async () => {
     if (!draft.start_time || !draft.end_time) return toast.error('Start and end times required');
+    if (!Number.isInteger(draft.slot_duration_min) || draft.slot_duration_min < 1 || draft.slot_duration_min > 32767) {
+      return toast.error('Slot duration must be a whole number between 1 and 32767 minutes');
+    }
     const res = await invokeFinanceFunction(FN, { operation: 'availability_upsert', window: draft });
     if (res.error) return toast.error(res.error);
     toast.success('Availability added');
@@ -68,7 +71,7 @@ export function AvailabilityCard() {
           </div>
           <div><Label className="text-xs">Start</Label><Input type="time" value={draft.start_time} onChange={e => setDraft({ ...draft, start_time: e.target.value })} /></div>
           <div><Label className="text-xs">End</Label><Input type="time" value={draft.end_time} onChange={e => setDraft({ ...draft, end_time: e.target.value })} /></div>
-          <div><Label className="text-xs">Slot (min)</Label><Input type="number" value={draft.slot_duration_min} onChange={e => setDraft({ ...draft, slot_duration_min: Number(e.target.value) })} /></div>
+          <div><Label htmlFor="slot-duration-min" className="text-xs">Slot (min)</Label><Input id="slot-duration-min" type="number" min={1} max={32767} step={1} value={draft.slot_duration_min} onChange={e => setDraft({ ...draft, slot_duration_min: Number(e.target.value) })} /></div>
           <Button onClick={add}><Plus className="h-3.5 w-3.5 mr-1" />Add</Button>
         </div>
 

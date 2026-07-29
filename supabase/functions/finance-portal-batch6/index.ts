@@ -253,6 +253,9 @@ Deno.serve(async (req) => {
     if (operation === 'availability_upsert') {
       const w = body.window || {};
       if (w.weekday == null || !w.start_time || !w.end_time) return json({ error: 'weekday, start_time, end_time required' }, 400);
+      if (!Number.isInteger(w.slot_duration_min) || w.slot_duration_min < 1 || w.slot_duration_min > 32767) {
+        return json({ error: 'slot_duration_min must be an integer between 1 and 32767' }, 400);
+      }
       const insert = pick(w, AVAIL_COLS);
       if (w.id) {
         const { data, error } = await supabase.from('finance_partner_availability')
