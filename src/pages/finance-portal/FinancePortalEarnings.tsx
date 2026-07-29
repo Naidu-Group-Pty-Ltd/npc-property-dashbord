@@ -39,7 +39,7 @@ const STATUS_DOT: Record<string, string> = {
   invoiced: 'bg-info',
   paid: 'bg-success',
   clawback: 'bg-destructive',
-  void: 'bg-zinc-400',
+  void: 'bg-muted-foreground',
 };
 
 // Animated count-up for KPI values
@@ -652,7 +652,7 @@ export default function FinancePortalEarnings() {
                           <TableCell className="text-right font-semibold tabular-nums">{fmt(c.net_amount)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[c.status] || 'bg-zinc-400')} />
+                              <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[c.status] || 'bg-muted-foreground')} />
                               <Badge variant={STATUS_VARIANT[c.status] || 'outline'} className="text-[10px] capitalize">
                                 {c.status}
                               </Badge>
@@ -695,7 +695,7 @@ export default function FinancePortalEarnings() {
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-1.5">
-                            <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[c.status] || 'bg-zinc-400')} />
+                            <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[c.status] || 'bg-muted-foreground')} />
                             <Badge variant={STATUS_VARIANT[c.status] || 'outline'} className="text-[10px] capitalize">
                               {c.status}
                             </Badge>
@@ -780,7 +780,7 @@ export default function FinancePortalEarnings() {
                           <TableCell className="text-right font-semibold tabular-nums">{fmt(s.total_net)}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-1.5">
-                              <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[s.status] || 'bg-zinc-400')} />
+                              <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[s.status] || 'bg-muted-foreground')} />
                               <Badge variant={STATUS_VARIANT[s.status] || 'outline'} className="text-[10px] capitalize">
                                 {s.status}
                               </Badge>
@@ -844,7 +844,7 @@ export default function FinancePortalEarnings() {
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-1.5">
-                            <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[s.status] || 'bg-zinc-400')} />
+                            <span className={cn('h-2 w-2 rounded-full', STATUS_DOT[s.status] || 'bg-muted-foreground')} />
                             <Badge variant={STATUS_VARIANT[s.status] || 'outline'} className="text-[10px] capitalize">
                               {s.status}
                             </Badge>
@@ -921,7 +921,7 @@ export default function FinancePortalEarnings() {
                 />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Card><CardContent className="space-y-2 p-4"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Client</div><div className="text-base font-semibold text-foreground">{smartCapitalize(selectedCommission.client_name_snapshot) || '—'}</div><div className="text-sm text-muted-foreground">{selectedCommission.deal_type_snapshot || 'Deal type unavailable'}</div></CardContent></Card>
-                  <Card><CardContent className="space-y-2 p-4"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Status</div><div className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', STATUS_DOT[selectedCommission.status] || 'bg-zinc-400')} /><Badge variant={STATUS_VARIANT[selectedCommission.status] || 'outline'} className="capitalize">{selectedCommission.status}</Badge></div><div className="text-sm text-muted-foreground">Created {format(new Date(selectedCommission.created_at), 'd MMM yyyy')}</div></CardContent></Card>
+                  <Card><CardContent className="space-y-2 p-4"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Status</div><div className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', STATUS_DOT[selectedCommission.status] || 'bg-muted-foreground')} /><Badge variant={STATUS_VARIANT[selectedCommission.status] || 'outline'} className="capitalize">{selectedCommission.status}</Badge></div><div className="text-sm text-muted-foreground">Created {format(new Date(selectedCommission.created_at), 'd MMM yyyy')}</div></CardContent></Card>
                 </div>
                 <Card><CardContent className="space-y-3 p-4"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Breakdown</div><div className="grid gap-3 sm:grid-cols-2"><div><div className="text-xs text-muted-foreground">Trigger</div><div className="mt-1 text-sm text-foreground break-words">{selectedCommission.trigger_event || '—'}</div></div><div><div className="text-xs text-muted-foreground">Commission basis</div><div className="mt-1 text-sm text-foreground break-words">{selectedCommission.commission_basis || '—'}</div></div><div><div className="text-xs text-muted-foreground">Basis amount</div><div className="mt-1 text-sm text-foreground">{fmt(selectedCommission.basis_amount)}</div></div><div><div className="text-xs text-muted-foreground">Rate</div><div className="mt-1 text-sm text-foreground">{Number(selectedCommission.rate_pct || 0).toFixed(2)}%</div></div><div><div className="text-xs text-muted-foreground">Invoice ref</div><div className="mt-1 text-sm text-foreground break-words">{selectedCommission.invoice_ref || '—'}</div></div><div><div className="text-xs text-muted-foreground">Paid at</div><div className="mt-1 text-sm text-foreground">{selectedCommission.paid_at ? format(new Date(selectedCommission.paid_at), 'd MMM yyyy') : '—'}</div></div></div>{selectedCommission.notes && <div><div className="text-xs text-muted-foreground">Notes</div><div className="mt-1 text-sm text-foreground break-words">{selectedCommission.notes}</div></div>}</CardContent></Card>
               </>
@@ -936,7 +936,7 @@ export default function FinancePortalEarnings() {
                 />
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Card><CardContent className="space-y-2 p-4"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Statement period</div><div className="text-base font-semibold text-foreground">{selectedStatement.period_start} → {selectedStatement.period_end}</div><div className="text-sm text-muted-foreground">Issued {selectedStatement.issued_at ? format(new Date(selectedStatement.issued_at), 'd MMM yyyy') : 'Not issued yet'}</div></CardContent></Card>
-                  <Card><CardContent className="space-y-2 p-4"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Status</div><div className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', STATUS_DOT[selectedStatement.status] || 'bg-zinc-400')} /><Badge variant={STATUS_VARIANT[selectedStatement.status] || 'outline'} className="capitalize">{selectedStatement.status}</Badge></div><div className="text-sm text-muted-foreground">{selectedStatement.line_count} line{selectedStatement.line_count !== 1 ? 's' : ''}</div></CardContent></Card>
+                  <Card><CardContent className="space-y-2 p-4"><div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Status</div><div className="flex items-center gap-2"><span className={cn('h-2 w-2 rounded-full', STATUS_DOT[selectedStatement.status] || 'bg-muted-foreground')} /><Badge variant={STATUS_VARIANT[selectedStatement.status] || 'outline'} className="capitalize">{selectedStatement.status}</Badge></div><div className="text-sm text-muted-foreground">{selectedStatement.line_count} line{selectedStatement.line_count !== 1 ? 's' : ''}</div></CardContent></Card>
                 </div>
                 <Card>
                   <CardContent className="space-y-4 p-4">

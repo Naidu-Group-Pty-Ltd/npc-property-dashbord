@@ -45,6 +45,7 @@ export interface DoclingPlanOptions {
 // editable in hybrid instead of locked. Locking only gates editing; the overlay
 // still renders identically either way.
 const DEFAULT_LOCK_THRESHOLD = 0.6;
+const MAX_OVERLAY_NAME_LENGTH = 64;
 
 function pageId(pageNo: number): string {
   return `docling-page-${pageNo}`;
@@ -56,9 +57,12 @@ function overlayId(block: RawImportBlock, suffix = 'ov'): string {
 
 function blockToOverlay(block: RawImportBlock, locked: boolean): Overlay | null {
   // Phase B: prefer alt-text / caption for the human-readable layer label.
-  const layerName = block.meta?.altText
+  const layerName = (block.meta?.altText
     ?? block.meta?.caption
-    ?? (block.text ? block.text.slice(0, 64) : block.type);
+    ?? block.text
+    ?? block.type)
+    .trim()
+    .slice(0, MAX_OVERLAY_NAME_LENGTH);
   const base = {
     id: overlayId(block),
     x: block.bbox.x,
@@ -283,7 +287,9 @@ function pagePlanForPage(
     height: page.size.height,
     background: {
       color: '#FFFFFF',
-      imageUrl: opts.mode === 'semantic' ? '' : (raster?.dataUrl ?? page.image_uri ?? ''),
+      // Semantic output must not retain the source page raster: opacity only
+      // hides it visually and render/export paths can still fetch or extract it.
+      imageUrl: opts.mode === 'semantic' ? '' : raster?.dataUrl ?? page.image_uri ?? '',
       // Phase 6B — hybrid demotes the raster to a faint reference underlay (was
       // 0.85, which let the flat raster dominate and ghost the overlays); the
       // reconstruction now leads, with the raster as a dim alignment backdrop.

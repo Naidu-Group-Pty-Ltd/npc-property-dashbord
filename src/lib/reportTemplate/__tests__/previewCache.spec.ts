@@ -67,7 +67,7 @@ describe('makeCanvasRenderKey', () => {
 
 describe('pageWithoutOverlays', () => {
   it('removes overlay content from the iframe render input without mutating the page', () => {
-    const overlay = { ...ov('o1'), rich: true, text: '<script>malicious()</script>' } as Overlay;
+    const overlay = { ...ov('o1'), rich: true, text: '<script>malicious()</script>' } as unknown as Overlay;
     const page = pg('p1', [blk('b1', 'free', [overlay])]);
 
     const renderPage = pageWithoutOverlays(page);

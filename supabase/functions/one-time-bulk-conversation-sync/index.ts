@@ -1,11 +1,16 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import {
+  createCorsHeaders,
+  createForbiddenResponse,
+  createUnauthorizedResponse,
+  verifyAuth,
+} from '../_shared/auth.ts';
+import { actorIsSuperadmin } from '../_shared/authz.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 
 const GHL_API_BASE = 'https://services.leadconnectorhq.com';
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+const MAX_BATCH_SIZE = 100;
 
 function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -59,9 +64,21 @@ function mapContentType(contentType: string | undefined): string {
 }
 
 Deno.serve(async (req) => {
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
+
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
+
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Allow': 'POST' },
+    });
+  }
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   const startTime = Date.now();
 
@@ -79,8 +96,30 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
     const body = await req.json().catch(() => ({}));
-    const batchSize = body.batchSize || 50;
-    const offset = body.offset || 0;
+
+    // This endpoint brokers service-role database access and expensive GHL
+    // requests. Authenticate and authorize before starting either operation.
+    const auth = await verifyAuth(supabase, req.headers, body);
+    if (auth.error || !auth.userId) {
+      return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
+    }
+    if (auth.userId !== 'service_role' && !(await actorIsSuperadmin(supabase, auth.userId))) {
+      return createForbiddenResponse('Superadmin access required', corsHeaders);
+    }
+
+    const requestedBatchSize = Number(body.batchSize ?? 50);
+    const requestedOffset = Number(body.offset ?? 0);
+    if (!Number.isInteger(requestedBatchSize) || requestedBatchSize < 1 || requestedBatchSize > MAX_BATCH_SIZE ||
+        !Number.isInteger(requestedOffset) || requestedOffset < 0) {
+      return new Response(JSON.stringify({
+        error: `batchSize must be an integer between 1 and ${MAX_BATCH_SIZE}; offset must be a non-negative integer`,
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    const batchSize = requestedBatchSize;
+    const offset = requestedOffset;
 
     const ghlHeaders = {
       'Authorization': `Bearer ${apiKey}`,
@@ -241,8 +280,9 @@ Deno.serve(async (req) => {
     const elapsed = Math.round((Date.now() - startTime) / 1000);
     console.log(`[bulk-sync] Done in ${elapsed}s: ${processed} clients, ${totalConversations} convos, ${totalMessages} msgs`);
 
-    // Surface a Command Center notification so the sync isn't silent.
-    try {
+    // Surface completion only to the initiating human administrator. Internal
+    // jobs have no user recipient and must never create broadcast rows.
+    if (auth.userId !== 'service_role') try {
       const errorSuffix = errors.length > 0 ? ` (${errors.length} client${errors.length === 1 ? '' : 's'} had errors)` : '';
       const { error: notifyError } = await supabase
         .from('notifications')
@@ -251,6 +291,7 @@ Deno.serve(async (req) => {
           title: 'Conversation sync completed',
           message: `Synced ${totalConversations} conversation${totalConversations === 1 ? '' : 's'} and ${totalMessages} message${totalMessages === 1 ? '' : 's'} across ${processed} client${processed === 1 ? '' : 's'} in ${elapsed}s${errorSuffix}.`,
           read: false,
+          target_user_id: auth.userId,
         });
       if (notifyError) console.error('[bulk-sync] Failed to insert completion notification:', notifyError.message);
     } catch (notifyErr: any) {

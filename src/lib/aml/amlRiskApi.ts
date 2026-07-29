@@ -75,6 +75,32 @@ export type AmlGateStatus = {
   };
 };
 
+/** Phase 8 — analyst recommendation (§12.8). */
+export type AmlAnalystRecommendation = {
+  id: string; case_id: string; assessment_id: string | null;
+  recommended_outcome: "cleared" | "cleared_with_conditions" | "edd_required" | "escalated" | "blocked";
+  rationale: string; status: "pending" | "superseded" | "actioned";
+  actioned_decision_id: string | null; created_by: string; created_at: string;
+};
+
+/** Phase 8 — service-gate contract (Appendix C.4). */
+export type AmlServiceGateContract = {
+  status: string;
+  effective_at: string | null;
+  conditions: Array<{ id?: string; label: string; status?: string }>;
+  decision_id: string | null;
+  approved_by: string | null;
+  policy_version: string | null;
+  audit_event_id: string | null;
+  reason: string | null;
+};
+
+export type AmlRecalcStatus = {
+  stale: boolean;
+  reasons: string[];
+  latest_assessment_at: string | null;
+};
+
 async function invoke<T = any>(payload: Record<string, any>): Promise<T> {
   return invokeAmlFunction<T>("aml-risk", payload);
 }
@@ -90,7 +116,7 @@ export const amlRiskApi = {
   listAssessments: (case_id: string) => invoke<{ assessments: AmlRiskAssessment[] }>({ op: "list_assessments", case_id }),
 
 
-  requestOverride: (p: { case_id: string; assessment_id?: string; requested_reason: string; requested_rating?: string }) =>
+  requestOverride: (p: { case_id: string; assessment_id?: string; requested_reason: string; requested_rating?: string; evidence: string }) =>
     invoke<{ override: AmlRiskOverride }>({ op: "request_override", ...p }),
   resolveOverride: (override_id: string, status: "approved" | "rejected", reviewer_note?: string) =>
     invoke<{ override: AmlRiskOverride }>({ op: "resolve_override", override_id, status, reviewer_note }),
@@ -106,6 +132,18 @@ export const amlRiskApi = {
     invoke<{ approvals: AmlApproval[] }>({ op: "list_approvals", ...p }),
   resolveApproval: (approval_id: string, status: "approved" | "rejected", note?: string) =>
     invoke<{ approval: AmlApproval }>({ op: "resolve_approval", approval_id, status, note }),
+
+  // Phase 8 — recommendation → decision → service-gate loop (§12.8, C.4)
+  recommend: (p: { case_id: string; recommended_outcome: AmlAnalystRecommendation["recommended_outcome"]; rationale: string; assessment_id?: string }) =>
+    invoke<{ recommendation: AmlAnalystRecommendation }>({ op: "recommend", ...p }),
+  listRecommendations: (case_id: string) =>
+    invoke<{ recommendations: AmlAnalystRecommendation[] }>({ op: "list_recommendations", case_id }),
+  setServiceGate: (p: { case_id: string; status: string; reason: string }) =>
+    invoke<{ gate: AmlServiceGateContract & { id?: string } }>({ op: "set_service_gate", ...p }),
+  gateContract: (case_id: string) =>
+    invoke<{ gate: AmlServiceGateContract }>({ op: "gate_contract", case_id }),
+  recalcStatus: (case_id: string) =>
+    invoke<{ recalc: AmlRecalcStatus }>({ op: "recalc_status", case_id }),
 
   listConditions: (case_id: string) => invoke<{ conditions: AmlCaseCondition[] }>({ op: "list_conditions", case_id }),
   upsertCondition: (condition: Partial<AmlCaseCondition> & { case_id: string; label: string }) =>

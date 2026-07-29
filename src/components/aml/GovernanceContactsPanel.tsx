@@ -177,7 +177,7 @@ export function GovernanceContactsPanel() {
                     )}
                   </CardTitle>
                   {isDirty && (
-                    <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-500">
+                    <Badge variant="outline" className="text-[10px] border-warning/40 text-warning">
                       Unsaved
                     </Badge>
                   )}

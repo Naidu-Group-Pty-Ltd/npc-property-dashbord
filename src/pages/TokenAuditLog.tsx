@@ -16,14 +16,12 @@ import { TokenEventDetailsDrawer } from "@/components/billing/TokenEventDetailsD
 interface AuditRow {
   id: string;
   created_at: string;
-  event: "reserve" | "commit" | "cancel" | string;
+  event: "reserve" | "commit" | "hold" | "release" | "cancel" | string;
   user_id: string | null;
   function_name: string | null;
   kind: string | null;
   idempotency_key: string;
   job_id: string | null;
-  requested_tokens: number;
-  reserved_tokens: number;
   used_tokens: number;
   available_tokens: number;
   status: string | null;
@@ -37,9 +35,14 @@ function EventBadge({ event }: { event: string }) {
       ? "border-brand-500/25 bg-brand-500/10 text-brand-700 dark:text-brand-300"
       : event === "commit"
         ? "border-success/25 bg-success/10 text-success dark:text-success"
-        : event === "cancel"
-          ? "border-destructive/25 bg-destructive/10 text-destructive"
-          : "border-border/70 bg-muted/60 text-muted-foreground";
+        // A chunk of a multi-call generation landed; the reservation is still
+        // open and nothing has been charged.
+        : event === "hold"
+          ? "border-primary/25 bg-primary/10 text-primary"
+          // The run failed: reservation canceled, or an earlier commit refunded.
+          : event === "release" || event === "cancel"
+            ? "border-destructive/25 bg-destructive/10 text-destructive"
+            : "border-border/70 bg-muted/60 text-muted-foreground";
 
   return (
     <Badge variant="outline" className={cn("max-w-full rounded-full px-2.5 py-0.5 capitalize", className)} title={event}>
@@ -65,20 +68,17 @@ function OutcomeBadge({ status, error }: { status: string | null; error: string 
 }
 
 function TokenSummary({ row }: { row: AuditRow }) {
+  // Only what was charged. The requested amount and the reservation are
+  // internal metering mechanics — they told an operator nothing they could act
+  // on, and three near-identical numbers per row made the real one hard to find.
   return (
-    <div className="grid min-w-0 grid-cols-3 gap-1 text-right text-[11px]" aria-label={`Requested ${row.requested_tokens.toLocaleString()}, reserved ${row.reserved_tokens.toLocaleString()}, used ${row.used_tokens.toLocaleString()} tokens`}>
-      <div className="min-w-0 rounded-lg bg-muted/35 px-1.5 py-1">
-        <span className="block truncate text-muted-foreground">Req</span>
-        <span className="block truncate font-medium tabular-nums text-foreground" title={`${row.requested_tokens}`}>{row.requested_tokens.toLocaleString()}</span>
-      </div>
-      <div className="min-w-0 rounded-lg bg-brand-500/10 px-1.5 py-1">
-        <span className="block truncate text-brand-700/80 dark:text-brand-300/80">Res</span>
-        <span className="block truncate font-semibold tabular-nums text-brand-700 dark:text-brand-300" title={`${row.reserved_tokens}`}>{row.reserved_tokens.toLocaleString()}</span>
-      </div>
-      <div className="min-w-0 rounded-lg bg-success/10 px-1.5 py-1">
-        <span className="block truncate text-success/80 dark:text-success/80">Used</span>
-        <span className="block truncate font-semibold tabular-nums text-success dark:text-success" title={`${row.used_tokens}`}>{row.used_tokens.toLocaleString()}</span>
-      </div>
+    <div
+      className="text-right text-sm"
+      aria-label={`Used ${row.used_tokens.toLocaleString()} tokens`}
+    >
+      <span className="font-semibold tabular-nums text-foreground" title={`${row.used_tokens}`}>
+        {row.used_tokens.toLocaleString()}
+      </span>
     </div>
   );
 }
@@ -141,7 +141,7 @@ function AuditEventMobileCard({ row, userLabel, isOpen, onOpen }: { row: AuditRo
 const PREMIUM_SCROLLBAR = "[scrollbar-color:hsl(var(--primary)/0.35)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-primary/35 [&::-webkit-scrollbar-track]:bg-transparent";
 
 const EVENT_STATES = [
-  { label: "Reserve", description: "Holds estimated Mission Control tokens before a job runs.", icon: RotateCcw, tone: "border-brand-500/20 bg-brand-500/10 text-brand-700 dark:text-brand-300" },
+  { label: "Reserve", description: "Holds Mission Control tokens before a job runs.", icon: RotateCcw, tone: "border-brand-500/20 bg-brand-500/10 text-brand-700 dark:text-brand-300" },
   { label: "Commit", description: "Finalises actual token usage after successful completion.", icon: CheckCircle2, tone: "border-success/20 bg-success/10 text-success dark:text-success" },
   { label: "Cancel", description: "Releases a reservation when work is cancelled or fails safely.", icon: XCircle, tone: "border-destructive/20 bg-destructive/10 text-destructive" },
 ] as const;
@@ -185,11 +185,15 @@ export default function TokenAuditLog() {
   const eventCounts = useMemo(() => {
     return rows.reduce(
       (acc, row) => {
-        if (row.event === "reserve" || row.event === "commit" || row.event === "cancel") acc[row.event] += 1;
+        if (row.event === "reserve") acc.reserve += 1;
+        else if (row.event === "commit") acc.commit += 1;
+        else if (row.event === "hold") acc.hold += 1;
+        // `cancel` is the pre-release event name; both mean "not charged".
+        else if (row.event === "release" || row.event === "cancel") acc.released += 1;
         if (row.error_message) acc.errors += 1;
         return acc;
       },
-      { reserve: 0, commit: 0, cancel: 0, errors: 0 },
+      { reserve: 0, commit: 0, hold: 0, released: 0, errors: 0 },
     );
   }, [rows]);
 
@@ -280,7 +284,9 @@ export default function TokenAuditLog() {
                       <SelectItem value="all">All events</SelectItem>
                       <SelectItem value="reserve">Reserve</SelectItem>
                       <SelectItem value="commit">Commit</SelectItem>
-                      <SelectItem value="cancel">Cancel</SelectItem>
+                      <SelectItem value="hold">Held (chunk)</SelectItem>
+                      <SelectItem value="release">Released</SelectItem>
+                      <SelectItem value="cancel">Cancel (legacy)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -315,11 +321,12 @@ export default function TokenAuditLog() {
               </div>
             </DashboardThemeFrame>
 
-            <div className="grid min-w-0 gap-3 md:grid-cols-4" aria-label="Token audit event totals">
+            <div className="grid min-w-0 gap-3 sm:grid-cols-2 md:grid-cols-5" aria-label="Token audit event totals">
               {[
                 { label: "Reserve", value: eventCounts.reserve, className: "border-brand-500/20 bg-brand-500/10 text-brand-700 dark:text-brand-300" },
                 { label: "Commit", value: eventCounts.commit, className: "border-success/20 bg-success/10 text-success dark:text-success" },
-                { label: "Cancel", value: eventCounts.cancel, className: "border-destructive/20 bg-destructive/10 text-destructive" },
+                { label: "Held", value: eventCounts.hold, className: "border-primary/20 bg-primary/10 text-primary" },
+                { label: "Released", value: eventCounts.released, className: "border-destructive/20 bg-destructive/10 text-destructive" },
                 { label: "Errors", value: eventCounts.errors, className: "border-primary/20 bg-primary/10 text-primary" },
               ].map((item) => (
                 <div key={item.label} className={cn("rounded-3xl border px-4 py-3 shadow-sm", item.className)}>
@@ -471,7 +478,7 @@ export default function TokenAuditLog() {
                         <TableHead className="w-[210px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">User</TableHead>
                         <TableHead className="w-[230px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Function / kind</TableHead>
                         <TableHead className="w-[280px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Idempotency key</TableHead>
-                        <TableHead className="w-[180px] py-3 text-right text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Tokens</TableHead>
+                        <TableHead className="w-[120px] py-3 text-right text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Used</TableHead>
                         <TableHead className="w-[120px] py-3 text-right text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Available</TableHead>
                         <TableHead className="w-[220px] py-3 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Status / outcome</TableHead>
                       </TableRow>
@@ -483,7 +490,7 @@ export default function TokenAuditLog() {
                           ? "amber"
                           : r.event === "commit"
                             ? "emerald"
-                            : r.event === "cancel"
+                            : r.event === "release" || r.event === "cancel"
                               ? "destructive"
                               : "primary";
                         return (

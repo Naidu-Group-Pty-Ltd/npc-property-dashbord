@@ -31,6 +31,19 @@ const templateWithRasterRef = () => ({
   slots: {},
 });
 
+const templateWithQr = (data: string) => ({
+  version: 1,
+  tokens: { colors: {}, fonts: {}, spacing: {} },
+  pages: [{
+    id: 'page-1',
+    name: 'Page 1',
+    size: { width: 595, height: 842 },
+    background: {},
+    blocks: [{ id: 'qr-1', type: 'qr', props: { data, size: 120 }, overlays: [] }],
+  }],
+  slots: {},
+});
+
 describe('preloadImages raster references', () => {
   beforeEach(() => {
     rasterRefs.reset();
@@ -50,5 +63,30 @@ describe('preloadImages raster references', () => {
     const second = await preloadImages(templateWithRasterRef() as any);
     expect(rasterRefs.resolveRasterRefUrl).toHaveBeenCalledTimes(2);
     expect(second.pages[0].background.imageUrl).toMatch(/^data:image\/png;base64,/);
+  });
+});
+
+describe('preloadImages QR bindings', () => {
+  it('leaves bindable QR data for local rendering without contacting a QR service', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await preloadImages(templateWithQr('{{client.portalUrl}}') as any);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.pages[0].blocks[0].props).toEqual({
+      data: '{{client.portalUrl}}',
+      size: 120,
+    });
+  });
+
+  it('leaves literal QR data for local rendering without contacting a QR service', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await preloadImages(templateWithQr('https://portal.example/client/123') as any);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.pages[0].blocks[0].props.qrUrl).toBeUndefined();
   });
 });

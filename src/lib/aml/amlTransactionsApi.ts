@@ -71,6 +71,12 @@ export interface AmlCounterpartyCase {
   metadata: Record<string, any>;
   created_at: string;
   updated_at: string;
+  // Phase 9 (§12.5) — set only via the dedicated audited ops
+  delayed_cdd_deadline?: string | null;
+  delayed_cdd_justification?: string | null;
+  uncooperative?: boolean;
+  uncooperative_marked_at?: string | null;
+  uncooperative_reason?: string | null;
 }
 
 export interface AmlCounterpartyRequest {
@@ -196,4 +202,10 @@ export const amlTransactionsApi = {
     invoke<{ obligation: AmlTransactionObligation }>({ op: "link_obligation_report", id, report_id }),
   counterpartyCddSummary: (case_id: string) =>
     invoke<{ summary: AmlCounterpartyCddSummary }>({ op: "counterparty_cdd_summary", case_id }),
+
+  // Phase 9 — delayed CDD + uncooperative-counterparty record (§12.5)
+  setDelayedCdd: (p: { id: string; deadline: string; justification: string }) =>
+    invoke<{ counterparty_case: AmlCounterpartyCase }>({ op: "set_delayed_cdd", ...p }),
+  markUncooperative: (p: { id: string; reason: string }) =>
+    invoke<{ counterparty_case: AmlCounterpartyCase }>({ op: "mark_uncooperative", ...p }),
 };

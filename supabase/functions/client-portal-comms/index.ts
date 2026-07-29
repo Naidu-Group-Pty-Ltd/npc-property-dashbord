@@ -15,6 +15,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders } from '../_shared/auth.ts';
 
+const CLIENT_VISIBLE_GHL_CHANNELS = ['sms', 'whatsapp', 'email'];
+
 function extractPortalToken(headers: Headers, body?: any): string | null {
   return (
     headers.get('x-portal-session-token') ||
@@ -128,7 +130,8 @@ Deno.serve(async (req) => {
         supabase
           .from('ghl_conversations')
           .select('id, channel_type')
-          .eq('client_id', clientId),
+          .eq('client_id', clientId)
+          .in('channel_type', CLIENT_VISIBLE_GHL_CHANNELS),
         supabase
           .from('finance_outbound_messages')
           .select('id, channel, body, subject, status, read_at, delivered_at, created_at, provider_message_id')
@@ -165,6 +168,7 @@ Deno.serve(async (req) => {
           .from('ghl_conversation_messages')
           .select('id, ghl_message_id, direction, channel_type, body, sender_name, ghl_date_added, created_at')
           .in('conversation_id', convIds)
+          .in('channel_type', CLIENT_VISIBLE_GHL_CHANNELS)
           .order('ghl_date_added', { ascending: false })
           .limit(limit);
         ghlMsgs = msgs ?? [];

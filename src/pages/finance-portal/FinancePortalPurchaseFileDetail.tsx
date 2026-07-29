@@ -44,6 +44,7 @@ import { NudgeSequencesPanel } from '@/components/finance-portal/NudgeSequencesP
 
 import { NpcHandoffCard } from '@/components/finance-portal/NpcHandoffCard';
 import { LimitedAmlStatusCard } from '@/components/finance-portal/LimitedAmlStatusCard';
+import { AmlFinanceRequestsCard } from '@/components/finance-portal/AmlFinanceRequestsCard';
 import { EntityCommentsThread } from '@/components/finance-portal/EntityCommentsThread';
 import { DealTypeFieldsCard } from '@/components/finance-portal/DealTypeFieldsCard';
 import { LenderPacketHistoryCard } from '@/components/finance-portal/LenderPacketHistoryCard';
@@ -357,6 +358,7 @@ export default function FinancePortalPurchaseFileDetail() {
               <NpcHandoffCard purchaseFileId={fileId!} />
               <LimitedAmlStatusCard purchaseFileId={fileId!} clientId={data.client_id} />
             </div>
+            <AmlFinanceRequestsCard purchaseFileId={fileId!} />
             <EntityCommentsThread purchaseFileId={fileId!} entityType="purchase_file" title="File comments" />
             <NudgeSequencesPanel purchaseFileId={fileId!} clientId={data.client_id} />
           </div>

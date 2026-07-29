@@ -3,8 +3,9 @@
  *
  * Autosaved editor state is kept in IndexedDB (chosen over localStorage so large
  * imported templates with embedded images don't blow the ~5MB synchronous quota).
- * One draft is stored per template id; the base server version it was branched
- * from is recorded so recovery can warn when the server has since moved on.
+ * One draft is stored per authenticated user and template id; the base server
+ * version it was branched from is recorded so recovery can warn when the server
+ * has since moved on.
  *
  * The store degrades gracefully: if IndexedDB is unavailable (SSR, private mode,
  * blocked) every operation becomes a safe no-op rather than throwing.
@@ -13,9 +14,11 @@ import { type ReportTemplate } from './templateSchema';
 
 const DB_NAME = 'template-builder';
 const STORE_NAME = 'drafts';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface TemplateDraft {
+  /** Authenticated user that owns this browser-local draft. */
+  ownerId: string;
   templateId: string;
   /** The server `version` the draft was based on when first autosaved. */
   baseServerVersion: number;
@@ -34,6 +37,15 @@ export interface TemplateDraft {
   schema: ReportTemplate;
 }
 
+interface StoredTemplateDraft extends TemplateDraft {
+  draftKey: string;
+}
+
+/** A collision-safe, user-scoped key for browser-local draft records. */
+export function makeTemplateDraftKey(ownerId: string, templateId: string): string {
+  return JSON.stringify([ownerId, templateId]);
+}
+
 /** Fields that participate in the draft-vs-server comparison. */
 export interface DraftComparableFields {
   name: string;
@@ -50,7 +62,7 @@ export interface DraftComparableFields {
 /**
  * Canonical serialization used to decide whether a draft differs from the saved
  * server copy. Pure and deterministic so the recovery decision is unit-testable.
- * Only content fields are included — `savedAt`, `templateId` and
+ * Only content fields are included — `savedAt`, `ownerId`, `templateId` and
  * `baseServerVersion` are deliberately excluded.
  */
 export function makeDraftSignature(fields: DraftComparableFields): string {
@@ -116,9 +128,10 @@ function openDb(): Promise<IDBDatabase | null> {
     }
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME, { keyPath: 'templateId' });
-      }
+      // Version 1 records were keyed only by template id and cannot be safely
+      // attributed to a user. Drop them rather than exposing them after login.
+      if (db.objectStoreNames.contains(STORE_NAME)) db.deleteObjectStore(STORE_NAME);
+      db.createObjectStore(STORE_NAME, { keyPath: 'draftKey' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => resolve(null);
@@ -152,18 +165,40 @@ function runTx<T>(
 }
 
 export async function saveTemplateDraft(draft: TemplateDraft): Promise<void> {
-  await runTx('readwrite', (store) => store.put(draft) as IDBRequest<IDBValidKey>);
+  if (!draft.ownerId || !draft.templateId) return;
+  const stored: StoredTemplateDraft = {
+    ...draft,
+    draftKey: makeTemplateDraftKey(draft.ownerId, draft.templateId),
+  };
+  await runTx('readwrite', (store) => store.put(stored) as IDBRequest<IDBValidKey>);
 }
 
-export async function loadTemplateDraft(templateId: string): Promise<TemplateDraft | null> {
-  return runTx<TemplateDraft>('readonly', (store) => store.get(templateId) as IDBRequest<TemplateDraft>);
+export async function loadTemplateDraft(ownerId: string, templateId: string): Promise<TemplateDraft | null> {
+  if (!ownerId || !templateId) return null;
+  const stored = await runTx<StoredTemplateDraft>(
+    'readonly',
+    (store) => store.get(makeTemplateDraftKey(ownerId, templateId)) as IDBRequest<StoredTemplateDraft>,
+  );
+  if (!stored) return null;
+  const { draftKey: _draftKey, ...draft } = stored;
+  return draft;
 }
 
-export async function deleteTemplateDraft(templateId: string): Promise<void> {
-  await runTx('readwrite', (store) => store.delete(templateId) as IDBRequest<undefined>);
+export async function deleteTemplateDraft(ownerId: string, templateId: string): Promise<void> {
+  if (!ownerId || !templateId) return;
+  await runTx(
+    'readwrite',
+    (store) => store.delete(makeTemplateDraftKey(ownerId, templateId)) as IDBRequest<undefined>,
+  );
 }
 
-export async function listTemplateDrafts(): Promise<TemplateDraft[]> {
-  const result = await runTx<TemplateDraft[]>('readonly', (store) => store.getAll() as IDBRequest<TemplateDraft[]>);
-  return result ?? [];
+export async function listTemplateDrafts(ownerId: string): Promise<TemplateDraft[]> {
+  if (!ownerId) return [];
+  const result = await runTx<StoredTemplateDraft[]>(
+    'readonly',
+    (store) => store.getAll() as IDBRequest<StoredTemplateDraft[]>,
+  );
+  return (result ?? [])
+    .filter((draft) => draft.ownerId === ownerId)
+    .map(({ draftKey: _draftKey, ...draft }) => draft);
 }

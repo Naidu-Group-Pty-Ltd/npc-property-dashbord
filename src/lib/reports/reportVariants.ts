@@ -15,11 +15,14 @@ export type ReportVariantSource = {
 };
 
 export const REPORT_TYPE_CONFIG: Record<ReportType, { label: string; icon: LucideIcon; order: number; className: string; }> = {
-  compass: { label: 'Compass', icon: Compass, order: 0, className: 'border-violet-400/45 bg-violet-500/15 text-violet-800 hover:bg-violet-500/25 focus-visible:ring-violet-400 dark:text-violet-200' },
-  financial: { label: 'Financial', icon: Calculator, order: 1, className: 'border-emerald-400/45 bg-emerald-500/15 text-emerald-800 hover:bg-emerald-500/25 focus-visible:ring-emerald-400 dark:text-emerald-200' },
-  strategic: { label: 'Strategic', icon: Target, order: 2, className: 'border-amber-400/45 bg-amber-500/15 text-amber-900 hover:bg-amber-500/25 focus-visible:ring-amber-400 dark:text-amber-200' },
-  snapshot: { label: 'Snapshot', icon: Zap, order: 3, className: 'border-cyan-400/45 bg-cyan-500/15 text-cyan-800 hover:bg-cyan-500/25 focus-visible:ring-cyan-400 dark:text-cyan-200' },
-  briefing: { label: 'Briefing', icon: FileText, order: 4, className: 'border-blue-400/45 bg-blue-500/15 text-blue-800 hover:bg-blue-500/25 focus-visible:ring-blue-400 dark:text-blue-200' },
+  // Each variant owns one slot of the categorical chart ramp. ReportVariantControls
+  // renders the same pathways with the same accents, so a variant looks the same
+  // wherever it appears.
+  compass: { label: 'Compass', icon: Compass, order: 0, className: 'border-chart-5/45 bg-chart-5/15 text-foreground hover:bg-chart-5/25 focus-visible:ring-chart-5' },
+  financial: { label: 'Financial', icon: Calculator, order: 1, className: 'border-chart-3/45 bg-chart-3/15 text-foreground hover:bg-chart-3/25 focus-visible:ring-chart-3' },
+  strategic: { label: 'Strategic', icon: Target, order: 2, className: 'border-chart-1/45 bg-chart-1/15 text-foreground hover:bg-chart-1/25 focus-visible:ring-chart-1' },
+  snapshot: { label: 'Snapshot', icon: Zap, order: 3, className: 'border-chart-8/45 bg-chart-8/15 text-foreground hover:bg-chart-8/25 focus-visible:ring-chart-8' },
+  briefing: { label: 'Briefing', icon: FileText, order: 4, className: 'border-chart-7/45 bg-chart-7/15 text-foreground hover:bg-chart-7/25 focus-visible:ring-chart-7' },
   other: { label: 'Other', icon: FileText, order: 99, className: 'border-border bg-muted/50 text-muted-foreground hover:bg-muted focus-visible:ring-ring' },
 };
 

@@ -168,7 +168,7 @@ export function ClientCard({ client, ghlLocationId, onView, onDelete, onSyncComp
     <Card
       className={cn(
         'group relative flex h-full min-h-[20rem] overflow-hidden rounded-3xl border shadow-lg transition-all duration-300 hover:-translate-y-1 hover:shadow-xl focus-within:ring-2 focus-within:ring-brand-300/35',
-        'border-border bg-white text-foreground shadow-stone-200/70 hover:border-brand-300/70',
+        'border-border bg-white text-foreground shadow-foreground/70 hover:border-brand-300/70',
         'dark:border-white/10 dark:bg-[linear-gradient(145deg,rgba(24,24,27,0.96),rgba(3,7,18,0.9))] dark:text-white dark:shadow-black/25 dark:hover:border-brand-400/45 dark:hover:shadow-brand-950/35',
         client.is_favorite && 'ring-2 ring-brand-400/45',
         isSelected && 'border-brand-400/80 ring-2 ring-brand-300/35 dark:shadow-brand-950/40'

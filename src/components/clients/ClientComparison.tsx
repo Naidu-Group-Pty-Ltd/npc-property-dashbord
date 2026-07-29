@@ -184,14 +184,14 @@ export function ClientComparison({ clients }: ClientComparisonProps) {
                 aria-label="Search clients to compare"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="h-12 rounded-2xl border-brand-300/15 bg-muted/45 dark:bg-black/20 pl-11 pr-4 text-sm text-foreground dark:text-white shadow-inner shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 placeholder:text-muted-foreground/80 dark:text-muted-foreground transition-all hover:border-brand-300/30 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950"
+                className="h-12 rounded-2xl border-brand-300/15 bg-muted/45 dark:bg-black/20 pl-11 pr-4 text-sm text-foreground dark:text-white shadow-inner shadow-[0_14px_38px_rgba(15,23,42,0.08)] dark:shadow-black/20 placeholder:text-muted-foreground/80 dark:text-muted-foreground transition-all hover:border-brand-300/30 focus-visible:border-brand-300/55 focus-visible:ring-2 focus-visible:ring-brand-300/30 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
               />
             </div>
             <Button
               variant={showActiveOnly ? 'default' : 'outline'}
               size="sm"
               aria-pressed={showActiveOnly}
-              className={`h-12 shrink-0 gap-2 rounded-2xl px-4 text-sm font-semibold transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-brand-300/40 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${
+              className={`h-12 shrink-0 gap-2 rounded-2xl px-4 text-sm font-semibold transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-brand-300/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
                 showActiveOnly
                   ? 'border-brand-300/30 bg-gradient-to-r from-brand-300 to-brand-500 text-black shadow-lg shadow-brand-500/20 hover:from-brand-200 hover:to-brand-400'
                   : 'border-border/60 dark:border-white/10 bg-background/65 dark:bg-white/[0.035] text-muted-foreground dark:text-foreground hover:border-brand-300/30 hover:bg-brand-300/10 hover:text-brand-700 dark:hover:text-brand-100'

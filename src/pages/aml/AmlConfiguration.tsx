@@ -33,7 +33,7 @@ function fmtMoney(cents: number, currency = "AUD") {
 function healthColor(status: AmlProviderHealth | null): string {
   switch (status) {
     case "ok": return "border-success/40 text-success";
-    case "degraded": return "border-yellow-500/40 text-yellow-500";
+    case "degraded": return "border-warning/40 text-warning";
     case "failing": return "border-destructive/40 text-destructive";
     default: return "border-border text-muted-foreground";
   }
@@ -893,7 +893,7 @@ function MetricsPanel() {
                     <TableCell>{p.calls.toLocaleString()}</TableCell>
                     <TableCell>{p.failures.toLocaleString()}</TableCell>
                     <TableCell>
-                      <span className={p.failure_rate > 0.1 ? "text-destructive" : p.failure_rate > 0.03 ? "text-yellow-500" : "text-success"}>
+                      <span className={p.failure_rate > 0.1 ? "text-destructive" : p.failure_rate > 0.03 ? "text-warning" : "text-success"}>
                         {(p.failure_rate * 100).toFixed(1)}%
                       </span>
                     </TableCell>

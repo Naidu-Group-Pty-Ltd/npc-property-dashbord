@@ -3,7 +3,7 @@ import type { ElementType, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -16,6 +16,8 @@ import { MobileFilterSheet } from '@/components/listings/MobileFilterSheet';
 import { PropertyCard } from '@/components/listings/PropertyCard';
 import { propertyDataService } from '@/services/propertyDataService';
 import { PropertyListing } from '@/lib/airtable';
+import { BulkActionBar } from '@/components/aurixa';
+
 
 
 import { buildFullAddress, extractAUState, extractPostcode } from '@/lib/addressUtils';
@@ -32,7 +34,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { ReportActionMenu } from '@/components/reports/ReportActionMenu';
 import { useReportPreferences, type ReportScope, type ReportTier } from '@/hooks/useReportPreferences';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ListingRowContextMenu } from '@/components/listings/ListingRowContextMenu';
 import { cn } from '@/lib/utils';
 
@@ -74,6 +76,7 @@ const getListingConfidenceBadgeTone = (confidence: number) =>
 const ListingDetailsModal = lazy(() => import('@/components/listings/ListingDetailsModal').then(m => ({ default: m.ListingDetailsModal })));
 const InvestmentReportModal = lazy(() => import('@/components/listings/InvestmentReportModal').then(m => ({ default: m.InvestmentReportModal })));
 const BulkGenerationModal = lazy(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
+const ListingsMapView = lazy(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
 
 // Default empty filter state — keyword always starts blank
 const DEFAULT_FILTERS = {
@@ -97,6 +100,69 @@ const DEFAULT_FILTERS = {
   keywordSearch: '',
   includeNearbySuburbs: false,
 };
+
+type ListingFilters = typeof DEFAULT_FILTERS;
+
+// URL <-> filter serialisation. Only non-default values are written to the URL so
+// links stay clean. Boolean flags are serialised as "1" and view/search live under
+// short keys (`view`, `q`).
+const URL_KEYS_STRING = [
+  'propertyType', 'suburb', 'state', 'zipCode', 'sourceHost', 'agencyName',
+  'priceMin', 'priceMax', 'bedsMin', 'bedsMax', 'bathsMin', 'bathsMax',
+  'carsMin', 'carsMax', 'keywordSearch',
+] as const;
+const URL_KEYS_BOOL = ['hasInspection', 'lowConfidence', 'offMarket', 'includeNearbySuburbs'] as const;
+
+function parseListingsUrlState(params: URLSearchParams): {
+  filters: Partial<ListingFilters>;
+  search: string | null;
+  view: 'list' | 'table' | 'map' | null;
+  hasAny: boolean;
+} {
+  let hasAny = false;
+  const filters: Partial<ListingFilters> = {};
+  for (const key of URL_KEYS_STRING) {
+    const v = params.get(key);
+    if (v !== null && v !== '') {
+      (filters as Record<string, unknown>)[key] = v;
+      hasAny = true;
+    }
+  }
+  for (const key of URL_KEYS_BOOL) {
+    if (params.get(key) === '1') {
+      (filters as Record<string, unknown>)[key] = true;
+      hasAny = true;
+    }
+  }
+  const search = params.get('q');
+  const viewRaw = params.get('view');
+  const view = viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' ? viewRaw : null;
+  if (search !== null) hasAny = true;
+  if (view !== null) hasAny = true;
+  return { filters, search, view, hasAny };
+}
+
+function buildListingsUrlParams(
+  filters: ListingFilters,
+  search: string,
+  view: 'list' | 'table' | 'map',
+  defaultView: 'list' | 'table' | 'map',
+): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const key of URL_KEYS_STRING) {
+    const value = filters[key];
+    const defaultValue = DEFAULT_FILTERS[key];
+    if (typeof value === 'string' && value && value !== defaultValue) {
+      params.set(key, value);
+    }
+  }
+  for (const key of URL_KEYS_BOOL) {
+    if (filters[key]) params.set(key, '1');
+  }
+  if (search) params.set('q', search);
+  if (view !== defaultView) params.set('view', view);
+  return params;
+}
 
 type ListingsStatePanelProps = {
   icon: ElementType;
@@ -183,10 +249,23 @@ export default function Listings() {
   const { canEdit: canEditListings, canDelete: canDeleteListings } = useModulePermissions('listings');
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
-  const [searchQuery, setSearchQuery] = useState('');
   const isMobile = useIsMobile();
-  const [viewMode, setViewMode] = useState<'list' | 'table'>(isMobile ? 'list' : 'table');
-  
+  const defaultViewMode: 'list' | 'table' | 'map' = isMobile ? 'list' : 'table';
+
+  // Snapshot URL state once at mount so we can hydrate filters/search/view before
+  // React writes anything back to the address bar.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialUrlState = useMemo(
+    () => parseListingsUrlState(new URLSearchParams(window.location.search)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  const [searchQuery, setSearchQuery] = useState(() => initialUrlState.search ?? '');
+  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(
+    () => initialUrlState.view ?? defaultViewMode,
+  );
+
   // Listings are locked to the Property Intake Master Airtable base — no other datasets should be exposed here.
   const PROPERTY_INTAKE_TABLE = 'Property Intake Master';
   useEffect(() => {
@@ -210,19 +289,20 @@ export default function Listings() {
 
 
   
-  // Load filters from localStorage — always reset keywordSearch to blank on mount
-  const [filters, setFilters] = useState(() => {
+  // Hydrate filters: URL params win, then localStorage, then defaults. Keyword
+  // still resets on load unless the URL explicitly carries one.
+  const [filters, setFilters] = useState<ListingFilters>(() => {
+    let base: ListingFilters = { ...DEFAULT_FILTERS };
     const savedFilters = localStorage.getItem('listingFilters');
     if (savedFilters) {
       try {
         const parsed = JSON.parse(savedFilters);
-        // Always reset keyword search to blank on page load to prevent stale pre-population
-        return { ...DEFAULT_FILTERS, ...parsed, keywordSearch: '' };
+        base = { ...DEFAULT_FILTERS, ...parsed, keywordSearch: '' };
       } catch (e) {
         console.error('Failed to parse saved filters:', e);
       }
     }
-    return { ...DEFAULT_FILTERS };
+    return { ...base, ...initialUrlState.filters };
   });
 
   const [selectedListing, setSelectedListing] = useState<PropertyListing | null>(null);
@@ -237,18 +317,36 @@ export default function Listings() {
   // Per-row pending scope/tier choice in the picker (controlled)
 
   useEffect(() => {
-    setViewMode(isMobile ? 'list' : 'table');
-  }, [isMobile]);
+    // Only auto-switch on breakpoint change when the URL isn't pinning a view.
+    if (!initialUrlState.view) {
+      setViewMode(isMobile ? 'list' : 'table');
+    }
+  }, [isMobile, initialUrlState.view]);
 
   // Sync global search with local search when component mounts or global search changes
   useEffect(() => {
-    setSearchQuery(globalSearchQuery);
+    if (globalSearchQuery) setSearchQuery(globalSearchQuery);
   }, [globalSearchQuery]);
 
-  // Save filters to localStorage whenever they change
+  // Persist filters + mirror filter/search/view state into the URL so links are
+  // shareable and the map view stays in lockstep with the active filter set.
   useEffect(() => {
     localStorage.setItem('listingFilters', JSON.stringify(filters));
   }, [filters]);
+
+  useEffect(() => {
+    const next = buildListingsUrlParams(filters, searchQuery, viewMode, defaultViewMode);
+    // Preserve unrelated query keys already on the URL.
+    const merged = new URLSearchParams(searchParams);
+    const managed = new Set<string>([...URL_KEYS_STRING, ...URL_KEYS_BOOL, 'q', 'view']);
+    managed.forEach((k) => merged.delete(k));
+    next.forEach((value, key) => merged.set(key, value));
+    if (merged.toString() !== searchParams.toString()) {
+      setSearchParams(merged, { replace: true });
+    }
+    // We intentionally omit searchParams/setSearchParams to avoid write loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters, searchQuery, viewMode, defaultViewMode]);
 
   // Refresh function — bypass cache for explicit user refresh
   const loadListings = useCallback(() => {
@@ -529,6 +627,8 @@ export default function Listings() {
   });
   const hasSearchQuery = searchQuery.trim().length > 0;
   const showListView = viewMode === 'list';
+  const showTableView = viewMode === 'table';
+  const showMapView = viewMode === 'map';
   const emptyStateCopy = hasSearchQuery
     ? {
         icon: Search,
@@ -565,8 +665,8 @@ export default function Listings() {
               <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_14px_rgba(245,158,11,0.55)]" />
               Property Intelligence
             </div>
-            <h1 className="text-3xl font-semibold tracking-[-0.045em] text-foreground md:text-4xl">Listings</h1>
-            <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">Manage and review property listings</p>
+            <h1 className="text-3xl font-semibold tracking-[-0.045em] text-foreground md:text-4xl">Opportunity Marketplace</h1>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">Off-Market · On Market · Builder Opportunities</p>
           </div>
           <Button onClick={loadListings} variant="outline" className={`${LISTINGS_REFRESH_ACTION} gap-2`}>
             <RefreshCw className="h-4 w-4" />
@@ -597,13 +697,14 @@ export default function Listings() {
               Property Intelligence
             </div>
             <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-              <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Listings</h1>
+              <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Opportunity Marketplace</h1>
               <div className="mb-1 inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm backdrop-blur dark:border-white/10 dark:bg-background/45">
                 <Building2 className="h-4 w-4 text-primary" />
                 <span className="tabular-nums">{filteredListings.length} of {listings.length}</span>
                 <span className="font-medium text-muted-foreground">properties</span>
               </div>
             </div>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">Off-Market · On Market · Builder Opportunities</p>
           </div>
           
           <div className="flex w-full flex-wrap items-stretch justify-start gap-3 rounded-[1.35rem] sm:items-center lg:w-auto border border-border/60 bg-background/65 p-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.55),0_10px_30px_rgba(15,23,42,0.06)] backdrop-blur dark:border-white/10 dark:bg-background/40 dark:shadow-black/20 lg:justify-end">
@@ -630,12 +731,23 @@ export default function Listings() {
                 type="button"
                 size="sm"
                 variant="outline"
-                aria-pressed={!showListView}
+                aria-pressed={showTableView}
                 onClick={() => setViewMode('table')}
-                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', !showListView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showTableView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
               >
                 <Table2 className="h-4 w-4" />
                 Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-pressed={showMapView}
+                onClick={() => setViewMode('map')}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showMapView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+              >
+                <MapIcon className="h-4 w-4" />
+                Map
               </Button>
             </div>
 
@@ -757,8 +869,12 @@ export default function Listings() {
         </div>
       </section>
 
-      {/* Content: Cards on Mobile, Table on Desktop */}
-      {showListView ? (
+      {/* Content: Cards on Mobile, Table on Desktop, Map view geocodes on demand */}
+      {showMapView ? (
+        <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
+          <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
+        </Suspense>
+      ) : showListView ? (
         <div className="space-y-3">
           {filteredListings.length === 0 ? (
             <ListingsStatePanel
@@ -1013,57 +1129,37 @@ export default function Listings() {
       )}
 
       {/* Floating Action Bar */}
-      {selectedListings.size > 0 && (
-        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-md md:max-w-lg md:w-auto">
-          <Card className="rounded-2xl border border-primary/30 bg-card/95 shadow-[0_18px_50px_rgba(15,23,42,0.18)] ring-1 ring-primary/10 backdrop-blur dark:border-primary/30 dark:bg-background/90 dark:shadow-black/45">
-            <CardContent className="py-2 px-3 md:py-3 md:px-6">
-              <div className="flex items-center gap-2 md:gap-4">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Checkbox 
-                    checked={selectedListings.size === filteredListings.length}
-                    onCheckedChange={toggleSelectAll}
-                    className="shrink-0"
-                  />
-                  <span className="font-medium text-sm truncate">
-                    {selectedListings.size} selected
-                  </span>
-                </div>
-                
-                <div className="h-6 w-px bg-border shrink-0 hidden md:block" />
-                
-                {canEditListings && (
-                  <Button
-                    onClick={() => setIsBulkGenerationModalOpen(true)}
-                    disabled={selectedListings.size < 2 || selectedListings.size > 10}
-                    size="sm"
-                    className="shrink-0 text-xs md:text-sm"
-                  >
-                    <FileText className="h-4 w-4 md:mr-2" />
-                    <span className="hidden md:inline">Generate Reports</span>
-                  </Button>
-                )}
-                
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedListings(new Set())}
-                  className="shrink-0"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-              
-              {(selectedListings.size < 2 || selectedListings.size > 10) && !isMobile && (
-                <p className="text-xs text-muted-foreground mt-2">
-                  {selectedListings.size < 2 
-                    ? 'Select at least 2 properties to generate bulk reports' 
-                    : 'Maximum 10 properties allowed per bulk generation'}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <BulkActionBar
+        count={selectedListings.size}
+        label={selectedListings.size === 1 ? 'listing selected' : 'listings selected'}
+        onClear={() => setSelectedListings(new Set())}
+        helper={
+          !isMobile && (selectedListings.size < 2 || selectedListings.size > 10)
+            ? selectedListings.size < 2
+              ? 'Select at least 2 properties to generate bulk reports'
+              : 'Maximum 10 properties allowed per bulk generation'
+            : undefined
+        }
+      >
+        <label className="inline-flex items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox
+            checked={selectedListings.size === filteredListings.length && filteredListings.length > 0}
+            onCheckedChange={toggleSelectAll}
+          />
+          <span className="hidden sm:inline">Select all</span>
+        </label>
+        {canEditListings && (
+          <Button
+            onClick={() => setIsBulkGenerationModalOpen(true)}
+            disabled={selectedListings.size < 2 || selectedListings.size > 10}
+            size="sm"
+          >
+            <FileText className="h-4 w-4 sm:mr-2" />
+            <span className="hidden sm:inline">Generate Reports</span>
+          </Button>
+        )}
+      </BulkActionBar>
     </div>
   );
 }
+

@@ -55,14 +55,14 @@ interface MobileSidebarProps {
 const navigationItems = [
   { title: 'Overview', url: '/', icon: Home, moduleKey: 'overview' },
   { title: 'Market Updates', url: '/market-updates', icon: Newspaper, moduleKey: '__always__' },
-  { title: 'Listings', url: '/listings', icon: Building2, moduleKey: 'listings' },
+  { title: 'Opportunity Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings' },
   { title: 'Commercial / Industrial', url: '/commercial', icon: Building2, moduleKey: '__always__' },
   { title: 'Calendar', url: '/calendar', icon: Calendar, moduleKey: 'calendar' },
   { title: 'Reports', url: '/reports', icon: BarChart3, moduleKey: 'reports' },
   { title: 'Quantitative Reports', url: '/quantitative-reports', icon: BarChart3, moduleKey: 'generated_reports' },
   { title: 'Generated Reports', url: '/generated-reports', icon: FileText, moduleKey: 'generated_reports' },
   { title: 'Cash Flow Analysis', url: '/cash-flow-analysis', icon: Activity, moduleKey: 'cash_flow' },
-  { title: 'Report Q&A', url: '/report-qa', icon: MessageSquareText, moduleKey: 'report_qa' },
+  { title: 'Aurixa Intelligence Hub', url: '/report-qa', icon: MessageSquareText, moduleKey: 'report_qa' },
   { title: 'Email Copilot', url: '/email-copilot', icon: Sparkles, moduleKey: 'email_copilot' },
   { title: 'Call Logs', url: '/call-logs', icon: Phone, moduleKey: 'call_logs' },
   { title: 'Portal Messages', url: '/messages', icon: Inbox, moduleKey: '__always__' },
@@ -85,11 +85,11 @@ const navigationItems = [
 const navigationGroups = [
   {
     title: 'Main Dashboard',
-    itemTitles: ['Overview', 'Market Updates', 'Listings', 'Commercial / Industrial', 'Calendar'],
+    itemTitles: ['Overview', 'Market Updates', 'Opportunity Marketplace', 'Commercial / Industrial', 'Calendar'],
   },
   {
     title: 'Reports & Analysis',
-    itemTitles: ['Reports', 'Quantitative Reports', 'Generated Reports', 'Cash Flow Analysis', 'Report Q&A', 'Portfolio Reports', 'Report Requests', 'Charts'],
+    itemTitles: ['Reports', 'Quantitative Reports', 'Generated Reports', 'Cash Flow Analysis', 'Aurixa Intelligence Hub', 'Portfolio Reports', 'Report Requests', 'Charts'],
   },
   {
     title: 'Client & CRM',
@@ -108,7 +108,7 @@ const navigationGroups = [
 const adminGroup = {
   title: 'Administration',
   itemTitles: [
-    'Automation',
+    'Auto Report Generation',
     'Templates',
     'Branding',
     'Integrations',
@@ -124,7 +124,7 @@ const adminGroup = {
     'Settings',
     'User Management',
     'Finance Portal',
-    'Portal Config',
+    'Client Portal',
     'Token Audit Log',
     'PDF Import Engine',
     'PDF Import Diagnostics',
@@ -135,7 +135,7 @@ const adminGroup = {
 };
 
 const adminItems = [
-  { title: 'Automation', url: '/automation', icon: Zap, moduleKey: 'automation' },
+  { title: 'Auto Report Generation', url: '/automation', icon: Zap, moduleKey: 'automation' },
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates' },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations' },
@@ -151,7 +151,7 @@ const adminItems = [
   { title: 'Settings', url: '/settings', icon: Settings, moduleKey: 'settings' },
   { title: 'User Management', url: '/admin/users', icon: Users, moduleKey: 'user_management' },
   { title: 'Finance Portal', url: '/admin/finance-portal', icon: ShieldCheck, moduleKey: 'finance_portal_admin' },
-  { title: 'Portal Config', url: '/portal-config', icon: Globe, moduleKey: 'portal_config' },
+  { title: 'Client Portal', url: '/portal-config', icon: Globe, moduleKey: 'portal_config' },
   { title: 'Token Audit Log', url: '/admin/token-audit', icon: Coins, moduleKey: '__superadmin_only__' },
   { title: 'PDF Import Engine', url: '/admin/pdf-import-engine', icon: Cpu, moduleKey: '__superadmin_only__' },
   { title: 'PDF Import Diagnostics', url: '/admin/pdf-import-diagnostics', icon: Activity, moduleKey: '__superadmin_only__' },

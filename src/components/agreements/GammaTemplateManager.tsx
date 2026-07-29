@@ -263,7 +263,7 @@ export default function GammaTemplateManager() {
                     <div className="flex flex-wrap items-center gap-2.5">
                       <span className="text-sm font-bold tracking-[-0.01em] text-foreground transition-colors group-hover:text-brand-700 sm:text-base dark:group-hover:text-brand-100">{t.name}</span>
                     {t.is_default && (
-                      <Badge variant="default" className="gap-1 rounded-full border border-brand-200/70 bg-[linear-gradient(135deg,hsl(48_96%_89%),hsl(43_84%_52%)_48%,hsl(35_92%_48%))] px-2.5 py-1 text-[0.68rem] font-black uppercase tracking-[0.12em] text-foreground shadow-[0_10px_24px_hsl(43_84%_52%/0.28),inset_0_1px_0_rgba(255,255,255,0.72)] dark:border-brand-100/35 dark:shadow-[0_10px_28px_rgba(251,191,36,0.18),inset_0_1px_0_rgba(255,255,255,0.35)]"><Sparkles className="h-3 w-3 fill-slate-950/20" />Default</Badge>
+                      <Badge variant="default" className="gap-1 rounded-full border border-brand-200/70 bg-[linear-gradient(135deg,hsl(48_96%_89%),hsl(43_84%_52%)_48%,hsl(35_92%_48%))] px-2.5 py-1 text-[0.68rem] font-black uppercase tracking-[0.12em] text-foreground shadow-[0_10px_24px_hsl(43_84%_52%/0.28),inset_0_1px_0_rgba(255,255,255,0.72)] dark:border-brand-100/35 dark:shadow-[0_10px_28px_rgba(251,191,36,0.18),inset_0_1px_0_rgba(255,255,255,0.35)]"><Sparkles className="h-3 w-3 fill-foreground/20" />Default</Badge>
                     )}
                     </div>
                     {t.description && <p className="mt-1 max-w-md truncate text-xs text-muted-foreground">{t.description}</p>}

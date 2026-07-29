@@ -55,7 +55,7 @@ const STATUS_COLORS: Record<string, string> = {
   active: 'bg-success',
   lead: 'bg-brand-500',
   prospect: 'bg-info',
-  inactive: 'bg-zinc-400',
+  inactive: 'bg-muted-foreground',
   nurture: 'bg-accent',
   settled: 'bg-success',
   'under contract': 'bg-info',
@@ -769,7 +769,7 @@ export default function FinancePortalClients() {
               </button>
               {statusOptions.map(({ status, count }) => {
                 const isActive = statusFilter === status;
-                const dotColor = STATUS_COLORS[status] || 'bg-zinc-400';
+                const dotColor = STATUS_COLORS[status] || 'bg-muted-foreground';
                 return (
                   <button
                     key={status}
@@ -852,7 +852,7 @@ export default function FinancePortalClients() {
                 const grantedTables = Object.entries(permissions).filter(([_, permission]: any) => permission?.view).length;
                 const totalTables = 12;
                 const status = (record.client?.status || 'active').toLowerCase();
-                const statusColor = STATUS_COLORS[status] || 'bg-zinc-400';
+                const statusColor = STATUS_COLORS[status] || 'bg-muted-foreground';
                 const avatarBg = getAvatarColor(name);
                 const pf = record.active_purchase_file;
                 const pfCount = record.purchase_file_count || 0;

@@ -367,7 +367,7 @@ export default function TemplateBuilderEdit() {
   const draftCheckedKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (!tplRow) return;
-    const key = `${tplRow.id}:${tplRow.version ?? 0}`;
+    const key = `${user.id}:${tplRow.id}:${tplRow.version ?? 0}`;
     if (hydratedKeyRef.current === key) {
       // Same id+version we already loaded — keep local edits intact, but still
       // refresh lightweight metadata flags that don't risk clobbering work.
@@ -612,8 +612,9 @@ export default function TemplateBuilderEdit() {
 
   // ── Local draft autosave + recovery (Phase 3B) ──────────────────────────────
   const buildDraftSnapshot = useCallback((): Omit<TemplateDraft, 'savedAt'> | null => {
-    if (!id) return null;
+    if (!id || !user?.id) return null;
     return {
+      ownerId: user.id,
       templateId: id,
       baseServerVersion: Number(tplRow?.version ?? 1),
       name,
@@ -627,11 +628,11 @@ export default function TemplateBuilderEdit() {
       sampleDataText,
       schema: template,
     };
-  }, [id, tplRow?.version, name, description, reportType, tier, variant, scope, priority, customCss, sampleDataText, template]);
+  }, [id, user?.id, tplRow?.version, name, description, reportType, tier, variant, scope, priority, customCss, sampleDataText, template]);
 
   const { lastLocalSaveAt, setLastLocalSaveAt } = useTemplateDraftAutosave({
     templateId: id,
-    enabled: isDirty && !isLoading && !showDraftRecovery,
+    enabled: Boolean(user?.id) && isDirty && !isLoading && !showDraftRecovery,
     changeKey: currentSignature,
     getDraft: buildDraftSnapshot,
   });
@@ -661,12 +662,12 @@ export default function TemplateBuilderEdit() {
   }, [draftRecovery, applyDraftToEditor]);
 
   const handleDiscardDraft = useCallback(() => {
-    if (id) void deleteTemplateDraft(id);
+    if (user?.id && id) void deleteTemplateDraft(user.id, id);
     setShowDraftRecovery(false);
     setDraftRecovery(null);
     setLastLocalSaveAt(null);
     toast('Local draft discarded');
-  }, [id, setLastLocalSaveAt]);
+  }, [user?.id, id, setLastLocalSaveAt]);
 
   const handleDraftSaveAsBranch = useCallback(() => {
     if (draftRecovery) applyDraftToEditor(draftRecovery);
@@ -676,13 +677,13 @@ export default function TemplateBuilderEdit() {
 
   // On load, surface a recoverable local draft if it differs from the server copy.
   useEffect(() => {
-    if (!tplRow || !id) return;
-    const key = `${tplRow.id}:${tplRow.version ?? 0}`;
+    if (!tplRow || !id || !user?.id) return;
+    const key = `${user.id}:${tplRow.id}:${tplRow.version ?? 0}`;
     if (draftCheckedKeyRef.current === key) return;
     draftCheckedKeyRef.current = key;
     let cancelled = false;
     void (async () => {
-      const draft = await loadTemplateDraft(id);
+      const draft = await loadTemplateDraft(user.id, id);
       if (cancelled || !draft) return;
       const serverSignature = makeDraftSignature({
         name: tplRow.name || '',
@@ -706,13 +707,13 @@ export default function TemplateBuilderEdit() {
         setShowDraftRecovery(true);
       } else {
         // Draft already matches the server — clean it up.
-        void deleteTemplateDraft(id);
+        void deleteTemplateDraft(user.id, id);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [tplRow, id]);
+  }, [tplRow, id, user?.id]);
 
   // ── Mutators + stable selection handlers ────────────────────────────────────
   // Store-backed (rehaul Phase 2 / state refactor): every handler is
@@ -1423,8 +1424,8 @@ export default function TemplateBuilderEdit() {
           // The server copy now matches the editor — drop the local autosave draft.
           // Pre-mark the next version as checked so the post-save refetch doesn't
           // momentarily re-offer recovery for content we just persisted.
-          draftCheckedKeyRef.current = `${id}:${record?.version ?? Number(tplRow?.version ?? 1) + 1}`;
-          void deleteTemplateDraft(id);
+          draftCheckedKeyRef.current = `${user?.id ?? ''}:${id}:${record?.version ?? Number(tplRow?.version ?? 1) + 1}`;
+          if (user?.id) void deleteTemplateDraft(user.id, id);
           setLastLocalSaveAt(null);
           toast.success(snapshot ? 'Saved as new version' : 'Saved');
           // Phase 14 — analytics
@@ -1483,8 +1484,8 @@ export default function TemplateBuilderEdit() {
     // freshest server copy.
     hydratedKeyRef.current = null;
     draftCheckedKeyRef.current = null;
-    if (id) {
-      void deleteTemplateDraft(id);
+    if (user?.id && id) {
+      void deleteTemplateDraft(user.id, id);
       setLastLocalSaveAt(null);
       qc.invalidateQueries({ queryKey: ['report-templates', id] });
     }
@@ -3361,4 +3362,3 @@ export default function TemplateBuilderEdit() {
     </div>
   );
 }
-

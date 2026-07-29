@@ -96,15 +96,12 @@ export default function CashFlowAnalysis() {
   const fetchReports = async (append = false, currentOffset = 0) => {
     try {
       if (append) setLoadingMore(true); else setLoading(true);
-      // IMPORTANT: do not fetch report_content for the list view (very large payload)
+      const pageNumber = Math.floor(currentOffset / PAGE_SIZE) + 1;
       const listOptions: Record<string, any> = {
-        select: 'id, property_address, property_listing_id, created_at, current_version, report_scope, status, manual_overrides, financial_calculations, investment_score, is_archived',
         status: 'completed',
         isArchived: false,
-        orderBy: 'created_at',
-        orderAsc: false,
-        limit: PAGE_SIZE,
-        offset: currentOffset,
+        page: pageNumber,
+        pageSize: PAGE_SIZE,
       };
       if (dateRangeCutoff) {
         listOptions.createdAfter = dateRangeCutoff.toISOString();
@@ -117,8 +114,11 @@ export default function CashFlowAnalysis() {
       if (error) throw new Error(error.message);
 
       const fetched: InvestmentReport[] = data?.reports || [];
-      const reportsWithCashFlowData = fetched.filter(hasRequiredData);
-      setReports(prev => append ? [...prev, ...reportsWithCashFlowData] : reportsWithCashFlowData);
+      // Note: the `library` projection returned by get-investment-reports does not
+      // include manual_overrides or financial_calculations, so we cannot filter by
+      // purchase price here. The full payload (with price/rent) is fetched on click
+      // via openAnalysisForReport(); the modal handles missing figures gracefully.
+      setReports(prev => append ? [...prev, ...fetched] : fetched);
       setBackendOffset(currentOffset + fetched.length);
       setHasMore(fetched.length === PAGE_SIZE);
     } catch (error: any) {

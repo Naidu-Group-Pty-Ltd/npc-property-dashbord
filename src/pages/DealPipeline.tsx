@@ -43,7 +43,7 @@ import type { DealWithClient } from "@/hooks/useAllDeals";
 const pipelineTabTriggerClass = cn(
   "group relative flex h-11 min-w-11 flex-shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[1rem] px-3.5 text-[13px] font-normal text-muted-foreground dark:text-foreground/82 transition-all duration-200",
   "border border-transparent hover:-translate-y-0.5 hover:border-brand-300/40 dark:hover:border-brand-200/20 hover:bg-brand-50/60 dark:hover:bg-white/[0.075] hover:text-brand-800 dark:hover:text-brand-100 hover:shadow-[0_14px_30px_rgba(0,0,0,0.22)]",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:focus-visible:ring-offset-zinc-950",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:focus-visible:ring-offset-background",
   "data-[state=active]:border-brand-100/60 data-[state=active]:bg-[linear-gradient(135deg,#fde68a,#f59e0b_58%,#b45309)] data-[state=active]:font-medium data-[state=active]:text-brand-950",
   "data-[state=active]:shadow-[0_16px_36px_rgba(245,158,11,0.32),inset_0_1px_0_rgba(255,255,255,0.55)] data-[state=active]:hover:text-brand-950 sm:h-12 sm:px-4 sm:text-sm",
 );

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { User, Key, RefreshCw, AlertCircle } from "lucide-react";
+import { User, Key, RefreshCw, AlertCircle, CreditCard } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { validatePassword } from "@/utils/passwordValidation";
@@ -36,6 +36,15 @@ export function ProfileCredentials() {
     role: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Billing contact details. These ride along on the Mission Control handoff
+  // when the user starts a purchase or saves a card, so Stripe's hosted page
+  // opens with their name and email already filled in.
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [savedContact, setSavedContact] = useState({ firstName: "", lastName: "", phone: "" });
+  const [updatingContact, setUpdatingContact] = useState(false);
 
   // Username update
   const [newUsername, setNewUsername] = useState("");
@@ -65,6 +74,15 @@ export function ProfileCredentials() {
           role: data.user.role,
         });
         setNewUsername(data.user.username);
+        const contact = {
+          firstName: data.user.first_name ?? "",
+          lastName: data.user.last_name ?? "",
+          phone: data.user.phone ?? "",
+        };
+        setFirstName(contact.firstName);
+        setLastName(contact.lastName);
+        setPhone(contact.phone);
+        setSavedContact(contact);
       }
     } catch (err) {
       console.error("Failed to fetch profile:", err);
@@ -124,6 +142,44 @@ export function ProfileCredentials() {
       });
     } finally {
       setUpdatingUsername(false);
+    }
+  };
+
+  const handleUpdateContact = async () => {
+    setUpdatingContact(true);
+    try {
+      const { data } = await invokeSecureFunction("admin-user-management", {
+        action: "update_own_profile",
+        first_name: firstName.trim(),
+        last_name: lastName.trim(),
+        phone: phone.trim(),
+      });
+
+      if (data?.success) {
+        setSavedContact({
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          phone: phone.trim(),
+        });
+        toast({
+          title: "Contact Details Saved",
+          description: "Checkout and card forms will be prefilled with these details.",
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: data?.error || "Failed to save contact details.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Failed to save contact details. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingContact(false);
     }
   };
 
@@ -205,7 +261,7 @@ export function ProfileCredentials() {
           Profile & Credentials
         </CardTitle>
         <CardDescription className="max-w-2xl break-words leading-6">
-          Update your username and password
+          Update your contact details, username and password
         </CardDescription>
       </CardHeader>
       <CardContent className="min-w-0 space-y-6">
@@ -239,6 +295,81 @@ export function ProfileCredentials() {
                       .replace(/\b\w/g, (l) => l.toUpperCase())}
             </span>
           </div>
+        </div>
+
+        <Separator />
+
+        {/* Billing contact — prefills Stripe checkout */}
+        <div className={settingsCx(settingsPanelClass, "space-y-4")}>
+          <h4 className="flex min-w-0 items-center gap-2 text-sm font-semibold">
+            <CreditCard className="h-4 w-4" />
+            Contact Details
+          </h4>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Used to prefill your name and email when you buy credits or save a card, so
+            you don&apos;t retype them on Stripe&apos;s payment page. Optional.
+          </p>
+          <div className="grid min-w-0 gap-4 sm:grid-cols-2">
+            <div className="min-w-0 space-y-2">
+              <Label htmlFor="contact-first-name">First Name</Label>
+              <Input
+                id="contact-first-name"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                maxLength={100}
+                autoComplete="given-name"
+                placeholder="Jane"
+                disabled={updatingContact}
+                className={settingsInputClass}
+              />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <Label htmlFor="contact-last-name">Last Name</Label>
+              <Input
+                id="contact-last-name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                maxLength={100}
+                autoComplete="family-name"
+                placeholder="Doe"
+                disabled={updatingContact}
+                className={settingsInputClass}
+              />
+            </div>
+          </div>
+          <div className="min-w-0 space-y-2">
+            <Label htmlFor="contact-phone">Phone</Label>
+            <Input
+              id="contact-phone"
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              maxLength={40}
+              autoComplete="tel"
+              placeholder="+61 400 000 000"
+              disabled={updatingContact}
+              className={settingsInputClass}
+            />
+          </div>
+          {profile.email && (
+            <p className="text-xs leading-5 text-muted-foreground">
+              Purchase receipts go to <span className="font-medium text-foreground">{profile.email}</span>.
+              Ask an administrator to change your account email.
+            </p>
+          )}
+          <Button
+            onClick={handleUpdateContact}
+            disabled={
+              updatingContact ||
+              (firstName.trim() === savedContact.firstName &&
+                lastName.trim() === savedContact.lastName &&
+                phone.trim() === savedContact.phone)
+            }
+            className={settingsCx(settingsPrimaryButtonClass, "w-full")}
+          >
+            {updatingContact && <RefreshCw className="h-4 w-4 mr-2 animate-spin" />}
+            Save Contact Details
+          </Button>
         </div>
 
         <Separator />

@@ -121,7 +121,7 @@ export async function evaluateCommercialSegment(
   const warnings: string[] = [];
 
   for (const p of properties) {
-    const propLeases = leases.filter(l => l.property_id === p.id && (l.status === null || l.status === 'active' || l.status === 'current'));
+    const propLeases = leases.filter(l => l.property_id === p.id && (l.status === 'occupied' || l.status === 'holdover'));
     const grossRent = propLeases.reduce((sum, l) => sum + (Number(l.base_rent_pa) || 0), 0);
     const recoveryWeighted = propLeases.length
       ? propLeases.reduce((sum, l) => sum + (Number(l.outgoings_recovery_pct) || 0), 0) / propLeases.length

@@ -161,7 +161,7 @@ export function TemplateDesignAgentPanel({
   const [messages, setMessages] = useState<Msg[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [autoApply, setAutoApply] = useState(true);
+  const [autoApply, setAutoApply] = useState(false);
   const [replaceMode, setReplaceMode] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const [attachedImage, setAttachedImage] = useState<{ name: string; dataUrl: string } | null>(null);
@@ -184,9 +184,17 @@ export function TemplateDesignAgentPanel({
     setPending(null);
   }, [templateId]);
 
-  // Persist on change (cap to ~50 messages)
+  // Persist only non-sensitive chat fields. Design briefs and reference images can
+  // contain client data and must remain in memory for the current session only.
   useEffect(() => {
-    try { localStorage.setItem(memKey(templateId), JSON.stringify(messages.slice(-50))); } catch {}
+    const persistedMessages = messages.slice(-50).map(({
+      brief: _brief,
+      briefPairings: _briefPairings,
+      briefSwaps: _briefSwaps,
+      referenceImageUrl: _referenceImageUrl,
+      ...message
+    }) => message);
+    try { localStorage.setItem(memKey(templateId), JSON.stringify(persistedMessages)); } catch {}
   }, [messages, templateId]);
   useEffect(() => {
     try { localStorage.setItem(factKey(templateId), JSON.stringify(memoryFacts)); } catch {}

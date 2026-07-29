@@ -122,7 +122,9 @@ export function GlobalReportSettings() {
             Contact Details
           </CardTitle>
           <CardDescription>
-            These details will appear in the footer and contact sections of all generated reports
+            These details appear in the footer and contact sections of all generated reports.
+            Company Name and ABN are also used at checkout — they become the billing name and
+            business tax ID on your Aurixa invoices, so nobody has to retype them.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">

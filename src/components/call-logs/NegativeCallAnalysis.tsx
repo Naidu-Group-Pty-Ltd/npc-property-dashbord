@@ -275,7 +275,7 @@ export const NegativeCallAnalysis = ({ calls, onRefresh }: NegativeCallAnalysisP
         <Card className={cn(issueStatCard, 'from-card/95 dark:from-background/95 via-card/85 dark:via-background/85 to-background/95 dark:to-black/95')}>
           <CardContent className="p-4">
             <div className="mb-3 flex items-center gap-2">
-              <div className="rounded-xl border border-border/20 bg-zinc-400/10 p-2">
+              <div className="rounded-xl border border-border/20 bg-muted/40 p-2">
                 <AlertTriangle className="h-4 w-4 text-muted-foreground dark:text-foreground" />
               </div>
               <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground dark:text-muted-foreground">Total Issues</span>
@@ -482,7 +482,7 @@ export const NegativeCallAnalysis = ({ calls, onRefresh }: NegativeCallAnalysisP
                             <div className="mb-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground dark:text-muted-foreground">
                               <span className="rounded-full border border-border dark:border-white/10 bg-background/25 dark:bg-black/25 px-2.5 py-1">{call.agent_name || 'Unknown Agent'}</span>
                               <span className="rounded-full border border-border dark:border-white/10 bg-background/25 dark:bg-black/25 px-2.5 py-1">{call.started_at ? format(new Date(call.started_at), 'MMM d, h:mm a') : '-'}</span>
-                              <span className="rounded-full border border-border/15 bg-zinc-400/10 px-2.5 py-1 font-mono text-xs text-foreground dark:text-foreground">{formatDuration(call.duration_seconds)}</span>
+                              <span className="rounded-full border border-border/15 bg-muted/40 px-2.5 py-1 font-mono text-xs text-foreground dark:text-foreground">{formatDuration(call.duration_seconds)}</span>
                             </div>
                             {call.root_cause_category && ROOT_CAUSE_LABELS[call.root_cause_category] && (
                               <div className="mb-2 flex items-center gap-1.5 rounded-full border border-border dark:border-white/10 bg-background/20 dark:bg-black/20 px-2.5 py-1 w-fit">

@@ -1,4 +1,4 @@
-// Admin audit log reader for Mission Control reserve/commit/cancel events.
+// Admin audit log reader for Mission Control reserve/commit/hold/release events.
 // Restricted to admin / superadmin roles. Returns rows across the agency.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
