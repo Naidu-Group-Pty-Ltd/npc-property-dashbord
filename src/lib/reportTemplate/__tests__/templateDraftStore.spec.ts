@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   makeDraftSignature,
+  makeTemplateDraftKey,
   evaluateDraftRecovery,
   type DraftComparableFields,
   type TemplateDraft,
@@ -34,6 +35,7 @@ function fields(overrides: Partial<DraftComparableFields> = {}): DraftComparable
 
 function draftFrom(f: DraftComparableFields, overrides: Partial<TemplateDraft> = {}): TemplateDraft {
   return {
+    ownerId: 'user-1',
     templateId: 't1',
     baseServerVersion: 3,
     savedAt: '2026-06-07T00:00:00.000Z',
@@ -67,6 +69,20 @@ describe('makeDraftSignature', () => {
 
   it('normalizes missing/NaN priority to 0', () => {
     expect(makeDraftSignature(fields({ priority: NaN }))).toBe(makeDraftSignature(fields({ priority: 0 })));
+  });
+});
+
+describe('makeTemplateDraftKey', () => {
+  it('isolates the same template between authenticated users', () => {
+    expect(makeTemplateDraftKey('user-a', 'template-1')).not.toBe(
+      makeTemplateDraftKey('user-b', 'template-1'),
+    );
+  });
+
+  it('cannot collide when ids contain separators', () => {
+    expect(makeTemplateDraftKey('user:a', 'template')).not.toBe(
+      makeTemplateDraftKey('user', 'a:template'),
+    );
   });
 });
 
