@@ -430,16 +430,19 @@ Deno.serve(async (req) => {
       since.setUTCDate(since.getUTCDate() - windowDays);
       const sinceIso = since.toISOString();
 
-      // Pull all submissions in window; partner uses finance_user_id, portal-wide for medians.
+      // Pull all submissions in window; partner ownership follows the current purchase file
+      // assignment, while the full result set supplies portal-wide medians.
       const { data: subs } = await supabase
         .from('lender_submissions')
-        .select('id, lender_name, status, submitted_at, approved_at, settled_at, assessed_at, decline_reason, purchase_file_id, finance_user_id, loan_amount')
+        .select('id, lender_name, status, submitted_at, approved_at, settled_at, assessed_at, decline_reason, purchase_file_id, loan_amount, purchase_files!inner(assigned_finance_user_id)')
         .gte('submitted_at', sinceIso)
         .limit(5000);
 
       const APPROVAL_STATES = new Set(['conditional_approval', 'unconditional_approval', 'loan_docs_issued', 'settled']);
 
-      const mine = (subs || []).filter((s: any) => s.finance_user_id === portalUserId);
+      const mine = (subs || []).filter(
+        (s: any) => s.purchase_files?.assigned_finance_user_id === portalUserId,
+      );
 
       const stats = (rows: any[]) => {
         const byLender: Record<string, {

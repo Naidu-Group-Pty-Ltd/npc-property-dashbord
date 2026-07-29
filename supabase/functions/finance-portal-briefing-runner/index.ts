@@ -19,7 +19,7 @@ import { enforceJsonBodyLimit, verifySignedInternal } from "../_shared/requestSe
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 let corsHeaders: Record<string, string> = {
   ...__createCorsHeaders(null),
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-cron-secret',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 function json(d: any, s = 200) {
@@ -40,6 +40,10 @@ Deno.serve(async (req) => {
   corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
+    if (!verifyRequiredCronSecret(CRON_SECRET, req.headers.get('x-cron-secret'))) {
+      return json({ error: 'unauthorized' }, 401);
+    }
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
