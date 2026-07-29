@@ -29,25 +29,31 @@ const num = (v: any) => {
   return Number.isFinite(n) ? n : NaN;
 };
 
+const precision = (value: string | undefined, fallback: number, maximum: number): number => {
+  if (value == null) return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= maximum ? parsed : fallback;
+};
+
 export const FILTERS: Record<string, Filter> = {
   // Money / numeric formatting
   currency: (v, decimals) => {
     const n = num(v);
     if (Number.isNaN(n)) return String(v ?? '');
-    return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: decimals != null ? Number(decimals) : 0 }).format(n);
+    return new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: precision(decimals, 0, 20) }).format(n);
   },
   number: (v, decimals) => {
     const n = num(v);
     if (Number.isNaN(n)) return String(v ?? '');
-    return new Intl.NumberFormat('en-AU', { maximumFractionDigits: decimals != null ? Number(decimals) : 0 }).format(n);
+    return new Intl.NumberFormat('en-AU', { maximumFractionDigits: precision(decimals, 0, 20) }).format(n);
   },
   percent: (v, decimals) => {
     const n = num(v);
     if (Number.isNaN(n)) return String(v ?? '');
-    return `${n.toFixed(decimals != null ? Number(decimals) : 2)}%`;
+    return `${n.toFixed(precision(decimals, 2, 100))}%`;
   },
   fixed: (v, decimals) => {
-    const n = num(v); return Number.isNaN(n) ? String(v ?? '') : n.toFixed(Number(decimals ?? 2));
+    const n = num(v); return Number.isNaN(n) ? String(v ?? '') : n.toFixed(precision(decimals, 2, 100));
   },
   round: (v) => { const n = num(v); return Number.isNaN(n) ? v : Math.round(n); },
   abs: (v) => { const n = num(v); return Number.isNaN(n) ? v : Math.abs(n); },
