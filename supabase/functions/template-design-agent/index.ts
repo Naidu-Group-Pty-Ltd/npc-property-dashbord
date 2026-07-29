@@ -197,7 +197,12 @@ function cleanupSchema(schema: any, opts: { grid?: number; clampPages?: Set<stri
           const h = Math.min(H, Math.max(1, Number(o.height) || 1));
           let x = Math.max(0, Math.min(W - w, Number(o.x) || 0));
           let y = Math.max(0, Math.min(H - h, Number(o.y) || 0));
-          if (grid > 0) { x = snap(x); y = snap(y); }
+          if (grid > 0) {
+            // Snapping can round a coordinate beyond the final grid interval,
+            // so clamp again to keep the overlay inside the page.
+            x = Math.max(0, Math.min(W - w, snap(x)));
+            y = Math.max(0, Math.min(H - h, snap(y)));
+          }
           if (x !== o.x || y !== o.y || w !== o.width || h !== o.height) {
             o.x = x; o.y = y; o.width = w; o.height = h;
           }
