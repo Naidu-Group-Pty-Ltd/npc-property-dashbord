@@ -421,14 +421,11 @@ export function StrategyScenarioModeling({
     });
   }, [consolidatableDebts, strategy.consolidatedLiabilities]);
 
-  // Audit-fix #2 — ALL properties with a recorded value are eligible for equity
-  // release (incl. rental securities). Previously rental-typed securities were
-  // silently filtered out, hiding Property 4 from the per-property selector
-  // even though the portfolio overview included it. Equity sits in the asset
-  // regardless of how the cash-flow is classified, so the selector must mirror
-  // the full portfolio for the broker.
+  // Rental records represent tenant commitments, not client-owned securities.
   const equityReleaseProperties = useMemo(() =>
-    properties.filter(p => p.current_value > 0), [properties]);
+    properties.filter(p =>
+      p.property_type?.toLowerCase() !== 'rental' && p.current_value > 0
+    ), [properties]);
 
   // ── Compute scenario result ──
 
