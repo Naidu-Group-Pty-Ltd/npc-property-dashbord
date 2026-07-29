@@ -43,3 +43,21 @@ describe('render-investment-report-pdf editorial shortcode escaping contract', (
     );
   });
 });
+
+describe('render-investment-report-pdf shortcode complexity contract', () => {
+  it('bounds attacker-controlled SVG collections before rendering', () => {
+    expect(functionSource).toContain('const MAX_WATERFALL_ITEMS = 50;');
+    expect(functionSource).toContain('const MAX_HEATMAP_CELLS = 400;');
+    expect(functionSource).toContain('const MAX_WHEEL_SCORES = 24;');
+    expect(functionSource).toContain('const MAX_COMPLEX_VISUAL_UNITS = 800;');
+    expect(functionSource).toContain('if (rawArgs.length > MAX_VISUAL_SHORTCODE_CHARS) return _m;');
+    expect(functionSource).toContain('rawGrid.length * cols > MAX_HEATMAP_CELLS');
+    expect(functionSource).toContain('if (rawScores.length > MAX_WHEEL_SCORES) return _m;');
+    expect(functionSource).toContain('complexVisualUnits + cellCount > MAX_COMPLEX_VISUAL_UNITS');
+  });
+
+  it('does not spread an attacker-sized heatmap into Math.min or Math.max', () => {
+    expect(functionSource).not.toContain('Math.min(...flat)');
+    expect(functionSource).not.toContain('Math.max(...flat)');
+  });
+});

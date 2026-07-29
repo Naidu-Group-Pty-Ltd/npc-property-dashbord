@@ -1077,6 +1077,16 @@ const VIZ_GOOD     = "#4F7A33";
 const VIZ_WARN     = "#C58A2E";
 const VIZ_RISK     = "#A8401C";
 
+// Editorial shortcodes expand stored markdown into SVG. Keep their render cost
+// predictably small even when report content is attacker-controlled.
+const MAX_VISUAL_SHORTCODE_CHARS = 16_384;
+const MAX_WATERFALL_ITEMS = 50;
+const MAX_HEATMAP_ROWS = 50;
+const MAX_HEATMAP_COLS = 50;
+const MAX_HEATMAP_CELLS = 400;
+const MAX_WHEEL_SCORES = 24;
+const MAX_COMPLEX_VISUAL_UNITS = 800;
+
 function svgEscape(s: string): string {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -1127,7 +1137,7 @@ function renderGaugeSvg(value: number, max = 100, label = "", caption = ""): str
 
 /** Waterfall chart — show cumulative cash-flow build-up (positive + negative bars). */
 function renderWaterfallSvg(items: Array<{ label: string; value: number; total?: boolean }>): string {
-  if (!items.length) return "";
+  if (!items.length || items.length > MAX_WATERFALL_ITEMS) return "";
   const w = 760, h = 360, padL = 70, padR = 24, padT = 30, padB = 70;
   const plotW = w - padL - padR, plotH = h - padT - padB;
   // Compute running totals to find y-range
@@ -1186,8 +1196,19 @@ function renderWaterfallSvg(items: Array<{ label: string; value: number; total?:
 function renderHeatmapSvg(grid: number[][], rowLabels: string[] = [], colLabels: string[] = [], title = ""): string {
   if (!grid.length || !grid[0]?.length) return "";
   const rows = grid.length, cols = grid[0].length;
+  if (
+    rows > MAX_HEATMAP_ROWS ||
+    cols > MAX_HEATMAP_COLS ||
+    rows * cols > MAX_HEATMAP_CELLS ||
+    grid.some((row) => row.length !== cols)
+  ) return "";
   const flat = grid.flat();
-  const lo = Math.min(...flat), hi = Math.max(...flat), span = (hi - lo) || 1;
+  let lo = Infinity, hi = -Infinity;
+  for (const value of flat) {
+    lo = Math.min(lo, value);
+    hi = Math.max(hi, value);
+  }
+  const span = (hi - lo) || 1;
 
   // Approximate text width @ 9pt Inter ≈ 5.2px / char; cap labels and grow cells.
   const charPx = 5.4;
@@ -1228,7 +1249,7 @@ function renderHeatmapSvg(grid: number[][], rowLabels: string[] = [], colLabels:
 
 /** Score wheel — radar/polar for multi-dimensional scoring. */
 function renderScoreWheelSvg(scores: number[], labels: string[] = [], max = 100): string {
-  if (scores.length < 3) return "";
+  if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return "";
   const w = 460, h = 360, cx = w / 2, cy = h / 2 + 8, R = 130;
   const n = scores.length;
   const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
@@ -1958,6 +1979,7 @@ function autoInjectVisualShortcodes(md: string): string {
 
 function applyEditorialMarkdown(md: string): string {
   let out = md;
+  let complexVisualUnits = 0;
 
 
   // Fenced editorial blocks with optional `key=value` attributes on the opening fence.
@@ -2129,7 +2151,11 @@ function applyEditorialMarkdown(md: string): string {
 
   // {{waterfall: Label1 +123, Label2 -45, Total =78}}
   out = out.replace(/\{\{waterfall:\s*([^}]+)\}\}/gi, (_m, args) => {
-    const items = String(args).split(/[,;]/).map((seg) => {
+    const rawArgs = String(args);
+    if (rawArgs.length > MAX_VISUAL_SHORTCODE_CHARS) return _m;
+    const segments = rawArgs.split(/[,;]/);
+    if (segments.length > MAX_WATERFALL_ITEMS) return _m;
+    const items = segments.map((seg) => {
       const m = seg.trim().match(/^(.+?)\s*([=+\-])\s*([\d.,$\s-]+)$/);
       if (!m) return null;
       const label = m[1].trim();
@@ -2138,14 +2164,30 @@ function applyEditorialMarkdown(md: string): string {
       return { label, value, total };
     }).filter(Boolean) as Array<{ label: string; value: number; total?: boolean }>;
     if (!items.length) return _m;
+    if (complexVisualUnits + items.length > MAX_COMPLEX_VISUAL_UNITS) return _m;
+    complexVisualUnits += items.length;
     return vizFigure(renderWaterfallSvg(items), "Cash-flow waterfall");
   });
 
   // {{heatmap: r1c1,r1c2 / r2c1,r2c2 | rows=A,B | cols=X,Y | title=…}}
   out = out.replace(/\{\{heatmap:\s*([^}]+)\}\}/gi, (_m, args) => {
-    const parts = String(args).split("|").map((s) => s.trim());
-    const grid = parts[0].split("/").map((row) => row.split(",").map((v) => Number(v.trim())).filter((n) => Number.isFinite(n)));
-    if (!grid.length || !grid[0].length) return _m;
+    const rawArgs = String(args);
+    if (rawArgs.length > MAX_VISUAL_SHORTCODE_CHARS) return _m;
+    const parts = rawArgs.split("|").map((s) => s.trim());
+    const rawRows = parts[0].split("/");
+    if (rawRows.length > MAX_HEATMAP_ROWS) return _m;
+    const rawGrid = rawRows.map((row) => row.split(","));
+    const cols = rawGrid[0]?.length ?? 0;
+    if (
+      !cols ||
+      cols > MAX_HEATMAP_COLS ||
+      rawGrid.length * cols > MAX_HEATMAP_CELLS ||
+      rawGrid.some((row) => row.length !== cols)
+    ) return _m;
+    const grid = rawGrid.map((row) => row.map((v) => Number(v.trim())).filter((n) => Number.isFinite(n)));
+    if (!grid.length || !grid[0].length || grid.some((row) => row.length !== cols)) return _m;
+    const cellCount = grid.length * cols;
+    if (complexVisualUnits + cellCount > MAX_COMPLEX_VISUAL_UNITS) return _m;
     const opts: Record<string, string> = {};
     for (const p of parts.slice(1)) {
       const m = p.match(/^(rows|cols|title)\s*=\s*(.+)$/i);
@@ -2153,20 +2195,27 @@ function applyEditorialMarkdown(md: string): string {
     }
     const rowLabels = opts.rows ? opts.rows.split(",").map((s) => s.trim()) : [];
     const colLabels = opts.cols ? opts.cols.split(",").map((s) => s.trim()) : [];
+    complexVisualUnits += cellCount;
     return vizFigure(renderHeatmapSvg(grid, rowLabels, colLabels, opts.title || ""), opts.title || "");
   });
 
   // {{wheel: 78,64,82 | labels=Yield,Growth,Risk | max=100 | title=…}}
   out = out.replace(/\{\{wheel:\s*([^}]+)\}\}/gi, (_m, args) => {
-    const parts = String(args).split("|").map((s) => s.trim());
-    const scores = parts[0].split(",").map((v) => Number(v.trim())).filter((n) => Number.isFinite(n));
+    const rawArgs = String(args);
+    if (rawArgs.length > MAX_VISUAL_SHORTCODE_CHARS) return _m;
+    const parts = rawArgs.split("|").map((s) => s.trim());
+    const rawScores = parts[0].split(",");
+    if (rawScores.length > MAX_WHEEL_SCORES) return _m;
+    const scores = rawScores.map((v) => Number(v.trim())).filter((n) => Number.isFinite(n));
     if (scores.length < 3) return _m;
+    if (complexVisualUnits + scores.length > MAX_COMPLEX_VISUAL_UNITS) return _m;
     const opts: Record<string, string> = {};
     for (const p of parts.slice(1)) {
       const m = p.match(/^(labels|max|title)\s*=\s*(.+)$/i);
       if (m) opts[m[1].toLowerCase()] = m[2];
     }
     const labels = opts.labels ? opts.labels.split(",").map((s) => s.trim()) : [];
+    complexVisualUnits += scores.length;
     return vizFigure(renderScoreWheelSvg(scores, labels, Number(opts.max) || 100), opts.title || "");
   });
 
