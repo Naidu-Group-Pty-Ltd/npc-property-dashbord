@@ -10,6 +10,7 @@ import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse,
 import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
+import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -216,15 +217,9 @@ function wrapInsightSections(html: string): string {
     },
   );
 
-  // Form 1: h3 / h4 heading captures content until next h1–h4
-  let out = html.replace(
-    /<h([34])[^>]*>([\s\S]*?)<\/h\1>([\s\S]*?)(?=<h[1-4][\s>]|<section|$)/gi,
-    (match, _lvl, rawTitle, content) => {
-      const title = String(rawTitle).replace(/<[^>]+>/g, "").trim().replace(/[:\-—]\s*$/, "");
-      if (!INSIGHT_LABEL_RE.test(title)) return match;
-      return `<div class="insight-box"><div class="insight-label">${esc(title)}</div>${content}</div>`;
-    },
-  );
+  // Form 1: h3 / h4 heading captures content until next h1–h4. This uses a
+  // linear tag scan so malformed stored HTML cannot trigger repeated rescans.
+  let out = wrapInsightHeadingSections(html, (title) => INSIGHT_LABEL_RE.test(title), esc);
 
   // Form 2: <p><strong>Label[:]</strong>[:] rest…</p> + ALL following block siblings
   // (paragraphs, lists, blockquotes, tables) until the next heading, hr,
