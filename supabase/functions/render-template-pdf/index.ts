@@ -83,6 +83,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   );
 
   let jobId: string | null = null;
+  let templateId: string | null = null;
+  let requestedBy: string | null = null;
   const started = Date.now();
 
   try {
@@ -111,7 +113,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
-    const requestedBy = auth.userId;
+    requestedBy = auth.userId;
 
     const html: string = String(payload.html ?? '');
     if (!html.trim()) {
@@ -125,7 +127,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // failed to normalize an asset.
     assertSafeRenderResources(html, Deno.env.get('SUPABASE_URL') || '');
     const fileName: string = String(payload.fileName || 'template-preview.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const templateId: string | null = payload.templateId ? String(payload.templateId) : null;
+    templateId = payload.templateId ? String(payload.templateId) : null;
     const templateName: string | null = payload.templateName ? String(payload.templateName).slice(0, 200) : null;
     const mode: string = payload.mode === 'final' ? 'final' : 'preview';
     const variantRaw = String(payload.pdfVariant || 'pdf/a-2b').toLowerCase();
@@ -241,11 +243,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     }
     // Phase 14 — analytics event (failure)
     try {
-      const failBody = await req.clone().json().catch(() => ({}));
-      const tplId = failBody?.templateId ? String(failBody.templateId) : null;
-      if (tplId) {
+      if (templateId) {
         await supabase.from('template_events').insert({
-          template_id: tplId,
+          template_id: templateId,
           event_type: 'render_failed',
           actor_id: requestedBy,
           metadata: { error: msg.slice(0, 500), duration_ms: Date.now() - started },
