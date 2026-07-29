@@ -9,16 +9,19 @@
  * in-app notification (which is also routed through the existing notify
  * helper so per-user channel prefs/quiet hours apply).
  *
- * Auth: cron-only — no portal session token. Service-role + anon-key header.
+ * Auth: cron-only — requires the dedicated briefing cron secret.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
+import { verifyRequiredCronSecret } from "../_shared/requestSecurity.ts";
+
+const CRON_SECRET = Deno.env.get('FINANCE_PORTAL_BRIEFING_CRON_SECRET') ?? '';
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
 let corsHeaders: Record<string, string> = {
   ...__createCorsHeaders(null),
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-cron-secret',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 function json(d: any, s = 200) {
@@ -39,6 +42,10 @@ Deno.serve(async (req) => {
   corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   try {
+    if (!verifyRequiredCronSecret(CRON_SECRET, req.headers.get('x-cron-secret'))) {
+      return json({ error: 'unauthorized' }, 401);
+    }
+
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
