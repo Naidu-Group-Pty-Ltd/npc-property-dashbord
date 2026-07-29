@@ -1,4 +1,4 @@
-import { usePermissions } from '@/hooks/usePermissions';
+import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ShieldAlert } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -13,7 +13,7 @@ interface ModuleGuardProps {
 }
 
 export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }: ModuleGuardProps) {
-  const { hasModuleAccess, canEdit, canDelete, isSuperadmin, loading } = usePermissions();
+  const { canView, canEdit, canDelete, loading } = useModulePermissions(moduleKey);
 
   if (loading) {
     return (
@@ -25,11 +25,7 @@ export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }:
     );
   }
 
-  if (isSuperadmin) {
-    return <>{children}</>;
-  }
-
-  if (!hasModuleAccess(moduleKey)) {
+  if (!canView) {
     return (
       <div className="p-6">
         <Alert variant="destructive">
@@ -42,7 +38,7 @@ export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }:
     );
   }
 
-  if (requireEdit && !canEdit(moduleKey)) {
+  if (requireEdit && !canEdit) {
     return (
       <div className="p-6">
         <Alert variant="destructive">
@@ -55,7 +51,7 @@ export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }:
     );
   }
 
-  if (requireDelete && !canDelete(moduleKey)) {
+  if (requireDelete && !canDelete) {
     return (
       <div className="p-6">
         <Alert variant="destructive">
