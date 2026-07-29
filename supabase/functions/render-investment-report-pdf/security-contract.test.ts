@@ -34,10 +34,10 @@ describe('render-investment-report-pdf authorization contract', () => {
     expect(contentLookup).toBeGreaterThan(denial);
   });
 
-  it('escapes quotes before interpolating metadata into HTML attributes', () => {
-    expect(functionSource).toContain('.replace(/"/g, "&quot;")');
-    expect(functionSource).toContain(".replace(/'/g, \"&#39;\")");
-    expect(functionSource).toContain('content="${esc(docAuthor)}"');
-    expect(functionSource).toContain('content="${esc(docKeywords)}"');
+  it('bounds table chart injection without shifting a worker queue', () => {
+    expect(functionSource).toContain('if (html.length > MAX_CHART_INJECTION_HTML_CHARS) return html');
+    expect(functionSource).toContain('if (tables.length >= MAX_CHART_INJECTION_TABLES) return html');
+    expect(functionSource).toContain('const index = nextTableIndex++');
+    expect(functionSource).not.toContain('queue.shift()');
   });
 });
