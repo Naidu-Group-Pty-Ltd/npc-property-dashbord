@@ -8,20 +8,20 @@
 # touching these paths requires their explicit approval. Lovable agents and
 # Codex runs must NOT modify these files as part of editor-only work.
 
-src/lib/reportTemplate/htmlRenderer.ts                              @template-builder-owners
-src/lib/reportTemplate/pdfRenderer.ts                               @template-builder-owners
-src/lib/reportTemplate/weasyPreview.ts                              @template-builder-owners
-src/lib/reportTemplate/bindingResolver.ts                           @template-builder-owners
-src/lib/reportTemplate/cssTokens.ts                                 @template-builder-owners
-src/lib/reportTemplate/blocks/                                      @template-builder-owners
-src/lib/reportTemplate/routeReportThroughTemplate.ts                @template-builder-owners
-src/lib/reportTemplate/resolveTemplate.ts                           @template-builder-owners
-src/lib/reportTemplate/buildBindingContext.ts                       @template-builder-owners
-supabase/functions/render-template-pdf/                             @template-builder-owners
-supabase/functions/_shared/resolveReportTemplate.ts                 @template-builder-owners
-supabase/functions/_shared/buildBindingContext.ts                   @template-builder-owners
-src/components/reports/*PDFGenerator.tsx                            @template-builder-owners
+src/lib/reportTemplate/htmlRenderer.ts                              @lavan96
+src/lib/reportTemplate/pdfRenderer.ts                               @lavan96
+src/lib/reportTemplate/weasyPreview.ts                              @lavan96
+src/lib/reportTemplate/bindingResolver.ts                           @lavan96
+src/lib/reportTemplate/cssTokens.ts                                 @lavan96
+src/lib/reportTemplate/blocks/                                      @lavan96
+src/lib/reportTemplate/routeReportThroughTemplate.ts                @lavan96
+src/lib/reportTemplate/resolveTemplate.ts                           @lavan96
+src/lib/reportTemplate/buildBindingContext.ts                       @lavan96
+supabase/functions/render-template-pdf/                             @lavan96
+supabase/functions/_shared/resolveReportTemplate.ts                 @lavan96
+supabase/functions/_shared/buildBindingContext.ts                   @lavan96
+src/components/reports/*PDFGenerator.tsx                            @lavan96
 
 # Editor schema is EXTEND-ONLY — additive optional fields are fine, but
 # renames/removals/repurposes break the contract.
-src/lib/reportTemplate/templateSchema.ts                            @template-builder-owners
+src/lib/reportTemplate/templateSchema.ts                            @lavan96

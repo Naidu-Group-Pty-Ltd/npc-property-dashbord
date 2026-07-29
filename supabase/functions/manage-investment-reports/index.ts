@@ -66,7 +66,10 @@ Deno.serve(async (req) => {
 
     const { action, reportId, reportIds, data } = body;
 
-    if (action === 'archivePackage' || action === 'unarchivePackage') {
+    // Updates run through a service-role client and can trigger billing side
+    // effects (including releasing a failed report's token reservation), so
+    // authentication alone is not sufficient authorization.
+    if (action === 'update' || action === 'archivePackage' || action === 'unarchivePackage') {
       const permission = await requireModulePermission(
         supabase,
         { userId, authMethod },

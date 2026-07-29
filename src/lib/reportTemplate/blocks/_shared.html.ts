@@ -9,8 +9,8 @@ import {
   resolveBindableColor,
   resolveBindableNumber,
   resolveTokenReference,
-  evalConditional,
 } from '../bindingResolver';
+import { shouldRenderOverlay } from '../renderVisibility';
 
 export interface HtmlBlockContext extends ResolveContext {
   page: { width: number; height: number };
@@ -152,7 +152,7 @@ function withCascadeWrapper(html: string, node: { anchors?: any[]; id?: string }
 
 /** Render an overlay (text / image / shape / textOnPath / table) as an absolute-positioned HTML element. */
 export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
-  if (!evalConditional(overlay.conditional, ctx)) return '';
+  if (!shouldRenderOverlay(overlay, ctx)) return '';
   // Effects originate in saved template JSON and are embedded in quoted style
   // attributes below. Encode them at this shared boundary so a CSS value cannot
   // terminate the attribute and inject HTML.

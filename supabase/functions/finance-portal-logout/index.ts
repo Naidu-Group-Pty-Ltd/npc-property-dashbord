@@ -49,11 +49,7 @@ Deno.serve(async (req) => {
       JSON.stringify({ success: true }),
       {
         status: 200,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'Set-Cookie': createClearFinanceSessionCookie(),
-        }
+        headers: createLogoutHeaders(corsHeaders),
       }
     )
   } catch (error: any) {
@@ -62,11 +58,7 @@ Deno.serve(async (req) => {
       JSON.stringify({ error: 'Internal server error' }),
       {
         status: 500,
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json',
-          'Set-Cookie': createClearFinanceSessionCookie(),
-        }
+        headers: createLogoutHeaders(corsHeaders),
       }
     )
   }

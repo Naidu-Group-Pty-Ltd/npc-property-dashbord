@@ -21,6 +21,7 @@ import {
 import { getBlockRenderer, type BlockRenderContext } from './blocks';
 import { sortBlocksForPaint, sortOverlaysForPaint } from './paintOrder';
 import { resolvePageOutputPolicy, resolvePageRenderPlan, shouldRenderPageBackgroundImage } from './rendering/pdfImportPagePolicy';
+import { shouldRenderOverlay } from './renderVisibility';
 
 export interface RenderOptions {
   /** Sample / live data the template binds against. */
@@ -141,7 +142,7 @@ function drawPage(doc: jsPDF, page: Page, ctxBase: ResolveContext) {
       }
       // Overlays sit on top of the block
       for (const overlay of sortOverlaysForPaint(block.overlays)) {
-        if (!evalConditional(overlay.conditional, ctxBase)) continue;
+        if (!shouldRenderOverlay(overlay, ctxBase)) continue;
         drawOverlay(doc, overlay, ctxBase);
       }
     }
