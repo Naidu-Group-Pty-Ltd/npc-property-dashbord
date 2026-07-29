@@ -210,6 +210,12 @@ describe("conditional questionnaire engine (Phase 5, §14.2–14.4)", () => {
   it("blocks final submission until every applicable section is submitted", () => {
     expect(portalSource).toContain("Cannot submit — some sections are incomplete");
     expect(portalSource).toContain("missing_sections");
+    expect(portalSource).toContain("validateQuestionnaireSection(");
+  });
+
+  it("validates submitted payloads at the server boundary", () => {
+    expect(portalSource).toMatch(/validateQuestionnaireSection\(\s*body\.section,\s*payload,/);
+    expect(portalSource).toContain("invalid_fields: invalidFields");
   });
 
   it("freezes the engine version and applicable list into the submission snapshot", () => {

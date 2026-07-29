@@ -22,6 +22,7 @@
  * no MLRO commentary. Only completion + acceptance state.
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
+import { validateQuestionnaireSection } from "./questionnaireValidation.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -232,7 +233,26 @@ Deno.serve(async (req) => {
         // subset) so an in-flight save is never rejected by a concurrent
         // structure change; superseded answers are retained, never deleted.
         if (!ALL_SECTIONS.includes(body.section)) return jsonResponse({ error: 'Invalid section' }, 400);
-        const payload = body.payload && typeof body.payload === 'object' ? body.payload : {};
+        const payload = body.payload && typeof body.payload === 'object' && !Array.isArray(body.payload)
+          ? body.payload
+          : {};
+        if (body.submit) {
+          const { data: structureResponse } = body.section === 'entity_details'
+            ? await admin.schema('aml').from('questionnaire_responses')
+              .select('payload').eq('case_id', c.id).eq('section', 'purchasing_structure').maybeSingle()
+            : { data: null };
+          const invalidFields = validateQuestionnaireSection(
+            body.section,
+            payload,
+            structureResponse?.payload,
+          );
+          if (invalidFields.length > 0) {
+            return jsonResponse({
+              error: 'Cannot submit — section contains invalid or missing fields',
+              invalid_fields: invalidFields,
+            }, 400);
+          }
+        }
         const row: Record<string, any> = {
           case_id: c.id, section: body.section, payload,
           status: body.submit ? 'submitted' : 'draft',
@@ -380,8 +400,15 @@ Deno.serve(async (req) => {
           bySection.get('purchasing_structure')?.payload ?? null,
           bySection.get('funding')?.payload ?? null,
         );
-        const missingSections = active.filter((s) =>
-          !['submitted', 'accepted', 'complete'].includes(bySection.get(s)?.status ?? ''));
+        const missingSections = active.filter((s) => {
+          const response = bySection.get(s);
+          return !['submitted', 'accepted', 'complete'].includes(response?.status ?? '') ||
+            validateQuestionnaireSection(
+              s,
+              response?.payload,
+              bySection.get('purchasing_structure')?.payload,
+            ).length > 0;
+        });
         if (missingSections.length > 0) {
           return jsonResponse({
             error: 'Cannot submit — some sections are incomplete',
