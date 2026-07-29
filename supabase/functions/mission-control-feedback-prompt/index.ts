@@ -56,8 +56,17 @@ Deno.serve(async (req) => {
       /* not fatal */
     }
 
+    // The /feedback page passes force so it can always hand over a working,
+    // attributed link. It changes only whether a link is minted — the reward
+    // rule is a database constraint neither this nor Mission Control can reach.
+    const force = new URL(req.url).searchParams.get("force") === "1" || body?.force === true;
+
     return json(
-      await getFeedbackPrompt({ originUserId: auth.userId, originUsername: username }),
+      await getFeedbackPrompt({
+        originUserId: auth.userId,
+        originUsername: username,
+        force,
+      }),
     );
   } catch (e) {
     // A prompt is the least important thing on a dashboard. Unreachable or

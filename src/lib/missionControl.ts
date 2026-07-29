@@ -524,12 +524,14 @@ export interface FeedbackPrompt {
   feedbackUrl: string | null;
 }
 
-export async function fetchFeedbackPrompt(): Promise<FeedbackPrompt | null> {
+export async function fetchFeedbackPrompt(
+  opts: { force?: boolean } = {},
+): Promise<FeedbackPrompt | null> {
   try {
     const { invokeSecureFunction } = await import("@/lib/secureInvoke");
     const { data, error } = await invokeSecureFunction<FeedbackPrompt>(
       "mission-control-feedback-prompt",
-      {},
+      opts.force ? { force: true } : {},
     );
     if (error || !data?.due || !data.feedbackUrl) return null;
     return data;
