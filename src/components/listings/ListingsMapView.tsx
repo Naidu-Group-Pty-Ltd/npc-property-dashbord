@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -6,10 +6,13 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import { Button } from '@/components/ui/button';
-import { Loader2, MapPin } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { PropertyListing } from '@/lib/airtable';
-import { buildFullAddress } from '@/lib/addressUtils';
-import { geocodeAddress, type GeoPoint } from '@/lib/geocode';
+
+interface GeoPoint {
+  lat: number;
+  lng: number;
+}
 
 // Fix default marker icons for bundlers that don't handle Leaflet's asset URLs.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,21 +32,26 @@ interface ListingsMapViewProps {
   onSelectListing: (listing: PropertyListing) => void;
 }
 
-interface GeocodedMarker {
+interface ListingMarker {
   listing: PropertyListing;
   point: GeoPoint;
 }
 
-function buildGeocodeQuery(listing: PropertyListing): string | null {
-  const full = buildFullAddress(listing);
-  if (full && full.trim().length > 0) return full;
-  const parts = [listing.address, listing.suburb, listing.state].filter(
-    (p): p is string => typeof p === 'string' && p.trim().length > 0,
-  );
-  return parts.length > 0 ? parts.join(', ') : null;
+export function getStoredListingPoint(listing: PropertyListing): GeoPoint | null {
+  if (listing.latitude === null || listing.latitude === undefined || listing.latitude === '') {
+    return null;
+  }
+  if (listing.longitude === null || listing.longitude === undefined || listing.longitude === '') {
+    return null;
+  }
+  const lat = Number(listing.latitude);
+  const lng = Number(listing.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
 }
 
-function FitBounds({ markers }: { markers: GeocodedMarker[] }) {
+function FitBounds({ markers }: { markers: ListingMarker[] }) {
   const map = useMap();
   useEffect(() => {
     if (markers.length === 0) return;
@@ -60,62 +68,21 @@ function FitBounds({ markers }: { markers: GeocodedMarker[] }) {
 }
 
 export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewProps) {
-  const [markers, setMarkers] = useState<GeocodedMarker[]>([]);
-  const [progress, setProgress] = useState({ done: 0, total: 0, failed: 0 });
-  const cancelledRef = useRef(false);
-
-  const queries = useMemo(() => {
+  const markers = useMemo(() => {
     return listings
-      .map((listing) => ({ listing, query: buildGeocodeQuery(listing) }))
-      .filter((row): row is { listing: PropertyListing; query: string } => !!row.query);
+      .map((listing) => ({ listing, point: getStoredListingPoint(listing) }))
+      .filter((row): row is ListingMarker => row.point !== null);
   }, [listings]);
 
-  useEffect(() => {
-    cancelledRef.current = false;
-    setMarkers([]);
-    setProgress({ done: 0, total: queries.length, failed: 0 });
-
-    (async () => {
-      for (const { listing, query } of queries) {
-        if (cancelledRef.current) return;
-        try {
-          const point = await geocodeAddress(query);
-          if (cancelledRef.current) return;
-          if (point) {
-            setMarkers((prev) => [...prev, { listing, point }]);
-            setProgress((p) => ({ ...p, done: p.done + 1 }));
-          } else {
-            setProgress((p) => ({ ...p, done: p.done + 1, failed: p.failed + 1 }));
-          }
-        } catch {
-          setProgress((p) => ({ ...p, done: p.done + 1, failed: p.failed + 1 }));
-        }
-      }
-    })();
-
-    return () => {
-      cancelledRef.current = true;
-    };
-  }, [queries]);
-
-  const isGeocoding = progress.total > 0 && progress.done < progress.total;
+  const missingCoordinates = listings.length - markers.length;
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-border/60 bg-card/60 shadow-[0_14px_40px_rgba(15,23,42,0.08)] dark:border-white/10 dark:bg-background/40">
       <div className="absolute left-4 top-4 z-[500] flex items-center gap-2 rounded-full border border-border/60 bg-background/90 px-3 py-1.5 text-xs font-semibold text-foreground shadow-md backdrop-blur">
-        {isGeocoding ? (
-          <>
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-            Geocoding {progress.done}/{progress.total}
-          </>
-        ) : (
-          <>
-            <MapPin className="h-3.5 w-3.5 text-primary" />
-            {markers.length} of {progress.total} plotted
-            {progress.failed > 0 && (
-              <span className="text-muted-foreground">· {progress.failed} unmatched</span>
-            )}
-          </>
+        <MapPin className="h-3.5 w-3.5 text-primary" />
+        {markers.length} of {listings.length} plotted
+        {missingCoordinates > 0 && (
+          <span className="text-muted-foreground">· {missingCoordinates} need saved coordinates</span>
         )}
       </div>
 
