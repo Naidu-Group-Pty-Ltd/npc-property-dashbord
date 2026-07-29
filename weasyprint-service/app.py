@@ -116,6 +116,9 @@ def healthz():
 
 @app.get("/version")
 def version():
+    if not _auth_ok(request):
+        return jsonify({"error": "unauthorized"}), 401
+
     return jsonify(
         {
             "weasyprint": _package_version("weasyprint"),
