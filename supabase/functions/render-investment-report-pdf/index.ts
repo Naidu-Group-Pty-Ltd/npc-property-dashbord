@@ -10,7 +10,7 @@ import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse,
 import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
-import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
+import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -2856,7 +2856,9 @@ export async function buildHtml(
   // are converted into shortcodes (heatmap / bars / gauge / tiles / sparkline) that
   // applyEditorialMarkdown then expands. This makes the renderer self-sufficient
   // even when the LLM emits pure prose + tables.
-  const mdRaw = cleanReportMarkdown(String(report.report_content || ""), address);
+  const mdRaw = escapeRawHtmlInMarkdown(
+    cleanReportMarkdown(String(report.report_content || ""), address),
+  );
   const mdWithVisuals = autoInjectVisualShortcodes(mdRaw);
   console.log("[visuals] shortcodes injected:", {
     heatmaps: (mdWithVisuals.match(/\{\{heatmap:/g) || []).length,
@@ -2867,6 +2869,7 @@ export async function buildHtml(
   });
   const md = applyEditorialMarkdown(mdWithVisuals);
   let bodyHtml = marked.parse(md, { gfm: true, breaks: false }) as string;
+  bodyHtml = removeUnsafeRenderedUrls(bodyHtml);
   bodyHtml = stripBareCitations(bodyHtml);
   // Repair LLM currency artefacts where "$45,872.969" leaks a 3-digit
   // fractional group instead of a thousands separator. Any $-prefixed number
@@ -2897,7 +2900,10 @@ export async function buildHtml(
   }
 
   const sourcesHtml = report.sources_content
-    ? marked.parse(String(report.sources_content), { gfm: true }) as string
+    ? removeUnsafeRenderedUrls(marked.parse(
+      escapeRawHtmlInMarkdown(String(report.sources_content)),
+      { gfm: true },
+    ) as string)
     : "";
   const financialChartsHtml = includeCharts ? await buildFinancialChartsHtml(fin) : "";
 
