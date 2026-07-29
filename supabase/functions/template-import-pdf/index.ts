@@ -27,6 +27,8 @@ const ARTIFACT_BUCKET = 'template-import-artifacts';
 const PDF_DIAGNOSTICS_BUCKET = 'pdf-import-diagnostics';
 const PDF_DIAGNOSTICS_SIGNED_URL_TTL_SECONDS = 60 * 60;
 const PDF_PAGE_CONTEXT_SUMMARY_MAX_PAGES = 60;
+const MAX_ASSET_BASE64_LENGTH = 20 * 1024 * 1024;
+const ALLOWED_ASSET_CONTENT_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const TEMPLATE_FINALIZATION_ARTIFACT_CONTRACT = 'template-finalization-artifacts-v1';
 const TEMPLATE_IMPORT_WORKER_TOKEN = Deno.env.get('TEMPLATE_IMPORT_WORKER_TOKEN') ?? SERVICE_ROLE;
 
@@ -843,6 +845,14 @@ Deno.serve(async (req) => {
     const userId = authedUserId ?? body.user_id ?? null;
 
     if (operation === 'create_import') {
+      const permission = await requireModulePermission(
+        admin,
+        { userId: auth.userId, authMethod: auth.authMethod },
+        'templates',
+        'can_edit',
+      );
+      if (!permission.ok) return json({ error: permission.error, code: permission.reason_code }, 403);
+
       const { data, error } = await admin
         .from('template_imports')
         .insert({
@@ -861,22 +871,54 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'upload_asset') {
-      await ensureAssetBucket(admin);
       const importId = body.import_id as string;
-      const kind = (body.kind ?? 'page') as string; // 'page' | 'image'
-      const pageIndex = body.page_index ?? 0;
-      const seq = body.seq ?? 0;
+      if (!importId) return json({ error: 'import_id required' }, 400);
+
+      const permission = await requireModulePermission(
+        admin,
+        { userId: auth.userId, authMethod: auth.authMethod },
+        'templates',
+        'can_edit',
+      );
+      if (!permission.ok) return json({ error: permission.error, code: permission.reason_code }, 403);
+
+      const { data: importRecord, error: importError } = await admin
+        .from('template_imports')
+        .select('id,user_id')
+        .eq('id', importId)
+        .maybeSingle();
+      if (importError) return json({ error: importError.message }, 400);
+      if (!importRecord) return json({ error: 'Import record not found' }, 404);
+      if (auth.userId !== 'service_role' && importRecord.user_id !== authedUserId) {
+        return json({ error: 'forbidden' }, 403);
+      }
+
+      const kind = body.kind ?? 'page';
+      const pageIndex = Number(body.page_index ?? 0);
+      const seq = Number(body.seq ?? 0);
       const contentType = body.content_type ?? 'image/png';
+      if (!['page', 'image'].includes(kind)) return json({ error: 'Invalid asset kind' }, 400);
+      if (!Number.isSafeInteger(pageIndex) || pageIndex < 0 || !Number.isSafeInteger(seq) || seq < 0) {
+        return json({ error: 'Invalid asset index' }, 400);
+      }
+      if (!ALLOWED_ASSET_CONTENT_TYPES.has(contentType)) return json({ error: 'Invalid asset content type' }, 400);
       const ext = contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png';
       const path = `${importId}/${kind}-${pageIndex}-${seq}.${ext}`;
       // Size ceiling before decoding caller-supplied base64 (request-size control):
       // ~20 MB of base64 ≈ ~15 MB decoded, comfortably above a page raster while
       // preventing a single upload from decoding an unbounded blob into memory.
       const dataB64 = (body.data_base64 as string) || '';
-      if (dataB64.length > 20 * 1024 * 1024) {
+      if (!dataB64) return json({ error: 'Asset payload required' }, 400);
+      if (dataB64.length > MAX_ASSET_BASE64_LENGTH) {
         return json({ error: 'Asset payload too large' }, 413);
       }
-      const bytes = b64ToBytes(dataB64);
+      let bytes: Uint8Array;
+      try {
+        bytes = b64ToBytes(dataB64);
+      } catch {
+        return json({ error: 'Invalid base64 asset payload' }, 400);
+      }
+      await ensureAssetBucket(admin);
       const { error: upErr } = await admin.storage
         .from(ASSET_BUCKET)
         .upload(path, bytes, { contentType, upsert: true });

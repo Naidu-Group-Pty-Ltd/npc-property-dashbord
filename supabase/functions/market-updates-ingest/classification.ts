@@ -50,7 +50,7 @@ export function normaliseClassification<T extends Record<string, unknown>>(value
   let confidence = Number(value.confidence_score);
   if (!Number.isFinite(confidence)) confidence = 0;
   // Some models return 0-1 fractions instead of the requested 0-100 scale.
-  if (confidence > 0 && confidence <= 1) confidence = confidence * 100;
+  if (confidence > 0 && confidence < 1) confidence = confidence * 100;
   confidence = Math.max(0, Math.min(100, confidence));
   return {
     ...value,

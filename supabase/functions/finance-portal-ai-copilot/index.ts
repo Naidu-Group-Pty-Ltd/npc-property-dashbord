@@ -4,21 +4,18 @@
 //          | list_summary | list_alerts | dismiss_alert | dismiss_insight
 import { hasCopilotObjectPermission } from "../_shared/finance-portal-copilot-auth.ts";
 import { extractFinanceToken, makeServiceClient, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
+import { consumeRateLimit, enforceJsonBodyLimit } from "../_shared/requestSecurity.ts";
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS (frontend uses credentials: 'include').
-let corsHeaders: Record<string, string> = {
-  ...__createCorsHeaders(null),
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token",
-  "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
-};
+const ALLOW_HEADERS = "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token";
+const EXPOSE_HEADERS = "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms";
 
 const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")!;
 const MODEL = "google/gemini-2.5-flash";
-
-function json(body: any, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-}
+const MAX_REQUEST_BYTES = 4 * 1024 * 1024;
+const MAX_VOICE_AUDIO_BYTES = 2 * 1024 * 1024;
+const MAX_VOICE_DURATION_SECONDS = 90;
 
 class HttpError extends Error {
   constructor(message: string, readonly status: number) {
@@ -467,12 +464,22 @@ async function transcribeVoice(supabase: any, userId: string, pfId: string | nul
 
 /* ─────────────── Router ─────────────── */
 Deno.serve(async (req) => {
-  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), "Access-Control-Allow-Headers": corsHeaders["Access-Control-Allow-Headers"], "Access-Control-Expose-Headers": corsHeaders["Access-Control-Expose-Headers"] };
+  const corsHeaders = {
+    ...__createCorsHeaders(req.headers.get("origin")),
+    "Access-Control-Allow-Headers": ALLOW_HEADERS,
+    "Access-Control-Expose-Headers": EXPOSE_HEADERS,
+  };
+  const json = (body: any, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
-    const body = await req.json();
+    const parsed = await enforceJsonBodyLimit<Record<string, unknown>>(req, MAX_REQUEST_BYTES);
+    if (!parsed.ok) {
+      return new Response(parsed.error.body, { status: parsed.error.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+    const body: any = parsed.value;
     const token = extractFinanceToken(req.headers, body);
     const supabase = makeServiceClient();
     const auth = await resolveFinancePartner(supabase, token);
@@ -559,6 +566,14 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
       case "transcribe_voice": {
+        validateVoiceMemo(body.audio_base64, body.duration_seconds);
+        const quota = await consumeRateLimit(supabase, `finance-voice-transcription:user:${userId}`, 5, 60 * 60);
+        if (!quota.allowed) {
+          return new Response(JSON.stringify({ error: "Voice transcription rate limit reached. Please retry later." }), {
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json", "Retry-After": String(quota.retryAfterSeconds) },
+          });
+        }
         const out = await transcribeVoice(supabase, userId, body.purchase_file_id ?? null, body.client_id ?? null, body.audio_base64, body.duration_seconds ?? 0);
         return json({ memo: out });
       }
