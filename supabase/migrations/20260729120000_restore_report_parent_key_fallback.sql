@@ -40,7 +40,8 @@ WITH RECURSIVE lineage AS (
       report.id,
       report.derived_from_report_id AS ancestor_id,
       ARRAY[report.id] AS visited,
-      ARRAY[1] AS priority_path
+      ARRAY[1] AS priority_path,
+      1 AS depth
     FROM public.investment_reports report
     WHERE report.derived_from_report_id IS NOT NULL
 
@@ -50,7 +51,8 @@ WITH RECURSIVE lineage AS (
       report.id,
       report.parent_report_id,
       ARRAY[report.id],
-      ARRAY[2]
+      ARRAY[2],
+      1
     FROM public.investment_reports report
     WHERE report.parent_report_id IS NOT NULL
   )
@@ -61,7 +63,8 @@ WITH RECURSIVE lineage AS (
     lineage.id,
     next_ancestor.ancestor_id,
     lineage.visited || ancestor.id,
-    lineage.priority_path || next_ancestor.priority
+    lineage.priority_path || next_ancestor.priority,
+    lineage.depth + 1
   FROM lineage
   JOIN public.investment_reports ancestor ON ancestor.id = lineage.ancestor_id
   CROSS JOIN LATERAL (
@@ -71,6 +74,9 @@ WITH RECURSIVE lineage AS (
   ) AS next_ancestor(ancestor_id, priority)
   WHERE next_ancestor.ancestor_id IS NOT NULL
     AND NOT next_ancestor.ancestor_id = ANY(lineage.visited || ancestor.id)
+    -- Report lineage is expected to be shallow. Keep the migration's work
+    -- bounded even if both links form a deliberately branching graph.
+    AND lineage.depth < 8
 ), inherited_keys AS (
   SELECT DISTINCT ON (lineage.id)
     lineage.id,
