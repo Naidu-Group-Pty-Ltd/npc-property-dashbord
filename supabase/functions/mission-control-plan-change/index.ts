@@ -50,11 +50,13 @@ Deno.serve(async (req) => {
       return json({ error: auth.error ?? "Unauthorized" }, 401);
     }
 
-    if (req.method === "POST") {
-      const id = typeof body?.id === "string" ? body.id.trim() : "";
-      if (!id) return json({ error: "id_required" }, 400);
+    // The client always POSTs (invokeSecureFunction has no GET mode), so the
+    // presence of `id` — not the HTTP verb — decides acknowledge vs. list.
+    const id = typeof body?.id === "string" ? body.id.trim() : "";
+    if (id) {
       return json({ acknowledged: await acknowledgePlanChange(id) });
     }
+
 
     return json({ changes: await getPlanChanges() });
   } catch (e) {

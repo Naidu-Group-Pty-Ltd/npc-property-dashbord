@@ -22,6 +22,7 @@ import { verifyAuth, createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { createBillingHandoff } from "../_shared/missionControl.ts";
 import { getBrandConfig } from "../_shared/brand-config.ts";
+import { normalizeAustralianBusinessNumber } from "../_shared/billingIdentity.ts";
 
 // "save_card" is the wallet flow: the storefront auto-launches a Stripe
 // setup-mode Checkout instead of a purchase (billing & usage page).
@@ -122,12 +123,13 @@ Deno.serve(async (req) => {
     // pre-attached so Stripe's tax-ID form doesn't even appear.
     try {
       const brand = await getBrandConfig(supabase);
-      if (brand.companyName || brand.abn) {
+      const billingAbn = normalizeAustralianBusinessNumber(brand.abn);
+      if (brand.companyName || billingAbn) {
         contact = {
           ...(contact ?? {}),
           company: brand.companyName || null,
-          taxId: brand.abn || null,
-          taxIdType: brand.abn ? "au_abn" : null,
+          taxId: billingAbn,
+          taxIdType: billingAbn ? "au_abn" : null,
         };
       }
     } catch (e) {

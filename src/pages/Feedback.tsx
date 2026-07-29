@@ -14,12 +14,12 @@ import { Badge } from '@/components/ui/badge';
 import { fetchFeedbackPrompt, type FeedbackPrompt } from '@/lib/missionControl';
 
 /**
- * A shortcut to the feedback form, for testing.
+ * A shortcut to the feedback form.
  *
  * In normal use nobody comes here: the workspace is prompted by
  * FeedbackPromptBanner inside its first 30 days and once a quarter after that,
- * and the banner carries the link. This page exists so the flow can be
- * exercised on demand without waiting for a campaign to fall due.
+ * and the banner carries the link. This page also provides the plain feedback
+ * form URL when no campaign is currently due.
  *
  * The distinction it makes visible is the one that matters. An ATTRIBUTED link
  * carries a handoff minted server-to-server, so the form knows the workspace
@@ -27,11 +27,6 @@ import { fetchFeedbackPrompt, type FeedbackPrompt } from '@/lib/missionControl';
  * plan. A PLAIN link carries nothing and the form will say so rather than
  * pretend.
  *
- * Because this page asks with `force`, falling back to the plain link is a
- * FAULT here, never a normal state — Mission Control mints a link whenever it
- * answers at all. Saying "no campaign is due" in that case, as this page once
- * did, names a cause it has not established: the real one is usually that the
- * edge function is undeployed. It cost a long diagnosis once already.
  */
 
 const FEEDBACK_URL = 'https://aurixasystems.com.au/feedback';
@@ -43,7 +38,7 @@ export default function Feedback() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetchFeedbackPrompt({ force: true })
+    void fetchFeedbackPrompt()
       .then((p) => !cancelled && setPrompt(p))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -51,10 +46,6 @@ export default function Feedback() {
     };
   }, []);
 
-  // Forced, because this page exists to test the form on demand. It changes
-  // only whether a link is MINTED — the 100-credit reward is still one per
-  // workspace per campaign, decided by a database constraint nothing here can
-  // reach. So the link always works and the reward stays honest.
   const attributed = prompt?.feedbackUrl ?? null;
   const target = attributed ?? FEEDBACK_URL;
 
@@ -79,7 +70,7 @@ export default function Feedback() {
           </p>
         </div>
         <Badge variant="outline" className="ml-auto">
-          Testing
+          Feedback
         </Badge>
       </div>
 
@@ -88,8 +79,8 @@ export default function Feedback() {
           <CardTitle className="text-base">Open the form</CardTitle>
           <CardDescription>
             In normal use this is reached from the prompt that appears at the top of the dashboard
-            — inside your first 30 days, then once a quarter. This page is a shortcut so the flow
-            can be tested without waiting for a campaign to fall due.
+            — inside your first 30 days, then once a quarter. An attributed, reward-eligible link
+            is available here only while a campaign is due.
           </CardDescription>
         </CardHeader>
 
@@ -138,19 +129,12 @@ export default function Feedback() {
                 <div className="rounded-md border border-destructive/40 bg-destructive/[0.07] p-4">
                   <p className="flex items-center gap-2 text-sm font-medium">
                     <AlertTriangle className="h-4 w-4 text-destructive" />
-                    Plain link — Mission Control could not be reached
+                    Plain link — no feedback campaign is due
                   </p>
                   <p className="mt-1.5 text-sm text-muted-foreground">
-                    This page asks with <code className="text-xs">force</code>, so a campaign
-                    falling due is not a condition here — Mission Control mints a link whenever it
-                    answers at all. Getting none back therefore means the request failed, not that
-                    there was nothing to send. The form will still open and show its questions,
-                    but with no workspace attached it will not accept a submission.
-                  </p>
-                  <p className="mt-1.5 text-sm text-muted-foreground">
-                    Usually the <code className="text-xs">mission-control-feedback-prompt</code>{' '}
-                    function is undeployed or its Mission Control credentials are unset. The
-                    browser console has the underlying status.
+                    Mission Control did not return a campaign link. The form can still be opened,
+                    but the plain link carries no workspace attribution and cannot grant campaign
+                    credits.
                   </p>
                 </div>
               )}

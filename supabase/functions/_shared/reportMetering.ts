@@ -26,7 +26,11 @@ import {
   type ReserveResult,
   type TokenKind,
 } from "./missionControl.ts";
-import { estimateTokens, type EstimateOptions } from "./tokenEstimator.ts";
+import {
+  applyEstimateOptions,
+  estimateTokens,
+  type EstimateOptions,
+} from "./tokenEstimator.ts";
 import {
   decideMeteringOutcome,
   investmentReportRunKeyPrefix,
@@ -209,8 +213,18 @@ export function withReportMetering(
       console.warn("[reportMetering] cost index lookup failed", e);
     }
 
+    // The catalogue controls the base price, while server-resolved options
+    // scale that price for the amount of work in this request. Applying the
+    // same modifiers to both catalogue and fallback prices prevents a large
+    // report from being charged as a single flat unit whenever the index is
+    // available. A deliberately free catalogue entry remains free.
+    const adjustedCatalogTokens = catalogTokens == null
+      ? null
+      : catalogTokens === 0
+      ? 0
+      : applyEstimateOptions(catalogTokens, plan.estimateOptions);
     const estimated =
-      catalogTokens ??
+      adjustedCatalogTokens ??
       (plan.estimatedTokensOverride && plan.estimatedTokensOverride > 0
         ? plan.estimatedTokensOverride
         : estimateTokens(plan.kind, plan.estimateOptions));
