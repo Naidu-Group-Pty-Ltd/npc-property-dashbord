@@ -10,6 +10,7 @@ import { createCorsHeaders, createForbiddenResponse, createUnauthorizedResponse,
 import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
+import { wrapInlineInsightParagraphs } from "./insightSections.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -250,16 +251,10 @@ function wrapInsightSections(html: string): string {
   // Form 2: <p><strong>Label[:]</strong>[:] rest…</p> + ALL following block siblings
   // (paragraphs, lists, blockquotes, tables) until the next heading, hr,
   // another insight-box, section boundary, or another bold-prefix insight label.
-  out = out.replace(
-    /<p>\s*<(?:strong|b)>\s*([^<:：]+?)\s*[:：]?\s*<\/(?:strong|b)>\s*[:：]?\s*([\s\S]*?)<\/p>((?:\s*(?:<p>(?!\s*<(?:strong|b)>[^<]+[:：]?\s*<\/(?:strong|b)>)[\s\S]*?<\/p>|<ul>[\s\S]*?<\/ul>|<ol>[\s\S]*?<\/ol>|<blockquote>[\s\S]*?<\/blockquote>))*)(?=\s*(?:<h[1-4][\s>]|<hr|<div\s+class="insight-box"|<section|$))/gi,
-    (match, rawLabel, firstRest, restBlocks) => {
-      const label = String(rawLabel).trim();
-      if (!INSIGHT_LABEL_RE.test(label)) return match;
-      const body = String(firstRest).trim();
-      const bodyHtml = body ? `<p>${body}</p>` : "";
-      return `<div class="insight-box"><div class="insight-label">${esc(label)}</div>${bodyHtml}${restBlocks || ""}</div>`;
-    },
-  );
+  out = wrapInlineInsightParagraphs(out, {
+    isInsightLabel: (label) => INSIGHT_LABEL_RE.test(label),
+    escapeLabel: (label) => esc(label),
+  });
 
   // Form 3: list-item bold-prefix form  →  <li><strong>What This Means:</strong> body…</li>
   // Many narrative bullets in the report use this pattern. Style the <li> as an

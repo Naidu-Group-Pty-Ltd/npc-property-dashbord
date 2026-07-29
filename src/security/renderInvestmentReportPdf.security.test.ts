@@ -1,11 +1,38 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { wrapInlineInsightParagraphs } from '../../supabase/functions/render-investment-report-pdf/insightSections';
 
 const functionSource = readFileSync(
   join(process.cwd(), 'supabase/functions/render-investment-report-pdf/index.ts'),
   'utf8',
 );
+
+const insightOptions = {
+  isInsightLabel: (label: string) => label.toLowerCase() === 'what this means',
+  escapeLabel: (label: string) => label,
+};
+
+describe('render-investment-report-pdf insight wrapping contract', () => {
+  it('preserves following narrative blocks in the insight box', () => {
+    const html = '<p><strong>What This Means:</strong> first</p>\n<p>second</p><ul><li>third</li></ul><h2>Next</h2>';
+
+    expect(wrapInlineInsightParagraphs(html, insightOptions)).toBe(
+      '<div class="insight-box"><div class="insight-label">What This Means</div><p>first</p>\n<p>second</p><ul><li>third</li></ul></div><h2>Next</h2>',
+    );
+  });
+
+  it('finishes promptly when many paragraphs are followed by an unexpected block', () => {
+    const paragraphs = '<p>detail</p>'.repeat(2_000);
+    const html = `<p><strong>What This Means:</strong> first</p>${paragraphs}<div>unexpected</div>`;
+
+    const startedAt = performance.now();
+    const result = wrapInlineInsightParagraphs(html, insightOptions);
+
+    expect(performance.now() - startedAt).toBeLessThan(250);
+    expect(result).toEndWith('</div><div>unexpected</div>');
+  });
+});
 
 describe('render-investment-report-pdf SVG escaping contract', () => {
   it('escapes explicit donut center subtitles before inserting them into SVG', () => {
