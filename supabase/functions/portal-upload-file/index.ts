@@ -216,8 +216,8 @@ Deno.serve(async (req) => {
       versionNumber: fileRecord.version_number,
     });
 
-    // Wave B: auto-link this upload to any open document_requirement_instances for
-    // this client. Matching strategy (cheap, conservative):
+    // Wave B: auto-link this upload to open, client-owned requirements that are
+    // visible in this client's portal. Matching strategy (cheap, conservative):
     //   1. exact category match wins
     //   2. otherwise filename-token overlap against the DRI label
     // We mark matching DRIs as 'uploaded' and record the client_files id in `notes`
@@ -228,6 +228,8 @@ Deno.serve(async (req) => {
         .from('document_requirement_instances')
         .select('id, label, category, status, purchase_file_id')
         .eq('client_id', clientId)
+        .eq('owner', 'client')
+        .eq('visible_to_client', true)
         .in('status', ['required', 'requested']);
       if (openDris && openDris.length > 0) {
         const filenameLower = (file.name || '').toLowerCase();
@@ -249,7 +251,11 @@ Deno.serve(async (req) => {
               notes: `Auto-linked to client portal upload ${fileRecord.id} (${file.name})`,
               updated_at: new Date().toISOString(),
             })
-            .in('id', ids);
+            .in('id', ids)
+            .eq('client_id', clientId)
+            .eq('owner', 'client')
+            .eq('visible_to_client', true)
+            .in('status', ['required', 'requested']);
           if (!linkErr) linkedDriIds = ids;
         }
       }

@@ -163,6 +163,6 @@ VALUES
      {"label": "OAIC — what is sensitive information", "url": "https://www.oaic.gov.au/privacy/your-privacy-rights/your-personal-information/what-is-personal-information"},
      {"label": "AUSTRAC — customer identification and verification", "url": "https://www.austrac.gov.au/business/core-guidance/customer-identification-and-verification"}
    ]'::jsonb,
-  true, 25
+  false, 25
 )
 ON CONFLICT (code, version) DO NOTHING;

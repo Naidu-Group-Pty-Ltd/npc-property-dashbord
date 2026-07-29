@@ -31,3 +31,32 @@ Deno.test("classification removes incompatible audience tags", () => {
   assertEquals(result.audience_tags, ["investors", "mortgage_brokers"]);
   assertEquals(result.confidence_score, 100);
 });
+
+Deno.test("classification preserves a confidence score of exactly one", () => {
+  const result = normaliseClassification({
+    category: "property",
+    segments: ["property"],
+    audience_tags: [],
+    confidence_score: 1,
+  });
+  const coercedResult = normaliseClassification({
+    category: "property",
+    segments: ["property"],
+    audience_tags: [],
+    confidence_score: "1",
+  });
+
+  assertEquals(result.confidence_score, 1);
+  assertEquals(coercedResult.confidence_score, 1);
+});
+
+Deno.test("classification still normalises unambiguous fractional confidence scores", () => {
+  const result = normaliseClassification({
+    category: "property",
+    segments: ["property"],
+    audience_tags: [],
+    confidence_score: 0.75,
+  });
+
+  assertEquals(result.confidence_score, 75);
+});
