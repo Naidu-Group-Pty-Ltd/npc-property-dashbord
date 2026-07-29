@@ -197,6 +197,8 @@ class AirtableService {
       createdAt: fields['Created At'] ? new Date(fields['Created At']) : undefined,
       state: fields['State'],
       zipCode: fields['Zipcode'] || fields['Zip Code'] || fields['Post Code'] || fields['Postcode'],
+      latitude: fields['Latitude'] ?? fields['latitude'],
+      longitude: fields['Longitude'] ?? fields['longitude'],
     };
   }
 }

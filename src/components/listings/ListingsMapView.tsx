@@ -9,6 +9,11 @@ import { Button } from '@/components/ui/button';
 import { MapPin } from 'lucide-react';
 import { PropertyListing } from '@/lib/airtable';
 
+interface GeoPoint {
+  lat: number;
+  lng: number;
+}
+
 // Fix default marker icons for bundlers that don't handle Leaflet's asset URLs.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -27,30 +32,26 @@ interface ListingsMapViewProps {
   onSelectListing: (listing: PropertyListing) => void;
 }
 
-interface GeocodedMarker {
+interface ListingMarker {
   listing: PropertyListing;
   point: { lat: number; lng: number };
 }
 
-function markerFromListing(listing: PropertyListing): GeocodedMarker | null {
-  if (
-    listing.latitude === null ||
-    listing.latitude === undefined ||
-    listing.latitude === '' ||
-    listing.longitude === null ||
-    listing.longitude === undefined ||
-    listing.longitude === ''
-  ) {
+export function getStoredListingPoint(listing: PropertyListing): GeoPoint | null {
+  if (listing.latitude === null || listing.latitude === undefined || listing.latitude === '') {
+    return null;
+  }
+  if (listing.longitude === null || listing.longitude === undefined || listing.longitude === '') {
     return null;
   }
   const lat = Number(listing.latitude);
   const lng = Number(listing.longitude);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  return { listing, point: { lat, lng } };
+  return { lat, lng };
 }
 
-function FitBounds({ markers }: { markers: GeocodedMarker[] }) {
+function FitBounds({ markers }: { markers: ListingMarker[] }) {
   const map = useMap();
   useEffect(() => {
     if (markers.length === 0) return;
@@ -69,9 +70,10 @@ function FitBounds({ markers }: { markers: GeocodedMarker[] }) {
 export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewProps) {
   const markers = useMemo(() => {
     return listings
-      .map(markerFromListing)
-      .filter((marker): marker is GeocodedMarker => marker !== null);
+      .map((listing) => ({ listing, point: getStoredListingPoint(listing) }))
+      .filter((row): row is ListingMarker => row.point !== null);
   }, [listings]);
+
   const missingCoordinates = listings.length - markers.length;
 
   return (
@@ -80,7 +82,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
         <MapPin className="h-3.5 w-3.5 text-primary" />
         {markers.length} of {listings.length} plotted
         {missingCoordinates > 0 && (
-          <span className="text-muted-foreground">· {missingCoordinates} need coordinates</span>
+          <span className="text-muted-foreground">· {missingCoordinates} need saved coordinates</span>
         )}
       </div>
 
