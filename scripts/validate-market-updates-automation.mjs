@@ -15,6 +15,10 @@ assert.match(hardeningMigration,/cron_invoke_signed_function\('market-updates-em
 for (const receiver of [digest, ingest, embedBackfill]) {
   assert.match(receiver, /verifySignedInternal\([\s\S]*\['pg_cron'\]\)/);
 }
+for (const receiver of [ingest, embedBackfill]) {
+  assert.match(receiver, /enforceRawBodyLimit\(req, [^)]+\)/);
+  assert.doesNotMatch(receiver, /await req\.text\(\)/);
+}
 assert.match(digest,/\(cronOk \|\| signedCronOk\) && typeof payload\?\.reference_at/);
 for(const token of ['market_updates_automation_status','cron_jobs_missing','automation_secrets_missing']) assert.ok(status.includes(token),token);
 assert.match(page,/Automation:/);

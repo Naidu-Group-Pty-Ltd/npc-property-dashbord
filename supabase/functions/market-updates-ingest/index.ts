@@ -10,7 +10,7 @@ import type { SourceConfig } from "./adapters/types.ts";
 import { MARKET_AUDIENCES, MARKET_SEGMENTS, normaliseClassification, validateClassification } from "./classification.ts";
 import { callLLM } from "../_shared/llmRouter.ts";
 import { classifyMarketError, logMarketEvent, marketCorrelationId } from "../_shared/marketUpdatesObservability.ts";
-import { verifySignedInternal } from "../_shared/requestSecurity.ts";
+import { enforceRawBodyLimit, verifySignedInternal } from "../_shared/requestSecurity.ts";
 
 const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -196,7 +196,9 @@ Deno.serve(async (req) => {
   const csrf = enforceCsrf(req);
   if (!csrf.ok) return csrfDenied(cors, csrf);
 
-  const rawBody = await req.text();
+  const boundedBody = await enforceRawBodyLimit(req, 64 * 1024);
+  if (!boundedBody.ok) return boundedBody.error;
+  const rawBody = boundedBody.raw;
   let payload: any = {};
   try { payload = JSON.parse(rawBody); } catch {}
 
