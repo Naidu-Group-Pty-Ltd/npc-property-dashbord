@@ -14,6 +14,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { PROMPT_CATALOG, getPromptCatalogEntry } from '../_shared/engine-prompts.ts';
 import { COMPASS_40_SECTIONS } from '../_shared/compassSectionRegistry.ts';
 import { FIN_SECTION_ORDER, PLDD_SECTION_ORDER } from '../_shared/reportSplitRegistry.ts';
+import { buildNewTemplateRow } from './templateProposal.ts';
 
 async function isSuperadmin(supabase: any, userId: string): Promise<boolean> {
   const { data } = await supabase
@@ -138,7 +139,7 @@ Deno.serve(async (req) => {
             if (error) throw error;
             appliedOk = true;
           } else if (prop.target_kind === 'report_structure_template_new') {
-            const row = { ...(prop.after_value || {}), is_active: prop.after_value?.is_active ?? true, created_by: userId };
+            const row = buildNewTemplateRow(prop.after_value, userId, proposalId);
             const { data: ins, error } = await supabase
               .from('report_structure_templates').insert(row).select('id').single();
             if (error) throw error;
