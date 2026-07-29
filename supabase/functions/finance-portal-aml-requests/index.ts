@@ -23,13 +23,13 @@ import { detectDiscrepancies, type Comparison } from "../_shared/amlFinanceEngin
 
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS (frontend uses credentials: 'include').
-let corsHeaders: Record<string, string> = {
+const corsHeaderDefaults: Record<string, string> = {
   ...__createCorsHeaders(null),
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token",
   "Access-Control-Expose-Headers": "x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms",
 };
-const jr = (d: unknown, s = 200) =>
-  new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+const jrWithHeaders = (d: unknown, responseCorsHeaders: Record<string, string>, s = 200) =>
+  new Response(JSON.stringify(d), { status: s, headers: { ...responseCorsHeaders, "Content-Type": "application/json" } });
 
 async function sha256Hex(input: string) {
   const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -74,7 +74,8 @@ function num(v: unknown): number | null {
 }
 
 Deno.serve(async (req) => {
-  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), "Access-Control-Allow-Headers": corsHeaders["Access-Control-Allow-Headers"], "Access-Control-Expose-Headers": corsHeaders["Access-Control-Expose-Headers"] };
+  const corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), "Access-Control-Allow-Headers": corsHeaderDefaults["Access-Control-Allow-Headers"], "Access-Control-Expose-Headers": corsHeaderDefaults["Access-Control-Expose-Headers"] };
+  const jr = (data: any, status = 200) => jrWithHeaders(data, corsHeaders, status);
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {

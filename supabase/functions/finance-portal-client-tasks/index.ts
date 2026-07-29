@@ -20,7 +20,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { createCorsHeaders as __createCorsHeaders } from "../_shared/auth.ts";
 // Dynamic per-request CORS — frontend uses `credentials: 'include'`, so ACAO must
 // echo the request Origin (never `*`) with `Allow-Credentials: true`.
-let corsHeaders: Record<string, string> = {
+const corsHeaderDefaults: Record<string, string> = {
   ...__createCorsHeaders(null),
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-portal-session-token, x-session-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
@@ -43,10 +43,10 @@ const VALID_STATUSES = new Set([
 const FINANCE_OPS = new Set(['list_for_file', 'create', 'update', 'set_status', 'delete']);
 const CLIENT_OPS = new Set(['client_list', 'client_respond']);
 
-function jsonResponse(data: unknown, status = 200) {
+function jsonResponseWithHeaders(data: unknown, responseCorsHeaders: Record<string, string>, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
@@ -76,7 +76,8 @@ function mergePermissions(global: any, perClient: any) {
 }
 
 Deno.serve(async (req) => {
-  corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaders['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaders['Access-Control-Expose-Headers'] };
+  const corsHeaders = { ...__createCorsHeaders(req.headers.get('origin')), 'Access-Control-Allow-Headers': corsHeaderDefaults['Access-Control-Allow-Headers'], 'Access-Control-Expose-Headers': corsHeaderDefaults['Access-Control-Expose-Headers'] };
+  const jsonResponse = (data: any, status = 200) => jsonResponseWithHeaders(data, corsHeaders, status);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {

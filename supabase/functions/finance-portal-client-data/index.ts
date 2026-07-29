@@ -50,7 +50,7 @@ import { createCorsHeaders } from "../_shared/auth.ts";
 // so we must echo the request Origin (never `*`) and set `Allow-Credentials: true`.
 // The previous wildcard ACAO caused browsers to block every response, resulting in
 // "no client data loading" on the finance portal.
-let corsHeaders: Record<string, string> = createCorsHeaders(null);
+const corsHeaderDefaults: Record<string, string> = createCorsHeaders(null);
 
 const TABLE_MAP: Record<string, string> = {
   properties: 'client_properties',
@@ -229,10 +229,10 @@ function extractToken(headers: Headers, body?: any): string | null {
     || null;
 }
 
-function jsonResponse(data: any, status = 200) {
+function jsonResponseWithHeaders(data: any, responseCorsHeaders: Record<string, string>, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    headers: { ...responseCorsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
@@ -397,7 +397,8 @@ async function prepareFinanceNotePayload(supabase: any, clientId: string, payloa
 }
 
 Deno.serve(async (req) => {
-  corsHeaders = createCorsHeaders(req.headers.get('origin'));
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
+  const jsonResponse = (data: any, status = 200) => jsonResponseWithHeaders(data, corsHeaders, status);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
   try {
