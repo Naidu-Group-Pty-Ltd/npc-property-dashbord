@@ -866,8 +866,6 @@ export async function getFeedbackPrompt(
   opts: {
     originUserId?: string | null;
     originUsername?: string | null;
-    /** Mint a link even when no campaign is due — the /feedback test page. */
-    force?: boolean;
   } = {},
 ): Promise<FeedbackPrompt> {
   const q = new URLSearchParams({
@@ -879,7 +877,6 @@ export async function getFeedbackPrompt(
     if (opts.originUsername) q.set("origin_username", opts.originUsername.slice(0, 200));
     q.set("origin_source", "prime_dashboard");
   }
-  if (opts.force) q.set("force", "1");
   const res = await mcFetch(`/api/public/tokens/feedback-prompt?${q.toString()}`, {
     method: "GET",
   });
