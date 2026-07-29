@@ -35,6 +35,7 @@ import GeneratedReports from "./pages/GeneratedReports";
 import ReportViewer from "./pages/ReportViewer";
 import Settings from "./pages/Settings";
 import UserGuide from "./pages/UserGuide";
+import Feedback from "./pages/Feedback";
 import DataImport from './pages/DataImport';
 import Monitoring from './pages/Monitoring';
 import QualityAssurance from './pages/QualityAssurance';
@@ -344,6 +345,7 @@ const App = () => (
                 <Route path="generated-reports" element={<ModuleGuard moduleKey="generated_reports"><GeneratedReports /></ModuleGuard>} />
                 <Route path="generated-reports/:reportId" element={<ModuleGuard moduleKey="generated_reports"><ReportViewer /></ModuleGuard>} />
                 <Route path="user-guide" element={<UserGuide />} />
+                <Route path="feedback" element={<Feedback />} />
                 <Route path="monitoring" element={<ModuleGuard moduleKey="monitoring"><Monitoring /></ModuleGuard>} />
                 <Route path="quality-assurance" element={<ModuleGuard moduleKey="quality_assurance"><QualityAssurance /></ModuleGuard>} />
                 <Route path="data-import" element={<ModuleGuard moduleKey="data_import"><DataImport /></ModuleGuard>} />
