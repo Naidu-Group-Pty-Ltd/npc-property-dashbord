@@ -1,5 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ArrowUpRight, Check, Copy, Loader2, MessageSquareQuote, Zap } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Check,
+  Copy,
+  Loader2,
+  MessageSquareQuote,
+  Zap,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -16,9 +24,14 @@ import { fetchFeedbackPrompt, type FeedbackPrompt } from '@/lib/missionControl';
  * The distinction it makes visible is the one that matters. An ATTRIBUTED link
  * carries a handoff minted server-to-server, so the form knows the workspace
  * and the person, can grant the 100 credits, and scales its questions to the
- * plan. A PLAIN link carries nothing, and the form will say so rather than
- * pretend — which is the correct behaviour, but not what you want to be
- * testing by accident.
+ * plan. A PLAIN link carries nothing and the form will say so rather than
+ * pretend.
+ *
+ * Because this page asks with `force`, falling back to the plain link is a
+ * FAULT here, never a normal state — Mission Control mints a link whenever it
+ * answers at all. Saying "no campaign is due" in that case, as this page once
+ * did, names a cause it has not established: the real one is usually that the
+ * edge function is undeployed. It cost a long diagnosis once already.
  */
 
 const FEEDBACK_URL = 'https://aurixasystems.com.au/feedback';
@@ -122,13 +135,22 @@ export default function Feedback() {
                   </p>
                 </div>
               ) : (
-                <div className="rounded-md border border-border bg-muted/40 p-4">
-                  <p className="text-sm font-medium">Plain link — read-only</p>
+                <div className="rounded-md border border-destructive/40 bg-destructive/[0.07] p-4">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <AlertTriangle className="h-4 w-4 text-destructive" />
+                    Plain link — Mission Control could not be reached
+                  </p>
                   <p className="mt-1.5 text-sm text-muted-foreground">
-                    No campaign is currently due for this workspace, so Mission Control did not
-                    mint an attributed link. The form will open and show its questions, but it
-                    will say it needs to be opened from a workspace and will not accept a
-                    submission. That is correct behaviour, not a fault.
+                    This page asks with <code className="text-xs">force</code>, so a campaign
+                    falling due is not a condition here — Mission Control mints a link whenever it
+                    answers at all. Getting none back therefore means the request failed, not that
+                    there was nothing to send. The form will still open and show its questions,
+                    but with no workspace attached it will not accept a submission.
+                  </p>
+                  <p className="mt-1.5 text-sm text-muted-foreground">
+                    Usually the <code className="text-xs">mission-control-feedback-prompt</code>{' '}
+                    function is undeployed or its Mission Control credentials are unset. The
+                    browser console has the underlying status.
                   </p>
                 </div>
               )}
