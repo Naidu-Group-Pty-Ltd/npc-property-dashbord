@@ -30,7 +30,7 @@ export default function Feedback() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetchFeedbackPrompt()
+    void fetchFeedbackPrompt({ force: true })
       .then((p) => !cancelled && setPrompt(p))
       .finally(() => !cancelled && setLoading(false));
     return () => {
@@ -38,9 +38,10 @@ export default function Feedback() {
     };
   }, []);
 
-  // Mission Control only mints an attributed link when a campaign is actually
-  // due — that is the production behaviour and this page does not override it.
-  // When nothing is due, the plain URL still opens the form.
+  // Forced, because this page exists to test the form on demand. It changes
+  // only whether a link is MINTED — the 100-credit reward is still one per
+  // workspace per campaign, decided by a database constraint nothing here can
+  // reach. So the link always works and the reward stays honest.
   const attributed = prompt?.feedbackUrl ?? null;
   const target = attributed ?? FEEDBACK_URL;
 
