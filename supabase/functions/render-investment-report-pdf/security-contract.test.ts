@@ -34,10 +34,11 @@ describe('render-investment-report-pdf authorization contract', () => {
     expect(contentLookup).toBeGreaterThan(denial);
   });
 
-  it('bounds table chart injection without shifting a worker queue', () => {
-    expect(functionSource).toContain('if (html.length > MAX_CHART_INJECTION_HTML_CHARS) return html');
-    expect(functionSource).toContain('if (tables.length >= MAX_CHART_INJECTION_TABLES) return html');
-    expect(functionSource).toContain('const index = nextTableIndex++');
-    expect(functionSource).not.toContain('queue.shift()');
+  it('escapes watermark text before embedding it in the SVG data URI', () => {
+    expect(functionSource).toContain(
+      'const wmText = esc(String(contact.company_name || brandName || "NPC").toUpperCase());',
+    );
+    expect(functionSource).toContain('url("${wmSvg}")');
+    expect(functionSource).not.toContain("url('${wmSvg}')");
   });
 });

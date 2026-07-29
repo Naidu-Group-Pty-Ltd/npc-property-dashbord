@@ -4370,7 +4370,7 @@ ${(() => {
   // ── Premium Layer (Phase 1+2) — wins specificity over all earlier rules.
   // Watermark generated as a tiled SVG data URI: ultra-light diagonal brand
   // string repeated across every page background.
-  const wmText = String(contact.company_name || brandName || "NPC").toUpperCase();
+  const wmText = esc(String(contact.company_name || brandName || "NPC").toUpperCase());
   const wmSvg = `data:image/svg+xml;utf8,${encodeURIComponent(`
     <svg xmlns='http://www.w3.org/2000/svg' width='560' height='560' viewBox='0 0 560 560'>
       <g transform='rotate(-32 280 280)' font-family='Inter, sans-serif' font-size='13' font-weight='700'
@@ -4385,7 +4385,7 @@ ${(() => {
     /* ── Phase 1+2 Premium Layer ─────────────────────────────────────── */
 
     /* Tiled watermark on every body page (cover/disclaimer/divider exempt). */
-    @page { background: ${palette.paper} url('${wmSvg}') repeat; background-size: 280px 280px; }
+    @page { background: ${palette.paper} url("${wmSvg}") repeat; background-size: 280px 280px; }
     @page cover, @page disclaimer-page, @page section-divider-page, @page quote-page { background-image: none; }
 
     /* Wider outer margin → real marginalia rail. */
