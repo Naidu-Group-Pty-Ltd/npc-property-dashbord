@@ -134,6 +134,18 @@ export default function PartnerReferralDetailSheet({ referralId, onOpenChange, o
                   </div>
                 </Section>
 
+                <Section title="Consent">
+                  <ReferralConsentPanel referral={referral} />
+                </Section>
+
+                {referral.direction === 'outbound_finance_referral' && (
+                  <Section title="Loan writer assignment">
+                    <LoanWriterAssignmentCard referral={referral} />
+                  </Section>
+                )}
+
+
+
                 <Section title="Governing agreement">
                   {agreement ? (
                     <>
