@@ -9209,10 +9209,23 @@ export type Database = {
           case_id: string
           client_id: string
           contractual_settlement_date: string | null
+          finance_clause_date: string | null
+          finance_clause_state: string | null
           finance_status: string | null
+          legal_matter_id: string | null
+          legal_source_version: number | null
           legal_status: string | null
+          legal_updated_at: string | null
           lender: string | null
+          link_health: string
+          matter_reference: string | null
+          practice_email: string | null
+          practice_name: string | null
+          practice_phone: string | null
+          purchase_file_id: string | null
+          solicitor_email: string | null
           solicitor_name: string | null
+          solicitor_user_id: string | null
           source_version: number
           updated_at: string
         }
@@ -9220,10 +9233,23 @@ export type Database = {
           case_id: string
           client_id: string
           contractual_settlement_date?: string | null
+          finance_clause_date?: string | null
+          finance_clause_state?: string | null
           finance_status?: string | null
+          legal_matter_id?: string | null
+          legal_source_version?: number | null
           legal_status?: string | null
+          legal_updated_at?: string | null
           lender?: string | null
+          link_health?: string
+          matter_reference?: string | null
+          practice_email?: string | null
+          practice_name?: string | null
+          practice_phone?: string | null
+          purchase_file_id?: string | null
+          solicitor_email?: string | null
           solicitor_name?: string | null
+          solicitor_user_id?: string | null
           source_version: number
           updated_at?: string
         }
@@ -9231,10 +9257,23 @@ export type Database = {
           case_id?: string
           client_id?: string
           contractual_settlement_date?: string | null
+          finance_clause_date?: string | null
+          finance_clause_state?: string | null
           finance_status?: string | null
+          legal_matter_id?: string | null
+          legal_source_version?: number | null
           legal_status?: string | null
+          legal_updated_at?: string | null
           lender?: string | null
+          link_health?: string
+          matter_reference?: string | null
+          practice_email?: string | null
+          practice_name?: string | null
+          practice_phone?: string | null
+          purchase_file_id?: string | null
+          solicitor_email?: string | null
           solicitor_name?: string | null
+          solicitor_user_id?: string | null
           source_version?: number
           updated_at?: string
         }
@@ -9244,6 +9283,34 @@ export type Database = {
             columns: ["case_id"]
             isOneToOne: true
             referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_case_read_model_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_case_read_model_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_files"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_case_read_model_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: false
+            referencedRelation: "v_purchase_file_deal_drift"
+            referencedColumns: ["purchase_file_id"]
+          },
+          {
+            foreignKeyName: "finance_case_read_model_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
             referencedColumns: ["id"]
           },
         ]
@@ -22875,33 +22942,57 @@ export type Database = {
         Row: {
           case_id: string
           client_id: string
+          finance_clause_date: string | null
+          finance_clause_state: string | null
+          finance_contact_email: string | null
+          finance_contact_name: string | null
+          finance_source_version: number | null
           finance_status: string | null
+          finance_updated_at: string | null
           internal_notes: string | null
           legal_status: string | null
           lender: string | null
+          link_health: string
           matter_reference: string | null
+          purchase_file_id: string | null
           source_version: number
           updated_at: string
         }
         Insert: {
           case_id: string
           client_id: string
+          finance_clause_date?: string | null
+          finance_clause_state?: string | null
+          finance_contact_email?: string | null
+          finance_contact_name?: string | null
+          finance_source_version?: number | null
           finance_status?: string | null
+          finance_updated_at?: string | null
           internal_notes?: string | null
           legal_status?: string | null
           lender?: string | null
+          link_health?: string
           matter_reference?: string | null
+          purchase_file_id?: string | null
           source_version: number
           updated_at?: string
         }
         Update: {
           case_id?: string
           client_id?: string
+          finance_clause_date?: string | null
+          finance_clause_state?: string | null
+          finance_contact_email?: string | null
+          finance_contact_name?: string | null
+          finance_source_version?: number | null
           finance_status?: string | null
+          finance_updated_at?: string | null
           internal_notes?: string | null
           legal_status?: string | null
           lender?: string | null
+          link_health?: string
           matter_reference?: string | null
+          purchase_file_id?: string | null
           source_version?: number
           updated_at?: string
         }
@@ -22912,6 +23003,20 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "transaction_cases"
             referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_case_read_model_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_files"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_case_read_model_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: false
+            referencedRelation: "v_purchase_file_deal_drift"
+            referencedColumns: ["purchase_file_id"]
           },
         ]
       }
@@ -24484,6 +24589,44 @@ export type Database = {
           },
         ]
       }
+      transaction_case_operational_events: {
+        Row: {
+          actor_user_id: string | null
+          case_id: string
+          event_type: string
+          id: string
+          metadata: Json
+          occurred_at: string
+          reason: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          case_id: string
+          event_type: string
+          id?: string
+          metadata?: Json
+          occurred_at?: string
+          reason: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          case_id?: string
+          event_type?: string
+          id?: string
+          metadata?: Json
+          occurred_at?: string
+          reason?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transaction_case_operational_events_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       transaction_case_reconciliation_issues: {
         Row: {
           actual_client_id: string | null
@@ -25814,6 +25957,10 @@ export type Database = {
         }
         Returns: Json
       }
+      get_finance_solicitor_collaboration_health: {
+        Args: { _stale_minutes?: number }
+        Returns: Json
+      }
       get_migration_upload_progress: {
         Args: { _upload_id: string }
         Returns: {
@@ -26217,6 +26364,10 @@ export type Database = {
       }
       replay_integration_dead_letter: {
         Args: { _actor_user_id: string; _dead_letter_id: string }
+        Returns: string
+      }
+      request_case_projection_refresh: {
+        Args: { _actor_user_id: string; _case_id: string; _reason: string }
         Returns: string
       }
       request_document_version: {
