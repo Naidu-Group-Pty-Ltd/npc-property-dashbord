@@ -24,6 +24,7 @@ import {
 } from "../_shared/solicitorPortalAuth.ts";
 import {
   MATTER_SELECT,
+  SOLICITOR_MATTER_LIST_SELECT,
   PARTY_SELECT,
   LEGAL_MATTER_STATUSES,
   buildMatterPayload,
@@ -77,6 +78,19 @@ Deno.serve(async (req) => {
       if (operation === 'list_matters') return json({ success: true, records: [] });
     }
 
+    /** Assigned clients for which the merged permission matrix allows matter visibility. */
+    const listViewableClientIds = async (): Promise<string[]> => {
+      const permissions = await Promise.all(
+        assignedClientIds.map(async (clientId) => ({
+          clientId,
+          matrix: await resolveClientPermissions(supabase, me.id, clientId),
+        })),
+      );
+      return permissions
+        .filter(({ matrix }) => can(matrix, 'matters', 'view'))
+        .map(({ clientId }) => clientId);
+    };
+
     /** Load a matter and confirm this solicitor may see it. */
     const loadMatter = async (matterId: string): Promise<
       { ok: true; matter: any; perms: PermissionMatrix } | { ok: false; status: number; error: string }
@@ -103,10 +117,13 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── LIST ─────────────────────────
     if (operation === 'list_matters') {
+      const viewableClientIds = await listViewableClientIds();
+      if (!viewableClientIds.length) return json({ success: true, records: [] });
+
       let query = supabase
         .from('legal_matters')
-        .select(MATTER_SELECT)
-        .in('client_id', assignedClientIds)
+        .select(SOLICITOR_MATTER_LIST_SELECT)
+        .in('client_id', viewableClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
         .order('settlement_date', { ascending: true, nullsFirst: false })
         .limit(500);
@@ -596,13 +613,14 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── STATS ─────────────────────────
     if (operation === 'matter_stats') {
-      if (!assignedClientIds.length) {
+      const viewableClientIds = await listViewableClientIds();
+      if (!viewableClientIds.length) {
         return json({ success: true, stats: { total: 0, by_status: {}, settling_30d: 0, at_risk: 0 } });
       }
       const { data } = await supabase
         .from('legal_matters')
         .select('id, status, settlement_date, risk_flag')
-        .in('client_id', assignedClientIds)
+        .in('client_id', viewableClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`);
 
       const rows = data || [];
