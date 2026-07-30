@@ -203,6 +203,12 @@ Deno.serve(async (req) => {
         parties: parties || [],
         status_history: history || [],
         finance_snapshot,
+        critical_dates: criticalDates || [],
+        settlement_tasks: runwayTasks || [],
+        runway: summariseRunway(
+          (criticalDates || []) as any[],
+          (runwayTasks || []) as any[],
+        ),
         permissions: perms,
       });
     }
