@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
-import { Scale } from 'lucide-react';
+import { BrandLogo } from '@/components/branding/BrandAssets';
+import { useBrand } from '@/branding/useTokens';
 
 /**
  * Shared chrome for the unauthenticated Solicitor Portal surfaces
