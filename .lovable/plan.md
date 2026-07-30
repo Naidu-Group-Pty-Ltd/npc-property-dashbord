@@ -1,110 +1,57 @@
+## Why pins disappeared
 
-# UI/UX Enhancement Plan — NPC Command Centre (21st.dev-informed)
+`ListingsMapView` now plots **only** listings that already carry `Latitude`/`Longitude` values from the Airtable "Property Intake Master" base. Browser-side geocoding was deliberately removed for privacy (there is a security test, `ListingsMapView.security.test.ts`, that fails if `geocodeAddress` returns to that file). Because almost no Airtable records have those fields populated, `markers.length` is 0 and the map shows the "No listings have map coordinates" notice.
 
-Planning only, no code changes. Grounded in existing project memory (dark-gold theme, semantic tokens, tri-portal split, glass modals, ScrollArea patterns) and 12+ inspiration results returned from 21st.dev across sidebar shells, data tables, kanban, KPI tiles, command palettes, AI chat assistants, and premium CTA affordances.
+The fix is not to re-add browser geocoding — it is to resolve coordinates **server-side** and cache them.
 
-## Guiding principles (apply to every phase)
+---
 
-- **Semantic tokens only.** Never `text-white`, `bg-[#…]`, or raw Tailwind palette classes in shared UI. All new palette work extends `--aurixa-*` / `--gold-*` tokens already declared in `tokens.css`.
-- **Aurixa aurora + gold on graphite.** Glass surfaces (`bg-glass`, `backdrop-blur`), gold accents (`hsl(var(--primary))` ≈ #D4A843), status pills use `text-success` / `text-warning` / `text-destructive`.
-- **Tri-portal parity.** Command Centre, Client Portal, Finance Portal share primitives (`AurixaMark`, `AurixaSectionHeader`, `StatusPill`, `GlassCard`, `MetricTile`) but never share sensitive AML surfaces.
-- **Accessibility floor.** WCAG AA contrast, focus-visible rings on every interactive, 44px tap targets, `prefers-reduced-motion` fallback for every animation, keyboard shortcut coverage on every list/table.
-- **Data density with breathing room.** Tables get sticky headers, condensed row height, inline row actions, empty states that describe next steps (per AGENTS.md rule "empty states must be actionable").
-- **Zero regressions.** Each phase ends with `npm run lint`, `npm run audit:style`, `npm run build`, and a screenshot pass on the affected route.
+## Phase 1 — Restore pins (server-side geocoding + cache)
 
-## Phase 0 — Design system audit & token consolidation
+- New table `public.listing_geocodes`: `listing_hash` (address+suburb+state fingerprint, PK), `lat`, `lng`, `precision`, `provider`, `resolved_at`. Explicit GRANTs, service_role-only RLS per project standard.
+- New edge function `resolve-listing-coordinates`: accepts a batch of listing address fragments, returns coordinates. Order of resolution:
+  1. Airtable `Latitude`/`Longitude` if present (no lookup).
+  2. Cache hit in `listing_geocodes`.
+  3. Google Maps Geocoding via the connector gateway (server-side key), result written to cache.
+- Frontend calls it through `invokeSecureFunction` from `Listings.tsx`, merges resolved points into listings before passing to the map. No address ever leaves the browser directly, so the privacy test stays green.
+- Graceful degradation: unresolvable listings stay off the map and are surfaced in the existing "need saved coordinates" counter.
 
-Deliverable: `archives/ui-uplift/phase-0-audit.md`.
+**Gate:** pins appear for the current Airtable dataset; security test + `npm run lint` pass.
 
-- Enumerate every hardcoded colour, font, spacing outlier via `npm run audit:style` and record baseline count.
-- Catalogue the six "shell" primitives already shipped (`AurixaMark`, `AurixaSectionHeader`, `StatusPill`, `GlassCard`, aurora orb launcher, glass modal shell) and identify parity gaps between Command Centre / Client Portal / Finance Portal.
-- Define the missing shared primitives to build: `MetricTile`, `KpiRow`, `SectionEmptyState`, `DataTableToolbar`, `SegmentedTabs`, `AuroraHero`, `TimelineRail`, `KanbanColumn`.
-- Publish the token map (spacing scale, radius scale, elevation scale, motion durations 120/200/320 ms) so subsequent phases reference tokens, not raw values.
+---
 
-## Phase 1 — Global chrome (sidebar, topbar, breadcrumb, search)
+## Phase 2 — Map design upgrade (heatmap + premium styling)
 
-Inspired by 21st.dev results: Dashboard Sidebar (arunjdass, dual-theme charcoal shell), Workbench Sidebar (nexus-ui), Command Palette (rafa-porto), Omni Command Palette.
+- Add `leaflet.heat` layer driven by listing density, weighted by price where available.
+- View toggle inside the map: **Pins · Clusters · Heat** (heat overlays optionally combine with clusters).
+- Dark-gold tile treatment: CartoDB dark basemap with a CSS filter tuned to the Aurixa palette, light-mode variant retained; all colours from semantic tokens.
+- Custom marker glyphs (price bubbles instead of default Leaflet pins), styled cluster badges, glass legend + control panel matching `GlassCard`.
+- Respect `prefers-reduced-motion` for fly-to/zoom transitions.
 
-- Rebuild `DashboardSidebar` as a **collapsible, grouped multi-tier nav** with pinned favourites, a "Recent" section, and a compact rail mode (56 px). Preserve the AML consolidation (single AML/CTF Compliance entry).
-- Topbar: unified search (⌘K), notification bell with unread pip, AI Agent orb (already shipped) moved to a fixed anchor, workspace switcher (Command Centre / Finance / Client-as-staff), user menu with role badge.
-- Breadcrumb rail replaces per-page headers where duplication exists.
-- Command palette upgrade: fuzzy nav, "Recent reports", "Recent clients", inline actions (create client, open PF, run report). Keyboard-first, screen-reader labelled.
+**Gate:** no hardcoded colours (`npm run audit:style` clean), no horizontal overflow at 1047px and mobile.
 
-## Phase 2 — Home / Compliance Home / Finance dashboard (KPI + activity)
+---
 
-Inspired by: Efferd Dashboard 2, Analytics Dashboard, Animated Dashboard Card, Dashboard Card With Modal.
+## Phase 3 — Google Street View integration
 
-- Introduce `MetricTile` with animated count-up, delta chip (up/down/neutral), sparkline mini-chart, and drill-down affordance.
-- Landing pages become **role-adaptive**: superadmin sees all workspaces, finance partner sees Pipeline+Forecast+Inbox, compliance officer sees Cases+SMR queue. Driven by effective permissions (already implemented) — this phase only redesigns the surface.
-- Add "Today" strip at top (morning briefing, streaks, badges — already implemented in finance portal; extend visual language to Command Centre).
-- Aurora hero band with the AurixaMark, current period, and a single primary CTA per role.
+- Add a Street View panel to the listing popup and to the listing detail drawer.
+- Preview uses the Street View **Static** API image via a server-side proxy edge function (`street-view-image`) so the server key is never exposed; interactive panorama uses the Maps JS `StreetViewPanorama` with the referrer-restricted browser key.
+- Metadata check first (`/streetview/metadata`) so we only render the panel when imagery genuinely exists; otherwise show an actionable empty state.
+- "Open in Google Maps" fallback link for listings with no panorama coverage.
 
-## Phase 3 — Data tables (Clients, Deals, Reports, Listings, Call Logs)
+**Gate:** panel renders for a coverage-positive listing, degrades cleanly for a coverage-negative one.
 
-Inspired by: HeroUI Table, Data Table Filter, Complex Data Table, Project Data Table, Leads Data Table.
+---
 
-- Unified `DataTableToolbar`: search, column visibility, saved views, bulk-action bar that slides in on selection, export CSV/PDF, density toggle.
-- Sticky first column (identity) + sticky header, virtualized rows for >200 items, inline row hover actions, right-side detail drawer instead of full page navigation for quick previews.
-- Status column standardised on `StatusPill` variants (compliance, deal stage, doc state).
-- Empty states with contextual next-step CTA (per AGENTS.md).
-- Column presets per role; URL-synced filters and pagination (pattern already proven on Model Hub OpenRouter tab).
+## Phase 4 — QA & hardening
 
-## Phase 4 — Pipelines, timelines, kanban (Deal Pipeline, Finance Pipeline, AML case timeline, Chronological Timeline)
+- Playwright pass over `/listings?view=map`: pin count, heat toggle, popup → drawer, Street View load, console clean.
+- Verify geocode cache prevents repeat provider calls (second load makes zero geocoding requests).
+- `npm run lint`, `npm run audit:style`, `npm run build`, plus the listings security tests.
 
-Inspired by: UltraQualityKanbanBoard, Sidebar Dashboard Skeleton.
+---
 
-- Redesign kanban cards with lender chip, days-in-stage micro-bar, risk pill, assignee avatar; drag handle isolated to reduce accidental drags.
-- Column headers show count + weighted value + WIP limit; over-limit column glows warning.
-- Timeline rail primitive for AML Chronological Timeline and Deal history: vertical gold rail, glass event cards, filter chips (system / user / integration / audit), keyboard nav.
-- Preserve current backend contracts; UI-only.
-
-## Phase 5 — Modals, drawers, forms
-
-Reinforce project memory rule: modals use `h-[90vh]` + `ScrollArea`, no Radix Select empty strings.
-
-- Standardise every dialog on a `GlassModal` primitive (header slot, sticky footer with primary/secondary/destructive slots, mandatory close via ⎋).
-- Multi-step forms (report generation, client intake, PF creation, AML case open) adopt a shared `Stepper` with progress rail, save-and-resume drafts.
-- Inline validation with token-coloured helper text; server errors surface as toast + inline flag on the offending field.
-- Right-side detail drawers replace deep-linked modals where the user needs to keep list context (Clients, Deals, Reports).
-
-## Phase 6 — AI surfaces (Agent widget, Report Q&A, Copilot, Chat)
-
-Inspired by: Glowing AI Chat Assistant, Suggestions, AI Suggested Actions, Message Dock.
-
-- Agent widget: keep aurora orb (Phase 2 legacy), add docked mode, suggestion chips above the composer, tool-call visualisation cards, memory citation strip (already shipped) with hover previews.
-- Report Q&A: split-pane on ≥lg (thread left, source viewer right), collapsible on md, single-column on sm. Streaming tokens use shimmer primitive from `primitives.css`.
-- Model-change indicator (already shipped from Model Hub work) gets a persistent chip in every AI surface header.
-- Voice-to-text mic button with waveform feedback and captioned transcript.
-
-## Phase 7 — Reports & PDF surfaces (viewer, cover, chart embeds)
-
-- `ReportViewer` gains a left TOC rail, floating "share/print/copy" cluster, chart lightbox parity with the Charts page (already implemented, extend).
-- Cover pages standardised on `AuroraHero` primitive, brand mark, category chip, timestamp, and canonical property key.
-- Chart embeds inherit `LiveChart` legend rule (legends off, tooltip on hover), always-print-safe palette.
-- Generated Reports index gets grouped view (by category / by property / by client) with saved filters.
-
-## Phase 8 — QA, motion, accessibility, and cutover
-
-- Reduced-motion audit: every aurora glow, shimmer, count-up, drawer slide must degrade to a static state under `prefers-reduced-motion`.
-- Keyboard audit: tab-order, focus-visible ring, skip-to-content, arrow-key nav on tables/kanban.
-- Contrast audit against WCAG AA on gold-on-graphite and status pills.
-- Cross-viewport pass at 1280×800, 1440×900, 1920×1080, 1366×768 (per user's 100 %-zoom preference), plus responsive checkpoints for finance-portal mobile cockpit.
-- Rollout flag `ui_uplift_v2` gated per workspace, mirroring the AML v3 cutover pattern; document runbook at `archives/ui-uplift/phase-8-runbook.md`.
-
-## Technical details (per-phase)
-
-- **21st.dev component sourcing**: for each phase, we metadata-search first (free), then `get_component` only for the two or three exemplars we actually adapt. All fetched code is re-tokenised to Aurixa semantics before merging — never ship a 21st component with its own palette or fonts.
-- **Skills wiring**: run the `frontend-design` skill at the start of Phases 1-7 for direction, and `web-design-guidelines` at the end of each phase for the review pass; verify in Chrome DevTools MCP.
-- **Non-negotiables**: `components.json`, `tailwind.config.ts`, `src/index.css`, `tokens.css`, `primitives.css` remain the only sources of design truth. New palette values land as tokens, never as raw hex.
-- **Traceability**: each phase writes an entry to `archives/ui-uplift/phase-N-brief.md` (audit → plan → files changed → screenshots → verification checklist).
-- **No backend changes** in any phase; the only allowed data-layer touch is adding query keys/columns strictly for presentation (e.g. sparkline sources) via existing edge functions.
-
-## Success metrics
-
-- 0 new `audit:style` violations, ≥ 30 % reduction from baseline.
-- 100 % of shared UI on semantic tokens.
-- Lighthouse a11y ≥ 95 on Home, Clients, Deal Pipeline, Report Viewer, Finance Portal Overview.
-- <150 ms perceived interaction latency on table filters and command palette.
-- One shared primitive library referenced from all three portals.
-
-Approve to proceed with Phase 0 (audit + primitive gap map). Each subsequent phase will be executed on your explicit "proceed" signal.
+### Technical notes
+- Uses the existing **Google Maps Platform connector** through the gateway for geocoding and Street View metadata — no new secrets needed if that connection is linked; if not, Phase 1 pauses to link it.
+- Leaflet stays as the map engine; Street View is the only Google-rendered surface, avoiding a full Mapbox/Google map migration.
+- All new edge functions follow the project's `verifyAuth` + CORS + signed-internal standards.
