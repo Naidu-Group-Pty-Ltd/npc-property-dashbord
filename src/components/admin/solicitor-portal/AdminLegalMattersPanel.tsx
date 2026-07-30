@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Briefcase, Loader2, Plus, RefreshCw, Search } from 'lucide-react';
+import { Briefcase, Loader2, MessagesSquare, Plus, RefreshCw, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +14,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { supabase } from '@/integrations/supabase/client';
+import { AdminMatterCommsDialog } from '@/components/admin/solicitor-portal/AdminMatterCommsDialog';
 import {
   AU_STATE_OPTIONS, MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, MATTER_STATUS_ORDER,
   MATTER_TYPE_LABELS, formatMatterDate, formatPropertyAddress,
@@ -54,6 +54,7 @@ export function AdminLegalMattersPanel() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [commsMatter, setCommsMatter] = useState<{ id: string; title: string } | null>(null);
   const [form, setForm] = useState({ ...BLANK });
 
   const load = useCallback(async () => {
@@ -61,7 +62,7 @@ export function AdminLegalMattersPanel() {
     const [matterRes, firmRes, clientRes] = await Promise.all([
       invokeSecureFunction('legal-matters-admin', { operation: 'list_matters' }),
       invokeSecureFunction('solicitor-portal-admin', { operation: 'list_users' }),
-      supabase.from('clients').select('id, primary_first_name, primary_surname').order('primary_surname').limit(1000),
+      invokeSecureFunction('solicitor-portal-admin', { operation: 'list_clients' }),
     ]);
     if (matterRes.error) toast.error(matterRes.error.message || 'Could not load matters');
     else setMatters((matterRes.data?.records || []) as LegalMatter[]);
@@ -75,9 +76,9 @@ export function AdminLegalMattersPanel() {
       for (const u of users) if (u.firm_id && u.firm_name) seen.set(u.firm_id, u.firm_name);
       setFirms([...seen].map(([id, name]) => ({ id, name })));
     }
-    setClients((clientRes.data || []).map((c) => ({
+    setClients((clientRes.data?.records || []).map((c: { id: string; primary_contact_name: string | null }) => ({
       id: c.id,
-      name: [c.primary_first_name, c.primary_surname].filter(Boolean).join(' ') || 'Unnamed client',
+      name: c.primary_contact_name || 'Unnamed client',
     })));
     setLoading(false);
   }, []);
@@ -201,6 +202,7 @@ export function AdminLegalMattersPanel() {
                   <TableHead className="hidden lg:table-cell">Solicitor</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden sm:table-cell">Settlement</TableHead>
+                  <TableHead className="text-right">Comms</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -253,7 +255,20 @@ export function AdminLegalMattersPanel() {
                     <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
                       {formatMatterDate(m.settlement_date)}
                     </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1"
+                        onClick={() => setCommsMatter({ id: m.id, title: m.title })}
+                        aria-label={`Open conversation for ${m.title}`}
+                      >
+                        <MessagesSquare className="h-4 w-4" aria-hidden />
+                        <span className="hidden lg:inline">Messages</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
+
                 ))}
               </TableBody>
             </Table>
@@ -391,6 +406,13 @@ export function AdminLegalMattersPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AdminMatterCommsDialog
+        matterId={commsMatter?.id ?? null}
+        matterTitle={commsMatter?.title}
+        open={!!commsMatter}
+        onOpenChange={(next) => { if (!next) setCommsMatter(null); }}
+      />
     </Card>
   );
 }

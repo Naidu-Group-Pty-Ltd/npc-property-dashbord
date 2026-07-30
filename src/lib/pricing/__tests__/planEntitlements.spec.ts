@@ -131,7 +131,7 @@ describe("GST is contained in the price, not added to it", () => {
   });
 });
 
-describe("a module no tier includes requires a separate add-on entitlement", () => {
+describe("a module no tier includes defers to the user permission gate", () => {
   const ADD_ONS = [
     "intelligence-hub",
     "email-copilot",
@@ -149,10 +149,18 @@ describe("a module no tier includes requires a separate add-on entitlement", () 
     expect(empty).toEqual([...ADD_ONS].sort());
   });
 
-  it("does not treat them as included in a known plan", () => {
+  it("does not lock purchased add-ons out of known-plan workspaces", () => {
     for (const slug of ADD_ONS) {
       for (const plan of ["launch", "growth", "scale"]) {
-        expect(planIncludesModule(plan, slug)).toBe(false);
+        expect(planIncludesModule(plan, slug)).toBe(true);
+      }
+    }
+  });
+
+  it("preserves add-on access when called with app permission keys", () => {
+    for (const key of ["email_copilot", "call_logs", "agent"]) {
+      for (const plan of ["launch", "growth", "scale"]) {
+        expect(planIncludesModule(plan, key)).toBe(true);
       }
     }
   });

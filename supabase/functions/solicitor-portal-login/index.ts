@@ -5,6 +5,9 @@ import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth
 const SESSION_HOURS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+// A fixed bcrypt hash keeps missing and passwordless accounts on the same
+// expensive verification path as accounts with a stored bcrypt password.
+const DUMMY_PASSWORD_HASH = '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -73,54 +76,32 @@ Deno.serve(async (req) => {
       .eq('email', normalizedEmail)
       .maybeSingle()
 
-    if (userError || !portalUser) {
-      return new Response(
-        JSON.stringify({ error: 'Invalid email or password' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
+    const passwordHash = portalUser?.password_hash || DUMMY_PASSWORD_HASH;
+    const isValid = await verifyPassword(password, passwordHash)
+    const firm = portalUser?.solicitor_firms as any;
+    const isLocked = portalUser?.locked_until && new Date(portalUser.locked_until) > new Date();
+    const canAuthenticate = Boolean(!userError
+      && portalUser
+      && portalUser.password_hash
+      && portalUser.is_active
+      && !portalUser.revoked_at
+      && firm?.is_active
+      && !isLocked);
 
-    if (!portalUser.is_active || portalUser.revoked_at) {
-      return new Response(
-        JSON.stringify({ error: 'Your access has been revoked. Please contact your administrator.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    const firm = portalUser.solicitor_firms as any;
-    if (!firm || !firm.is_active) {
-      return new Response(
-        JSON.stringify({ error: 'The legal practice linked to this account is no longer active.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    if (portalUser.locked_until && new Date(portalUser.locked_until) > new Date()) {
-      const minutesLeft = Math.ceil((new Date(portalUser.locked_until).getTime() - Date.now()) / 60000);
-      return new Response(
-        JSON.stringify({ error: `Account temporarily locked. Try again in ${minutesLeft} minute(s).` }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    if (!portalUser.password_hash) {
-      return new Response(
-        JSON.stringify({ error: 'Please accept your invite first to set up your password.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    const isValid = await verifyPassword(password, portalUser.password_hash)
-    if (!isValid) {
-      const newAttempts = (portalUser.failed_login_attempts || 0) + 1;
-      const updates: Record<string, any> = { failed_login_attempts: newAttempts };
-      if (newAttempts >= MAX_FAILED_ATTEMPTS) {
-        const lockUntil = new Date();
-        lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
-        updates.locked_until = lockUntil.toISOString();
-        updates.failed_login_attempts = 0;
+    if (!isValid || !canAuthenticate || !portalUser) {
+      // Only eligible accounts accrue failed attempts. All failures deliberately
+      // share a response so callers cannot enumerate account or invitation state.
+      if (!isValid && canAuthenticate && portalUser) {
+        const newAttempts = (portalUser.failed_login_attempts || 0) + 1;
+        const updates: Record<string, any> = { failed_login_attempts: newAttempts };
+        if (newAttempts >= MAX_FAILED_ATTEMPTS) {
+          const lockUntil = new Date();
+          lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
+          updates.locked_until = lockUntil.toISOString();
+          updates.failed_login_attempts = 0;
+        }
+        await supabase.from('solicitor_portal_users').update(updates).eq('id', portalUser.id);
       }
-      await supabase.from('solicitor_portal_users').update(updates).eq('id', portalUser.id);
 
       return new Response(
         JSON.stringify({ error: 'Invalid email or password' }),
@@ -173,7 +154,6 @@ Deno.serve(async (req) => {
           must_change_password: !!portalUser.must_change_password,
         },
         must_change_password: !!portalUser.must_change_password,
-        session_token: sessionToken,
         expires_at: expiresAt.toISOString(),
       }),
       {

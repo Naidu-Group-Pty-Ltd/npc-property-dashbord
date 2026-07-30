@@ -159,6 +159,7 @@ import SolicitorForgotPassword from "@/pages/solicitor/SolicitorForgotPassword";
 import SolicitorChangePassword from "@/pages/solicitor/SolicitorChangePassword";
 import SolicitorDashboard from "@/pages/solicitor/SolicitorDashboard";
 import SolicitorMatters from "@/pages/solicitor/SolicitorMatters";
+import SolicitorPipeline from "@/pages/solicitor/SolicitorPipeline";
 import SolicitorMatterDetail from "@/pages/solicitor/SolicitorMatterDetail";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
@@ -344,6 +345,11 @@ const App = () => (
                               <Route path="matters" element={
                                 <SolicitorPortalProtectedRoute>
                                   <SolicitorMatters />
+                                </SolicitorPortalProtectedRoute>
+                              } />
+                              <Route path="pipeline" element={
+                                <SolicitorPortalProtectedRoute>
+                                  <SolicitorPipeline />
                                 </SolicitorPortalProtectedRoute>
                               } />
                               <Route path="matters/:matterId" element={

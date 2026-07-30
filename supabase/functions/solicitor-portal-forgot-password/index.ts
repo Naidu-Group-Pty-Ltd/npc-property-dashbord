@@ -5,6 +5,7 @@ import { getBrandConfig } from "../_shared/brand-config.ts"
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
 const WINDOW_SECONDS = 3600;
+const IP_WINDOW_SECONDS = 900;
 
 function generateOtp(): string {
   const buf = new Uint32Array(1);
@@ -42,27 +43,52 @@ Deno.serve(async (req) => {
 
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Rate limit BEFORE any lookup so enumeration cannot outrun the throttle.
-    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    const { data: allowed } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `solicitor_forgot:${normalizedEmail}:${ip}`,
+    // Consume an IP-only bucket before lookup so arbitrary emails cannot create
+    // unbounded persistent limiter rows.
+    const ip = (req.headers.get('x-forwarded-for')?.split(',')[0]
+      || req.headers.get('cf-connecting-ip') || 'unknown').trim();
+    const { data: ipAllowed, error: ipLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `solicitor_forgot_ip:${ip}`,
       p_max: MAX_REQUESTS_PER_WINDOW,
-      p_window_seconds: WINDOW_SECONDS,
+      p_window_seconds: IP_WINDOW_SECONDS,
     });
-    if (allowed === false) {
-      return new Response(
-        JSON.stringify({ error: 'Too many reset requests. Please try again later.' }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    if (ipLimitError || ipAllowed !== true) {
+      console.warn('[solicitor-portal-forgot-password] IP rate limited', { ip });
+      return genericOk();
     }
 
     const { data: user } = await supabase
       .from('solicitor_portal_users')
-      .select('id, firm_id, email, name, is_active, revoked_at')
+      .select('id, firm_id, email, name, is_active, revoked_at, password_hash, invited_at, solicitor_firms:firm_id (is_active)')
       .eq('email', normalizedEmail)
       .maybeSingle()
 
     if (!user || !user.is_active || user.revoked_at) {
+      return genericOk();
+    }
+
+    // A reset code must never resurrect an account whose practice is deactivated —
+    // login would reject it anyway, so issuing a code only leaks account existence.
+    const firm = (user as any).solicitor_firms as { is_active?: boolean } | null;
+    if (!firm || firm.is_active !== true) {
+      return genericOk();
+    }
+
+    // Never let password recovery bypass the invite flow: an account that has
+    // never been invited and has no password must be onboarded via its invite.
+    if (!user.password_hash && !user.invited_at) {
+      return genericOk();
+    }
+
+    // A validated account gets its own bucket so changing the source IP cannot
+    // churn reset tokens or trigger repeated email delivery.
+    const { data: accountAllowed, error: accountLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `solicitor_forgot_account:${user.id}`,
+      p_max: MAX_REQUESTS_PER_WINDOW,
+      p_window_seconds: WINDOW_SECONDS,
+    });
+    if (accountLimitError || accountAllowed !== true) {
+      console.warn('[solicitor-portal-forgot-password] account rate limited', { userId: user.id });
       return genericOk();
     }
 

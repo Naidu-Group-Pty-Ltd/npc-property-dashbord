@@ -2335,6 +2335,18 @@
       "exposure_class": "module-gated",
       "owner": "solicitor-portal-program",
       "reviewed": true
+    },
+    "solicitor-portal-documents": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-comms": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
     }
   }
 }

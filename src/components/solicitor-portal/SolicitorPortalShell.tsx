@@ -1,13 +1,15 @@
 import { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Briefcase, LayoutDashboard, LogOut, Scale } from 'lucide-react';
+import { Briefcase, KanbanSquare, LayoutDashboard, LogOut, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
+import { SolicitorNotificationBell } from '@/components/solicitor-portal/SolicitorNotificationBell';
 
 const NAV = [
   { to: '/solicitor', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { to: '/solicitor/matters', label: 'Matters', icon: Briefcase, exact: false },
+  { to: '/solicitor/pipeline', label: 'Pipeline', icon: KanbanSquare, exact: false },
 ];
 
 /**
@@ -65,6 +67,7 @@ export function SolicitorPortalShell({
                 );
               })}
             </nav>
+            <SolicitorNotificationBell />
             <Button variant="outline" size="sm" onClick={() => void signOut()}>
               <LogOut className="mr-2 h-4 w-4" aria-hidden />
               Sign out

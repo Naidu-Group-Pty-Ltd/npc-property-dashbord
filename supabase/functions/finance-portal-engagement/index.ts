@@ -188,9 +188,6 @@ Deno.serve(async (req) => {
         [...(clientPfs || []), ...(assignedPfs || [])].map((pf: any) => [pf.id, pf]),
       ).values());
       const pfIds = (pfs || []).map((p: any) => p.id);
-      const documentPfIds = (pfs || [])
-        .filter((p: any) => documentClientIds.has(p.client_id))
-        .map((p: any) => p.id);
       const pfById = new Map((pfs || []).map((p: any) => [p.id, p]));
       const documentPfIds = pfs
         .filter((pf: any) => purchaseFileAssignments.some((assignment: any) =>
@@ -244,24 +241,23 @@ Deno.serve(async (req) => {
         }
       }
 
-        if (documentPfIds.length) {
-          const { data: docs } = await supabase
-            .from('finance_portal_documents')
-            .select('id, original_filename, purchase_file_id, created_at')
-            .in('purchase_file_id', documentPfIds)
-            .is('deleted_at', null)
-            .gt('created_at', sinceIso)
-            .order('created_at', { ascending: false })
-            .limit(20);
-          for (const d of docs || []) {
-            const pf: any = pfById.get(d.purchase_file_id);
-            changed.push({
-              type: 'document_uploaded',
-              label: `Document uploaded — ${d.original_filename || 'file'} (${pf?.title || ''})`,
-              link: `/finance/purchase-files/${d.purchase_file_id}`,
-              at: d.created_at,
-            });
-          }
+      if (documentPfIds.length) {
+        const { data: docs } = await supabase
+          .from('finance_portal_documents')
+          .select('id, original_filename, purchase_file_id, created_at')
+          .in('purchase_file_id', documentPfIds)
+          .is('deleted_at', null)
+          .gt('created_at', sinceIso)
+          .order('created_at', { ascending: false })
+          .limit(20);
+        for (const d of docs || []) {
+          const pf: any = pfById.get(d.purchase_file_id);
+          changed.push({
+            type: 'document_uploaded',
+            label: `Document uploaded — ${d.original_filename || 'file'} (${pf?.title || ''})`,
+            link: `/finance/purchase-files/${d.purchase_file_id}`,
+            at: d.created_at,
+          });
         }
       }
 

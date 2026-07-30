@@ -23,13 +23,38 @@ import {
   cleanEnum,
   cleanText,
 } from "../_shared/legalMatters.ts";
+import {
+  CRITICAL_DATE_SELECT,
+  SETTLEMENT_TASK_SELECT,
+  LEGAL_CRITICAL_DATE_STATUSES,
+  LEGAL_SETTLEMENT_TASK_STATUSES,
+  buildCriticalDatePayload,
+  buildSettlementTaskPayload,
+  summariseRunway,
+} from "../_shared/legalCriticalDates.ts";
+import {
+  THREAD_SELECT,
+  MESSAGE_SELECT,
+  STAFF_POSTABLE_SCOPES,
+  isValidScope,
+  scopeLabel,
+  preview,
+  notifySolicitors,
+  mirrorToFinancePortal,
+  summariseThreads,
+  type LegalThreadScope,
+} from "../_shared/legalComms.ts";
+
+
 
 const MODULE_KEY = 'solicitor_portal_admin';
 
 const READ_OPS = new Set([
   'list_matters', 'get_matter', 'list_for_deal', 'list_for_client', 'link_options',
+  'list_dates', 'list_runway', 'upcoming_dates',
+  'list_threads', 'get_thread', 'comms_summary',
 ]);
-const DELETE_OPS = new Set(['delete_matter', 'delete_party']);
+const DELETE_OPS = new Set(['delete_matter', 'delete_party', 'delete_date']);
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -136,16 +161,29 @@ Deno.serve(async (req) => {
         .select(MATTER_SELECT).eq('id', body.matter_id).maybeSingle();
       if (!matter) return json({ error: 'Matter not found' }, 404);
 
-      const [{ data: parties }, { data: history }] = await Promise.all([
+      const [{ data: parties }, { data: history }, { data: dates }, { data: tasks }] = await Promise.all([
         supabase.from('legal_matter_parties').select(PARTY_SELECT)
           .eq('legal_matter_id', matter.id).order('created_at', { ascending: true }),
         supabase.from('legal_matter_status_history')
           .select('id, from_status, to_status, changed_by_type, reason, created_at')
           .eq('legal_matter_id', matter.id).order('created_at', { ascending: false }).limit(100),
+        supabase.from('legal_matter_critical_dates').select(CRITICAL_DATE_SELECT)
+          .eq('legal_matter_id', matter.id)
+          .order('due_date', { ascending: true, nullsFirst: false }),
+        supabase.from('legal_matter_settlement_tasks').select(SETTLEMENT_TASK_SELECT)
+          .eq('legal_matter_id', matter.id).order('sequence', { ascending: true }),
       ]);
 
       const [hydrated] = await hydrate([matter]);
-      return json({ success: true, matter: hydrated, parties: parties || [], status_history: history || [] });
+      return json({
+        success: true,
+        matter: hydrated,
+        parties: parties || [],
+        status_history: history || [],
+        critical_dates: dates || [],
+        settlement_tasks: tasks || [],
+        runway: summariseRunway((dates || []) as any[], (tasks || []) as any[]),
+      });
     }
 
     if (operation === 'list_for_deal' || operation === 'list_for_client') {
@@ -182,6 +220,28 @@ Deno.serve(async (req) => {
     // ───────────────────────── WRITES ─────────────────────────
     if (operation === 'create_matter') {
       if (!body.client_id) return json({ error: 'A client is required' }, 400);
+
+      if (body.purchase_file_id) {
+        const { data: pf } = await supabase.from('purchase_files')
+          .select('id, client_id, legal_matter_id').eq('id', body.purchase_file_id).maybeSingle();
+        if (!pf) return json({ error: 'Purchase file not found' }, 404);
+        if (pf.client_id !== body.client_id) {
+          return json({ error: 'The purchase file belongs to a different client' }, 400);
+        }
+        if (pf.legal_matter_id) {
+          return json({ error: 'That purchase file is already linked to another matter' }, 409);
+        }
+      }
+
+      if (body.client_deal_id) {
+        const { data: deal } = await supabase.from('client_deals')
+          .select('id, client_id').eq('id', body.client_deal_id).maybeSingle();
+        if (!deal) return json({ error: 'Client deal not found' }, 404);
+        if (deal.client_id !== body.client_id) {
+          return json({ error: 'The client deal belongs to a different client' }, 400);
+        }
+      }
+
       const payload = buildMatterPayload(body, { isCreate: true });
 
       const insert: Record<string, unknown> = {
@@ -300,6 +360,18 @@ Deno.serve(async (req) => {
       const link = operation === 'link_deal';
       if (link && !body.client_deal_id) return json({ error: 'client_deal_id is required' }, 400);
 
+      if (link) {
+        const { data: deal } = await supabase.from('client_deals')
+          .select('id, client_id').eq('id', body.client_deal_id).maybeSingle();
+        if (!deal) return json({ error: 'Client deal not found' }, 404);
+        const { data: matter } = await supabase.from('legal_matters')
+          .select('id, client_id').eq('id', body.matter_id).maybeSingle();
+        if (!matter) return json({ error: 'Matter not found' }, 404);
+        if (deal.client_id !== matter.client_id) {
+          return json({ error: 'The client deal belongs to a different client' }, 400);
+        }
+      }
+
       const { data, error } = await supabase.from('legal_matters')
         .update({ client_deal_id: link ? body.client_deal_id : null, updated_at: new Date().toISOString() })
         .eq('id', body.matter_id).select(MATTER_SELECT).maybeSingle();
@@ -368,6 +440,340 @@ Deno.serve(async (req) => {
         client_id: matter.client_id, entity_type: 'legal_matter', entity_id: matter.id,
       });
       return json({ success: true });
+    }
+
+    // ─────────────── CRITICAL DATES (Phase 4) ───────────────
+    const requireMatter = async (id: unknown) => {
+      const { data } = await supabase.from('legal_matters')
+        .select('id, client_id, settlement_date').eq('id', String(id || '')).maybeSingle();
+      return data;
+    };
+
+    if (operation === 'list_dates') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data } = await supabase.from('legal_matter_critical_dates')
+        .select(CRITICAL_DATE_SELECT).eq('legal_matter_id', matter.id)
+        .order('due_date', { ascending: true, nullsFirst: false });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'upsert_date') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const isCreate = !body.date_id;
+      const payload = buildCriticalDatePayload(body, { isCreate });
+      if (isCreate && !payload.label) return json({ error: 'A label is required' }, 400);
+
+      let record: any;
+      if (isCreate) {
+        const { data, error } = await supabase.from('legal_matter_critical_dates')
+          .insert({ ...payload, legal_matter_id: matter.id, source: 'manual' })
+          .select(CRITICAL_DATE_SELECT).maybeSingle();
+        if (error) throw error;
+        record = data;
+      } else {
+        const { data: existing } = await supabase.from('legal_matter_critical_dates')
+          .select('id, source').eq('id', body.date_id).eq('legal_matter_id', matter.id).maybeSingle();
+        if (!existing) return json({ error: 'Critical date not found' }, 404);
+        if (existing.source === 'matter_field') delete (payload as any).due_date;
+        const { data, error } = await supabase.from('legal_matter_critical_dates')
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', existing.id).select(CRITICAL_DATE_SELECT).maybeSingle();
+        if (error) throw error;
+        record = data;
+      }
+
+      await logStaff(isCreate ? 'matter_date_added' : 'matter_date_updated', {
+        client_id: matter.client_id, entity_type: 'legal_matter_critical_date',
+        entity_id: record?.id ?? null,
+      });
+      return json({ success: true, record });
+    }
+
+    if (operation === 'set_date_status') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const status = cleanEnum(body.status, LEGAL_CRITICAL_DATE_STATUSES);
+      if (!status) return json({ error: 'A valid status is required' }, 400);
+
+      const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
+      if (status === 'satisfied') {
+        patch.satisfied_at = new Date().toISOString();
+        patch.satisfied_by_type = 'staff';
+      } else {
+        patch.satisfied_at = null;
+        patch.satisfied_by_type = null;
+      }
+
+      const { data: record, error } = await supabase.from('legal_matter_critical_dates')
+        .update(patch).eq('id', body.date_id).eq('legal_matter_id', matter.id)
+        .select(CRITICAL_DATE_SELECT).maybeSingle();
+      if (error) throw error;
+      if (!record) return json({ error: 'Critical date not found' }, 404);
+
+      await logStaff('matter_date_status_changed', {
+        client_id: matter.client_id, entity_type: 'legal_matter_critical_date', entity_id: record.id,
+      });
+      return json({ success: true, record });
+    }
+
+    if (operation === 'delete_date') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data: existing } = await supabase.from('legal_matter_critical_dates')
+        .select('id, source').eq('id', body.date_id).eq('legal_matter_id', matter.id).maybeSingle();
+      if (!existing) return json({ error: 'Critical date not found' }, 404);
+      if (existing.source === 'matter_field') {
+        return json({ error: 'Derived contract dates follow the matter — clear the matter field instead.' }, 400);
+      }
+      const { error } = await supabase.from('legal_matter_critical_dates').delete().eq('id', existing.id);
+      if (error) throw error;
+
+      await logStaff('matter_date_removed', {
+        client_id: matter.client_id, entity_type: 'legal_matter_critical_date', entity_id: existing.id,
+      });
+      return json({ success: true });
+    }
+
+    // ─────────────── SETTLEMENT RUNWAY (Phase 4) ───────────────
+    if (operation === 'list_runway') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data } = await supabase.from('legal_matter_settlement_tasks')
+        .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', matter.id)
+        .order('sequence', { ascending: true });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'seed_runway') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { error } = await supabase.rpc('seed_legal_matter_settlement_tasks', {
+        _matter_id: matter.id,
+      });
+      if (error) throw error;
+      const { data } = await supabase.from('legal_matter_settlement_tasks')
+        .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', matter.id)
+        .order('sequence', { ascending: true });
+
+      await logStaff('matter_runway_seeded', {
+        client_id: matter.client_id, entity_type: 'legal_matter', entity_id: matter.id,
+      });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'update_task') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const payload = buildSettlementTaskPayload(body);
+      if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
+
+      if ('status' in payload) {
+        const status = cleanEnum(payload.status, LEGAL_SETTLEMENT_TASK_STATUSES, 'not_started');
+        if (status === 'complete') {
+          payload.completed_at = new Date().toISOString();
+          payload.completed_by_type = 'staff';
+        } else {
+          payload.completed_at = null;
+          payload.completed_by_type = null;
+        }
+        if (status !== 'blocked') payload.blocked_reason = null;
+      }
+
+      const { data: record, error } = await supabase.from('legal_matter_settlement_tasks')
+        .update({ ...payload, updated_at: new Date().toISOString() })
+        .eq('id', body.task_id).eq('legal_matter_id', matter.id)
+        .select(SETTLEMENT_TASK_SELECT).maybeSingle();
+      if (error) throw error;
+      if (!record) return json({ error: 'Settlement task not found' }, 404);
+
+      await logStaff('matter_runway_task_updated', {
+        client_id: matter.client_id, entity_type: 'legal_matter_settlement_task', entity_id: record.id,
+      });
+      return json({ success: true, record });
+    }
+
+    // ─────────────── UPCOMING DATES (portfolio-wide) ───────────────
+    if (operation === 'upcoming_dates') {
+      const horizonDays = Math.min(Math.max(Number(body.days) || 30, 1), 120);
+      const horizon = new Date();
+      horizon.setDate(horizon.getDate() + horizonDays);
+
+      const { data: dates } = await supabase
+        .from('legal_matter_critical_dates')
+        .select(CRITICAL_DATE_SELECT)
+        .not('due_date', 'is', null)
+        .lte('due_date', horizon.toISOString().slice(0, 10))
+        .in('status', ['pending', 'at_risk', 'extended', 'missed'])
+        .order('due_date', { ascending: true })
+        .limit(300);
+
+      const matterIds = Array.from(new Set((dates || []).map((d: any) => d.legal_matter_id)));
+      const matterMap = new Map<string, any>();
+      if (matterIds.length) {
+        const { data: matters } = await supabase.from('legal_matters')
+          .select('id, title, property_address, property_suburb, status, client_id, firm_id')
+          .in('id', matterIds);
+        for (const m of matters || []) matterMap.set(m.id, m);
+      }
+
+      return json({
+        success: true,
+        records: (dates || []).map((d: any) => ({ ...d, matter: matterMap.get(d.legal_matter_id) ?? null })),
+      });
+    }
+
+    // ─────────────── COMMUNICATIONS (Phase 6) ───────────────
+    const loadStaffMatter = async (matterId: string) => {
+      if (!matterId) return null;
+      const { data } = await supabase
+        .from('legal_matters')
+        .select('id, client_id, firm_id, title, matter_reference')
+        .eq('id', matterId)
+        .maybeSingle();
+      return data;
+    };
+
+    const ensureStaffThread = async (matter: any, scope: LegalThreadScope) => {
+      const { data: existing } = await supabase
+        .from('legal_matter_threads').select(THREAD_SELECT)
+        .eq('legal_matter_id', matter.id).eq('scope', scope)
+        .is('finance_user_id', null).maybeSingle();
+      if (existing) return existing;
+      const { data, error } = await supabase.from('legal_matter_threads').insert({
+        legal_matter_id: matter.id,
+        client_id: matter.client_id,
+        firm_id: matter.firm_id,
+        scope,
+        subject: `${matter.matter_reference || matter.title || 'Matter'} — ${scopeLabel(scope)}`,
+        created_by: staffUserId,
+      }).select(THREAD_SELECT).maybeSingle();
+      if (error) throw error;
+      return data;
+    };
+
+    if (operation === 'list_threads') {
+      const matter = await loadStaffMatter(String(body.matter_id || ''));
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data: threads } = await supabase
+        .from('legal_matter_threads').select(THREAD_SELECT)
+        .eq('legal_matter_id', matter.id)
+        // Firm-internal notes are never exposed outside the solicitor portal.
+        .neq('scope', 'firm_internal')
+        .order('last_message_at', { ascending: false, nullsFirst: false });
+      return json({
+        success: true,
+        threads: threads || [],
+        summary: summariseThreads((threads || []) as any[], 'staff'),
+      });
+    }
+
+    if (operation === 'get_thread') {
+      const matter = await loadStaffMatter(String(body.matter_id || ''));
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const scope: LegalThreadScope = isValidScope(body.scope) ? body.scope : 'solicitor_npc';
+      if (scope === 'firm_internal') return json({ error: 'Thread not available' }, 403);
+
+      let thread: any = null;
+      if (body.thread_id) {
+        const { data } = await supabase.from('legal_matter_threads').select(THREAD_SELECT)
+          .eq('id', String(body.thread_id)).eq('legal_matter_id', matter.id)
+          .neq('scope', 'firm_internal').maybeSingle();
+        thread = data;
+      } else {
+        thread = await ensureStaffThread(matter, scope);
+      }
+      if (!thread) return json({ error: 'Thread not found' }, 404);
+
+      const { data: messages } = await supabase
+        .from('legal_matter_messages').select(MESSAGE_SELECT)
+        .eq('thread_id', thread.id).eq('is_internal', false)
+        .order('created_at', { ascending: true }).limit(500);
+
+      if (body.mark_read !== false) {
+        const now = new Date().toISOString();
+        await supabase.from('legal_matter_messages')
+          .update({ read_by_staff_at: now })
+          .eq('thread_id', thread.id).is('read_by_staff_at', null);
+        await supabase.from('legal_matter_threads')
+          .update({ unread_count_staff: 0 }).eq('id', thread.id);
+      }
+
+      return json({ success: true, thread, messages: messages || [] });
+    }
+
+    if (operation === 'post_message') {
+      const matter = await loadStaffMatter(String(body.matter_id || ''));
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const scope: LegalThreadScope = isValidScope(body.scope) ? body.scope : 'solicitor_npc';
+      if (!STAFF_POSTABLE_SCOPES.has(scope)) {
+        return json({ error: 'That conversation is not available from Command Centre' }, 403);
+      }
+      const text = String(body.body || '').trim();
+      if (!text) return json({ error: 'A message body is required' }, 400);
+      if (text.length > 8000) return json({ error: 'Messages are limited to 8000 characters' }, 400);
+
+      const thread = await ensureStaffThread(matter, scope);
+      const senderName = String(body.sender_name || 'NPC Command Centre');
+
+      let mirroredFinanceId: string | null = null;
+      if (scope === 'solicitor_finance') {
+        mirroredFinanceId = await mirrorToFinancePortal(supabase, {
+          clientId: matter.client_id, senderName, body: text,
+        });
+      }
+
+      const { data: message, error } = await supabase.from('legal_matter_messages').insert({
+        thread_id: thread.id,
+        legal_matter_id: matter.id,
+        client_id: matter.client_id,
+        scope,
+        sender_type: 'staff',
+        sender_staff_user_id: staffUserId,
+        sender_name: senderName,
+        body: text,
+        is_internal: false,
+        mirrored_finance_message_id: mirroredFinanceId,
+        read_by_staff_at: new Date().toISOString(),
+      }).select(MESSAGE_SELECT).maybeSingle();
+      if (error) throw error;
+
+      // Notify only assigned solicitors whose practice can access this matter.
+      let assignmentsQuery = supabase
+        .from('solicitor_portal_client_assignments')
+        .select('solicitor_user_id, solicitor_portal_users!inner(firm_id)')
+        .eq('client_id', matter.client_id);
+      if (matter.firm_id) {
+        assignmentsQuery = assignmentsQuery.eq('solicitor_portal_users.firm_id', matter.firm_id);
+      }
+      const { data: assignments } = await assignmentsQuery;
+      await notifySolicitors(supabase, {
+        solicitorUserIds: (assignments || []).map((a: any) => a.solicitor_user_id),
+        firmId: matter.firm_id,
+        clientId: matter.client_id,
+        legalMatterId: matter.id,
+        eventType: 'message_received',
+        title: `New message from ${senderName}`,
+        body: preview(text, 160),
+        linkPath: `/solicitor/matters/${matter.id}?tab=messages`,
+        metadata: { scope },
+      });
+
+      await logStaff('matter_message_sent', {
+        client_id: matter.client_id, legal_matter_id: matter.id,
+        entity_type: 'legal_matter_message', entity_id: message?.id ?? null,
+        metadata: { scope },
+      });
+
+      return json({ success: true, message, thread_id: thread.id });
+    }
+
+    if (operation === 'comms_summary') {
+      const { data: threads } = await supabase
+        .from('legal_matter_threads').select(THREAD_SELECT)
+        .neq('scope', 'firm_internal').eq('is_archived', false).limit(500);
+      return json({ success: true, summary: summariseThreads((threads || []) as any[], 'staff') });
     }
 
     return json({ error: `Unknown operation: ${operation || '(none)'}` }, 400);

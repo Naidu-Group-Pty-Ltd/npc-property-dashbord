@@ -27,7 +27,7 @@ import {
 } from "../_shared/solicitorPortalAuth.ts";
 
 const MODULE_KEY = 'solicitor_portal_admin';
-const PORTAL_ROLES = new Set(['solicitor', 'conveyancer', 'paralegal', 'practice_admin']);
+const PORTAL_ROLES = new Set(['principal', 'solicitor', 'conveyancer', 'paralegal', 'assistant']);
 const AU_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT']);
 
 type Matrix = Record<string, { view: boolean; edit: boolean; delete: boolean }>;

@@ -1,6 +1,21 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { createCorsHeaders, createClearFinanceSessionCookie } from "../_shared/auth.ts"
+import {
+  createCorsHeaders,
+  createClearFinanceSessionCookie,
+  createClearSessionCookie,
+} from "../_shared/auth.ts"
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { extractFinanceSessionToken } from "../_shared/financeSessionToken.ts"
+
+function createLogoutHeaders(corsHeaders: Record<string, string>): Headers {
+  const headers = new Headers({
+    ...corsHeaders,
+    'Content-Type': 'application/json',
+  });
+  headers.append('Set-Cookie', createClearFinanceSessionCookie());
+  headers.append('Set-Cookie', createClearSessionCookie());
+  return headers;
+}
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -9,6 +24,19 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  if (req.method !== 'POST') {
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed' }),
+      {
+        status: 405,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Allow': 'POST' },
+      },
+    )
+  }
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!

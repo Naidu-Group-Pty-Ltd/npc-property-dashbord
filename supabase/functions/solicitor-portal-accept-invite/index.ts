@@ -88,6 +88,13 @@ Deno.serve(async (req) => {
       )
     }
 
+    if (portalUser.invite_accepted_at || portalUser.password_hash) {
+      return new Response(
+        JSON.stringify({ error: 'This invite has already been accepted.', valid: false, already_active: true }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     // === ACCEPT INVITE ===
     if (!password || typeof password !== 'string') {
       return new Response(
@@ -163,7 +170,6 @@ Deno.serve(async (req) => {
           has_completed_onboarding: false,
           must_change_password: false,
         },
-        session_token: sessionToken,
         expires_at: expiresAt.toISOString(),
       }),
       {
