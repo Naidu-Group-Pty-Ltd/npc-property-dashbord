@@ -21,7 +21,7 @@ import {
   Settings2, Shield, Trash2, Unlock, UserCheck, Users, UserX,
 } from 'lucide-react';
 import { SolicitorFirmDialog, type SolicitorFirm } from '@/components/admin/solicitor-portal/SolicitorFirmDialog';
-import { SolicitorUserDialog, SOLICITOR_ROLES, type SolicitorUserRow } from '@/components/admin/solicitor-portal/SolicitorUserDialog';
+import { SolicitorUserDialog, type SolicitorUserRow } from '@/components/admin/solicitor-portal/SolicitorUserDialog';
 import { SolicitorAssignmentsDialog } from '@/components/admin/solicitor-portal/SolicitorAssignmentsDialog';
 import { SolicitorGlobalPermissionsDialog } from '@/components/admin/solicitor-portal/SolicitorGlobalPermissionsDialog';
 import { SolicitorActivityLogDialog } from '@/components/admin/solicitor-portal/SolicitorActivityLogDialog';
