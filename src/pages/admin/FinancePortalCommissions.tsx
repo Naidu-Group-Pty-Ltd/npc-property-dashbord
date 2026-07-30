@@ -368,7 +368,7 @@ export default function FinancePortalCommissions() {
                 </TableHeader>
                 <TableBody>
                   {filteredCommissions.length === 0 && (
-                    <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No commissions found</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">No commissions found</TableCell></TableRow>
                   )}
                   {filteredCommissions.map(c => (
                     <TableRow key={c.id} className="transition-colors hover:bg-primary/5">
@@ -381,12 +381,28 @@ export default function FinancePortalCommissions() {
                         <div>{c.client_name_snapshot || '—'}</div>
                         <div className="text-xs text-muted-foreground">{c.deal_type_snapshot || ''}</div>
                       </TableCell>
-                      <TableCell><span className="text-xs">{c.trigger_event || '—'}</span></TableCell>
+                      <TableCell><span className="text-xs">{c.qualifying_event || c.trigger_event || '—'}</span></TableCell>
                       <TableCell className="text-right">{fmt(c.basis_amount)}</TableCell>
                       <TableCell className="text-right">{Number(c.rate_pct).toFixed(2)}%</TableCell>
+                      <TableCell>
+                        <span className="text-xs text-muted-foreground">
+                          {(c.rate_source || 'partner_default').replace(/_/g, ' ')}
+                          {c.agreement_version ? ` · v${c.agreement_version}` : ''}
+                        </span>
+                      </TableCell>
                       <TableCell className="text-right font-semibold">{fmt(c.net_amount)}</TableCell>
+                      <TableCell>
+                        {!c.cleared_funds_required ? (
+                          <span className="text-xs text-muted-foreground">n/a</span>
+                        ) : c.cleared_funds_received_at ? (
+                          <Badge variant="default" className="text-xs">Cleared</Badge>
+                        ) : (
+                          <Badge variant="destructive" className="text-xs">Awaiting funds</Badge>
+                        )}
+                      </TableCell>
                       <TableCell><Badge variant={STATUS_VARIANT[c.status] || 'outline'}>{c.status}</Badge></TableCell>
                       <TableCell className="text-xs">{format(new Date(c.created_at), 'd MMM yyyy')}</TableCell>
+
                     </TableRow>
                   ))}
                 </TableBody>
