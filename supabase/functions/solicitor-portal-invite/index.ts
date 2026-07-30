@@ -50,16 +50,6 @@ Deno.serve(async (req) => {
       return createForbiddenResponse('Solicitor portal administration access denied', corsHeaders)
     }
 
-    const authorization = await requireModulePermission(
-      supabase,
-      { userId: auth.userId, authMethod: auth.authMethod },
-      'solicitor_portal_admin',
-      action === 'check_status' ? 'can_view' : 'can_edit',
-    )
-    if (!authorization.ok) {
-      return createForbiddenResponse('Solicitor Portal administration access denied', corsHeaders)
-    }
-
     // === CHECK STATUS ===
     if (action === 'check_status') {
       if (!solicitor_user_id) return json({ error: 'solicitor_user_id is required' }, 400)
