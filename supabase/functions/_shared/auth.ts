@@ -444,11 +444,12 @@ export const CORS_ALLOWED_REQUEST_HEADERS = [
   // Observability + step-up (sent by src/lib/secureInvoke.ts).
   'x-correlation-id',
   'x-step-up-token',
-  // Session carriers for the staff / client / finance portals.
+  // Session carriers for the staff / client / finance / solicitor portals.
   'x-session-token',
   'x-command-centre-session-token',
   'x-portal-session-token',
   'x-finance-session-token',
+  'x-solicitor-session-token',
   'x-session-id',
   'x-generation-run-id',
 ].join(', ');
@@ -614,6 +615,27 @@ export function createFinanceSessionCookie(
 export function createClearFinanceSessionCookie(): string {
   return createFinanceSessionCookie('', new Date(0), { clear: true });
 }
+
+/**
+ * Solicitor-portal-scoped session cookie. Same rationale as the finance
+ * variant: a dedicated `__Host-`-prefixed name so signing into the Command
+ * Centre, the Client Portal or the Finance Portal never clobbers the
+ * solicitor's session (all edge functions share the *.supabase.co origin).
+ */
+export function createSolicitorSessionCookie(
+  sessionToken: string,
+  expiresAt: Date,
+  options?: { clear?: boolean }
+): string {
+  const maxAge = options?.clear ? 0 : Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+  const expires = options?.clear ? new Date(0).toUTCString() : expiresAt.toUTCString();
+  return `__Host-solicitor_session_token=${options?.clear ? '' : sessionToken}; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}; Expires=${expires}; Path=/`;
+}
+
+export function createClearSolicitorSessionCookie(): string {
+  return createSolicitorSessionCookie('', new Date(0), { clear: true });
+}
+
 
 /**
  * Create an unauthorized response with proper CORS headers

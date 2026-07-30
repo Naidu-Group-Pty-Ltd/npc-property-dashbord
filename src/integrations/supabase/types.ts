@@ -19691,6 +19691,321 @@ export type Database = {
         }
         Relationships: []
       }
+      solicitor_firms: {
+        Row: {
+          abn: string | null
+          address_line1: string | null
+          address_line2: string | null
+          contact_email: string | null
+          contact_phone: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          is_active: boolean
+          licence_number: string | null
+          name: string
+          notes: string | null
+          postcode: string | null
+          practising_states: string[]
+          state: string | null
+          suburb: string | null
+          trading_name: string | null
+          updated_at: string
+          website: string | null
+        }
+        Insert: {
+          abn?: string | null
+          address_line1?: string | null
+          address_line2?: string | null
+          contact_email?: string | null
+          contact_phone?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          licence_number?: string | null
+          name: string
+          notes?: string | null
+          postcode?: string | null
+          practising_states?: string[]
+          state?: string | null
+          suburb?: string | null
+          trading_name?: string | null
+          updated_at?: string
+          website?: string | null
+        }
+        Update: {
+          abn?: string | null
+          address_line1?: string | null
+          address_line2?: string | null
+          contact_email?: string | null
+          contact_phone?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          is_active?: boolean
+          licence_number?: string | null
+          name?: string
+          notes?: string | null
+          postcode?: string | null
+          practising_states?: string[]
+          state?: string | null
+          suburb?: string | null
+          trading_name?: string | null
+          updated_at?: string
+          website?: string | null
+        }
+        Relationships: []
+      }
+      solicitor_portal_activity_log: {
+        Row: {
+          action: string
+          actor_type: string
+          actor_user_id: string | null
+          client_id: string | null
+          created_at: string
+          entity_id: string | null
+          entity_type: string | null
+          firm_id: string | null
+          id: string
+          ip_address: string | null
+          legal_matter_id: string | null
+          metadata: Json | null
+          solicitor_user_id: string | null
+          user_agent: string | null
+          visible_to_client: boolean
+          visible_to_command_centre: boolean
+          visible_to_solicitor: boolean
+        }
+        Insert: {
+          action: string
+          actor_type?: string
+          actor_user_id?: string | null
+          client_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          firm_id?: string | null
+          id?: string
+          ip_address?: string | null
+          legal_matter_id?: string | null
+          metadata?: Json | null
+          solicitor_user_id?: string | null
+          user_agent?: string | null
+          visible_to_client?: boolean
+          visible_to_command_centre?: boolean
+          visible_to_solicitor?: boolean
+        }
+        Update: {
+          action?: string
+          actor_type?: string
+          actor_user_id?: string | null
+          client_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          firm_id?: string | null
+          id?: string
+          ip_address?: string | null
+          legal_matter_id?: string | null
+          metadata?: Json | null
+          solicitor_user_id?: string | null
+          user_agent?: string | null
+          visible_to_client?: boolean
+          visible_to_command_centre?: boolean
+          visible_to_solicitor?: boolean
+        }
+        Relationships: []
+      }
+      solicitor_portal_client_assignments: {
+        Row: {
+          assigned_at: string
+          assigned_by: string | null
+          client_id: string
+          id: string
+          legal_matter_id: string | null
+          permissions: Json | null
+          solicitor_user_id: string
+          updated_at: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by?: string | null
+          client_id: string
+          id?: string
+          legal_matter_id?: string | null
+          permissions?: Json | null
+          solicitor_user_id: string
+          updated_at?: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by?: string | null
+          client_id?: string
+          id?: string
+          legal_matter_id?: string | null
+          permissions?: Json | null
+          solicitor_user_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_portal_client_assignments_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solicitor_portal_default_permissions: {
+        Row: {
+          created_at: string
+          id: string
+          permissions: Json
+          solicitor_user_id: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          permissions?: Json
+          solicitor_user_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          permissions?: Json
+          solicitor_user_id?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_portal_default_permissions_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solicitor_portal_users: {
+        Row: {
+          created_at: string
+          email: string
+          failed_login_attempts: number
+          firm_id: string
+          has_accepted_terms: boolean
+          has_completed_onboarding: boolean
+          id: string
+          invite_accepted_at: string | null
+          invite_token: string | null
+          invite_token_expires_at: string | null
+          invited_at: string | null
+          invited_by: string | null
+          is_active: boolean
+          last_login_at: string | null
+          last_seen_at: string | null
+          locked_until: string | null
+          must_change_password: boolean
+          name: string
+          notes: string | null
+          password_hash: string | null
+          phone: string | null
+          portal_role: Database["public"]["Enums"]["solicitor_portal_role"]
+          position: string | null
+          reset_attempts: number
+          reset_token: string | null
+          reset_token_expires_at: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          session_expires_at: string | null
+          session_token: string | null
+          terms_accepted_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          failed_login_attempts?: number
+          firm_id: string
+          has_accepted_terms?: boolean
+          has_completed_onboarding?: boolean
+          id?: string
+          invite_accepted_at?: string | null
+          invite_token?: string | null
+          invite_token_expires_at?: string | null
+          invited_at?: string | null
+          invited_by?: string | null
+          is_active?: boolean
+          last_login_at?: string | null
+          last_seen_at?: string | null
+          locked_until?: string | null
+          must_change_password?: boolean
+          name: string
+          notes?: string | null
+          password_hash?: string | null
+          phone?: string | null
+          portal_role?: Database["public"]["Enums"]["solicitor_portal_role"]
+          position?: string | null
+          reset_attempts?: number
+          reset_token?: string | null
+          reset_token_expires_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          session_expires_at?: string | null
+          session_token?: string | null
+          terms_accepted_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          failed_login_attempts?: number
+          firm_id?: string
+          has_accepted_terms?: boolean
+          has_completed_onboarding?: boolean
+          id?: string
+          invite_accepted_at?: string | null
+          invite_token?: string | null
+          invite_token_expires_at?: string | null
+          invited_at?: string | null
+          invited_by?: string | null
+          is_active?: boolean
+          last_login_at?: string | null
+          last_seen_at?: string | null
+          locked_until?: string | null
+          must_change_password?: boolean
+          name?: string
+          notes?: string | null
+          password_hash?: string | null
+          phone?: string | null
+          portal_role?: Database["public"]["Enums"]["solicitor_portal_role"]
+          position?: string | null
+          reset_attempts?: number
+          reset_token?: string | null
+          reset_token_expires_at?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          session_expires_at?: string | null
+          session_token?: string | null
+          terms_accepted_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_portal_users_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stamp_duty_rates_cache: {
         Row: {
           brackets: Json
@@ -22327,6 +22642,12 @@ export type Database = {
         | "statewide"
       report_tier_enum: "compass" | "executive" | "snapshot"
       signature_method: "docusign" | "wet" | "portal_consent" | "email_consent"
+      solicitor_portal_role:
+        | "principal"
+        | "solicitor"
+        | "conveyancer"
+        | "paralegal"
+        | "assistant"
       sync_status_type:
         | "local"
         | "synced"
@@ -22934,6 +23255,13 @@ export const Constants = {
       ],
       report_tier_enum: ["compass", "executive", "snapshot"],
       signature_method: ["docusign", "wet", "portal_consent", "email_consent"],
+      solicitor_portal_role: [
+        "principal",
+        "solicitor",
+        "conveyancer",
+        "paralegal",
+        "assistant",
+      ],
       sync_status_type: [
         "local",
         "synced",

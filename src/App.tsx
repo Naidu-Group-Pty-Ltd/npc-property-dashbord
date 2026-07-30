@@ -150,6 +150,13 @@ import PortalAml from "./pages/portal/PortalAml";
 import PortalConfig from "./pages/PortalConfig";
 import { PortalConsentWall } from "@/components/portal/PortalConsentWall";
 import { FinancePortalAuthProvider } from "@/hooks/useFinancePortalAuth";
+import { SolicitorPortalAuthProvider } from "@/hooks/useSolicitorPortalAuth";
+import { SolicitorPortalProtectedRoute } from "@/components/solicitor-portal/SolicitorPortalProtectedRoute";
+import SolicitorLogin from "@/pages/solicitor/SolicitorLogin";
+import SolicitorAcceptInvite from "@/pages/solicitor/SolicitorAcceptInvite";
+import SolicitorForgotPassword from "@/pages/solicitor/SolicitorForgotPassword";
+import SolicitorChangePassword from "@/pages/solicitor/SolicitorChangePassword";
+import SolicitorDashboard from "@/pages/solicitor/SolicitorDashboard";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
@@ -313,6 +320,29 @@ const App = () => (
                             </Routes>
                           </FinancePortalAuthProvider>
                         } />
+
+                        {/* Solicitor Portal Routes - single provider wrapping all /solicitor/* */}
+                        <Route path="/solicitor/*" element={
+                          <SolicitorPortalAuthProvider>
+                            <Routes>
+                              <Route path="login" element={<SolicitorLogin />} />
+                              <Route path="accept-invite" element={<SolicitorAcceptInvite />} />
+                              <Route path="forgot-password" element={<SolicitorForgotPassword />} />
+                              <Route path="change-password" element={
+                                <SolicitorPortalProtectedRoute>
+                                  <SolicitorChangePassword />
+                                </SolicitorPortalProtectedRoute>
+                              } />
+                              <Route path="" element={
+                                <SolicitorPortalProtectedRoute>
+                                  <SolicitorDashboard />
+                                </SolicitorPortalProtectedRoute>
+                              } />
+                            </Routes>
+                          </SolicitorPortalAuthProvider>
+                        } />
+
+
 
                         {/* Internal Dashboard Routes */}
                         <Route path="/auth" element={<Auth />} />
