@@ -66,6 +66,7 @@ export function SolicitorPortalShell({
                 );
               })}
             </nav>
+            <SolicitorNotificationBell />
             <Button variant="outline" size="sm" onClick={() => void signOut()}>
               <LogOut className="mr-2 h-4 w-4" aria-hidden />
               Sign out
