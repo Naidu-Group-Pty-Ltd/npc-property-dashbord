@@ -484,6 +484,15 @@ Deno.serve(async (req) => {
         if (!existing.general_purpose) missing.push('General purpose of referral');
         if (!existing.client_email && !existing.client_phone) missing.push('Client contact detail');
         if (existing.prior_client_check === 'unchecked') missing.push('Prior-client check');
+        if (existing.direction === 'outbound_finance_referral' && existing.assigned_finance_user_id) {
+          const gate = await gateLoanWriterAssignment(supabase, {
+            direction: existing.direction,
+            financeUserId: existing.assigned_finance_user_id,
+            financeAgentContactId: existing.finance_agent_contact_id,
+            undertakingId: existing.loan_writer_undertaking_id,
+          });
+          if (!gate.ok) missing.push('Live loan writer undertaking (Annexure B)');
+        }
         if (missing.length > 0) {
           return json({
             error: 'submission_gate',
