@@ -49,7 +49,8 @@ export const MATTER_SELECT = `
   contract_date, exchange_date, cooling_off_expiry, finance_clause_date,
   building_pest_date, sunset_date, settlement_date, actual_settlement_date,
   pexa_workspace_id, other_side_firm, risk_flag, risk_notes, internal_notes,
-  shared_summary, opened_at, closed_at, created_at, updated_at
+  shared_summary, opened_at, closed_at, kanban_position, stage_entered_at,
+  created_at, updated_at
 `;
 
 export const PARTY_SELECT = `

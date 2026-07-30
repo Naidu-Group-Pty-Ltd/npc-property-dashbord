@@ -12645,6 +12645,113 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_contract_analyses: {
+        Row: {
+          confidence: number | null
+          confirmed_at: string | null
+          confirmed_by_id: string | null
+          confirmed_by_type: string | null
+          created_at: string
+          created_by_solicitor_user_id: string | null
+          created_by_staff_id: string | null
+          created_by_type: string
+          document_id: string | null
+          financials: Json
+          firm_id: string | null
+          id: string
+          key_dates: Json
+          legal_matter_id: string
+          model: string | null
+          parties: Json
+          review_notes: string | null
+          risk_flags: Json
+          source_label: string | null
+          special_conditions: Json
+          status: Database["public"]["Enums"]["legal_contract_analysis_status"]
+          summary: string | null
+          updated_at: string
+        }
+        Insert: {
+          confidence?: number | null
+          confirmed_at?: string | null
+          confirmed_by_id?: string | null
+          confirmed_by_type?: string | null
+          created_at?: string
+          created_by_solicitor_user_id?: string | null
+          created_by_staff_id?: string | null
+          created_by_type?: string
+          document_id?: string | null
+          financials?: Json
+          firm_id?: string | null
+          id?: string
+          key_dates?: Json
+          legal_matter_id: string
+          model?: string | null
+          parties?: Json
+          review_notes?: string | null
+          risk_flags?: Json
+          source_label?: string | null
+          special_conditions?: Json
+          status?: Database["public"]["Enums"]["legal_contract_analysis_status"]
+          summary?: string | null
+          updated_at?: string
+        }
+        Update: {
+          confidence?: number | null
+          confirmed_at?: string | null
+          confirmed_by_id?: string | null
+          confirmed_by_type?: string | null
+          created_at?: string
+          created_by_solicitor_user_id?: string | null
+          created_by_staff_id?: string | null
+          created_by_type?: string
+          document_id?: string | null
+          financials?: Json
+          firm_id?: string | null
+          id?: string
+          key_dates?: Json
+          legal_matter_id?: string
+          model?: string | null
+          parties?: Json
+          review_notes?: string | null
+          risk_flags?: Json
+          source_label?: string | null
+          special_conditions?: Json
+          status?: Database["public"]["Enums"]["legal_contract_analysis_status"]
+          summary?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_contract_analyses_created_by_solicitor_user_id_fkey"
+            columns: ["created_by_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_contract_analyses_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matter_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_contract_analyses_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_contract_analyses_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       legal_matter_critical_dates: {
         Row: {
           created_at: string
@@ -13503,6 +13610,7 @@ export type Database = {
           firm_id: string | null
           id: string
           internal_notes: string | null
+          kanban_position: number
           lot_plan: string | null
           matter_reference: string | null
           matter_type: Database["public"]["Enums"]["legal_matter_type"]
@@ -13519,6 +13627,7 @@ export type Database = {
           risk_notes: string | null
           settlement_date: string | null
           shared_summary: string | null
+          stage_entered_at: string
           status: Database["public"]["Enums"]["legal_matter_status"]
           sunset_date: string | null
           title: string
@@ -13544,6 +13653,7 @@ export type Database = {
           firm_id?: string | null
           id?: string
           internal_notes?: string | null
+          kanban_position?: number
           lot_plan?: string | null
           matter_reference?: string | null
           matter_type?: Database["public"]["Enums"]["legal_matter_type"]
@@ -13560,6 +13670,7 @@ export type Database = {
           risk_notes?: string | null
           settlement_date?: string | null
           shared_summary?: string | null
+          stage_entered_at?: string
           status?: Database["public"]["Enums"]["legal_matter_status"]
           sunset_date?: string | null
           title: string
@@ -13585,6 +13696,7 @@ export type Database = {
           firm_id?: string | null
           id?: string
           internal_notes?: string | null
+          kanban_position?: number
           lot_plan?: string | null
           matter_reference?: string | null
           matter_type?: Database["public"]["Enums"]["legal_matter_type"]
@@ -13601,6 +13713,7 @@ export type Database = {
           risk_notes?: string | null
           settlement_date?: string | null
           shared_summary?: string | null
+          stage_entered_at?: string
           status?: Database["public"]["Enums"]["legal_matter_status"]
           sunset_date?: string | null
           title?: string
@@ -23657,6 +23770,7 @@ export type Database = {
         | "signed"
         | "voided"
         | "expired"
+      legal_contract_analysis_status: "draft" | "confirmed" | "dismissed"
       legal_critical_date_status:
         | "pending"
         | "at_risk"
@@ -24416,6 +24530,7 @@ export const Constants = {
         "voided",
         "expired",
       ],
+      legal_contract_analysis_status: ["draft", "confirmed", "dismissed"],
       legal_critical_date_status: [
         "pending",
         "at_risk",
