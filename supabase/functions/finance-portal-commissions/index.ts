@@ -52,22 +52,30 @@ function escapeHtml(s: any) {
 }
 
 function buildStatementHtml(statement: any, lines: any[], brandName: string) {
+  const cell = 'padding:8px;border-bottom:1px solid #1f2a44';
   const rows = lines.map((l, i) => `
     <tr>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${i + 1}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${escapeHtml(l.client_name_snapshot || '—')}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${escapeHtml(l.deal_type_snapshot || '—')}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${escapeHtml(l.trigger_event_snapshot || '—')}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right">${escapeHtml(l.rate_pct_snapshot ?? '—')}%</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right">${fmtMoney(l.gross_snapshot)}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right">${fmtMoney(l.gst_snapshot)}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right;color:#BF9B50;font-weight:600">${fmtMoney(l.net_snapshot)}</td>
+      <td style="${cell}">${i + 1}</td>
+      <td style="${cell}">${escapeHtml(l.client_name_snapshot || '—')}</td>
+      <td style="${cell}">${escapeHtml(l.deal_type_snapshot || '—')}</td>
+      <td style="${cell}">${escapeHtml(l.qualifying_event_snapshot || l.trigger_event_snapshot || '—')}</td>
+      <td style="${cell}">${escapeHtml(l.basis_snapshot || '—')}${l.basis_amount_snapshot != null ? ` · ${fmtMoney(l.basis_amount_snapshot)}` : ''}</td>
+      <td style="${cell};text-align:right">${escapeHtml(l.rate_pct_snapshot ?? '—')}%</td>
+      <td style="${cell};font-size:11px;color:#94a3b8">${escapeHtml((l.rate_source_snapshot || 'partner_default').replace(/_/g, ' '))}${l.agreement_version_snapshot ? ` v${l.agreement_version_snapshot}` : ''}</td>
+      <td style="${cell};text-align:right">${fmtMoney(l.gross_snapshot)}</td>
+      <td style="${cell};text-align:right">${fmtMoney(l.gst_snapshot)}</td>
+      <td style="${cell};text-align:right">${Number(l.adjustment_snapshot || 0) !== 0 ? fmtMoney(l.adjustment_snapshot) : '—'}</td>
+      <td style="${cell};text-align:right;color:#BF9B50;font-weight:600">${fmtMoney(Number(l.net_snapshot || 0) + Number(l.adjustment_snapshot || 0))}</td>
     </tr>
   `).join('');
 
+  const disputeNote = statement.dispute_deadline
+    ? `Any discrepancy must be raised in writing by <strong>${escapeHtml(statement.dispute_deadline)}</strong> (${statement.dispute_window_days} day dispute window per the executed agreement).`
+    : 'Any discrepancy should be raised in writing as soon as practicable.';
+
   return `<!doctype html><html><head><meta charset="utf-8"/><title>Commission Statement</title></head>
 <body style="margin:0;padding:0;background:#0D264D;color:#e8ecf3;font-family:Helvetica,Arial,sans-serif">
-  <div style="max-width:840px;margin:0 auto;padding:48px 56px">
+  <div style="max-width:960px;margin:0 auto;padding:48px 56px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #BF9B50;padding-bottom:24px;margin-bottom:32px">
       <div>
         <div style="color:#BF9B50;letter-spacing:.18em;font-size:11px;text-transform:uppercase">${brandName}</div>
@@ -80,23 +88,27 @@ function buildStatementHtml(statement: any, lines: any[], brandName: string) {
         <div style="font-weight:600">${statement.period_start} → ${statement.period_end}</div>
         <div style="color:#94a3b8;font-size:12px;margin-top:8px">Issued</div>
         <div style="font-weight:600">${statement.issued_at ? new Date(statement.issued_at).toLocaleDateString('en-AU') : 'Draft'}</div>
+        ${statement.agreement_version ? `<div style="color:#94a3b8;font-size:12px;margin-top:8px">Agreement</div><div style="font-weight:600">Version ${statement.agreement_version}</div>` : ''}
       </div>
     </div>
 
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead>
         <tr style="color:#BF9B50;text-align:left;border-bottom:1px solid #BF9B50">
           <th style="padding:8px">#</th>
           <th style="padding:8px">Client</th>
           <th style="padding:8px">Deal</th>
-          <th style="padding:8px">Trigger</th>
+          <th style="padding:8px">Qualifying event</th>
+          <th style="padding:8px">Calculation basis</th>
           <th style="padding:8px;text-align:right">Rate</th>
+          <th style="padding:8px">Source</th>
           <th style="padding:8px;text-align:right">Gross</th>
           <th style="padding:8px;text-align:right">GST</th>
+          <th style="padding:8px;text-align:right">Adj.</th>
           <th style="padding:8px;text-align:right">Net</th>
         </tr>
       </thead>
-      <tbody>${rows || '<tr><td colspan="8" style="padding:24px;text-align:center;color:#94a3b8">No commission lines</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="11" style="padding:24px;text-align:center;color:#94a3b8">No commission lines</td></tr>'}</tbody>
     </table>
 
     <div style="margin-top:32px;display:flex;justify-content:flex-end">
@@ -108,7 +120,15 @@ function buildStatementHtml(statement: any, lines: any[], brandName: string) {
       </table>
     </div>
 
-    <div style="margin-top:48px;padding-top:18px;border-top:1px solid #1f2a44;color:#94a3b8;font-size:11px;text-align:center">
+    <div style="margin-top:36px;padding:16px 18px;border:1px solid #1f2a44;border-radius:8px;color:#cbd5e1;font-size:11px;line-height:1.6">
+      <div style="color:#BF9B50;text-transform:uppercase;letter-spacing:.14em;font-size:10px;margin-bottom:6px">Calculation &amp; dispute basis</div>
+      Commission lines are calculated on the basis shown against each line. Where the rate source is
+      "agreement schedule", the rate is taken from the executed Commission &amp; Payment Schedule at the
+      version noted. Amounts subject to a cleared-funds condition are only included once funds have been
+      received. ${disputeNote}
+    </div>
+
+    <div style="margin-top:32px;padding-top:18px;border-top:1px solid #1f2a44;color:#94a3b8;font-size:11px;text-align:center">
       This statement is generated by ${brandName} Command Centre. Payments are processed per the partner agreement on file.
     </div>
   </div>
@@ -116,21 +136,28 @@ function buildStatementHtml(statement: any, lines: any[], brandName: string) {
 }
 
 function buildRemittanceCsv(statement: any, lines: any[]) {
-  const header = 'line,client,deal_type,trigger,rate_pct,gross,gst,net,accrual_date';
+  const header = 'line,client,deal_type,qualifying_event,basis,basis_amount,rate_pct,rate_source,agreement_version,gross,gst,adjustment,net,cleared_funds_received_at,accrual_date';
   const body = lines.map((l, i) => [
     i + 1,
     JSON.stringify(l.client_name_snapshot || ''),
     JSON.stringify(l.deal_type_snapshot || ''),
-    JSON.stringify(l.trigger_event_snapshot || ''),
+    JSON.stringify(l.qualifying_event_snapshot || l.trigger_event_snapshot || ''),
+    JSON.stringify(l.basis_snapshot || ''),
+    l.basis_amount_snapshot ?? '',
     l.rate_pct_snapshot ?? '',
+    JSON.stringify(l.rate_source_snapshot || ''),
+    l.agreement_version_snapshot ?? '',
     l.gross_snapshot ?? 0,
     l.gst_snapshot ?? 0,
-    l.net_snapshot ?? 0,
+    l.adjustment_snapshot ?? 0,
+    Number(l.net_snapshot || 0) + Number(l.adjustment_snapshot || 0),
+    JSON.stringify(l.cleared_funds_received_at_snapshot || ''),
     l.accrual_date ?? '',
   ].join(',')).join('\n');
-  const totals = `\n,,,,TOTAL,${statement.total_gross},${statement.total_gst},${statement.total_net},`;
+  const totals = `\n,,,,,,,,TOTAL,${statement.total_gross},${statement.total_gst},,${statement.total_net},,`;
   return header + '\n' + body + totals;
 }
+
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function resolvePartnerFromSession(supabase: any, sessionToken?: string) {
