@@ -49,6 +49,9 @@ import {
   MatterDisbursementsPanel, type DisbursementDraft,
 } from '@/components/solicitor-portal/MatterDisbursementsPanel';
 import {
+  MatterCommunicationsPanel,
+} from '@/components/solicitor-portal/MatterCommunicationsPanel';
+import {
   MAX_DOCUMENT_BYTES,
   type DocumentRegisterSummary, type LegalDocumentStatus, type LegalMatterDisbursement,
   type LegalMatterDocument, type LegalMatterRequisition, type LegalMatterSearch,
