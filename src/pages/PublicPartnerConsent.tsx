@@ -37,7 +37,7 @@ export default function PublicPartnerConsent() {
     <div className="min-h-screen bg-background px-4 py-10">
       <div className="mx-auto w-full max-w-2xl space-y-6">
         <div className="flex justify-center">
-          <BrandLockup />
+          <BrandLockup slot="auth" meta="Referral Consent" />
         </div>
 
         {isLoading ? (
