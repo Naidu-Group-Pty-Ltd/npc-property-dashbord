@@ -36,6 +36,24 @@ import {
 import type {
   LegalCriticalDate, LegalCriticalDateStatus, LegalSettlementTask, RunwaySummary,
 } from '@/lib/legalCriticalDates';
+import {
+  MatterDocumentsPanel, type DocumentDraft,
+} from '@/components/solicitor-portal/MatterDocumentsPanel';
+import {
+  MatterSearchesPanel, type SearchDraft,
+} from '@/components/solicitor-portal/MatterSearchesPanel';
+import {
+  MatterRequisitionsPanel, type RequisitionDraft,
+} from '@/components/solicitor-portal/MatterRequisitionsPanel';
+import {
+  MatterDisbursementsPanel, type DisbursementDraft,
+} from '@/components/solicitor-portal/MatterDisbursementsPanel';
+import {
+  MAX_DOCUMENT_BYTES,
+  type DocumentRegisterSummary, type LegalDocumentStatus, type LegalMatterDisbursement,
+  type LegalMatterDocument, type LegalMatterRequisition, type LegalMatterSearch,
+  type LegalRequisitionStatus, type LegalSearchStatus,
+} from '@/lib/legalDocuments';
 
 type PermissionMatrix = Record<string, { view?: boolean; edit?: boolean; delete?: boolean }>;
 
@@ -83,6 +101,12 @@ export default function SolicitorMatterDetail() {
   const [runway, setRunway] = useState<RunwaySummary | null>(null);
   const [datesSaving, setDatesSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [documents, setDocuments] = useState<LegalMatterDocument[]>([]);
+  const [searches, setSearches] = useState<LegalMatterSearch[]>([]);
+  const [requisitions, setRequisitions] = useState<LegalMatterRequisition[]>([]);
+  const [disbursements, setDisbursements] = useState<LegalMatterDisbursement[]>([]);
+  const [registerSummary, setRegisterSummary] = useState<DocumentRegisterSummary | null>(null);
+  const [registerSaving, setRegisterSaving] = useState(false);
 
   const canEdit = !!perms.matters?.edit;
   const canEditParties = !!perms.parties?.edit;
@@ -187,6 +211,166 @@ export default function SolicitorMatterDetail() {
     await refreshDates();
   };
 
+  // ───────────── Phase 5 registers ─────────────
+  const callDocs = useCallback(
+    async (payload: Record<string, unknown>) =>
+      invokeSolicitorFunction('solicitor-portal-documents', { ...payload, matter_id: matterId }),
+    [matterId],
+  );
+
+  const refreshRegisters = useCallback(async () => {
+    const { data, error } = await callDocs({ operation: 'list_registers' });
+    if (error || !data?.success) return;
+    setDocuments((data.documents || []) as LegalMatterDocument[]);
+    setSearches((data.searches || []) as LegalMatterSearch[]);
+    setRequisitions((data.requisitions || []) as LegalMatterRequisition[]);
+    setDisbursements((data.disbursements || []) as LegalMatterDisbursement[]);
+    setRegisterSummary((data.summary ?? null) as DocumentRegisterSummary | null);
+  }, [callDocs]);
+
+  useEffect(() => { if (matterId) void refreshRegisters(); }, [matterId, refreshRegisters]);
+
+  const runRegisterOp = async (
+    payload: Record<string, unknown>,
+    successMessage?: string,
+  ): Promise<void> => {
+    setRegisterSaving(true);
+    const { data, error } = await callDocs(payload);
+    setRegisterSaving(false);
+    const message = error?.message || (data as any)?.error;
+    if (message) { toast.error(message); return; }
+    if (successMessage) toast.success(successMessage);
+    await refreshRegisters();
+  };
+
+  const saveDocument = (d: DocumentDraft) => runRegisterOp({
+    operation: d.id ? 'upsert_document' : 'request_document',
+    document_id: d.id || undefined,
+    category: d.category,
+    label: d.label,
+    description: d.description,
+    owner: d.owner,
+    due_date: d.due_date || null,
+    visible_to_client: d.visible_to_client,
+    visible_to_npc: d.visible_to_npc,
+  }, 'Document saved');
+
+  const setDocumentStatus = (documentId: string, status: LegalDocumentStatus) =>
+    runRegisterOp({ operation: 'set_document_status', document_id: documentId, status });
+
+  const deleteDocument = (documentId: string) =>
+    runRegisterOp({ operation: 'delete_document', document_id: documentId }, 'Document removed');
+
+  const uploadDocument = async (documentId: string, file: File) => {
+    if (file.size > MAX_DOCUMENT_BYTES) { toast.error('Files must be 50 MB or smaller'); return; }
+    setRegisterSaving(true);
+    try {
+      const { data: signed, error: signError } = await callDocs({
+        operation: 'upload_url',
+        document_id: documentId,
+        file_name: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        file_size: file.size,
+      });
+      const signMessage = signError?.message || (signed as any)?.error;
+      if (signMessage || !signed?.signed_url) { toast.error(signMessage || 'Could not start the upload'); return; }
+
+      const put = await fetch(signed.signed_url as string, {
+        method: 'PUT',
+        headers: { 'content-type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      if (!put.ok) { toast.error('The file could not be uploaded'); return; }
+
+      const { data, error } = await callDocs({
+        operation: 'attach_upload',
+        document_id: documentId,
+        storage_path: signed.path,
+        file_name: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        file_size: file.size,
+      });
+      const message = error?.message || (data as any)?.error;
+      if (message) { toast.error(message); return; }
+      toast.success('File uploaded');
+      await refreshRegisters();
+    } finally {
+      setRegisterSaving(false);
+    }
+  };
+
+  const downloadDocument = async (documentId: string) => {
+    const { data, error } = await callDocs({ operation: 'download_url', document_id: documentId });
+    const message = error?.message || (data as any)?.error;
+    if (message || !data?.url) { toast.error(message || 'No file available yet'); return; }
+    window.open(data.url as string, '_blank', 'noopener,noreferrer');
+  };
+
+  const saveSearch = (s: SearchDraft) => runRegisterOp({
+    operation: 'upsert_search',
+    search_id: s.id || undefined,
+    search_type: s.search_type,
+    label: s.label,
+    provider: s.provider,
+    reference: s.reference,
+    status: s.status,
+    ordered_at: s.ordered_at || null,
+    received_at: s.received_at || null,
+    due_date: s.due_date || null,
+    cost_amount: s.cost_amount === '' ? null : Number(s.cost_amount),
+    issue_flag: s.issue_flag,
+    result_summary: s.result_summary,
+    notes: s.notes,
+    visible_to_client: s.visible_to_client,
+  }, 'Search saved');
+
+  const setSearchStatus = (searchId: string, status: LegalSearchStatus) =>
+    runRegisterOp({ operation: 'upsert_search', search_id: searchId, status });
+
+  const deleteSearch = (searchId: string) =>
+    runRegisterOp({ operation: 'delete_search', search_id: searchId }, 'Search removed');
+
+  const saveRequisition = (r: RequisitionDraft) => runRegisterOp({
+    operation: 'upsert_requisition',
+    requisition_id: r.id || undefined,
+    direction: r.direction,
+    reference: r.reference,
+    subject: r.subject,
+    detail: r.detail,
+    response: r.response,
+    status: r.status,
+    raised_on: r.raised_on || null,
+    response_due: r.response_due || null,
+    is_blocking: r.is_blocking,
+    visible_to_client: r.visible_to_client,
+    notes: r.notes,
+  }, 'Requisition saved');
+
+  const setRequisitionStatus = (requisitionId: string, status: LegalRequisitionStatus) =>
+    runRegisterOp({ operation: 'upsert_requisition', requisition_id: requisitionId, status });
+
+  const deleteRequisition = (requisitionId: string) =>
+    runRegisterOp({ operation: 'delete_requisition', requisition_id: requisitionId }, 'Requisition removed');
+
+  const saveDisbursement = (d: DisbursementDraft) => runRegisterOp({
+    operation: 'upsert_disbursement',
+    disbursement_id: d.id || undefined,
+    label: d.label,
+    category: d.category,
+    amount: d.amount === '' ? 0 : Number(d.amount),
+    gst_amount: d.gst_amount === '' ? 0 : Number(d.gst_amount),
+    payable_to: d.payable_to,
+    status: d.status,
+    incurred_on: d.incurred_on || null,
+    paid_on: d.paid_on || null,
+    invoice_reference: d.invoice_reference,
+    include_in_settlement: d.include_in_settlement,
+    visible_to_client: d.visible_to_client,
+    notes: d.notes,
+  }, 'Disbursement saved');
+
+  const deleteDisbursement = (disbursementId: string) =>
+    runRegisterOp({ operation: 'delete_disbursement', disbursement_id: disbursementId }, 'Disbursement removed');
 
   useEffect(() => { void load(); }, [load]);
 
@@ -311,6 +495,9 @@ export default function SolicitorMatterDetail() {
           <TabsTrigger value="parties" className="gap-2"><Users className="h-4 w-4" /> Parties</TabsTrigger>
           <TabsTrigger value="dates" className="gap-2"><CalendarClock className="h-4 w-4" /> Dates</TabsTrigger>
           <TabsTrigger value="settlement" className="gap-2"><Route className="h-4 w-4" /> Settlement</TabsTrigger>
+          <TabsTrigger value="docs" className="gap-2"><FileText className="h-4 w-4" /> Docs</TabsTrigger>
+          <TabsTrigger value="searches" className="gap-2"><FileText className="h-4 w-4" /> Searches</TabsTrigger>
+          <TabsTrigger value="costs" className="gap-2"><FileText className="h-4 w-4" /> Costs</TabsTrigger>
           <TabsTrigger value="notes" className="gap-2"><Contact className="h-4 w-4" /> Notes</TabsTrigger>
         </TabsList>
 
@@ -564,6 +751,60 @@ export default function SolicitorMatterDetail() {
               id: taskId, status, due_date: '', blocked_reason: '', notes: '',
             }, true)}
             onSeed={seedRunway}
+          />
+        </TabsContent>
+
+        {/* ─────────── DOCS ─────────── */}
+        <TabsContent value="docs" className="mt-4 space-y-4">
+          {registerSummary ? (
+            <p className="text-sm text-muted-foreground">
+              {registerSummary.documents_outstanding} outstanding · {registerSummary.documents_overdue} overdue
+            </p>
+          ) : null}
+          <MatterDocumentsPanel
+            documents={documents}
+            canEdit={!!perms.documents?.edit}
+            canDelete={!!perms.documents?.delete}
+            saving={registerSaving}
+            onSave={saveDocument}
+            onSetStatus={setDocumentStatus}
+            onUpload={uploadDocument}
+            onDownload={downloadDocument}
+            onDelete={deleteDocument}
+          />
+        </TabsContent>
+
+        {/* ─────────── SEARCHES & REQUISITIONS ─────────── */}
+        <TabsContent value="searches" className="mt-4 space-y-4">
+          <MatterSearchesPanel
+            searches={searches}
+            canEdit={!!perms.searches?.edit}
+            canDelete={!!perms.searches?.delete}
+            saving={registerSaving}
+            onSave={saveSearch}
+            onSetStatus={setSearchStatus}
+            onDelete={deleteSearch}
+          />
+          <MatterRequisitionsPanel
+            requisitions={requisitions}
+            canEdit={!!perms.searches?.edit}
+            canDelete={!!perms.searches?.delete}
+            saving={registerSaving}
+            onSave={saveRequisition}
+            onSetStatus={setRequisitionStatus}
+            onDelete={deleteRequisition}
+          />
+        </TabsContent>
+
+        {/* ─────────── COSTS ─────────── */}
+        <TabsContent value="costs" className="mt-4">
+          <MatterDisbursementsPanel
+            disbursements={disbursements}
+            canEdit={!!perms.disbursements?.edit}
+            canDelete={!!perms.disbursements?.delete}
+            saving={registerSaving}
+            onSave={saveDisbursement}
+            onDelete={deleteDisbursement}
           />
         </TabsContent>
 
