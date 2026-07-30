@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
         return json({ error: (resolved as any).error }, corsHeaders, (resolved as any).status ?? 401);
       }
       const portalUser = (resolved as any).portalUser;
-      const actor = { id: portalUser.id, label: portalUser.full_name ?? portalUser.email, surface: 'finance_portal' };
+      const actor = { id: portalUser.id, label: portalUser.email ?? null, surface: 'finance_portal' };
 
       // Partner scope: referrals assigned to this portal user, or raised by them.
       const scope = (q: any) =>
@@ -531,7 +531,7 @@ Deno.serve(async (req) => {
           primary_first_name: existing.client_first_name,
           primary_surname: existing.client_surname,
           primary_email: existing.client_email,
-          primary_phone: existing.client_phone,
+          primary_mobile: existing.client_phone,
           lead_source: existing.direction === 'inbound_property_referral' ? 'Finance partner referral' : 'Partner referral',
           notes: existing.general_purpose,
         })
@@ -582,9 +582,9 @@ Deno.serve(async (req) => {
     if (action === 'list_finance_users') {
       const { data, error } = await supabase
         .from('finance_portal_users')
-        .select('id, email, full_name, company_name, is_active')
+        .select('id, email, is_active, finance_contact_id, finance_agent_contacts:finance_contact_id (contact_name, company_name)')
         .eq('is_active', true)
-        .order('full_name', { ascending: true });
+        .order('email', { ascending: true });
       if (error) throw error;
       return json({ users: data ?? [] }, corsHeaders);
     }

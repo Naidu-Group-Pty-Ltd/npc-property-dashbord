@@ -28,7 +28,7 @@ export async function resolveFinancePartner(supabase: SupabaseClient, token: str
     if (mod.isSessionHashConfigured()) hash = await mod.hashSessionToken(token);
   } catch { /* pepper missing → fallback */ }
 
-  const cols = 'id, email, full_name, is_active, revoked_at, session_expires_at, session_idle_expires_at, session_token_hash, global_permissions';
+  const cols = 'id, email, is_active, revoked_at, session_expires_at, session_idle_expires_at, session_token_hash, global_permissions';
   let portalUser: any = null;
   if (hash) {
     const { data } = await supabase.from('finance_portal_users').select(cols)
