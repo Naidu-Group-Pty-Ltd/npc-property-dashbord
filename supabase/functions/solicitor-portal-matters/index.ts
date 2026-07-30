@@ -146,7 +146,7 @@ Deno.serve(async (req) => {
         supabase.from('legal_matter_status_history')
           .select('id, from_status, to_status, changed_by_type, reason, created_at')
           .eq('legal_matter_id', matter.id).order('created_at', { ascending: false }).limit(50),
-        supabase.from('clients').select('id, primary_first_name, primary_surname, primary_email, primary_phone').eq('id', matter.client_id).maybeSingle(),
+        supabase.from('clients').select('id, primary_first_name, primary_surname, primary_email, primary_mobile').eq('id', matter.client_id).maybeSingle(),
       ]);
 
       // Finance clause visibility only — never the client's financial position.
