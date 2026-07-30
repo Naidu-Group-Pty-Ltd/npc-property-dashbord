@@ -184,13 +184,20 @@ Deno.serve(async (req) => {
         });
       }
 
-      if (assignedClientIds.length === 0) {
+      const permittedClientIds = (await Promise.all(
+        assignedClientIds.map(async (clientId) => {
+          const perms = await resolveClientPermissions(supabase, me.id, clientId);
+          return perms && can(perms, 'messages', 'view') ? clientId : null;
+        }),
+      )).filter((clientId): clientId is string => clientId !== null);
+
+      if (permittedClientIds.length === 0) {
         return json({ success: true, threads: [], summary: summariseThreads([], 'solicitor') });
       }
       const { data: threads } = await supabase
         .from('legal_matter_threads')
         .select(`${THREAD_SELECT}, legal_matters:legal_matter_id (id, title, matter_reference)`)
-        .in('client_id', assignedClientIds)
+        .in('client_id', permittedClientIds)
         .eq('firm_id', me.firm_id)
         .eq('is_archived', false)
         .order('last_message_at', { ascending: false, nullsFirst: false })
