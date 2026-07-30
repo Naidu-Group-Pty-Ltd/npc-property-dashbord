@@ -19515,6 +19515,135 @@ export type Database = {
         }
         Relationships: []
       }
+      portal_operational_alerts: {
+        Row: {
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          alert_type: string
+          created_at: string
+          event_id: string
+          id: string
+          resolution_notes: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          severity: string
+          status: string
+          summary: string
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          alert_type: string
+          created_at?: string
+          event_id: string
+          id?: string
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity: string
+          status?: string
+          summary: string
+        }
+        Update: {
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          alert_type?: string
+          created_at?: string
+          event_id?: string
+          id?: string
+          resolution_notes?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          severity?: string
+          status?: string
+          summary?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_operational_alerts_event_id_fkey"
+            columns: ["event_id"]
+            isOneToOne: true
+            referencedRelation: "portal_operational_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_operational_events: {
+        Row: {
+          actor_id: string | null
+          actor_type: string
+          case_id: string | null
+          correlation_id: string
+          duration_ms: number | null
+          event_name: string
+          firm_id: string | null
+          id: string
+          matter_id: string | null
+          metadata: Json
+          occurred_at: string
+          portal: string
+          request_id: string | null
+          severity: string
+          success: boolean | null
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_type: string
+          case_id?: string | null
+          correlation_id: string
+          duration_ms?: number | null
+          event_name: string
+          firm_id?: string | null
+          id?: string
+          matter_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          portal: string
+          request_id?: string | null
+          severity: string
+          success?: boolean | null
+        }
+        Update: {
+          actor_id?: string | null
+          actor_type?: string
+          case_id?: string | null
+          correlation_id?: string
+          duration_ms?: number | null
+          event_name?: string
+          firm_id?: string | null
+          id?: string
+          matter_id?: string | null
+          metadata?: Json
+          occurred_at?: string
+          portal?: string
+          request_id?: string | null
+          severity?: string
+          success?: boolean | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_operational_events_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_operational_events_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_operational_events_matter_id_fkey"
+            columns: ["matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portal_terms_acceptances: {
         Row: {
           accepted_at: string
@@ -25682,6 +25811,15 @@ export type Database = {
         }
         Returns: Json
       }
+      acknowledge_portal_operational_alert: {
+        Args: {
+          _actor_id: string
+          _alert_id: string
+          _notes?: string
+          _resolution?: boolean
+        }
+        Returns: Json
+      }
       acquire_market_ingestion_run: {
         Args: {
           p_requested_by?: string
@@ -26276,6 +26414,10 @@ export type Database = {
         }
         Returns: Json
       }
+      get_portal_operational_health: {
+        Args: { _hours?: number }
+        Returns: Json
+      }
       get_recent_activities: {
         Args: {
           p_entity_type?: Database["public"]["Enums"]["activity_entity_type"]
@@ -26625,6 +26767,24 @@ export type Database = {
       }
       record_legal_audit_verification: {
         Args: { _matter_id: string; _result: Json }
+        Returns: string
+      }
+      record_portal_operational_event: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _case_id: string
+          _correlation_id: string
+          _duration_ms: number
+          _event_name: string
+          _firm_id: string
+          _matter_id: string
+          _metadata?: Json
+          _portal: string
+          _request_id: string
+          _severity: string
+          _success: boolean
+        }
         Returns: string
       }
       refresh_pdf_import_cost_daily: { Args: never; Returns: undefined }
