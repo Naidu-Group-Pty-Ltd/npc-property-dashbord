@@ -226,12 +226,19 @@ export default function SolicitorPortalAdmin() {
                 <CardDescription>Solicitors, conveyancers and practice staff with Solicitor Portal access.</CardDescription>
               </div>
               <Button
-                onClick={() => setUserDialog({ open: true, user: null })}
-                disabled={firms.filter(f => f.is_active).length === 0}
+                onClick={() => {
+                  if (firms.filter(f => f.is_active).length === 0) {
+                    toast.info('Create an active legal practice first — portal users must belong to one.');
+                    setFirmDialog({ open: true, firm: null });
+                    return;
+                  }
+                  setUserDialog({ open: true, user: null });
+                }}
                 className="gap-2"
               >
                 <Plus className="h-4 w-4" /> New User
               </Button>
+
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap gap-2">
