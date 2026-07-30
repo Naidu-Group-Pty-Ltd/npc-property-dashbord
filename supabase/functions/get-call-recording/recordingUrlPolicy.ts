@@ -1,4 +1,4 @@
-import { isPrivateOrReservedAddress } from '../import-from-url/ssrfGuard.ts';
+import { isPrivateOrReservedAddress } from '../_shared/ssrfGuard.ts';
 
 export type RecordingDnsResolver = (
   hostname: string,
