@@ -12945,6 +12945,112 @@ export type Database = {
           },
         ]
       }
+      legal_matter_messages: {
+        Row: {
+          attachment_filename: string | null
+          attachment_mime: string | null
+          attachment_path: string | null
+          attachment_size_bytes: number | null
+          body: string
+          client_id: string | null
+          created_at: string
+          id: string
+          is_internal: boolean
+          legal_matter_id: string
+          metadata: Json
+          mirrored_client_message_id: string | null
+          mirrored_finance_message_id: string | null
+          read_by_client_at: string | null
+          read_by_finance_at: string | null
+          read_by_solicitor_at: string | null
+          read_by_staff_at: string | null
+          scope: Database["public"]["Enums"]["legal_thread_scope"]
+          sender_client_portal_user_id: string | null
+          sender_finance_user_id: string | null
+          sender_name: string | null
+          sender_solicitor_user_id: string | null
+          sender_staff_user_id: string | null
+          sender_type: Database["public"]["Enums"]["legal_message_sender_type"]
+          thread_id: string
+        }
+        Insert: {
+          attachment_filename?: string | null
+          attachment_mime?: string | null
+          attachment_path?: string | null
+          attachment_size_bytes?: number | null
+          body: string
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          is_internal?: boolean
+          legal_matter_id: string
+          metadata?: Json
+          mirrored_client_message_id?: string | null
+          mirrored_finance_message_id?: string | null
+          read_by_client_at?: string | null
+          read_by_finance_at?: string | null
+          read_by_solicitor_at?: string | null
+          read_by_staff_at?: string | null
+          scope?: Database["public"]["Enums"]["legal_thread_scope"]
+          sender_client_portal_user_id?: string | null
+          sender_finance_user_id?: string | null
+          sender_name?: string | null
+          sender_solicitor_user_id?: string | null
+          sender_staff_user_id?: string | null
+          sender_type: Database["public"]["Enums"]["legal_message_sender_type"]
+          thread_id: string
+        }
+        Update: {
+          attachment_filename?: string | null
+          attachment_mime?: string | null
+          attachment_path?: string | null
+          attachment_size_bytes?: number | null
+          body?: string
+          client_id?: string | null
+          created_at?: string
+          id?: string
+          is_internal?: boolean
+          legal_matter_id?: string
+          metadata?: Json
+          mirrored_client_message_id?: string | null
+          mirrored_finance_message_id?: string | null
+          read_by_client_at?: string | null
+          read_by_finance_at?: string | null
+          read_by_solicitor_at?: string | null
+          read_by_staff_at?: string | null
+          scope?: Database["public"]["Enums"]["legal_thread_scope"]
+          sender_client_portal_user_id?: string | null
+          sender_finance_user_id?: string | null
+          sender_name?: string | null
+          sender_solicitor_user_id?: string | null
+          sender_staff_user_id?: string | null
+          sender_type?: Database["public"]["Enums"]["legal_message_sender_type"]
+          thread_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_messages_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_messages_sender_solicitor_user_id_fkey"
+            columns: ["sender_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_messages_thread_id_fkey"
+            columns: ["thread_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matter_threads"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       legal_matter_parties: {
         Row: {
           address: string | null
@@ -13286,6 +13392,90 @@ export type Database = {
           },
           {
             foreignKeyName: "legal_matter_status_history_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matter_threads: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          created_by: string | null
+          finance_user_id: string | null
+          firm_id: string | null
+          id: string
+          is_archived: boolean
+          last_message_at: string | null
+          last_message_preview: string | null
+          last_sender_type:
+            | Database["public"]["Enums"]["legal_message_sender_type"]
+            | null
+          legal_matter_id: string
+          scope: Database["public"]["Enums"]["legal_thread_scope"]
+          subject: string
+          unread_count_client: number
+          unread_count_finance: number
+          unread_count_solicitor: number
+          unread_count_staff: number
+          updated_at: string
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          finance_user_id?: string | null
+          firm_id?: string | null
+          id?: string
+          is_archived?: boolean
+          last_message_at?: string | null
+          last_message_preview?: string | null
+          last_sender_type?:
+            | Database["public"]["Enums"]["legal_message_sender_type"]
+            | null
+          legal_matter_id: string
+          scope?: Database["public"]["Enums"]["legal_thread_scope"]
+          subject?: string
+          unread_count_client?: number
+          unread_count_finance?: number
+          unread_count_solicitor?: number
+          unread_count_staff?: number
+          updated_at?: string
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          finance_user_id?: string | null
+          firm_id?: string | null
+          id?: string
+          is_archived?: boolean
+          last_message_at?: string | null
+          last_message_preview?: string | null
+          last_sender_type?:
+            | Database["public"]["Enums"]["legal_message_sender_type"]
+            | null
+          legal_matter_id?: string
+          scope?: Database["public"]["Enums"]["legal_thread_scope"]
+          subject?: string
+          unread_count_client?: number
+          unread_count_finance?: number
+          unread_count_solicitor?: number
+          unread_count_staff?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_threads_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_threads_legal_matter_id_fkey"
             columns: ["legal_matter_id"]
             isOneToOne: false
             referencedRelation: "legal_matters"
@@ -20591,6 +20781,53 @@ export type Database = {
         }
         Relationships: []
       }
+      solicitor_notification_prefs: {
+        Row: {
+          channels: string[]
+          created_at: string
+          event_type: string
+          id: string
+          is_enabled: boolean
+          quiet_hours_end: string | null
+          quiet_hours_start: string | null
+          solicitor_user_id: string
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          channels?: string[]
+          created_at?: string
+          event_type: string
+          id?: string
+          is_enabled?: boolean
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
+          solicitor_user_id: string
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          channels?: string[]
+          created_at?: string
+          event_type?: string
+          id?: string
+          is_enabled?: boolean
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
+          solicitor_user_id?: string
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_notification_prefs_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       solicitor_portal_activity_log: {
         Row: {
           action: string
@@ -20727,6 +20964,76 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "solicitor_portal_default_permissions_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solicitor_portal_notifications: {
+        Row: {
+          body: string | null
+          client_id: string | null
+          created_at: string
+          firm_id: string | null
+          id: string
+          is_read: boolean
+          legal_matter_id: string | null
+          link_path: string | null
+          metadata: Json
+          notification_type: string
+          read_at: string | null
+          solicitor_user_id: string
+          title: string
+        }
+        Insert: {
+          body?: string | null
+          client_id?: string | null
+          created_at?: string
+          firm_id?: string | null
+          id?: string
+          is_read?: boolean
+          legal_matter_id?: string | null
+          link_path?: string | null
+          metadata?: Json
+          notification_type: string
+          read_at?: string | null
+          solicitor_user_id: string
+          title: string
+        }
+        Update: {
+          body?: string | null
+          client_id?: string | null
+          created_at?: string
+          firm_id?: string | null
+          id?: string
+          is_read?: boolean
+          legal_matter_id?: string | null
+          link_path?: string | null
+          metadata?: Json
+          notification_type?: string
+          read_at?: string | null
+          solicitor_user_id?: string
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_portal_notifications_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_portal_notifications_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_portal_notifications_solicitor_user_id_fkey"
             columns: ["solicitor_user_id"]
             isOneToOne: false
             referencedRelation: "solicitor_portal_users"
@@ -23436,6 +23743,12 @@ export type Database = {
         | "refinance"
         | "commercial"
         | "other"
+      legal_message_sender_type:
+        | "solicitor_user"
+        | "staff"
+        | "client"
+        | "finance_partner"
+        | "system"
       legal_party_role:
         | "buyer"
         | "seller"
@@ -23502,6 +23815,11 @@ export type Database = {
         | "blocked"
         | "complete"
         | "not_applicable"
+      legal_thread_scope:
+        | "solicitor_npc"
+        | "solicitor_client"
+        | "solicitor_finance"
+        | "firm_internal"
       lender_doc_status: "required" | "received" | "verified" | "waived"
       lender_loan_purpose: "OWNER_OCCUPIED" | "INVESTMENT"
       lender_repayment_type: "PRINCIPAL_AND_INTEREST" | "INTEREST_ONLY"
@@ -24192,6 +24510,13 @@ export const Constants = {
         "commercial",
         "other",
       ],
+      legal_message_sender_type: [
+        "solicitor_user",
+        "staff",
+        "client",
+        "finance_partner",
+        "system",
+      ],
       legal_party_role: [
         "buyer",
         "seller",
@@ -24263,6 +24588,12 @@ export const Constants = {
         "blocked",
         "complete",
         "not_applicable",
+      ],
+      legal_thread_scope: [
+        "solicitor_npc",
+        "solicitor_client",
+        "solicitor_finance",
+        "firm_internal",
       ],
       lender_doc_status: ["required", "received", "verified", "waived"],
       lender_loan_purpose: ["OWNER_OCCUPIED", "INVESTMENT"],

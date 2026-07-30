@@ -1002,5 +1002,8 @@ verify_jwt = false
 [functions.solicitor-portal-documents]
 verify_jwt = false
 
+[functions.solicitor-portal-comms]
+verify_jwt = false
+
 [functions.legal-matters-admin]
 verify_jwt = true

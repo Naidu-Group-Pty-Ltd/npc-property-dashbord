@@ -32,12 +32,27 @@ import {
   buildSettlementTaskPayload,
   summariseRunway,
 } from "../_shared/legalCriticalDates.ts";
+import {
+  THREAD_SELECT,
+  MESSAGE_SELECT,
+  STAFF_POSTABLE_SCOPES,
+  isValidScope,
+  scopeLabel,
+  preview,
+  notifySolicitors,
+  mirrorToFinancePortal,
+  summariseThreads,
+  type LegalThreadScope,
+} from "../_shared/legalComms.ts";
+
+
 
 const MODULE_KEY = 'solicitor_portal_admin';
 
 const READ_OPS = new Set([
   'list_matters', 'get_matter', 'list_for_deal', 'list_for_client', 'link_options',
   'list_dates', 'list_runway', 'upcoming_dates',
+  'list_threads', 'get_thread', 'comms_summary',
 ]);
 const DELETE_OPS = new Set(['delete_matter', 'delete_party', 'delete_date']);
 
@@ -575,6 +590,153 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ─────────────── COMMUNICATIONS (Phase 6) ───────────────
+    const loadStaffMatter = async (matterId: string) => {
+      if (!matterId) return null;
+      const { data } = await supabase
+        .from('legal_matters')
+        .select('id, client_id, firm_id, title, matter_reference')
+        .eq('id', matterId)
+        .maybeSingle();
+      return data;
+    };
+
+    const ensureStaffThread = async (matter: any, scope: LegalThreadScope) => {
+      const { data: existing } = await supabase
+        .from('legal_matter_threads').select(THREAD_SELECT)
+        .eq('legal_matter_id', matter.id).eq('scope', scope)
+        .is('finance_user_id', null).maybeSingle();
+      if (existing) return existing;
+      const { data, error } = await supabase.from('legal_matter_threads').insert({
+        legal_matter_id: matter.id,
+        client_id: matter.client_id,
+        firm_id: matter.firm_id,
+        scope,
+        subject: `${matter.matter_reference || matter.title || 'Matter'} — ${scopeLabel(scope)}`,
+        created_by: staffUserId,
+      }).select(THREAD_SELECT).maybeSingle();
+      if (error) throw error;
+      return data;
+    };
+
+    if (operation === 'list_threads') {
+      const matter = await loadStaffMatter(String(body.matter_id || ''));
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data: threads } = await supabase
+        .from('legal_matter_threads').select(THREAD_SELECT)
+        .eq('legal_matter_id', matter.id)
+        // Firm-internal notes are never exposed outside the solicitor portal.
+        .neq('scope', 'firm_internal')
+        .order('last_message_at', { ascending: false, nullsFirst: false });
+      return json({
+        success: true,
+        threads: threads || [],
+        summary: summariseThreads((threads || []) as any[], 'staff'),
+      });
+    }
+
+    if (operation === 'get_thread') {
+      const matter = await loadStaffMatter(String(body.matter_id || ''));
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const scope: LegalThreadScope = isValidScope(body.scope) ? body.scope : 'solicitor_npc';
+      if (scope === 'firm_internal') return json({ error: 'Thread not available' }, 403);
+
+      let thread: any = null;
+      if (body.thread_id) {
+        const { data } = await supabase.from('legal_matter_threads').select(THREAD_SELECT)
+          .eq('id', String(body.thread_id)).eq('legal_matter_id', matter.id)
+          .neq('scope', 'firm_internal').maybeSingle();
+        thread = data;
+      } else {
+        thread = await ensureStaffThread(matter, scope);
+      }
+      if (!thread) return json({ error: 'Thread not found' }, 404);
+
+      const { data: messages } = await supabase
+        .from('legal_matter_messages').select(MESSAGE_SELECT)
+        .eq('thread_id', thread.id).eq('is_internal', false)
+        .order('created_at', { ascending: true }).limit(500);
+
+      if (body.mark_read !== false) {
+        const now = new Date().toISOString();
+        await supabase.from('legal_matter_messages')
+          .update({ read_by_staff_at: now })
+          .eq('thread_id', thread.id).is('read_by_staff_at', null);
+        await supabase.from('legal_matter_threads')
+          .update({ unread_count_staff: 0 }).eq('id', thread.id);
+      }
+
+      return json({ success: true, thread, messages: messages || [] });
+    }
+
+    if (operation === 'post_message') {
+      const matter = await loadStaffMatter(String(body.matter_id || ''));
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const scope: LegalThreadScope = isValidScope(body.scope) ? body.scope : 'solicitor_npc';
+      if (!STAFF_POSTABLE_SCOPES.has(scope)) {
+        return json({ error: 'That conversation is not available from Command Centre' }, 403);
+      }
+      const text = String(body.body || '').trim();
+      if (!text) return json({ error: 'A message body is required' }, 400);
+      if (text.length > 8000) return json({ error: 'Messages are limited to 8000 characters' }, 400);
+
+      const thread = await ensureStaffThread(matter, scope);
+      const senderName = String(body.sender_name || 'NPC Command Centre');
+
+      let mirroredFinanceId: string | null = null;
+      if (scope === 'solicitor_finance') {
+        mirroredFinanceId = await mirrorToFinancePortal(supabase, {
+          clientId: matter.client_id, senderName, body: text,
+        });
+      }
+
+      const { data: message, error } = await supabase.from('legal_matter_messages').insert({
+        thread_id: thread.id,
+        legal_matter_id: matter.id,
+        client_id: matter.client_id,
+        scope,
+        sender_type: 'staff',
+        sender_staff_user_id: staffUserId,
+        sender_name: senderName,
+        body: text,
+        is_internal: false,
+        mirrored_finance_message_id: mirroredFinanceId,
+        read_by_staff_at: new Date().toISOString(),
+      }).select(MESSAGE_SELECT).maybeSingle();
+      if (error) throw error;
+
+      // Notify every solicitor assigned to this client.
+      const { data: assignments } = await supabase
+        .from('solicitor_portal_client_assignments')
+        .select('solicitor_user_id')
+        .eq('client_id', matter.client_id);
+      await notifySolicitors(supabase, {
+        solicitorUserIds: (assignments || []).map((a: any) => a.solicitor_user_id),
+        firmId: matter.firm_id,
+        clientId: matter.client_id,
+        legalMatterId: matter.id,
+        eventType: 'message_received',
+        title: `New message from ${senderName}`,
+        body: preview(text, 160),
+        linkPath: `/solicitor/matters/${matter.id}?tab=messages`,
+        metadata: { scope },
+      });
+
+      await logStaff('matter_message_sent', {
+        client_id: matter.client_id, legal_matter_id: matter.id,
+        entity_type: 'legal_matter_message', entity_id: message?.id ?? null,
+        metadata: { scope },
+      });
+
+      return json({ success: true, message, thread_id: thread.id });
+    }
+
+    if (operation === 'comms_summary') {
+      const { data: threads } = await supabase
+        .from('legal_matter_threads').select(THREAD_SELECT)
+        .neq('scope', 'firm_internal').eq('is_archived', false).limit(500);
+      return json({ success: true, summary: summariseThreads((threads || []) as any[], 'staff') });
+    }
 
     return json({ error: `Unknown operation: ${operation || '(none)'}` }, 400);
   } catch (error: any) {

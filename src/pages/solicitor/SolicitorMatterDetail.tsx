@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Building2, CalendarClock, Contact, FileText, Landmark, Loader2,
-  Pencil, Plus, Route, Save, ShieldAlert, Trash2, Users,
+  MessagesSquare, Pencil, Plus, Route, Save, ShieldAlert, Trash2, Users,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -49,6 +49,9 @@ import {
   MatterDisbursementsPanel, type DisbursementDraft,
 } from '@/components/solicitor-portal/MatterDisbursementsPanel';
 import {
+  MatterCommunicationsPanel,
+} from '@/components/solicitor-portal/MatterCommunicationsPanel';
+import {
   MAX_DOCUMENT_BYTES,
   type DocumentRegisterSummary, type LegalDocumentStatus, type LegalMatterDisbursement,
   type LegalMatterDocument, type LegalMatterRequisition, type LegalMatterSearch,
@@ -83,6 +86,15 @@ const EMPTY_PARTY = {
 export default function SolicitorMatterDetail() {
   const { matterId } = useParams<{ matterId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTabState] = useState(searchParams.get('tab') || 'overview');
+
+  const setActiveTab = useCallback((tab: string) => {
+    setActiveTabState(tab);
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'overview') next.delete('tab'); else next.set('tab', tab);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -489,7 +501,7 @@ export default function SolicitorMatterDetail() {
         </Card>
       ) : null}
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview" className="gap-2"><FileText className="h-4 w-4" /> Overview</TabsTrigger>
           <TabsTrigger value="parties" className="gap-2"><Users className="h-4 w-4" /> Parties</TabsTrigger>
@@ -498,8 +510,22 @@ export default function SolicitorMatterDetail() {
           <TabsTrigger value="docs" className="gap-2"><FileText className="h-4 w-4" /> Docs</TabsTrigger>
           <TabsTrigger value="searches" className="gap-2"><FileText className="h-4 w-4" /> Searches</TabsTrigger>
           <TabsTrigger value="costs" className="gap-2"><FileText className="h-4 w-4" /> Costs</TabsTrigger>
+          <TabsTrigger value="messages" className="gap-2"><MessagesSquare className="h-4 w-4" /> Messages</TabsTrigger>
           <TabsTrigger value="notes" className="gap-2"><Contact className="h-4 w-4" /> Notes</TabsTrigger>
         </TabsList>
+
+        {/* ─────────── MESSAGES ─────────── */}
+        <TabsContent value="messages" className="mt-4 space-y-4">
+          {matterId ? (
+            <MatterCommunicationsPanel
+              matterId={matterId}
+              canEdit={!!perms.messages?.edit}
+              onError={(message) => toast.error(message)}
+            />
+          ) : null}
+        </TabsContent>
+
+
 
         {/* ─────────── OVERVIEW ─────────── */}
         <TabsContent value="overview" className="mt-4 space-y-4">

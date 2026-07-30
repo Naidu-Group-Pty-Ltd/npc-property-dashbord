@@ -4,6 +4,7 @@ import { Briefcase, LayoutDashboard, LogOut, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
+import { SolicitorNotificationBell } from '@/components/solicitor-portal/SolicitorNotificationBell';
 
 const NAV = [
   { to: '/solicitor', label: 'Dashboard', icon: LayoutDashboard, exact: true },
@@ -65,6 +66,7 @@ export function SolicitorPortalShell({
                 );
               })}
             </nav>
+            <SolicitorNotificationBell />
             <Button variant="outline" size="sm" onClick={() => void signOut()}>
               <LogOut className="mr-2 h-4 w-4" aria-hidden />
               Sign out
