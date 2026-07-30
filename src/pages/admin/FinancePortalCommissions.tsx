@@ -177,6 +177,18 @@ export default function FinancePortalCommissions() {
     void refresh();
   };
 
+  const bulkSetClearedFunds = async (received: boolean) => {
+    if (selected.size === 0) return;
+    const reference = received ? (window.prompt('Cleared funds reference (optional):') || null) : null;
+    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+      operation: 'set_cleared_funds', ids: Array.from(selected), received, reference,
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success(received ? 'Cleared funds recorded' : 'Cleared funds cleared');
+    setSelected(new Set());
+    void refresh();
+  };
+
   const issueStatement = async (id: string) => {
     const { error } = await invokeSecureFunction('finance-portal-commissions', { operation: 'issue_statement', id });
     if (error) { toast.error(error.message); return; }
@@ -185,14 +197,40 @@ export default function FinancePortalCommissions() {
   };
 
   const markPaid = async (id: string) => {
+    const openCount = disputes.filter(d => d.statement_id === id && ['open', 'under_review'].includes(d.status)).length;
+    if (openCount > 0 && !window.confirm(`This statement has ${openCount} open dispute${openCount === 1 ? '' : 's'}. Pay anyway?`)) return;
     const ref = window.prompt('Payment reference (optional):') || null;
-    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+    const { data, error } = await invokeSecureFunction('finance-portal-commissions', {
       operation: 'mark_statement_paid', id, paid_reference: ref,
+      ...(openCount > 0 ? { override_dispute: true } : {}),
     });
     if (error) { toast.error(error.message); return; }
+    if ((data as any)?.error) { toast.error((data as any).error); return; }
     toast.success('Statement marked paid');
     void refresh();
   };
+
+  const resolveDispute = async (id: string, status: string) => {
+    const notes = window.prompt('Resolution notes (optional):') || null;
+    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+      operation: 'resolve_dispute', id, status, resolution_notes: notes,
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success('Dispute updated');
+    void refresh();
+  };
+
+  const raiseDispute = async (statementId: string) => {
+    const reason = window.prompt('Reason for the dispute:');
+    if (!reason) return;
+    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+      operation: 'raise_dispute', statement_id: statementId, reason, reason_category: 'other',
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success('Dispute raised');
+    void refresh();
+  };
+
 
   const downloadStatement = async (path: string) => {
     const { data, error } = await invokeSecureFunction('finance-portal-commissions', {
