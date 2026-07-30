@@ -345,12 +345,137 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // ── Phase 4: agreement-derived commercial terms ────────────────────────
+    if (operation === 'resolve_terms') {
+      const { partner_id, direction } = body;
+      if (!partner_id) throw new Error('partner_id required');
+      const { data, error } = await supabase.rpc('fp_resolve_partner_agreement', {
+        _finance_contact_id: partner_id,
+        _direction: direction || 'outbound_finance_referral',
+      });
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, terms: (data || [])[0] || null }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // Record (or clear) receipt of cleared funds for one or more commissions.
+    if (operation === 'set_cleared_funds') {
+      const ids: string[] = body.ids || (body.id ? [body.id] : []);
+      if (!ids.length) throw new Error('ids required');
+      const received = body.received !== false;
+      const { data, error } = await supabase
+        .from('finance_partner_commissions')
+        .update({
+          cleared_funds_received_at: received ? (body.received_at || new Date().toISOString()) : null,
+          cleared_funds_reference: received ? (body.reference || null) : null,
+        })
+        .in('id', ids)
+        .select('id, cleared_funds_received_at');
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, commissions: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── Phase 4: disputes (clause 5.3) ─────────────────────────────────────
+    if (operation === 'list_disputes') {
+      let q = supabase.from('finance_partner_statement_disputes').select('*')
+        .order('raised_at', { ascending: false }).limit(300);
+      if (body.statement_id) q = q.eq('statement_id', body.statement_id);
+      if (body.partner_id) q = q.eq('finance_contact_id', body.partner_id);
+      if (body.status) q = q.eq('status', body.status);
+      const { data, error } = await q;
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, disputes: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'raise_dispute' || operation === 'partner_raise_dispute') {
+      const statementId = body.statement_id;
+      if (!statementId) throw new Error('statement_id required');
+      if (!body.reason) throw new Error('reason required');
+
+      const { data: stmt } = await supabase.from('finance_partner_statements')
+        .select('id, finance_contact_id, status, dispute_deadline')
+        .eq('id', statementId).maybeSingle();
+      if (!stmt) throw new Error('Statement not found');
+
+      const isPartner = operation === 'partner_raise_dispute';
+      if (isPartner && stmt.finance_contact_id !== partner.finance_contact_id) {
+        return new Response(JSON.stringify({ error: 'Not found' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (isPartner && stmt.status === 'draft') {
+        return new Response(JSON.stringify({ error: 'Statement not yet issued' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const withinWindow = !stmt.dispute_deadline
+        || new Date().toISOString().slice(0, 10) <= stmt.dispute_deadline;
+
+      const { data, error } = await supabase.from('finance_partner_statement_disputes')
+        .insert({
+          statement_id: statementId,
+          finance_contact_id: stmt.finance_contact_id,
+          commission_id: body.commission_id || null,
+          raised_by_type: isPartner ? 'partner' : 'staff',
+          raised_by_id: isPartner ? partner.id : adminUserId,
+          raised_by_name: body.raised_by_name || null,
+          within_window: withinWindow,
+          reason_category: body.reason_category || 'other',
+          reason: String(body.reason).slice(0, 4000),
+          disputed_amount: body.disputed_amount != null ? Number(body.disputed_amount) : null,
+        })
+        .select('*').single();
+      if (error) throw error;
+
+      return new Response(JSON.stringify({ success: true, dispute: data, within_window: withinWindow }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'resolve_dispute') {
+      const { id, status } = body;
+      if (!id) throw new Error('id required');
+      const next = status || 'resolved';
+      const terminal = ['resolved', 'withdrawn', 'rejected'].includes(next);
+      const { data, error } = await supabase.from('finance_partner_statement_disputes')
+        .update({
+          status: next,
+          resolution_outcome: body.resolution_outcome || null,
+          resolution_notes: body.resolution_notes || null,
+          adjustment_amount: body.adjustment_amount != null ? Number(body.adjustment_amount) : null,
+          resolved_at: terminal ? new Date().toISOString() : null,
+          resolved_by: terminal ? adminUserId : null,
+          resolved_by_name: terminal ? (body.resolved_by_name || null) : null,
+        })
+        .eq('id', id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, dispute: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'partner_disputes') {
+      const { data, error } = await supabase.from('finance_partner_statement_disputes')
+        .select('*')
+        .eq('finance_contact_id', partner.finance_contact_id)
+        .order('raised_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, disputes: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (operation === 'generate_statement') {
       const { partner_id, period_start, period_end } = body;
       if (!partner_id || !period_start || !period_end) throw new Error('partner_id, period_start, period_end required');
 
       const { data: pc } = await supabase.from('finance_agent_contacts')
         .select('name, company').eq('id', partner_id).maybeSingle();
+
+      // Agreement-derived terms drive the dispute window and provenance.
+      const { data: termsRows } = await supabase.rpc('fp_resolve_partner_agreement', {
+        _finance_contact_id: partner_id,
+        _direction: 'outbound_finance_referral',
+      });
+      const terms = (termsRows || [])[0] || null;
 
       // Pull eligible commissions (pending or invoiced, not on a statement)
       const { data: commissions, error: cErr } = await supabase
@@ -364,10 +489,23 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: true });
       if (cErr) throw cErr;
 
-      const lines = commissions || [];
-      const totalGross = lines.reduce((s, c) => s + Number(c.gross_amount || 0), 0);
-      const totalGst = lines.reduce((s, c) => s + Number(c.gst_amount || 0), 0);
-      const totalNet = lines.reduce((s, c) => s + Number(c.net_amount || 0), 0);
+      // Cleared-funds gate (Doc 2 §5): a commission that requires cleared funds
+      // cannot be statemented until the funds have actually been received.
+      const all = commissions || [];
+      const lines = body.include_unclearedq === true
+        ? all
+        : all.filter(c => !c.cleared_funds_required || !!c.cleared_funds_received_at);
+      const withheld = all.filter(c => c.cleared_funds_required && !c.cleared_funds_received_at);
+
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+      const totalGross = round2(lines.reduce((s, c) => s + Number(c.gross_amount || 0), 0));
+      const totalGst = round2(lines.reduce((s, c) => s + Number(c.gst_amount || 0), 0));
+      const totalNet = round2(lines.reduce((s, c) => s + Number(c.net_amount || 0) + Number(c.adjustment_amount || 0), 0));
+
+      const disputeWindowDays = terms?.dispute_window_days ?? null;
+      const deadline = disputeWindowDays
+        ? new Date(Date.now() + disputeWindowDays * 86400000).toISOString().slice(0, 10)
+        : null;
 
       const { data: stmt, error: sErr } = await supabase
         .from('finance_partner_statements')
@@ -379,6 +517,10 @@ Deno.serve(async (req) => {
           total_gross: totalGross, total_gst: totalGst, total_net: totalNet,
           line_count: lines.length,
           status: 'draft',
+          agreement_id: terms?.agreement_id || null,
+          agreement_version: terms?.agreement_version || null,
+          dispute_window_days: disputeWindowDays,
+          dispute_deadline: deadline,
         })
         .select('*').single();
       if (sErr) throw sErr;
@@ -396,6 +538,15 @@ Deno.serve(async (req) => {
           gst_snapshot: c.gst_amount,
           net_snapshot: c.net_amount,
           accrual_date: (c.created_at || '').slice(0, 10),
+          agreement_id: c.agreement_id || terms?.agreement_id || null,
+          agreement_version_snapshot: c.agreement_version || terms?.agreement_version || null,
+          rate_source_snapshot: c.rate_source || null,
+          gst_treatment_snapshot: c.gst_treatment || terms?.gst_treatment || null,
+          qualifying_event_snapshot: c.qualifying_event || terms?.qualifying_event || null,
+          basis_amount_snapshot: c.basis_amount ?? null,
+          cleared_funds_received_at_snapshot: c.cleared_funds_received_at || null,
+          adjustment_snapshot: Number(c.adjustment_amount || 0),
+          adjustment_reason_snapshot: c.adjustment_reason || null,
         }));
         await supabase.from('finance_partner_statement_lines').insert(lineRows);
         await supabase.from('finance_partner_commissions')
@@ -403,11 +554,17 @@ Deno.serve(async (req) => {
           .in('id', lines.map(l => l.id));
       }
 
-      return new Response(JSON.stringify({ success: true, statement: stmt, line_count: lines.length }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({
+        success: true,
+        statement: stmt,
+        line_count: lines.length,
+        withheld_count: withheld.length,
+        withheld_net: round2(withheld.reduce((s, c) => s + Number(c.net_amount || 0), 0)),
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     if (operation === 'issue_statement') {
+
       const { id } = body;
       const { data: stmt, error: sErr } = await supabase
         .from('finance_partner_statements').select('*').eq('id', id).maybeSingle();
