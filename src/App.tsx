@@ -254,6 +254,9 @@ const App = () => (
                         <Route path="/qa/market/:slug" element={<SharedMarketQAAnswer />} />
                         {/* Public template share preview (no auth) */}
                         <Route path="/template-share/:token" element={<TemplateSharePreview />} />
+                        {/* Public partner referral consent signing (no auth) */}
+                        <Route path="/partner-consent/:token" element={<PublicPartnerConsent />} />
+
                         {/* Client Portal Routes */}
                         <Route path="/client/login" element={
                           <PortalAuthProvider>
