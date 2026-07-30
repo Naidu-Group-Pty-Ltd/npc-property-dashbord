@@ -1,122 +1,85 @@
+## What the two documents actually are
 
-# Solicitor Portal — Feature List & Implementation Plan
+Both are **Version 2.0 partner agreement templates** for the buyer's-agency ↔ finance-partner relationship. They are mirror images of each other — same structure, opposite direction of referral and opposite direction of money.
 
-## 1. Why this shape
+**Doc 1 — Strategic Property Referral Agreement** (issued *by* the Buyer's Agency *to* the Finance Partner)
+- Finance partner refers a client **to** NPC for property strategy / buyer advocacy.
+- Money flows **NPC → finance partner** (a referral fee off the buyer's-agency fee).
+- 7-stage referral workflow: Identify → Consent → Submit → Accept → Engage → Update → Complete.
+- Commercial Schedule is deliberately **blank**: remuneration model (fixed fee / % of BA fee / other), amount, GST treatment, qualifying event (engagement signed / unconditional / settlement / other), payment timeframe in business days, invoice process (tax invoice / RCTI), exclusions, duplicate-referral rule, fee cap/minimum, post-termination entitlement.
+- Clauses 1–13 + execution block (incl. optional s127 Corporations Act) + **Annexure A: Referral Registration Form** (referral ID, dates, parties, client, consent obtained Y/N, benefit disclosed, prior-client check new/existing/duplicate, assigned consultant, status, commercial eligibility).
 
-The Finance Portal already proves the pattern this codebase wants: a standalone, session-token portal with its own login/invite/auth stack, its own edge functions, its own permission matrix, and an admin surface inside Command Centre. The Solicitor Portal mirrors that skeleton exactly so we inherit auth, notifications, audit chains, comments, branding and the tri-portal sync work already done.
+**Doc 2 — Finance Referral & Commission Agreement** (issued *by* the Finance Partner *to* the Buyer's Agency)
+- NPC refers a client **to** the finance partner for credit services.
+- Money flows **finance partner → NPC** (upfront + trail commission share).
+- Commission & Payment Schedule: upfront share %, trail share %, commission basis (gross / net of aggregator deductions), qualifying event (settled loan + first drawdown), payment cycle, **cleared-funds condition**, GST/RCTI, clawback treatment, clawback repayment window, refinance/top-up inclusion, duplicate rule, post-termination entitlement.
+- Clauses 1–13 plus three annexures:
+  - **A — Client Referral & Consent Form** (with a verbatim client consent statement + client signature).
+  - **B — Loan Writer / Authorised Representative Undertaking** (separate signature block, ACL/CRN, no separate payment obligation, auto-terminates with authorisation).
+  - **C — Referrer Entity & Payment Details** (ABN, GST registered, accounts/RCTI email, account name/BSB/account number, **independent verification date + verified by** — explicitly a restricted-access form).
 
-The key conceptual object is the **Matter** (conveyancing file). It is to the solicitor what the **Purchase File** is to the broker — and crucially, both hang off the same client + property + deal. Matter ↔ Purchase File is a first-class link, exactly like the existing `client_deals` ↔ `purchase_files` link. That single design decision is what makes finance, legal, and (later) build all line up on one settlement date.
+Hard compliance constraints running through both: strict information boundary (name + contact + general purpose only), consent before disclosure, benefit disclosure, no credit assistance by the referrer, no guaranteed outcomes, status updates limited to approved high-level milestones, records retention, privacy-incident notification, banking-change callback verification.
 
-```text
-                        clients / client_deals
-                                 |
-        +------------------------+------------------------+
-        |                        |                        |
-  purchase_files            legal_matters            build_jobs (Builder Portal, later)
-  (Finance Portal)        (Solicitor Portal)          (not built yet)
-        |                        |                        |
-        +----- shared settlement date + critical dates ----+
-                     surfaced in Command Centre + Client Portal
-```
+## What already exists in the codebase
 
-## 2. What solicitors actually need
+- `agency_agreements` + `gamma_agreement_templates` + `manage-agency-agreements` edge function + DocuSign envelope flow (`send_docusign`, `check_status`, `void`, `retry_pdf`) — but scoped to **client** agreements only (`client_id`, `buyer_names`, `initial_commitment_fee`).
+- `finance_agent_contacts` already carries `abn`, `gst_registered`, `bank_bsb`, `bank_account_number`, `bank_account_name`, `default_commission_rate_pct`, `default_commission_basis`.
+- `finance_partner_commissions` + `finance_partner_statements` + `finance-portal-commissions` / `generate-commission-payout` / `manage-commission-ledger`.
+- Finance Portal: partners, per-client assignments, permission matrix, purchase files, clawback radar, forecasting.
+- **Missing entirely:** any concept of a *partner agreement*, a *referral* (inbound or outbound), a commercial schedule that parameterises commission, consent capture, or a loan-writer undertaking.
 
-Grouped by their real workflow, mapped to what already exists here.
+## Gap analysis — what needs to be added
 
-### A. Matter management (core)
-- Matter list: purchase / sale / transfer / off-the-plan / house-and-land / refinance / commercial.
-- Matter detail "Legal Deal Room": parties, property, contract, dates, docs, tasks, comms, audit.
-- Matter status pipeline: `instructed → contract_review → exchanged → cooling_off → conditions → unconditional → pre_settlement → settled → post_settlement → terminated`.
-- Link to the client's Purchase File and internal Deal (bidirectional, drift-detected — never auto-mirror shared fields).
+**1. Partner agreements as a first-class object**
+New `partner_agreements` table (direction: `inbound_property_referral` | `outbound_finance_referral`, version, status, governing state, effective/termination dates, both parties' legal/trading names, ABN/ACN, ACL/CRN, aggregator/licensee, addresses, emails, notice terms, termination notice days, dispute window). Reuse the existing DocuSign envelope pattern rather than building a second signing stack — extend `manage-agency-agreements` or fork a `manage-partner-agreements` function with the same envelope/status/void/retry surface.
 
-### B. Critical dates & settlement runway (highest value)
-- Typed critical dates: contract date, cooling-off expiry, finance clause, building & pest, deposit due, balance-of-deposit, sunset date, settlement date, adjustment date.
-- State-aware defaults (NSW 5-business-day cooling off, VIC 3, QLD 5) seeded from a template table.
-- Settlement runway checklist auto-seeded on `unconditional` — mirrors the existing 9-step finance settlement task pattern (transfer lodged, stamp duty paid, PEXA workspace created, settlement statement issued, adjustments agreed, funds authorised, keys released).
-- Countdown + escalation cron (T-14 / T-7 / T-2 / T-0) raising notifications into all three portals.
+**2. Commercial schedule as structured data, not prose**
+Two schedule shapes stored against the agreement:
+- *Property referral schedule*: model, amount/percentage, GST treatment, qualifying event, payment days, invoice process, exclusions, duplicate rule, cap/minimum, post-termination treatment.
+- *Commission schedule*: upfront %, trail %, basis (gross/net), qualifying event, payment cycle, cleared-funds flag, GST/RCTI, clawback treatment + repayment days, refinance inclusion, duplicate rule, post-termination treatment.
+These must become the **inputs to the commission engine** — today `finance_partner_commissions.rate_pct` comes from a partner default, not from a signed schedule. Agreement-derived rates should override partner defaults, with the agreement version snapshotted onto every commission row.
 
-### C. Contract review
-- Contract upload + versioning, special conditions register, amendment tracking.
-- Optional AI contract summariser (Lovable AI, tool-calling) producing: parties, price, deposit %, key dates, special conditions, risk flags — always human-reviewed, never auto-actioned. Follows the existing `ai_doc_classifications` pattern.
-- Advice note to client (shared) vs internal legal note (never leaves the portal).
+**3. Referral register (both directions)**
+New `partner_referrals` table matching Annexure A of both docs: referral ID, direction, agreement FK, referring entity + individual (with CRN), client details, general purpose, timing/preferred contact, consent obtained + consent artefact, benefit disclosed, prior-client check (new/existing/duplicate), assigned consultant or assigned broker/loan writer, status lifecycle, commercial eligibility (pending/eligible/not eligible), and links to `clients` / `purchase_files` / `client_deals` once converted. Status vocabularies differ per direction — submitted/accepted/contacted/engaged/contracted/settled vs submitted/accepted/contacted/application/approved/settled.
 
-### D. Requisitions, searches & disbursements
-- Searches register: title, plan, council 149/10.7, water, land tax clearance, strata, ATO clearance certificate, foreign resident withholding.
-- Each search: ordered / received / issue-found / cleared, with cost captured.
-- Disbursement ledger → feeds a settlement statement and an invoice figure.
+**4. Consent capture + information boundary enforcement**
+The client-signature consent block in Doc 2 Annexure A needs a real capture path (client portal signature or DocuSign) and an immutable stored artefact. Server-side, referral payloads must be whitelisted to name/contact/general purpose — the same projection discipline already used in the finance↔solicitor collaboration read models. Status updates exposed cross-party must be clamped to the approved milestone list; detailed credit/servicing/liability data must never appear on a referral surface.
 
-### E. Documents & signing
-- Document requirements matrix scoped to the matter (mirrors `document_requirement_instances`), requestable from the client with reminders/escalation.
-- Client-signable docs via the existing DocuSign anchor strategy (costs disclosure, client authority, verification of identity declaration).
-- VOI: reuse the existing `voi_verifications` table from the finance compliance batch rather than building a second identity stack.
+**5. Loan writer undertaking**
+Child record of an outbound agreement: loan writer entity, ACL/authorising licensee, CRN, main-agreement FK, own signature/envelope, auto-expiry when authorisation ends or main agreement terminates. Referrals can then be assigned to a specific loan writer only if a live undertaking exists.
 
-### F. Trust & funds (read-only ledger, not a trust accounting system)
-- Deposit tracking, stakeholder details, funds-to-complete calculation, settlement adjustments (rates, water, strata, land tax).
-- Explicitly **not** a regulated trust accounting replacement — it records, it does not reconcile.
+**6. Restricted banking / payment details workflow**
+Annexure C is explicitly restricted-access. Needs its own permission key, masked display, an `independent_verification_date` + `verified_by` requirement before first payout, and a re-verification gate on any bank detail change (matching clause 9.3's callback rule). Bank fields on `finance_agent_contacts` today have neither masking nor a verification gate.
 
-### G. Collaboration
-- Solicitor ↔ Command Centre thread (internal, always).
-- Solicitor ↔ Client thread (permissioned, mirrored into Client Portal inbox).
-- Solicitor ↔ Finance Partner thread — the finance-clause / unconditional handshake. This is the biggest real-world win: broker marks unconditional, solicitor sees it instantly.
-- Entity-level comment threads on matters, reusing `purchase_file_entity_comments` semantics.
+**7. Commission administration gaps against Doc 2 clauses 5–7**
+- Payment statements must show referral, settled loan, commission received, calculation basis, GST treatment, adjustments (§5.1) — the current statement generator does not carry referral or basis provenance.
+- Dispute window (§5.3) — no dispute-raising state exists on statements.
+- Clawback (§6) — clawback radar predicts risk but there is no *executed* clawback record with evidence attachment, and no enforcement of §6.3's cap (repayment can never exceed commission actually paid for that loan).
+- RCTI (§7.3) — no RCTI-vs-tax-invoice mode, and no duplicate-invoice guard.
+- Cleared-funds condition — no gate preventing payout before funds received.
 
-### H. Dashboard & ops
-- Today view: settlements this week, dates due, unanswered client requests, docs outstanding.
-- Matter pipeline board (kanban by status).
-- Capacity/KPIs: matters by stage, average time to settle, settlements booked by month, at-risk matters.
+**8. Template rendering + partner email**
+Both docs open with an editable partner email template and a 4-step activation checklist (Customise → Review → Execute → Activate). This maps onto a template-driven generation flow with `<<TOKEN>>` merge fields — the existing `gamma_agreement_templates.placeholder_mappings` pattern fits, extended with a partner-agreement scope and the ~40 tokens each document uses.
 
-### I. Compliance
-- Hash-chained audit events per matter (reuse the `purchase_file_audit_events` design).
-- Costs disclosure issued/acknowledged tracking, conflict check record, file-closure/archive with retention date.
-- AML: solicitors are reporting entities. Read-only AML case snapshot only, no SMR exposure — same restriction the Finance Portal has.
+**9. Surfaces**
+- Command Centre: Partner Agreements register (list, generate, send, track envelope, void, version history), commercial schedule editor, banking verification queue.
+- Finance Portal: "My Agreement" read-only view of the executed terms + schedule, inbound/outbound referral inbox, per-referral status updates constrained to permitted milestones.
+- Client Portal: consent form signing surface for outbound referrals.
+- New permission keys on the finance permission matrix: `partner_agreements`, `referrals`, `banking_details` (restricted).
 
-### J. Builder Portal foresight (design now, build later)
-- `legal_matters.build_job_id` nullable FK reserved.
-- House-and-land / off-the-plan matters get a construction block: land settlement date, build contract date, practical completion, progress-payment schedule reference.
-- Critical-date types already include sunset date + practical completion so the builder's milestones drop straight in.
-- Shared enum + shared notification dispatcher so Builder Portal is a new role on the same rails, not a third stack.
+## Suggested phasing
 
-## 3. Phase plan
+1. **Schema + agreement engine** — `partner_agreements`, schedules, template tokens, DocuSign reuse, Command Centre register.
+2. **Referral register** — `partner_referrals` both directions, boundary-enforced projections, portal inboxes, conversion into `clients` / `purchase_files`.
+3. **Consent + loan writer undertaking** — client consent capture, undertaking records, assignment gating.
+4. **Commercial wiring** — schedule-driven commission rates, cleared-funds gate, statements with provenance, disputes.
+5. **Clawbacks, RCTI, banking verification** — executed clawback records with §6.3 cap, RCTI mode + duplicate guard, restricted banking workflow with callback verification.
+6. **Compliance hardening** — records retention, privacy-incident notification, audit chain over agreements/referrals/consent, termination handling of accrued entitlements.
 
-Each phase is independently shippable and ends at a gate.
+## Technical notes
 
-**Phase 1 — Foundation & auth**
-`solicitor_portal_users`, `solicitor_portal_sessions`, `solicitor_portal_client_assignments`, `solicitor_portal_activity_log`, `solicitor_portal_default_permissions`. Edge functions: invite, accept-invite, login, logout, verify, forgot-password, reset-password, change-password. `useSolicitorPortalAuth` + `SolicitorPortalProtectedRoute` + `SolicitorPortalLayout`. Routes under `/legal/*` (login, accept-invite, change-password, dashboard shell).
-
-**Phase 2 — Command Centre admin**
-`/admin/solicitor-portal` behind `ModuleGuard moduleKey="solicitor_portal_admin"`: invite solicitors, assign clients, per-client permission matrix + global baseline (OR-merged, null = legacy allow), suspend/revoke, activity log. Firm-level grouping (`solicitor_firms`) so a practice can have multiple users.
-
-**Phase 3 — Matters core**
-`legal_matters` (+ status history, party records, `purchase_file_id` / `client_deal_id` / reserved `build_job_id`), matter list + Deal Room detail with Overview / Parties / Dates / Docs / Notes tabs. Bidirectional link card to the Purchase File, plus a Linked Matters panel on the internal Deal Pipeline.
-
-**Phase 4 — Critical dates & settlement runway**
-`legal_critical_dates` (typed, state-aware templates), `legal_settlement_tasks` auto-seeded on unconditional via trigger, countdown UI, hourly cron escalations, cross-portal notifications.
-
-**Phase 5 — Documents, searches & requisitions**
-Matter-scoped document requirements + request-from-client flow with auto-reminders, searches register, disbursement ledger, DocuSign costs-disclosure/authority pack, VOI reuse.
-
-**Phase 6 — Communications & tri-portal sync**
-Solicitor↔CC, Solicitor↔Client (mirrored into Client Portal), Solicitor↔Finance threads; notification prefs + quiet hours reusing the shared dispatcher; a Legal card on the client's `/client/finance`-style hub showing matter status and next date only.
-
-**Phase 7 — Intelligence & reporting**
-AI contract summariser + special-conditions extractor + risk flags (all human-confirmed), matter pipeline kanban, KPI dashboard, at-risk/stuck-matter detection.
-
-**Phase 8 — Compliance, audit & hardening**
-Hash-chained `legal_matter_audit_events`, audit timeline tab + verify, compliance export, conflict checks, file closure/retention, tri-portal health checks extended to legal, security scan + negative-auth tests.
-
-## 4. Technical notes
-
-- **Auth**: opaque session token in `x-solicitor-session-token`, validated in-function; `verify_jwt = false`; never `supabase.auth.getUser()`. Invite links are single-use, expiring, and force a password change on first login (same as finance).
-- **Data access**: service-role-only RLS; all reads/writes go through `solicitor-portal-*` edge functions with explicit table whitelists. Every new `public` table gets explicit `GRANT`s in the same migration.
-- **Isolation**: every query scoped by `solicitor_user_id` + assignment; no cross-firm visibility; SMR/restricted AML records never selected.
-- **Enums**: new `legal_matter_type`, `legal_matter_status`, `legal_critical_date_type`, `legal_search_type`, `legal_settlement_task_key`.
-- **Realtime**: new tables added to `supabase_realtime`; new notification types added to `notifications_type_check`.
-- **UI**: dark-gold semantic tokens only, shadcn-first, `h-[90vh]` + ScrollArea modals, no raw palette classes — `npm run audit:style` must not regress.
-- **Reuse, don't fork**: notification dispatcher, comments threads, document requirement instances, VOI, audit-hash helper, DocuSign anchors are all shared with the Finance Portal rather than duplicated.
-
-## 5. Open questions before Phase 1
-
-1. Is a solicitor a **firm with multiple users** (recommended: yes, `solicitor_firms` + members) or a single login per solicitor?
-2. Should solicitors ever see the client's **financial position** (borrowing capacity, income), or strictly matter/legal data? Default assumption: strictly legal, plus finance-clause status only.
-3. Are you using **PEXA**? If so we model the workspace ID and settlement booking as first-class fields now rather than retrofitting.
-4. Which **states** are in scope at launch (cooling-off and duty rules are state-specific)? Default: NSW, VIC, QLD.
+- Direction is the primary discriminator; nearly every table needs it, and status vocabularies, money direction and permission scope all branch on it.
+- Reuse `invokeSecureFunction` + `service_role`-only RLS, add every new table to `ALLOWED_TABLES` and to `supabase_realtime` where live updates are needed.
+- Money and rate handling must follow the existing financial-math standards (exact multipliers, 2-dp rate rounding).
+- No commercial defaults may be hardcoded — both documents deliberately ship with empty schedules, so the UI must require explicit completion before an agreement can be sent for execution.
+- Everything above is legal-template scaffolding: the app should never present generated agreements as legally approved, mirroring the "template only — obtain legal, licensing, privacy and aggregator approval before use" banner.
