@@ -101,6 +101,12 @@ export default function SolicitorMatterDetail() {
   const [runway, setRunway] = useState<RunwaySummary | null>(null);
   const [datesSaving, setDatesSaving] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [documents, setDocuments] = useState<LegalMatterDocument[]>([]);
+  const [searches, setSearches] = useState<LegalMatterSearch[]>([]);
+  const [requisitions, setRequisitions] = useState<LegalMatterRequisition[]>([]);
+  const [disbursements, setDisbursements] = useState<LegalMatterDisbursement[]>([]);
+  const [registerSummary, setRegisterSummary] = useState<DocumentRegisterSummary | null>(null);
+  const [registerSaving, setRegisterSaving] = useState(false);
 
   const canEdit = !!perms.matters?.edit;
   const canEditParties = !!perms.parties?.edit;
