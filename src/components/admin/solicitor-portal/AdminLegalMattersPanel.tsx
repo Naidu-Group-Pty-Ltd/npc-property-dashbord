@@ -202,6 +202,7 @@ export function AdminLegalMattersPanel() {
                   <TableHead className="hidden lg:table-cell">Solicitor</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="hidden sm:table-cell">Settlement</TableHead>
+                  <TableHead className="text-right">Comms</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
