@@ -23164,6 +23164,15 @@ export type Database = {
           user_id: string
         }[]
       }
+      consume_solicitor_portal_reset_attempt: {
+        Args: { p_email: string; p_max: number }
+        Returns: {
+          firm_id: string
+          reset_token: string
+          status: string
+          user_id: string
+        }[]
+      }
       cron_invoke_signed_function: {
         Args: { body?: Json; caller?: string; function_name: string }
         Returns: number
