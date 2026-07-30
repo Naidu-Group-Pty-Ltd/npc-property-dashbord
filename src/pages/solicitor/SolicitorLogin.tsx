@@ -56,9 +56,8 @@ export default function SolicitorLogin() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background" role="status" aria-label="Loading authentication">
         <div className="flex flex-col items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
-            <Scale className="h-6 w-6 text-primary" aria-hidden="true" />
-          </div>
+          <BrandLogo slot="auth" className="h-12 max-w-[200px] object-contain" fallbackClassName="h-12 w-12" />
+
           <Loader2 className="h-5 w-5 animate-spin text-primary" aria-hidden="true" />
           <span className="sr-only">Loading</span>
         </div>
