@@ -116,6 +116,9 @@ import Checklists from "./pages/Checklists";
 import Agreements from "./pages/Agreements";
 import PartnerAgreements from "./pages/PartnerAgreements";
 import PartnerReferrals from "./pages/PartnerReferrals";
+import LoanWriterUndertakings from "./pages/LoanWriterUndertakings";
+import PublicPartnerConsent from "./pages/PublicPartnerConsent";
+
 import GamePlan from "./pages/GamePlan";
 import Commissions from "./pages/Commissions";
 import ReportsAnalytics from "./pages/ReportsAnalytics";
@@ -251,6 +254,9 @@ const App = () => (
                         <Route path="/qa/market/:slug" element={<SharedMarketQAAnswer />} />
                         {/* Public template share preview (no auth) */}
                         <Route path="/template-share/:token" element={<TemplateSharePreview />} />
+                        {/* Public partner referral consent signing (no auth) */}
+                        <Route path="/partner-consent/:token" element={<PublicPartnerConsent />} />
+
                         {/* Client Portal Routes */}
                         <Route path="/client/login" element={
                           <PortalAuthProvider>
@@ -479,6 +485,8 @@ const App = () => (
                 <Route path="agreements" element={<ModuleGuard moduleKey="agreements"><Agreements /></ModuleGuard>} />
                 <Route path="partner-agreements" element={<ModuleGuard moduleKey="agreements"><PartnerAgreements /></ModuleGuard>} />
                 <Route path="partner-referrals" element={<ModuleGuard moduleKey="agreements"><PartnerReferrals /></ModuleGuard>} />
+                <Route path="loan-writer-undertakings" element={<ModuleGuard moduleKey="agreements"><LoanWriterUndertakings /></ModuleGuard>} />
+
                 <Route path="game-plan" element={<ModuleGuard moduleKey="game_plans"><GamePlan /></ModuleGuard>} />
                 <Route path="portal-config" element={<ModuleGuard moduleKey="portal_config"><PortalConfig /></ModuleGuard>} />
                 <Route path="marketing-analytics" element={<ModuleGuard moduleKey="marketing_analytics"><MarketingAnalytics /></ModuleGuard>} />

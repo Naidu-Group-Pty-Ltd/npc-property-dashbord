@@ -19048,6 +19048,205 @@ export type Database = {
           },
         ]
       }
+      partner_consent_requests: {
+        Row: {
+          artefact_path: string | null
+          channel: string
+          created_at: string
+          created_by: string | null
+          declined_at: string | null
+          disclosure_text: string | null
+          expires_at: string
+          first_viewed_at: string | null
+          id: string
+          metadata: Json
+          recipient_email: string | null
+          recipient_name: string | null
+          recipient_phone: string | null
+          referral_id: string
+          revoked_at: string | null
+          sent_at: string
+          signature_ip: string | null
+          signature_name: string | null
+          signature_typed: string | null
+          signature_user_agent: string | null
+          signed_at: string | null
+          statement_text: string
+          statement_version: string
+          status: string
+          token_hash: string
+          updated_at: string
+        }
+        Insert: {
+          artefact_path?: string | null
+          channel?: string
+          created_at?: string
+          created_by?: string | null
+          declined_at?: string | null
+          disclosure_text?: string | null
+          expires_at?: string
+          first_viewed_at?: string | null
+          id?: string
+          metadata?: Json
+          recipient_email?: string | null
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          referral_id: string
+          revoked_at?: string | null
+          sent_at?: string
+          signature_ip?: string | null
+          signature_name?: string | null
+          signature_typed?: string | null
+          signature_user_agent?: string | null
+          signed_at?: string | null
+          statement_text: string
+          statement_version?: string
+          status?: string
+          token_hash: string
+          updated_at?: string
+        }
+        Update: {
+          artefact_path?: string | null
+          channel?: string
+          created_at?: string
+          created_by?: string | null
+          declined_at?: string | null
+          disclosure_text?: string | null
+          expires_at?: string
+          first_viewed_at?: string | null
+          id?: string
+          metadata?: Json
+          recipient_email?: string | null
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          referral_id?: string
+          revoked_at?: string | null
+          sent_at?: string
+          signature_ip?: string | null
+          signature_name?: string | null
+          signature_typed?: string | null
+          signature_user_agent?: string | null
+          signed_at?: string | null
+          statement_text?: string
+          statement_version?: string
+          status?: string
+          token_hash?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_consent_requests_referral_id_fkey"
+            columns: ["referral_id"]
+            isOneToOne: false
+            referencedRelation: "partner_referrals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_loan_writer_undertakings: {
+        Row: {
+          acl_number: string | null
+          agreement_id: string | null
+          authorisation_end_date: string | null
+          created_at: string
+          created_by: string | null
+          crn: string | null
+          effective_date: string | null
+          envelope_id: string | null
+          expiry_date: string | null
+          finance_agent_contact_id: string | null
+          finance_user_id: string | null
+          id: string
+          licensee_name: string | null
+          metadata: Json
+          notes: string | null
+          reference: string
+          signature_artefact_path: string | null
+          signature_method: string | null
+          signed_at: string | null
+          signed_by_name: string | null
+          status: string
+          terminated_at: string | null
+          termination_reason: string | null
+          updated_at: string
+          updated_by: string | null
+          writer_email: string | null
+          writer_entity_name: string | null
+          writer_full_name: string
+          writer_phone: string | null
+        }
+        Insert: {
+          acl_number?: string | null
+          agreement_id?: string | null
+          authorisation_end_date?: string | null
+          created_at?: string
+          created_by?: string | null
+          crn?: string | null
+          effective_date?: string | null
+          envelope_id?: string | null
+          expiry_date?: string | null
+          finance_agent_contact_id?: string | null
+          finance_user_id?: string | null
+          id?: string
+          licensee_name?: string | null
+          metadata?: Json
+          notes?: string | null
+          reference: string
+          signature_artefact_path?: string | null
+          signature_method?: string | null
+          signed_at?: string | null
+          signed_by_name?: string | null
+          status?: string
+          terminated_at?: string | null
+          termination_reason?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          writer_email?: string | null
+          writer_entity_name?: string | null
+          writer_full_name: string
+          writer_phone?: string | null
+        }
+        Update: {
+          acl_number?: string | null
+          agreement_id?: string | null
+          authorisation_end_date?: string | null
+          created_at?: string
+          created_by?: string | null
+          crn?: string | null
+          effective_date?: string | null
+          envelope_id?: string | null
+          expiry_date?: string | null
+          finance_agent_contact_id?: string | null
+          finance_user_id?: string | null
+          id?: string
+          licensee_name?: string | null
+          metadata?: Json
+          notes?: string | null
+          reference?: string
+          signature_artefact_path?: string | null
+          signature_method?: string | null
+          signed_at?: string | null
+          signed_by_name?: string | null
+          status?: string
+          terminated_at?: string | null
+          termination_reason?: string | null
+          updated_at?: string
+          updated_by?: string | null
+          writer_email?: string | null
+          writer_entity_name?: string | null
+          writer_full_name?: string
+          writer_phone?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_loan_writer_undertakings_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       partner_referral_events: {
         Row: {
           actor_id: string | null
@@ -19115,6 +19314,7 @@ export type Database = {
           consent_method: string | null
           consent_obtained: boolean
           consent_obtained_at: string | null
+          consent_request_id: string | null
           created_at: string
           created_by: string | null
           declined_at: string | null
@@ -19125,6 +19325,7 @@ export type Database = {
           general_purpose: string | null
           id: string
           internal_notes: string | null
+          loan_writer_undertaking_id: string | null
           metadata: Json
           preferred_contact_method: string | null
           preferred_contact_time: string | null
@@ -19165,6 +19366,7 @@ export type Database = {
           consent_method?: string | null
           consent_obtained?: boolean
           consent_obtained_at?: string | null
+          consent_request_id?: string | null
           created_at?: string
           created_by?: string | null
           declined_at?: string | null
@@ -19175,6 +19377,7 @@ export type Database = {
           general_purpose?: string | null
           id?: string
           internal_notes?: string | null
+          loan_writer_undertaking_id?: string | null
           metadata?: Json
           preferred_contact_method?: string | null
           preferred_contact_time?: string | null
@@ -19215,6 +19418,7 @@ export type Database = {
           consent_method?: string | null
           consent_obtained?: boolean
           consent_obtained_at?: string | null
+          consent_request_id?: string | null
           created_at?: string
           created_by?: string | null
           declined_at?: string | null
@@ -19225,6 +19429,7 @@ export type Database = {
           general_purpose?: string | null
           id?: string
           internal_notes?: string | null
+          loan_writer_undertaking_id?: string | null
           metadata?: Json
           preferred_contact_method?: string | null
           preferred_contact_time?: string | null
@@ -19249,6 +19454,20 @@ export type Database = {
             columns: ["agreement_id"]
             isOneToOne: false
             referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_referrals_consent_request_id_fkey"
+            columns: ["consent_request_id"]
+            isOneToOne: false
+            referencedRelation: "partner_consent_requests"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_referrals_loan_writer_undertaking_id_fkey"
+            columns: ["loan_writer_undertaking_id"]
+            isOneToOne: false
+            referencedRelation: "partner_loan_writer_undertakings"
             referencedColumns: ["id"]
           },
         ]

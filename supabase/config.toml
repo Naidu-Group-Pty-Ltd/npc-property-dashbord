@@ -87,6 +87,12 @@ verify_jwt = false
 [functions.manage-partner-agreements]
 verify_jwt = false
 
+[functions.manage-loan-writer-undertakings]
+verify_jwt = false
+
+[functions.partner-consent-portal]
+verify_jwt = false
+
 [functions.import-clients-from-ghl]
 verify_jwt = true
 

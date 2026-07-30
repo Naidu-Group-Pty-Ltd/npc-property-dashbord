@@ -251,7 +251,26 @@ export function usePartnerReferralMutations() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const assignLoanWriter = useMutation({
+    mutationFn: (params: {
+      id: string;
+      loan_writer_undertaking_id: string | null;
+      assigned_finance_user_id?: string | null;
+    }) => call<{ referral: PartnerReferral }>({ action: 'assign_loan_writer', ...params }),
+    onSuccess: (res) => {
+      invalidate(res.referral.id);
+      queryClient.invalidateQueries({ queryKey: ['loan-writer-undertakings'] });
+      toast.success(
+        res.referral.assigned_loan_writer_name
+          ? `Assigned to ${res.referral.assigned_loan_writer_name}`
+          : 'Loan writer assignment cleared',
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const addNote = useMutation({
+
     mutationFn: (params: { id: string; note: string }) => call<{ success: boolean }>({ action: 'add_note', ...params }),
     onSuccess: (_res, vars) => {
       invalidate(vars.id);
@@ -276,6 +295,8 @@ export function usePartnerReferralMutations() {
     setEligibility,
     runPriorClientCheck,
     convertToClient,
+    assignLoanWriter,
+
     addNote,
     deleteDraft,
   };

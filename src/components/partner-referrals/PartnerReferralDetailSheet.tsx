@@ -40,6 +40,9 @@ import {
   type PartnerReferral,
   type ReferralStatus,
 } from '@/hooks/usePartnerReferrals';
+import ReferralConsentPanel from './ReferralConsentPanel';
+import LoanWriterAssignmentCard from './LoanWriterAssignmentCard';
+
 
 export function referralStatusVariant(status: ReferralStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'settled') return 'default';
@@ -133,6 +136,18 @@ export default function PartnerReferralDetailSheet({ referralId, onOpenChange, o
                     </Button>
                   </div>
                 </Section>
+
+                <Section title="Consent">
+                  <ReferralConsentPanel referral={referral} />
+                </Section>
+
+                {referral.direction === 'outbound_finance_referral' && (
+                  <Section title="Loan writer assignment">
+                    <LoanWriterAssignmentCard referral={referral} />
+                  </Section>
+                )}
+
+
 
                 <Section title="Governing agreement">
                   {agreement ? (
