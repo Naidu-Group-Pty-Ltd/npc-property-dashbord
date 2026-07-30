@@ -272,20 +272,27 @@ export default function FinancePortalEarnings() {
   const [selectedCommission, setSelectedCommission] = useState<any | null>(null);
   const [selectedStatement, setSelectedStatement] = useState<any | null>(null);
   const [statementLines, setStatementLines] = useState<any[]>([]);
+  const [disputes, setDisputes] = useState<any[]>([]);
+  const [disputeReason, setDisputeReason] = useState('');
+  const [disputeAmount, setDisputeAmount] = useState('');
+  const [disputeSubmitting, setDisputeSubmitting] = useState(false);
   const latestRowRef = useRef<HTMLTableRowElement>(null);
 
   const refresh = async () => {
     setLoading(true);
     try {
-      const [sumRes, cRes, stRes] = await Promise.all([
+      const [sumRes, cRes, stRes, dRes] = await Promise.all([
         invokeFinanceFunction('finance-portal-commissions', { operation: 'partner_summary' }),
         invokeFinanceFunction('finance-portal-commissions', { operation: 'partner_commissions' }),
         invokeFinanceFunction('finance-portal-commissions', { operation: 'partner_statements' }),
+        invokeFinanceFunction('finance-portal-commissions', { operation: 'partner_disputes' }),
       ]);
       if (sumRes.error) throw new Error(sumRes.error.message);
       setKpis(sumRes.data?.kpis);
       setCommissions(cRes.data?.commissions || []);
       setStatements(stRes.data?.statements || []);
+      setDisputes(dRes.data?.disputes || []);
+
     } catch (e: any) {
       toast.error('Failed to load earnings: ' + e.message);
     } finally {
