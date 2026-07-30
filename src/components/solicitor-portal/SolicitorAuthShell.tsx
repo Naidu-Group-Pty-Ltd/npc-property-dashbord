@@ -18,7 +18,6 @@ export function SolicitorAuthShell({
   children: ReactNode;
   footer?: ReactNode;
 }) {
-}) {
   const { settings } = useBrand();
 
   return (
