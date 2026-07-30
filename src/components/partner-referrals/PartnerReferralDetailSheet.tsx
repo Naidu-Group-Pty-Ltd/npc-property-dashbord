@@ -40,6 +40,9 @@ import {
   type PartnerReferral,
   type ReferralStatus,
 } from '@/hooks/usePartnerReferrals';
+import ReferralConsentPanel from './ReferralConsentPanel';
+import LoanWriterAssignmentCard from './LoanWriterAssignmentCard';
+
 
 export function referralStatusVariant(status: ReferralStatus): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'settled') return 'default';
