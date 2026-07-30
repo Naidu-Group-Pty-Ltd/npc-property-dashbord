@@ -129,15 +129,17 @@ export function planEnablesSubModule(planSlug: string | null | undefined, key: s
 /**
  * Whether a plan includes a module without buying it separately.
  *
- * An empty tier list identifies an add-on that no plan includes. Purchased
- * add-on access must come from a separate entitlement source; until one is
- * consulted by this gate, known plans must not receive add-ons by default.
+ * An empty tier list identifies an add-on whose entitlement cannot be decided
+ * from the base plan. Until purchased add-ons are supplied to this gate, leave
+ * those modules to the existing user-permission check rather than locking out
+ * workspaces that have purchased them.
  */
 export function planIncludesModule(planSlug: string | null | undefined, moduleSlug: string): boolean {
   if (!isKnownPlan(planSlug)) return true;
   const pricingSlug = MODULE_KEY_TO_PRICING_SLUG[moduleSlug] ?? moduleSlug;
   const tiers = MODULE_TIERS[pricingSlug];
   if (!tiers) return true; // not a priced module
+  if (tiers.length === 0) return true; // separately entitled add-on
   return tiers.includes(planSlug);
 }
 
