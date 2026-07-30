@@ -990,7 +990,85 @@ export default function FinancePortalEarnings() {
                     )}
                   </CardContent>
                 </Card>
+
+                <Card>
+                  <CardContent className="space-y-4 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        <AlertTriangle className="h-4 w-4 text-primary" /> Query this statement
+                      </div>
+                      {selectedStatement.dispute_deadline && (
+                        <Badge variant="outline" className="text-[11px]">
+                          Window closes {format(new Date(selectedStatement.dispute_deadline), 'd MMM yyyy')}
+                        </Badge>
+                      )}
+                    </div>
+
+                    {(() => {
+                      const mine = disputes.filter((d) => d.statement_id === selectedStatement.id);
+                      return mine.length > 0 ? (
+                        <div className="space-y-2">
+                          {mine.map((d) => (
+                            <div key={d.id} className="rounded-xl border border-border/60 bg-muted/20 p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 text-sm text-foreground break-words">{d.reason}</div>
+                                <Badge variant={d.status === 'resolved' ? 'default' : d.status === 'rejected' ? 'destructive' : 'secondary'} className="capitalize shrink-0">
+                                  {String(d.status).replace(/_/g, ' ')}
+                                </Badge>
+                              </div>
+                              <div className="mt-1 text-[11px] text-muted-foreground">
+                                Raised {format(new Date(d.raised_at), 'd MMM yyyy')}
+                                {d.disputed_amount != null ? ` · ${fmt(d.disputed_amount)}` : ''}
+                                {d.within_window === false ? ' · outside agreed window' : ''}
+                              </div>
+                              {d.resolution_notes && (
+                                <div className="mt-2 text-xs text-muted-foreground">Outcome: {d.resolution_notes}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
+
+                    {selectedStatement.status !== 'draft' && (
+                      <div className="space-y-3">
+                        <div className="space-y-1.5">
+                          <Label htmlFor="dispute-reason" className="text-xs text-muted-foreground">What looks incorrect?</Label>
+                          <textarea
+                            id="dispute-reason"
+                            value={disputeReason}
+                            onChange={(e) => setDisputeReason(e.target.value)}
+                            rows={3}
+                            maxLength={4000}
+                            placeholder="Describe the line item and the amount you believe is incorrect…"
+                            className="w-full rounded-xl border border-border/70 bg-background/75 p-3 text-sm shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-primary/35"
+                          />
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-[200px_auto] sm:items-end">
+                          <div className="space-y-1.5">
+                            <Label htmlFor="dispute-amount" className="text-xs text-muted-foreground">Amount in question (optional)</Label>
+                            <Input
+                              id="dispute-amount"
+                              type="number"
+                              inputMode="decimal"
+                              value={disputeAmount}
+                              onChange={(e) => setDisputeAmount(e.target.value)}
+                              placeholder="0.00"
+                            />
+                          </div>
+                          <Button onClick={submitDispute} disabled={disputeSubmitting || !disputeReason.trim()} className="sm:justify-self-start">
+                            {disputeSubmitting ? 'Submitting…' : 'Raise dispute'}
+                          </Button>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Disputes are reviewed against the executed agreement. Payment of a disputed statement is held until the query is resolved.
+                        </p>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               </>
+
             )}
           </div>
         </DrawerContent>
