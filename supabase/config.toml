@@ -995,3 +995,9 @@ verify_jwt = true
 
 [functions.solicitor-portal-admin]
 verify_jwt = true
+
+[functions.solicitor-portal-matters]
+verify_jwt = false
+
+[functions.legal-matters-admin]
+verify_jwt = true
