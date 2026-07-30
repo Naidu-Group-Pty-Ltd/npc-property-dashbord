@@ -7474,6 +7474,257 @@ export type Database = {
         }
         Relationships: []
       }
+      cross_portal_cutover_approvals: {
+        Row: {
+          approval_type: string
+          approved_at: string
+          approved_by: string
+          evidence_reference: string
+          feature_key: string
+          firm_id: string
+          id: string
+          revoked_at: string | null
+        }
+        Insert: {
+          approval_type: string
+          approved_at?: string
+          approved_by: string
+          evidence_reference: string
+          feature_key: string
+          firm_id: string
+          id?: string
+          revoked_at?: string | null
+        }
+        Update: {
+          approval_type?: string
+          approved_at?: string
+          approved_by?: string
+          evidence_reference?: string
+          feature_key?: string
+          firm_id?: string
+          id?: string
+          revoked_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cross_portal_cutover_approvals_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cross_portal_dual_read_comparisons: {
+        Row: {
+          compared_at: string
+          correlation_id: string
+          feature_key: string
+          firm_id: string
+          id: string
+          legacy_hash: string
+          matches: boolean
+          mismatch_fields: string[]
+          subject_id: string | null
+          subject_type: string
+          target_hash: string
+        }
+        Insert: {
+          compared_at?: string
+          correlation_id: string
+          feature_key: string
+          firm_id: string
+          id?: string
+          legacy_hash: string
+          matches: boolean
+          mismatch_fields?: string[]
+          subject_id?: string | null
+          subject_type: string
+          target_hash: string
+        }
+        Update: {
+          compared_at?: string
+          correlation_id?: string
+          feature_key?: string
+          firm_id?: string
+          id?: string
+          legacy_hash?: string
+          matches?: boolean
+          mismatch_fields?: string[]
+          subject_id?: string | null
+          subject_type?: string
+          target_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cross_portal_dual_read_comparisons_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cross_portal_feature_definitions: {
+        Row: {
+          created_at: string
+          default_mode: string
+          description: string
+          feature_key: string
+          legacy_removal_target: string
+          minimum_stable_days: number
+        }
+        Insert: {
+          created_at?: string
+          default_mode: string
+          description: string
+          feature_key: string
+          legacy_removal_target: string
+          minimum_stable_days?: number
+        }
+        Update: {
+          created_at?: string
+          default_mode?: string
+          description?: string
+          feature_key?: string
+          legacy_removal_target?: string
+          minimum_stable_days?: number
+        }
+        Relationships: []
+      }
+      cross_portal_firm_rollouts: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          feature_key: string
+          firm_id: string
+          id: string
+          mode: string
+          reason: string
+          stable_since: string | null
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          feature_key: string
+          firm_id: string
+          id?: string
+          mode: string
+          reason: string
+          stable_since?: string | null
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          feature_key?: string
+          firm_id?: string
+          id?: string
+          mode?: string
+          reason?: string
+          stable_since?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cross_portal_firm_rollouts_feature_key_fkey"
+            columns: ["feature_key"]
+            isOneToOne: false
+            referencedRelation: "cross_portal_feature_definitions"
+            referencedColumns: ["feature_key"]
+          },
+          {
+            foreignKeyName: "cross_portal_firm_rollouts_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cross_portal_reconciliation_runs: {
+        Row: {
+          completed_at: string | null
+          counters: Json
+          feature_key: string | null
+          firm_id: string | null
+          id: string
+          initiated_by: string | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          counters?: Json
+          feature_key?: string | null
+          firm_id?: string | null
+          id?: string
+          initiated_by?: string | null
+          started_at?: string
+          status: string
+        }
+        Update: {
+          completed_at?: string | null
+          counters?: Json
+          feature_key?: string | null
+          firm_id?: string | null
+          id?: string
+          initiated_by?: string | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cross_portal_reconciliation_runs_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cross_portal_rollout_history: {
+        Row: {
+          changed_at: string
+          changed_by: string | null
+          feature_key: string
+          firm_id: string
+          from_mode: string | null
+          id: string
+          readiness_snapshot: Json
+          reason: string
+          to_mode: string
+        }
+        Insert: {
+          changed_at?: string
+          changed_by?: string | null
+          feature_key: string
+          firm_id: string
+          from_mode?: string | null
+          id?: string
+          readiness_snapshot?: Json
+          reason: string
+          to_mode: string
+        }
+        Update: {
+          changed_at?: string
+          changed_by?: string | null
+          feature_key?: string
+          firm_id?: string
+          from_mode?: string | null
+          id?: string
+          readiness_snapshot?: Json
+          reason?: string
+          to_mode?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cross_portal_rollout_history_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       custom_users: {
         Row: {
           created_at: string
@@ -26383,6 +26634,10 @@ export type Database = {
         }
         Returns: Json
       }
+      get_cross_portal_cutover_readiness: {
+        Args: { _feature_key: string; _firm_id: string }
+        Returns: Json
+      }
       get_finance_solicitor_collaboration_health: {
         Args: { _stale_minutes?: number }
         Returns: Json
@@ -26752,6 +27007,19 @@ export type Database = {
         Args: { p_job_id: string }
         Returns: Json
       }
+      record_cross_portal_dual_read: {
+        Args: {
+          _correlation_id: string
+          _feature_key: string
+          _firm_id: string
+          _legacy: Json
+          _mismatch_fields: string[]
+          _subject_id: string
+          _subject_type: string
+          _target: Json
+        }
+        Returns: string
+      }
       record_document_download: {
         Args: {
           _actor_id: string
@@ -26841,6 +27109,10 @@ export type Database = {
         Args: { p_client_id: string }
         Returns: string
       }
+      resolve_cross_portal_feature_mode: {
+        Args: { _feature_key: string; _firm_id: string }
+        Returns: string
+      }
       resolve_investment_report_property_key: {
         Args: {
           p_address: string
@@ -26889,6 +27161,16 @@ export type Database = {
       }
       seed_sample_schools: { Args: never; Returns: undefined }
       seed_settlement_runway: { Args: { _file_id: string }; Returns: undefined }
+      set_cross_portal_firm_rollout: {
+        Args: {
+          _actor_id: string
+          _feature_key: string
+          _firm_id: string
+          _reason: string
+          _to_mode: string
+        }
+        Returns: Json
+      }
       set_document_access_grant: {
         Args: {
           _actor_id: string
