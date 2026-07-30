@@ -52,6 +52,9 @@ const text = (v: unknown, max = 500): string | null => {
   return t ? t.slice(0, max) : null;
 };
 
+const conflictTerm = (v: unknown): string =>
+  String(v).replace(/[%_(),]/g, '').trim();
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -231,7 +234,7 @@ Deno.serve(async (req) => {
 
       // Terms: explicit list plus every party recorded on this matter.
       const explicit = Array.isArray(body.terms)
-        ? body.terms.map((t: unknown) => String(t).trim()).filter(Boolean).slice(0, 25)
+        ? body.terms.map(conflictTerm).filter((t: string) => t.length >= 3).slice(0, 25)
         : [];
       const { data: parties } = await supabase
         .from('legal_matter_parties')
@@ -240,7 +243,7 @@ Deno.serve(async (req) => {
       const partyTerms = (parties || [])
         .flatMap((p: any) => [p.name, p.organisation])
         .filter(Boolean)
-        .map((s: string) => s.trim());
+        .map(conflictTerm);
 
       const terms = Array.from(new Set([...explicit, ...partyTerms]))
         .filter((t) => t.length >= 3)
@@ -263,7 +266,7 @@ Deno.serve(async (req) => {
 
         if (matterIds.length) {
           const orFilter = terms
-            .map((t) => `name.ilike.%${t.replace(/[%,()]/g, '')}%,organisation.ilike.%${t.replace(/[%,()]/g, '')}%`)
+            .map((t) => `name.ilike.%${t}%,organisation.ilike.%${t}%`)
             .join(',');
           const { data: hits } = await supabase
             .from('legal_matter_parties')
