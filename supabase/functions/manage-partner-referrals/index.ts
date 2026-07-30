@@ -364,6 +364,21 @@ Deno.serve(async (req) => {
         agreementVersion = agr.version ?? null;
       }
 
+      // A loan writer can only be attached at creation if their undertaking is live.
+      if (payload.assigned_finance_user_id) {
+        const gate = await gateLoanWriterAssignment(supabase, {
+          direction,
+          financeUserId: payload.assigned_finance_user_id as string,
+          financeAgentContactId: (payload.finance_agent_contact_id as string) ?? null,
+          undertakingId: (body.loan_writer_undertaking_id as string) ?? null,
+        });
+        if (!gate.ok) return json({ error: gate.error, message: gate.message }, corsHeaders, 422);
+        if (gate.undertaking) {
+          payload.loan_writer_undertaking_id = gate.undertaking.id;
+          payload.assigned_loan_writer_name = payload.assigned_loan_writer_name || gate.undertaking.writer_full_name;
+        }
+      }
+
       const check = await priorClientCheck(supabase, {
         email: payload.client_email as string | null,
         phone: payload.client_phone as string | null,
