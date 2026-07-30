@@ -22,10 +22,10 @@ Deno.serve(async (req) => {
     try { body = await req.json(); } catch { /* ignore */ }
     const action = typeof body?.action === 'string' ? body.action : null;
 
-    if (action === 'accept_terms' || action === 'complete_onboarding') {
-      const csrf = enforceCsrf(req);
-      if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
-    }
+    // Every successful verification updates last_seen_at, so cookie-authenticated
+    // requests require CSRF protection even when no explicit action is supplied.
+    const csrf = enforceCsrf(req);
+    if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
     if (!extractSolicitorSessionToken(req.headers, body)) {
       return new Response(
