@@ -78,6 +78,11 @@ export default function SolicitorMatterDetail() {
   const [nextStatus, setNextStatus] = useState<LegalMatterStatus>('instructed');
   const [statusReason, setStatusReason] = useState('');
   const [partyDialog, setPartyDialog] = useState<typeof EMPTY_PARTY | null>(null);
+  const [criticalDates, setCriticalDates] = useState<LegalCriticalDate[]>([]);
+  const [runwayTasks, setRunwayTasks] = useState<LegalSettlementTask[]>([]);
+  const [runway, setRunway] = useState<RunwaySummary | null>(null);
+  const [datesSaving, setDatesSaving] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   const canEdit = !!perms.matters?.edit;
   const canEditParties = !!perms.parties?.edit;
