@@ -16,6 +16,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
   solicitorGovernanceError,
@@ -27,7 +28,13 @@ import {
   can,
   type PermissionMatrix,
 } from "../_shared/solicitorPortalAuth.ts";
-import { MATTER_SELECT, LEGAL_MATTER_STATUSES, cleanEnum, cleanText } from "../_shared/legalMatters.ts";
+import {
+  MATTER_SELECT,
+  LEGAL_MATTER_STATUSES,
+  TERMINAL_STATUSES,
+  cleanEnum,
+  cleanText,
+} from "../_shared/legalMatters.ts";
 import { LEGAL_DOCUMENT_BUCKET } from "../_shared/legalDocuments.ts";
 import {
   CONTRACT_ANALYSIS_SELECT,
@@ -51,6 +58,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   const json = (payload: unknown, status = 200) => new Response(
     JSON.stringify(payload),
@@ -155,14 +165,24 @@ Deno.serve(async (req) => {
 
       const status = cleanEnum(body.status, LEGAL_MATTER_STATUSES);
       if (!status) return json({ error: 'A valid status is required' }, 400);
+      if (matter.status !== status && TERMINAL_STATUSES.has(matter.status)) {
+        return json({ error: 'This matter is closed. Contact NPC to reopen it.' }, 400);
+      }
       const rawPosition = Number(body.position);
       const position = Number.isFinite(rawPosition)
         ? Math.max(0, Math.min(9999, Math.round(rawPosition)))
         : 0;
 
+      const now = new Date().toISOString();
+      const patch: Record<string, unknown> = { status, kanban_position: position, updated_at: now };
+      if (matter.status !== status && status === 'settled') {
+        patch.actual_settlement_date = matter.actual_settlement_date || now.slice(0, 10);
+        patch.closed_at = now;
+      }
+
       const { data: updated, error } = await supabase
         .from('legal_matters')
-        .update({ status, kanban_position: position, updated_at: new Date().toISOString() })
+        .update(patch)
         .eq('id', matter.id)
         .select(MATTER_SELECT)
         .maybeSingle();

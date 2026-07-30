@@ -34,34 +34,28 @@ Deno.serve(async (req) => {
 
     const normalizedEmail = String(email).toLowerCase().trim();
 
-    const { data: user } = await supabase
-      .from('solicitor_portal_users')
-      .select('id, firm_id, reset_token, reset_token_expires_at, reset_attempts, is_active, revoked_at, invite_accepted_at')
-      .eq('email', normalizedEmail)
-      .maybeSingle()
+    // Consume an attempt in the database so concurrent guesses cannot share a
+    // stale reset_attempts value and bypass the cap.
+    const { data, error: consumeError } = await supabase.rpc('consume_solicitor_portal_reset_attempt', {
+      p_email: normalizedEmail,
+      p_max: MAX_OTP_ATTEMPTS,
+    })
+    const user = Array.isArray(data) ? data[0] : data
 
-    if (!user || !user.is_active || user.revoked_at || !user.reset_token) {
+    if (consumeError || !user || user.status === 'not_found') {
       return json({ error: 'Invalid or expired code' }, 400)
     }
 
-    if (!user.reset_token_expires_at || new Date(user.reset_token_expires_at) < new Date()) {
+    if (user.status === 'expired') {
       return json({ error: 'This code has expired. Please request a new one.' }, 400)
     }
 
-    if ((user.reset_attempts || 0) >= MAX_OTP_ATTEMPTS) {
-      await supabase
-        .from('solicitor_portal_users')
-        .update({ reset_token: null, reset_token_expires_at: null })
-        .eq('id', user.id)
+    if (user.status === 'too_many') {
       return json({ error: 'Too many incorrect attempts. Please request a new code.' }, 429)
     }
 
     // Constant-length comparison on a 6-digit code.
     if (String(otp).trim() !== user.reset_token) {
-      await supabase
-        .from('solicitor_portal_users')
-        .update({ reset_attempts: (user.reset_attempts || 0) + 1 })
-        .eq('id', user.id)
       return json({ error: 'Invalid or expired code' }, 400)
     }
 
@@ -99,9 +93,9 @@ Deno.serve(async (req) => {
     await auditSolicitorIdentity(supabase, req, { userId: user.id, firmId: user.firm_id, action: 'sessions_revoked_after_password_reset', metadata: { revoked } });
 
     await supabase.from('solicitor_portal_activity_log').insert({
-      solicitor_user_id: user.id,
+      solicitor_user_id: user.user_id,
       firm_id: user.firm_id,
-      actor_user_id: user.id,
+      actor_user_id: user.user_id,
       actor_type: 'solicitor_user',
       action: 'password_reset_completed',
       entity_type: 'session',

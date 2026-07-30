@@ -1,12 +1,23 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import {
+  enforceActorQuota,
+  enforceGlobalDailyQuota,
+  enforceIpQuota,
+  fetchWithTimeout,
+  getClientIp,
+  killSwitchActive,
+  redactError,
+} from '../_shared/publicAbuseControls.ts';
 
 // Server-side Google Street View proxy. The browser never sees the server key.
 // Returns coverage metadata plus a base64 static preview when imagery exists.
 
 const MAX_WIDTH = 640;
 const MAX_HEIGHT = 400;
+const CIRCUIT_SCOPE = 'google_street_view';
 
 function numeric(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -33,8 +44,10 @@ Deno.serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
-    const { error: authError } = await verifyAuth(supabase, req.headers, body as { session_token?: string });
-    if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body as { session_token?: string });
+    if (authError || !userId) return createUnauthorizedResponse(authError || 'Authentication required', corsHeaders);
+    const permission = await requireModulePermission(supabase, { userId, authMethod }, 'listings', 'can_view');
+    if (!permission.ok) return createForbiddenResponse(permission.error || 'Listings access required', corsHeaders);
 
     const lat = numeric((body as { lat?: unknown }).lat);
     const lng = numeric((body as { lng?: unknown }).lng);
@@ -46,15 +59,33 @@ Deno.serve(async (req) => {
 
     const apiKey = Deno.env.get('GOOGLE_MAPS_API_KEY');
     if (!apiKey) return j({ error: 'street_view_not_configured', success: false }, 500);
+    const actorQuota = await enforceActorQuota(supabase, userId, CIRCUIT_SCOPE, { limit: 30, windowMs: 60_000 });
+    const ipQuota = await enforceIpQuota(supabase, getClientIp(req), CIRCUIT_SCOPE, { limit: 60, windowMs: 60_000 });
+    if (!actorQuota.ok || !ipQuota.ok) return j({ error: 'rate_limited', success: false }, 429);
+    if (killSwitchActive('GOOGLE_STREET_VIEW_KILL_SWITCH')) {
+      return j({ error: 'temporarily_unavailable', success: false }, 503);
+    }
+
+    const { data: circuitOpen, error: circuitReadError } = await supabase.rpc('provider_circuit_is_open', { p_scope: CIRCUIT_SCOPE });
+    if (circuitReadError || circuitOpen === true) return j({ error: 'temporarily_unavailable', success: false }, 503);
 
     const location = `${lat},${lng}`;
 
-    const metaResponse = await fetch(
+    const dailyLimit = Number(Deno.env.get('GOOGLE_STREET_VIEW_DAILY_LIMIT') ?? '5000');
+    const metadataQuota = await enforceGlobalDailyQuota(supabase, CIRCUIT_SCOPE, dailyLimit);
+    if (!metadataQuota.ok) return j({ error: 'daily_quota_exceeded', success: false }, 429);
+
+    const metaResponse = await fetchWithTimeout(
       `https://maps.googleapis.com/maps/api/streetview/metadata?location=${encodeURIComponent(location)}&key=${apiKey}`,
+      {},
+      6000,
     );
     const meta = await metaResponse.json().catch(() => ({}));
 
     if (meta.status !== 'OK') {
+      if (meta.status !== 'ZERO_RESULTS') {
+        await supabase.rpc('provider_circuit_record_failure', { p_scope: CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
+      }
       return j({ success: true, available: false, status: String(meta.status ?? 'UNKNOWN') });
     }
 
@@ -68,10 +99,14 @@ Deno.serve(async (req) => {
       key: apiKey,
     });
 
-    const imageResponse = await fetch(`https://maps.googleapis.com/maps/api/streetview?${params.toString()}`);
+    const imageQuota = await enforceGlobalDailyQuota(supabase, CIRCUIT_SCOPE, dailyLimit);
+    if (!imageQuota.ok) return j({ error: 'daily_quota_exceeded', success: false }, 429);
+    const imageResponse = await fetchWithTimeout(`https://maps.googleapis.com/maps/api/streetview?${params.toString()}`, {}, 6000);
     if (!imageResponse.ok) {
+      await supabase.rpc('provider_circuit_record_failure', { p_scope: CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
       return j({ success: true, available: false, status: `image_${imageResponse.status}` });
     }
+    await supabase.rpc('provider_circuit_record_success', { p_scope: CIRCUIT_SCOPE });
 
     const bytes = new Uint8Array(await imageResponse.arrayBuffer());
     let binary = '';
@@ -86,7 +121,7 @@ Deno.serve(async (req) => {
       copyright: typeof meta.copyright === 'string' ? meta.copyright.slice(0, 200) : null,
     });
   } catch (error) {
-    console.error('[street-view] error', error);
+    console.error('[street-view] error', redactError(error));
     return j({ error: 'internal_error', success: false }, 500);
   }
 });

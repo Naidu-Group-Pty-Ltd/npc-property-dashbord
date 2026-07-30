@@ -74,6 +74,13 @@ export const LEGAL_MATTER_CLIENT_PROJECTION_SELECT = `
 /** Compatibility alias is deliberately the safe, note-free list contract. */
 export const MATTER_SELECT = LEGAL_MATTER_SOLICITOR_LIST_SELECT;
 
+/** Minimal matter summary returned by solicitor portal list surfaces. */
+export const SOLICITOR_MATTER_LIST_SELECT = `
+  id, matter_reference, title, matter_type, status, client_id,
+  property_address, property_suburb, property_state, property_postcode,
+  settlement_date, risk_flag
+`;
+
 export const PARTY_SELECT = `
   id, legal_matter_id, role, name, organisation, email, phone, address,
   reference, is_primary_contact, notes, created_at, updated_at

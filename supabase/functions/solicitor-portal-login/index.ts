@@ -6,6 +6,9 @@ import { auditSolicitorIdentity, GENERIC_AUTH_ERROR, issueSolicitorSession } fro
 
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
+// A fixed bcrypt hash keeps missing and passwordless accounts on the same
+// expensive verification path as accounts with a stored bcrypt password.
+const DUMMY_PASSWORD_HASH = '$2b$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');

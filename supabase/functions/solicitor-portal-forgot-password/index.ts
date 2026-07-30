@@ -6,6 +6,7 @@ import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
 const WINDOW_SECONDS = 3600;
+const IP_WINDOW_SECONDS = 900;
 
 function generateOtp(): string {
   const buf = new Uint32Array(1);
@@ -74,6 +75,18 @@ Deno.serve(async (req) => {
     // Never let password recovery bypass the invite flow: an account that has
     // never been invited and has no password must be onboarded via its invite.
     if (!user.password_hash && !user.invited_at) {
+      return genericOk();
+    }
+
+    // A validated account gets its own bucket so changing the source IP cannot
+    // churn reset tokens or trigger repeated email delivery.
+    const { data: accountAllowed, error: accountLimitError } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `solicitor_forgot_account:${user.id}`,
+      p_max: MAX_REQUESTS_PER_WINDOW,
+      p_window_seconds: WINDOW_SECONDS,
+    });
+    if (accountLimitError || accountAllowed !== true) {
+      console.warn('[solicitor-portal-forgot-password] account rate limited', { userId: user.id });
       return genericOk();
     }
 

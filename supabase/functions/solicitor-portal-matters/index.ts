@@ -13,6 +13,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
   solicitorGovernanceError,
@@ -55,6 +56,9 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+
   const json = (payload: unknown, status = 200) => new Response(
     JSON.stringify(payload),
     { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
@@ -83,6 +87,19 @@ Deno.serve(async (req) => {
     if (!accessibleMatterIds.length && operation !== 'matter_stats') {
       if (operation === 'list_matters') return json({ success: true, records: [] });
     }
+
+    /** Assigned clients for which the merged permission matrix allows matter visibility. */
+    const listViewableClientIds = async (): Promise<string[]> => {
+      const permissions = await Promise.all(
+        assignedClientIds.map(async (clientId) => ({
+          clientId,
+          matrix: await resolveClientPermissions(supabase, me.id, clientId),
+        })),
+      );
+      return permissions
+        .filter(({ matrix }) => can(matrix, 'matters', 'view'))
+        .map(({ clientId }) => clientId);
+    };
 
     /** Load a matter and confirm this solicitor may see it. */
     const loadMatter = async (matterId: string): Promise<

@@ -62,6 +62,13 @@ Deno.serve(async (req) => {
       )
     }
 
+    if (portalUser.invite_accepted_at || portalUser.password_hash) {
+      return new Response(
+        JSON.stringify({ error: 'This account is already active. Use the password reset flow instead.', valid: false }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
     const firm = portalUser.solicitor_firms as any;
     if (!firm || !firm.is_active) {
       return new Response(
@@ -83,6 +90,13 @@ Deno.serve(async (req) => {
           already_active: !!portalUser.invite_accepted_at && !!portalUser.password_hash,
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    if (portalUser.invite_accepted_at || portalUser.password_hash) {
+      return new Response(
+        JSON.stringify({ error: 'This invite has already been accepted.', valid: false, already_active: true }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -116,12 +130,16 @@ Deno.serve(async (req) => {
         session_expires_at: null,
       })
       .eq('id', portalUser.id)
+      .is('invite_accepted_at', null)
+      .eq('invite_token', token)
+      .select('id')
+      .maybeSingle()
 
-    if (updateError) {
+    if (updateError || !updatedUser) {
       console.error('[solicitor-portal-accept-invite] update failed:', updateError)
       return new Response(
-        JSON.stringify({ error: 'Failed to activate your account' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: updateError ? 'Failed to activate your account' : 'This invite is no longer valid.' }),
+        { status: updateError ? 500 : 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
     const issued = await issueSolicitorSession(supabase, portalUser.id, req, { deviceLabel: req.headers.get('user-agent') || undefined });
