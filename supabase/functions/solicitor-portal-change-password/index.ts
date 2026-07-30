@@ -1,8 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword, verifyPassword } from "../_shared/password.ts"
-import { createCorsHeaders } from "../_shared/auth.ts"
+import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth.ts"
 import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts"
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts"
+import { auditSolicitorIdentity, issueSolicitorSession, revokeAllSolicitorSessions } from "../_shared/solicitorSessions.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -61,7 +62,7 @@ Deno.serve(async (req) => {
 
     const passwordHash = await hashPassword(new_password)
 
-    await supabase
+    const { error: passwordUpdateError } = await supabase
       .from('solicitor_portal_users')
       .update({
         password_hash: passwordHash,
@@ -69,8 +70,13 @@ Deno.serve(async (req) => {
         reset_token: null,
         reset_token_expires_at: null,
         reset_attempts: 0,
+        session_token: null,
+        session_expires_at: null,
       })
       .eq('id', record.id)
+    if (passwordUpdateError) throw passwordUpdateError;
+    const revoked = await revokeAllSolicitorSessions(supabase, record.id, 'password_changed');
+    const issued = await issueSolicitorSession(supabase, record.id, req, { deviceLabel: req.headers.get('user-agent') || undefined });
 
     await supabase.from('solicitor_portal_activity_log').insert({
       solicitor_user_id: record.id,
@@ -82,7 +88,8 @@ Deno.serve(async (req) => {
       ip_address: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null,
     });
 
-    return json({ success: true })
+    await auditSolicitorIdentity(supabase, req, { userId: record.id, firmId: record.firm_id, action: 'sessions_revoked_after_password_change', sessionId: issued.id, metadata: { revoked } });
+    return new Response(JSON.stringify({ success: true, session: { id: issued.id, absolute_expires_at: issued.absoluteExpiresAt.toISOString() } }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Set-Cookie': createSolicitorSessionCookie(issued.token, issued.absoluteExpiresAt) } })
   } catch (error: any) {
     console.error('Solicitor portal change-password error:', error)
     return json({ error: 'Internal server error' }, 500)

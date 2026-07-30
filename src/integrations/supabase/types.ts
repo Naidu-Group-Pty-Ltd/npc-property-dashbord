@@ -4373,6 +4373,7 @@ export type Database = {
       }
       client_portal_messages: {
         Row: {
+          canonical_message_id: string | null
           allocated_finance_user_id: string | null
           allocation_status: Database["public"]["Enums"]["message_allocation_status"]
           client_id: string
@@ -4380,6 +4381,7 @@ export type Database = {
           created_at: string | null
           finance_allocated: boolean
           id: string
+          integration_event_id: string | null
           is_internal: boolean
           is_read: boolean | null
           message: string
@@ -4395,6 +4397,7 @@ export type Database = {
           visibility_scope: Database["public"]["Enums"]["message_visibility_scope"]
         }
         Insert: {
+          canonical_message_id?: string | null
           allocated_finance_user_id?: string | null
           allocation_status?: Database["public"]["Enums"]["message_allocation_status"]
           client_id: string
@@ -4402,6 +4405,7 @@ export type Database = {
           created_at?: string | null
           finance_allocated?: boolean
           id?: string
+          integration_event_id?: string | null
           is_internal?: boolean
           is_read?: boolean | null
           message: string
@@ -4417,6 +4421,7 @@ export type Database = {
           visibility_scope?: Database["public"]["Enums"]["message_visibility_scope"]
         }
         Update: {
+          canonical_message_id?: string | null
           allocated_finance_user_id?: string | null
           allocation_status?: Database["public"]["Enums"]["message_allocation_status"]
           client_id?: string
@@ -4424,6 +4429,7 @@ export type Database = {
           created_at?: string | null
           finance_allocated?: boolean
           id?: string
+          integration_event_id?: string | null
           is_internal?: boolean
           is_read?: boolean | null
           message?: string
@@ -4476,6 +4482,7 @@ export type Database = {
           client_id: string
           created_at: string | null
           id: string
+          integration_event_id: string | null
           is_read: boolean | null
           message: string | null
           metadata: Json | null
@@ -4489,6 +4496,7 @@ export type Database = {
           client_id: string
           created_at?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean | null
           message?: string | null
           metadata?: Json | null
@@ -4502,6 +4510,7 @@ export type Database = {
           client_id?: string
           created_at?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean | null
           message?: string | null
           metadata?: Json | null
@@ -9474,6 +9483,7 @@ export type Database = {
       }
       finance_portal_messages: {
         Row: {
+          canonical_message_id: string | null
           allocation_status: Database["public"]["Enums"]["message_allocation_status"]
           attachment_filename: string | null
           attachment_mime: string | null
@@ -9485,6 +9495,7 @@ export type Database = {
           created_at: string
           finance_user_id: string | null
           id: string
+          integration_event_id: string | null
           is_read_by_partner: boolean
           is_read_by_staff: boolean
           notification_status: Json
@@ -9499,6 +9510,7 @@ export type Database = {
           visibility_scope: Database["public"]["Enums"]["message_visibility_scope"]
         }
         Insert: {
+          canonical_message_id?: string | null
           allocation_status?: Database["public"]["Enums"]["message_allocation_status"]
           attachment_filename?: string | null
           attachment_mime?: string | null
@@ -9510,6 +9522,7 @@ export type Database = {
           created_at?: string
           finance_user_id?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read_by_partner?: boolean
           is_read_by_staff?: boolean
           notification_status?: Json
@@ -9524,6 +9537,7 @@ export type Database = {
           visibility_scope?: Database["public"]["Enums"]["message_visibility_scope"]
         }
         Update: {
+          canonical_message_id?: string | null
           allocation_status?: Database["public"]["Enums"]["message_allocation_status"]
           attachment_filename?: string | null
           attachment_mime?: string | null
@@ -9535,6 +9549,7 @@ export type Database = {
           created_at?: string
           finance_user_id?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read_by_partner?: boolean
           is_read_by_staff?: boolean
           notification_status?: Json
@@ -9592,6 +9607,7 @@ export type Database = {
           client_id: string | null
           created_at: string
           id: string
+          integration_event_id: string | null
           is_read: boolean
           link_path: string | null
           metadata: Json | null
@@ -9605,6 +9621,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
@@ -9618,6 +9635,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
@@ -13129,6 +13147,8 @@ export type Database = {
       }
       legal_matter_documents: {
         Row: {
+          immutable_document_record_id: string | null
+          immutable_current_version_id: string | null
           category: Database["public"]["Enums"]["legal_document_category"]
           client_id: string | null
           created_at: string
@@ -13161,6 +13181,8 @@ export type Database = {
           visible_to_npc: boolean
         }
         Insert: {
+          immutable_document_record_id?: string | null
+          immutable_current_version_id?: string | null
           category?: Database["public"]["Enums"]["legal_document_category"]
           client_id?: string | null
           created_at?: string
@@ -13193,6 +13215,8 @@ export type Database = {
           visible_to_npc?: boolean
         }
         Update: {
+          immutable_document_record_id?: string | null
+          immutable_current_version_id?: string | null
           category?: Database["public"]["Enums"]["legal_document_category"]
           client_id?: string | null
           created_at?: string
@@ -13264,6 +13288,7 @@ export type Database = {
       }
       legal_matter_messages: {
         Row: {
+          canonical_message_id: string | null
           attachment_filename: string | null
           attachment_mime: string | null
           attachment_path: string | null
@@ -13291,6 +13316,7 @@ export type Database = {
           thread_id: string
         }
         Insert: {
+          canonical_message_id?: string | null
           attachment_filename?: string | null
           attachment_mime?: string | null
           attachment_path?: string | null
@@ -13318,6 +13344,7 @@ export type Database = {
           thread_id: string
         }
         Update: {
+          canonical_message_id?: string | null
           attachment_filename?: string | null
           attachment_mime?: string | null
           attachment_path?: string | null
@@ -13828,6 +13855,7 @@ export type Database = {
           firm_id: string | null
           id: string
           internal_notes: string | null
+          npc_internal_notes: string | null
           kanban_position: number
           lot_plan: string | null
           matter_reference: string | null
@@ -13845,6 +13873,7 @@ export type Database = {
           retention_until: string | null
           risk_flag: boolean
           risk_notes: string | null
+          row_version: number
           settlement_date: string | null
           shared_summary: string | null
           stage_entered_at: string
@@ -13881,6 +13910,7 @@ export type Database = {
           firm_id?: string | null
           id?: string
           internal_notes?: string | null
+          npc_internal_notes?: string | null
           kanban_position?: number
           lot_plan?: string | null
           matter_reference?: string | null
@@ -13898,6 +13928,7 @@ export type Database = {
           retention_until?: string | null
           risk_flag?: boolean
           risk_notes?: string | null
+          row_version?: number
           settlement_date?: string | null
           shared_summary?: string | null
           stage_entered_at?: string
@@ -13934,6 +13965,7 @@ export type Database = {
           firm_id?: string | null
           id?: string
           internal_notes?: string | null
+          npc_internal_notes?: string | null
           kanban_position?: number
           lot_plan?: string | null
           matter_reference?: string | null
@@ -13951,6 +13983,7 @@ export type Database = {
           retention_until?: string | null
           risk_flag?: boolean
           risk_notes?: string | null
+          row_version?: number
           settlement_date?: string | null
           shared_summary?: string | null
           stage_entered_at?: string
@@ -21241,6 +21274,25 @@ export type Database = {
         }
         Relationships: []
       }
+      solicitor_matter_access: {
+        Row: { access_role: string; created_at: string; firm_id: string; granted_at: string; granted_by: string | null; id: string; legal_matter_id: string; permissions: Json; revocation_reason: string | null; revoked_at: string | null; revoked_by: string | null; solicitor_user_id: string; source_assignment_id: string | null; updated_at: string; valid_from: string; valid_until: string | null }
+        Insert: { access_role?: string; created_at?: string; firm_id: string; granted_at?: string; granted_by?: string | null; id?: string; legal_matter_id: string; permissions?: Json; revocation_reason?: string | null; revoked_at?: string | null; revoked_by?: string | null; solicitor_user_id: string; source_assignment_id?: string | null; updated_at?: string; valid_from?: string; valid_until?: string | null }
+        Update: { access_role?: string; created_at?: string; firm_id?: string; granted_at?: string; granted_by?: string | null; id?: string; legal_matter_id?: string; permissions?: Json; revocation_reason?: string | null; revoked_at?: string | null; revoked_by?: string | null; solicitor_user_id?: string; source_assignment_id?: string | null; updated_at?: string; valid_from?: string; valid_until?: string | null }
+        Relationships: [
+          { foreignKeyName: "solicitor_matter_access_firm_id_fkey"; columns: ["firm_id"]; isOneToOne: false; referencedRelation: "solicitor_firms"; referencedColumns: ["id"] },
+          { foreignKeyName: "solicitor_matter_access_legal_matter_id_fkey"; columns: ["legal_matter_id"]; isOneToOne: false; referencedRelation: "legal_matters"; referencedColumns: ["id"] },
+          { foreignKeyName: "solicitor_matter_access_solicitor_user_id_fkey"; columns: ["solicitor_user_id"]; isOneToOne: false; referencedRelation: "solicitor_portal_users"; referencedColumns: ["id"] },
+          { foreignKeyName: "solicitor_matter_access_source_assignment_id_fkey"; columns: ["source_assignment_id"]; isOneToOne: false; referencedRelation: "solicitor_portal_client_assignments"; referencedColumns: ["id"] },
+        ]
+      }
+      solicitor_matter_access_migration_exceptions: {
+        Row: { client_id: string | null; created_at: string; details: Json; exception_code: string; id: string; legal_matter_id: string | null; resolved_at: string | null; resolved_by: string | null; solicitor_user_id: string | null; source_assignment_id: string | null }
+        Insert: { client_id?: string | null; created_at?: string; details?: Json; exception_code: string; id?: string; legal_matter_id?: string | null; resolved_at?: string | null; resolved_by?: string | null; solicitor_user_id?: string | null; source_assignment_id?: string | null }
+        Update: { client_id?: string | null; created_at?: string; details?: Json; exception_code?: string; id?: string; legal_matter_id?: string | null; resolved_at?: string | null; resolved_by?: string | null; solicitor_user_id?: string | null; source_assignment_id?: string | null }
+        Relationships: [
+          { foreignKeyName: "solicitor_matter_access_migration_exceptions_source_assignment_id_fkey"; columns: ["source_assignment_id"]; isOneToOne: false; referencedRelation: "solicitor_portal_client_assignments"; referencedColumns: ["id"] },
+        ]
+      }
       solicitor_portal_client_assignments: {
         Row: {
           assigned_at: string
@@ -21393,6 +21445,36 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      portal_terms_versions: {
+        Row: { id: string; portal: string; version: string; title: string; content_markdown: string; published_at: string; effective_at: string; retired_at: string | null; created_by: string | null; created_at: string }
+        Insert: { id?: string; portal: string; version: string; title: string; content_markdown: string; published_at?: string; effective_at?: string; retired_at?: string | null; created_by?: string | null; created_at?: string }
+        Update: { id?: string; portal?: string; version?: string; title?: string; content_markdown?: string; published_at?: string; effective_at?: string; retired_at?: string | null; created_by?: string | null; created_at?: string }
+        Relationships: []
+      }
+      portal_terms_acceptances: {
+        Row: { id: string; terms_version_id: string; portal: string; solicitor_user_id: string; accepted_at: string; ip_hash: string | null; user_agent_hash: string | null }
+        Insert: { id?: string; terms_version_id: string; portal: string; solicitor_user_id: string; accepted_at?: string; ip_hash?: string | null; user_agent_hash?: string | null }
+        Update: { id?: string; terms_version_id?: string; portal?: string; solicitor_user_id?: string; accepted_at?: string; ip_hash?: string | null; user_agent_hash?: string | null }
+        Relationships: []
+      }
+      solicitor_onboarding_steps: {
+        Row: { id: string; solicitor_user_id: string; step_key: string; mandatory: boolean; completed_at: string | null; completed_session_id: string | null; created_at: string }
+        Insert: { id?: string; solicitor_user_id: string; step_key: string; mandatory?: boolean; completed_at?: string | null; completed_session_id?: string | null; created_at?: string }
+        Update: { id?: string; solicitor_user_id?: string; step_key?: string; mandatory?: boolean; completed_at?: string | null; completed_session_id?: string | null; created_at?: string }
+        Relationships: []
+      }
+      client_legal_case_summary: {
+        Row: { id: string; case_id: string | null; client_id: string; legal_matter_id: string; matter_reference: string | null; friendly_status: string; shared_summary: string | null; property_address: string | null; settlement_date: string | null; next_client_action: string | null; updated_at: string }
+        Insert: { id?: string; case_id?: string | null; client_id: string; legal_matter_id: string; matter_reference?: string | null; friendly_status: string; shared_summary?: string | null; property_address?: string | null; settlement_date?: string | null; next_client_action?: string | null; updated_at?: string }
+        Update: { id?: string; case_id?: string | null; client_id?: string; legal_matter_id?: string; matter_reference?: string | null; friendly_status?: string; shared_summary?: string | null; property_address?: string | null; settlement_date?: string | null; next_client_action?: string | null; updated_at?: string }
+        Relationships: []
+      }
+      solicitor_portal_sessions: {
+        Row: { absolute_expires_at: string; created_at: string; device_label: string | null; id: string; idle_expires_at: string; ip_hash: string | null; last_used_at: string; legacy_migrated_at: string | null; revoked_at: string | null; revoked_reason: string | null; solicitor_user_id: string; token_hash: string; user_agent_hash: string | null }
+        Insert: { absolute_expires_at: string; created_at?: string; device_label?: string | null; id?: string; idle_expires_at: string; ip_hash?: string | null; last_used_at?: string; legacy_migrated_at?: string | null; revoked_at?: string | null; revoked_reason?: string | null; solicitor_user_id: string; token_hash: string; user_agent_hash?: string | null }
+        Update: { absolute_expires_at?: string; created_at?: string; device_label?: string | null; id?: string; idle_expires_at?: string; ip_hash?: string | null; last_used_at?: string; legacy_migrated_at?: string | null; revoked_at?: string | null; revoked_reason?: string | null; solicitor_user_id?: string; token_hash?: string; user_agent_hash?: string | null }
+        Relationships: [{ foreignKeyName: "solicitor_portal_sessions_solicitor_user_id_fkey"; columns: ["solicitor_user_id"]; isOneToOne: false; referencedRelation: "solicitor_portal_users"; referencedColumns: ["id"] }]
       }
       solicitor_portal_users: {
         Row: {
@@ -22317,6 +22399,202 @@ export type Database = {
           state?: string
           suburb?: string | null
         }
+        Relationships: []
+      }
+      document_records: {
+        Row: { id:string; case_id:string; legal_matter_id:string; category:string; title:string; description:string|null; owner:string; due_date:string|null; client_visible:boolean; command_visible:boolean; logical_status:string; current_version_id:string|null; row_version:number; source:string; created_by_type:string; created_by_id:string|null; created_at:string; updated_at:string }
+        Insert: { id?:string; case_id:string; legal_matter_id:string; category:string; title:string; description?:string|null; owner?:string; due_date?:string|null; client_visible?:boolean; command_visible?:boolean; logical_status?:string; current_version_id?:string|null; row_version?:number; source?:string; created_by_type:string; created_by_id?:string|null; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["document_records"]["Insert"]>; Relationships: []
+      }
+      document_versions: {
+        Row: { id:string; document_record_id:string; version_number:number; storage_bucket:string; storage_path:string; sha256:string|null; detected_mime_type:string|null; byte_size:number|null; declared_mime_type:string|null; declared_byte_size:number|null; original_filename:string; malware_scan_status:string; lifecycle_status:string; uploaded_by_type:string; uploaded_by_id:string|null; uploaded_at:string|null; supersedes_version_id:string|null; scan_provider:string|null; scan_reference:string|null; scan_details:Json; scanned_at:string|null; reviewed_by_type:string|null; reviewed_by_id:string|null; reviewed_at:string|null; review_notes:string|null; created_at:string; updated_at:string }
+        Insert: { id?:string; document_record_id:string; version_number:number; storage_bucket:string; storage_path:string; sha256?:string|null; detected_mime_type?:string|null; byte_size?:number|null; declared_mime_type?:string|null; declared_byte_size?:number|null; original_filename:string; malware_scan_status?:string; lifecycle_status?:string; uploaded_by_type:string; uploaded_by_id?:string|null; uploaded_at?:string|null; supersedes_version_id?:string|null; scan_provider?:string|null; scan_reference?:string|null; scan_details?:Json; scanned_at?:string|null; reviewed_by_type?:string|null; reviewed_by_id?:string|null; reviewed_at?:string|null; review_notes?:string|null; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["document_versions"]["Insert"]>; Relationships: []
+      }
+      document_access_grants: {
+        Row: { id:string; document_record_id:string; document_version_id:string|null; audience:string; grantee_id:string|null; permission:string; granted_by_type:string; granted_by_id:string|null; granted_at:string; revoked_at:string|null; revoked_by_type:string|null; revoked_by_id:string|null; revocation_reason:string|null; grant_key:string }
+        Insert: { id?:string; document_record_id:string; document_version_id?:string|null; audience:string; grantee_id?:string|null; permission:string; granted_by_type:string; granted_by_id?:string|null; granted_at?:string; revoked_at?:string|null; revoked_by_type?:string|null; revoked_by_id?:string|null; revocation_reason?:string|null }
+        Update: Partial<Database["public"]["Tables"]["document_access_grants"]["Insert"]>; Relationships: []
+      }
+      document_processing_jobs: {
+        Row: { id:string; document_version_id:string; status:string; attempts:number; available_at:string; locked_at:string|null; locked_by:string|null; last_error:string|null; created_at:string; updated_at:string }
+        Insert: { id?:string; document_version_id:string; status?:string; attempts?:number; available_at?:string; locked_at?:string|null; locked_by?:string|null; last_error?:string|null; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["document_processing_jobs"]["Insert"]>; Relationships: []
+      }
+      document_download_audit: {
+        Row: { id:string; document_record_id:string; document_version_id:string; actor_type:string; actor_id:string|null; audience:string; ip_hash:string|null; user_agent_hash:string|null; correlation_id:string; downloaded_at:string }
+        Insert: { id?:string; document_record_id:string; document_version_id:string; actor_type:string; actor_id?:string|null; audience:string; ip_hash?:string|null; user_agent_hash?:string|null; correlation_id?:string; downloaded_at?:string }
+        Update: Partial<Database["public"]["Tables"]["document_download_audit"]["Insert"]>; Relationships: []
+      }
+      document_migration_issues: {
+        Row: { id:string; legacy_document_id:string|null; issue_type:string; details:Json; status:string; detected_at:string; resolved_at:string|null }
+        Insert: { id?:string; legacy_document_id?:string|null; issue_type:string; details?:Json; status?:string; detected_at?:string; resolved_at?:string|null }
+        Update: Partial<Database["public"]["Tables"]["document_migration_issues"]["Insert"]>; Relationships: []
+      }
+      conversations: {
+        Row: { id:string; case_id:string|null; scope:string; subject:string; firm_id:string|null; created_by_type:string; created_by_id:string|null; is_archived:boolean; row_version:number; last_message_at:string|null; created_at:string; updated_at:string }
+        Insert: { id?:string; case_id?:string|null; scope:string; subject:string; firm_id?:string|null; created_by_type:string; created_by_id?:string|null; is_archived?:boolean; row_version?:number; last_message_at?:string|null; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["conversations"]["Insert"]>; Relationships: []
+      }
+      conversation_participants: {
+        Row: { id:string; conversation_id:string; participant_type:string; participant_id:string; role:string; can_post:boolean; joined_at:string; left_at:string|null; added_by_type:string; added_by_id:string|null }
+        Insert: { id?:string; conversation_id:string; participant_type:string; participant_id:string; role?:string; can_post?:boolean; joined_at?:string; left_at?:string|null; added_by_type?:string; added_by_id?:string|null }
+        Update: Partial<Database["public"]["Tables"]["conversation_participants"]["Insert"]>; Relationships: []
+      }
+      messages: {
+        Row: { id:string; conversation_id:string; sender_participant_id:string; sender_type:string; sender_id:string|null; sender_name:string|null; body:string; reply_to_message_id:string|null; idempotency_key:string; legacy_sources:Json; migration_status:string; migration_duplicate_group_id:string|null; correlation_id:string; created_at:string; edited_at:string|null; deleted_at:string|null }
+        Insert: { id?:string; conversation_id:string; sender_participant_id:string; sender_type:string; sender_id?:string|null; sender_name?:string|null; body:string; reply_to_message_id?:string|null; idempotency_key:string; legacy_sources?:Json; migration_status?:string; migration_duplicate_group_id?:string|null; correlation_id?:string; created_at?:string; edited_at?:string|null; deleted_at?:string|null }
+        Update: Partial<Database["public"]["Tables"]["messages"]["Insert"]>; Relationships: []
+      }
+      message_attachments: {
+        Row: { id:string; message_id:string; storage_path:string; filename:string; declared_mime_type:string|null; declared_size_bytes:number|null; created_at:string }
+        Insert: { id?:string; message_id:string; storage_path:string; filename:string; declared_mime_type?:string|null; declared_size_bytes?:number|null; created_at?:string }
+        Update: Partial<Database["public"]["Tables"]["message_attachments"]["Insert"]>; Relationships: []
+      }
+      message_receipts: {
+        Row: { id:string; message_id:string; participant_id:string; delivered_at:string|null; read_at:string|null; created_at:string }
+        Insert: { id?:string; message_id:string; participant_id:string; delivered_at?:string|null; read_at?:string|null; created_at?:string }
+        Update: Partial<Database["public"]["Tables"]["message_receipts"]["Insert"]>; Relationships: []
+      }
+      notification_deliveries: {
+        Row: { id:string; message_id:string|null; participant_id:string; event_type:string; channel:string; status:string; scheduled_for:string; attempts:number; available_at:string; locked_at:string|null; locked_by:string|null; delivered_at:string|null; last_error:string|null; idempotency_key:string; created_at:string; updated_at:string }
+        Insert: { id?:string; message_id?:string|null; participant_id:string; event_type:string; channel:string; status?:string; scheduled_for?:string; attempts?:number; available_at?:string; locked_at?:string|null; locked_by?:string|null; delivered_at?:string|null; last_error?:string|null; idempotency_key:string; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["notification_deliveries"]["Insert"]>; Relationships: []
+      }
+      notification_preferences: {
+        Row: { id:string; participant_type:string; participant_id:string; event_type:string; channel:string; enabled:boolean; quiet_hours_start:string|null; quiet_hours_end:string|null; timezone:string; created_at:string; updated_at:string }
+        Insert: { id?:string; participant_type:string; participant_id:string; event_type:string; channel:string; enabled?:boolean; quiet_hours_start?:string|null; quiet_hours_end?:string|null; timezone?:string; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["notification_preferences"]["Insert"]>; Relationships: []
+      }
+      conversation_migration_issues: {
+        Row: { id:string; issue_type:string; source_table:string; source_id:string; candidate_message_id:string|null; details:Json; status:string; detected_at:string; resolved_at:string|null }
+        Insert: { id?:string; issue_type:string; source_table:string; source_id:string; candidate_message_id?:string|null; details?:Json; status?:string; detected_at?:string; resolved_at?:string|null }
+        Update: Partial<Database["public"]["Tables"]["conversation_migration_issues"]["Insert"]>; Relationships: []
+      }
+      case_milestones: {
+        Row: { id:string; case_id:string; milestone_type:string; title:string; source_domain:string; source_record_id:string; authority:string; due_at:string; status:string; visibility:string; owner_type:string|null; owner_id:string|null; visible_to_client:boolean; notes:string|null; source_created_at:string|null; source_updated_at:string|null; row_version:number; created_at:string; updated_at:string }
+        Insert: { id?:string; case_id:string; milestone_type:string; title:string; source_domain:string; source_record_id:string; authority:string; due_at:string; status:string; visibility:string; owner_type?:string|null; owner_id?:string|null; visible_to_client?:boolean; notes?:string|null; source_created_at?:string|null; source_updated_at?:string|null; row_version?:number; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["case_milestones"]["Insert"]>
+        Relationships: []
+      }
+      case_tasks: {
+        Row: { id:string; case_id:string; task_key:string; label:string; description:string|null; status:string; owner_domain:string; visibility:string; visible_to_client:boolean; is_required:boolean; due_at:string|null; completed_at:string|null; completion_evidence:Json; source_refs:Json; notes:string|null; sequence:number; row_version:number; created_at:string; updated_at:string }
+        Insert: { id?:string; case_id:string; task_key:string; label:string; description?:string|null; status?:string; owner_domain:string; visibility:string; visible_to_client?:boolean; is_required?:boolean; due_at?:string|null; completed_at?:string|null; completion_evidence?:Json; source_refs?:Json; notes?:string|null; sequence?:number; row_version?:number; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["case_tasks"]["Insert"]>
+        Relationships: []
+      }
+      case_task_assignments: {
+        Row: { id:string; task_id:string; assignee_type:string; assignee_id:string; assigned_by:string|null; assigned_at:string; revoked_at:string|null }
+        Insert: { id?:string; task_id:string; assignee_type:string; assignee_id:string; assigned_by?:string|null; assigned_at?:string; revoked_at?:string|null }
+        Update: Partial<Database["public"]["Tables"]["case_task_assignments"]["Insert"]>
+        Relationships: []
+      }
+      case_task_status_history: {
+        Row: { id:string; task_id:string; from_status:string|null; to_status:string; actor_type:string; actor_id:string|null; reason:string; completion_evidence:Json; occurred_at:string }
+        Insert: { id?:string; task_id:string; from_status?:string|null; to_status:string; actor_type:string; actor_id?:string|null; reason:string; completion_evidence?:Json; occurred_at?:string }
+        Update: Partial<Database["public"]["Tables"]["case_task_status_history"]["Insert"]>
+        Relationships: []
+      }
+      case_milestone_conflicts: {
+        Row: { id:string; case_id:string; milestone_type:string; conflict_type:string; left_source:Json; right_source:Json; authoritative_milestone_id:string|null; resolution_status:string; requires_confirmation:boolean; resolution_reason:string|null; resolved_by:string|null; resolved_at:string|null; conflict_key:string; created_at:string; updated_at:string }
+        Insert: { id?:string; case_id:string; milestone_type:string; conflict_type:string; left_source:Json; right_source:Json; authoritative_milestone_id?:string|null; resolution_status?:string; requires_confirmation?:boolean; resolution_reason?:string|null; resolved_by?:string|null; resolved_at?:string|null; conflict_key:string; created_at?:string; updated_at?:string }
+        Update: Partial<Database["public"]["Tables"]["case_milestone_conflicts"]["Insert"]>
+        Relationships: []
+      }
+      integration_outbox: {
+        Row: { id:string; aggregate_type:string; aggregate_id:string; event_type:string; event_version:number; payload:Json; idempotency_key:string; correlation_id:string; occurred_at:string; available_at:string; processed_at:string|null; locked_at:string|null; locked_by:string|null; attempts:number; last_error:string|null; created_at:string }
+        Insert: { id?:string; aggregate_type:string; aggregate_id:string; event_type:string; event_version?:number; payload?:Json; idempotency_key:string; correlation_id?:string; occurred_at?:string; available_at?:string; processed_at?:string|null; locked_at?:string|null; locked_by?:string|null; attempts?:number; last_error?:string|null; created_at?:string }
+        Update: { id?:string; aggregate_type?:string; aggregate_id?:string; event_type?:string; event_version?:number; payload?:Json; idempotency_key?:string; correlation_id?:string; occurred_at?:string; available_at?:string; processed_at?:string|null; locked_at?:string|null; locked_by?:string|null; attempts?:number; last_error?:string|null; created_at?:string }
+        Relationships: []
+      }
+      integration_dead_letters: {
+        Row: { id:string; outbox_id:string; aggregate_type:string; aggregate_id:string; event_type:string; payload:Json; attempts:number; last_error:string; failed_at:string; replayed_at:string|null; replayed_by:string|null }
+        Insert: { id?:string; outbox_id:string; aggregate_type:string; aggregate_id:string; event_type:string; payload:Json; attempts:number; last_error:string; failed_at?:string; replayed_at?:string|null; replayed_by?:string|null }
+        Update: { id?:string; outbox_id?:string; aggregate_type?:string; aggregate_id?:string; event_type?:string; payload?:Json; attempts?:number; last_error?:string; failed_at?:string; replayed_at?:string|null; replayed_by?:string|null }
+        Relationships: []
+      }
+      projection_checkpoints: {
+        Row: { consumer_name:string; last_event_id:string|null; last_occurred_at:string|null; processed_count:number; updated_at:string }
+        Insert: { consumer_name:string; last_event_id?:string|null; last_occurred_at?:string|null; processed_count?:number; updated_at?:string }
+        Update: { consumer_name?:string; last_event_id?:string|null; last_occurred_at?:string|null; processed_count?:number; updated_at?:string }
+        Relationships: []
+      }
+      integration_delivery_attempts: {
+        Row: { id:string; outbox_id:string; consumer_name:string; attempt_number:number; status:string; error:string|null; started_at:string; completed_at:string|null }
+        Insert: { id?:string; outbox_id:string; consumer_name:string; attempt_number:number; status:string; error?:string|null; started_at?:string; completed_at?:string|null }
+        Update: { id?:string; outbox_id?:string; consumer_name?:string; attempt_number?:number; status?:string; error?:string|null; started_at?:string; completed_at?:string|null }
+        Relationships: []
+      }
+      legal_audit_verification_runs: {
+        Row: { id:string; legal_matter_id:string; verified:boolean; checked:number; broken_at:string|null; failure_reason:string|null; verified_at:string; alerted_at:string|null }
+        Insert: { id?:string; legal_matter_id:string; verified:boolean; checked:number; broken_at?:string|null; failure_reason?:string|null; verified_at?:string; alerted_at?:string|null }
+        Update: { id?:string; legal_matter_id?:string; verified?:boolean; checked?:number; broken_at?:string|null; failure_reason?:string|null; verified_at?:string; alerted_at?:string|null }
+        Relationships: []
+      }
+      client_case_read_model: {
+        Row: { case_id:string; client_id:string; legal_matter_id:string|null; matter_reference:string|null; friendly_status:string; shared_summary:string|null; property_address:string|null; settlement_date:string|null; next_client_action:string|null; practice_name:string|null; practice_email:string|null; practice_phone:string|null; solicitor_name:string|null; solicitor_email:string|null; source_version:number; updated_at:string }
+        Insert: { case_id:string; client_id:string; legal_matter_id?:string|null; matter_reference?:string|null; friendly_status:string; shared_summary?:string|null; property_address?:string|null; settlement_date?:string|null; next_client_action?:string|null; practice_name?:string|null; practice_email?:string|null; practice_phone?:string|null; solicitor_name?:string|null; solicitor_email?:string|null; source_version:number; updated_at?:string }
+        Update: { case_id?:string; client_id?:string; legal_matter_id?:string|null; matter_reference?:string|null; friendly_status?:string; shared_summary?:string|null; property_address?:string|null; settlement_date?:string|null; next_client_action?:string|null; practice_name?:string|null; practice_email?:string|null; practice_phone?:string|null; solicitor_name?:string|null; solicitor_email?:string|null; source_version?:number; updated_at?:string }
+        Relationships: []
+      }
+      client_case_activity_read_model: {
+        Row: { id:string; case_id:string; client_id:string; event_key:string; activity_type:string; title:string; summary:string|null; occurred_at:string; source_version:number; created_at:string }
+        Insert: { id?:string; case_id:string; client_id:string; event_key:string; activity_type:string; title:string; summary?:string|null; occurred_at:string; source_version?:number; created_at?:string }
+        Update: { id?:string; case_id?:string; client_id?:string; event_key?:string; activity_type?:string; title?:string; summary?:string|null; occurred_at?:string; source_version?:number; created_at?:string }
+        Relationships: []
+      }
+      client_document_acknowledgements: {
+        Row: { id:string; case_id:string; document_record_id:string; document_version_id:string; client_portal_user_id:string; acknowledgement_type:string; acknowledged_at:string; ip_hash:string|null; user_agent_hash:string|null; correlation_id:string }
+        Insert: { id?:string; case_id:string; document_record_id:string; document_version_id:string; client_portal_user_id:string; acknowledgement_type?:string; acknowledged_at?:string; ip_hash?:string|null; user_agent_hash?:string|null; correlation_id?:string }
+        Update: { id?:string; case_id?:string; document_record_id?:string; document_version_id?:string; client_portal_user_id?:string; acknowledgement_type?:string; acknowledged_at?:string; ip_hash?:string|null; user_agent_hash?:string|null; correlation_id?:string }
+        Relationships: []
+      }
+      finance_case_read_model: {
+        Row: { case_id:string; client_id:string; legal_matter_id:string|null; purchase_file_id:string|null; finance_status:string|null; lender:string|null; legal_status:string|null; contractual_settlement_date:string|null; matter_reference:string|null; practice_name:string|null; practice_email:string|null; practice_phone:string|null; solicitor_user_id:string|null; solicitor_name:string|null; solicitor_email:string|null; finance_clause_date:string|null; finance_clause_state:string|null; legal_source_version:number|null; legal_updated_at:string|null; link_health:string; source_version:number; updated_at:string }
+        Insert: { case_id:string; client_id:string; legal_matter_id?:string|null; purchase_file_id?:string|null; finance_status?:string|null; lender?:string|null; legal_status?:string|null; contractual_settlement_date?:string|null; matter_reference?:string|null; practice_name?:string|null; practice_email?:string|null; practice_phone?:string|null; solicitor_user_id?:string|null; solicitor_name?:string|null; solicitor_email?:string|null; finance_clause_date?:string|null; finance_clause_state?:string|null; legal_source_version?:number|null; legal_updated_at?:string|null; link_health?:string; source_version:number; updated_at?:string }
+        Update: { case_id?:string; client_id?:string; legal_matter_id?:string|null; purchase_file_id?:string|null; finance_status?:string|null; lender?:string|null; legal_status?:string|null; contractual_settlement_date?:string|null; matter_reference?:string|null; practice_name?:string|null; practice_email?:string|null; practice_phone?:string|null; solicitor_user_id?:string|null; solicitor_name?:string|null; solicitor_email?:string|null; finance_clause_date?:string|null; finance_clause_state?:string|null; legal_source_version?:number|null; legal_updated_at?:string|null; link_health?:string; source_version?:number; updated_at?:string }
+        Relationships: []
+      }
+      solicitor_case_read_model: {
+        Row: { case_id:string; client_id:string; purchase_file_id:string|null; legal_status:string|null; matter_reference:string|null; internal_notes:string|null; finance_status:string|null; lender:string|null; finance_clause_date:string|null; finance_clause_state:string|null; finance_contact_name:string|null; finance_contact_email:string|null; finance_source_version:number|null; finance_updated_at:string|null; link_health:string; source_version:number; updated_at:string }
+        Insert: { case_id:string; client_id:string; purchase_file_id?:string|null; legal_status?:string|null; matter_reference?:string|null; internal_notes?:string|null; finance_status?:string|null; lender?:string|null; finance_clause_date?:string|null; finance_clause_state?:string|null; finance_contact_name?:string|null; finance_contact_email?:string|null; finance_source_version?:number|null; finance_updated_at?:string|null; link_health?:string; source_version:number; updated_at?:string }
+        Update: { case_id?:string; client_id?:string; purchase_file_id?:string|null; legal_status?:string|null; matter_reference?:string|null; internal_notes?:string|null; finance_status?:string|null; lender?:string|null; finance_clause_date?:string|null; finance_clause_state?:string|null; finance_contact_name?:string|null; finance_contact_email?:string|null; finance_source_version?:number|null; finance_updated_at?:string|null; link_health?:string; source_version?:number; updated_at?:string }
+        Relationships: []
+      }
+      transaction_case_operational_events: {
+        Row: { id:string; case_id:string; event_type:string; actor_user_id:string|null; reason:string; metadata:Json; occurred_at:string }
+        Insert: { id?:string; case_id:string; event_type:string; actor_user_id?:string|null; reason:string; metadata?:Json; occurred_at?:string }
+        Update: { id?:string; case_id?:string; event_type?:string; actor_user_id?:string|null; reason?:string; metadata?:Json; occurred_at?:string }
+        Relationships: []
+      }
+      command_case_health_read_model: {
+        Row: { case_id:string; client_id:string; shared_lifecycle_status:string; legal_status:string|null; finance_status:string|null; deal_stage:string|null; link_health:string; open_issue_count:number; source_version:number; updated_at:string }
+        Insert: { case_id:string; client_id:string; shared_lifecycle_status:string; legal_status?:string|null; finance_status?:string|null; deal_stage?:string|null; link_health:string; open_issue_count?:number; source_version:number; updated_at?:string }
+        Update: { case_id?:string; client_id?:string; shared_lifecycle_status?:string; legal_status?:string|null; finance_status?:string|null; deal_stage?:string|null; link_health?:string; open_issue_count?:number; source_version?:number; updated_at?:string }
+        Relationships: []
+      }
+      transaction_cases: {
+        Row: { id: string; client_id: string; case_type: string; canonical_property_id: string | null; property_address_normalized: string | null; jurisdiction: string | null; shared_lifecycle_status: string; risk_level: string; row_version: number; created_by: string | null; opened_at: string; closed_at: string | null; created_at: string; updated_at: string }
+        Insert: { id?: string; client_id: string; case_type?: string; canonical_property_id?: string | null; property_address_normalized?: string | null; jurisdiction?: string | null; shared_lifecycle_status?: string; risk_level?: string; row_version?: number; created_by?: string | null; opened_at?: string; closed_at?: string | null; created_at?: string; updated_at?: string }
+        Update: { id?: string; client_id?: string; case_type?: string; canonical_property_id?: string | null; property_address_normalized?: string | null; jurisdiction?: string | null; shared_lifecycle_status?: string; risk_level?: string; row_version?: number; created_by?: string | null; opened_at?: string; closed_at?: string | null; created_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      transaction_case_links: {
+        Row: { id: string; case_id: string; legal_matter_id: string | null; purchase_file_id: string | null; client_deal_id: string | null; link_source: string; linked_by: string | null; linked_at: string; updated_at: string }
+        Insert: { id?: string; case_id: string; legal_matter_id?: string | null; purchase_file_id?: string | null; client_deal_id?: string | null; link_source: string; linked_by?: string | null; linked_at?: string; updated_at?: string }
+        Update: { id?: string; case_id?: string; legal_matter_id?: string | null; purchase_file_id?: string | null; client_deal_id?: string | null; link_source?: string; linked_by?: string | null; linked_at?: string; updated_at?: string }
+        Relationships: []
+      }
+      transaction_case_link_history: {
+        Row: { id: string; case_id: string; domain_type: string; domain_record_id: string; action: string; link_source: string; actor_user_id: string | null; reason: string | null; occurred_at: string }
+        Insert: { id?: string; case_id: string; domain_type: string; domain_record_id: string; action: string; link_source: string; actor_user_id?: string | null; reason?: string | null; occurred_at?: string }
+        Update: { id?: string; case_id?: string; domain_type?: string; domain_record_id?: string; action?: string; link_source?: string; actor_user_id?: string | null; reason?: string | null; occurred_at?: string }
+        Relationships: []
+      }
+      transaction_case_reconciliation_issues: {
+        Row: { id: string; issue_type: string; legal_matter_id: string | null; purchase_file_id: string | null; client_deal_id: string | null; expected_client_id: string | null; actual_client_id: string | null; details: Json; status: string; issue_key: string; detected_at: string; resolved_at: string | null }
+        Insert: { id?: string; issue_type: string; legal_matter_id?: string | null; purchase_file_id?: string | null; client_deal_id?: string | null; expected_client_id?: string | null; actual_client_id?: string | null; details?: Json; status?: string; detected_at?: string; resolved_at?: string | null }
+        Update: { id?: string; issue_type?: string; legal_matter_id?: string | null; purchase_file_id?: string | null; client_deal_id?: string | null; expected_client_id?: string | null; actual_client_id?: string | null; details?: Json; status?: string; detected_at?: string; resolved_at?: string | null }
         Relationships: []
       }
       user_permissions: {

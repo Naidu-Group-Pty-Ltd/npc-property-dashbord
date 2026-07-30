@@ -21,6 +21,7 @@ import {
   Plus, Trash2, Loader2, Activity, FileText, Lightbulb, Wallet, ShieldCheck,
   ShieldAlert, Calculator, ListChecks, Ship, FileSearch, Inbox, Users, PackageCheck,
   ChevronLeft, ChevronRight,
+  Scale,
 } from 'lucide-react';
 import { ComplianceTab } from '@/components/finance-portal/ComplianceTab';
 import { ApplicantsCard } from '@/components/finance-portal/ApplicantsCard';
@@ -49,6 +50,7 @@ import { EntityCommentsThread } from '@/components/finance-portal/EntityComments
 import { DealTypeFieldsCard } from '@/components/finance-portal/DealTypeFieldsCard';
 import { LenderPacketHistoryCard } from '@/components/finance-portal/LenderPacketHistoryCard';
 import { SettlementRunwayTab } from '@/components/finance-portal/SettlementRunwayTab';
+import { FinanceLegalCoordinationPanel } from '@/components/finance-portal/FinanceLegalCoordinationPanel';
 
 import { toast } from 'sonner';
 import { smartCapitalize } from '@/lib/nameUtils';
@@ -131,6 +133,9 @@ export default function FinancePortalPurchaseFileDetail() {
     { key: 'valuation', label: 'Valuation', icon: Wallet },
     { key: 'risks', label: 'Risks', icon: ShieldAlert },
     { key: 'runway', label: 'Settlement Runway', icon: Ship },
+    ...(import.meta.env.VITE_FINANCE_SOLICITOR_COLLABORATION === 'true'
+      ? [{ key: 'legal', label: 'Legal Coordination', icon: Scale }]
+      : []),
     { key: 'borrowing', label: 'Borrowing', icon: Calculator },
     { key: 'inbox', label: 'Unified Inbox', icon: Inbox },
     { key: 'activity', label: 'Activity', icon: Activity },
@@ -377,6 +382,7 @@ export default function FinancePortalPurchaseFileDetail() {
         <TabsContent value="valuation"><ValuationsTab fileId={fileId!} /></TabsContent>
         <TabsContent value="risks"><RiskRegisterTab fileId={fileId!} /></TabsContent>
         <TabsContent value="runway"><SettlementRunwayTab fileId={fileId!} /></TabsContent>
+        <TabsContent value="legal"><FinanceLegalCoordinationPanel purchaseFileId={fileId!} /></TabsContent>
         <TabsContent value="borrowing">
           <BorrowingSnapshotCard
             fileId={fileId!}

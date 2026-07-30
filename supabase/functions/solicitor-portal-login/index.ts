@@ -1,8 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth.ts"
+import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
+import { auditSolicitorIdentity, GENERIC_AUTH_ERROR, issueSolicitorSession } from "../_shared/solicitorSessions.ts"
 
-const SESSION_HOURS = 12;
 const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
@@ -13,6 +14,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+  if (!validateSolicitorPortalRequest(req)) return new Response(JSON.stringify({ error: GENERIC_AUTH_ERROR }), { status: 401, headers: corsHeaders });
 
   try {
     const supabase = createClient(
@@ -60,6 +62,11 @@ Deno.serve(async (req) => {
     }
 
     const normalizedEmail = String(email).toLowerCase().trim();
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    for (const key of [`solicitor_login:ip:${ip}`, `solicitor_login:email:${normalizedEmail}`]) {
+      const { data: allowed } = await supabase.rpc('check_and_bump_rate_limit', { p_key: key, p_max: 10, p_window_seconds: 900 });
+      if (allowed === false) return new Response(JSON.stringify({ error: GENERIC_AUTH_ERROR }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
 
     const { data: portalUser, error: userError } = await supabase
       .from('solicitor_portal_users')
@@ -75,38 +82,38 @@ Deno.serve(async (req) => {
 
     if (userError || !portalUser) {
       return new Response(
-        JSON.stringify({ error: 'Invalid email or password' }),
+        JSON.stringify({ error: GENERIC_AUTH_ERROR }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
     if (!portalUser.is_active || portalUser.revoked_at) {
       return new Response(
-        JSON.stringify({ error: 'Your access has been revoked. Please contact your administrator.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: GENERIC_AUTH_ERROR }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
     const firm = portalUser.solicitor_firms as any;
     if (!firm || !firm.is_active) {
       return new Response(
-        JSON.stringify({ error: 'The legal practice linked to this account is no longer active.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: GENERIC_AUTH_ERROR }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
     if (portalUser.locked_until && new Date(portalUser.locked_until) > new Date()) {
       const minutesLeft = Math.ceil((new Date(portalUser.locked_until).getTime() - Date.now()) / 60000);
       return new Response(
-        JSON.stringify({ error: `Account temporarily locked. Try again in ${minutesLeft} minute(s).` }),
-        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: GENERIC_AUTH_ERROR }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
     if (!portalUser.password_hash) {
       return new Response(
-        JSON.stringify({ error: 'Please accept your invite first to set up your password.' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: GENERIC_AUTH_ERROR }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
@@ -119,8 +126,10 @@ Deno.serve(async (req) => {
         lockUntil.setMinutes(lockUntil.getMinutes() + LOCKOUT_MINUTES);
         updates.locked_until = lockUntil.toISOString();
         updates.failed_login_attempts = 0;
+        await auditSolicitorIdentity(supabase, req, { userId: portalUser.id, firmId: portalUser.firm_id, action: 'login_lockout' });
       }
       await supabase.from('solicitor_portal_users').update(updates).eq('id', portalUser.id);
+      await supabase.rpc('record_portal_operational_event',{_event_name:newAttempts>=MAX_FAILED_ATTEMPTS?'excessive_authentication_failures':'solicitor_login_failure',_severity:newAttempts>=MAX_FAILED_ATTEMPTS?'high':'warning',_correlation_id:crypto.randomUUID(),_request_id:req.headers.get('x-request-id'),_actor_type:'solicitor_user',_actor_id:portalUser.id,_portal:'solicitor',_case_id:null,_matter_id:null,_firm_id:portalUser.firm_id,_duration_ms:null,_success:false,_metadata:{attempt_bucket:newAttempts>=MAX_FAILED_ATTEMPTS?'lockout':'below_lockout'}});
 
       return new Response(
         JSON.stringify({ error: 'Invalid email or password' }),
@@ -128,32 +137,21 @@ Deno.serve(async (req) => {
       )
     }
 
-    const sessionToken = crypto.randomUUID() + '-' + crypto.randomUUID();
-    const expiresAt = new Date()
-    expiresAt.setHours(expiresAt.getHours() + SESSION_HOURS)
-
-    await supabase
+    const { error: loginUpdateError } = await supabase
       .from('solicitor_portal_users')
       .update({
-        session_token: sessionToken,
-        session_expires_at: expiresAt.toISOString(),
         last_login_at: new Date().toISOString(),
         failed_login_attempts: 0,
         locked_until: null,
+        session_token: null,
+        session_expires_at: null,
       })
       .eq('id', portalUser.id)
+    if (loginUpdateError) throw loginUpdateError;
+    const issued = await issueSolicitorSession(supabase, portalUser.id, req, { deviceLabel: req.headers.get('user-agent') || undefined });
 
-    await supabase.from('solicitor_portal_activity_log').insert({
-      solicitor_user_id: portalUser.id,
-      firm_id: portalUser.firm_id,
-      actor_user_id: portalUser.id,
-      actor_type: 'solicitor_user',
-      action: 'login',
-      entity_type: 'session',
-      ip_address: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null,
-      user_agent: req.headers.get('user-agent') || null,
-      metadata: { email: normalizedEmail },
-    });
+    await auditSolicitorIdentity(supabase, req, { userId: portalUser.id, firmId: portalUser.firm_id, action: 'login', sessionId: issued.id });
+    await supabase.rpc('record_portal_operational_event',{_event_name:'solicitor_login_success',_severity:'info',_correlation_id:crypto.randomUUID(),_request_id:req.headers.get('x-request-id'),_actor_type:'solicitor_user',_actor_id:portalUser.id,_portal:'solicitor',_case_id:null,_matter_id:null,_firm_id:portalUser.firm_id,_duration_ms:null,_success:true,_metadata:{session_id:issued.id}});
 
     return new Response(
       JSON.stringify({
@@ -173,15 +171,14 @@ Deno.serve(async (req) => {
           must_change_password: !!portalUser.must_change_password,
         },
         must_change_password: !!portalUser.must_change_password,
-        session_token: sessionToken,
-        expires_at: expiresAt.toISOString(),
+        session: { id: issued.id, absolute_expires_at: issued.absoluteExpiresAt.toISOString(), idle_expires_at: issued.idleExpiresAt.toISOString() },
       }),
       {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-          'Set-Cookie': createSolicitorSessionCookie(sessionToken, expiresAt),
+          'Set-Cookie': createSolicitorSessionCookie(issued.token, issued.absoluteExpiresAt),
         }
       }
     )

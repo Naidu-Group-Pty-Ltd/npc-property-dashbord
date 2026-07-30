@@ -1,9 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 import {
-  clearSolicitorSessionToken,
-  getSolicitorSessionToken,
   invokeSolicitorFunction,
-  persistSolicitorSessionToken,
   type SolicitorPortalUser,
 } from '@/lib/solicitorPortal';
 
@@ -20,7 +17,7 @@ interface SolicitorPortalAuthContextType {
   acceptTerms: () => Promise<void>;
   completeOnboarding: () => Promise<void>;
   refresh: () => Promise<void>;
-  applySession: (token: string, user: SolicitorPortalUser) => void;
+  applySession: (user: SolicitorPortalUser) => void;
 }
 
 const SolicitorPortalAuthContext = createContext<SolicitorPortalAuthContextType | undefined>(undefined);
@@ -31,19 +28,11 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
   const [previousSeenAt, setPreviousSeenAt] = useState<string | null>(null);
 
   const clearAuthState = useCallback(() => {
-    clearSolicitorSessionToken();
     setUser(null);
     setPreviousSeenAt(null);
   }, []);
 
   const checkSession = useCallback(async () => {
-    const token = getSolicitorSessionToken();
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
     const { data, error } = await invokeSolicitorFunction('solicitor-portal-verify');
     if (error || !data?.valid) {
       clearAuthState();
@@ -69,10 +58,11 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
       return { error: (data as any)?.error || error?.message || 'Login failed' };
     }
 
-    if (data.session_token) persistSolicitorSessionToken(data.session_token);
-    setUser(data.user);
+    // Re-read through the cookie-backed verifier so governance state always comes
+    // from the server, never from login response defaults.
+    await checkSession();
     return {};
-  }, []);
+  }, [checkSession]);
 
   const signOut = useCallback(async () => {
     try {
@@ -123,17 +113,18 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
   }, []);
 
   const acceptTerms = useCallback(async () => {
-    await invokeSolicitorFunction('solicitor-portal-verify', { action: 'accept_terms' });
-    setUser((prev) => (prev ? { ...prev, has_accepted_terms: true } : prev));
+    const { error } = await invokeSolicitorFunction('solicitor-portal-verify', { action: 'accept_current_terms' });
+    if (error) throw error;
+    setUser((prev) => (prev ? { ...prev, has_accepted_terms: true, has_accepted_current_terms: true } : prev));
   }, []);
 
   const completeOnboarding = useCallback(async () => {
-    await invokeSolicitorFunction('solicitor-portal-verify', { action: 'complete_onboarding' });
-    setUser((prev) => (prev ? { ...prev, has_completed_onboarding: true } : prev));
+    const { error } = await invokeSolicitorFunction('solicitor-portal-verify', { action: 'complete_onboarding' });
+    if (error) throw error;
+    setUser((prev) => (prev ? { ...prev, has_completed_onboarding: true, has_completed_mandatory_onboarding: true } : prev));
   }, []);
 
-  const applySession = useCallback((token: string, nextUser: SolicitorPortalUser) => {
-    persistSolicitorSessionToken(token);
+  const applySession = useCallback((nextUser: SolicitorPortalUser) => {
     setUser(nextUser);
     setLoading(false);
   }, []);

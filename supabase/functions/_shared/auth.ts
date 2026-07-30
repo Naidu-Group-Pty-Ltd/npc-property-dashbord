@@ -450,6 +450,7 @@ export const CORS_ALLOWED_REQUEST_HEADERS = [
   'x-portal-session-token',
   'x-finance-session-token',
   'x-solicitor-session-token',
+  'x-portal-request',
   'x-session-id',
   'x-generation-run-id',
 ].join(', ');

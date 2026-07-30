@@ -11,6 +11,8 @@
  */
 import { createClient } from "npm:@supabase/supabase-js@2.55.0";
 import { notifyFinancePortalAssignees } from "../_shared/finance-portal-notify.ts";
+import { LEGAL_MATTER_CLIENT_PROJECTION_SELECT } from "../_shared/legalMatters.ts";
+const CASE_PROJECTIONS_V1 = Deno.env.get('CASE_PROJECTIONS_V1') !== 'false';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -23,6 +25,7 @@ const corsHeaders = {
 function json(d: unknown, s = 200) {
   return new Response(JSON.stringify(d), { status: s, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 }
+async function sha256Telemetry(value:string|null){if(!value)return null;const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return Array.from(new Uint8Array(digest)).map(b=>b.toString(16).padStart(2,'0')).join('');}
 
 function isOfferedSlot(
   window: { weekday: number; start_time: string; end_time: string; slot_duration_min: number },
@@ -57,6 +60,39 @@ Deno.serve(async (req) => {
     const portalUser: any = (session as any)?.client_portal_users;
     if (!portalUser || portalUser.status !== 'active') return json({ error: 'Invalid session' }, 401);
     const clientId = portalUser.client_id;
+
+    if (operation === 'legal_case_summaries') {
+      const projection = CASE_PROJECTIONS_V1
+        ? supabase.from('client_case_read_model').select('case_id,client_id,friendly_status,shared_summary,property_address,settlement_date,next_client_action,source_version,updated_at')
+        : supabase.from('client_legal_case_summary').select(LEGAL_MATTER_CLIENT_PROJECTION_SELECT);
+      const { data, error } = await projection.eq('client_id', clientId).order('updated_at', { ascending: false });
+      if (error) return json({ error: error.message }, 500);
+      return json({ legal_cases: data || [] });
+    }
+
+    if (operation === 'legal_case_runway') {
+      const caseId = String(body.case_id || '');
+      const { data: ownedCase } = await supabase.from('transaction_cases').select('id').eq('id', caseId).eq('client_id', clientId).maybeSingle();
+      if (!ownedCase) return json({ error: 'Not found' }, 404);
+      const { data, error } = await supabase.rpc('get_case_runway', { _case_id: caseId, _audience: 'client' });
+      if (error) return json({ error: error.message }, 500);
+      return json({ runway: data });
+    }
+
+    if (operation === 'legal_documents') {
+      if(Deno.env.get('IMMUTABLE_DOCUMENTS_V2')!=='true')return json({documents:[]});
+      const caseId=String(body.case_id||''); const {data:ownedCase}=await supabase.from('transaction_cases').select('id').eq('id',caseId).eq('client_id',clientId).maybeSingle();if(!ownedCase)return json({error:'Not found'},404);
+      const {data,error}=await supabase.rpc('list_accessible_documents',{_case_id:caseId,_audience:'client',_grantee_id:portalUser.id});if(error)return json({error:error.message},500);
+      const documents=(data||[]).filter((entry:any)=>entry.version?.malware_scan_status==='clean'&&['reviewed','retained','legal_hold'].includes(entry.version?.lifecycle_status)).map((entry:any)=>({id:entry.record.id,case_id:entry.record.case_id,category:entry.record.category,title:entry.record.title,description:entry.record.description,status:entry.record.logical_status,row_version:entry.record.row_version,current_version:{id:entry.version.id,version_number:entry.version.version_number,filename:entry.version.original_filename,mime_type:entry.version.detected_mime_type,byte_size:entry.version.byte_size,sha256:entry.version.sha256,lifecycle_status:entry.version.lifecycle_status,reviewed_at:entry.version.reviewed_at},updated_at:entry.record.updated_at}));
+      return json({documents});
+    }
+
+    if (operation === 'legal_document_download') {
+      if(Deno.env.get('IMMUTABLE_DOCUMENTS_V2')!=='true')return json({error:'Not found'},404);
+      const caseId=String(body.case_id||'');const recordId=String(body.document_record_id||'');const {data:record}=await supabase.from('document_records').select('id,case_id,transaction_cases!inner(client_id)').eq('id',recordId).eq('case_id',caseId).eq('transaction_cases.client_id',clientId).maybeSingle();if(!record)return json({error:'Not found'},404);
+      const {data:authorized,error}=await supabase.rpc('authorize_document_download',{_document_record_id:recordId,_document_version_id:body.document_version_id||null,_audience:'client',_grantee_id:portalUser.id});if(error)return json({error:error.message},500);if(!authorized)return json({error:'Not found'},404);
+      const version=authorized.version;const {data:signed,error:signError}=await supabase.storage.from(version.storage_bucket).createSignedUrl(version.storage_path,300,{download:version.original_filename});if(signError)return json({error:'Download unavailable'},500);const correlationId=crypto.randomUUID();await supabase.rpc('record_document_download',{_document_record_id:recordId,_document_version_id:version.id,_actor_type:'client_user',_actor_id:portalUser.id,_audience:'client',_ip_hash:await sha256Telemetry(req.headers.get('x-forwarded-for')),_user_agent_hash:await sha256Telemetry(req.headers.get('user-agent')),_correlation_id:correlationId});return json({url:signed?.signedUrl||null,filename:version.original_filename,version_id:version.id,sha256:version.sha256});
+    }
 
     if (operation === 'assigned_partner') {
       const { data: assigns, error: assignmentError } = await supabase.from('finance_portal_client_assignments')

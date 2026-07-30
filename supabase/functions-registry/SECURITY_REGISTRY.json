@@ -2347,6 +2347,30 @@
       "exposure_class": "portal-authenticated",
       "owner": "solicitor-portal-program",
       "reviewed": true
+    },
+    "cross-portal-outbox-worker": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
+    },
+    "legal-document-processor": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
+    },
+    "client-legal-workspace": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
+    },
+    "finance-legal-coordination": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
     }
   }
 }

@@ -1,6 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders } from "../_shared/auth.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
+import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
 
 const OTP_EXPIRY_MINUTES = 15;
 const MAX_REQUESTS_PER_WINDOW = 5;
@@ -19,6 +20,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+  if (!validateSolicitorPortalRequest(req)) return new Response(JSON.stringify({ success: true, message: 'If an account exists for that email, a reset code has been sent.' }), { status: 200, headers: corsHeaders });
 
   // Generic response — never reveals whether an account exists.
   const genericOk = () => new Response(
@@ -44,12 +46,8 @@ Deno.serve(async (req) => {
 
     // Rate limit BEFORE any lookup so enumeration cannot outrun the throttle.
     const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
-    const { data: allowed } = await supabase.rpc('check_and_bump_rate_limit', {
-      p_key: `solicitor_forgot:${normalizedEmail}:${ip}`,
-      p_max: MAX_REQUESTS_PER_WINDOW,
-      p_window_seconds: WINDOW_SECONDS,
-    });
-    if (allowed === false) {
+    const limits = await Promise.all([`solicitor_forgot:email:${normalizedEmail}`, `solicitor_forgot:ip:${ip}`].map(p_key => supabase.rpc('check_and_bump_rate_limit', { p_key, p_max: MAX_REQUESTS_PER_WINDOW, p_window_seconds: WINDOW_SECONDS })));
+    if (limits.some(result => result.data === false)) {
       return new Response(
         JSON.stringify({ error: 'Too many reset requests. Please try again later.' }),
         { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

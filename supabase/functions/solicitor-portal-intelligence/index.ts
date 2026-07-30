@@ -18,8 +18,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
 import {
   resolveSolicitorSession,
-  resolveClientPermissions,
-  listAssignedClientIds,
+  solicitorGovernanceError,
+  resolveSolicitorMatterAccess,
+  resolveMatterPermissions,
+  listAccessibleMatterIds,
   logSolicitorActivity,
   requestIp,
   can,
@@ -30,7 +32,6 @@ import { LEGAL_DOCUMENT_BUCKET } from "../_shared/legalDocuments.ts";
 import {
   CONTRACT_ANALYSIS_SELECT,
   CONTRACT_ANALYSIS_STATUSES,
-  CONTRACT_ANALYSIS_SYSTEM_PROMPT,
   CONTRACT_ANALYSIS_TOOL,
   PIPELINE_STAGES,
   assessMatterRisk,
@@ -40,8 +41,8 @@ import {
 } from "../_shared/legalIntelligence.ts";
 
 const MODEL = "google/gemini-3.6-flash";
-const MAX_CONTRACT_CHARS = 240_000;
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
+const sha256 = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -70,10 +71,12 @@ Deno.serve(async (req) => {
       return json({ error: session.error || 'Unauthorised' }, session.status || 401);
     }
     const me = session.user;
+    const governanceError = solicitorGovernanceError(me);
+    if (governanceError) return json({ error: 'Portal setup required', code: governanceError }, 403);
     const ip = requestIp(req);
     const userAgent = req.headers.get('user-agent');
 
-    const assignedClientIds = await listAssignedClientIds(supabase, me.id);
+    const accessibleMatterIds = await listAccessibleMatterIds(supabase, me.id, me.firm_id, 'contract');
 
     /** Load a matter and confirm this solicitor may see it. */
     const loadMatter = async (matterId: string): Promise<
@@ -86,13 +89,14 @@ Deno.serve(async (req) => {
         .eq('id', matterId)
         .maybeSingle();
       if (!matter) return { ok: false, status: 404, error: 'Matter not found' };
-      if (matter.firm_id && matter.firm_id !== me.firm_id) {
-        return { ok: false, status: 403, error: 'This matter belongs to another practice' };
+      if (!matter.firm_id || matter.firm_id !== me.firm_id) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      if (!matter.client_id || !assignedClientIds.includes(matter.client_id)) {
-        return { ok: false, status: 403, error: 'You do not have access to this matter' };
+      const access = await resolveSolicitorMatterAccess(supabase, me.id, me.firm_id, matter.id);
+      if (!access) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      const perms = await resolveClientPermissions(supabase, me.id, matter.client_id);
+      const perms = await resolveMatterPermissions(supabase, access);
       if (!perms || !can(perms, 'matters', 'view')) {
         return { ok: false, status: 403, error: 'You do not have access to this matter' };
       }
@@ -101,12 +105,12 @@ Deno.serve(async (req) => {
 
     /** All matters this solicitor may see, with client display names attached. */
     const loadVisibleMatters = async () => {
-      if (!assignedClientIds.length) return [] as any[];
+      if (!accessibleMatterIds.length) return [] as any[];
       const { data, error } = await supabase
         .from('legal_matters')
         .select(MATTER_SELECT)
-        .in('client_id', assignedClientIds)
-        .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
+        .in('id', accessibleMatterIds)
+        .eq('firm_id', me.firm_id)
         .limit(1000);
       if (error) throw error;
       const rows = data || [];
@@ -230,179 +234,77 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: false })
         .limit(50);
       if (error) throw error;
-      return json({ success: true, records: data || [] });
+      const analysisIds=(data||[]).map((row:any)=>row.id);
+      const {data:runs}=analysisIds.length?await supabase.from('ai_analysis_runs').select('id,legacy_analysis_id,status,review_status,provider,model,request_correlation_id,input_hash,output_hash,input_tokens,output_tokens,cost_usd,created_at,ai_prompt_versions(version,jurisdiction),ai_analysis_sources(document_version_id,source_sha256)').in('legacy_analysis_id',analysisIds):{data:[]};
+      const byAnalysis=new Map((runs||[]).map((run:any)=>[run.legacy_analysis_id,run]));
+      return json({ success: true, records: (data||[]).map((row:any)=>({...row,governance:byAnalysis.get(row.id)||null})) });
+    }
+
+    if (operation === 'get_ai_policy_status') {
+      const { data: policy } = await supabase.from('firm_ai_policies').select('external_processing_enabled,consent_version,provider,allowed_models,max_input_tokens,max_output_tokens,max_cost_usd,timeout_seconds,redaction_profile,circuit_open_until').eq('firm_id',me.firm_id).maybeSingle();
+      return json({ success:true, policy: policy ? { configured:true, enabled:policy.external_processing_enabled, consent_version:policy.consent_version, provider:policy.provider, allowed_models:policy.allowed_models, max_cost_usd:policy.max_cost_usd, redaction_profile:policy.redaction_profile, available:policy.external_processing_enabled && (!policy.circuit_open_until || new Date(policy.circuit_open_until)<=new Date()) } : { configured:false,enabled:false,available:false } });
     }
 
     if (operation === 'analyse_contract') {
       const res = await loadMatter(String(body.matter_id || ''));
       if (!res.ok) return json({ error: res.error }, res.status);
       const { matter, perms } = res;
-      if (!can(perms, 'contract', 'edit')) {
-        return json({ error: 'You do not have permission to run contract intelligence' }, 403);
-      }
+      if (!can(perms, 'contract', 'edit') || !can(perms, 'documents', 'view')) return json({ error: 'You do not have permission to run contract intelligence' }, 403);
 
-      const apiKey = Deno.env.get('LOVABLE_API_KEY');
-      if (!apiKey) return json({ error: 'AI is not configured for this project' }, 503);
+      const [{ data: policy }, { data: prompt }] = await Promise.all([
+        supabase.from('firm_ai_policies').select('*').eq('firm_id',me.firm_id).maybeSingle(),
+        supabase.from('ai_prompt_versions').select('id,version,content,content_sha256,jurisdiction').eq('prompt_key','legal_contract_review').eq('jurisdiction','AU').eq('active',true).maybeSingle(),
+      ]);
+      if (!policy?.external_processing_enabled || !policy.consent_version) return json({ error:'External AI processing is disabled for this practice',code:'AI_POLICY_DISABLED' },403);
+      if (policy.circuit_open_until && new Date(policy.circuit_open_until)>new Date()) return json({ error:'Contract intelligence is temporarily paused after provider failures',code:'AI_CIRCUIT_OPEN' },503);
+      if (!prompt) return json({ error:'No approved prompt exists for this jurisdiction',code:'AI_PROMPT_UNAVAILABLE' },503);
+      const model=cleanText(body.model,120) || MODEL;
+      if (!policy.allowed_models?.includes(model)) return json({ error:'That model is not approved by this practice',code:'AI_MODEL_NOT_ALLOWED' },403);
+      const apiKey = Deno.env.get('LOVABLE_API_KEY'); if (!apiKey) return json({ error:'AI is not configured for this project' },503);
 
-      let contractText = cleanText(body.contract_text, MAX_CONTRACT_CHARS);
-      let documentId: string | null = null;
-      let sourceLabel = cleanText(body.source_label, 200);
-      const fileParts: any[] = [];
+      const { data: legacyDocument } = await supabase.from('legal_matter_documents').select('id,legal_matter_id,immutable_current_version_id').eq('id',String(body.document_id||'')).maybeSingle();
+      if (!legacyDocument || legacyDocument.legal_matter_id!==matter.id || !legacyDocument.immutable_current_version_id) return json({ error:'Choose a clean immutable document version',code:'IMMUTABLE_SOURCE_REQUIRED' },400);
+      const { data: sourceVersion } = await supabase.from('document_versions').select('id,document_record_id,storage_bucket,storage_path,original_filename,detected_mime_type,byte_size,sha256,malware_scan_status,lifecycle_status,document_records!inner(id,legal_matter_id,allow_external_ai)').eq('id',legacyDocument.immutable_current_version_id).maybeSingle();
+      const record=(sourceVersion as any)?.document_records;
+      if (!sourceVersion || record?.legal_matter_id!==matter.id || record?.allow_external_ai!==true) return json({ error:'This document is not approved for external AI processing',code:'DOCUMENT_AI_PERMISSION_REQUIRED' },403);
+      if (sourceVersion.malware_scan_status!=='clean' || !['reviewed','retained','legal_hold'].includes(sourceVersion.lifecycle_status) || !sourceVersion.sha256) return json({ error:'Only clean, reviewed immutable versions can be analysed',code:'DOCUMENT_NOT_REVIEWED' },409);
+      if (Number(sourceVersion.byte_size)>MAX_DOCUMENT_BYTES) return json({ error:'That document exceeds the practice AI size limit' },413);
 
-      if (body.document_id) {
-        if (!can(perms, 'documents', 'view')) {
-          return json({ error: 'You do not have access to matter documents' }, 403);
-        }
-        const { data: doc } = await supabase
-          .from('legal_matter_documents')
-          .select('id, legal_matter_id, storage_bucket, storage_path, file_name, mime_type, file_size, label')
-          .eq('id', String(body.document_id))
-          .maybeSingle();
-        if (!doc || doc.legal_matter_id !== matter.id) {
-          return json({ error: 'Document not found on this matter' }, 404);
-        }
-        if (!doc.storage_path) return json({ error: 'That document has no uploaded file yet' }, 400);
-        if (Number(doc.file_size) > MAX_DOCUMENT_BYTES) {
-          return json({ error: 'That file is too large to analyse. Paste the relevant clauses instead.' }, 413);
-        }
+      const idempotencyKey=await sha256(`${matter.id}:${sourceVersion.sha256}:${prompt.id}:${model}`);
+      const { data: existingRun } = await supabase.from('ai_analysis_runs').select('id,status,review_status,legacy_analysis_id').eq('idempotency_key',idempotencyKey).maybeSingle();
+      if (existingRun) { const {data:existing}=existingRun.legacy_analysis_id?await supabase.from('legal_contract_analyses').select(CONTRACT_ANALYSIS_SELECT).eq('id',existingRun.legacy_analysis_id).maybeSingle():{data:null}; return json({success:true,record:existing,run:existingRun,idempotent:true}); }
+      const correlationId=crypto.randomUUID();
+      const {data:run,error:runError}=await supabase.from('ai_analysis_runs').insert({firm_id:me.firm_id,legal_matter_id:matter.id,prompt_version_id:prompt.id,provider:policy.provider,model,idempotency_key:idempotencyKey,status:'running',review_status:'review_required',redaction_profile:policy.redaction_profile,jurisdiction:matter.property_state||prompt.jurisdiction,request_correlation_id:correlationId,input_hash:sourceVersion.sha256,requested_by:me.id,started_at:new Date().toISOString()}).select('*').single();
+      if(runError) throw runError;
+      await supabase.from('ai_analysis_sources').insert({run_id:run.id,document_version_id:sourceVersion.id,source_sha256:sourceVersion.sha256,permission_confirmed_at:new Date().toISOString()});
 
-        const { data: file, error: dlError } = await supabase.storage
-          .from(doc.storage_bucket || LEGAL_DOCUMENT_BUCKET)
-          .download(doc.storage_path);
-        if (dlError || !file) return json({ error: 'Could not read that document from storage' }, 502);
-
-        const mime = String(doc.mime_type || '').toLowerCase();
-        documentId = doc.id;
-        sourceLabel = sourceLabel ?? cleanText(doc.label || doc.file_name, 200);
-
-        if (mime.startsWith('text/') || mime === 'application/json') {
-          contractText = (await file.text()).slice(0, MAX_CONTRACT_CHARS);
-        } else {
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          let binary = '';
-          for (let i = 0; i < bytes.length; i += 0x8000) {
-            binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-          }
-          const dataUrl = `data:${mime || 'application/pdf'};base64,${btoa(binary)}`;
-          if (mime.startsWith('image/')) {
-            fileParts.push({ type: 'image_url', image_url: { url: dataUrl } });
-          } else if (mime === 'application/pdf') {
-            fileParts.push({ type: 'file', file: { filename: doc.file_name || 'contract.pdf', file_data: dataUrl } });
-          } else {
-            return json({
-              error: 'Only PDF, image or text documents can be analysed. Paste the contract text instead.',
-            }, 415);
-          }
-        }
-      }
-
-      if (!contractText && !fileParts.length) {
-        return json({ error: 'Provide contract text or choose an uploaded document' }, 400);
-      }
-
-      const contextLines = [
-        `Matter: ${matter.title ?? matter.matter_reference ?? matter.id}`,
-        matter.matter_type ? `Matter type: ${matter.matter_type}` : null,
-        matter.property_address
-          ? `Property: ${[matter.property_address, matter.property_suburb, matter.property_state, matter.property_postcode].filter(Boolean).join(', ')}`
-          : null,
-        matter.property_state ? `Jurisdiction: ${matter.property_state}` : null,
-      ].filter(Boolean).join('\n');
-
-      const userContent: any[] = [
-        {
-          type: 'text',
-          text: [
-            'Review the following Australian contract of sale and record a structured analysis.',
-            '',
-            contextLines,
-            '',
-            contractText ? `Contract text:\n${contractText}` : 'The contract is supplied as an attached file.',
-          ].join('\n'),
-        },
-        ...fileParts,
-      ];
-
-      const aiResponse = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: MODEL,
-          messages: [
-            { role: 'system', content: CONTRACT_ANALYSIS_SYSTEM_PROMPT },
-            { role: 'user', content: userContent },
-          ],
-          tools: [CONTRACT_ANALYSIS_TOOL],
-          tool_choice: { type: 'function', function: { name: CONTRACT_ANALYSIS_TOOL.function.name } },
-        }),
-      });
-
-      if (aiResponse.status === 429) {
-        return json({ error: 'AI rate limit reached. Please try again in a moment.' }, 429);
-      }
-      if (aiResponse.status === 402) {
-        return json({ error: 'AI credits exhausted. Add credits to continue using contract intelligence.' }, 402);
-      }
-      if (!aiResponse.ok) {
-        const detail = await aiResponse.text();
-        console.error('[solicitor-portal-intelligence] AI gateway error', aiResponse.status, detail.slice(0, 500));
-        return json({ error: 'The contract analyser could not process that document.' }, 502);
-      }
-
-      const aiData = await aiResponse.json();
-      const toolCall = aiData?.choices?.[0]?.message?.tool_calls?.[0];
-      if (!toolCall) return json({ error: 'The analyser returned no structured result. Try again.' }, 502);
-
-      let parsed: any;
       try {
-        parsed = JSON.parse(toolCall.function.arguments);
-      } catch {
-        return json({ error: 'The analyser returned an unreadable result. Try again.' }, 502);
+        const {data:file,error:downloadError}=await supabase.storage.from(sourceVersion.storage_bucket).download(sourceVersion.storage_path); if(downloadError||!file)throw new Error('SOURCE_DOWNLOAD_FAILED');
+        const bytes=new Uint8Array(await file.arrayBuffer()); let binary=''; for(let i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode(...bytes.subarray(i,i+0x8000));
+        const mime=String(sourceVersion.detected_mime_type||''); const dataUrl=`data:${mime};base64,${btoa(binary)}`;
+        const filePart=mime.startsWith('image/')?{type:'image_url',image_url:{url:dataUrl}}:{type:'file',file:{filename:sourceVersion.original_filename,file_data:dataUrl}};
+        const estimatedInputTokens=Math.ceil(bytes.length/3); if(estimatedInputTokens>policy.max_input_tokens)throw new Error('AI_INPUT_TOKEN_CAP');
+        const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),Math.min(120,policy.timeout_seconds)*1000);
+        const requestBody=JSON.stringify({model,max_tokens:policy.max_output_tokens,messages:[{role:'system',content:prompt.content},{role:'user',content:[{type:'text',text:`Review this Australian contract for jurisdiction ${matter.property_state||'AU'}. Assistive output only.`},filePart]}],tools:[CONTRACT_ANALYSIS_TOOL],tool_choice:{type:'function',function:{name:CONTRACT_ANALYSIS_TOOL.function.name}}});
+        let aiResponse:Response|undefined; try { for(let attempt=0;attempt<2;attempt++){aiResponse=await fetch('https://ai.gateway.lovable.dev/v1/chat/completions',{method:'POST',signal:controller.signal,headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json','X-Correlation-ID':correlationId},body:requestBody});if(!(aiResponse.status===429||aiResponse.status>=500)||attempt===1)break;await new Promise(resolve=>setTimeout(resolve,500));} } finally { clearTimeout(timeout); }
+        if(!aiResponse)throw new Error('AI_PROVIDER_NO_RESPONSE');
+        if(!aiResponse.ok)throw new Error(`AI_PROVIDER_${aiResponse.status}`);
+        const aiData=await aiResponse.json(); const toolCall=aiData?.choices?.[0]?.message?.tool_calls?.[0]; if(!toolCall)throw new Error('AI_STRUCTURED_OUTPUT_MISSING');
+        const rawOutput=String(toolCall.function.arguments); const payload=normaliseAnalysisPayload(JSON.parse(rawOutput)); const outputHash=await sha256(rawOutput);
+        const inputTokens=Number(aiData?.usage?.prompt_tokens)||estimatedInputTokens,outputTokens=Number(aiData?.usage?.completion_tokens)||null; const estimatedCost=Number(((inputTokens*0.0000005+(outputTokens||0)*0.0000015)).toFixed(4));
+        if(estimatedCost>Number(policy.max_cost_usd))throw new Error('AI_COST_CAP');
+        const {data:inserted,error:insertError}=await supabase.from('legal_contract_analyses').insert({legal_matter_id:matter.id,firm_id:me.firm_id,document_id:legacyDocument.id,source_label:sourceVersion.original_filename,status:'draft',model,summary:payload.summary,parties:payload.parties,key_dates:payload.key_dates,special_conditions:payload.special_conditions,risk_flags:payload.risk_flags,financials:payload.financials,confidence:payload.confidence,created_by_type:'solicitor_user',created_by_solicitor_user_id:me.id}).select(CONTRACT_ANALYSIS_SELECT).single(); if(insertError)throw insertError;
+        await Promise.all([supabase.from('ai_analysis_runs').update({status:'succeeded',legacy_analysis_id:inserted.id,output_hash:outputHash,input_tokens:inputTokens,output_tokens:outputTokens,cost_usd:estimatedCost,completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',run.id),supabase.from('firm_ai_policies').update({consecutive_failures:0,circuit_open_until:null,updated_at:new Date().toISOString()}).eq('id',policy.id)]);
+        await supabase.rpc('record_portal_operational_event',{_event_name:'ai_analysis_run',_severity:'info',_correlation_id:correlationId,_request_id:run.id,_actor_type:'solicitor_user',_actor_id:me.id,_portal:'solicitor',_case_id:null,_matter_id:matter.id,_firm_id:me.firm_id,_duration_ms:Date.now()-new Date(run.started_at).getTime(),_success:true,_metadata:{model,prompt_version:prompt.version,cost_usd:estimatedCost,input_tokens:inputTokens,output_tokens:outputTokens}});
+        await logSolicitorActivity(supabase,{solicitor_user_id:me.id,firm_id:me.firm_id,action:'contract_analysis_generated',client_id:matter.client_id,legal_matter_id:matter.id,entity_type:'ai_analysis_run',entity_id:run.id,metadata:{document_version_id:sourceVersion.id,model,prompt_version:prompt.version,correlation_id:correlationId},ip_address:ip,user_agent:userAgent});
+        return json({success:true,record:inserted,run:{id:run.id,review_status:'review_required',source_sha256:sourceVersion.sha256,prompt_version:prompt.version,model,provider:policy.provider,cost_usd:estimatedCost},idempotent:false});
+      } catch(error) {
+        const code=error instanceof DOMException&&error.name==='AbortError'?'AI_TIMEOUT':error instanceof Error?error.message:'AI_RUN_FAILED'; const failures=Number(policy.consecutive_failures||0)+1;
+        await Promise.all([supabase.from('ai_analysis_runs').update({status:code==='AI_TIMEOUT'?'cancelled':'failed',error_code:code.slice(0,120),completed_at:new Date().toISOString(),updated_at:new Date().toISOString()}).eq('id',run.id),supabase.from('firm_ai_policies').update({consecutive_failures:failures,circuit_open_until:failures>=3?new Date(Date.now()+15*60_000).toISOString():null,updated_at:new Date().toISOString()}).eq('id',policy.id)]);
+        await supabase.rpc('record_portal_operational_event',{_event_name:'ai_analysis_run',_severity:'warning',_correlation_id:correlationId,_request_id:run.id,_actor_type:'solicitor_user',_actor_id:me.id,_portal:'solicitor',_case_id:null,_matter_id:matter.id,_firm_id:me.firm_id,_duration_ms:Date.now()-new Date(run.started_at).getTime(),_success:false,_metadata:{model,prompt_version:prompt.version,error_code:code.slice(0,120)}});
+        console.error('[solicitor-portal-intelligence] governed AI run failed',{run_id:run.id,correlation_id:correlationId,error_code:code.slice(0,120)});
+        return json({error:code==='AI_TIMEOUT'?'Contract analysis timed out':'Contract analysis could not be completed',code},code==='AI_TIMEOUT'?504:502);
       }
-      const payload = normaliseAnalysisPayload(parsed);
-
-      const { data: inserted, error: insertError } = await supabase
-        .from('legal_contract_analyses')
-        .insert({
-          legal_matter_id: matter.id,
-          firm_id: me.firm_id,
-          document_id: documentId,
-          source_label: sourceLabel ?? 'Pasted contract text',
-          status: 'draft',
-          model: MODEL,
-          summary: payload.summary,
-          parties: payload.parties,
-          key_dates: payload.key_dates,
-          special_conditions: payload.special_conditions,
-          risk_flags: payload.risk_flags,
-          financials: payload.financials,
-          confidence: payload.confidence,
-          created_by_type: 'solicitor_user',
-          created_by_solicitor_user_id: me.id,
-        })
-        .select(CONTRACT_ANALYSIS_SELECT)
-        .maybeSingle();
-      if (insertError) throw insertError;
-
-      await logSolicitorActivity(supabase, {
-        solicitor_user_id: me.id,
-        firm_id: me.firm_id,
-        action: 'contract_analysis_generated',
-        client_id: matter.client_id,
-        legal_matter_id: matter.id,
-        entity_type: 'legal_contract_analysis',
-        entity_id: inserted?.id ?? null,
-        metadata: {
-          document_id: documentId,
-          model: MODEL,
-          conditions: payload.special_conditions.length,
-          risks: payload.risk_flags.length,
-        },
-        ip_address: ip,
-        user_agent: userAgent,
-      });
-
-      return json({ success: true, record: inserted });
     }
 
     if (operation === 'set_analysis_status') {
@@ -436,6 +338,9 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (error) throw error;
 
+      const {data:governedRun}=await supabase.from('ai_analysis_runs').select('id').eq('legacy_analysis_id',analysis.id).maybeSingle();
+      if(governedRun){const reviewStatus=status==='confirmed'?'confirmed':'rejected';const {error:reviewError}=await supabase.rpc('review_ai_analysis_run',{_run_id:governedRun.id,_reviewer_id:me.id,_status:reviewStatus,_notes:cleanText(body.review_notes,2000)});if(reviewError)throw reviewError;}
+
       await logSolicitorActivity(supabase, {
         solicitor_user_id: me.id,
         firm_id: me.firm_id,
@@ -465,8 +370,10 @@ Deno.serve(async (req) => {
         return json({ error: 'You do not have permission to delete contract intelligence' }, 403);
       }
 
-      const { error } = await supabase.from('legal_contract_analyses').delete().eq('id', analysis.id);
+      const { error } = await supabase.from('legal_contract_analyses').update({status:'dismissed',review_notes:'Superseded by reviewer; retained for provenance'}).eq('id', analysis.id);
       if (error) throw error;
+      const {data:governedRun}=await supabase.from('ai_analysis_runs').select('id,status').eq('legacy_analysis_id',analysis.id).maybeSingle();
+      if(governedRun?.status==='succeeded')await supabase.rpc('review_ai_analysis_run',{_run_id:governedRun.id,_reviewer_id:me.id,_status:'superseded',_notes:'Removed from active Solicitor workspace; provenance retained'});
 
       await logSolicitorActivity(supabase, {
         solicitor_user_id: me.id,

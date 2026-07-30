@@ -47,6 +47,7 @@ export interface ContractAnalysis {
   review_notes: string | null;
   created_at: string;
   updated_at: string;
+  governance?: { id:string; status:string; review_status:string; provider:string; model:string; request_correlation_id:string; input_hash:string; output_hash:string|null; input_tokens:number|null; output_tokens:number|null; cost_usd:number|null; ai_prompt_versions?:{version:number;jurisdiction:string}; ai_analysis_sources?:Array<{document_version_id:string;source_sha256:string}> } | null;
 }
 
 export type MatterRiskLevel = 'critical' | 'high' | 'medium' | 'ok';
@@ -152,6 +153,10 @@ export function fetchAtRiskMatters(limit = 12, mineOnly = false) {
 
 export function listContractAnalyses(matterId: string) {
   return call<{ records: ContractAnalysis[] }>({ operation: 'list_analyses', matter_id: matterId });
+}
+
+export function getAiPolicyStatus() {
+  return call<{policy:{configured:boolean;enabled:boolean;available:boolean;consent_version?:string;provider?:string;allowed_models?:string[];max_cost_usd?:number;redaction_profile?:string}}>({ operation:'get_ai_policy_status' });
 }
 
 export function analyseContract(input: {

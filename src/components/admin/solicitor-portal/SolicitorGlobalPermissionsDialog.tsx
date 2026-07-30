@@ -24,7 +24,7 @@ interface Props {
 /**
  * Per-solicitor GLOBAL baseline permissions.
  * OR-merged with each per-client matrix — a per-client matrix can only add
- * permissions on top, never remove what the baseline grants.
+ * matter policies can explicitly allow or deny; deny overrides this baseline.
  */
 export function SolicitorGlobalPermissionsDialog({ open, onOpenChange, user, onSaved }: Props) {
   const [loading, setLoading] = useState(false);

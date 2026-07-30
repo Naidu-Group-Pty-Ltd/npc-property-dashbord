@@ -1,9 +1,8 @@
-import { ReactNode } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
 
-export function SolicitorPortalProtectedRoute({ children }: { children: ReactNode }) {
+export function SolicitorPortalProtectedRoute() {
   const { user, loading } = useSolicitorPortalAuth();
   const location = useLocation();
 
@@ -23,9 +22,21 @@ export function SolicitorPortalProtectedRoute({ children }: { children: ReactNod
   }
 
   // Temp-password users must rotate their password before anything else.
-  if (user.must_change_password && location.pathname !== '/solicitor/change-password') {
-    return <Navigate to="/solicitor/change-password" replace />;
+  if (user.must_change_password) {
+    return location.pathname === '/solicitor/change-password'
+      ? <Outlet />
+      : <Navigate to="/solicitor/change-password" replace />;
+  }
+  if (!user.has_accepted_current_terms) {
+    return location.pathname === '/solicitor/terms'
+      ? <Outlet />
+      : <Navigate to="/solicitor/terms" replace />;
+  }
+  if (!user.has_completed_mandatory_onboarding) {
+    return location.pathname === '/solicitor/onboarding'
+      ? <Outlet />
+      : <Navigate to="/solicitor/onboarding" replace />;
   }
 
-  return <>{children}</>;
+  return <Outlet />;
 }

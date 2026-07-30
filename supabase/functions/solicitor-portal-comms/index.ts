@@ -19,8 +19,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
 import {
   resolveSolicitorSession,
-  resolveClientPermissions,
-  listAssignedClientIds,
+  solicitorGovernanceError,
+  resolveSolicitorMatterAccess,
+  resolveMatterPermissions,
+  listAccessibleMatterIds,
   logSolicitorActivity,
   requestIp,
   can,
@@ -36,13 +38,15 @@ import {
   isValidScope,
   scopeLabel,
   preview,
-  mirrorToClientPortal,
-  mirrorToFinancePortal,
   summariseThreads,
   type LegalThreadScope,
 } from "../_shared/legalComms.ts";
 
 const MAX_BODY_LENGTH = 8000;
+const CANONICAL_CONVERSATIONS_V2 = Deno.env.get('CANONICAL_CONVERSATIONS_V2') !== 'false';
+const canonicalScope = (scope: LegalThreadScope) => ({ solicitor_npc: 'npc_solicitor', solicitor_client: 'client_solicitor', solicitor_finance: 'finance_solicitor', firm_internal: 'firm_internal' } as const)[scope];
+const legacyScope = (scope: string) => ({ npc_solicitor: 'solicitor_npc', client_solicitor: 'solicitor_client', finance_solicitor: 'solicitor_finance', firm_internal: 'firm_internal' } as Record<string,string>)[scope] || scope;
+const legacySender = (sender: string) => ({ command_user: 'staff', client_user: 'client', finance_user: 'finance_partner' } as Record<string,string>)[sender] || sender;
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -71,12 +75,14 @@ Deno.serve(async (req) => {
       return json({ error: session.error || 'Unauthorised' }, session.status || 401);
     }
     const me = session.user;
+    const governanceError = solicitorGovernanceError(me);
+    if (governanceError) return json({ error: 'Portal setup required', code: governanceError }, 403);
     const ip = requestIp(req);
     const userAgent = req.headers.get('user-agent');
     const displayName = me.name || me.email;
     const firmLabel = me.firm?.trading_name || me.firm?.name || 'Legal practice';
 
-    const assignedClientIds = await listAssignedClientIds(supabase, me.id);
+    const accessibleMatterIds = await listAccessibleMatterIds(supabase, me.id, me.firm_id, 'messages');
 
     const loadMatter = async (matterId: string): Promise<
       { ok: true; matter: any; perms: PermissionMatrix } | { ok: false; status: number; error: string }
@@ -88,13 +94,14 @@ Deno.serve(async (req) => {
         .eq('id', matterId)
         .maybeSingle();
       if (!matter) return { ok: false, status: 404, error: 'Matter not found' };
-      if (matter.firm_id && matter.firm_id !== me.firm_id) {
-        return { ok: false, status: 403, error: 'This matter belongs to another practice' };
+      if (!matter.firm_id || matter.firm_id !== me.firm_id) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      if (!matter.client_id || !assignedClientIds.includes(matter.client_id)) {
-        return { ok: false, status: 403, error: 'You do not have access to this matter' };
+      const access = await resolveSolicitorMatterAccess(supabase, me.id, me.firm_id, matter.id);
+      if (!access) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      const perms = await resolveClientPermissions(supabase, me.id, matter.client_id);
+      const perms = await resolveMatterPermissions(supabase, access);
       if (!perms || !can(perms, 'messages', 'view')) {
         return { ok: false, status: 403, error: 'You do not have access to matter messages' };
       }
@@ -112,6 +119,21 @@ Deno.serve(async (req) => {
       entity_type: 'legal_matter_message', entity_id: entityId,
       metadata: metadata ?? null, ip_address: ip, user_agent: userAgent,
     });
+
+    const caseForMatter = async (matterId: string) => {
+      const { data } = await supabase.from('transaction_case_links').select('case_id').eq('legal_matter_id', matterId).maybeSingle();
+      return data?.case_id as string | undefined;
+    };
+    const ensureCanonical = async (matter: any, scope: LegalThreadScope) => {
+      const caseId = await caseForMatter(matter.id);
+      if (!caseId) return null;
+      const { data, error } = await supabase.rpc('ensure_case_conversation', {
+        _case_id: caseId, _scope: canonicalScope(scope), _actor_type: 'solicitor_user', _actor_id: me.id,
+        _subject: `${matter.matter_reference || matter.title || 'Matter'} — ${scopeLabel(scope)}`,
+      });
+      if (error) throw error;
+      return { ...data.conversation, legal_matter_id: matter.id, scope, unread_count_solicitor: 0 };
+    };
 
     /** Find-or-create the single thread for a matter + scope. */
     const ensureThread = async (matter: any, scope: LegalThreadScope) => {
@@ -146,6 +168,15 @@ Deno.serve(async (req) => {
       if (matterId) {
         const res = await loadMatter(matterId);
         if (!res.ok) return json({ error: res.error }, res.status);
+        if (CANONICAL_CONVERSATIONS_V2) {
+          const caseId = await caseForMatter(res.matter.id);
+          if (caseId) {
+            const { data, error } = await supabase.rpc('get_participant_conversations', { _participant_type: 'solicitor_user', _participant_id: me.id, _case_id: caseId });
+            if (error) throw error;
+            const threads = (data || []).map((entry: any) => ({ ...entry.conversation, legal_matter_id: res.matter.id, scope: legacyScope(entry.conversation.scope), unread_count_solicitor: Number(entry.unread_count || 0) }));
+            return json({ success: true, threads, summary: { unread: threads.reduce((n: number,t: any)=>n+t.unread_count_solicitor,0), total: threads.length }, permissions: res.perms });
+          }
+        }
         const { data: threads } = await supabase
           .from('legal_matter_threads')
           .select(THREAD_SELECT)
@@ -159,13 +190,13 @@ Deno.serve(async (req) => {
         });
       }
 
-      if (assignedClientIds.length === 0) {
+      if (accessibleMatterIds.length === 0) {
         return json({ success: true, threads: [], summary: summariseThreads([], 'solicitor') });
       }
       const { data: threads } = await supabase
         .from('legal_matter_threads')
         .select(`${THREAD_SELECT}, legal_matters:legal_matter_id (id, title, matter_reference)`)
-        .in('client_id', assignedClientIds)
+        .in('legal_matter_id', accessibleMatterIds)
         .eq('firm_id', me.firm_id)
         .eq('is_archived', false)
         .order('last_message_at', { ascending: false, nullsFirst: false })
@@ -181,6 +212,11 @@ Deno.serve(async (req) => {
       const res = await loadMatter(String(body.matter_id || ''));
       if (!res.ok) return json({ error: res.error }, res.status);
       const scope = isValidScope(body.scope) ? body.scope : 'solicitor_npc';
+      if (CANONICAL_CONVERSATIONS_V2) {
+        const thread = await ensureCanonical(res.matter, scope);
+        if (thread) return json({ success: true, thread });
+        return json({ error: 'Transaction case link required for canonical conversation', code: 'CASE_LINK_REQUIRED' }, 409);
+      }
       const thread = await ensureThread(res.matter, scope);
       return json({ success: true, thread });
     }
@@ -198,9 +234,21 @@ Deno.serve(async (req) => {
           .eq('id', threadId).eq('legal_matter_id', res.matter.id).maybeSingle();
         thread = data;
       } else if (scope) {
-        thread = await ensureThread(res.matter, scope);
+        thread = CANONICAL_CONVERSATIONS_V2 ? await ensureCanonical(res.matter, scope) : await ensureThread(res.matter, scope);
+      }
+      if (!thread && CANONICAL_CONVERSATIONS_V2 && threadId) {
+        const caseId = await caseForMatter(res.matter.id);
+        const { data } = caseId ? await supabase.from('conversations').select('*').eq('id',threadId).eq('case_id',caseId).maybeSingle() : { data:null };
+        if (data) thread = { ...data, legal_matter_id:res.matter.id, scope:legacyScope(data.scope), unread_count_solicitor:0 };
       }
       if (!thread) return json({ error: 'Thread not found' }, 404);
+
+      if (CANONICAL_CONVERSATIONS_V2 && 'case_id' in thread) {
+        const { data, error } = await supabase.rpc('get_conversation_messages', { _conversation_id: thread.id, _participant_type: 'solicitor_user', _participant_id: me.id, _limit: Math.min(Number(body.limit)||100,200), _before: body.before || null });
+        if (error) throw error;
+        const messages = (data || []).map((m: any) => ({ ...m, sender_type: legacySender(m.sender_type), is_internal: thread.scope === 'firm_internal' }));
+        return json({ success: true, thread, messages, permissions: res.perms });
+      }
 
       const { data: messages } = await supabase
         .from('legal_matter_messages')
@@ -233,21 +281,21 @@ Deno.serve(async (req) => {
       const thread = await ensureThread(res.matter, scope);
       const isInternal = scope === 'firm_internal';
 
-      let mirroredClientId: string | null = null;
-      let mirroredFinanceId: string | null = null;
-      if (scope === 'solicitor_client') {
-        mirroredClientId = await mirrorToClientPortal(supabase, {
-          clientId: res.matter.client_id,
-          senderName: `${displayName} · ${firmLabel}`,
-          body: text,
-        });
-      } else if (scope === 'solicitor_finance') {
-        mirroredFinanceId = await mirrorToFinancePortal(supabase, {
-          clientId: res.matter.client_id,
-          senderName: `${displayName} · ${firmLabel}`,
-          body: text,
-        });
+      if (CANONICAL_CONVERSATIONS_V2) {
+        const canonical = await ensureCanonical(res.matter, scope);
+        if (canonical) {
+          const { data: message, error } = await supabase.rpc('post_conversation_message', {
+            _conversation_id: canonical.id, _actor_type: 'solicitor_user', _actor_id: me.id, _body: text,
+            _idempotency_key: String(body.idempotency_key || `solicitor:${me.id}:${crypto.randomUUID()}`), _sender_name: displayName, _reply_to: body.reply_to_message_id || null,
+          });
+          if (error) throw error;
+          await audit(res.matter, 'matter_message_sent', message?.id ?? null, { scope, delivery: 'canonical', preview: preview(text,120) });
+          return json({ success: true, message: { ...message, sender_type: 'solicitor_user', is_internal: isInternal }, thread_id: canonical.id });
+        }
+        return json({ error: 'Transaction case link required for canonical conversation', code: 'CASE_LINK_REQUIRED' }, 409);
       }
+
+      // Cross-portal delivery is enqueued transactionally by the message trigger.
 
       const { data: message, error } = await supabase
         .from('legal_matter_messages')
@@ -261,8 +309,6 @@ Deno.serve(async (req) => {
           sender_name: displayName,
           body: text,
           is_internal: isInternal,
-          mirrored_client_message_id: mirroredClientId,
-          mirrored_finance_message_id: mirroredFinanceId,
           read_by_solicitor_at: new Date().toISOString(),
         })
         .select(MESSAGE_SELECT)
@@ -271,8 +317,7 @@ Deno.serve(async (req) => {
 
       await audit(res.matter, 'matter_message_sent', message?.id ?? null, {
         scope,
-        mirrored_client: !!mirroredClientId,
-        mirrored_finance: !!mirroredFinanceId,
+        delivery: scope === 'solicitor_client' || scope === 'solicitor_finance' ? 'outbox_pending' : 'local_only',
         preview: preview(text, 120),
       });
 
@@ -284,6 +329,15 @@ Deno.serve(async (req) => {
       if (!res.ok) return json({ error: res.error }, res.status);
       const threadId = String(body.thread_id || '');
       if (!threadId) return json({ error: 'thread_id is required' }, 400);
+      if (CANONICAL_CONVERSATIONS_V2) {
+        const caseId = await caseForMatter(res.matter.id);
+        const { data: canonical } = caseId ? await supabase.from('conversations').select('id').eq('id',threadId).eq('case_id',caseId).maybeSingle() : { data: null };
+        if (canonical) {
+          const { data, error } = await supabase.rpc('mark_conversation_read', { _conversation_id: threadId, _actor_type: 'solicitor_user', _actor_id: me.id });
+          if (error) throw error;
+          return json({ success: true, read_count: data });
+        }
+      }
 
       const now = new Date().toISOString();
       await supabase
@@ -317,10 +371,16 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'unread_summary') {
+      if (CANONICAL_CONVERSATIONS_V2) {
+        const { data } = await supabase.rpc('get_participant_conversations', { _participant_type: 'solicitor_user', _participant_id: me.id, _case_id: null });
+        const unread = (data || []).reduce((n: number,entry: any)=>n+Number(entry.unread_count||0),0);
+        const { count: notificationCount } = await supabase.from('notification_deliveries').select('id',{count:'exact',head:true}).eq('channel','in_app').eq('status','delivered').in('participant_id',(data||[]).map((entry:any)=>entry.participant.id));
+        return json({ success:true, messages:{ unread, total:(data||[]).length }, unread_notifications: notificationCount||0 });
+      }
       const [{ data: threads }, { count: notificationCount }] = await Promise.all([
-        assignedClientIds.length
+        accessibleMatterIds.length
           ? supabase.from('legal_matter_threads').select(THREAD_SELECT)
-              .in('client_id', assignedClientIds).eq('firm_id', me.firm_id).eq('is_archived', false)
+              .in('legal_matter_id', accessibleMatterIds).eq('firm_id', me.firm_id).eq('is_archived', false)
           : Promise.resolve({ data: [] as any[] }),
         supabase.from('solicitor_portal_notifications')
           .select('id', { count: 'exact', head: true })
@@ -336,6 +396,7 @@ Deno.serve(async (req) => {
     // ───────────────────── NOTIFICATIONS ─────────────────────
     if (operation === 'list_notifications') {
       const limit = Math.min(Number(body.limit) || 50, 200);
+      if(CANONICAL_CONVERSATIONS_V2){const {data,error}=await supabase.rpc('get_participant_notifications',{_participant_type:'solicitor_user',_participant_id:me.id,_limit:limit,_unread_only:body.unread_only===true});if(error)throw error;return json({success:true,notifications:data||[],unread:(data||[]).filter((n:any)=>!n.is_read).length});}
       let query = supabase
         .from('solicitor_portal_notifications')
         .select(NOTIFICATION_SELECT)
@@ -349,6 +410,7 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'mark_notification_read') {
+      if(CANONICAL_CONVERSATIONS_V2){let messageId=body.message_id?String(body.message_id):null;if(!messageId&&body.notification_id){const {data:delivery}=await supabase.from('notification_deliveries').select('message_id,conversation_participants!inner(participant_type,participant_id)').eq('id',String(body.notification_id)).eq('conversation_participants.participant_type','solicitor_user').eq('conversation_participants.participant_id',me.id).maybeSingle();messageId=delivery?.message_id||null;}if(messageId){const {data,error}=await supabase.rpc('mark_message_read',{_message_id:messageId,_participant_type:'solicitor_user',_participant_id:me.id});if(error)throw error;return json({success:true,read:data});}}
       const { data } = await supabase
         .from('solicitor_portal_notifications')
         .update({ is_read: true, read_at: new Date().toISOString() })
@@ -360,6 +422,7 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'mark_all_notifications_read') {
+      if(CANONICAL_CONVERSATIONS_V2){const {data}=await supabase.rpc('get_participant_conversations',{_participant_type:'solicitor_user',_participant_id:me.id,_case_id:null});for(const entry of data||[])await supabase.rpc('mark_conversation_read',{_conversation_id:entry.conversation.id,_actor_type:'solicitor_user',_actor_id:me.id});return json({success:true});}
       await supabase
         .from('solicitor_portal_notifications')
         .update({ is_read: true, read_at: new Date().toISOString() })
@@ -370,6 +433,7 @@ Deno.serve(async (req) => {
 
     // ───────────────────── PREFERENCES ─────────────────────
     if (operation === 'get_prefs') {
+      if(CANONICAL_CONVERSATIONS_V2){const {data:rows}=await supabase.from('notification_preferences').select('*').eq('participant_type','solicitor_user').eq('participant_id',me.id);const byEvent=new Map<string,any[]>();for(const row of rows||[])byEvent.set(row.event_type,[...(byEvent.get(row.event_type)||[]),row]);const prefs=SOLICITOR_NOTIFICATION_EVENTS.map(event=>{const eventRows=byEvent.get(event)||[];return {solicitor_user_id:me.id,event_type:event,channels:eventRows.filter(r=>r.enabled).map(r=>r.channel).length?eventRows.filter(r=>r.enabled).map(r=>r.channel):['in_app'],quiet_hours_start:eventRows[0]?.quiet_hours_start||null,quiet_hours_end:eventRows[0]?.quiet_hours_end||null,timezone:eventRows[0]?.timezone||'Australia/Sydney',is_enabled:eventRows.some(r=>r.enabled)||eventRows.length===0};});return json({success:true,prefs,events:SOLICITOR_NOTIFICATION_EVENTS});}
       const { data: rows } = await supabase
         .from('solicitor_notification_prefs')
         .select(PREFS_SELECT)
@@ -396,6 +460,8 @@ Deno.serve(async (req) => {
       const channels = Array.isArray(body.channels)
         ? body.channels.filter((c: unknown) => typeof c === 'string' && ['in_app', 'email'].includes(c))
         : ['in_app'];
+
+      if(CANONICAL_CONVERSATIONS_V2){const selected=channels.length?channels:['in_app'];for(const channel of ['in_app','email','push']){const {error}=await supabase.from('notification_preferences').upsert({participant_type:'solicitor_user',participant_id:me.id,event_type:eventType,channel,enabled:body.is_enabled!==false&&selected.includes(channel),quiet_hours_start:body.quiet_hours_start||null,quiet_hours_end:body.quiet_hours_end||null,timezone:String(body.timezone||'Australia/Sydney'),updated_at:new Date().toISOString()},{onConflict:'participant_type,participant_id,event_type,channel'});if(error)throw error;}return json({success:true,pref:{solicitor_user_id:me.id,event_type:eventType,channels:selected,quiet_hours_start:body.quiet_hours_start||null,quiet_hours_end:body.quiet_hours_end||null,timezone:String(body.timezone||'Australia/Sydney'),is_enabled:body.is_enabled!==false}});}
 
       const { data, error } = await supabase
         .from('solicitor_notification_prefs')

@@ -1,6 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders } from "../_shared/auth.ts"
+import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
+import { auditSolicitorIdentity, revokeAllSolicitorSessions } from "../_shared/solicitorSessions.ts"
 
 const MAX_OTP_ATTEMPTS = 5;
 
@@ -11,6 +13,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+  if (!validateSolicitorPortalRequest(req)) return new Response(JSON.stringify({ error: 'Invalid or expired code' }), { status: 400, headers: corsHeaders });
 
   const json = (payload: unknown, status = 200) => new Response(
     JSON.stringify(payload),
@@ -92,6 +95,8 @@ Deno.serve(async (req) => {
         ...(user.invite_accepted_at ? {} : { invite_accepted_at: new Date().toISOString(), invite_token: null, invite_token_expires_at: null }),
       })
       .eq('id', user.id)
+    const revoked = await revokeAllSolicitorSessions(supabase, user.id, 'password_reset');
+    await auditSolicitorIdentity(supabase, req, { userId: user.id, firmId: user.firm_id, action: 'sessions_revoked_after_password_reset', metadata: { revoked } });
 
     await supabase.from('solicitor_portal_activity_log').insert({
       solicitor_user_id: user.id,

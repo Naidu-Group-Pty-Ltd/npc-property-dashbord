@@ -1,8 +1,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { hashPassword } from "../_shared/password.ts"
 import { createCorsHeaders, createSolicitorSessionCookie } from "../_shared/auth.ts"
+import { validateSolicitorPortalRequest } from "../_shared/solicitorSessionToken.ts"
+import { auditSolicitorIdentity, issueSolicitorSession } from "../_shared/solicitorSessions.ts"
 
-const SESSION_HOURS = 12;
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -11,6 +12,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+  if (!validateSolicitorPortalRequest(req)) return new Response(JSON.stringify({ error: 'Invalid or expired invite link' }), { status: 400, headers: corsHeaders });
 
   try {
     const supabase = createClient(
@@ -25,6 +27,9 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const { data: allowed } = await supabase.rpc('check_and_bump_rate_limit', { p_key: `solicitor_invite:${ip}`, p_max: 20, p_window_seconds: 3600 });
+    if (allowed === false) return new Response(JSON.stringify({ error: 'Invalid or expired invite link' }), { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
     const { data: portalUser, error: lookupError } = await supabase
       .from('solicitor_portal_users')
@@ -96,10 +101,6 @@ Deno.serve(async (req) => {
     }
 
     const hashedPassword = await hashPassword(password)
-    const sessionToken = crypto.randomUUID() + '-' + crypto.randomUUID();
-    const expiresAt = new Date()
-    expiresAt.setHours(expiresAt.getHours() + SESSION_HOURS)
-
     const { error: updateError } = await supabase
       .from('solicitor_portal_users')
       .update({
@@ -108,11 +109,11 @@ Deno.serve(async (req) => {
         invite_token: null,
         invite_token_expires_at: null,
         invite_accepted_at: new Date().toISOString(),
-        session_token: sessionToken,
-        session_expires_at: expiresAt.toISOString(),
         last_login_at: new Date().toISOString(),
         failed_login_attempts: 0,
         locked_until: null,
+        session_token: null,
+        session_expires_at: null,
       })
       .eq('id', portalUser.id)
 
@@ -123,18 +124,9 @@ Deno.serve(async (req) => {
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
+    const issued = await issueSolicitorSession(supabase, portalUser.id, req, { deviceLabel: req.headers.get('user-agent') || undefined });
 
-    await supabase.from('solicitor_portal_activity_log').insert({
-      solicitor_user_id: portalUser.id,
-      firm_id: portalUser.firm_id,
-      actor_user_id: portalUser.id,
-      actor_type: 'solicitor_user',
-      action: 'invite_accepted',
-      entity_type: 'solicitor_portal_user',
-      entity_id: portalUser.id,
-      ip_address: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null,
-      user_agent: req.headers.get('user-agent') || null,
-    });
+    await auditSolicitorIdentity(supabase, req, { userId: portalUser.id, firmId: portalUser.firm_id, action: 'invite_accepted', sessionId: issued.id });
 
     return new Response(
       JSON.stringify({
@@ -152,15 +144,14 @@ Deno.serve(async (req) => {
           has_completed_onboarding: false,
           must_change_password: false,
         },
-        session_token: sessionToken,
-        expires_at: expiresAt.toISOString(),
+        session: { id: issued.id, absolute_expires_at: issued.absoluteExpiresAt.toISOString(), idle_expires_at: issued.idleExpiresAt.toISOString() },
       }),
       {
         status: 200,
         headers: {
           ...corsHeaders,
           'Content-Type': 'application/json',
-          'Set-Cookie': createSolicitorSessionCookie(sessionToken, expiresAt),
+          'Set-Cookie': createSolicitorSessionCookie(issued.token, issued.absoluteExpiresAt),
         }
       }
     )

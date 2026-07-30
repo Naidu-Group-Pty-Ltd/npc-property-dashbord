@@ -55,10 +55,11 @@ export interface MatterDocumentsPanelProps {
   onUpload: (documentId: string, file: File) => Promise<void> | void;
   onDownload: (documentId: string) => Promise<void> | void;
   onDelete: (documentId: string) => Promise<void> | void;
+  onSetAiPermission?: (documentId:string, allow:boolean) => Promise<void> | void;
 }
 
 export function MatterDocumentsPanel({
-  documents, canEdit, canDelete, saving, onSave, onSetStatus, onUpload, onDownload, onDelete,
+  documents, canEdit, canDelete, saving, onSave, onSetStatus, onUpload, onDownload, onDelete, onSetAiPermission,
 }: MatterDocumentsPanelProps) {
   const [draft, setDraft] = useState<DocumentDraft | null>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -161,10 +162,20 @@ export function MatterDocumentsPanel({
                 {doc.review_notes ? (
                   <p className="text-xs text-muted-foreground">Review: {doc.review_notes}</p>
                 ) : null}
+                {doc.malware_scan_status && doc.malware_scan_status !== 'clean' ? (
+                  <Badge variant="outline" className="w-fit text-xs">
+                    {doc.malware_scan_status === 'infected' ? 'Security scan rejected' : doc.malware_scan_status === 'error' ? 'Security scan requires retry' : 'Security scan pending'}
+                  </Badge>
+                ) : null}
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                {canEdit ? (
+                {canEdit && onSetAiPermission && doc.current_version_id ? <label className="flex items-center gap-2 rounded-md border px-2 py-1 text-xs"><Switch checked={doc.allow_external_ai===true} onCheckedChange={(checked)=>void onSetAiPermission(doc.id,checked)} aria-label={`Allow external AI processing for ${doc.label}`}/>AI processing</label> : null}
+                {canEdit && doc.current_version_id !== undefined ? (
+                  doc.malware_scan_status === 'clean' && doc.status !== 'accepted' ? (
+                    <Button size="sm" variant="outline" onClick={() => void onSetStatus(doc.id, 'accepted')}>Review and accept</Button>
+                  ) : <Badge variant="outline">{DOCUMENT_STATUS_LABELS[doc.status] || doc.status}</Badge>
+                ) : canEdit ? (
                   <Select
                     value={doc.status}
                     onValueChange={(v) => void onSetStatus(doc.id, v as LegalDocumentStatus)}
@@ -188,11 +199,11 @@ export function MatterDocumentsPanel({
                     {uploadingId === doc.id
                       ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       : <Upload className="mr-2 h-4 w-4" />}
-                    {doc.storage_path ? 'Replace' : 'Upload'}
+                    {doc.storage_path ? 'Upload new version' : 'Upload'}
                   </Button>
                 ) : null}
 
-                {doc.storage_path ? (
+                {doc.storage_path && (!doc.malware_scan_status || doc.malware_scan_status === 'clean') ? (
                   <Button size="sm" variant="outline" onClick={() => void onDownload(doc.id)}>
                     <Download className="mr-2 h-4 w-4" /> Open
                   </Button>

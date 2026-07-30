@@ -24,6 +24,7 @@ import {
   SOLICITOR_PERMISSION_KEYS,
   SOLICITOR_FORBIDDEN_KEYS,
   mergePermissions,
+  resolveTriStatePermissions,
 } from "../_shared/solicitorPortalAuth.ts";
 
 const MODULE_KEY = 'solicitor_portal_admin';
@@ -52,6 +53,26 @@ function normalizeMatrix(input: unknown): Matrix {
         edit: !!p.edit,
         delete: !!p.delete,
       };
+    }
+  }
+  return out;
+}
+
+function normalizeTriStateMatrix(input: unknown): Record<string, Record<string, 'inherit' | 'allow' | 'deny'>> {
+  const out: Record<string, Record<string, 'inherit' | 'allow' | 'deny'>> = {};
+  const src = input && typeof input === 'object' ? input as Record<string, any> : {};
+  for (const key of SOLICITOR_PERMISSION_KEYS) {
+    if (SOLICITOR_FORBIDDEN_KEYS.has(key)) continue;
+    out[key] = {};
+    for (const level of ['view', 'edit', 'delete']) {
+      const value = src[key]?.[level];
+      out[key][level] = value === 'allow' || value === 'deny' ? value : 'inherit';
+    }
+    if (out[key].view === 'deny') {
+      out[key].edit = 'deny';
+      out[key].delete = 'deny';
+    } else if (out[key].edit === 'allow' || out[key].delete === 'allow') {
+      out[key].view = 'allow';
     }
   }
   return out;
@@ -126,9 +147,9 @@ Deno.serve(async (req) => {
 
     const READ_OPS = new Set([
       'list_firms', 'list_users', 'list_clients', 'get_assignments',
-      'get_global_permissions', 'get_activity_log',
+      'get_global_permissions', 'get_activity_log', 'get_matter_access', 'list_matter_access_candidates',
     ]);
-    const DELETE_OPS = new Set(['delete_firm', 'delete_user', 'delete_assignment']);
+    const DELETE_OPS = new Set(['delete_firm', 'delete_user', 'delete_assignment', 'revoke_matter_access']);
 
     const requiredPerm: ModulePerm = READ_OPS.has(operation)
       ? 'can_view'
@@ -151,6 +172,11 @@ Deno.serve(async (req) => {
       } catch (e) {
         console.error('[solicitor-portal-admin] activity log failed:', e);
       }
+    };
+    const revokeIdentitySessions = async (solicitorUserId: string, reason: string) => {
+      await supabase.from('solicitor_portal_sessions').update({ revoked_at: new Date().toISOString(), revoked_reason: reason })
+        .eq('solicitor_user_id', solicitorUserId).is('revoked_at', null);
+      await supabase.from('solicitor_portal_users').update({ session_token: null, session_expires_at: null }).eq('id', solicitorUserId);
     };
 
     // ─────────────────────────── FIRMS ───────────────────────────
@@ -253,6 +279,14 @@ Deno.serve(async (req) => {
           .not('session_token', 'is', null)
           .select('id');
         sessionsRevoked = (killed || []).length;
+        const { data: firmUsers } = await supabase.from('solicitor_portal_users').select('id').eq('firm_id', firmId);
+        const userIds = (firmUsers || []).map((user: any) => user.id);
+        if (userIds.length) {
+          const { data: revokedSessions } = await supabase.from('solicitor_portal_sessions')
+            .update({ revoked_at: new Date().toISOString(), revoked_reason: 'firm_deactivated' })
+            .in('solicitor_user_id', userIds).is('revoked_at', null).select('id');
+          sessionsRevoked += (revokedSessions || []).length;
+        }
       }
 
       await logStaff(isActive ? 'firm_activated' : 'firm_deactivated', {
@@ -298,9 +332,10 @@ Deno.serve(async (req) => {
       const assignCounts = new Map<string, number>();
       if (ids.length) {
         const { data: assigns } = await supabase
-          .from('solicitor_portal_client_assignments')
+          .from('solicitor_matter_access')
           .select('solicitor_user_id')
-          .in('solicitor_user_id', ids);
+          .in('solicitor_user_id', ids)
+          .is('revoked_at', null);
         for (const a of assigns || []) {
           assignCounts.set(a.solicitor_user_id, (assignCounts.get(a.solicitor_user_id) ?? 0) + 1);
         }
@@ -422,6 +457,7 @@ Deno.serve(async (req) => {
 
       const { error } = await supabase.from('solicitor_portal_users').update(patch).eq('id', userId);
       if (error) throw error;
+      if ('portal_role' in patch || 'firm_id' in patch) await revokeIdentitySessions(userId, 'portal_identity_changed');
 
       await logStaff('portal_user_updated', {
         solicitor_user_id: userId,
@@ -443,6 +479,7 @@ Deno.serve(async (req) => {
       }
       const { error } = await supabase.from('solicitor_portal_users').update(patch).eq('id', userId);
       if (error) throw error;
+      if (!isActive) await revokeIdentitySessions(userId, 'user_deactivated');
 
       await logStaff(isActive ? 'portal_user_activated' : 'portal_user_deactivated', {
         solicitor_user_id: userId, entity_type: 'solicitor_portal_user', entity_id: userId,
@@ -476,6 +513,7 @@ Deno.serve(async (req) => {
         })
         .eq('id', userId);
       if (error) throw error;
+      await revokeIdentitySessions(userId, 'access_revoked');
       await logStaff('access_revoked', {
         solicitor_user_id: userId, entity_type: 'solicitor_portal_user', entity_id: userId,
       });
@@ -513,7 +551,135 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ──────────────────────── ASSIGNMENTS ────────────────────────
+    // ──────────────────────── MATTER ACCESS (PHASE 1) ────────────────────────
+    if (operation === 'get_matter_access' || operation === 'list_matter_access_candidates') {
+      const userId = body.solicitor_user_id;
+      if (!userId) return json({ error: 'solicitor_user_id is required' }, 400);
+      const { data: portalUser } = await supabase.from('solicitor_portal_users')
+        .select('id, firm_id').eq('id', userId).maybeSingle();
+      if (!portalUser) return json({ error: 'Solicitor Portal user not found' }, 404);
+
+      const [{ data: grants, error }, { data: baseline }] = await Promise.all([
+        supabase.from('solicitor_matter_access')
+          .select('id, legal_matter_id, firm_id, access_role, permissions, valid_from, valid_until, granted_at, revoked_at, revocation_reason')
+          .eq('solicitor_user_id', userId).order('granted_at', { ascending: false }),
+        supabase.from('solicitor_portal_default_permissions').select('permissions')
+          .eq('solicitor_user_id', userId).maybeSingle(),
+      ]);
+      if (error) throw error;
+
+      const { data: matters } = await supabase.from('legal_matters')
+        .select('id, client_id, matter_reference, title, property_address, property_suburb, firm_id, assigned_solicitor_user_id, status')
+        .eq('firm_id', portalUser.firm_id).order('created_at', { ascending: false }).limit(1000);
+      const matterMap = new Map<string, any>((matters || []).map((matter: any) => [matter.id, matter]));
+      const clientIds = Array.from(new Set((matters || []).map((matter: any) => matter.client_id).filter(Boolean)));
+      const clientMap = new Map<string, string>();
+      if (clientIds.length) {
+        const { data: clients } = await supabase.from('clients')
+          .select('id, primary_first_name, primary_surname').in('id', clientIds);
+        for (const client of clients || []) clientMap.set(client.id,
+          [client.primary_first_name, client.primary_surname].filter(Boolean).join(' ') || 'Unnamed client');
+      }
+      const records = (grants || []).map((grant: any) => ({
+        ...grant,
+        matter: matterMap.get(grant.legal_matter_id) ?? null,
+        client_name: clientMap.get(matterMap.get(grant.legal_matter_id)?.client_id) ?? null,
+        effective_permissions: resolveTriStatePermissions(baseline?.permissions ?? null, grant.permissions),
+      }));
+      if (operation === 'get_matter_access') return json({ success: true, records });
+      return json({
+        success: true,
+        records: (matters || []).map((matter: any) => ({ ...matter, client_name: clientMap.get(matter.client_id) ?? null })),
+      });
+    }
+
+    if (operation === 'upsert_matter_access') {
+      const userId = body.solicitor_user_id;
+      const matterId = body.legal_matter_id;
+      if (!userId || !matterId) return json({ error: 'solicitor_user_id and legal_matter_id are required' }, 400);
+      const [{ data: portalUser }, { data: matter }] = await Promise.all([
+        supabase.from('solicitor_portal_users').select('id, firm_id').eq('id', userId).maybeSingle(),
+        supabase.from('legal_matters').select('id, client_id, firm_id, assigned_solicitor_user_id').eq('id', matterId).maybeSingle(),
+      ]);
+      if (!portalUser || !matter || !matter.firm_id || matter.firm_id !== portalUser.firm_id) {
+        return json({ error: 'Matter not found for this user practice' }, 404);
+      }
+      const role = ['responsible','team_member','supervisor','read_only'].includes(String(body.access_role))
+        ? String(body.access_role) : (matter.assigned_solicitor_user_id === userId ? 'responsible' : 'team_member');
+      const permissions = normalizeTriStateMatrix(body.permissions);
+      const validUntil = body.valid_until ? new Date(String(body.valid_until)) : null;
+      if (validUntil && (!Number.isFinite(validUntil.getTime()) || validUntil <= new Date())) {
+        return json({ error: 'valid_until must be a future timestamp' }, 400);
+      }
+      const { data: existing } = await supabase.from('solicitor_matter_access').select('id')
+        .eq('solicitor_user_id', userId).eq('legal_matter_id', matterId).maybeSingle();
+      const payload = {
+        firm_id: portalUser.firm_id, access_role: role, permissions,
+        valid_from: body.valid_from || new Date().toISOString(), valid_until: validUntil?.toISOString() ?? null,
+        revoked_at: null, revoked_by: null, revocation_reason: null,
+      };
+      const mutation = existing
+        ? supabase.from('solicitor_matter_access').update(payload).eq('id', existing.id)
+        : supabase.from('solicitor_matter_access').insert({
+            ...payload, solicitor_user_id: userId, legal_matter_id: matterId, granted_by: adminUserId,
+          });
+      const { error } = await mutation;
+      if (error) throw error;
+      await revokeIdentitySessions(userId, 'matter_access_changed');
+      await logStaff(existing ? 'matter_access_updated' : 'matter_access_granted', {
+        solicitor_user_id: userId, firm_id: portalUser.firm_id, client_id: matter.client_id,
+        legal_matter_id: matterId, entity_type: 'solicitor_matter_access', entity_id: existing?.id ?? null,
+      });
+      return json({ success: true });
+    }
+
+    if (operation === 'revoke_matter_access') {
+      const accessId = body.access_id;
+      if (!accessId) return json({ error: 'access_id is required' }, 400);
+      const { data: access } = await supabase.from('solicitor_matter_access')
+        .select('id, solicitor_user_id, legal_matter_id, firm_id').eq('id', accessId).maybeSingle();
+      if (!access) return json({ error: 'Matter access not found' }, 404);
+      const { error } = await supabase.from('solicitor_matter_access').update({
+        revoked_at: new Date().toISOString(), revoked_by: adminUserId,
+        revocation_reason: cleanText(body.reason, 500) || 'Revoked by Command Centre',
+      }).eq('id', access.id).is('revoked_at', null);
+      if (error) throw error;
+      await revokeIdentitySessions(access.solicitor_user_id, 'matter_access_revoked');
+      await logStaff('matter_access_revoked', {
+        solicitor_user_id: access.solicitor_user_id, firm_id: access.firm_id,
+        legal_matter_id: access.legal_matter_id, entity_type: 'solicitor_matter_access', entity_id: access.id,
+      });
+      return json({ success: true });
+    }
+
+    if (operation === 'grant_all_current_client_matters') {
+      const userId = body.solicitor_user_id;
+      const clientId = body.client_id;
+      if (!userId || !clientId) return json({ error: 'solicitor_user_id and client_id are required' }, 400);
+      const { data: portalUser } = await supabase.from('solicitor_portal_users')
+        .select('id, firm_id').eq('id', userId).maybeSingle();
+      if (!portalUser) return json({ error: 'Solicitor Portal user not found' }, 404);
+      const { data: matters } = await supabase.from('legal_matters')
+        .select('id, assigned_solicitor_user_id').eq('client_id', clientId).eq('firm_id', portalUser.firm_id);
+      const rows = (matters || []).map((matter: any) => ({
+        solicitor_user_id: userId, legal_matter_id: matter.id, firm_id: portalUser.firm_id,
+        access_role: matter.assigned_solicitor_user_id === userId ? 'responsible' : 'team_member',
+        permissions: {}, granted_by: adminUserId, revoked_at: null,
+      }));
+      if (rows.length) {
+        const { error } = await supabase.from('solicitor_matter_access')
+          .upsert(rows, { onConflict: 'solicitor_user_id,legal_matter_id' });
+        if (error) throw error;
+      }
+      await revokeIdentitySessions(userId, 'matter_access_bulk_changed');
+      await logStaff('matter_access_bulk_granted', {
+        solicitor_user_id: userId, firm_id: portalUser.firm_id, client_id: clientId,
+        entity_type: 'solicitor_matter_access', metadata: { current_matter_count: rows.length, future_matters_included: false },
+      });
+      return json({ success: true, granted_count: rows.length });
+    }
+
+    // Legacy client assignments remain as an emergency rollback adapter only.
     if (operation === 'get_assignments') {
       const userId = body.solicitor_user_id;
       if (!userId) return json({ error: 'solicitor_user_id is required' }, 400);
@@ -654,6 +820,7 @@ Deno.serve(async (req) => {
           .delete()
           .eq('solicitor_user_id', userId);
         if (error) throw error;
+        await revokeIdentitySessions(userId, 'global_permissions_cleared');
         await logStaff('global_permissions_cleared', {
           solicitor_user_id: userId, entity_type: 'solicitor_portal_default_permissions',
         });
@@ -683,6 +850,7 @@ Deno.serve(async (req) => {
       await logStaff('global_permissions_updated', {
         solicitor_user_id: userId, entity_type: 'solicitor_portal_default_permissions',
       });
+      await revokeIdentitySessions(userId, 'global_permissions_changed');
       return json({ success: true, has_global: true, permissions });
     }
 

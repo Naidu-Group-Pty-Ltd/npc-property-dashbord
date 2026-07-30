@@ -11,7 +11,7 @@
  * financial or AML data.
  *
  * Operations
- *   audit_timeline | audit_verify | audit_record
+ *   audit_timeline | audit_verify
  *   conflict_list | conflict_run | conflict_clear
  *   closure_state | closure_update | matter_close | matter_reopen
  *   compliance_export | compliance_health
@@ -20,8 +20,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
 import {
   resolveSolicitorSession,
-  resolveClientPermissions,
-  listAssignedClientIds,
+  solicitorGovernanceError,
+  resolveSolicitorMatterAccess,
+  resolveMatterPermissions,
+  listAccessibleMatterIds,
   logSolicitorActivity,
   requestIp,
   can,
@@ -44,6 +46,7 @@ const AUDIT_CATEGORIES = new Set<string>([
 ]);
 
 const CONFLICT_OUTCOMES = new Set(['pending', 'clear', 'potential_conflict', 'conflict', 'waived']);
+const LEGAL_INTEGRITY_COMMANDS_V1 = Deno.env.get('SOLICITOR_LEGAL_INTEGRITY_V1') !== 'false';
 
 const text = (v: unknown, max = 500): string | null => {
   if (typeof v !== 'string') return null;
@@ -75,10 +78,12 @@ Deno.serve(async (req) => {
       return json({ error: session.error || 'Unauthorised' }, session.status || 401);
     }
     const me = session.user;
+    const governanceError = solicitorGovernanceError(me);
+    if (governanceError) return json({ error: 'Portal setup required', code: governanceError }, 403);
     const ip = requestIp(req);
     const userAgent = req.headers.get('user-agent');
 
-    const assignedClientIds = await listAssignedClientIds(supabase, me.id);
+    const accessibleMatterIds = await listAccessibleMatterIds(supabase, me.id, me.firm_id, 'audit');
 
     const loadMatter = async (matterId: string): Promise<
       { ok: true; matter: any; perms: PermissionMatrix } | { ok: false; status: number; error: string }
@@ -90,18 +95,19 @@ Deno.serve(async (req) => {
           id, matter_reference, title, status, client_id, firm_id, settlement_date,
           actual_settlement_date, closure_status, closure_reason, closure_checklist,
           closed_at, closed_by_type, closed_by_solicitor_user_id, retention_class,
-          retention_until, archived_at, conflict_check_status, conflict_checked_at
+          retention_until, archived_at, conflict_check_status, conflict_checked_at, row_version
         `)
         .eq('id', matterId)
         .maybeSingle();
       if (!matter) return { ok: false, status: 404, error: 'Matter not found' };
-      if (matter.firm_id && matter.firm_id !== me.firm_id) {
-        return { ok: false, status: 403, error: 'This matter belongs to another practice' };
+      if (!matter.firm_id || matter.firm_id !== me.firm_id) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      if (!matter.client_id || !assignedClientIds.includes(matter.client_id)) {
-        return { ok: false, status: 403, error: 'You do not have access to this matter' };
+      const access = await resolveSolicitorMatterAccess(supabase, me.id, me.firm_id, matter.id);
+      if (!access) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      const perms = await resolveClientPermissions(supabase, me.id, matter.client_id);
+      const perms = await resolveMatterPermissions(supabase, access);
       if (!perms || !can(perms, 'matters', 'view')) {
         return { ok: false, status: 403, error: 'You do not have access to this matter' };
       }
@@ -177,27 +183,7 @@ Deno.serve(async (req) => {
       return json({ success: true, verification });
     }
 
-    /** Allow other portal surfaces to append a scoped audit entry. */
-    if (operation === 'audit_record') {
-      const loaded = await loadMatter(String(body.matter_id || ''));
-      if (!loaded.ok) return json({ error: loaded.error }, loaded.status);
-      const category = text(body.category, 40) ?? 'access';
-      if (!AUDIT_CATEGORIES.has(category)) return json({ error: 'Unsupported audit category' }, 400);
-      const action = text(body.action, 120);
-      if (!action) return json({ error: 'action is required' }, 400);
-
-      const id = await audit(loaded.matter, category as LegalAuditCategory, action, {
-        severity: text(body.severity, 20) ?? 'info',
-        target_type: text(body.target_type, 60),
-        target_id: text(body.target_id, 64),
-        description: text(body.description, 500),
-        fields_accessed: Array.isArray(body.fields_accessed)
-          ? body.fields_accessed.slice(0, 50).map((f: unknown) => String(f).slice(0, 80))
-          : null,
-        metadata: typeof body.metadata === 'object' && body.metadata ? body.metadata : {},
-      });
-      return json({ success: true, id });
-    }
+    if (operation === 'audit_record') return json({ error: 'General audit insertion is not available' }, 404);
 
     // ───────────────────── CONFLICT CHECKS ─────────────────────
     if (operation === 'conflict_list') {
@@ -424,12 +410,15 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'closure_update') {
+      if (!LEGAL_INTEGRITY_COMMANDS_V1) return json({ error: 'Legal mutations are temporarily unavailable' }, 503);
       const loaded = await loadMatter(String(body.matter_id || ''));
       if (!loaded.ok) return json({ error: loaded.error }, loaded.status);
       if (!can(loaded.perms, 'matters', 'edit')) {
         return json({ error: 'You do not have permission to edit closure details' }, 403);
       }
 
+      const expectedVersion = Number(body.expected_version);
+      if (!Number.isInteger(expectedVersion) || expectedVersion < 1) return json({ error: 'expected_version is required' }, 400);
       const checklist: Record<string, boolean> = { ...(loaded.matter.closure_checklist ?? {}) };
       if (body.checklist && typeof body.checklist === 'object') {
         for (const key of LEGAL_CLOSURE_CHECKLIST_KEYS) {
@@ -449,11 +438,13 @@ Deno.serve(async (req) => {
 
       const { data: updated, error } = await supabase
         .from('legal_matters')
-        .update(patch)
+        .update({ ...patch, row_version: expectedVersion + 1, updated_at: new Date().toISOString() })
         .eq('id', loaded.matter.id)
-        .select('closure_status, closure_reason, closure_checklist, closed_at, retention_class, retention_until, archived_at')
+        .eq('row_version', expectedVersion)
+        .select('row_version, closure_status, closure_reason, closure_checklist, closed_at, retention_class, retention_until, archived_at')
         .maybeSingle();
       if (error) throw error;
+      if (!updated) return json({ error: 'This matter was changed by another user', code: 'STALE_VERSION' }, 409);
 
       await audit(loaded.matter, 'closure', 'closure_details_updated', {
         metadata: { fields: Object.keys(patch) },
@@ -463,78 +454,46 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'matter_close' || operation === 'matter_reopen') {
+      if (!LEGAL_INTEGRITY_COMMANDS_V1) return json({ error: 'Legal mutations are temporarily unavailable' }, 503);
       const loaded = await loadMatter(String(body.matter_id || ''));
       if (!loaded.ok) return json({ error: loaded.error }, loaded.status);
-      if (!can(loaded.perms, 'matters', 'edit')) {
-        return json({ error: 'You do not have permission to close or reopen matters' }, 403);
-      }
+      if (!can(loaded.perms, 'matters', 'edit')) return json({ error: 'You do not have permission to close or reopen matters' }, 403);
+      const expectedVersion = Number(body.expected_version);
+      const reason = text(body.reason, 1000);
+      if (!Number.isInteger(expectedVersion) || expectedVersion < 1 || !reason) return json({ error: 'expected_version and reason are required' }, 400);
 
       if (operation === 'matter_reopen') {
-        const reason = text(body.reason, 1000);
-        if (!reason) return json({ error: 'A reason is required to reopen a matter' }, 400);
-        const { data: updated, error } = await supabase
-          .from('legal_matters')
-          .update({
-            closure_status: 'open',
-            closure_reason: reason,
-            closed_at: null,
-            closed_by_type: null,
-            closed_by_solicitor_user_id: null,
-            archived_at: null,
-          })
-          .eq('id', loaded.matter.id)
-          .select('closure_status, closure_reason, closed_at, retention_class, retention_until, archived_at, closure_checklist')
-          .maybeSingle();
-        if (error) throw error;
-        await audit(loaded.matter, 'closure', 'matter_reopened', {
-          severity: 'notice',
-          description: reason,
+        const targetStatus = String(body.target_status || 'pre_settlement');
+        const { data, error } = await supabase.rpc('reopen_legal_matter', {
+          _matter_id: loaded.matter.id, _expected_version: expectedVersion,
+          _target_status: targetStatus, _reason: reason, _actor_solicitor_user_id: me.id,
         });
-        return json({ success: true, closure: updated });
+        if (error) {
+          const conflict = /STALE_VERSION|INVALID_REOPEN|MATTER_NOT_CLOSED/.test(error.message || '');
+          return json({ error: 'Unable to reopen matter', code: error.message }, conflict ? 409 : 400);
+        }
+        return json({ success: true, closure: data });
       }
 
       const retention = text(body.retention_class, 40) ?? loaded.matter.retention_class ?? 'standard_7y';
-      if (!(LEGAL_RETENTION_CLASSES as readonly string[]).includes(retention)) {
-        return json({ error: 'Unsupported retention class' }, 400);
+      if (!(LEGAL_RETENTION_CLASSES as readonly string[]).includes(retention)) return json({ error: 'Unsupported retention class' }, 400);
+      const { data, error } = await supabase.rpc('close_legal_matter', {
+        _matter_id: loaded.matter.id, _expected_version: expectedVersion,
+        _retention_class: retention, _reason: reason, _actor_solicitor_user_id: me.id,
+        _actor_staff_user_id: null, _override_authorized: false, _override_category: null,
+        _override_step_up_verified_at: null,
+      });
+      if (error) {
+        const conflict = /STALE_VERSION|CLOSURE_BLOCKED|INVALID_CLOSURE_STATUS/.test(error.message || '');
+        return json({ error: /CLOSURE_BLOCKED/.test(error.message || '') ? 'Closure blockers must be resolved' : 'Unable to close matter', code: error.message }, conflict ? 409 : 400);
       }
-      const now = new Date();
-      const archive = body.archive === true;
-
-      const { data: updated, error } = await supabase
-        .from('legal_matters')
-        .update({
-          closure_status: archive ? 'archived' : 'closed',
-          closure_reason: text(body.reason, 1000) ?? loaded.matter.closure_reason,
-          closed_at: now.toISOString(),
-          closed_by_type: 'solicitor_user',
-          closed_by_solicitor_user_id: me.id,
-          retention_class: retention,
-          retention_until: retentionUntil(retention, now),
-          archived_at: archive ? now.toISOString() : null,
-        })
-        .eq('id', loaded.matter.id)
-        .select('closure_status, closure_reason, closed_at, retention_class, retention_until, archived_at, closure_checklist')
-        .maybeSingle();
-      if (error) throw error;
-
-      await audit(loaded.matter, 'closure', archive ? 'matter_archived' : 'matter_closed', {
-        severity: 'notice',
-        metadata: { retention_class: retention, retention_until: updated?.retention_until ?? null },
-      });
       await logSolicitorActivity(supabase, {
-        solicitor_user_id: me.id,
-        firm_id: me.firm_id,
-        action: archive ? 'matter_archived' : 'matter_closed',
-        client_id: loaded.matter.client_id,
-        legal_matter_id: loaded.matter.id,
-        entity_type: 'legal_matter',
-        entity_id: loaded.matter.id,
-        metadata: { retention_class: retention },
-        ip_address: ip,
-        user_agent: userAgent,
+        solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_closed',
+        client_id: loaded.matter.client_id, legal_matter_id: loaded.matter.id,
+        entity_type: 'legal_matter', entity_id: loaded.matter.id,
+        metadata: { retention_class: retention, row_version: data?.row_version }, ip_address: ip, user_agent: userAgent,
       });
-
-      return json({ success: true, closure: updated });
+      return json({ success: true, closure: data });
     }
 
     // ───────────────────── COMPLIANCE EXPORT ─────────────────────
@@ -625,14 +584,14 @@ Deno.serve(async (req) => {
 
     // ───────────────────── FIRM COMPLIANCE HEALTH ─────────────────────
     if (operation === 'compliance_health') {
-      if (!assignedClientIds.length) {
+      if (!accessibleMatterIds.length) {
         return json({ success: true, health: { matters: 0, signals: [] } });
       }
       const { data: matters } = await supabase
         .from('legal_matters')
         .select('id, matter_reference, title, status, closure_status, retention_until, conflict_check_status, settlement_date, actual_settlement_date')
-        .in('client_id', assignedClientIds)
-        .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
+        .in('id', accessibleMatterIds)
+        .eq('firm_id', me.firm_id)
         .limit(500);
 
       const rows = matters || [];

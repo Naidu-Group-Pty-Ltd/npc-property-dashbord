@@ -1,16 +1,13 @@
 /**
  * Solicitor Portal client-side API wrapper.
  *
- * Mirrors the Finance Portal transport: anon-key edge invocation carrying a
- * portal-scoped session token in a dedicated header so the Command Centre,
+ * Mirrors the Finance Portal transport: cookie-authenticated edge invocation using an HttpOnly portal-scoped session so the Command Centre,
  * Client Portal, Finance Portal and Solicitor Portal never share a session.
  */
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk';
-
-export const SOLICITOR_SESSION_KEY = 'solicitor_session_token';
 
 export interface SolicitorPortalUser {
   id: string;
@@ -25,55 +22,33 @@ export interface SolicitorPortalUser {
   has_accepted_terms: boolean;
   has_completed_onboarding: boolean;
   must_change_password: boolean;
-}
-
-export function getSolicitorSessionToken(): string | null {
-  try {
-    return sessionStorage.getItem(SOLICITOR_SESSION_KEY) || localStorage.getItem(SOLICITOR_SESSION_KEY);
-  } catch {
-    try {
-      return localStorage.getItem(SOLICITOR_SESSION_KEY);
-    } catch {
-      return null;
-    }
-  }
-}
-
-export function persistSolicitorSessionToken(token: string) {
-  try { sessionStorage.setItem(SOLICITOR_SESSION_KEY, token); } catch { /* ignore */ }
-  try { localStorage.setItem(SOLICITOR_SESSION_KEY, token); } catch { /* ignore */ }
-}
-
-export function clearSolicitorSessionToken() {
-  try { sessionStorage.removeItem(SOLICITOR_SESSION_KEY); } catch { /* ignore */ }
-  try { localStorage.removeItem(SOLICITOR_SESSION_KEY); } catch { /* ignore */ }
+  current_terms_version: string | null;
+  has_accepted_current_terms: boolean;
+  has_completed_mandatory_onboarding: boolean;
 }
 
 export async function invokeSolicitorFunction<T = any>(
   functionName: string,
   body: Record<string, unknown> = {},
-): Promise<{ data: T | null; error: { message: string } | null }> {
+  options: { signal?: AbortSignal } = {},
+): Promise<{ data: T | null; error: { message: string; code?: string; status?: number } | null }> {
   try {
-    const sessionToken = getSolicitorSessionToken();
-
     const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        ...(sessionToken ? { 'x-solicitor-session-token': sessionToken } : {}),
+        'X-Portal-Request': 'solicitor-portal',
       },
-      credentials: 'omit',
-      body: JSON.stringify({
-        ...body,
-        ...(sessionToken ? { solicitor_session_token: sessionToken } : {}),
-      }),
+      credentials: 'include',
+      signal: options.signal,
+      body: JSON.stringify(body),
     });
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      return { data, error: { message: (data as any)?.error || `HTTP ${response.status}` } };
+      return { data, error: { message: (data as any)?.error || `HTTP ${response.status}`, code: (data as any)?.code, status: response.status } };
     }
     return { data, error: null };
   } catch (error: any) {

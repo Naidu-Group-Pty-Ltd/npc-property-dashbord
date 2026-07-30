@@ -14,7 +14,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import { supabase } from '@/integrations/supabase/client';
 import { AdminMatterCommsDialog } from '@/components/admin/solicitor-portal/AdminMatterCommsDialog';
 import {
   AU_STATE_OPTIONS, MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, MATTER_STATUS_ORDER,
@@ -63,7 +62,7 @@ export function AdminLegalMattersPanel() {
     const [matterRes, firmRes, clientRes] = await Promise.all([
       invokeSecureFunction('legal-matters-admin', { operation: 'list_matters' }),
       invokeSecureFunction('solicitor-portal-admin', { operation: 'list_users' }),
-      supabase.from('clients').select('id, primary_first_name, primary_surname').order('primary_surname').limit(1000),
+      invokeSecureFunction('legal-matters-admin', { operation: 'list_workspace_options' }),
     ]);
     if (matterRes.error) toast.error(matterRes.error.message || 'Could not load matters');
     else setMatters((matterRes.data?.records || []) as LegalMatter[]);
@@ -77,10 +76,7 @@ export function AdminLegalMattersPanel() {
       for (const u of users) if (u.firm_id && u.firm_name) seen.set(u.firm_id, u.firm_name);
       setFirms([...seen].map(([id, name]) => ({ id, name })));
     }
-    setClients((clientRes.data || []).map((c) => ({
-      id: c.id,
-      name: [c.primary_first_name, c.primary_surname].filter(Boolean).join(' ') || 'Unnamed client',
-    })));
+    if (!clientRes.error) setClients(clientRes.data?.clients || []);
     setLoading(false);
   }, []);
 
@@ -129,10 +125,11 @@ export function AdminLegalMattersPanel() {
     void load();
   };
 
-  const assign = async (matterId: string, field: 'firm_id' | 'assigned_solicitor_user_id', value: string) => {
+  const assign = async (matterId: string, expectedVersion: number, field: 'firm_id' | 'assigned_solicitor_user_id', value: string) => {
     const { error } = await invokeSecureFunction('legal-matters-admin', {
       operation: 'update_matter',
       matter_id: matterId,
+      expected_version: expectedVersion,
       [field]: value === '__unassigned__' ? null : value,
     });
     if (error) { toast.error(error.message || 'Could not update matter'); return; }
@@ -221,7 +218,7 @@ export function AdminLegalMattersPanel() {
                     <TableCell>
                       <Select
                         value={m.firm_id ?? '__unassigned__'}
-                        onValueChange={(v) => void assign(m.id, 'firm_id', v)}
+                        onValueChange={(v) => void assign(m.id, m.row_version, 'firm_id', v)}
                       >
                         <SelectTrigger className="h-8 w-44" aria-label={`Practice for ${m.title}`}>
                           <SelectValue />
@@ -235,7 +232,7 @@ export function AdminLegalMattersPanel() {
                     <TableCell className="hidden lg:table-cell">
                       <Select
                         value={m.assigned_solicitor_user_id ?? '__unassigned__'}
-                        onValueChange={(v) => void assign(m.id, 'assigned_solicitor_user_id', v)}
+                        onValueChange={(v) => void assign(m.id, m.row_version, 'assigned_solicitor_user_id', v)}
                       >
                         <SelectTrigger className="h-8 w-44" aria-label={`Solicitor for ${m.title}`}>
                           <SelectValue />

@@ -148,11 +148,14 @@ import PortalPropertyInsights from "./pages/portal/PortalPropertyInsights";
 import PortalBooking from "./pages/portal/PortalBooking";
 import PortalAppointments from "./pages/portal/PortalAppointments";
 import PortalAml from "./pages/portal/PortalAml";
+import PortalLegal from "./pages/portal/PortalLegal";
+import PortalLegalDetail from "./pages/portal/PortalLegalDetail";
 import PortalConfig from "./pages/PortalConfig";
 import { PortalConsentWall } from "@/components/portal/PortalConsentWall";
 import { FinancePortalAuthProvider } from "@/hooks/useFinancePortalAuth";
 import { SolicitorPortalAuthProvider } from "@/hooks/useSolicitorPortalAuth";
 import { SolicitorPortalProtectedRoute } from "@/components/solicitor-portal/SolicitorPortalProtectedRoute";
+import { SolicitorPortalLayout } from "@/components/solicitor-portal/SolicitorPortalLayout";
 import SolicitorLogin from "@/pages/solicitor/SolicitorLogin";
 import SolicitorAcceptInvite from "@/pages/solicitor/SolicitorAcceptInvite";
 import SolicitorForgotPassword from "@/pages/solicitor/SolicitorForgotPassword";
@@ -161,6 +164,10 @@ import SolicitorDashboard from "@/pages/solicitor/SolicitorDashboard";
 import SolicitorMatters from "@/pages/solicitor/SolicitorMatters";
 import SolicitorPipeline from "@/pages/solicitor/SolicitorPipeline";
 import SolicitorMatterDetail from "@/pages/solicitor/SolicitorMatterDetail";
+import SolicitorTerms from "@/pages/solicitor/SolicitorTerms";
+import SolicitorOnboarding from "@/pages/solicitor/SolicitorOnboarding";
+import SolicitorSecurity from "@/pages/solicitor/SolicitorSecurity";
+import SolicitorWorkspacePage from "@/pages/solicitor/SolicitorWorkspacePage";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
@@ -280,6 +287,8 @@ const App = () => (
                           <Route path="finance" element={<PortalFinanceHub />} />
                           <Route path="lenders" element={<PortalLenders />} />
                           <Route path="messages" element={<PortalMessages />} />
+                          <Route path="legal" element={<PortalLegal />} />
+                          <Route path="legal/:caseId" element={<PortalLegalDetail />} />
                           <Route path="property-insights" element={<PortalPropertyInsights />} />
                           <Route path="booking" element={<PortalBooking />} />
                           <Route path="appointments" element={<PortalAppointments />} />
@@ -332,31 +341,22 @@ const App = () => (
                               <Route path="login" element={<SolicitorLogin />} />
                               <Route path="accept-invite" element={<SolicitorAcceptInvite />} />
                               <Route path="forgot-password" element={<SolicitorForgotPassword />} />
-                              <Route path="change-password" element={
-                                <SolicitorPortalProtectedRoute>
-                                  <SolicitorChangePassword />
-                                </SolicitorPortalProtectedRoute>
-                              } />
-                              <Route path="" element={
-                                <SolicitorPortalProtectedRoute>
-                                  <SolicitorDashboard />
-                                </SolicitorPortalProtectedRoute>
-                              } />
-                              <Route path="matters" element={
-                                <SolicitorPortalProtectedRoute>
-                                  <SolicitorMatters />
-                                </SolicitorPortalProtectedRoute>
-                              } />
-                              <Route path="pipeline" element={
-                                <SolicitorPortalProtectedRoute>
-                                  <SolicitorPipeline />
-                                </SolicitorPortalProtectedRoute>
-                              } />
-                              <Route path="matters/:matterId" element={
-                                <SolicitorPortalProtectedRoute>
-                                  <SolicitorMatterDetail />
-                                </SolicitorPortalProtectedRoute>
-                              } />
+                              <Route element={<SolicitorPortalProtectedRoute />}>
+                                <Route path="change-password" element={<SolicitorChangePassword />} />
+                                <Route path="terms" element={<SolicitorTerms />} />
+                                <Route path="onboarding" element={<SolicitorOnboarding />} />
+                                <Route element={<SolicitorPortalLayout />}>
+                                  <Route index element={<SolicitorDashboard />} />
+                                  <Route path="matters" element={<SolicitorMatters />} />
+                                  <Route path="pipeline" element={<SolicitorPipeline />} />
+                                  <Route path="matters/:matterId" element={<SolicitorMatterDetail />} />
+                                  <Route path="messages" element={<SolicitorWorkspacePage kind="messages" />} />
+                                  <Route path="tasks" element={<SolicitorWorkspacePage kind="tasks" />} />
+                                  <Route path="notifications" element={<SolicitorWorkspacePage kind="notifications" />} />
+                                  <Route path="settings" element={<SolicitorWorkspacePage kind="settings" />} />
+                                  <Route path="settings/security" element={<SolicitorSecurity />} />
+                                </Route>
+                              </Route>
                             </Routes>
                           </SolicitorPortalAuthProvider>
                         } />

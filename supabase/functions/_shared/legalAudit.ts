@@ -7,8 +7,8 @@
  * SHA-256 hash chain. Rows are append-only at the database level, so any later
  * mutation or deletion breaks verification.
  *
- * Never throws — audit failures must not break the caller's operation, but they
- * are logged loudly so they surface in edge function logs.
+ * This helper is for lower-assurance operational events. High-assurance
+ * mutations write audit evidence inside their trusted database command.
  */
 
 export type LegalAuditSeverity = 'info' | 'notice' | 'warning' | 'critical';
@@ -89,37 +89,6 @@ export async function recordLegalAuditEvent(
   }
 }
 
-function canonicalString(row: any, prevHash: string | null): string {
-  const actorId =
-    row.actor_solicitor_user_id || row.actor_staff_user_id || row.actor_client_portal_user_id || '';
-  const created = new Date(row.created_at);
-  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-  const ts =
-    `${created.getUTCFullYear()}-${pad(created.getUTCMonth() + 1)}-${pad(created.getUTCDate())}` +
-    `T${pad(created.getUTCHours())}:${pad(created.getUTCMinutes())}:${pad(created.getUTCSeconds())}` +
-    `.${pad(created.getUTCMilliseconds(), 3)}Z`;
-
-  return [
-    prevHash ?? '',
-    row.legal_matter_id ?? '',
-    row.actor_type ?? '',
-    actorId,
-    row.category ?? '',
-    row.action ?? '',
-    row.target_type ?? '',
-    row.target_id ?? '',
-    row.metadata === null || row.metadata === undefined ? '{}' : JSON.stringify(row.metadata),
-    ts,
-  ].join('|');
-}
-
-async function sha256Hex(input: string): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
 export interface LegalAuditChainVerification {
   verified: boolean;
   checked: number;
@@ -129,79 +98,13 @@ export interface LegalAuditChainVerification {
   last_event_at: string | null;
 }
 
-/**
- * Recompute the hash chain for one matter and report the first divergence.
- *
- * Note: Postgres serialises `metadata::text` with its own jsonb key ordering,
- * so a strict byte comparison can differ from `JSON.stringify`. We therefore
- * treat a link as valid when either the recomputed hash matches OR the stored
- * `prev_hash` correctly points at the preceding row's `row_hash` — the latter
- * is what actually detects insertion, deletion and reordering.
- */
 export async function verifyLegalAuditChain(
   supabase: any,
   legalMatterId: string,
 ): Promise<LegalAuditChainVerification> {
-  const { data, error } = await supabase
-    .from('legal_matter_audit_events')
-    .select('id, legal_matter_id, actor_type, actor_solicitor_user_id, actor_staff_user_id, actor_client_portal_user_id, category, action, target_type, target_id, metadata, prev_hash, row_hash, created_at')
-    .eq('legal_matter_id', legalMatterId)
-    .order('created_at', { ascending: true })
-    .order('id', { ascending: true });
-
-  if (error) {
-    return {
-      verified: false,
-      checked: 0,
-      broken_at: null,
-      broken_reason: error.message,
-      first_event_at: null,
-      last_event_at: null,
-    };
-  }
-
-  const rows = data || [];
-  let previous: any = null;
-
-  for (const row of rows) {
-    const expectedPrev = previous ? previous.row_hash : null;
-    if ((row.prev_hash ?? null) !== (expectedPrev ?? null)) {
-      return {
-        verified: false,
-        checked: rows.length,
-        broken_at: row.id,
-        broken_reason: 'prev_hash does not match the preceding entry',
-        first_event_at: rows[0]?.created_at ?? null,
-        last_event_at: rows[rows.length - 1]?.created_at ?? null,
-      };
-    }
-    const recomputed = await sha256Hex(canonicalString(row, expectedPrev));
-    if (recomputed !== row.row_hash) {
-      // Metadata serialisation can differ between Postgres and JS; only treat
-      // this as a break when the row carries no metadata at all.
-      const hasMetadata = row.metadata && Object.keys(row.metadata).length > 0;
-      if (!hasMetadata) {
-        return {
-          verified: false,
-          checked: rows.length,
-          broken_at: row.id,
-          broken_reason: 'row_hash does not match the recorded content',
-          first_event_at: rows[0]?.created_at ?? null,
-          last_event_at: rows[rows.length - 1]?.created_at ?? null,
-        };
-      }
-    }
-    previous = row;
-  }
-
-  return {
-    verified: true,
-    checked: rows.length,
-    broken_at: null,
-    broken_reason: null,
-    first_event_at: rows[0]?.created_at ?? null,
-    last_event_at: rows[rows.length - 1]?.created_at ?? null,
-  };
+  const { data, error } = await supabase.rpc('verify_legal_audit_chain_strict', { _matter_id: legalMatterId });
+  if (error || !data) return { verified: false, checked: 0, broken_at: null, broken_reason: error?.message || 'verification_failed', first_event_at: null, last_event_at: null };
+  return { verified: data.verified === true, checked: Number(data.checked || 0), broken_at: data.broken_at || null, broken_reason: data.reason || null, first_event_at: null, last_event_at: null };
 }
 
 /** Retention presets offered in the closure workflow. */

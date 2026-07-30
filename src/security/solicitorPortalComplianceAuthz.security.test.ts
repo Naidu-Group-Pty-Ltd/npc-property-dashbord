@@ -10,10 +10,11 @@ describe('solicitor-portal-compliance authorization', () => {
     expect(source).toContain("json({ error: session.error || 'Unauthorised' }, session.status || 401)");
   });
 
-  it('scopes every matter to the caller firm AND an assigned client', () => {
-    expect(source).toContain("matter.firm_id !== me.firm_id");
-    expect(source).toContain('assignedClientIds.includes(matter.client_id)');
-    expect(source).toContain('resolveClientPermissions(supabase, me.id, matter.client_id)');
+  it('scopes every matter to an exact non-null firm and explicit matter grant', () => {
+    expect(source).toContain("!matter.firm_id || matter.firm_id !== me.firm_id");
+    expect(source).toContain('resolveSolicitorMatterAccess(supabase, me.id, me.firm_id, matter.id)');
+    expect(source).toContain('resolveMatterPermissions(supabase, access)');
+    expect(source).not.toContain('assignedClientIds.includes(matter.client_id)');
   });
 
   it('gates the audit trail and export behind the audit permission key', () => {

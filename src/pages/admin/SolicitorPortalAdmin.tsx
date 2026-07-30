@@ -17,15 +17,21 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  Briefcase, Building2, Gavel, History, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
+  Briefcase, Building2, Gavel, History, Link2, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
   Settings2, Shield, Trash2, Unlock, UserCheck, Users, UserX,
 } from 'lucide-react';
+import { IntegrationHealthPanel } from '@/components/admin/solicitor-portal/IntegrationHealthPanel';
+import { CollaborationHealthPanel } from '@/components/admin/solicitor-portal/CollaborationHealthPanel';
+import { TransactionCasesPanel } from '@/components/admin/solicitor-portal/TransactionCasesPanel';
 import { AdminLegalMattersPanel } from '@/components/admin/solicitor-portal/AdminLegalMattersPanel';
 import { SolicitorFirmDialog, type SolicitorFirm } from '@/components/admin/solicitor-portal/SolicitorFirmDialog';
 import { SolicitorUserDialog, type SolicitorUserRow } from '@/components/admin/solicitor-portal/SolicitorUserDialog';
 import { SolicitorAssignmentsDialog } from '@/components/admin/solicitor-portal/SolicitorAssignmentsDialog';
 import { SolicitorGlobalPermissionsDialog } from '@/components/admin/solicitor-portal/SolicitorGlobalPermissionsDialog';
 import { SolicitorActivityLogDialog } from '@/components/admin/solicitor-portal/SolicitorActivityLogDialog';
+import { FirmAiPolicyDialog } from '@/components/admin/solicitor-portal/FirmAiPolicyDialog';
+import { OperationalObservabilityPanel } from '@/components/admin/solicitor-portal/OperationalObservabilityPanel';
+import { CrossPortalCutoverPanel } from '@/components/admin/solicitor-portal/CrossPortalCutoverPanel';
 
 const STATUS_META: Record<SolicitorUserRow['status'], { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
   active: { label: 'Active', variant: 'default' },
@@ -39,6 +45,7 @@ const STATUS_META: Record<SolicitorUserRow['status'], { label: string; variant: 
 export default function SolicitorPortalAdmin() {
   const [loading, setLoading] = useState(true);
   const [firms, setFirms] = useState<SolicitorFirm[]>([]);
+  const [aiPolicyFirm,setAiPolicyFirm]=useState<{id:string;name:string}|null>(null);
   const [users, setUsers] = useState<SolicitorUserRow[]>([]);
   const [userSearch, setUserSearch] = useState('');
   const [firmSearch, setFirmSearch] = useState('');
@@ -176,7 +183,7 @@ export default function SolicitorPortalAdmin() {
             Solicitor Portal
           </h1>
           <p className="text-sm text-muted-foreground">
-            Manage legal practices, portal access and the clients each solicitor can act for.
+            Manage legal practices, explicit matter access, roles and effective permission policies.
           </p>
         </div>
         <div className="flex gap-2">
@@ -194,7 +201,7 @@ export default function SolicitorPortalAdmin() {
           { label: 'Legal practices', value: `${stats.activeFirms}/${stats.firms}`, hint: 'active', icon: Building2 },
           { label: 'Portal users', value: `${stats.activeUsers}/${stats.users}`, hint: 'with live access', icon: Users },
           { label: 'Pending invites', value: stats.pendingInvites, hint: 'awaiting acceptance', icon: Mail },
-          { label: 'Client assignments', value: stats.assignments, hint: 'solicitor ↔ client links', icon: Gavel },
+          { label: 'Matter access', value: stats.assignments, hint: 'explicit solicitor ↔ matter grants', icon: Gavel },
         ].map(s => (
           <Card key={s.label}>
             <CardContent className="flex items-center gap-3 p-4">
@@ -215,6 +222,8 @@ export default function SolicitorPortalAdmin() {
           <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Portal Users</TabsTrigger>
           <TabsTrigger value="firms" className="gap-2"><Building2 className="h-4 w-4" /> Legal Practices</TabsTrigger>
           <TabsTrigger value="matters" className="gap-2"><Briefcase className="h-4 w-4" /> Matters</TabsTrigger>
+          <TabsTrigger value="cases" className="gap-2"><Link2 className="h-4 w-4" /> Transaction Cases</TabsTrigger>
+          <TabsTrigger value="integrations" className="gap-2"><RefreshCw className="h-4 w-4" /> Integration Health</TabsTrigger>
         </TabsList>
 
         {/* ───────────── USERS ───────────── */}
@@ -300,7 +309,7 @@ export default function SolicitorPortalAdmin() {
                         <TableHead>Practice</TableHead>
                         <TableHead>Role</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Clients</TableHead>
+                        <TableHead>Matters</TableHead>
                         <TableHead>Last login</TableHead>
                         <TableHead className="text-right">Actions</TableHead>
                       </TableRow>
@@ -342,7 +351,7 @@ export default function SolicitorPortalAdmin() {
                                     <Settings2 className="mr-2 h-4 w-4" /> Edit details
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => setAssignDialog({ open: true, user: u })}>
-                                    <Users className="mr-2 h-4 w-4" /> Client assignments
+                                    <Users className="mr-2 h-4 w-4" /> Matter access
                                   </DropdownMenuItem>
                                   <DropdownMenuItem onClick={() => setPermsDialog({ open: true, user: u })}>
                                     <Shield className="mr-2 h-4 w-4" /> Baseline permissions
@@ -470,6 +479,9 @@ export default function SolicitorPortalAdmin() {
                                 <DropdownMenuItem onClick={() => { setFirmFilter(f.id); }}>
                                   <Users className="mr-2 h-4 w-4" /> Filter users by practice
                                 </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => setAiPolicyFirm({id:f.id,name:f.trading_name||f.name})}>
+                                  <Shield className="mr-2 h-4 w-4" /> Contract AI policy
+                                </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
                                   onClick={() => call({ operation: 'set_firm_active', firm_id: f.id, is_active: !f.is_active }, f.is_active ? 'Practice deactivated' : 'Practice activated', f.id)}
@@ -491,6 +503,14 @@ export default function SolicitorPortalAdmin() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="integrations" className="mt-4">
+          <div className="space-y-4"><CrossPortalCutoverPanel firms={firms}/><OperationalObservabilityPanel /><IntegrationHealthPanel />{import.meta.env.VITE_FINANCE_SOLICITOR_COLLABORATION === 'true' ? <CollaborationHealthPanel /> : null}</div>
+        </TabsContent>
+
+        <TabsContent value="cases" className="mt-4">
+          <TransactionCasesPanel />
         </TabsContent>
 
         {/* ───────────── MATTERS ───────────── */}
@@ -530,6 +550,7 @@ export default function SolicitorPortalAdmin() {
         user={activityDialog.user ? { id: activityDialog.user.id, name: activityDialog.user.name } : null}
       />
 
+      <FirmAiPolicyDialog firm={aiPolicyFirm} onClose={()=>setAiPolicyFirm(null)}/>
       <AlertDialog open={!!confirm} onOpenChange={o => { if (!o) setConfirm(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -543,7 +564,7 @@ export default function SolicitorPortalAdmin() {
                 <>This immediately ends {confirm.user.name}&apos;s session and invalidates any outstanding invite. Access can be restored later.</>
               )}
               {confirm?.kind === 'delete_user' && (
-                <>{confirm.user.name}, their client assignments and baseline permissions will be removed for good. This cannot be undone.</>
+                <>{confirm.user.name}, their matter access grants, legacy client assignments and baseline permissions will be removed for good. This cannot be undone.</>
               )}
               {confirm?.kind === 'delete_firm' && (
                 <>{confirm.firm.name} will be removed. Practices with portal users must have those users removed or reassigned first.</>

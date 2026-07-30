@@ -1,3 +1,4 @@
+import { mayWriteCrossPortalField } from './crossPortalFieldOwnership.ts';
 /**
  * Shared Legal Matter domain helpers (Solicitor Portal — Phase 3).
  *
@@ -28,8 +29,11 @@ export const AU_STATES = new Set(['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 
 export const MATTER_TEXT_FIELDS = [
   'matter_reference', 'title', 'property_address', 'property_suburb',
   'property_postcode', 'title_reference', 'lot_plan', 'pexa_workspace_id',
-  'other_side_firm', 'risk_notes', 'internal_notes', 'shared_summary',
+  'other_side_firm', 'risk_notes', 'shared_summary',
 ] as const;
+
+export const SOLICITOR_PRIVATE_MATTER_FIELDS = ['internal_notes'] as const;
+export const COMMAND_CENTRE_PRIVATE_MATTER_FIELDS = ['npc_internal_notes'] as const;
 
 export const MATTER_NUMERIC_FIELDS = [
   'purchase_price', 'deposit_amount', 'deposit_percent',
@@ -41,17 +45,34 @@ export const MATTER_DATE_FIELDS = [
 ] as const;
 
 /** Columns returned to portal + staff callers. Never selects financial-position data. */
-export const MATTER_SELECT = `
+const LEGAL_MATTER_SHARED_SELECT = `
   id, matter_reference, title, matter_type, status, client_id, firm_id,
   assigned_solicitor_user_id, purchase_file_id, client_deal_id, build_job_id,
   property_address, property_suburb, property_state, property_postcode,
   title_reference, lot_plan, purchase_price, deposit_amount, deposit_percent,
   contract_date, exchange_date, cooling_off_expiry, finance_clause_date,
   building_pest_date, sunset_date, settlement_date, actual_settlement_date,
-  pexa_workspace_id, other_side_firm, risk_flag, risk_notes, internal_notes,
+  pexa_workspace_id, other_side_firm, risk_flag, risk_notes,
   shared_summary, opened_at, closed_at, kanban_position, stage_entered_at,
-  created_at, updated_at
+  row_version, created_at, updated_at
 `;
+
+/** List/search responses intentionally contain no audience-private notes. */
+export const LEGAL_MATTER_SOLICITOR_LIST_SELECT = LEGAL_MATTER_SHARED_SELECT;
+/** Only the authenticated Solicitor matter-detail contract includes practice notes. */
+export const LEGAL_MATTER_SOLICITOR_DETAIL_SELECT = `${LEGAL_MATTER_SHARED_SELECT}, internal_notes`;
+/** Command Centre has a separate NPC-owned note and cannot read practice notes. */
+export const LEGAL_MATTER_COMMAND_CENTRE_SELECT = `${LEGAL_MATTER_SHARED_SELECT}, npc_internal_notes`;
+export const LEGAL_MATTER_FINANCE_SUMMARY_SELECT = `
+  id, client_id, matter_reference, status, property_address, settlement_date, updated_at
+`;
+export const LEGAL_MATTER_CLIENT_PROJECTION_SELECT = `
+  case_id, client_id, legal_matter_id, matter_reference, friendly_status,
+  shared_summary, property_address, settlement_date, next_client_action, updated_at
+`;
+
+/** Compatibility alias is deliberately the safe, note-free list contract. */
+export const MATTER_SELECT = LEGAL_MATTER_SOLICITOR_LIST_SELECT;
 
 export const PARTY_SELECT = `
   id, legal_matter_id, role, name, organisation, email, phone, address,
@@ -91,18 +112,23 @@ export function cleanState(value: unknown): string | null {
 /** Build a sanitised matter payload from arbitrary input. */
 export function buildMatterPayload(
   body: Record<string, any>,
-  { isCreate }: { isCreate: boolean },
+  { isCreate, audience = 'solicitor' }: { isCreate: boolean; audience?: 'solicitor' | 'command_centre' },
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
 
   for (const f of MATTER_TEXT_FIELDS) {
-    if (f in body) payload[f] = cleanText(body[f], f === 'internal_notes' || f === 'shared_summary' || f === 'risk_notes' ? 8000 : 300);
+    if (f in body) payload[f] = cleanText(body[f], f === 'shared_summary' || f === 'risk_notes' ? 8000 : 300);
   }
+  const privateField = audience === 'solicitor' ? 'internal_notes' : 'npc_internal_notes';
+  if (privateField in body) payload[privateField] = cleanText(body[privateField], 8000);
   for (const f of MATTER_NUMERIC_FIELDS) {
-    if (f in body) payload[f] = cleanNumber(body[f]);
+    // Transaction financials are Finance/Command Centre owned.
+    if (audience === 'command_centre' && f in body && mayWriteCrossPortalField(f, 'command_centre')) payload[f] = cleanNumber(body[f]);
   }
   for (const f of MATTER_DATE_FIELDS) {
-    if (f in body) payload[f] = cleanDate(body[f]);
+    // Finance clause is Finance-owned; the legal domain owns the remaining
+    // contractual and settlement dates.
+    if ((audience === 'command_centre' || f !== 'finance_clause_date') && f in body && mayWriteCrossPortalField(f, audience)) payload[f] = cleanDate(body[f]);
   }
   if ('property_state' in body) payload.property_state = cleanState(body.property_state);
   if ('matter_type' in body) {

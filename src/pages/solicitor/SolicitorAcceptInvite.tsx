@@ -83,7 +83,7 @@ export default function SolicitorAcceptInvite() {
       return;
     }
 
-    applySession(data.session_token, data.user);
+    applySession(data.user);
     navigate('/solicitor', { replace: true });
   };
 

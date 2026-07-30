@@ -276,6 +276,10 @@ Deno.serve(async (req) => {
     // ── unread_count (partner only) ──
     if (operation === 'unread_count') {
       if (actor.type !== 'partner') return jsonResponse({ error: 'Partner only' }, 403, corsHeaders);
+      if (Deno.env.get('CANONICAL_CONVERSATIONS_V2') !== 'false') {
+        const { data,error }=await supabase.rpc('get_participant_conversations',{_participant_type:'finance_user',_participant_id:actor.portalUserId,_case_id:null});
+        if(error)throw error; return jsonResponse({success:true,count:(data||[]).reduce((n:number,e:any)=>n+Number(e.unread_count||0),0)},200,corsHeaders);
+      }
       const { data, error } = await supabase
         .from('finance_portal_threads')
         .select('unread_count_partner')
@@ -287,6 +291,16 @@ Deno.serve(async (req) => {
 
     // ── list_threads ──
     if (operation === 'list_threads') {
+      let canonicalFinanceThreads:any[]=[];
+      if (Deno.env.get('CANONICAL_CONVERSATIONS_V2') !== 'false' && actor.type==='partner') {
+        const { data,error }=await supabase.rpc('get_participant_conversations',{_participant_type:'finance_user',_participant_id:actor.portalUserId,_case_id:body.case_id||null});
+        if(error)throw error;
+        const candidateCases=(data||[]).filter((e:any)=>['finance_solicitor','case_all_parties'].includes(e.conversation.scope)).map((e:any)=>e.conversation.case_id).filter(Boolean);
+        const {data:currentLinks}=candidateCases.length?await supabase.from('transaction_case_links').select('case_id,purchase_files!inner(assigned_finance_user_id)').in('case_id',candidateCases).eq('purchase_files.assigned_finance_user_id',actor.portalUserId):{data:[]};
+        const currentCaseIds=new Set((currentLinks||[]).map((l:any)=>l.case_id));
+        canonicalFinanceThreads=(data||[]).filter((e:any)=>['finance_solicitor','case_all_parties'].includes(e.conversation.scope)&&currentCaseIds.has(e.conversation.case_id)).map((e:any)=>({...e.conversation,thread_type:'legal_coordination',visibility_scope:'finance_solicitor',finance_user_id:actor.portalUserId,unread_count_partner:Number(e.unread_count||0)}));
+        if(body.canonical_only===true)return jsonResponse({success:true,threads:canonicalFinanceThreads},200,corsHeaders);
+      }
       let query = supabase
         .from('finance_portal_threads')
         .select(`
@@ -322,7 +336,7 @@ Deno.serve(async (req) => {
           secondary_contact_name: [t.clients.secondary_first_name, t.clients.secondary_surname].filter(Boolean).join(' ').trim() || null,
         } : null,
       }));
-      return jsonResponse({ success: true, threads }, 200, corsHeaders);
+      return jsonResponse({ success: true, threads: [...canonicalFinanceThreads,...threads] }, 200, corsHeaders);
     }
 
     // ── get_or_create_thread ──
@@ -398,6 +412,11 @@ Deno.serve(async (req) => {
       const { thread_id } = body;
       if (!thread_id) return jsonResponse({ error: 'thread_id required' }, 400, corsHeaders);
 
+      if (Deno.env.get('CANONICAL_CONVERSATIONS_V2') !== 'false' && actor.type==='partner') {
+        const { data: canonical }=await supabase.from('conversations').select('id,case_id,scope,subject').eq('id',thread_id).in('scope',['finance_solicitor','case_all_parties']).maybeSingle();
+        if(canonical){const {data:current}=await supabase.from('transaction_case_links').select('case_id,purchase_files!inner(assigned_finance_user_id)').eq('case_id',canonical.case_id).eq('purchase_files.assigned_finance_user_id',actor.portalUserId).maybeSingle();if(!current)return jsonResponse({error:'Forbidden'},403,corsHeaders);const {data,error}=await supabase.rpc('get_conversation_messages',{_conversation_id:thread_id,_participant_type:'finance_user',_participant_id:actor.portalUserId,_limit:Math.min(Number(body.limit)||100,200),_before:body.before||null});if(error)throw error;return jsonResponse({success:true,messages:(data||[]).map((m:any)=>({...m,thread_id,sender_type:m.sender_type==='finance_user'?'partner':m.sender_type==='solicitor_user'?'staff':m.sender_type})),thread:canonical},200,corsHeaders);}
+      }
+
       const { data: thread } = await supabase
         .from('finance_portal_threads')
         .select('id, client_id, finance_user_id, visibility_scope')
@@ -429,6 +448,10 @@ Deno.serve(async (req) => {
     if (operation === 'mark_thread_read') {
       const { thread_id } = body;
       if (!thread_id) return jsonResponse({ error: 'thread_id required' }, 400, corsHeaders);
+      if(Deno.env.get('CANONICAL_CONVERSATIONS_V2')!=='false'&&actor.type==='partner'){
+        const {data:canonical}=await supabase.from('conversations').select('id,case_id').eq('id',thread_id).in('scope',['finance_solicitor','case_all_parties']).maybeSingle();
+        if(canonical){const {data:current}=await supabase.from('transaction_case_links').select('case_id,purchase_files!inner(assigned_finance_user_id)').eq('case_id',canonical.case_id).eq('purchase_files.assigned_finance_user_id',actor.portalUserId).maybeSingle();if(!current)return jsonResponse({error:'Forbidden'},403,corsHeaders);const {error}=await supabase.rpc('mark_conversation_read',{_conversation_id:thread_id,_actor_type:'finance_user',_actor_id:actor.portalUserId});if(error)throw error;return jsonResponse({success:true},200,corsHeaders);}
+      }
 
       const { data: thread } = await supabase
         .from('finance_portal_threads')
@@ -473,6 +496,11 @@ Deno.serve(async (req) => {
       const trimmed = (messageBody || '').toString().trim();
       if (!trimmed && !attachment) return jsonResponse({ error: 'body or attachment required' }, 400, corsHeaders);
       if (trimmed.length > 5000) return jsonResponse({ error: 'Message too long (max 5000 chars)' }, 400, corsHeaders);
+
+      if(Deno.env.get('CANONICAL_CONVERSATIONS_V2')!=='false'&&actor.type==='partner'){
+        const {data:canonical}=await supabase.from('conversations').select('id,case_id').eq('id',thread_id).in('scope',['finance_solicitor','case_all_parties']).maybeSingle();
+        if(canonical){const {data:current}=await supabase.from('transaction_case_links').select('case_id,purchase_files!inner(assigned_finance_user_id)').eq('case_id',canonical.case_id).eq('purchase_files.assigned_finance_user_id',actor.portalUserId).maybeSingle();if(!current)return jsonResponse({error:'Forbidden'},403,corsHeaders);if(attachment)return jsonResponse({error:'Canonical legal-conversation attachments require the immutable document service',code:'IMMUTABLE_DOCUMENTS_REQUIRED'},409,corsHeaders);const {data,error}=await supabase.rpc('post_conversation_message',{_conversation_id:thread_id,_actor_type:'finance_user',_actor_id:actor.portalUserId,_body:trimmed,_idempotency_key:String(body.idempotency_key||`finance:${actor.portalUserId}:${crypto.randomUUID()}`),_sender_name:actor.name,_reply_to:body.reply_to_message_id||null});if(error)return jsonResponse({error:error.message},/CONVERSATION_ACCESS_DENIED/.test(error.message||'')?403:400,corsHeaders);return jsonResponse({success:true,message:{...data,thread_id,sender_type:'partner'}},200,corsHeaders);}
+      }
 
       const { data: thread } = await supabase
         .from('finance_portal_threads')
