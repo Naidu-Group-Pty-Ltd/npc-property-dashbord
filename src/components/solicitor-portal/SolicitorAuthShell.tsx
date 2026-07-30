@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
-import { Scale } from 'lucide-react';
+import { BrandLogo } from '@/components/branding/BrandAssets';
+import { useBrand } from '@/branding/useTokens';
 
 /**
  * Shared chrome for the unauthenticated Solicitor Portal surfaces
@@ -17,6 +18,8 @@ export function SolicitorAuthShell({
   children: ReactNode;
   footer?: ReactNode;
 }) {
+  const { settings } = useBrand();
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-background">
       <div
@@ -31,10 +34,16 @@ export function SolicitorAuthShell({
       <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-10">
         <div className="w-full max-w-md">
           <div className="mb-8 text-center">
-            <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/30 bg-primary/10">
-              <Scale className="h-7 w-7 text-primary" aria-hidden />
+            <div className="mb-4 flex justify-center">
+              <BrandLogo
+                slot="auth"
+                alt={settings.companyName || 'Solicitor Portal'}
+                className="h-14 max-w-[220px] object-contain"
+                fallbackClassName="h-14 w-14 rounded-2xl border border-primary/30"
+              />
             </div>
-            <p className="text-xs font-semibold uppercase tracking-[0.35em] text-primary">Solicitor Portal</p>
+            <p className="text-base font-semibold tracking-tight text-foreground">{settings.companyName}</p>
+            <p className="mt-1 text-xs font-semibold uppercase tracking-[0.35em] text-primary">Solicitor Portal</p>
             <h1 className="mt-2 text-2xl font-semibold text-foreground">{title}</h1>
             {description ? (
               <p className="mt-2 text-sm text-muted-foreground">{description}</p>

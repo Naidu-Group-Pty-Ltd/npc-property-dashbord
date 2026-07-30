@@ -1120,7 +1120,13 @@ function ListRowsField({
                       <input
                         type="checkbox"
                         checked={item}
-                        onChange={(e) => onChange(updateListRowValue(rows, i, key, e.target.checked))}
+                        onChange={(e) => onChange(updateListRowValue(
+                          rows,
+                          i,
+                          key,
+                          e.target.checked,
+                          Array.isArray(rowValue) ? valueIndex : undefined,
+                        ))}
                       />
                       {fieldLabel}
                     </label>

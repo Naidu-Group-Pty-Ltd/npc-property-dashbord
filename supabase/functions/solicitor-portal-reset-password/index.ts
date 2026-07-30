@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
 
     const { data: user } = await supabase
       .from('solicitor_portal_users')
-      .select('id, firm_id, reset_token, reset_token_expires_at, reset_attempts, is_active, revoked_at')
+      .select('id, firm_id, reset_token, reset_token_expires_at, reset_attempts, is_active, revoked_at, invite_accepted_at')
       .eq('email', normalizedEmail)
       .maybeSingle()
 
@@ -87,6 +87,9 @@ Deno.serve(async (req) => {
         session_expires_at: null,
         failed_login_attempts: 0,
         locked_until: null,
+        // A completed reset is a proven mailbox challenge — treat it as invite acceptance
+        // so the account stops showing as "invited" forever in the Command Centre.
+        ...(user.invite_accepted_at ? {} : { invite_accepted_at: new Date().toISOString(), invite_token: null, invite_token_expires_at: null }),
       })
       .eq('id', user.id)
 

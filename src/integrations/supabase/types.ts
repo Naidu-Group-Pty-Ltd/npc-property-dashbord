@@ -12645,6 +12645,133 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_compliance_exports: {
+        Row: {
+          chain_broken_at: string | null
+          chain_verified: boolean | null
+          client_id: string | null
+          created_at: string
+          export_scope: string
+          firm_id: string | null
+          format: string
+          id: string
+          ip_address: string | null
+          legal_matter_id: string
+          requested_by_solicitor_user_id: string | null
+          requested_by_staff_user_id: string | null
+          requested_by_type: string
+          section_counts: Json
+        }
+        Insert: {
+          chain_broken_at?: string | null
+          chain_verified?: boolean | null
+          client_id?: string | null
+          created_at?: string
+          export_scope?: string
+          firm_id?: string | null
+          format?: string
+          id?: string
+          ip_address?: string | null
+          legal_matter_id: string
+          requested_by_solicitor_user_id?: string | null
+          requested_by_staff_user_id?: string | null
+          requested_by_type?: string
+          section_counts?: Json
+        }
+        Update: {
+          chain_broken_at?: string | null
+          chain_verified?: boolean | null
+          client_id?: string | null
+          created_at?: string
+          export_scope?: string
+          firm_id?: string | null
+          format?: string
+          id?: string
+          ip_address?: string | null
+          legal_matter_id?: string
+          requested_by_solicitor_user_id?: string | null
+          requested_by_staff_user_id?: string | null
+          requested_by_type?: string
+          section_counts?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_compliance_exports_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_conflict_checks: {
+        Row: {
+          cleared_at: string | null
+          cleared_by_solicitor_user_id: string | null
+          cleared_by_staff_user_id: string | null
+          cleared_by_type: string | null
+          client_id: string | null
+          created_at: string
+          created_by: string | null
+          created_by_type: string
+          firm_id: string | null
+          id: string
+          legal_matter_id: string
+          match_count: number
+          matches: Json
+          notes: string | null
+          outcome: string
+          searched_terms: string[]
+          updated_at: string
+        }
+        Insert: {
+          cleared_at?: string | null
+          cleared_by_solicitor_user_id?: string | null
+          cleared_by_staff_user_id?: string | null
+          cleared_by_type?: string | null
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string
+          firm_id?: string | null
+          id?: string
+          legal_matter_id: string
+          match_count?: number
+          matches?: Json
+          notes?: string | null
+          outcome?: string
+          searched_terms?: string[]
+          updated_at?: string
+        }
+        Update: {
+          cleared_at?: string | null
+          cleared_by_solicitor_user_id?: string | null
+          cleared_by_staff_user_id?: string | null
+          cleared_by_type?: string | null
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string
+          firm_id?: string | null
+          id?: string
+          legal_matter_id?: string
+          match_count?: number
+          matches?: Json
+          notes?: string | null
+          outcome?: string
+          searched_terms?: string[]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_conflict_checks_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       legal_contract_analyses: {
         Row: {
           confidence: number | null
@@ -12745,6 +12872,89 @@ export type Database = {
           },
           {
             foreignKeyName: "legal_contract_analyses_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matter_audit_events: {
+        Row: {
+          action: string
+          actor_client_portal_user_id: string | null
+          actor_solicitor_user_id: string | null
+          actor_staff_user_id: string | null
+          actor_type: string
+          category: string
+          client_id: string | null
+          created_at: string
+          description: string | null
+          fields_accessed: string[] | null
+          firm_id: string | null
+          id: string
+          ip_address: string | null
+          legal_matter_id: string | null
+          metadata: Json
+          prev_hash: string | null
+          retention_class: string
+          row_hash: string | null
+          severity: string
+          target_id: string | null
+          target_type: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          actor_client_portal_user_id?: string | null
+          actor_solicitor_user_id?: string | null
+          actor_staff_user_id?: string | null
+          actor_type?: string
+          category: string
+          client_id?: string | null
+          created_at?: string
+          description?: string | null
+          fields_accessed?: string[] | null
+          firm_id?: string | null
+          id?: string
+          ip_address?: string | null
+          legal_matter_id?: string | null
+          metadata?: Json
+          prev_hash?: string | null
+          retention_class?: string
+          row_hash?: string | null
+          severity?: string
+          target_id?: string | null
+          target_type?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          actor_client_portal_user_id?: string | null
+          actor_solicitor_user_id?: string | null
+          actor_staff_user_id?: string | null
+          actor_type?: string
+          category?: string
+          client_id?: string | null
+          created_at?: string
+          description?: string | null
+          fields_accessed?: string[] | null
+          firm_id?: string | null
+          id?: string
+          ip_address?: string | null
+          legal_matter_id?: string | null
+          metadata?: Json
+          prev_hash?: string | null
+          retention_class?: string
+          row_hash?: string | null
+          severity?: string
+          target_id?: string | null
+          target_type?: string | null
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_audit_events_legal_matter_id_fkey"
             columns: ["legal_matter_id"]
             isOneToOne: false
             referencedRelation: "legal_matters"
@@ -13593,12 +13803,20 @@ export type Database = {
       legal_matters: {
         Row: {
           actual_settlement_date: string | null
+          archived_at: string | null
           assigned_solicitor_user_id: string | null
           build_job_id: string | null
           building_pest_date: string | null
           client_deal_id: string | null
           client_id: string | null
           closed_at: string | null
+          closed_by_solicitor_user_id: string | null
+          closed_by_type: string | null
+          closure_checklist: Json
+          closure_reason: string | null
+          closure_status: string
+          conflict_check_status: string
+          conflict_checked_at: string | null
           contract_date: string | null
           cooling_off_expiry: string | null
           created_at: string
@@ -13623,6 +13841,8 @@ export type Database = {
           property_suburb: string | null
           purchase_file_id: string | null
           purchase_price: number | null
+          retention_class: string
+          retention_until: string | null
           risk_flag: boolean
           risk_notes: string | null
           settlement_date: string | null
@@ -13636,12 +13856,20 @@ export type Database = {
         }
         Insert: {
           actual_settlement_date?: string | null
+          archived_at?: string | null
           assigned_solicitor_user_id?: string | null
           build_job_id?: string | null
           building_pest_date?: string | null
           client_deal_id?: string | null
           client_id?: string | null
           closed_at?: string | null
+          closed_by_solicitor_user_id?: string | null
+          closed_by_type?: string | null
+          closure_checklist?: Json
+          closure_reason?: string | null
+          closure_status?: string
+          conflict_check_status?: string
+          conflict_checked_at?: string | null
           contract_date?: string | null
           cooling_off_expiry?: string | null
           created_at?: string
@@ -13666,6 +13894,8 @@ export type Database = {
           property_suburb?: string | null
           purchase_file_id?: string | null
           purchase_price?: number | null
+          retention_class?: string
+          retention_until?: string | null
           risk_flag?: boolean
           risk_notes?: string | null
           settlement_date?: string | null
@@ -13679,12 +13909,20 @@ export type Database = {
         }
         Update: {
           actual_settlement_date?: string | null
+          archived_at?: string | null
           assigned_solicitor_user_id?: string | null
           build_job_id?: string | null
           building_pest_date?: string | null
           client_deal_id?: string | null
           client_id?: string | null
           closed_at?: string | null
+          closed_by_solicitor_user_id?: string | null
+          closed_by_type?: string | null
+          closure_checklist?: Json
+          closure_reason?: string | null
+          closure_status?: string
+          conflict_check_status?: string
+          conflict_checked_at?: string | null
           contract_date?: string | null
           cooling_off_expiry?: string | null
           created_at?: string
@@ -13709,6 +13947,8 @@ export type Database = {
           property_suburb?: string | null
           purchase_file_id?: string | null
           purchase_price?: number | null
+          retention_class?: string
+          retention_until?: string | null
           risk_flag?: boolean
           risk_notes?: string | null
           settlement_date?: string | null
@@ -22888,6 +23128,21 @@ export type Database = {
           _metadata: Json
           _prev_hash: string
           _purchase_file_id: string
+          _target_id: string
+          _target_type: string
+        }
+        Returns: string
+      }
+      compute_legal_audit_row_hash: {
+        Args: {
+          _action: string
+          _actor_id: string
+          _actor_type: string
+          _category: string
+          _created_at: string
+          _legal_matter_id: string
+          _metadata: Json
+          _prev_hash: string
           _target_id: string
           _target_type: string
         }
