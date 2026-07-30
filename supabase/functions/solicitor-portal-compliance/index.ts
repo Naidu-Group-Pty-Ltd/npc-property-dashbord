@@ -170,7 +170,7 @@ Deno.serve(async (req) => {
         return json({ error: 'You do not have access to the audit trail' }, 403);
       }
       const verification = await verifyLegalAuditChain(supabase, loaded.matter.id);
-      await audit(loaded.matter, 'audit' as LegalAuditCategory === undefined ? 'access' : 'access', 'audit_chain_verified', {
+      await audit(loaded.matter, 'access', 'audit_chain_verified', {
         severity: verification.verified ? 'info' : 'critical',
         metadata: { verified: verification.verified, checked: verification.checked },
       });
