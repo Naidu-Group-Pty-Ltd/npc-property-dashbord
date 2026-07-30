@@ -358,10 +358,13 @@ export default function FinancePortalCommissions() {
                     <TableHead>Trigger</TableHead>
                     <TableHead className="text-right">Basis</TableHead>
                     <TableHead className="text-right">Rate</TableHead>
+                    <TableHead>Rate source</TableHead>
                     <TableHead className="text-right">Net</TableHead>
+                    <TableHead>Funds</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Created</TableHead>
                   </TableRow>
+
                 </TableHeader>
                 <TableBody>
                   {filteredCommissions.length === 0 && (
