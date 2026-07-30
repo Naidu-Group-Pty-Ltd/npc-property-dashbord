@@ -1413,7 +1413,7 @@ function StaticPlanTab() {
                                     <span>chunk #{c.chunk_index} · {c.token_count ?? '?'} tok</span>
                                     <span className="font-mono text-muted-foreground">{String(c.id).slice(0, 8)}</span>
                                   </summary>
-                                  <pre className="text-[10px] whitespace-pre-wrap font-mono p-2 max-h-48 overflow-auto">{c.content}</pre>
+                                  <pre className="text-[10px] whitespace-pre-wrap font-mono p-2 max-h-48 overflow-auto">{c.chunk_text}</pre>
                                 </details>
                               ))
                             )}
