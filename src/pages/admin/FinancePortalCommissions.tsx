@@ -334,6 +334,10 @@ export default function FinancePortalCommissions() {
                 <Button size="sm" variant="outline" onClick={() => bulkSetStatus('invoiced')}>Mark invoiced</Button>
                 <Button size="sm" variant="outline" onClick={() => bulkSetStatus('paid')}>Mark paid</Button>
                 <Button size="sm" variant="outline" onClick={() => bulkSetStatus('void')}>Void</Button>
+                <Button size="sm" variant="outline" onClick={() => bulkSetClearedFunds(true)}>
+                  <ShieldCheck className="h-3.5 w-3.5 mr-1" />Funds cleared
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => bulkSetClearedFunds(false)}>Undo funds cleared</Button>
                 <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear</Button>
               </div>
             )}
