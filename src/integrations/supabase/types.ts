@@ -10035,6 +10035,101 @@ export type Database = {
         }
         Relationships: []
       }
+      finance_partner_bank_details: {
+        Row: {
+          abn: string | null
+          account_name: string | null
+          account_number_last4: string | null
+          account_number_masked: string | null
+          accounts_email: string | null
+          agreement_id: string | null
+          bsb: string | null
+          change_reason: string | null
+          created_at: string
+          created_by: string | null
+          entity_name: string | null
+          finance_contact_id: string
+          gst_registered: boolean | null
+          id: string
+          independent_verification_date: string | null
+          rcti_email: string | null
+          status: string
+          superseded_at: string | null
+          superseded_by: string | null
+          updated_at: string
+          verification_contact_number: string | null
+          verification_method: string | null
+          verification_notes: string | null
+          verified_by: string | null
+          verified_by_name: string | null
+          version: number
+        }
+        Insert: {
+          abn?: string | null
+          account_name?: string | null
+          account_number_last4?: string | null
+          account_number_masked?: string | null
+          accounts_email?: string | null
+          agreement_id?: string | null
+          bsb?: string | null
+          change_reason?: string | null
+          created_at?: string
+          created_by?: string | null
+          entity_name?: string | null
+          finance_contact_id: string
+          gst_registered?: boolean | null
+          id?: string
+          independent_verification_date?: string | null
+          rcti_email?: string | null
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          updated_at?: string
+          verification_contact_number?: string | null
+          verification_method?: string | null
+          verification_notes?: string | null
+          verified_by?: string | null
+          verified_by_name?: string | null
+          version?: number
+        }
+        Update: {
+          abn?: string | null
+          account_name?: string | null
+          account_number_last4?: string | null
+          account_number_masked?: string | null
+          accounts_email?: string | null
+          agreement_id?: string | null
+          bsb?: string | null
+          change_reason?: string | null
+          created_at?: string
+          created_by?: string | null
+          entity_name?: string | null
+          finance_contact_id?: string
+          gst_registered?: boolean | null
+          id?: string
+          independent_verification_date?: string | null
+          rcti_email?: string | null
+          status?: string
+          superseded_at?: string | null
+          superseded_by?: string | null
+          updated_at?: string
+          verification_contact_number?: string | null
+          verification_method?: string | null
+          verification_notes?: string | null
+          verified_by?: string | null
+          verified_by_name?: string | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finance_partner_bank_details_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       finance_partner_bookings: {
         Row: {
           booked_by: string
@@ -10151,6 +10246,160 @@ export type Database = {
           updated_by_finance_user_id?: string | null
         }
         Relationships: []
+      }
+      finance_partner_clawbacks: {
+        Row: {
+          acknowledged_at: string | null
+          agreement_id: string | null
+          agreement_version: number | null
+          amount_recovered: number
+          cap_amount: number
+          capped: boolean
+          clawback_amount: number
+          clawback_treatment_snapshot: string | null
+          client_id: string | null
+          client_name_snapshot: string | null
+          commission_id: string | null
+          commission_paid_total: number
+          created_at: string
+          created_by: string | null
+          deal_id: string | null
+          discharge_date: string | null
+          evidence_filename: string | null
+          evidence_path: string | null
+          evidence_uploaded_at: string | null
+          finance_contact_id: string
+          id: string
+          issued_at: string | null
+          issued_by: string | null
+          lender_clawback_amount: number | null
+          lender_name: string | null
+          loan_reference: string | null
+          notes: string | null
+          offset_statement_id: string | null
+          partner_company_snapshot: string | null
+          partner_name_snapshot: string | null
+          reason: string
+          reason_category: string
+          recovery_method: string | null
+          repayment_days: number | null
+          repayment_due_date: string | null
+          settled_at: string | null
+          settlement_date: string | null
+          status: string
+          updated_at: string
+          waived_at: string | null
+          waived_reason: string | null
+        }
+        Insert: {
+          acknowledged_at?: string | null
+          agreement_id?: string | null
+          agreement_version?: number | null
+          amount_recovered?: number
+          cap_amount?: number
+          capped?: boolean
+          clawback_amount?: number
+          clawback_treatment_snapshot?: string | null
+          client_id?: string | null
+          client_name_snapshot?: string | null
+          commission_id?: string | null
+          commission_paid_total?: number
+          created_at?: string
+          created_by?: string | null
+          deal_id?: string | null
+          discharge_date?: string | null
+          evidence_filename?: string | null
+          evidence_path?: string | null
+          evidence_uploaded_at?: string | null
+          finance_contact_id: string
+          id?: string
+          issued_at?: string | null
+          issued_by?: string | null
+          lender_clawback_amount?: number | null
+          lender_name?: string | null
+          loan_reference?: string | null
+          notes?: string | null
+          offset_statement_id?: string | null
+          partner_company_snapshot?: string | null
+          partner_name_snapshot?: string | null
+          reason: string
+          reason_category?: string
+          recovery_method?: string | null
+          repayment_days?: number | null
+          repayment_due_date?: string | null
+          settled_at?: string | null
+          settlement_date?: string | null
+          status?: string
+          updated_at?: string
+          waived_at?: string | null
+          waived_reason?: string | null
+        }
+        Update: {
+          acknowledged_at?: string | null
+          agreement_id?: string | null
+          agreement_version?: number | null
+          amount_recovered?: number
+          cap_amount?: number
+          capped?: boolean
+          clawback_amount?: number
+          clawback_treatment_snapshot?: string | null
+          client_id?: string | null
+          client_name_snapshot?: string | null
+          commission_id?: string | null
+          commission_paid_total?: number
+          created_at?: string
+          created_by?: string | null
+          deal_id?: string | null
+          discharge_date?: string | null
+          evidence_filename?: string | null
+          evidence_path?: string | null
+          evidence_uploaded_at?: string | null
+          finance_contact_id?: string
+          id?: string
+          issued_at?: string | null
+          issued_by?: string | null
+          lender_clawback_amount?: number | null
+          lender_name?: string | null
+          loan_reference?: string | null
+          notes?: string | null
+          offset_statement_id?: string | null
+          partner_company_snapshot?: string | null
+          partner_name_snapshot?: string | null
+          reason?: string
+          reason_category?: string
+          recovery_method?: string | null
+          repayment_days?: number | null
+          repayment_due_date?: string | null
+          settled_at?: string | null
+          settlement_date?: string | null
+          status?: string
+          updated_at?: string
+          waived_at?: string | null
+          waived_reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finance_partner_clawbacks_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_partner_clawbacks_commission_id_fkey"
+            columns: ["commission_id"]
+            isOneToOne: false
+            referencedRelation: "finance_partner_commissions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_partner_clawbacks_offset_statement_id_fkey"
+            columns: ["offset_statement_id"]
+            isOneToOne: false
+            referencedRelation: "finance_partner_statements"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       finance_partner_commissions: {
         Row: {
@@ -10801,12 +11050,17 @@ export type Database = {
         Row: {
           agreement_id: string | null
           agreement_version: number | null
+          banking_verified_at_issue: boolean | null
+          clawback_offset_total: number
           created_at: string
           dispute_deadline: string | null
           dispute_status: string
           dispute_window_days: number | null
           finance_contact_id: string
           id: string
+          invoice_id: string | null
+          invoice_mode: string | null
+          invoice_number: string | null
           issued_at: string | null
           issued_by: string | null
           line_count: number
@@ -10829,12 +11083,17 @@ export type Database = {
         Insert: {
           agreement_id?: string | null
           agreement_version?: number | null
+          banking_verified_at_issue?: boolean | null
+          clawback_offset_total?: number
           created_at?: string
           dispute_deadline?: string | null
           dispute_status?: string
           dispute_window_days?: number | null
           finance_contact_id: string
           id?: string
+          invoice_id?: string | null
+          invoice_mode?: string | null
+          invoice_number?: string | null
           issued_at?: string | null
           issued_by?: string | null
           line_count?: number
@@ -10857,12 +11116,17 @@ export type Database = {
         Update: {
           agreement_id?: string | null
           agreement_version?: number | null
+          banking_verified_at_issue?: boolean | null
+          clawback_offset_total?: number
           created_at?: string
           dispute_deadline?: string | null
           dispute_status?: string
           dispute_window_days?: number | null
           finance_contact_id?: string
           id?: string
+          invoice_id?: string | null
+          invoice_mode?: string | null
+          invoice_number?: string | null
           issued_at?: string | null
           issued_by?: string | null
           line_count?: number
@@ -10895,6 +11159,13 @@ export type Database = {
             columns: ["finance_contact_id"]
             isOneToOne: false
             referencedRelation: "finance_agent_contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_partner_statements_invoice_id_fkey"
+            columns: ["invoice_id"]
+            isOneToOne: false
+            referencedRelation: "partner_tax_invoices"
             referencedColumns: ["id"]
           },
           {
@@ -19670,6 +19941,108 @@ export type Database = {
           },
         ]
       }
+      partner_tax_invoices: {
+        Row: {
+          agreement_id: string | null
+          cancelled_at: string | null
+          cancelled_reason: string | null
+          created_at: string
+          due_date: string | null
+          finance_contact_id: string
+          gst_amount: number
+          gst_treatment: string | null
+          id: string
+          invoice_date: string
+          invoice_mode: string
+          invoice_number: string
+          issued_at: string
+          issued_by: string | null
+          notes: string | null
+          recipient_abn: string | null
+          recipient_name: string | null
+          statement_id: string | null
+          status: string
+          storage_path: string | null
+          subtotal_amount: number
+          supplier_abn: string | null
+          supplier_gst_registered: boolean | null
+          supplier_name: string | null
+          total_amount: number
+          updated_at: string
+        }
+        Insert: {
+          agreement_id?: string | null
+          cancelled_at?: string | null
+          cancelled_reason?: string | null
+          created_at?: string
+          due_date?: string | null
+          finance_contact_id: string
+          gst_amount?: number
+          gst_treatment?: string | null
+          id?: string
+          invoice_date?: string
+          invoice_mode?: string
+          invoice_number: string
+          issued_at?: string
+          issued_by?: string | null
+          notes?: string | null
+          recipient_abn?: string | null
+          recipient_name?: string | null
+          statement_id?: string | null
+          status?: string
+          storage_path?: string | null
+          subtotal_amount?: number
+          supplier_abn?: string | null
+          supplier_gst_registered?: boolean | null
+          supplier_name?: string | null
+          total_amount?: number
+          updated_at?: string
+        }
+        Update: {
+          agreement_id?: string | null
+          cancelled_at?: string | null
+          cancelled_reason?: string | null
+          created_at?: string
+          due_date?: string | null
+          finance_contact_id?: string
+          gst_amount?: number
+          gst_treatment?: string | null
+          id?: string
+          invoice_date?: string
+          invoice_mode?: string
+          invoice_number?: string
+          issued_at?: string
+          issued_by?: string | null
+          notes?: string | null
+          recipient_abn?: string | null
+          recipient_name?: string | null
+          statement_id?: string | null
+          status?: string
+          storage_path?: string | null
+          subtotal_amount?: number
+          supplier_abn?: string | null
+          supplier_gst_registered?: boolean | null
+          supplier_name?: string | null
+          total_amount?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_tax_invoices_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_tax_invoices_statement_id_fkey"
+            columns: ["statement_id"]
+            isOneToOne: false
+            referencedRelation: "finance_partner_statements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       password_reset_tokens: {
         Row: {
           attempts: number
@@ -27429,6 +27802,15 @@ export type Database = {
           status: string
         }[]
       }
+      fp_partner_banking_verified: {
+        Args: { _finance_contact_id: string }
+        Returns: {
+          bank_detail_id: string
+          independent_verification_date: string
+          status: string
+          verified: boolean
+        }[]
+      }
       fp_resolve_partner_agreement: {
         Args: { _direction?: string; _finance_contact_id: string }
         Returns: {
@@ -27458,6 +27840,18 @@ export type Database = {
           default_rate: number
           finance_contact_id: string
           gst_registered: boolean
+        }[]
+      }
+      fp_resolve_partner_invoicing: {
+        Args: { _direction?: string; _finance_contact_id: string }
+        Returns: {
+          agreement_id: string
+          agreement_version: number
+          clawback_repayment_days: number
+          clawback_treatment: string
+          gst_treatment: string
+          invoice_mode: string
+          invoice_process: string
         }[]
       }
       gc_pdf_import_jobs: { Args: never; Returns: undefined }
