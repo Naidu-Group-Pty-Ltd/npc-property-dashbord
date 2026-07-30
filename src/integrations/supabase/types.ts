@@ -4768,6 +4768,7 @@ export type Database = {
         Row: {
           allocated_finance_user_id: string | null
           allocation_status: Database["public"]["Enums"]["message_allocation_status"]
+          canonical_message_id: string | null
           client_id: string
           command_owner_user_id: string | null
           created_at: string | null
@@ -4791,6 +4792,7 @@ export type Database = {
         Insert: {
           allocated_finance_user_id?: string | null
           allocation_status?: Database["public"]["Enums"]["message_allocation_status"]
+          canonical_message_id?: string | null
           client_id: string
           command_owner_user_id?: string | null
           created_at?: string | null
@@ -4814,6 +4816,7 @@ export type Database = {
         Update: {
           allocated_finance_user_id?: string | null
           allocation_status?: Database["public"]["Enums"]["message_allocation_status"]
+          canonical_message_id?: string | null
           client_id?: string
           command_owner_user_id?: string | null
           created_at?: string | null
@@ -4840,6 +4843,13 @@ export type Database = {
             columns: ["allocated_finance_user_id"]
             isOneToOne: false
             referencedRelation: "finance_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_portal_messages_canonical_message_id_fkey"
+            columns: ["canonical_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
             referencedColumns: ["id"]
           },
           {
@@ -6846,6 +6856,157 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_purchase_file_deal_drift"
             referencedColumns: ["client_deal_id"]
+          },
+        ]
+      }
+      conversation_migration_issues: {
+        Row: {
+          candidate_message_id: string | null
+          details: Json
+          detected_at: string
+          id: string
+          issue_type: string
+          resolved_at: string | null
+          source_id: string
+          source_table: string
+          status: string
+        }
+        Insert: {
+          candidate_message_id?: string | null
+          details?: Json
+          detected_at?: string
+          id?: string
+          issue_type: string
+          resolved_at?: string | null
+          source_id: string
+          source_table: string
+          status?: string
+        }
+        Update: {
+          candidate_message_id?: string | null
+          details?: Json
+          detected_at?: string
+          id?: string
+          issue_type?: string
+          resolved_at?: string | null
+          source_id?: string
+          source_table?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_migration_issues_candidate_message_id_fkey"
+            columns: ["candidate_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversation_participants: {
+        Row: {
+          added_by_id: string | null
+          added_by_type: string
+          can_post: boolean
+          conversation_id: string
+          id: string
+          joined_at: string
+          left_at: string | null
+          participant_id: string
+          participant_type: string
+          role: string
+        }
+        Insert: {
+          added_by_id?: string | null
+          added_by_type?: string
+          can_post?: boolean
+          conversation_id: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          participant_id: string
+          participant_type: string
+          role?: string
+        }
+        Update: {
+          added_by_id?: string | null
+          added_by_type?: string
+          can_post?: boolean
+          conversation_id?: string
+          id?: string
+          joined_at?: string
+          left_at?: string | null
+          participant_id?: string
+          participant_type?: string
+          role?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversation_participants_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      conversations: {
+        Row: {
+          case_id: string | null
+          created_at: string
+          created_by_id: string | null
+          created_by_type: string
+          firm_id: string | null
+          id: string
+          is_archived: boolean
+          last_message_at: string | null
+          row_version: number
+          scope: string
+          subject: string
+          updated_at: string
+        }
+        Insert: {
+          case_id?: string | null
+          created_at?: string
+          created_by_id?: string | null
+          created_by_type: string
+          firm_id?: string | null
+          id?: string
+          is_archived?: boolean
+          last_message_at?: string | null
+          row_version?: number
+          scope: string
+          subject: string
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string | null
+          created_at?: string
+          created_by_id?: string | null
+          created_by_type?: string
+          firm_id?: string | null
+          id?: string
+          is_archived?: boolean
+          last_message_at?: string | null
+          row_version?: number
+          scope?: string
+          subject?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -9970,6 +10131,7 @@ export type Database = {
           attachment_path: string | null
           attachment_size_bytes: number | null
           body: string
+          canonical_message_id: string | null
           client_id: string
           command_owner_user_id: string | null
           created_at: string
@@ -9996,6 +10158,7 @@ export type Database = {
           attachment_path?: string | null
           attachment_size_bytes?: number | null
           body: string
+          canonical_message_id?: string | null
           client_id: string
           command_owner_user_id?: string | null
           created_at?: string
@@ -10022,6 +10185,7 @@ export type Database = {
           attachment_path?: string | null
           attachment_size_bytes?: number | null
           body?: string
+          canonical_message_id?: string | null
           client_id?: string
           command_owner_user_id?: string | null
           created_at?: string
@@ -10042,6 +10206,13 @@ export type Database = {
           visibility_scope?: Database["public"]["Enums"]["message_visibility_scope"]
         }
         Relationships: [
+          {
+            foreignKeyName: "finance_portal_messages_canonical_message_id_fkey"
+            columns: ["canonical_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "finance_portal_messages_client_id_fkey"
             columns: ["client_id"]
@@ -13954,6 +14125,7 @@ export type Database = {
           attachment_path: string | null
           attachment_size_bytes: number | null
           body: string
+          canonical_message_id: string | null
           client_id: string | null
           created_at: string
           id: string
@@ -13981,6 +14153,7 @@ export type Database = {
           attachment_path?: string | null
           attachment_size_bytes?: number | null
           body: string
+          canonical_message_id?: string | null
           client_id?: string | null
           created_at?: string
           id?: string
@@ -14008,6 +14181,7 @@ export type Database = {
           attachment_path?: string | null
           attachment_size_bytes?: number | null
           body?: string
+          canonical_message_id?: string | null
           client_id?: string | null
           created_at?: string
           id?: string
@@ -14030,6 +14204,13 @@ export type Database = {
           thread_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "legal_matter_messages_canonical_message_id_fkey"
+            columns: ["canonical_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "legal_matter_messages_legal_matter_id_fkey"
             columns: ["legal_matter_id"]
@@ -16719,6 +16900,44 @@ export type Database = {
         }
         Relationships: []
       }
+      message_attachments: {
+        Row: {
+          created_at: string
+          declared_mime_type: string | null
+          declared_size_bytes: number | null
+          filename: string
+          id: string
+          message_id: string
+          storage_path: string
+        }
+        Insert: {
+          created_at?: string
+          declared_mime_type?: string | null
+          declared_size_bytes?: number | null
+          filename: string
+          id?: string
+          message_id: string
+          storage_path: string
+        }
+        Update: {
+          created_at?: string
+          declared_mime_type?: string | null
+          declared_size_bytes?: number | null
+          filename?: string
+          id?: string
+          message_id?: string
+          storage_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_attachments_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message_governance_log: {
         Row: {
           allocation_status: Database["public"]["Enums"]["message_allocation_status"]
@@ -16783,6 +17002,127 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      message_receipts: {
+        Row: {
+          created_at: string
+          delivered_at: string | null
+          id: string
+          message_id: string
+          participant_id: string
+          read_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          message_id: string
+          participant_id: string
+          read_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          delivered_at?: string | null
+          id?: string
+          message_id?: string
+          participant_id?: string
+          read_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_receipts_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_receipts_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "conversation_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          body: string
+          conversation_id: string
+          correlation_id: string
+          created_at: string
+          deleted_at: string | null
+          edited_at: string | null
+          id: string
+          idempotency_key: string
+          legacy_sources: Json
+          migration_duplicate_group_id: string | null
+          migration_status: string
+          reply_to_message_id: string | null
+          sender_id: string | null
+          sender_name: string | null
+          sender_participant_id: string
+          sender_type: string
+        }
+        Insert: {
+          body: string
+          conversation_id: string
+          correlation_id?: string
+          created_at?: string
+          deleted_at?: string | null
+          edited_at?: string | null
+          id?: string
+          idempotency_key: string
+          legacy_sources?: Json
+          migration_duplicate_group_id?: string | null
+          migration_status?: string
+          reply_to_message_id?: string | null
+          sender_id?: string | null
+          sender_name?: string | null
+          sender_participant_id: string
+          sender_type: string
+        }
+        Update: {
+          body?: string
+          conversation_id?: string
+          correlation_id?: string
+          created_at?: string
+          deleted_at?: string | null
+          edited_at?: string | null
+          id?: string
+          idempotency_key?: string
+          legacy_sources?: Json
+          migration_duplicate_group_id?: string | null
+          migration_status?: string
+          reply_to_message_id?: string | null
+          sender_id?: string | null
+          sender_name?: string | null
+          sender_participant_id?: string
+          sender_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_reply_to_message_id_fkey"
+            columns: ["reply_to_message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_sender_participant_id_fkey"
+            columns: ["sender_participant_id"]
+            isOneToOne: false
+            referencedRelation: "conversation_participants"
             referencedColumns: ["id"]
           },
         ]
@@ -17096,6 +17436,120 @@ export type Database = {
           raw_metadata?: Json | null
           route?: string
           status?: string
+        }
+        Relationships: []
+      }
+      notification_deliveries: {
+        Row: {
+          attempts: number
+          available_at: string
+          channel: string
+          created_at: string
+          delivered_at: string | null
+          event_type: string
+          id: string
+          idempotency_key: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          message_id: string | null
+          participant_id: string
+          scheduled_for: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          available_at?: string
+          channel: string
+          created_at?: string
+          delivered_at?: string | null
+          event_type: string
+          id?: string
+          idempotency_key: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          message_id?: string | null
+          participant_id: string
+          scheduled_for?: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          available_at?: string
+          channel?: string
+          created_at?: string
+          delivered_at?: string | null
+          event_type?: string
+          id?: string
+          idempotency_key?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          message_id?: string | null
+          participant_id?: string
+          scheduled_for?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_deliveries_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notification_deliveries_participant_id_fkey"
+            columns: ["participant_id"]
+            isOneToOne: false
+            referencedRelation: "conversation_participants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notification_preferences: {
+        Row: {
+          channel: string
+          created_at: string
+          enabled: boolean
+          event_type: string
+          id: string
+          participant_id: string
+          participant_type: string
+          quiet_hours_end: string | null
+          quiet_hours_start: string | null
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          channel: string
+          created_at?: string
+          enabled?: boolean
+          event_type: string
+          id?: string
+          participant_id: string
+          participant_type: string
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          channel?: string
+          created_at?: string
+          enabled?: boolean
+          event_type?: string
+          id?: string
+          participant_id?: string
+          participant_type?: string
+          quiet_hours_end?: string | null
+          quiet_hours_start?: string | null
+          timezone?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -24325,6 +24779,18 @@ export type Database = {
         Args: { p_insight_id: string; p_user_id: string }
         Returns: Json
       }
+      attach_conversation_message: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _declared_mime: string
+          _declared_size: number
+          _filename: string
+          _message_id: string
+          _storage_path: string
+        }
+        Returns: Json
+      }
       bootstrap_cron_vault: {
         Args: { p_internal_edge_secret: string; p_service_role_key: string }
         Returns: undefined
@@ -24437,6 +24903,33 @@ export type Database = {
           property_listing_id: string
           report_id: string
         }[]
+      }
+      claim_notification_deliveries: {
+        Args: { _limit?: number; _worker_id: string }
+        Returns: {
+          attempts: number
+          available_at: string
+          channel: string
+          created_at: string
+          delivered_at: string | null
+          event_type: string
+          id: string
+          idempotency_key: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          message_id: string | null
+          participant_id: string
+          scheduled_for: string
+          status: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "notification_deliveries"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       cleanup_expired_census_cache: { Args: never; Returns: undefined }
       cleanup_expired_climate_cache: { Args: never; Returns: undefined }
@@ -24564,6 +25057,16 @@ export type Database = {
         }
         Returns: string
       }
+      ensure_case_conversation: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _case_id: string
+          _scope: string
+          _subject?: string
+        }
+        Returns: Json
+      }
       evaluate_market_updates_automation_alerts: {
         Args: never
         Returns: undefined
@@ -24687,6 +25190,16 @@ export type Database = {
         Args: { _audience: string; _case_id: string }
         Returns: Json
       }
+      get_conversation_messages: {
+        Args: {
+          _before?: string
+          _conversation_id: string
+          _limit?: number
+          _participant_id: string
+          _participant_type: string
+        }
+        Returns: Json
+      }
       get_migration_upload_progress: {
         Args: { _upload_id: string }
         Returns: {
@@ -24696,6 +25209,23 @@ export type Database = {
           row_count: number
           status: string
         }[]
+      }
+      get_participant_conversations: {
+        Args: {
+          _case_id?: string
+          _participant_id: string
+          _participant_type: string
+        }
+        Returns: Json
+      }
+      get_participant_notifications: {
+        Args: {
+          _limit?: number
+          _participant_id: string
+          _participant_type: string
+          _unread_only?: boolean
+        }
+        Returns: Json
       }
       get_recent_activities: {
         Args: {
@@ -24912,6 +25442,22 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      mark_conversation_read: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _conversation_id: string
+        }
+        Returns: number
+      }
+      mark_message_read: {
+        Args: {
+          _message_id: string
+          _participant_id: string
+          _participant_type: string
+        }
+        Returns: boolean
+      }
       market_updates_automation_status: { Args: never; Returns: Json }
       match_agent_memories: {
         Args: {
@@ -24981,8 +25527,24 @@ export type Database = {
           suburb: string
         }[]
       }
+      next_notification_delivery_time: {
+        Args: { _end: string; _start: string; _timezone: string }
+        Returns: string
+      }
       pause_migration_job: { Args: { p_job_id: string }; Returns: undefined }
       pdf_import_watchdog_sweep: { Args: never; Returns: number }
+      post_conversation_message: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _body: string
+          _conversation_id: string
+          _idempotency_key: string
+          _reply_to?: string
+          _sender_name?: string
+        }
+        Returns: Json
+      }
       prune_agent_memories: {
         Args: { p_max?: number; p_user_id: string }
         Returns: number
