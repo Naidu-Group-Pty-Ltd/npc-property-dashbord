@@ -18,6 +18,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
   resolveClientPermissions,
@@ -55,6 +56,9 @@ Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   const json = (payload: unknown, status = 200) => new Response(
     JSON.stringify(payload),
