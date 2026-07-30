@@ -25,7 +25,13 @@ import {
   can,
   type PermissionMatrix,
 } from "../_shared/solicitorPortalAuth.ts";
-import { MATTER_SELECT, LEGAL_MATTER_STATUSES, cleanEnum, cleanText } from "../_shared/legalMatters.ts";
+import {
+  MATTER_SELECT,
+  LEGAL_MATTER_STATUSES,
+  TERMINAL_STATUSES,
+  cleanEnum,
+  cleanText,
+} from "../_shared/legalMatters.ts";
 import { LEGAL_DOCUMENT_BUCKET } from "../_shared/legalDocuments.ts";
 import {
   CONTRACT_ANALYSIS_SELECT,
@@ -151,14 +157,24 @@ Deno.serve(async (req) => {
 
       const status = cleanEnum(body.status, LEGAL_MATTER_STATUSES);
       if (!status) return json({ error: 'A valid status is required' }, 400);
+      if (matter.status !== status && TERMINAL_STATUSES.has(matter.status)) {
+        return json({ error: 'This matter is closed. Contact NPC to reopen it.' }, 400);
+      }
       const rawPosition = Number(body.position);
       const position = Number.isFinite(rawPosition)
         ? Math.max(0, Math.min(9999, Math.round(rawPosition)))
         : 0;
 
+      const now = new Date().toISOString();
+      const patch: Record<string, unknown> = { status, kanban_position: position, updated_at: now };
+      if (matter.status !== status && status === 'settled') {
+        patch.actual_settlement_date = matter.actual_settlement_date || now.slice(0, 10);
+        patch.closed_at = now;
+      }
+
       const { data: updated, error } = await supabase
         .from('legal_matters')
-        .update({ status, kanban_position: position, updated_at: new Date().toISOString() })
+        .update(patch)
         .eq('id', matter.id)
         .select(MATTER_SELECT)
         .maybeSingle();
