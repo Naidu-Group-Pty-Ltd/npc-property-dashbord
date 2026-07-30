@@ -3582,6 +3582,50 @@ export type Database = {
           },
         ]
       }
+      client_case_read_model: {
+        Row: {
+          case_id: string
+          client_id: string
+          friendly_status: string
+          next_client_action: string | null
+          property_address: string | null
+          settlement_date: string | null
+          shared_summary: string | null
+          source_version: number
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          client_id: string
+          friendly_status: string
+          next_client_action?: string | null
+          property_address?: string | null
+          settlement_date?: string | null
+          shared_summary?: string | null
+          source_version: number
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          client_id?: string
+          friendly_status?: string
+          next_client_action?: string | null
+          property_address?: string | null
+          settlement_date?: string | null
+          shared_summary?: string | null
+          source_version?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_case_read_model_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: true
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_deals: {
         Row: {
           build_price: number | null
@@ -4430,6 +4474,7 @@ export type Database = {
           created_at: string | null
           finance_allocated: boolean
           id: string
+          integration_event_id: string | null
           is_internal: boolean
           is_read: boolean | null
           message: string
@@ -4452,6 +4497,7 @@ export type Database = {
           created_at?: string | null
           finance_allocated?: boolean
           id?: string
+          integration_event_id?: string | null
           is_internal?: boolean
           is_read?: boolean | null
           message: string
@@ -4474,6 +4520,7 @@ export type Database = {
           created_at?: string | null
           finance_allocated?: boolean
           id?: string
+          integration_event_id?: string | null
           is_internal?: boolean
           is_read?: boolean | null
           message?: string
@@ -4526,6 +4573,7 @@ export type Database = {
           client_id: string
           created_at: string | null
           id: string
+          integration_event_id: string | null
           is_read: boolean | null
           message: string | null
           metadata: Json | null
@@ -4539,6 +4587,7 @@ export type Database = {
           client_id: string
           created_at?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean | null
           message?: string | null
           metadata?: Json | null
@@ -4552,6 +4601,7 @@ export type Database = {
           client_id?: string
           created_at?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean | null
           message?: string | null
           metadata?: Json | null
@@ -5609,6 +5659,53 @@ export type Database = {
           temperature_data?: Json | null
         }
         Relationships: []
+      }
+      command_case_health_read_model: {
+        Row: {
+          case_id: string
+          client_id: string
+          deal_stage: string | null
+          finance_status: string | null
+          legal_status: string | null
+          link_health: string
+          open_issue_count: number
+          shared_lifecycle_status: string
+          source_version: number
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          client_id: string
+          deal_stage?: string | null
+          finance_status?: string | null
+          legal_status?: string | null
+          link_health: string
+          open_issue_count?: number
+          shared_lifecycle_status: string
+          source_version: number
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          client_id?: string
+          deal_stage?: string | null
+          finance_status?: string | null
+          legal_status?: string | null
+          link_health?: string
+          open_issue_count?: number
+          shared_lifecycle_status?: string
+          source_version?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "command_case_health_read_model_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: true
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       commercial_capex: {
         Row: {
@@ -8117,6 +8214,50 @@ export type Database = {
           },
         ]
       }
+      finance_case_read_model: {
+        Row: {
+          case_id: string
+          client_id: string
+          contractual_settlement_date: string | null
+          finance_status: string | null
+          legal_status: string | null
+          lender: string | null
+          solicitor_name: string | null
+          source_version: number
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          client_id: string
+          contractual_settlement_date?: string | null
+          finance_status?: string | null
+          legal_status?: string | null
+          lender?: string | null
+          solicitor_name?: string | null
+          source_version: number
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          client_id?: string
+          contractual_settlement_date?: string | null
+          finance_status?: string | null
+          legal_status?: string | null
+          lender?: string | null
+          solicitor_name?: string | null
+          source_version?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finance_case_read_model_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: true
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       finance_email_opens: {
         Row: {
           client_id: string | null
@@ -9535,6 +9676,7 @@ export type Database = {
           created_at: string
           finance_user_id: string | null
           id: string
+          integration_event_id: string | null
           is_read_by_partner: boolean
           is_read_by_staff: boolean
           notification_status: Json
@@ -9560,6 +9702,7 @@ export type Database = {
           created_at?: string
           finance_user_id?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read_by_partner?: boolean
           is_read_by_staff?: boolean
           notification_status?: Json
@@ -9585,6 +9728,7 @@ export type Database = {
           created_at?: string
           finance_user_id?: string | null
           id?: string
+          integration_event_id?: string | null
           is_read_by_partner?: boolean
           is_read_by_staff?: boolean
           notification_status?: Json
@@ -9642,6 +9786,7 @@ export type Database = {
           client_id: string | null
           created_at: string
           id: string
+          integration_event_id: string | null
           is_read: boolean
           link_path: string | null
           metadata: Json | null
@@ -9655,6 +9800,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
@@ -9668,6 +9814,7 @@ export type Database = {
           client_id?: string | null
           created_at?: string
           id?: string
+          integration_event_id?: string | null
           is_read?: boolean
           link_path?: string | null
           metadata?: Json | null
@@ -12065,6 +12212,154 @@ export type Database = {
         }
         Relationships: []
       }
+      integration_dead_letters: {
+        Row: {
+          aggregate_id: string
+          aggregate_type: string
+          attempts: number
+          event_type: string
+          failed_at: string
+          id: string
+          last_error: string
+          outbox_id: string
+          payload: Json
+          replayed_at: string | null
+          replayed_by: string | null
+        }
+        Insert: {
+          aggregate_id: string
+          aggregate_type: string
+          attempts: number
+          event_type: string
+          failed_at?: string
+          id?: string
+          last_error: string
+          outbox_id: string
+          payload: Json
+          replayed_at?: string | null
+          replayed_by?: string | null
+        }
+        Update: {
+          aggregate_id?: string
+          aggregate_type?: string
+          attempts?: number
+          event_type?: string
+          failed_at?: string
+          id?: string
+          last_error?: string
+          outbox_id?: string
+          payload?: Json
+          replayed_at?: string | null
+          replayed_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_dead_letters_outbox_id_fkey"
+            columns: ["outbox_id"]
+            isOneToOne: true
+            referencedRelation: "integration_outbox"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      integration_delivery_attempts: {
+        Row: {
+          attempt_number: number
+          completed_at: string | null
+          consumer_name: string
+          error: string | null
+          id: string
+          outbox_id: string
+          started_at: string
+          status: string
+        }
+        Insert: {
+          attempt_number: number
+          completed_at?: string | null
+          consumer_name: string
+          error?: string | null
+          id?: string
+          outbox_id: string
+          started_at?: string
+          status: string
+        }
+        Update: {
+          attempt_number?: number
+          completed_at?: string | null
+          consumer_name?: string
+          error?: string | null
+          id?: string
+          outbox_id?: string
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_delivery_attempts_outbox_id_fkey"
+            columns: ["outbox_id"]
+            isOneToOne: false
+            referencedRelation: "integration_outbox"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      integration_outbox: {
+        Row: {
+          aggregate_id: string
+          aggregate_type: string
+          attempts: number
+          available_at: string
+          correlation_id: string
+          created_at: string
+          event_type: string
+          event_version: number
+          id: string
+          idempotency_key: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          occurred_at: string
+          payload: Json
+          processed_at: string | null
+        }
+        Insert: {
+          aggregate_id: string
+          aggregate_type: string
+          attempts?: number
+          available_at?: string
+          correlation_id?: string
+          created_at?: string
+          event_type: string
+          event_version?: number
+          id?: string
+          idempotency_key: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          occurred_at?: string
+          payload?: Json
+          processed_at?: string | null
+        }
+        Update: {
+          aggregate_id?: string
+          aggregate_type?: string
+          attempts?: number
+          available_at?: string
+          correlation_id?: string
+          created_at?: string
+          event_type?: string
+          event_version?: number
+          id?: string
+          idempotency_key?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          occurred_at?: string
+          payload?: Json
+          processed_at?: string | null
+        }
+        Relationships: []
+      }
       internal_request_nonces: {
         Row: {
           caller_function: string | null
@@ -12694,6 +12989,47 @@ export type Database = {
           worker_lock_until?: string | null
         }
         Relationships: []
+      }
+      legal_audit_verification_runs: {
+        Row: {
+          alerted_at: string | null
+          broken_at: string | null
+          checked: number
+          failure_reason: string | null
+          id: string
+          legal_matter_id: string
+          verified: boolean
+          verified_at: string
+        }
+        Insert: {
+          alerted_at?: string | null
+          broken_at?: string | null
+          checked: number
+          failure_reason?: string | null
+          id?: string
+          legal_matter_id: string
+          verified: boolean
+          verified_at?: string
+        }
+        Update: {
+          alerted_at?: string | null
+          broken_at?: string | null
+          checked?: number
+          failure_reason?: string | null
+          id?: string
+          legal_matter_id?: string
+          verified?: boolean
+          verified_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_audit_verification_runs_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       legal_compliance_exports: {
         Row: {
@@ -17820,6 +18156,30 @@ export type Database = {
           },
         ]
       }
+      projection_checkpoints: {
+        Row: {
+          consumer_name: string
+          last_event_id: string | null
+          last_occurred_at: string | null
+          processed_count: number
+          updated_at: string
+        }
+        Insert: {
+          consumer_name: string
+          last_event_id?: string | null
+          last_occurred_at?: string | null
+          processed_count?: number
+          updated_at?: string
+        }
+        Update: {
+          consumer_name?: string
+          last_event_id?: string | null
+          last_occurred_at?: string | null
+          processed_count?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
       property_comparisons: {
         Row: {
           analysis_depth: string | null
@@ -21208,6 +21568,50 @@ export type Database = {
         }
         Relationships: []
       }
+      solicitor_case_read_model: {
+        Row: {
+          case_id: string
+          client_id: string
+          finance_status: string | null
+          internal_notes: string | null
+          legal_status: string | null
+          lender: string | null
+          matter_reference: string | null
+          source_version: number
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          client_id: string
+          finance_status?: string | null
+          internal_notes?: string | null
+          legal_status?: string | null
+          lender?: string | null
+          matter_reference?: string | null
+          source_version: number
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          client_id?: string
+          finance_status?: string | null
+          internal_notes?: string | null
+          legal_status?: string | null
+          lender?: string | null
+          matter_reference?: string | null
+          source_version?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_case_read_model_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: true
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       solicitor_firms: {
         Row: {
           abn: string | null
@@ -23686,6 +24090,33 @@ export type Database = {
         Returns: boolean
       }
       check_pdf_import_success_rate: { Args: never; Returns: undefined }
+      claim_integration_outbox: {
+        Args: { _limit?: number; _worker_id: string }
+        Returns: {
+          aggregate_id: string
+          aggregate_type: string
+          attempts: number
+          available_at: string
+          correlation_id: string
+          created_at: string
+          event_type: string
+          event_version: number
+          id: string
+          idempotency_key: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          occurred_at: string
+          payload: Json
+          processed_at: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "integration_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_migration_jobs: {
         Args: { p_lease_seconds?: number; p_limit?: number }
         Returns: {
@@ -23821,6 +24252,18 @@ export type Database = {
           p_target_function: string
         }
         Returns: number
+      }
+      enqueue_integration_event: {
+        Args: {
+          _aggregate_id: string
+          _aggregate_type: string
+          _correlation_id?: string
+          _event_type: string
+          _event_version: number
+          _idempotency_key: string
+          _payload: Json
+        }
+        Returns: string
       }
       evaluate_market_updates_automation_alerts: {
         Args: never
@@ -24249,6 +24692,10 @@ export type Database = {
         Args: { p_job_id: string }
         Returns: Json
       }
+      record_legal_audit_verification: {
+        Args: { _matter_id: string; _result: Json }
+        Returns: string
+      }
       refresh_pdf_import_cost_daily: { Args: never; Returns: undefined }
       release_migration_job_lock: {
         Args: { p_job_id: string }
@@ -24263,6 +24710,10 @@ export type Database = {
           _target_status: Database["public"]["Enums"]["legal_matter_status"]
         }
         Returns: Json
+      }
+      replay_integration_dead_letter: {
+        Args: { _actor_user_id: string; _dead_letter_id: string }
+        Returns: string
       }
       requeue_stale_bulk_items: {
         Args: never
@@ -24461,6 +24912,10 @@ export type Database = {
           is_valid: boolean
           missing_fields: string[]
         }[]
+      }
+      verify_legal_audit_chain_strict: {
+        Args: { _matter_id: string }
+        Returns: Json
       }
     }
     Enums: {
