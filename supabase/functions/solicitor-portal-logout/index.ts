@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { createCorsHeaders, createClearSolicitorSessionCookie } from "../_shared/auth.ts"
+import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts"
 import { extractSolicitorSessionToken } from "../_shared/solicitorSessionToken.ts"
 
 Deno.serve(async (req) => {
@@ -15,6 +16,16 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json', 'Allow': 'POST' },
+    })
+  }
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   try {
     const supabase = createClient(
