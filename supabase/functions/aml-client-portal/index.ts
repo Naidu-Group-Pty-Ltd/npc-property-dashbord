@@ -210,6 +210,111 @@ async function loadConsentState(admin: any, caseId: string): Promise<ConsentStat
   };
 }
 
+/* ─────────────────────────── identity verification ──────────────────────── */
+
+/** Owner decision of 2026-07-28: one attempt plus two retries. */
+const MAX_VERIFICATION_ATTEMPTS = 3;
+
+/** Attempts already consumed by this party on the electronic path. */
+async function verificationAttemptsUsed(
+  admin: any, caseId: string, partyId: string | null,
+): Promise<number> {
+  let q = admin.schema('aml').from('verification_checks')
+    .select('attempt_number')
+    .eq('case_id', caseId)
+    .eq('check_type', 'electronic_idv');
+  q = partyId ? q.eq('party_id', partyId) : q.is('party_id', null);
+  const { data, error } = await q.order('attempt_number', { ascending: false }).limit(1);
+  if (error) throw error;
+  return Number((data ?? [])[0]?.attempt_number ?? 0);
+}
+
+/**
+ * Stable per-party identifier derived from the case and the declared name.
+ *
+ * Parties the CLIENT declared live in their questionnaire, not in the staff
+ * ownership model, so they have no database id of their own. A deterministic
+ * uuid keeps the attempt ceiling enforceable per party across requests
+ * without inventing a row the client can see.
+ */
+async function derivedPartyId(caseId: string, name: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256', new TextEncoder().encode(`${caseId}|${name.trim().toLowerCase()}`));
+  const h = Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return [h.slice(0, 8), h.slice(8, 12), '5' + h.slice(13, 16),
+    ((parseInt(h[16], 16) & 0x3 | 0x8).toString(16)) + h.slice(17, 20), h.slice(20, 32)].join('-');
+}
+
+/**
+ * Parties the client still has to verify: themselves, plus anyone they
+ * declared in the related-parties section of their own questionnaire.
+ *
+ * The staff ownership model is deliberately NOT read here. Beneficial-owner
+ * records carry internal analysis (control assessments, screening state), and
+ * the portal boundary is drawn at the table rather than per-field so that it
+ * cannot be eroded one column at a time. Everything below comes from what the
+ * client typed themselves.
+ */
+async function verificationParties(admin: any, caseId: string) {
+  const { data: caseRow } = await admin.schema('aml').from('cases')
+    .select('subject_display_name').eq('id', caseId).maybeSingle();
+
+  const { data: sections } = await admin.schema('aml').from('questionnaire_responses')
+    .select('section, payload').eq('case_id', caseId).eq('section', 'related_parties');
+
+  const declared: string[] = [];
+  const payload = (sections ?? [])[0]?.payload ?? {};
+  for (const entry of (Array.isArray(payload?.parties) ? payload.parties : [])) {
+    const name = String((entry as any)?.full_name ?? (entry as any)?.name ?? '').trim();
+    if (name) declared.push(name.slice(0, 200));
+  }
+
+  const { data: checks } = await admin.schema('aml').from('verification_checks')
+    .select('party_id, attempt_number, status, check_type')
+    .eq('case_id', caseId);
+
+  const targets: Array<{ id: string | null; label: string }> = [
+    { id: null, label: String(caseRow?.subject_display_name ?? 'You') },
+  ];
+  for (const name of declared) {
+    targets.push({ id: await derivedPartyId(caseId, name), label: name });
+  }
+
+  // Internal states collapse to what the client can act on. No score, no
+  // threshold, no reason for a referral (Appendix C.1).
+  const CLIENT_VISIBLE: Record<string, string> = {
+    passed: 'verified',
+    failed: 'action_required',
+    referred: 'in_review',
+    exhausted: 'contact_adviser',
+    pending: 'in_review',
+    in_progress: 'in_review',
+    abandoned: 'not_started',
+  };
+
+  return targets.map((t) => {
+    const mine = (checks ?? []).filter((c: any) =>
+      (t.id === null ? c.party_id === null : String(c.party_id) === t.id));
+    const electronic = mine.filter((c: any) => c.check_type === 'electronic_idv');
+    const used = electronic.reduce((max: number, c: any) =>
+      Math.max(max, Number(c.attempt_number ?? 0)), 0);
+    // A staff document sighting settles the party regardless of attempts.
+    const sighted = mine.some((c: any) => c.check_type === 'document_sighting' && c.status === 'passed');
+    const latest = mine.slice().sort((a: any, b: any) =>
+      Number(b.attempt_number ?? 0) - Number(a.attempt_number ?? 0))[0];
+
+    const rawStatus = sighted ? 'passed' : (latest?.status ?? 'not_started');
+    return {
+      party_id: t.id,
+      label: t.label,
+      status: CLIENT_VISIBLE[rawStatus] ?? 'not_started',
+      attempts_used: used,
+      attempts_remaining: Math.max(0, MAX_VERIFICATION_ATTEMPTS - used),
+      can_attempt: !sighted && used < MAX_VERIFICATION_ATTEMPTS && rawStatus !== 'passed',
+    };
+  });
+}
+
 function consentRequiredResponse(state: ConsentState) {
   return jsonResponse({
     error: state.version
@@ -464,6 +569,127 @@ Deno.serve(async (req) => {
           consent_state: {
             version: state.version, satisfied: state.satisfied, outstanding: state.outstanding,
           },
+        });
+      }
+
+      case 'verification_status': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ parties: [], enabled: false });
+        const consentState = await loadConsentState(admin, c.id);
+        const parties = await verificationParties(admin, c.id);
+        return jsonResponse({
+          enabled: true,
+          max_attempts: MAX_VERIFICATION_ATTEMPTS,
+          // The biometric consent is separate (APP 3.3) and is what unlocks
+          // the facial check specifically.
+          biometric_consent_accepted: !consentState.outstanding.includes('biometric_collection')
+            && consentState.documents.some((d) => d.code === 'biometric_collection'),
+          parties,
+        });
+      }
+
+      case 'submit_verification': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        const partyId = body.party_id ? String(body.party_id) : null;
+        const partyLabel = String(body.party_label ?? c.subject_display_name ?? 'Customer').slice(0, 200);
+
+        // Attempt ceiling is the database's job too, but check here so the
+        // client gets a clear message rather than a constraint violation.
+        const used = await verificationAttemptsUsed(admin, c.id, partyId);
+        if (used >= MAX_VERIFICATION_ATTEMPTS) {
+          return jsonResponse({
+            error: 'You have used all available attempts. A member of our team will contact you to complete verification another way.',
+            code: 'attempts_exhausted',
+            attempts_used: used,
+            max_attempts: MAX_VERIFICATION_ATTEMPTS,
+          }, 409);
+        }
+
+        // The biometric consent must be recorded BEFORE a face is captured —
+        // consent after collection is not consent (APP 3.3).
+        const { data: bioConsent } = await admin.schema('aml').from('consents')
+          .select('id, version').eq('case_id', c.id).eq('kind', 'biometric_collection')
+          .order('accepted_at', { ascending: false }).limit(1).maybeSingle();
+        if (!bioConsent) {
+          return jsonResponse({
+            error: 'Please accept the facial verification consent before continuing.',
+            code: 'biometric_consent_required',
+          }, 403);
+        }
+
+        const documentPath = String(body.document_storage_path ?? '').trim();
+        const selfiePath = String(body.selfie_storage_path ?? '').trim();
+        if (!documentPath || !selfiePath) {
+          return jsonResponse({ error: 'document_storage_path and selfie_storage_path are required' }, 400);
+        }
+        // Both objects must live under this case's prefix — a client must not
+        // be able to name someone else's upload.
+        for (const [label, p] of [['document', documentPath], ['selfie', selfiePath]] as const) {
+          if (!p.startsWith(`${c.id}/`)) {
+            return jsonResponse({ error: `Invalid ${label} path` }, 400);
+          }
+        }
+
+        const { data: created, error: insErr } = await admin.schema('aml')
+          .from('verification_checks').insert({
+            case_id: c.id,
+            party_id: partyId,
+            party_label: partyLabel,
+            check_type: 'electronic_idv',
+            attempt_number: used + 1,
+            status: 'pending',
+            provider: 'selfhosted',
+            biometric_kind: 'face_image',
+            biometric_storage_path: selfiePath,
+            biometric_captured_at: new Date().toISOString(),
+            biometric_consent_id: bioConsent.id,
+            document_reference: documentPath,
+            outcome_detail: { submitted_from: 'client_portal' },
+          }).select('*').single();
+        if (insErr) {
+          if (insErr.code === '23514') {
+            return jsonResponse({
+              error: 'You have used all available attempts.', code: 'attempts_exhausted',
+            }, 409);
+          }
+          throw insErr;
+        }
+
+        // Adjudication happens staff-side. The portal deliberately does not
+        // learn the score, the threshold, or why a check was referred —
+        // that is internal AML information (Appendix C.1).
+        return jsonResponse({
+          submitted: true,
+          attempt_number: created.attempt_number,
+          attempts_remaining: MAX_VERIFICATION_ATTEMPTS - created.attempt_number,
+          status: 'pending',
+          message: 'Thank you. We are checking your identity documents and will be in touch if anything else is needed.',
+        });
+      }
+
+      case 'request_verification_upload_url': {
+        const c = await resolveCase(body.case_id);
+        if (!c) return jsonResponse({ error: 'No case' }, 404);
+        const consentState = await loadConsentState(admin, c.id);
+        if (!consentState.satisfied) return consentRequiredResponse(consentState);
+
+        const kind = String(body.kind ?? '');
+        if (!['document', 'selfie'].includes(kind)) {
+          return jsonResponse({ error: 'kind must be "document" or "selfie"' }, 400);
+        }
+        // Selfies go to the biometrics bucket, never to aml-documents: the
+        // tighter access policy and the access log both hang off that bucket.
+        const bucket = kind === 'selfie' ? 'aml-biometrics' : 'aml-documents';
+        const key = `${c.id}/${kind}-${crypto.randomUUID()}.jpg`;
+        const { data, error } = await admin.storage.from(bucket).createSignedUploadUrl(key);
+        if (error) throw error;
+        return jsonResponse({
+          upload_url: data.signedUrl, token: data.token, path: key, bucket,
         });
       }
 

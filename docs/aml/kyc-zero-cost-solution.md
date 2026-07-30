@@ -206,3 +206,60 @@ licensed weights if accuracy proves insufficient in practice.
 **Recommendation: build this, run it, and measure.** If the false-rejection rate
 turns out to cost more in staff time than a paid licence would, you will have
 real numbers to make that decision with rather than a vendor's marketing.
+
+
+---
+
+## 7. Implementation status (2026-07-28)
+
+Built and shipped. What exists now:
+
+| Piece | Where | State |
+|---|---|---|
+| Verification service | `services/aml-verification-service/` | FastAPI + OpenCV, Dockerised, 22 tests |
+| Matching + MRZ engine | `supabase/functions/_shared/aml/matching.ts` | 42 unit tests |
+| Self-hosted IDV adapter | `_shared/aml/providers/index.ts` → `selfhosted` | wired into the existing factory |
+| Local-lists screening adapter | same file → `local_lists` | reads `aml.sanctions_entries` |
+| Schema | `20260728120000`, `20260728160000` | applied live |
+| Sanctions loader | `scripts/aml/load-sanctions-lists.mjs` | UN + OFAC automated; DFAT via CSV export |
+| Client portal step | `src/components/portal/IdentityVerificationStep.tsx` | camera capture + upload fallback |
+| Command centre panel | `src/components/aml/VerificationSection.tsx` | adjudication, sightings, audited image access |
+
+### Decisions that were forced during the build
+
+- **The portal reads party names from the client's own questionnaire, not from
+  `aml.beneficial_owners`.** A contract test caught the latter. The ownership
+  model carries internal analysis, and the portal boundary is drawn at the
+  table rather than per-field precisely so it cannot be eroded a column at a
+  time. Declared parties get a deterministic derived id so the attempt ceiling
+  stays enforceable per party.
+- **Liveness is never recorded as `pass`.** Best case is `warn`. Recording a
+  heuristic as a pass would overstate what was established, and that record
+  outlives whoever wrote it.
+- **An unreadable MRZ is a warning, not a failure.** Australian driver licences
+  carry no ICAO MRZ. A *failed check digit* is an entirely different signal.
+- **A service outage returns the attempt to `pending`.** Our infrastructure
+  failing must not consume one of the customer's three attempts.
+- **A capture problem (`unusable`) is separated from an identity failure.**
+  Bad lighting is not a finding against the customer.
+- **Screening never auto-clears a match.** Everything above the threshold goes
+  to a person; the low threshold is only defensible because a human adjudicates.
+
+### Operational prerequisites
+
+1. Deploy the container; set `AML_VERIFICATION_SERVICE_URL` and
+   `AML_VERIFICATION_SERVICE_TOKEN` on the edge functions.
+2. Set the tenant provider rows: `idv` → `selfhosted` (live),
+   `pep_sanctions` → `local_lists` (live). Until then both stay on the
+   simulator, which is the safe default.
+3. Load the lists: `node scripts/aml/load-sanctions-lists.mjs --list un,ofac`,
+   and export the DFAT XLSX to CSV for `--dfat-csv`.
+4. Schedule the loader. A stale sanctions list is a live compliance failure —
+   `sanctions_list_status` surfaces the last sync per list for that reason.
+
+### Still not covered
+
+DVS. Unchanged and unchangeable at zero cost — see §3. The compensating
+control is certified copies or in-person sighting for higher-risk matters,
+recorded through `record_document_sighting`, which now captures who certified
+the copy and in what capacity.

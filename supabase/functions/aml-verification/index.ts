@@ -39,6 +39,9 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+/** Owner decision of 2026-07-28: one attempt plus two retries. */
+const MAX_VERIFICATION_ATTEMPTS = 3;
+
 const IDV_ESTIMATED_TOKENS = 400;
 const SCREENING_ESTIMATED_TOKENS = 250;
 
@@ -383,6 +386,252 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           userId, userEmail);
 
         return jr({ resolution, match: updatedMatch });
+      }
+
+      // ---------------- self-hosted verification (zero-cost stack) ----------
+      //
+      // docs/aml/kyc-zero-cost-solution.md. The portal captures; these ops
+      // adjudicate. Nothing here moves the service gate — that stays an
+      // explicit, reasoned human decision in aml-risk.
+
+      case "list_verification_checks": {
+        if (!body.case_id) return jr({ error: "case_id required" }, 400);
+        const { data, error } = await admin.schema("aml").from("verification_checks")
+          .select("*").eq("case_id", body.case_id)
+          .order("requested_at", { ascending: false });
+        if (error) throw error;
+        // Never ship the storage path to the browser: a biometric is fetched
+        // only through `get_biometric_url`, which writes the access log.
+        const checks = (data ?? []).map((c: any) => {
+          const { biometric_storage_path, ...safe } = c;
+          return { ...safe, has_biometric: Boolean(biometric_storage_path) };
+        });
+        return jr({ checks, max_attempts: MAX_VERIFICATION_ATTEMPTS });
+      }
+
+      case "run_verification": {
+        // Adjudicate a pending portal submission through the self-hosted
+        // service. Staff-triggered so that a customer cannot spend compute,
+        // and so the result is attributable.
+        if (!canWrite) return jr({ error: "Analyst, reviewer or MLRO role required" }, 403);
+        const checkId = String(body.check_id ?? "");
+        if (!checkId) return jr({ error: "check_id required" }, 400);
+
+        const { data: check } = await admin.schema("aml").from("verification_checks")
+          .select("*").eq("id", checkId).maybeSingle();
+        if (!check) return jr({ error: "Not found" }, 404);
+        if (!["pending", "in_progress"].includes(check.status)) {
+          return jr({ error: `Check is already ${check.status}`, code: "not_pending" }, 409);
+        }
+
+        const tenantId = await resolveTenantId(admin, check.case_id);
+        const resolved = await resolveTenantProvider(admin, tenantId, "idv");
+        const provider = getIdvProvider({ resolved, preferred: "selfhosted", admin });
+
+        const download = async (bucket: string, path: string) => {
+          const { data, error } = await admin.storage.from(bucket).download(path);
+          if (error) throw new Error(`could not read ${bucket}/${path}: ${error.message}`);
+          const buf = new Uint8Array(await data.arrayBuffer());
+          let binary = "";
+          for (let i = 0; i < buf.length; i++) binary += String.fromCharCode(buf[i]);
+          return btoa(binary);
+        };
+
+        await admin.schema("aml").from("verification_checks")
+          .update({ status: "in_progress", updated_at: new Date().toISOString() })
+          .eq("id", checkId);
+
+        let result;
+        try {
+          const [documentB64, selfieB64] = await Promise.all([
+            check.document_reference ? download("aml-documents", check.document_reference) : Promise.resolve(""),
+            check.biometric_storage_path ? download("aml-biometrics", check.biometric_storage_path) : Promise.resolve(""),
+          ]);
+          result = await runWithMetrics(admin, {
+            tenantId, capability: "idv",
+            providerKey: resolved?.providerKey ?? "selfhosted",
+            costCents: resolved?.costCents ?? 0, configId: resolved?.configId ?? null,
+          }, () => provider.runIdv({
+            caseId: check.case_id,
+            subjectLabel: check.party_label,
+            method: "document_and_liveness",
+            metadata: { document_image_b64: documentB64, selfie_image_b64: selfieB64 },
+          }));
+        } catch (e: any) {
+          // A service failure is OUR failure. Return the attempt to pending so
+          // it does not consume one of the customer's three.
+          await admin.schema("aml").from("verification_checks").update({
+            status: "pending",
+            failure_reason: `service_error: ${String(e?.message ?? e).slice(0, 300)}`,
+            updated_at: new Date().toISOString(),
+          }).eq("id", checkId);
+          return jr({ error: `Verification service unavailable: ${e?.message ?? e}`, code: "service_unavailable" }, 503);
+        }
+
+        // 'unusable' capture (no face found, too small) is a capture problem,
+        // not an identity failure — leave the attempt open for a retake.
+        const unusable = (result.raw as any)?.face?.verdict === "unusable";
+        const status = unusable ? "pending"
+          : result.status === "failed" ? "failed"
+          : result.status === "verified" ? "passed"
+          : "referred";
+
+        const attemptsUsed = Number(check.attempt_number ?? 1);
+        const finalStatus = (status === "failed" && attemptsUsed >= MAX_VERIFICATION_ATTEMPTS)
+          ? "exhausted" : status;
+
+        const { data: updated, error: upErr } = await admin.schema("aml")
+          .from("verification_checks").update({
+            status: finalStatus,
+            provider: result.provider,
+            provider_reference: result.providerReference,
+            outcome_detail: {
+              ...(check.outcome_detail ?? {}),
+              checks: result.checks,
+              overall_score: result.overallScore,
+              raw: result.raw,
+              adjudicated_by: userId,
+            },
+            failure_reason: status === "failed"
+              ? result.checks.filter((c: any) => c.status === "fail").map((c: any) => c.name).join(", ")
+              : null,
+            completed_at: ["passed", "failed", "exhausted"].includes(finalStatus)
+              ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString(),
+          }).eq("id", checkId).select("*").single();
+        if (upErr) throw upErr;
+
+        await appendCaseEvent(admin, check.case_id, "idv_result",
+          `Identity verification for ${check.party_label}: ${finalStatus} (attempt ${attemptsUsed} of ${MAX_VERIFICATION_ATTEMPTS})`,
+          {
+            verification_check_id: checkId, status: finalStatus,
+            provider: result.provider, provider_reference: result.providerReference,
+            checks: result.checks,
+            limitations: (result.raw as any)?.limitations ?? [],
+          }, userId, userEmail);
+
+        const { biometric_storage_path: _bp, ...safe } = updated as any;
+        return jr({ check: { ...safe, has_biometric: Boolean(_bp) } });
+      }
+
+      case "record_document_sighting": {
+        // The documentary path — under the zero-cost design this is the
+        // primary evidence, not a fallback for edge cases.
+        if (!canWrite) return jr({ error: "Analyst, reviewer or MLRO role required" }, 403);
+        const caseId = String(body.case_id ?? "");
+        const partyLabel = String(body.party_label ?? "").trim();
+        const documentType = String(body.document_type ?? "").trim();
+        const sightingKind = String(body.sighting_kind ?? "");
+        const notes = String(body.notes ?? "").trim();
+
+        if (!caseId || !partyLabel) return jr({ error: "case_id and party_label are required" }, 400);
+        if (!documentType) return jr({ error: "document_type is required" }, 400);
+        if (!["original", "certified_copy"].includes(sightingKind)) {
+          return jr({ error: 'sighting_kind must be "original" or "certified_copy"' }, 400);
+        }
+        // A certified copy is only evidence if we recorded who certified it.
+        const certifierName = String(body.certifier_name ?? "").trim();
+        const certifierCapacity = String(body.certifier_capacity ?? "").trim();
+        if (sightingKind === "certified_copy" && (!certifierName || !certifierCapacity)) {
+          return jr({
+            error: "certifier_name and certifier_capacity are required for a certified copy",
+          }, 400);
+        }
+        if (notes.length < 10) {
+          return jr({ error: "notes must be at least 10 characters" }, 400);
+        }
+
+        const { data: created, error } = await admin.schema("aml")
+          .from("verification_checks").insert({
+            case_id: caseId,
+            party_id: body.party_id ?? null,
+            party_label: partyLabel.slice(0, 200),
+            check_type: "document_sighting",
+            attempt_number: 1,
+            status: "passed",
+            provider: "manual",
+            verified_by: userId,
+            verified_by_type: "staff",
+            outcome_detail: {
+              document_type: documentType,
+              sighting_kind: sightingKind,
+              certifier_name: certifierName || null,
+              certifier_capacity: certifierCapacity || null,
+              notes,
+              sighted_by_email: userEmail,
+            },
+            completed_at: new Date().toISOString(),
+          }).select("*").single();
+        if (error) {
+          if (error.code === "23505") {
+            return jr({ error: "A document sighting is already recorded for this party" }, 409);
+          }
+          throw error;
+        }
+
+        await appendCaseEvent(admin, caseId, "idv_result",
+          `Document sighting recorded for ${partyLabel} (${sightingKind.replace("_", " ")}, ${documentType})`,
+          {
+            verification_check_id: created.id, sighting_kind: sightingKind,
+            document_type: documentType, certifier_name: certifierName || null,
+          }, userId, userEmail);
+
+        return jr({ check: created });
+      }
+
+      case "get_biometric_url": {
+        // Every read of a retained biometric is logged. That log is the
+        // APP 11 answer to "who looked at this, and why".
+        if (!canWrite) return jr({ error: "Analyst, reviewer or MLRO role required" }, 403);
+        const checkId = String(body.check_id ?? "");
+        const reason = String(body.reason ?? "").trim();
+        if (!checkId) return jr({ error: "check_id required" }, 400);
+        if (reason.length < 10) {
+          return jr({ error: "A reason of at least 10 characters is required to view a biometric" }, 400);
+        }
+
+        const { data: check } = await admin.schema("aml").from("verification_checks")
+          .select("id, case_id, biometric_storage_path, party_label").eq("id", checkId).maybeSingle();
+        if (!check?.biometric_storage_path) return jr({ error: "No biometric on this check" }, 404);
+
+        const { data: signed, error } = await admin.storage.from("aml-biometrics")
+          .createSignedUrl(check.biometric_storage_path, 120);
+        if (error) throw error;
+
+        await admin.schema("aml").from("biometric_access_log").insert({
+          verification_check_id: checkId,
+          case_id: check.case_id,
+          actor_id: userId,
+          actor_label: userEmail,
+          action: "view",
+          reason,
+          ip_address: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null,
+        });
+
+        await appendCaseEvent(admin, check.case_id, "system",
+          `Biometric image viewed for ${check.party_label}`,
+          { verification_check_id: checkId, reason }, userId, userEmail);
+
+        // Short expiry on purpose: a long-lived URL is an unlogged copy.
+        return jr({ url: signed.signedUrl, expires_in_seconds: 120 });
+      }
+
+      case "list_biometric_access": {
+        if (!body.case_id) return jr({ error: "case_id required" }, 400);
+        const { data, error } = await admin.schema("aml").from("biometric_access_log")
+          .select("*").eq("case_id", body.case_id)
+          .order("created_at", { ascending: false }).limit(200);
+        if (error) throw error;
+        return jr({ access_log: data ?? [] });
+      }
+
+      case "sanctions_list_status": {
+        const { data, error } = await admin.schema("aml").from("sanctions_list_syncs")
+          .select("*").order("started_at", { ascending: false }).limit(20);
+        if (error) throw error;
+        const { count } = await admin.schema("aml").from("sanctions_entries")
+          .select("id", { count: "exact", head: true });
+        return jr({ syncs: data ?? [], entry_count: count ?? 0 });
       }
 
       default:
