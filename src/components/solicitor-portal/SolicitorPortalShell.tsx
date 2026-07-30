@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Briefcase, LayoutDashboard, LogOut, Scale } from 'lucide-react';
+import { Briefcase, KanbanSquare, LayoutDashboard, LogOut, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
@@ -9,6 +9,7 @@ import { SolicitorNotificationBell } from '@/components/solicitor-portal/Solicit
 const NAV = [
   { to: '/solicitor', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { to: '/solicitor/matters', label: 'Matters', icon: Briefcase, exact: false },
+  { to: '/solicitor/pipeline', label: 'Pipeline', icon: KanbanSquare, exact: false },
 ];
 
 /**
