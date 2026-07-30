@@ -50,6 +50,12 @@ interface RequestBody {
 // server-owned so callers of this service-role broker cannot request secrets.
 const SAFE_CUSTOM_USERS_SELECT = 'id, username, email, is_active, personal_mailbox';
 
+// `purchase_files` has a foreign key to service-role-only legal matters. Keep
+// this projection server-owned so PostgREST relationship embeds cannot cross
+// that authorization boundary.
+const SAFE_PURCHASE_FILES_SELECT =
+  'id, title, finance_status, lender, settlement_date, risk_level, client_deal_id';
+
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
@@ -131,12 +137,33 @@ Deno.serve(async (req) => {
       // contains password and MFA secret fields which must never be returned.
       const safeSelect = targetTable === 'custom_users'
         ? SAFE_CUSTOM_USERS_SELECT
-        : select;
+        : targetTable === 'purchase_files'
+          ? SAFE_PURCHASE_FILES_SELECT
+          : select;
 
       let query = supabase
         .from(targetTable)
         .select(safeSelect)
         .order(orderBy, { ascending: isAscending });
+
+      // The service-role client bypasses RLS, so purchase files must be
+      // constrained to the same client set the actor may access.
+      if (targetTable === 'purchase_files' && !await canAccessAllClients(supabase, actor)) {
+        const { data: accessibleClients, error: accessibleClientsError } = await supabase
+          .from('clients')
+          .select('id')
+          .or(`created_by.eq.${userId},assigned_team_user_id.eq.${userId}`);
+
+        if (accessibleClientsError) {
+          console.error('Error resolving accessible purchase-file clients:', accessibleClientsError);
+          return new Response(
+            JSON.stringify({ error: 'Failed to authorize purchase_files' }),
+            { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+          );
+        }
+
+        query = query.in('client_id', (accessibleClients || []).map(({ id }: { id: string }) => id));
+      }
 
       // Apply filters
       for (const [key, value] of Object.entries(filters)) {
