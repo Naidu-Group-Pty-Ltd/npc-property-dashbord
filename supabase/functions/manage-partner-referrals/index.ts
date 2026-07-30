@@ -17,6 +17,22 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
+import {
+  UNDERTAKING_TABLE,
+  expireLapsedUndertakings,
+  gateLoanWriterAssignment,
+  isUndertakingLive,
+} from '../_shared/loanWriterUndertakings.ts';
+import {
+  CONSENT_STATEMENT_VERSION,
+  buildConsentStatement,
+  buildDisclosureText,
+  consentLinkFor,
+  generateConsentToken,
+  hashConsentToken,
+} from '../_shared/partnerConsent.ts';
+
+const CONSENT_TABLE = 'partner_consent_requests';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
