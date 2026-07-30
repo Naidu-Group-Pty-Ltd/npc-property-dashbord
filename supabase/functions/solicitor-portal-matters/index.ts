@@ -169,6 +169,22 @@ Deno.serve(async (req) => {
         if (pf) finance_snapshot = pf;
       }
 
+      // Phase 4 — typed critical dates + settlement runway.
+      const canDates = can(perms, 'critical_dates', 'view');
+      const canRunway = can(perms, 'settlement', 'view');
+      const [{ data: criticalDates }, { data: runwayTasks }] = await Promise.all([
+        canDates
+          ? supabase.from('legal_matter_critical_dates').select(CRITICAL_DATE_SELECT)
+              .eq('legal_matter_id', matter.id)
+              .order('due_date', { ascending: true, nullsFirst: false })
+          : Promise.resolve({ data: [] as any[] }),
+        canRunway
+          ? supabase.from('legal_matter_settlement_tasks').select(SETTLEMENT_TASK_SELECT)
+              .eq('legal_matter_id', matter.id).order('sequence', { ascending: true })
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+
       await logSolicitorActivity(supabase, {
         solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_viewed',
         client_id: matter.client_id, legal_matter_id: matter.id,
