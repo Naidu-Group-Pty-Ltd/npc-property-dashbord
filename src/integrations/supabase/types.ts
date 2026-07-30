@@ -13896,6 +13896,7 @@ export type Database = {
           retention_until: string | null
           risk_flag: boolean
           risk_notes: string | null
+          row_version: number
           settlement_date: string | null
           shared_summary: string | null
           stage_entered_at: string
@@ -13950,6 +13951,7 @@ export type Database = {
           retention_until?: string | null
           risk_flag?: boolean
           risk_notes?: string | null
+          row_version?: number
           settlement_date?: string | null
           shared_summary?: string | null
           stage_entered_at?: string
@@ -14004,6 +14006,7 @@ export type Database = {
           retention_until?: string | null
           risk_flag?: boolean
           risk_notes?: string | null
+          row_version?: number
           settlement_date?: string | null
           shared_summary?: string | null
           stage_entered_at?: string
@@ -23489,6 +23492,20 @@ export type Database = {
       cleanup_expired_stamp_duty_cache: { Args: never; Returns: undefined }
       cleanup_expired_transport_cache: { Args: never; Returns: undefined }
       cleanup_old_health_logs: { Args: never; Returns: undefined }
+      close_legal_matter: {
+        Args: {
+          _actor_solicitor_user_id: string
+          _actor_staff_user_id?: string
+          _expected_version: number
+          _matter_id: string
+          _override_authorized?: boolean
+          _override_category?: string
+          _override_step_up_verified_at?: string
+          _reason: string
+          _retention_class: string
+        }
+        Returns: Json
+      }
       compute_audit_row_hash: {
         Args: {
           _action: string
@@ -23807,6 +23824,23 @@ export type Database = {
         Args: { _user_id: string }
         Returns: boolean
       }
+      is_legal_matter_transition_allowed: {
+        Args: {
+          _from: Database["public"]["Enums"]["legal_matter_status"]
+          _to: Database["public"]["Enums"]["legal_matter_status"]
+        }
+        Returns: boolean
+      }
+      link_legal_matter_record: {
+        Args: {
+          _actor_staff_user_id: string
+          _expected_version: number
+          _matter_id: string
+          _record_id: string
+          _record_type: string
+        }
+        Returns: Json
+      }
       list_resumable_bulk_jobs: {
         Args: never
         Returns: {
@@ -23971,6 +24005,16 @@ export type Database = {
         Args: { p_job_id: string }
         Returns: undefined
       }
+      reopen_legal_matter: {
+        Args: {
+          _actor_solicitor_user_id: string
+          _expected_version: number
+          _matter_id: string
+          _reason: string
+          _target_status: Database["public"]["Enums"]["legal_matter_status"]
+        }
+        Returns: Json
+      }
       requeue_stale_bulk_items: {
         Args: never
         Returns: {
@@ -24129,6 +24173,28 @@ export type Database = {
           name: string
           version: number
         }[]
+      }
+      transition_legal_matter: {
+        Args: {
+          _actor_solicitor_user_id?: string
+          _actor_staff_user_id?: string
+          _actor_type: string
+          _expected_version: number
+          _from: Database["public"]["Enums"]["legal_matter_status"]
+          _matter_id: string
+          _reason: string
+          _to: Database["public"]["Enums"]["legal_matter_status"]
+        }
+        Returns: Json
+      }
+      unlink_legal_matter_record: {
+        Args: {
+          _actor_staff_user_id: string
+          _expected_version: number
+          _matter_id: string
+          _record_type: string
+        }
+        Returns: Json
       }
       validate_property_specs: {
         Args: { specs: Json }
