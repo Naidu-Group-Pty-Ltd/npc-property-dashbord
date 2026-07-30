@@ -168,3 +168,45 @@
   }
 }
 
+
+/* Listings map — price chip markers + cluster styling (semantic tokens only). */
+@layer components {
+  .listing-price-marker {
+    background: transparent;
+    border: 0;
+  }
+
+  .listing-price-marker__chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transform: translate(-50%, -100%);
+    white-space: nowrap;
+    padding: 0.2rem 0.55rem;
+    border-radius: 9999px;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    line-height: 1.1;
+    color: hsl(var(--primary-foreground));
+    background: hsl(var(--primary));
+    border: 1px solid hsl(var(--primary) / 0.6);
+    box-shadow: 0 4px 12px hsl(var(--foreground) / 0.25);
+  }
+
+  .leaflet-popup-content-wrapper,
+  .leaflet-popup-tip {
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    border: 1px solid hsl(var(--border));
+  }
+
+  .marker-cluster div {
+    background: hsl(var(--primary) / 0.85) !important;
+    color: hsl(var(--primary-foreground)) !important;
+    font-weight: 600;
+  }
+
+  .marker-cluster {
+    background: hsl(var(--primary) / 0.3) !important;
+  }
+}
