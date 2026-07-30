@@ -232,12 +232,15 @@ export default function SolicitorLogin() {
           {/* Mobile logo */}
           <div className="mb-8 flex justify-center lg:hidden">
             <div className="flex flex-col items-center gap-3">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
-                <Scale className="h-7 w-7 text-primary" aria-hidden="true" />
-              </div>
+              <BrandLogo
+                slot="auth"
+                alt={settings.companyName || 'Solicitor Portal'}
+                className="h-14 max-w-[220px] object-contain"
+                fallbackClassName="h-14 w-14 rounded-2xl border border-primary/20"
+              />
               <div className="text-center">
-                <div className="text-lg font-bold tracking-tight">Solicitor Portal</div>
-                <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Legal Access</div>
+                <div className="text-lg font-bold tracking-tight">{settings.companyName || 'Solicitor Portal'}</div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Solicitor Portal · Legal Access</div>
               </div>
             </div>
           </div>
