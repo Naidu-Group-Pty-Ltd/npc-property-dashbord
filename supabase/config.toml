@@ -968,3 +968,30 @@ verify_jwt = false
 [functions.market-updates-feed]
 verify_jwt = false
 # Auth is verified in-function to support authenticated RSS clients and ETag responses.
+
+[functions.solicitor-portal-login]
+verify_jwt = false
+
+[functions.solicitor-portal-logout]
+verify_jwt = false
+
+[functions.solicitor-portal-verify]
+verify_jwt = false
+
+[functions.solicitor-portal-accept-invite]
+verify_jwt = false
+
+[functions.solicitor-portal-forgot-password]
+verify_jwt = false
+
+[functions.solicitor-portal-reset-password]
+verify_jwt = false
+
+[functions.solicitor-portal-change-password]
+verify_jwt = false
+
+[functions.solicitor-portal-invite]
+verify_jwt = true
+
+[functions.solicitor-portal-admin]
+verify_jwt = true
