@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Briefcase, Loader2, Plus, RefreshCw, Search } from 'lucide-react';
+import { Briefcase, Loader2, MessagesSquare, Plus, RefreshCw, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
