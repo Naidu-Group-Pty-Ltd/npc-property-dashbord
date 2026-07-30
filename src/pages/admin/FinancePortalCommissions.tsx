@@ -16,7 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import {
-  Loader2, Plus, RefreshCw, FileText, DollarSign, Download, Search, ArrowLeft,
+  Loader2, Plus, RefreshCw, FileText, DollarSign, Download, Search, ArrowLeft, AlertTriangle, ShieldCheck,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
