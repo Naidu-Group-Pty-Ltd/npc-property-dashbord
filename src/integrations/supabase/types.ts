@@ -19048,6 +19048,211 @@ export type Database = {
           },
         ]
       }
+      partner_referral_events: {
+        Row: {
+          actor_id: string | null
+          actor_label: string | null
+          actor_surface: string | null
+          created_at: string
+          event_type: string
+          id: string
+          payload: Json
+          referral_id: string
+          summary: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_label?: string | null
+          actor_surface?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          payload?: Json
+          referral_id: string
+          summary?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          actor_label?: string | null
+          actor_surface?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          payload?: Json
+          referral_id?: string
+          summary?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_referral_events_referral_id_fkey"
+            columns: ["referral_id"]
+            isOneToOne: false
+            referencedRelation: "partner_referrals"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_referrals: {
+        Row: {
+          accepted_at: string | null
+          agreement_id: string | null
+          agreement_version: number | null
+          assigned_consultant_id: string | null
+          assigned_consultant_name: string | null
+          assigned_finance_user_id: string | null
+          assigned_loan_writer_name: string | null
+          benefit_disclosed: boolean
+          benefit_disclosed_at: string | null
+          client_deal_id: string | null
+          client_email: string | null
+          client_first_name: string
+          client_id: string | null
+          client_phone: string | null
+          client_surname: string | null
+          commercial_eligibility: string
+          completed_at: string | null
+          consent_artefact_path: string | null
+          consent_method: string | null
+          consent_obtained: boolean
+          consent_obtained_at: string | null
+          created_at: string
+          created_by: string | null
+          declined_at: string | null
+          direction: string
+          eligibility_reason: string | null
+          estimated_value: number | null
+          finance_agent_contact_id: string | null
+          general_purpose: string | null
+          id: string
+          internal_notes: string | null
+          metadata: Json
+          preferred_contact_method: string | null
+          preferred_contact_time: string | null
+          prior_client_check: string
+          purchase_file_id: string | null
+          reference: string
+          referring_contact_email: string | null
+          referring_contact_phone: string | null
+          referring_entity_name: string | null
+          referring_individual_crn: string | null
+          referring_individual_name: string | null
+          shared_notes: string | null
+          status: string
+          status_reason: string | null
+          submitted_at: string | null
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          accepted_at?: string | null
+          agreement_id?: string | null
+          agreement_version?: number | null
+          assigned_consultant_id?: string | null
+          assigned_consultant_name?: string | null
+          assigned_finance_user_id?: string | null
+          assigned_loan_writer_name?: string | null
+          benefit_disclosed?: boolean
+          benefit_disclosed_at?: string | null
+          client_deal_id?: string | null
+          client_email?: string | null
+          client_first_name: string
+          client_id?: string | null
+          client_phone?: string | null
+          client_surname?: string | null
+          commercial_eligibility?: string
+          completed_at?: string | null
+          consent_artefact_path?: string | null
+          consent_method?: string | null
+          consent_obtained?: boolean
+          consent_obtained_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          declined_at?: string | null
+          direction: string
+          eligibility_reason?: string | null
+          estimated_value?: number | null
+          finance_agent_contact_id?: string | null
+          general_purpose?: string | null
+          id?: string
+          internal_notes?: string | null
+          metadata?: Json
+          preferred_contact_method?: string | null
+          preferred_contact_time?: string | null
+          prior_client_check?: string
+          purchase_file_id?: string | null
+          reference: string
+          referring_contact_email?: string | null
+          referring_contact_phone?: string | null
+          referring_entity_name?: string | null
+          referring_individual_crn?: string | null
+          referring_individual_name?: string | null
+          shared_notes?: string | null
+          status?: string
+          status_reason?: string | null
+          submitted_at?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          accepted_at?: string | null
+          agreement_id?: string | null
+          agreement_version?: number | null
+          assigned_consultant_id?: string | null
+          assigned_consultant_name?: string | null
+          assigned_finance_user_id?: string | null
+          assigned_loan_writer_name?: string | null
+          benefit_disclosed?: boolean
+          benefit_disclosed_at?: string | null
+          client_deal_id?: string | null
+          client_email?: string | null
+          client_first_name?: string
+          client_id?: string | null
+          client_phone?: string | null
+          client_surname?: string | null
+          commercial_eligibility?: string
+          completed_at?: string | null
+          consent_artefact_path?: string | null
+          consent_method?: string | null
+          consent_obtained?: boolean
+          consent_obtained_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          declined_at?: string | null
+          direction?: string
+          eligibility_reason?: string | null
+          estimated_value?: number | null
+          finance_agent_contact_id?: string | null
+          general_purpose?: string | null
+          id?: string
+          internal_notes?: string | null
+          metadata?: Json
+          preferred_contact_method?: string | null
+          preferred_contact_time?: string | null
+          prior_client_check?: string
+          purchase_file_id?: string | null
+          reference?: string
+          referring_contact_email?: string | null
+          referring_contact_phone?: string | null
+          referring_entity_name?: string | null
+          referring_individual_crn?: string | null
+          referring_individual_name?: string | null
+          shared_notes?: string | null
+          status?: string
+          status_reason?: string | null
+          submitted_at?: string | null
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_referrals_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       password_reset_tokens: {
         Row: {
           attempts: number
