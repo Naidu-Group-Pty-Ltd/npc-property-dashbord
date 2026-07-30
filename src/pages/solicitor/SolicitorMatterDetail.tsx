@@ -86,6 +86,15 @@ const EMPTY_PARTY = {
 export default function SolicitorMatterDetail() {
   const { matterId } = useParams<{ matterId: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeTab, setActiveTabState] = useState(searchParams.get('tab') || 'overview');
+
+  const setActiveTab = useCallback((tab: string) => {
+    setActiveTabState(tab);
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'overview') next.delete('tab'); else next.set('tab', tab);
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
