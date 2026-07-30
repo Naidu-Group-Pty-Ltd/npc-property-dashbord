@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { createCorsHeaders, verifyAuth } from "../_shared/auth.ts"
+import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shared/auth.ts"
+import { requireModulePermission } from "../_shared/authz.ts"
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 
@@ -37,6 +38,16 @@ Deno.serve(async (req) => {
     const auth = await verifyAuth(supabase, req.headers, body)
     if (auth.error || !auth.userId) {
       return json({ error: 'Admin authentication required' }, 401)
+    }
+
+    const authorization = await requireModulePermission(
+      supabase,
+      { userId: auth.userId, authMethod: auth.authMethod },
+      'solicitor_portal_admin',
+      action === 'check_status' ? 'can_view' : 'can_edit',
+    )
+    if (!authorization.ok) {
+      return createForbiddenResponse('Solicitor Portal administration access denied', corsHeaders)
     }
 
     // === CHECK STATUS ===
