@@ -123,9 +123,14 @@ export function SolicitorUserDialog({ open, onOpenChange, user, firms, defaultFi
         </DialogHeader>
 
         <div className="space-y-4">
+          {activeFirms.length === 0 && (
+            <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              No active legal practice exists yet. Create one under the Legal Practices tab before adding portal users.
+            </div>
+          )}
           <div className="space-y-2">
             <Label>Legal practice *</Label>
-            <Select value={firmId} onValueChange={setFirmId}>
+            <Select value={firmId} onValueChange={setFirmId} disabled={activeFirms.length === 0}>
               <SelectTrigger><SelectValue placeholder="Select a practice..." /></SelectTrigger>
               <SelectContent>
                 {activeFirms.map(f => (
@@ -134,6 +139,7 @@ export function SolicitorUserDialog({ open, onOpenChange, user, firms, defaultFi
               </SelectContent>
             </Select>
           </div>
+
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
