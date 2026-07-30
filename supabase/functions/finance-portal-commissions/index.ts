@@ -165,8 +165,10 @@ Deno.serve(async (req) => {
     const { operation } = body;
 
     const PARTNER_OPS = new Set([
-      'partner_summary', 'partner_commissions', 'partner_statements', 'partner_statement_pdf_url'
+      'partner_summary', 'partner_commissions', 'partner_statements', 'partner_statement_pdf_url',
+      'partner_statement_detail', 'partner_raise_dispute', 'partner_disputes',
     ]);
+
 
     let adminUserId: string | null = null;
     let partner: any = null;
