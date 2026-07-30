@@ -17,9 +17,10 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  Building2, Gavel, History, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
+  Briefcase, Building2, Gavel, History, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
   Settings2, Shield, Trash2, Unlock, UserCheck, Users, UserX,
 } from 'lucide-react';
+import { AdminLegalMattersPanel } from '@/components/admin/solicitor-portal/AdminLegalMattersPanel';
 import { SolicitorFirmDialog, type SolicitorFirm } from '@/components/admin/solicitor-portal/SolicitorFirmDialog';
 import { SolicitorUserDialog, type SolicitorUserRow } from '@/components/admin/solicitor-portal/SolicitorUserDialog';
 import { SolicitorAssignmentsDialog } from '@/components/admin/solicitor-portal/SolicitorAssignmentsDialog';
