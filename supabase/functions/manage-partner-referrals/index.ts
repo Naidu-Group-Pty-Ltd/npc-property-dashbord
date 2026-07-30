@@ -589,6 +589,189 @@ Deno.serve(async (req) => {
       return json({ users: data ?? [] }, corsHeaders);
     }
 
+    /** Live undertakings available to receive an outbound referral. */
+    if (action === 'list_active_undertakings') {
+      await expireLapsedUndertakings(supabase);
+      let q = supabase
+        .from(UNDERTAKING_TABLE)
+        .select('id, reference, status, writer_full_name, writer_entity_name, licensee_name, acl_number, crn, finance_user_id, finance_agent_contact_id, effective_date, expiry_date, authorisation_end_date, signed_at')
+        .eq('status', 'active')
+        .order('writer_full_name', { ascending: true });
+      if (body.finance_user_id) q = q.eq('finance_user_id', body.finance_user_id);
+      if (body.agreement_id) q = q.eq('agreement_id', body.agreement_id);
+      const { data, error } = await q;
+      if (error) throw error;
+      return json({ undertakings: (data ?? []).filter((row: any) => isUndertakingLive(row)) }, corsHeaders);
+    }
+
+    /** Assign an outbound referral to a loan writer — gated on a live undertaking. */
+    if (action === 'assign_loan_writer') {
+      const { id, assigned_finance_user_id, loan_writer_undertaking_id, assigned_loan_writer_name } = body;
+      if (!id) return json({ error: 'id_required' }, corsHeaders, 400);
+      const { data: existing } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
+      if (!existing) return json({ error: 'not_found' }, corsHeaders, 404);
+
+      // Clearing the assignment is always allowed.
+      if (!assigned_finance_user_id && !loan_writer_undertaking_id) {
+        const { data, error } = await supabase.from(TABLE).update({
+          assigned_finance_user_id: null,
+          loan_writer_undertaking_id: null,
+          assigned_loan_writer_name: null,
+          updated_by: actorId,
+        }).eq('id', id).select().single();
+        if (error) throw error;
+        await logEvent(supabase, id, 'loan_writer_unassigned', actor, 'Loan writer assignment cleared');
+        return json({ referral: data }, corsHeaders);
+      }
+
+      const gate = await gateLoanWriterAssignment(supabase, {
+        direction: existing.direction,
+        financeUserId: assigned_finance_user_id ?? null,
+        financeAgentContactId: existing.finance_agent_contact_id ?? null,
+        undertakingId: loan_writer_undertaking_id ?? null,
+      });
+      if (!gate.ok) return json({ error: gate.error, message: gate.message }, corsHeaders, 422);
+
+      const patch: Record<string, unknown> = {
+        assigned_finance_user_id: assigned_finance_user_id ?? gate.undertaking?.finance_user_id ?? null,
+        loan_writer_undertaking_id: gate.undertaking?.id ?? null,
+        assigned_loan_writer_name:
+          assigned_loan_writer_name || gate.undertaking?.writer_full_name || existing.assigned_loan_writer_name || null,
+        updated_by: actorId,
+      };
+
+      const { data, error } = await supabase.from(TABLE).update(patch).eq('id', id).select().single();
+      if (error) throw error;
+      await logEvent(supabase, id, 'loan_writer_assigned', actor,
+        `Assigned to ${patch.assigned_loan_writer_name}${gate.undertaking ? ` under undertaking ${gate.undertaking.reference}` : ''}`,
+        { undertaking_id: gate.undertaking?.id ?? null, undertaking_reference: gate.undertaking?.reference ?? null });
+      return json({ referral: data, undertaking: gate.undertaking }, corsHeaders);
+    }
+
+    // ── Consent capture (Annexure A) ───────────────────────
+
+    if (action === 'list_consent_requests') {
+      const { id } = body;
+      if (!id) return json({ error: 'id_required' }, corsHeaders, 400);
+      const { data, error } = await supabase
+        .from(CONSENT_TABLE)
+        .select('id, referral_id, channel, recipient_name, recipient_email, recipient_phone, statement_version, statement_text, disclosure_text, status, sent_at, first_viewed_at, signed_at, declined_at, revoked_at, expires_at, signature_name, signature_ip, created_at')
+        .eq('referral_id', id)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return json({ consent_requests: data ?? [] }, corsHeaders);
+    }
+
+    /** Issue a fresh signing link. Any previous live request is superseded. */
+    if (action === 'issue_consent_request') {
+      const { id, channel, recipient_email, recipient_phone, expires_in_days } = body;
+      if (!id) return json({ error: 'id_required' }, corsHeaders, 400);
+      const { data: existing } = await supabase.from(TABLE).select('*').eq('id', id).maybeSingle();
+      if (!existing) return json({ error: 'not_found' }, corsHeaders, 404);
+      if (existing.consent_obtained) {
+        return json({ error: 'consent_already_recorded', message: 'Consent is already recorded for this referral.' }, corsHeaders, 409);
+      }
+
+      const email = recipient_email || existing.client_email;
+      const phone = recipient_phone || existing.client_phone;
+      const useChannel = channel || (email ? 'email' : phone ? 'sms' : 'manual');
+      if (useChannel === 'email' && !email) return json({ error: 'recipient_email_required' }, corsHeaders, 400);
+      if (useChannel === 'sms' && !phone) return json({ error: 'recipient_phone_required' }, corsHeaders, 400);
+
+      let feeSummary: string | null = null;
+      let partnerName: string | null = null;
+      if (existing.agreement_id) {
+        const { data: agr } = await supabase
+          .from('partner_agreements')
+          .select('partner_legal_name, fee_model, fee_amount, fee_percentage')
+          .eq('id', existing.agreement_id).maybeSingle();
+        partnerName = agr?.partner_legal_name ?? null;
+      }
+
+      const clientName = [existing.client_first_name, existing.client_surname].filter(Boolean).join(' ');
+      const statement = buildConsentStatement({
+        clientName: clientName || 'the client',
+        direction: existing.direction,
+        referringEntity: existing.referring_entity_name ?? partnerName,
+        receivingEntity: partnerName ?? existing.referring_entity_name,
+        generalPurpose: existing.general_purpose,
+      });
+      const disclosure = buildDisclosureText(existing.direction, feeSummary);
+
+      // Supersede outstanding links so only one is ever signable.
+      await supabase.from(CONSENT_TABLE)
+        .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+        .eq('referral_id', id).in('status', ['pending', 'viewed']);
+
+      const token = generateConsentToken();
+      const tokenHash = await hashConsentToken(token);
+      const days = Math.min(Math.max(Number(expires_in_days) || 14, 1), 60);
+
+      const { data: created, error } = await supabase.from(CONSENT_TABLE).insert({
+        referral_id: id,
+        token_hash: tokenHash,
+        channel: useChannel,
+        recipient_name: clientName || null,
+        recipient_email: email ?? null,
+        recipient_phone: phone ?? null,
+        statement_version: CONSENT_STATEMENT_VERSION,
+        statement_text: statement,
+        disclosure_text: disclosure,
+        expires_at: new Date(Date.now() + days * 86400000).toISOString(),
+        created_by: actorId,
+      }).select().single();
+      if (error) throw error;
+
+      const link = consentLinkFor(token, origin);
+      await logEvent(supabase, id, 'consent_requested', actor,
+        `Consent link issued via ${useChannel}`, { consent_request_id: created.id, channel: useChannel, expires_at: created.expires_at });
+
+      return json({ consent_request: created, consent_link: link }, corsHeaders);
+    }
+
+    if (action === 'revoke_consent_request') {
+      const { consent_request_id, reason } = body;
+      if (!consent_request_id) return json({ error: 'consent_request_id_required' }, corsHeaders, 400);
+      const { data: cr } = await supabase.from(CONSENT_TABLE).select('*').eq('id', consent_request_id).maybeSingle();
+      if (!cr) return json({ error: 'not_found' }, corsHeaders, 404);
+      if (!['pending', 'viewed'].includes(cr.status)) {
+        return json({ error: 'request_not_live', message: 'Only an outstanding consent link can be revoked.' }, corsHeaders, 409);
+      }
+      const { data, error } = await supabase.from(CONSENT_TABLE)
+        .update({ status: 'revoked', revoked_at: new Date().toISOString() })
+        .eq('id', consent_request_id).select().single();
+      if (error) throw error;
+      await logEvent(supabase, cr.referral_id, 'consent_revoked', actor, 'Consent link revoked', { consent_request_id, reason: reason ?? null });
+      return json({ consent_request: data }, corsHeaders);
+    }
+
+    /** Consent taken verbally / on paper — evidence path is mandatory. */
+    if (action === 'record_manual_consent') {
+      const { id, consent_method, consent_artefact_path, obtained_at, note } = body;
+      if (!id) return json({ error: 'id_required' }, corsHeaders, 400);
+      if (!consent_method) return json({ error: 'consent_method_required' }, corsHeaders, 400);
+      if (!consent_artefact_path && !note) {
+        return json({
+          error: 'evidence_required',
+          message: 'Record where the consent evidence is held (file reference or a note describing the call).',
+        }, corsHeaders, 422);
+      }
+
+      const { data, error } = await supabase.from(TABLE).update({
+        consent_obtained: true,
+        consent_obtained_at: obtained_at ?? new Date().toISOString(),
+        consent_method,
+        consent_artefact_path: consent_artefact_path ?? null,
+        updated_by: actorId,
+      }).eq('id', id).select().single();
+      if (error) throw error;
+
+      await logEvent(supabase, id, 'consent_recorded', actor,
+        `Consent recorded manually (${consent_method})`, { consent_method, consent_artefact_path: consent_artefact_path ?? null, note: note ?? null });
+      return json({ referral: data }, corsHeaders);
+    }
+
     return json({ error: 'unknown_action' }, corsHeaders, 400);
   } catch (error) {
     console.error('[manage-partner-referrals] error:', error);
