@@ -562,6 +562,14 @@ Deno.serve(async (req) => {
     // ─────────────── UPCOMING DATES ACROSS THE PRACTICE ───────────────
     if (operation === 'upcoming_dates') {
       if (!assignedClientIds.length) return json({ success: true, records: [] });
+      const permittedClientIds = (await Promise.all(assignedClientIds.map(async (clientId) => {
+        const perms = await resolveClientPermissions(supabase, me.id, clientId);
+        return can(perms, 'matters', 'view') && can(perms, 'critical_dates', 'view')
+          ? clientId
+          : null;
+      }))).filter((clientId): clientId is string => clientId !== null);
+      if (!permittedClientIds.length) return json({ success: true, records: [] });
+
       const horizonDays = Math.min(Math.max(Number(body.days) || 30, 1), 120);
       const horizon = new Date();
       horizon.setDate(horizon.getDate() + horizonDays);
@@ -569,7 +577,7 @@ Deno.serve(async (req) => {
       const { data: matters } = await supabase
         .from('legal_matters')
         .select('id, title, property_address, property_suburb, status, client_id, firm_id')
-        .in('client_id', assignedClientIds)
+        .in('client_id', permittedClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
         .limit(500);
 
