@@ -2814,6 +2814,305 @@ export type Database = {
         }
         Relationships: []
       }
+      case_milestone_conflicts: {
+        Row: {
+          authoritative_milestone_id: string | null
+          case_id: string
+          conflict_key: string
+          conflict_type: string
+          created_at: string
+          id: string
+          left_source: Json
+          milestone_type: string
+          requires_confirmation: boolean
+          resolution_reason: string | null
+          resolution_status: string
+          resolved_at: string | null
+          resolved_by: string | null
+          right_source: Json
+          updated_at: string
+        }
+        Insert: {
+          authoritative_milestone_id?: string | null
+          case_id: string
+          conflict_key: string
+          conflict_type: string
+          created_at?: string
+          id?: string
+          left_source: Json
+          milestone_type: string
+          requires_confirmation?: boolean
+          resolution_reason?: string | null
+          resolution_status?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          right_source: Json
+          updated_at?: string
+        }
+        Update: {
+          authoritative_milestone_id?: string | null
+          case_id?: string
+          conflict_key?: string
+          conflict_type?: string
+          created_at?: string
+          id?: string
+          left_source?: Json
+          milestone_type?: string
+          requires_confirmation?: boolean
+          resolution_reason?: string | null
+          resolution_status?: string
+          resolved_at?: string | null
+          resolved_by?: string | null
+          right_source?: Json
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_milestone_conflicts_authoritative_milestone_id_fkey"
+            columns: ["authoritative_milestone_id"]
+            isOneToOne: false
+            referencedRelation: "case_milestones"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "case_milestone_conflicts_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_milestones: {
+        Row: {
+          authority: string
+          case_id: string
+          created_at: string
+          due_at: string
+          id: string
+          milestone_type: string
+          notes: string | null
+          owner_id: string | null
+          owner_type: string | null
+          row_version: number
+          source_created_at: string | null
+          source_domain: string
+          source_record_id: string
+          source_updated_at: string | null
+          status: string
+          title: string
+          updated_at: string
+          visibility: string
+          visible_to_client: boolean
+        }
+        Insert: {
+          authority: string
+          case_id: string
+          created_at?: string
+          due_at: string
+          id?: string
+          milestone_type: string
+          notes?: string | null
+          owner_id?: string | null
+          owner_type?: string | null
+          row_version?: number
+          source_created_at?: string | null
+          source_domain: string
+          source_record_id: string
+          source_updated_at?: string | null
+          status: string
+          title: string
+          updated_at?: string
+          visibility: string
+          visible_to_client?: boolean
+        }
+        Update: {
+          authority?: string
+          case_id?: string
+          created_at?: string
+          due_at?: string
+          id?: string
+          milestone_type?: string
+          notes?: string | null
+          owner_id?: string | null
+          owner_type?: string | null
+          row_version?: number
+          source_created_at?: string | null
+          source_domain?: string
+          source_record_id?: string
+          source_updated_at?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+          visibility?: string
+          visible_to_client?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_milestones_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_task_assignments: {
+        Row: {
+          assigned_at: string
+          assigned_by: string | null
+          assignee_id: string
+          assignee_type: string
+          id: string
+          revoked_at: string | null
+          task_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by?: string | null
+          assignee_id: string
+          assignee_type: string
+          id?: string
+          revoked_at?: string | null
+          task_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by?: string | null
+          assignee_id?: string
+          assignee_type?: string
+          id?: string
+          revoked_at?: string | null
+          task_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "case_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_task_status_history: {
+        Row: {
+          actor_id: string | null
+          actor_type: string
+          completion_evidence: Json
+          from_status: string | null
+          id: string
+          occurred_at: string
+          reason: string
+          task_id: string
+          to_status: string
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_type: string
+          completion_evidence?: Json
+          from_status?: string | null
+          id?: string
+          occurred_at?: string
+          reason: string
+          task_id: string
+          to_status: string
+        }
+        Update: {
+          actor_id?: string | null
+          actor_type?: string
+          completion_evidence?: Json
+          from_status?: string | null
+          id?: string
+          occurred_at?: string
+          reason?: string
+          task_id?: string
+          to_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_task_status_history_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "case_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      case_tasks: {
+        Row: {
+          case_id: string
+          completed_at: string | null
+          completion_evidence: Json
+          created_at: string
+          description: string | null
+          due_at: string | null
+          id: string
+          is_required: boolean
+          label: string
+          notes: string | null
+          owner_domain: string
+          row_version: number
+          sequence: number
+          source_refs: Json
+          status: string
+          task_key: string
+          updated_at: string
+          visibility: string
+          visible_to_client: boolean
+        }
+        Insert: {
+          case_id: string
+          completed_at?: string | null
+          completion_evidence?: Json
+          created_at?: string
+          description?: string | null
+          due_at?: string | null
+          id?: string
+          is_required?: boolean
+          label: string
+          notes?: string | null
+          owner_domain: string
+          row_version?: number
+          sequence?: number
+          source_refs?: Json
+          status?: string
+          task_key: string
+          updated_at?: string
+          visibility: string
+          visible_to_client?: boolean
+        }
+        Update: {
+          case_id?: string
+          completed_at?: string | null
+          completion_evidence?: Json
+          created_at?: string
+          description?: string | null
+          due_at?: string | null
+          id?: string
+          is_required?: boolean
+          label?: string
+          notes?: string | null
+          owner_domain?: string
+          row_version?: number
+          sequence?: number
+          source_refs?: Json
+          status?: string
+          task_key?: string
+          updated_at?: string
+          visibility?: string
+          visible_to_client?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "case_tasks_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_flow_analyses: {
         Row: {
           analysis_data: Json
@@ -24384,6 +24683,10 @@ export type Database = {
           total_entries: number
         }[]
       }
+      get_case_runway: {
+        Args: { _audience: string; _case_id: string }
+        Returns: Json
+      }
       get_migration_upload_progress: {
         Args: { _upload_id: string }
         Returns: {
@@ -24903,6 +25206,18 @@ export type Database = {
           _domain_type: string
           _expected_version: number
           _reason: string
+        }
+        Returns: Json
+      }
+      update_case_task_status: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _completion_evidence?: Json
+          _expected_version: number
+          _reason: string
+          _status: string
+          _task_id: string
         }
         Returns: Json
       }
