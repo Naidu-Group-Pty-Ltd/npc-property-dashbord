@@ -9,7 +9,7 @@ import {
   KeyRound,
   Loader2,
   Mail,
-  Scale,
+  
   ShieldCheck,
   FileSignature,
 } from 'lucide-react';
