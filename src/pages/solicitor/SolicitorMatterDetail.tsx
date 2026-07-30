@@ -230,15 +230,17 @@ export default function SolicitorMatterDetail() {
 
   useEffect(() => { if (matterId) void refreshRegisters(); }, [matterId, refreshRegisters]);
 
-  const runRegisterOp = async (payload: Record<string, unknown>, successMessage?: string) => {
+  const runRegisterOp = async (
+    payload: Record<string, unknown>,
+    successMessage?: string,
+  ): Promise<void> => {
     setRegisterSaving(true);
     const { data, error } = await callDocs(payload);
     setRegisterSaving(false);
     const message = error?.message || (data as any)?.error;
-    if (message) { toast.error(message); return false; }
+    if (message) { toast.error(message); return; }
     if (successMessage) toast.success(successMessage);
     await refreshRegisters();
-    return true;
   };
 
   const saveDocument = (d: DocumentDraft) => runRegisterOp({
