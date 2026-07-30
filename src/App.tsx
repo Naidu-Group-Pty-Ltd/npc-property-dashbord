@@ -115,6 +115,7 @@ import RemindersHub from "./pages/RemindersHub";
 import Checklists from "./pages/Checklists";
 import Agreements from "./pages/Agreements";
 import PartnerAgreements from "./pages/PartnerAgreements";
+import PartnerReferrals from "./pages/PartnerReferrals";
 import GamePlan from "./pages/GamePlan";
 import Commissions from "./pages/Commissions";
 import ReportsAnalytics from "./pages/ReportsAnalytics";
@@ -188,6 +189,7 @@ import FinancePortalPurchaseFileDetail from "./pages/finance-portal/FinancePorta
 import FinancePortalClientInbox from "./pages/finance-portal/FinancePortalClientInbox";
 import FinancePortalPipeline from "./pages/finance-portal/FinancePortalPipeline";
 import FinancePortalInsights from "./pages/finance-portal/FinancePortalInsights";
+import PartnerReferralInbox from "./pages/finance-portal/PartnerReferralInbox";
 import AmlCaseSnapshot from "./pages/finance-portal/AmlCaseSnapshot";
 
 
@@ -323,6 +325,7 @@ const App = () => (
                                 <Route path="lender-intelligence" element={<FinancePortalLenderIntelligence />} />
                                 <Route path="pipeline" element={<FinancePortalPipeline />} />
                                 <Route path="insights" element={<FinancePortalInsights />} />
+                                <Route path="referrals" element={<PartnerReferralInbox />} />
                                 <Route path="reports" element={<FinancePortalReports />} />
                                 <Route path="settings" element={<FinancePortalSettings />} />
                                 <Route path="aml-snapshot/:token" element={<AmlCaseSnapshot />} />
@@ -475,6 +478,7 @@ const App = () => (
                 <Route path="checklists" element={<ModuleGuard moduleKey="checklists"><Checklists /></ModuleGuard>} />
                 <Route path="agreements" element={<ModuleGuard moduleKey="agreements"><Agreements /></ModuleGuard>} />
                 <Route path="partner-agreements" element={<ModuleGuard moduleKey="agreements"><PartnerAgreements /></ModuleGuard>} />
+                <Route path="partner-referrals" element={<ModuleGuard moduleKey="agreements"><PartnerReferrals /></ModuleGuard>} />
                 <Route path="game-plan" element={<ModuleGuard moduleKey="game_plans"><GamePlan /></ModuleGuard>} />
                 <Route path="portal-config" element={<ModuleGuard moduleKey="portal_config"><PortalConfig /></ModuleGuard>} />
                 <Route path="marketing-analytics" element={<ModuleGuard moduleKey="marketing_analytics"><MarketingAnalytics /></ModuleGuard>} />
