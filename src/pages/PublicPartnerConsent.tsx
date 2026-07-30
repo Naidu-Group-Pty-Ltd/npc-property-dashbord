@@ -8,7 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Loader2, ShieldCheck, CheckCircle2, XCircle, Clock } from 'lucide-react';
-import { BrandLockup } from '@/branding/BrandLockup';
+import { BrandLockup } from '@/components/branding/BrandAssets';
 import { usePublicConsent, usePublicConsentActions } from '@/hooks/usePartnerConsent';
 
 /**
