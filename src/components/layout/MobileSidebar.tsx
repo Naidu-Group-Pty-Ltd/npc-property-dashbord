@@ -76,6 +76,7 @@ const navigationItems = [
   { title: 'Reminders', url: '/reminders', icon: Bell, moduleKey: 'reminders' },
   { title: 'Checklists', url: '/checklists', icon: ClipboardList, moduleKey: 'checklists' },
   { title: 'Agreements', url: '/agreements', icon: FileSignature, moduleKey: 'agreements' },
+  { title: 'Partner Agreements', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements' },
   { title: 'Game Plan', url: '/game-plan', icon: MapIcon, moduleKey: 'game_plans' },
   { title: 'Marketing', url: '/marketing-analytics', icon: TrendingUp, moduleKey: 'marketing_analytics' },
   { title: 'Charts', url: '/charts', icon: BarChart3, moduleKey: 'charts' },
@@ -98,7 +99,7 @@ const navigationGroups = [
   },
   {
     title: 'Operations',
-    itemTitles: ['Deal Pipeline', 'Reminders', 'Checklists', 'Agreements', 'Game Plan', 'Marketing'],
+    itemTitles: ['Deal Pipeline', 'Reminders', 'Checklists', 'Agreements', 'Partner Agreements', 'Game Plan', 'Marketing'],
   },
   {
     title: 'Help & Usage',
