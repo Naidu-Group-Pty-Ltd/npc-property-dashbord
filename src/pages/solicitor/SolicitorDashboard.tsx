@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
 import { invokeSolicitorFunction } from '@/lib/solicitorPortal';
 import { SolicitorPortalShell } from '@/components/solicitor-portal/SolicitorPortalShell';
+import { PortfolioInsightsPanel } from '@/components/solicitor-portal/PortfolioInsightsPanel';
 import {
   MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, countdownLabel, formatMatterDate,
   formatPropertyAddress, daysUntil, type LegalMatter,
@@ -92,6 +93,10 @@ export default function SolicitorDashboard() {
           </Card>
         ))}
       </div>
+
+      <PortfolioInsightsPanel />
+
+
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">

@@ -13,6 +13,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
   resolveClientPermissions,
@@ -24,6 +25,7 @@ import {
 } from "../_shared/solicitorPortalAuth.ts";
 import {
   MATTER_SELECT,
+  SOLICITOR_MATTER_LIST_SELECT,
   PARTY_SELECT,
   LEGAL_MATTER_STATUSES,
   buildMatterPayload,
@@ -32,6 +34,15 @@ import {
   cleanText,
   TERMINAL_STATUSES,
 } from "../_shared/legalMatters.ts";
+import {
+  CRITICAL_DATE_SELECT,
+  SETTLEMENT_TASK_SELECT,
+  LEGAL_CRITICAL_DATE_STATUSES,
+  LEGAL_SETTLEMENT_TASK_STATUSES,
+  buildCriticalDatePayload,
+  buildSettlementTaskPayload,
+  summariseRunway,
+} from "../_shared/legalCriticalDates.ts";
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -40,6 +51,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   const json = (payload: unknown, status = 200) => new Response(
     JSON.stringify(payload),
@@ -68,6 +82,19 @@ Deno.serve(async (req) => {
       if (operation === 'list_matters') return json({ success: true, records: [] });
     }
 
+    /** Assigned clients for which the merged permission matrix allows matter visibility. */
+    const listViewableClientIds = async (): Promise<string[]> => {
+      const permissions = await Promise.all(
+        assignedClientIds.map(async (clientId) => ({
+          clientId,
+          matrix: await resolveClientPermissions(supabase, me.id, clientId),
+        })),
+      );
+      return permissions
+        .filter(({ matrix }) => can(matrix, 'matters', 'view'))
+        .map(({ clientId }) => clientId);
+    };
+
     /** Load a matter and confirm this solicitor may see it. */
     const loadMatter = async (matterId: string): Promise<
       { ok: true; matter: any; perms: PermissionMatrix } | { ok: false; status: number; error: string }
@@ -94,10 +121,13 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── LIST ─────────────────────────
     if (operation === 'list_matters') {
+      const viewableClientIds = await listViewableClientIds();
+      if (!viewableClientIds.length) return json({ success: true, records: [] });
+
       let query = supabase
         .from('legal_matters')
-        .select(MATTER_SELECT)
-        .in('client_id', assignedClientIds)
+        .select(SOLICITOR_MATTER_LIST_SELECT)
+        .in('client_id', viewableClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
         .order('settlement_date', { ascending: true, nullsFirst: false })
         .limit(500);
@@ -160,6 +190,22 @@ Deno.serve(async (req) => {
         if (pf) finance_snapshot = pf;
       }
 
+      // Phase 4 — typed critical dates + settlement runway.
+      const canDates = can(perms, 'critical_dates', 'view');
+      const canRunway = can(perms, 'settlement', 'view');
+      const [{ data: criticalDates }, { data: runwayTasks }] = await Promise.all([
+        canDates
+          ? supabase.from('legal_matter_critical_dates').select(CRITICAL_DATE_SELECT)
+              .eq('legal_matter_id', matter.id)
+              .order('due_date', { ascending: true, nullsFirst: false })
+          : Promise.resolve({ data: [] as any[] }),
+        canRunway
+          ? supabase.from('legal_matter_settlement_tasks').select(SETTLEMENT_TASK_SELECT)
+              .eq('legal_matter_id', matter.id).order('sequence', { ascending: true })
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+
       await logSolicitorActivity(supabase, {
         solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_viewed',
         client_id: matter.client_id, legal_matter_id: matter.id,
@@ -178,6 +224,12 @@ Deno.serve(async (req) => {
         parties: parties || [],
         status_history: history || [],
         finance_snapshot,
+        critical_dates: criticalDates || [],
+        settlement_tasks: runwayTasks || [],
+        runway: summariseRunway(
+          (criticalDates || []) as any[],
+          (runwayTasks || []) as any[],
+        ),
         permissions: perms,
       });
     }
@@ -339,15 +391,240 @@ Deno.serve(async (req) => {
       return json({ success: true, records: data || [] });
     }
 
+    // ─────────────── CRITICAL DATES (Phase 4) ───────────────
+    if (operation === 'list_dates') {
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'critical_dates', 'view')) return json({ error: 'Access denied' }, 403);
+      const { data } = await supabase.from('legal_matter_critical_dates')
+        .select(CRITICAL_DATE_SELECT).eq('legal_matter_id', res.matter.id)
+        .order('due_date', { ascending: true, nullsFirst: false });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'upsert_date') {
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'critical_dates', 'edit')) {
+        return json({ error: 'You do not have permission to manage critical dates' }, 403);
+      }
+      const isCreate = !body.date_id;
+      const payload = buildCriticalDatePayload(body, { isCreate });
+      if (isCreate && !payload.label) return json({ error: 'A label is required' }, 400);
+
+      let record: any;
+      if (isCreate) {
+        const { data, error } = await supabase.from('legal_matter_critical_dates')
+          .insert({ ...payload, legal_matter_id: res.matter.id, source: 'manual' })
+          .select(CRITICAL_DATE_SELECT).maybeSingle();
+        if (error) throw error;
+        record = data;
+      } else {
+        const { data: existing } = await supabase.from('legal_matter_critical_dates')
+          .select('id, source, due_date').eq('id', body.date_id)
+          .eq('legal_matter_id', res.matter.id).maybeSingle();
+        if (!existing) return json({ error: 'Critical date not found' }, 404);
+        // Derived rows are owned by the matter fields — the date itself is read-only.
+        if (existing.source === 'matter_field') delete (payload as any).due_date;
+        const { data, error } = await supabase.from('legal_matter_critical_dates')
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', existing.id).select(CRITICAL_DATE_SELECT).maybeSingle();
+        if (error) throw error;
+        record = data;
+      }
+
+      await logSolicitorActivity(supabase, {
+        solicitor_user_id: me.id, firm_id: me.firm_id,
+        action: isCreate ? 'matter_date_added' : 'matter_date_updated',
+        client_id: res.matter.client_id, legal_matter_id: res.matter.id,
+        entity_type: 'legal_matter_critical_date', entity_id: record?.id ?? null,
+        metadata: { label: record?.label ?? null, due_date: record?.due_date ?? null },
+        ip_address: ip, user_agent: userAgent,
+      });
+      return json({ success: true, record });
+    }
+
+    if (operation === 'set_date_status') {
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'critical_dates', 'edit')) {
+        return json({ error: 'You do not have permission to manage critical dates' }, 403);
+      }
+      const status = cleanEnum(body.status, LEGAL_CRITICAL_DATE_STATUSES);
+      if (!status) return json({ error: 'A valid status is required' }, 400);
+
+      const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
+      if (status === 'satisfied') {
+        patch.satisfied_at = new Date().toISOString();
+        patch.satisfied_by_type = 'solicitor_user';
+        patch.satisfied_by_solicitor_user_id = me.id;
+      } else {
+        patch.satisfied_at = null;
+        patch.satisfied_by_type = null;
+        patch.satisfied_by_solicitor_user_id = null;
+      }
+
+      const { data: record, error } = await supabase.from('legal_matter_critical_dates')
+        .update(patch).eq('id', body.date_id).eq('legal_matter_id', res.matter.id)
+        .select(CRITICAL_DATE_SELECT).maybeSingle();
+      if (error) throw error;
+      if (!record) return json({ error: 'Critical date not found' }, 404);
+
+      await logSolicitorActivity(supabase, {
+        solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_date_status_changed',
+        client_id: res.matter.client_id, legal_matter_id: res.matter.id,
+        entity_type: 'legal_matter_critical_date', entity_id: record.id,
+        metadata: { status, label: record.label }, visible_to_client: !!record.visible_to_client,
+        ip_address: ip, user_agent: userAgent,
+      });
+      return json({ success: true, record });
+    }
+
+    if (operation === 'delete_date') {
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'critical_dates', 'delete')) {
+        return json({ error: 'You do not have permission to remove critical dates' }, 403);
+      }
+      const { data: existing } = await supabase.from('legal_matter_critical_dates')
+        .select('id, source').eq('id', body.date_id)
+        .eq('legal_matter_id', res.matter.id).maybeSingle();
+      if (!existing) return json({ error: 'Critical date not found' }, 404);
+      if (existing.source === 'matter_field') {
+        return json({ error: 'Contract dates are derived from the matter — clear the date on the matter instead.' }, 400);
+      }
+      const { error } = await supabase.from('legal_matter_critical_dates')
+        .delete().eq('id', existing.id);
+      if (error) throw error;
+
+      await logSolicitorActivity(supabase, {
+        solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_date_removed',
+        client_id: res.matter.client_id, legal_matter_id: res.matter.id,
+        entity_type: 'legal_matter_critical_date', entity_id: existing.id,
+        ip_address: ip, user_agent: userAgent,
+      });
+      return json({ success: true });
+    }
+
+    // ─────────────── SETTLEMENT RUNWAY (Phase 4) ───────────────
+    if (operation === 'list_runway') {
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'settlement', 'view')) return json({ error: 'Access denied' }, 403);
+      const { data } = await supabase.from('legal_matter_settlement_tasks')
+        .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', res.matter.id)
+        .order('sequence', { ascending: true });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'seed_runway') {
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'settlement', 'edit')) {
+        return json({ error: 'You do not have permission to manage the settlement runway' }, 403);
+      }
+      const { error } = await supabase.rpc('seed_legal_matter_settlement_tasks', {
+        _matter_id: res.matter.id,
+      });
+      if (error) throw error;
+      const { data } = await supabase.from('legal_matter_settlement_tasks')
+        .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', res.matter.id)
+        .order('sequence', { ascending: true });
+
+      await logSolicitorActivity(supabase, {
+        solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_runway_seeded',
+        client_id: res.matter.client_id, legal_matter_id: res.matter.id,
+        entity_type: 'legal_matter', entity_id: res.matter.id,
+        ip_address: ip, user_agent: userAgent,
+      });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'update_task') {
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'settlement', 'edit')) {
+        return json({ error: 'You do not have permission to manage the settlement runway' }, 403);
+      }
+      const payload = buildSettlementTaskPayload(body);
+      if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
+
+      if ('status' in payload) {
+        const status = cleanEnum(payload.status, LEGAL_SETTLEMENT_TASK_STATUSES, 'not_started');
+        if (status === 'complete') {
+          payload.completed_at = new Date().toISOString();
+          payload.completed_by_type = 'solicitor_user';
+          payload.completed_by_solicitor_user_id = me.id;
+        } else {
+          payload.completed_at = null;
+          payload.completed_by_type = null;
+          payload.completed_by_solicitor_user_id = null;
+        }
+        if (status !== 'blocked') payload.blocked_reason = null;
+      }
+
+      const { data: record, error } = await supabase.from('legal_matter_settlement_tasks')
+        .update({ ...payload, updated_at: new Date().toISOString() })
+        .eq('id', body.task_id).eq('legal_matter_id', res.matter.id)
+        .select(SETTLEMENT_TASK_SELECT).maybeSingle();
+      if (error) throw error;
+      if (!record) return json({ error: 'Settlement task not found' }, 404);
+
+      await logSolicitorActivity(supabase, {
+        solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_runway_task_updated',
+        client_id: res.matter.client_id, legal_matter_id: res.matter.id,
+        entity_type: 'legal_matter_settlement_task', entity_id: record.id,
+        metadata: { task_key: record.task_key, status: record.status },
+        visible_to_client: false, ip_address: ip, user_agent: userAgent,
+      });
+      return json({ success: true, record });
+    }
+
+    // ─────────────── UPCOMING DATES ACROSS THE PRACTICE ───────────────
+    if (operation === 'upcoming_dates') {
+      if (!assignedClientIds.length) return json({ success: true, records: [] });
+      const horizonDays = Math.min(Math.max(Number(body.days) || 30, 1), 120);
+      const horizon = new Date();
+      horizon.setDate(horizon.getDate() + horizonDays);
+
+      const { data: matters } = await supabase
+        .from('legal_matters')
+        .select('id, title, property_address, property_suburb, status, client_id, firm_id')
+        .in('client_id', assignedClientIds)
+        .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
+        .limit(500);
+
+      const matterMap = new Map<string, any>((matters || []).map((m: any) => [m.id, m]));
+      if (!matterMap.size) return json({ success: true, records: [] });
+
+      const { data: dates } = await supabase
+        .from('legal_matter_critical_dates')
+        .select(CRITICAL_DATE_SELECT)
+        .in('legal_matter_id', Array.from(matterMap.keys()))
+        .not('due_date', 'is', null)
+        .lte('due_date', horizon.toISOString().slice(0, 10))
+        .in('status', ['pending', 'at_risk', 'extended', 'missed'])
+        .order('due_date', { ascending: true })
+        .limit(200);
+
+      const records = (dates || []).map((d: any) => ({
+        ...d,
+        matter: matterMap.get(d.legal_matter_id) ?? null,
+      }));
+      return json({ success: true, records });
+    }
+
+
     // ───────────────────────── STATS ─────────────────────────
     if (operation === 'matter_stats') {
-      if (!assignedClientIds.length) {
+      const viewableClientIds = await listViewableClientIds();
+      if (!viewableClientIds.length) {
         return json({ success: true, stats: { total: 0, by_status: {}, settling_30d: 0, at_risk: 0 } });
       }
       const { data } = await supabase
         .from('legal_matters')
         .select('id, status, settlement_date, risk_flag')
-        .in('client_id', assignedClientIds)
+        .in('client_id', viewableClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`);
 
       const rows = data || [];

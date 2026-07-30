@@ -29,6 +29,36 @@ async function resolveTenantId(admin: any, caseId: string): Promise<string> {
     return (data?.tenant_id as string) || DEFAULT_TENANT;
   } catch { return DEFAULT_TENANT; }
 }
+
+async function hasCaseAccess(
+  admin: any,
+  userId: string,
+  caseId: string,
+  requireWriteRole = false,
+): Promise<boolean> {
+  const { data: caseRow, error: caseError } = await admin.schema("aml").from("cases")
+    .select("tenant_id").eq("id", caseId).maybeSingle();
+  if (caseError || !caseRow?.tenant_id) return false;
+
+  const aml = admin.schema("aml");
+  if (!requireWriteRole) {
+    const { data, error } = await aml.rpc("has_any_tenant_aml_role", {
+      _user_id: userId,
+      _tenant_id: caseRow.tenant_id,
+    });
+    return !error && data === true;
+  }
+
+  for (const role of ["analyst", "reviewer", "mlro"]) {
+    const { data, error } = await aml.rpc("has_tenant_aml_role", {
+      _user_id: userId,
+      _tenant_id: caseRow.tenant_id,
+      _role: role,
+    });
+    if (!error && data === true) return true;
+  }
+  return false;
+}
 import { reserveTokens, commitTokens, cancelTokens } from "../_shared/missionControl.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
 
@@ -396,6 +426,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       case "list_verification_checks": {
         if (!body.case_id) return jr({ error: "case_id required" }, 400);
+        if (!await hasCaseAccess(admin, userId, String(body.case_id))) {
+          return jr({ error: "Tenant AML role required" }, 403);
+        }
         const { data, error } = await admin.schema("aml").from("verification_checks")
           .select("*").eq("case_id", body.case_id)
           .order("requested_at", { ascending: false });
@@ -420,6 +453,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const { data: check } = await admin.schema("aml").from("verification_checks")
           .select("*").eq("id", checkId).maybeSingle();
         if (!check) return jr({ error: "Not found" }, 404);
+        if (!await hasCaseAccess(admin, userId, check.case_id, true)) {
+          return jr({ error: "Tenant write role required" }, 403);
+        }
         if (!["pending", "in_progress"].includes(check.status)) {
           return jr({ error: `Check is already ${check.status}`, code: "not_pending" }, 409);
         }
@@ -540,6 +576,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (notes.length < 10) {
           return jr({ error: "notes must be at least 10 characters" }, 400);
         }
+        if (!await hasCaseAccess(admin, userId, caseId, true)) {
+          return jr({ error: "Tenant write role required" }, 403);
+        }
 
         const { data: created, error } = await admin.schema("aml")
           .from("verification_checks").insert({
@@ -592,7 +631,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
         const { data: check } = await admin.schema("aml").from("verification_checks")
           .select("id, case_id, biometric_storage_path, party_label").eq("id", checkId).maybeSingle();
-        if (!check?.biometric_storage_path) return jr({ error: "No biometric on this check" }, 404);
+        if (!check) return jr({ error: "No biometric on this check" }, 404);
+        if (!await hasCaseAccess(admin, userId, check.case_id, true)) {
+          return jr({ error: "Tenant write role required" }, 403);
+        }
+        if (!check.biometric_storage_path) return jr({ error: "No biometric on this check" }, 404);
 
         const { data: signed, error } = await admin.storage.from("aml-biometrics")
           .createSignedUrl(check.biometric_storage_path, 120);
@@ -618,6 +661,9 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       case "list_biometric_access": {
         if (!body.case_id) return jr({ error: "case_id required" }, 400);
+        if (!await hasCaseAccess(admin, userId, String(body.case_id))) {
+          return jr({ error: "Tenant AML role required" }, 403);
+        }
         const { data, error } = await admin.schema("aml").from("biometric_access_log")
           .select("*").eq("case_id", body.case_id)
           .order("created_at", { ascending: false }).limit(200);
