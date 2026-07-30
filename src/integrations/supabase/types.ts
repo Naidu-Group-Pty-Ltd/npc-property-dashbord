@@ -7688,6 +7688,72 @@ export type Database = {
           },
         ]
       }
+      document_access_grants: {
+        Row: {
+          audience: string
+          document_record_id: string
+          document_version_id: string | null
+          grant_key: string | null
+          granted_at: string
+          granted_by_id: string | null
+          granted_by_type: string
+          grantee_id: string | null
+          id: string
+          permission: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by_id: string | null
+          revoked_by_type: string | null
+        }
+        Insert: {
+          audience: string
+          document_record_id: string
+          document_version_id?: string | null
+          grant_key?: string | null
+          granted_at?: string
+          granted_by_id?: string | null
+          granted_by_type: string
+          grantee_id?: string | null
+          id?: string
+          permission: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_id?: string | null
+          revoked_by_type?: string | null
+        }
+        Update: {
+          audience?: string
+          document_record_id?: string
+          document_version_id?: string | null
+          grant_key?: string | null
+          granted_at?: string
+          granted_by_id?: string | null
+          granted_by_type?: string
+          grantee_id?: string | null
+          id?: string
+          permission?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by_id?: string | null
+          revoked_by_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_access_grants_document_record_id_fkey"
+            columns: ["document_record_id"]
+            isOneToOne: false
+            referencedRelation: "document_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_access_grants_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       document_chunks: {
         Row: {
           chunk_index: number
@@ -7752,6 +7818,222 @@ export type Database = {
             columns: ["conversation_id"]
             isOneToOne: false
             referencedRelation: "report_qa_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_download_audit: {
+        Row: {
+          actor_id: string | null
+          actor_type: string
+          audience: string
+          correlation_id: string
+          document_record_id: string
+          document_version_id: string
+          downloaded_at: string
+          id: string
+          ip_hash: string | null
+          user_agent_hash: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_type: string
+          audience: string
+          correlation_id?: string
+          document_record_id: string
+          document_version_id: string
+          downloaded_at?: string
+          id?: string
+          ip_hash?: string | null
+          user_agent_hash?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          actor_type?: string
+          audience?: string
+          correlation_id?: string
+          document_record_id?: string
+          document_version_id?: string
+          downloaded_at?: string
+          id?: string
+          ip_hash?: string | null
+          user_agent_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_download_audit_document_record_id_fkey"
+            columns: ["document_record_id"]
+            isOneToOne: false
+            referencedRelation: "document_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_download_audit_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_migration_issues: {
+        Row: {
+          details: Json
+          detected_at: string
+          id: string
+          issue_type: string
+          legacy_document_id: string | null
+          resolved_at: string | null
+          status: string
+        }
+        Insert: {
+          details?: Json
+          detected_at?: string
+          id?: string
+          issue_type: string
+          legacy_document_id?: string | null
+          resolved_at?: string | null
+          status?: string
+        }
+        Update: {
+          details?: Json
+          detected_at?: string
+          id?: string
+          issue_type?: string
+          legacy_document_id?: string | null
+          resolved_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      document_processing_jobs: {
+        Row: {
+          attempts: number
+          available_at: string
+          created_at: string
+          document_version_id: string
+          id: string
+          last_error: string | null
+          locked_at: string | null
+          locked_by: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          available_at?: string
+          created_at?: string
+          document_version_id: string
+          id?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          available_at?: string
+          created_at?: string
+          document_version_id?: string
+          id?: string
+          last_error?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_processing_jobs_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: true
+            referencedRelation: "document_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_records: {
+        Row: {
+          case_id: string
+          category: string
+          client_visible: boolean
+          command_visible: boolean
+          created_at: string
+          created_by_id: string | null
+          created_by_type: string
+          current_version_id: string | null
+          description: string | null
+          due_date: string | null
+          id: string
+          legal_matter_id: string
+          logical_status: string
+          owner: string
+          row_version: number
+          source: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          category: string
+          client_visible?: boolean
+          command_visible?: boolean
+          created_at?: string
+          created_by_id?: string | null
+          created_by_type: string
+          current_version_id?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          legal_matter_id: string
+          logical_status?: string
+          owner?: string
+          row_version?: number
+          source?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          category?: string
+          client_visible?: boolean
+          command_visible?: boolean
+          created_at?: string
+          created_by_id?: string | null
+          created_by_type?: string
+          current_version_id?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          legal_matter_id?: string
+          logical_status?: string
+          owner?: string
+          row_version?: number
+          source?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_records_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_records_current_version_id_fkey"
+            columns: ["current_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_records_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
             referencedColumns: ["id"]
           },
         ]
@@ -8044,6 +8326,111 @@ export type Database = {
             columns: ["document_id"]
             isOneToOne: false
             referencedRelation: "generated_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_versions: {
+        Row: {
+          byte_size: number | null
+          created_at: string
+          declared_byte_size: number | null
+          declared_mime_type: string | null
+          detected_mime_type: string | null
+          document_record_id: string
+          id: string
+          lifecycle_status: string
+          malware_scan_status: string
+          original_filename: string
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by_id: string | null
+          reviewed_by_type: string | null
+          scan_details: Json
+          scan_provider: string | null
+          scan_reference: string | null
+          scanned_at: string | null
+          sha256: string | null
+          storage_bucket: string
+          storage_path: string
+          supersedes_version_id: string | null
+          updated_at: string
+          uploaded_at: string | null
+          uploaded_by_id: string | null
+          uploaded_by_type: string
+          version_number: number
+        }
+        Insert: {
+          byte_size?: number | null
+          created_at?: string
+          declared_byte_size?: number | null
+          declared_mime_type?: string | null
+          detected_mime_type?: string | null
+          document_record_id: string
+          id?: string
+          lifecycle_status?: string
+          malware_scan_status?: string
+          original_filename: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by_id?: string | null
+          reviewed_by_type?: string | null
+          scan_details?: Json
+          scan_provider?: string | null
+          scan_reference?: string | null
+          scanned_at?: string | null
+          sha256?: string | null
+          storage_bucket: string
+          storage_path: string
+          supersedes_version_id?: string | null
+          updated_at?: string
+          uploaded_at?: string | null
+          uploaded_by_id?: string | null
+          uploaded_by_type: string
+          version_number: number
+        }
+        Update: {
+          byte_size?: number | null
+          created_at?: string
+          declared_byte_size?: number | null
+          declared_mime_type?: string | null
+          detected_mime_type?: string | null
+          document_record_id?: string
+          id?: string
+          lifecycle_status?: string
+          malware_scan_status?: string
+          original_filename?: string
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by_id?: string | null
+          reviewed_by_type?: string | null
+          scan_details?: Json
+          scan_provider?: string | null
+          scan_reference?: string | null
+          scanned_at?: string | null
+          sha256?: string | null
+          storage_bucket?: string
+          storage_path?: string
+          supersedes_version_id?: string | null
+          updated_at?: string
+          uploaded_at?: string | null
+          uploaded_by_id?: string | null
+          uploaded_by_type?: string
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_versions_document_record_id_fkey"
+            columns: ["document_record_id"]
+            isOneToOne: false
+            referencedRelation: "document_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "document_versions_supersedes_version_id_fkey"
+            columns: ["supersedes_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_versions"
             referencedColumns: ["id"]
           },
         ]
@@ -13995,6 +14382,8 @@ export type Database = {
           file_size: number | null
           firm_id: string | null
           id: string
+          immutable_current_version_id: string | null
+          immutable_document_record_id: string | null
           label: string
           legal_matter_id: string
           mime_type: string | null
@@ -14027,6 +14416,8 @@ export type Database = {
           file_size?: number | null
           firm_id?: string | null
           id?: string
+          immutable_current_version_id?: string | null
+          immutable_document_record_id?: string | null
           label: string
           legal_matter_id: string
           mime_type?: string | null
@@ -14059,6 +14450,8 @@ export type Database = {
           file_size?: number | null
           firm_id?: string | null
           id?: string
+          immutable_current_version_id?: string | null
+          immutable_document_record_id?: string | null
           label?: string
           legal_matter_id?: string
           mime_type?: string | null
@@ -14086,6 +14479,20 @@ export type Database = {
             columns: ["firm_id"]
             isOneToOne: false
             referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_documents_immutable_current_version_id_fkey"
+            columns: ["immutable_current_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_documents_immutable_document_record_id_fkey"
+            columns: ["immutable_document_record_id"]
+            isOneToOne: false
+            referencedRelation: "document_records"
             referencedColumns: ["id"]
           },
           {
@@ -24791,6 +25198,15 @@ export type Database = {
         }
         Returns: Json
       }
+      authorize_document_download: {
+        Args: {
+          _audience: string
+          _document_record_id: string
+          _document_version_id: string
+          _grantee_id?: string
+        }
+        Returns: Json
+      }
       bootstrap_cron_vault: {
         Args: { p_internal_edge_secret: string; p_service_role_key: string }
         Returns: undefined
@@ -24855,6 +25271,17 @@ export type Database = {
         Returns: boolean
       }
       check_pdf_import_success_rate: { Args: never; Returns: undefined }
+      claim_document_processing_jobs: {
+        Args: { _limit?: number; _worker_id: string }
+        Returns: {
+          declared_byte_size: number
+          declared_mime_type: string
+          job_id: string
+          storage_bucket: string
+          storage_path: string
+          version_id: string
+        }[]
+      }
       claim_integration_outbox: {
         Args: { _limit?: number; _worker_id: string }
         Returns: {
@@ -24956,6 +25383,21 @@ export type Database = {
         }
         Returns: Json
       }
+      complete_document_processing: {
+        Args: {
+          _byte_size: number
+          _detected_mime: string
+          _error?: string
+          _job_id: string
+          _scan_details: Json
+          _scan_provider: string
+          _scan_reference: string
+          _scan_status: string
+          _sha256: string
+          _worker_id: string
+        }
+        Returns: Json
+      }
       compute_audit_row_hash: {
         Args: {
           _action: string
@@ -25010,6 +25452,22 @@ export type Database = {
           status: string
           user_id: string
         }[]
+      }
+      create_document_record: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _case_id: string
+          _category: string
+          _client_visible: boolean
+          _command_visible: boolean
+          _description: string
+          _due_date: string
+          _legal_matter_id: string
+          _owner: string
+          _title: string
+        }
+        Returns: Json
       }
       create_transaction_case: {
         Args: {
@@ -25366,6 +25824,10 @@ export type Database = {
         }
         Returns: Json
       }
+      list_accessible_documents: {
+        Args: { _audience: string; _case_id: string; _grantee_id?: string }
+        Returns: Json
+      }
       list_resumable_bulk_jobs: {
         Args: never
         Returns: {
@@ -25557,11 +26019,32 @@ export type Database = {
         Args: { p_job_id: string }
         Returns: Json
       }
+      record_document_download: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _audience: string
+          _correlation_id: string
+          _document_record_id: string
+          _document_version_id: string
+          _ip_hash: string
+          _user_agent_hash: string
+        }
+        Returns: string
+      }
       record_legal_audit_verification: {
         Args: { _matter_id: string; _result: Json }
         Returns: string
       }
       refresh_pdf_import_cost_daily: { Args: never; Returns: undefined }
+      register_uploaded_document_version: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _document_version_id: string
+        }
+        Returns: Json
+      }
       release_migration_job_lock: {
         Args: { p_job_id: string }
         Returns: undefined
@@ -25579,6 +26062,18 @@ export type Database = {
       replay_integration_dead_letter: {
         Args: { _actor_user_id: string; _dead_letter_id: string }
         Returns: string
+      }
+      request_document_version: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _declared_mime: string
+          _declared_size: number
+          _document_record_id: string
+          _expected_version: number
+          _filename: string
+        }
+        Returns: Json
       }
       requeue_stale_bulk_items: {
         Args: never
@@ -25613,12 +26108,47 @@ export type Database = {
       }
       resume_migration_job: { Args: { p_job_id: string }; Returns: undefined }
       retry_failed_bulk_items: { Args: { p_job_id: string }; Returns: number }
+      review_document_version: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _document_record_id: string
+          _document_version_id: string
+          _expected_version: number
+          _notes: string
+        }
+        Returns: Json
+      }
       seed_legal_matter_settlement_tasks: {
         Args: { _matter_id: string }
         Returns: number
       }
       seed_sample_schools: { Args: never; Returns: undefined }
       seed_settlement_runway: { Args: { _file_id: string }; Returns: undefined }
+      set_document_access_grant: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _audience: string
+          _document_record_id: string
+          _grant: boolean
+          _grantee_id: string
+          _permission: string
+          _reason?: string
+        }
+        Returns: Json
+      }
+      set_document_legal_hold: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _document_record_id: string
+          _expected_version: number
+          _hold: boolean
+          _reason: string
+        }
+        Returns: Json
+      }
       solicitor_legacy_permissions_to_tri_state: {
         Args: { value: Json }
         Returns: Json
@@ -25780,6 +26310,22 @@ export type Database = {
           _reason: string
           _status: string
           _task_id: string
+        }
+        Returns: Json
+      }
+      update_document_record: {
+        Args: {
+          _actor_id: string
+          _actor_type: string
+          _category: string
+          _client_visible: boolean
+          _command_visible: boolean
+          _description: string
+          _document_record_id: string
+          _due_date: string
+          _expected_version: number
+          _owner: string
+          _title: string
         }
         Returns: Json
       }
