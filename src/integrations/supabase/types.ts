@@ -18756,6 +18756,298 @@ export type Database = {
           },
         ]
       }
+      partner_agreement_events: {
+        Row: {
+          actor_id: string | null
+          actor_label: string | null
+          agreement_id: string
+          created_at: string
+          event_type: string
+          id: string
+          payload: Json
+          summary: string | null
+        }
+        Insert: {
+          actor_id?: string | null
+          actor_label?: string | null
+          agreement_id: string
+          created_at?: string
+          event_type: string
+          id?: string
+          payload?: Json
+          summary?: string | null
+        }
+        Update: {
+          actor_id?: string | null
+          actor_label?: string | null
+          agreement_id?: string
+          created_at?: string
+          event_type?: string
+          id?: string
+          payload?: Json
+          summary?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreement_events_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_agreements: {
+        Row: {
+          activated_at: string | null
+          clawback_repayment_days: number | null
+          clawback_treatment: string | null
+          cleared_funds_required: boolean
+          commission_basis:
+            | Database["public"]["Enums"]["partner_commission_basis"]
+            | null
+          created_at: string
+          created_by: string | null
+          direction: Database["public"]["Enums"]["partner_agreement_direction"]
+          dispute_window_days: number
+          document_version: string
+          docusign_envelope_id: string | null
+          docusign_sent_at: string | null
+          docusign_signed_at: string | null
+          docusign_status: string | null
+          duplicate_referral_rule: string | null
+          effective_date: string | null
+          exclusions: string | null
+          executed_under_s127: boolean
+          fee_amount: number | null
+          fee_cap: number | null
+          fee_minimum: number | null
+          fee_model: Database["public"]["Enums"]["partner_fee_model"] | null
+          fee_percentage: number | null
+          finance_agent_contact_id: string | null
+          governing_state: string
+          gst_treatment:
+            | Database["public"]["Enums"]["partner_gst_treatment"]
+            | null
+          id: string
+          includes_refinance_topup: boolean
+          invoice_process:
+            | Database["public"]["Enums"]["partner_invoice_process"]
+            | null
+          notes: string | null
+          partner_abn: string | null
+          partner_acl_number: string | null
+          partner_acn: string | null
+          partner_address: string | null
+          partner_aggregator: string | null
+          partner_contact_email: string | null
+          partner_contact_name: string | null
+          partner_contact_phone: string | null
+          partner_credit_rep_number: string | null
+          partner_legal_name: string
+          partner_notice_email: string | null
+          partner_trading_name: string | null
+          payment_business_days: number | null
+          payment_cycle: string | null
+          pdf_storage_path: string | null
+          post_termination_entitlement: string | null
+          principal_abn: string | null
+          principal_acn: string | null
+          principal_address: string | null
+          principal_contact_email: string | null
+          principal_contact_name: string | null
+          principal_legal_name: string
+          principal_licence_number: string | null
+          principal_notice_email: string | null
+          principal_trading_name: string | null
+          qualifying_event: string | null
+          records_retention_years: number
+          schedule_extras: Json
+          sent_via: string
+          signed_pdf_storage_path: string | null
+          status: Database["public"]["Enums"]["partner_agreement_status"]
+          supersedes_agreement_id: string | null
+          template_id: string | null
+          terminated_at: string | null
+          termination_date: string | null
+          termination_notice_days: number
+          termination_reason: string | null
+          trail_share_pct: number | null
+          updated_at: string
+          updated_by: string | null
+          upfront_share_pct: number | null
+          version: number
+        }
+        Insert: {
+          activated_at?: string | null
+          clawback_repayment_days?: number | null
+          clawback_treatment?: string | null
+          cleared_funds_required?: boolean
+          commission_basis?:
+            | Database["public"]["Enums"]["partner_commission_basis"]
+            | null
+          created_at?: string
+          created_by?: string | null
+          direction: Database["public"]["Enums"]["partner_agreement_direction"]
+          dispute_window_days?: number
+          document_version?: string
+          docusign_envelope_id?: string | null
+          docusign_sent_at?: string | null
+          docusign_signed_at?: string | null
+          docusign_status?: string | null
+          duplicate_referral_rule?: string | null
+          effective_date?: string | null
+          exclusions?: string | null
+          executed_under_s127?: boolean
+          fee_amount?: number | null
+          fee_cap?: number | null
+          fee_minimum?: number | null
+          fee_model?: Database["public"]["Enums"]["partner_fee_model"] | null
+          fee_percentage?: number | null
+          finance_agent_contact_id?: string | null
+          governing_state?: string
+          gst_treatment?:
+            | Database["public"]["Enums"]["partner_gst_treatment"]
+            | null
+          id?: string
+          includes_refinance_topup?: boolean
+          invoice_process?:
+            | Database["public"]["Enums"]["partner_invoice_process"]
+            | null
+          notes?: string | null
+          partner_abn?: string | null
+          partner_acl_number?: string | null
+          partner_acn?: string | null
+          partner_address?: string | null
+          partner_aggregator?: string | null
+          partner_contact_email?: string | null
+          partner_contact_name?: string | null
+          partner_contact_phone?: string | null
+          partner_credit_rep_number?: string | null
+          partner_legal_name: string
+          partner_notice_email?: string | null
+          partner_trading_name?: string | null
+          payment_business_days?: number | null
+          payment_cycle?: string | null
+          pdf_storage_path?: string | null
+          post_termination_entitlement?: string | null
+          principal_abn?: string | null
+          principal_acn?: string | null
+          principal_address?: string | null
+          principal_contact_email?: string | null
+          principal_contact_name?: string | null
+          principal_legal_name?: string
+          principal_licence_number?: string | null
+          principal_notice_email?: string | null
+          principal_trading_name?: string | null
+          qualifying_event?: string | null
+          records_retention_years?: number
+          schedule_extras?: Json
+          sent_via?: string
+          signed_pdf_storage_path?: string | null
+          status?: Database["public"]["Enums"]["partner_agreement_status"]
+          supersedes_agreement_id?: string | null
+          template_id?: string | null
+          terminated_at?: string | null
+          termination_date?: string | null
+          termination_notice_days?: number
+          termination_reason?: string | null
+          trail_share_pct?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          upfront_share_pct?: number | null
+          version?: number
+        }
+        Update: {
+          activated_at?: string | null
+          clawback_repayment_days?: number | null
+          clawback_treatment?: string | null
+          cleared_funds_required?: boolean
+          commission_basis?:
+            | Database["public"]["Enums"]["partner_commission_basis"]
+            | null
+          created_at?: string
+          created_by?: string | null
+          direction?: Database["public"]["Enums"]["partner_agreement_direction"]
+          dispute_window_days?: number
+          document_version?: string
+          docusign_envelope_id?: string | null
+          docusign_sent_at?: string | null
+          docusign_signed_at?: string | null
+          docusign_status?: string | null
+          duplicate_referral_rule?: string | null
+          effective_date?: string | null
+          exclusions?: string | null
+          executed_under_s127?: boolean
+          fee_amount?: number | null
+          fee_cap?: number | null
+          fee_minimum?: number | null
+          fee_model?: Database["public"]["Enums"]["partner_fee_model"] | null
+          fee_percentage?: number | null
+          finance_agent_contact_id?: string | null
+          governing_state?: string
+          gst_treatment?:
+            | Database["public"]["Enums"]["partner_gst_treatment"]
+            | null
+          id?: string
+          includes_refinance_topup?: boolean
+          invoice_process?:
+            | Database["public"]["Enums"]["partner_invoice_process"]
+            | null
+          notes?: string | null
+          partner_abn?: string | null
+          partner_acl_number?: string | null
+          partner_acn?: string | null
+          partner_address?: string | null
+          partner_aggregator?: string | null
+          partner_contact_email?: string | null
+          partner_contact_name?: string | null
+          partner_contact_phone?: string | null
+          partner_credit_rep_number?: string | null
+          partner_legal_name?: string
+          partner_notice_email?: string | null
+          partner_trading_name?: string | null
+          payment_business_days?: number | null
+          payment_cycle?: string | null
+          pdf_storage_path?: string | null
+          post_termination_entitlement?: string | null
+          principal_abn?: string | null
+          principal_acn?: string | null
+          principal_address?: string | null
+          principal_contact_email?: string | null
+          principal_contact_name?: string | null
+          principal_legal_name?: string
+          principal_licence_number?: string | null
+          principal_notice_email?: string | null
+          principal_trading_name?: string | null
+          qualifying_event?: string | null
+          records_retention_years?: number
+          schedule_extras?: Json
+          sent_via?: string
+          signed_pdf_storage_path?: string | null
+          status?: Database["public"]["Enums"]["partner_agreement_status"]
+          supersedes_agreement_id?: string | null
+          template_id?: string | null
+          terminated_at?: string | null
+          termination_date?: string | null
+          termination_notice_days?: number
+          termination_reason?: string | null
+          trail_share_pct?: number | null
+          updated_at?: string
+          updated_by?: string | null
+          upfront_share_pct?: number | null
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_agreements_supersedes_agreement_id_fkey"
+            columns: ["supersedes_agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       password_reset_tokens: {
         Row: {
           attempts: number
@@ -27851,6 +28143,22 @@ export type Database = {
         | "command_client_with_finance_allocated"
         | "finance_client_with_command_visibility"
         | "internal_command_only"
+      partner_agreement_direction:
+        | "inbound_property_referral"
+        | "outbound_finance_referral"
+      partner_agreement_status:
+        | "draft"
+        | "pending_review"
+        | "sent_for_signature"
+        | "partially_signed"
+        | "active"
+        | "terminated"
+        | "superseded"
+        | "void"
+      partner_commission_basis: "gross" | "net_of_aggregator"
+      partner_fee_model: "fixed_fee" | "percentage_of_fee" | "tiered" | "other"
+      partner_gst_treatment: "plus_gst" | "inclusive_of_gst" | "not_applicable"
+      partner_invoice_process: "tax_invoice" | "rcti"
       payout_status: "draft" | "pending" | "paid" | "cancelled"
       pf_client_task_status:
         | "pending"
@@ -28630,6 +28938,24 @@ export const Constants = {
         "finance_client_with_command_visibility",
         "internal_command_only",
       ],
+      partner_agreement_direction: [
+        "inbound_property_referral",
+        "outbound_finance_referral",
+      ],
+      partner_agreement_status: [
+        "draft",
+        "pending_review",
+        "sent_for_signature",
+        "partially_signed",
+        "active",
+        "terminated",
+        "superseded",
+        "void",
+      ],
+      partner_commission_basis: ["gross", "net_of_aggregator"],
+      partner_fee_model: ["fixed_fee", "percentage_of_fee", "tiered", "other"],
+      partner_gst_treatment: ["plus_gst", "inclusive_of_gst", "not_applicable"],
+      partner_invoice_process: ["tax_invoice", "rcti"],
       payout_status: ["draft", "pending", "paid", "cancelled"],
       pf_client_task_status: [
         "pending",

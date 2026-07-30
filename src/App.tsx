@@ -114,6 +114,7 @@ import DealPipeline from "./pages/DealPipeline";
 import RemindersHub from "./pages/RemindersHub";
 import Checklists from "./pages/Checklists";
 import Agreements from "./pages/Agreements";
+import PartnerAgreements from "./pages/PartnerAgreements";
 import GamePlan from "./pages/GamePlan";
 import Commissions from "./pages/Commissions";
 import ReportsAnalytics from "./pages/ReportsAnalytics";
@@ -473,6 +474,7 @@ const App = () => (
                 <Route path="reminders" element={<ModuleGuard moduleKey="reminders"><RemindersHub /></ModuleGuard>} />
                 <Route path="checklists" element={<ModuleGuard moduleKey="checklists"><Checklists /></ModuleGuard>} />
                 <Route path="agreements" element={<ModuleGuard moduleKey="agreements"><Agreements /></ModuleGuard>} />
+                <Route path="partner-agreements" element={<ModuleGuard moduleKey="agreements"><PartnerAgreements /></ModuleGuard>} />
                 <Route path="game-plan" element={<ModuleGuard moduleKey="game_plans"><GamePlan /></ModuleGuard>} />
                 <Route path="portal-config" element={<ModuleGuard moduleKey="portal_config"><PortalConfig /></ModuleGuard>} />
                 <Route path="marketing-analytics" element={<ModuleGuard moduleKey="marketing_analytics"><MarketingAnalytics /></ModuleGuard>} />

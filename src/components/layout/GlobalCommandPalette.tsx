@@ -107,6 +107,7 @@ const ENTRIES: NavEntry[] = [
   { title: 'Reminders', url: '/reminders', icon: Bell, moduleKey: 'reminders', group: 'Operations' },
   { title: 'Checklists', url: '/checklists', icon: ClipboardList, moduleKey: 'checklists', group: 'Operations' },
   { title: 'Agreements', url: '/agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
+  { title: 'Partner Agreements', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements', group: 'Operations' },
   { title: 'Game Plan', url: '/game-plan', icon: MapIcon, moduleKey: 'game_plans', group: 'Operations' },
   { title: 'Marketing', url: '/marketing-analytics', icon: TrendingUp, moduleKey: 'marketing_analytics', group: 'Operations' },
 
