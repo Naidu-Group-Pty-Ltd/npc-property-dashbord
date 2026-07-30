@@ -188,9 +188,6 @@ Deno.serve(async (req) => {
         [...(clientPfs || []), ...(assignedPfs || [])].map((pf: any) => [pf.id, pf]),
       ).values());
       const pfIds = (pfs || []).map((p: any) => p.id);
-      const documentPfIds = (pfs || [])
-        .filter((p: any) => documentClientIds.has(p.client_id))
-        .map((p: any) => p.id);
       const pfById = new Map((pfs || []).map((p: any) => [p.id, p]));
       const documentPfIds = pfs
         .filter((pf: any) => purchaseFileAssignments.some((assignment: any) =>
