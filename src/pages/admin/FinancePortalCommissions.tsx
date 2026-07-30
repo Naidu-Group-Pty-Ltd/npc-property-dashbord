@@ -432,15 +432,18 @@ export default function FinancePortalCommissions() {
                     <TableHead>Period</TableHead>
                     <TableHead className="text-right">Lines</TableHead>
                     <TableHead className="text-right">Net</TableHead>
+                    <TableHead>Dispute window</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {statements.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No statements yet</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No statements yet</TableCell></TableRow>
                   )}
-                  {statements.map(s => (
+                  {statements.map(s => {
+                    const open = disputes.filter(d => d.statement_id === s.id && ['open', 'under_review'].includes(d.status)).length;
+                    return (
                     <TableRow key={s.id} className="transition-colors hover:bg-primary/5">
                       <TableCell>
                         <div className="font-medium">{s.partner_name_snapshot}</div>
@@ -449,6 +452,14 @@ export default function FinancePortalCommissions() {
                       <TableCell className="text-sm">{s.period_start} → {s.period_end}</TableCell>
                       <TableCell className="text-right">{s.line_count}</TableCell>
                       <TableCell className="text-right font-semibold">{fmt(s.total_net)}</TableCell>
+                      <TableCell className="text-xs">
+                        {s.dispute_deadline
+                          ? <>Closes {s.dispute_deadline}{s.dispute_window_days ? ` (${s.dispute_window_days}d)` : ''}</>
+                          : <span className="text-muted-foreground">—</span>}
+                        {open > 0 && (
+                          <Badge variant="destructive" className="ml-2 text-[10px]">{open} open</Badge>
+                        )}
+                      </TableCell>
                       <TableCell><Badge variant={STATUS_VARIANT[s.status] || 'outline'}>{s.status}</Badge></TableCell>
                       <TableCell className="text-right space-x-1">
                         {s.status === 'draft' && (
@@ -457,6 +468,12 @@ export default function FinancePortalCommissions() {
                         {s.status === 'issued' && (
                           <Button size="sm" variant="outline" onClick={() => markPaid(s.id)}>Mark paid</Button>
                         )}
+                        {s.status !== 'draft' && (
+                          <Button size="sm" variant="ghost" onClick={() => raiseDispute(s.id)} aria-label={`Raise dispute on statement ${s.id}`}>
+                            <AlertTriangle className="h-4 w-4" />
+                          </Button>
+                        )}
+
                         {s.pdf_storage_path && (
                           <>
                             <Button size="sm" variant="ghost" onClick={() => downloadStatement(s.pdf_storage_path!)} aria-label={`Download statement ${s.id}`}>
