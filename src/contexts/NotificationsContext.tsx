@@ -71,11 +71,20 @@ export type NotificationType =
   // Conversation sync
   | 'bulk_conversation_sync_completed';
 
+/**
+ * The DB no longer enumerates notification types (it validates the slug format
+ * only), so new backend/trigger types must never be dropped by the client.
+ * The union above stays for autocomplete + routing; unknown slugs are allowed.
+ */
+export type AnyNotificationType = NotificationType | (string & {});
+
 export interface Notification {
   id: string;
-  type: NotificationType;
+  type: AnyNotificationType;
   title: string;
   message: string;
+  reportId?: string;
+
   reportId?: string;
   entityId?: string;
   targetUserId?: string;
