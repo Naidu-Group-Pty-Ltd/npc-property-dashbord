@@ -1,0 +1,136 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
+import { createCorsHeaders } from "../_shared/auth.ts"
+import { getBrandConfig } from "../_shared/brand-config.ts"
+
+const OTP_EXPIRY_MINUTES = 15;
+const MAX_REQUESTS_PER_WINDOW = 5;
+const WINDOW_SECONDS = 3600;
+
+function generateOtp(): string {
+  const buf = new Uint32Array(1);
+  crypto.getRandomValues(buf);
+  return String(buf[0] % 1000000).padStart(6, '0');
+}
+
+Deno.serve(async (req) => {
+  const origin = req.headers.get('origin');
+  const corsHeaders = createCorsHeaders(origin);
+
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  // Generic response — never reveals whether an account exists.
+  const genericOk = () => new Response(
+    JSON.stringify({ success: true, message: 'If an account exists for that email, a reset code has been sent.' }),
+    { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  );
+
+  try {
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+    )
+
+    const { email } = await req.json()
+    if (!email || typeof email !== 'string') {
+      return new Response(
+        JSON.stringify({ error: 'Email is required' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Rate limit BEFORE any lookup so enumeration cannot outrun the throttle.
+    const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const { data: allowed } = await supabase.rpc('check_and_bump_rate_limit', {
+      p_key: `solicitor_forgot:${normalizedEmail}:${ip}`,
+      p_max: MAX_REQUESTS_PER_WINDOW,
+      p_window_seconds: WINDOW_SECONDS,
+    });
+    if (allowed === false) {
+      return new Response(
+        JSON.stringify({ error: 'Too many reset requests. Please try again later.' }),
+        { status: 429, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const { data: user } = await supabase
+      .from('solicitor_portal_users')
+      .select('id, firm_id, email, name, is_active, revoked_at')
+      .eq('email', normalizedEmail)
+      .maybeSingle()
+
+    if (!user || !user.is_active || user.revoked_at) {
+      return genericOk();
+    }
+
+    const otp = generateOtp();
+    const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60_000);
+
+    await supabase
+      .from('solicitor_portal_users')
+      .update({
+        reset_token: otp,
+        reset_token_expires_at: expiresAt.toISOString(),
+        reset_attempts: 0,
+      })
+      .eq('id', user.id)
+
+    const brand = await getBrandConfig();
+    const resendApiKey = Deno.env.get('RESEND_API_KEY');
+    const safeName = String(user.name || 'there').replace(/[<>]/g, '');
+
+    if (resendApiKey) {
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${resendApiKey}`,
+          },
+          body: JSON.stringify({
+            from: brand.fromHeaderAdmin,
+            to: [normalizedEmail],
+            subject: `Your ${brand.companyName} Solicitor Portal reset code`,
+            html: `<!doctype html><html><body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f5f7;padding:32px 12px;"><tr><td align="center">
+<table role="presentation" width="560" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden;">
+<tr><td style="background:#0D264D;padding:28px 32px;text-align:center;">
+<div style="font-family:Georgia,serif;color:#BF9B50;font-size:13px;letter-spacing:4px;text-transform:uppercase;font-weight:600;">${brand.companyName}</div>
+<div style="margin-top:6px;color:#ffffff;font-size:20px;font-weight:600;">Solicitor Portal</div></td></tr>
+<tr><td style="padding:32px;">
+<p style="margin:0 0 18px;color:#0D264D;font-size:16px;">Hi ${safeName},</p>
+<p style="margin:0 0 16px;color:#475569;font-size:15px;line-height:1.6;">Use the code below to reset your password. It expires in ${OTP_EXPIRY_MINUTES} minutes.</p>
+<div style="background:#F8F5EC;border:1px solid #E5D9B6;border-radius:10px;padding:18px 20px;margin:20px 0;text-align:center;">
+<p style="margin:0;font-family:Menlo,Consolas,monospace;font-size:28px;color:#0D264D;letter-spacing:8px;font-weight:700;">${otp}</p></div>
+<p style="margin:0;color:#94a3b8;font-size:12px;text-align:center;">If you didn't request this, you can safely ignore this email.</p>
+</td></tr></table></td></tr></table></body></html>`,
+            text: `Hi ${safeName},\n\nYour ${brand.companyName} Solicitor Portal password reset code is: ${otp}\n\nIt expires in ${OTP_EXPIRY_MINUTES} minutes.\n\nIf you didn't request this, ignore this email.`,
+            tags: [{ name: 'category', value: 'solicitor_portal_reset' }],
+          }),
+        })
+      } catch (e) {
+        console.error('[solicitor-portal-forgot-password] email send failed:', e)
+      }
+    } else {
+      console.warn('[solicitor-portal-forgot-password] RESEND_API_KEY unset — reset code not delivered')
+    }
+
+    await supabase.from('solicitor_portal_activity_log').insert({
+      solicitor_user_id: user.id,
+      firm_id: user.firm_id,
+      actor_user_id: user.id,
+      actor_type: 'solicitor_user',
+      action: 'password_reset_requested',
+      entity_type: 'session',
+      ip_address: ip === 'unknown' ? null : ip,
+    });
+
+    return genericOk();
+  } catch (error: any) {
+    console.error('Solicitor portal forgot-password error:', error)
+    return genericOk();
+  }
+})
