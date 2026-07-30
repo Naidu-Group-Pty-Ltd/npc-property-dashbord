@@ -23,6 +23,15 @@ import {
   cleanEnum,
   cleanText,
 } from "../_shared/legalMatters.ts";
+import {
+  CRITICAL_DATE_SELECT,
+  SETTLEMENT_TASK_SELECT,
+  LEGAL_CRITICAL_DATE_STATUSES,
+  LEGAL_SETTLEMENT_TASK_STATUSES,
+  buildCriticalDatePayload,
+  buildSettlementTaskPayload,
+  summariseRunway,
+} from "../_shared/legalCriticalDates.ts";
 
 const MODULE_KEY = 'solicitor_portal_admin';
 
