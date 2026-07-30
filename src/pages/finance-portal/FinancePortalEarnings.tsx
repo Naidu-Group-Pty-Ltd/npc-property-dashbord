@@ -367,6 +367,8 @@ export default function FinancePortalEarnings() {
     setSelectedStatement(statement);
     setSelectedCommission(null);
     setStatementLines([]);
+    setDisputeReason('');
+    setDisputeAmount('');
     setDetailLoading(true);
     setDetailOpen(true);
 
@@ -385,6 +387,30 @@ export default function FinancePortalEarnings() {
     setStatementLines(data?.lines || []);
     setDetailLoading(false);
   };
+
+  const submitDispute = async () => {
+    if (!selectedStatement || !disputeReason.trim()) return;
+    setDisputeSubmitting(true);
+    const { data, error } = await invokeFinanceFunction('finance-portal-commissions', {
+      operation: 'partner_raise_dispute',
+      statement_id: selectedStatement.id,
+      reason: disputeReason.trim(),
+      reason_category: 'other',
+      ...(disputeAmount ? { disputed_amount: Number(disputeAmount) } : {}),
+    });
+    setDisputeSubmitting(false);
+    if (error || (data as any)?.error) {
+      toast.error((data as any)?.error || error?.message || 'Could not raise the dispute');
+      return;
+    }
+    setDisputeReason('');
+    setDisputeAmount('');
+    toast.success((data as any)?.within_window === false
+      ? 'Dispute logged — note it was raised outside the agreed window'
+      : 'Dispute raised — our team will review it');
+    void refresh();
+  };
+
 
   return (
     <motion.div
