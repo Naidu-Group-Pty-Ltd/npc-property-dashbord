@@ -612,11 +612,24 @@ Deno.serve(async (req) => {
 
     if (operation === 'mark_statement_paid') {
       const { id, paid_reference } = body;
+
+      // Clause 5.3 — an open dispute blocks payment unless explicitly overridden.
+      const { data: openDisputes } = await supabase
+        .from('finance_partner_statement_disputes')
+        .select('id').eq('statement_id', id).in('status', ['open', 'under_review']);
+      if ((openDisputes?.length || 0) > 0 && body.override_dispute !== true) {
+        return new Response(JSON.stringify({
+          error: 'Statement has an open dispute — resolve it or pass override_dispute',
+          open_dispute_count: openDisputes?.length || 0,
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       const { data: updated, error } = await supabase
         .from('finance_partner_statements')
         .update({ status: 'paid', paid_at: new Date().toISOString(), paid_reference: paid_reference || null })
         .eq('id', id).select('*').single();
       if (error) throw error;
+
 
       await supabase.from('finance_partner_commissions')
         .update({ status: 'paid', paid_at: new Date().toISOString() })
