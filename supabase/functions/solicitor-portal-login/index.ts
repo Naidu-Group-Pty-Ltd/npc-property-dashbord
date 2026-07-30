@@ -173,7 +173,6 @@ Deno.serve(async (req) => {
           must_change_password: !!portalUser.must_change_password,
         },
         must_change_password: !!portalUser.must_change_password,
-        session_token: sessionToken,
         expires_at: expiresAt.toISOString(),
       }),
       {

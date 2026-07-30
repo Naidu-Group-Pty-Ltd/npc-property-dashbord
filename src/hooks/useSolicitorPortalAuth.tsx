@@ -1,9 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
 import {
-  clearSolicitorSessionToken,
-  getSolicitorSessionToken,
   invokeSolicitorFunction,
-  persistSolicitorSessionToken,
   type SolicitorPortalUser,
 } from '@/lib/solicitorPortal';
 
@@ -20,7 +17,7 @@ interface SolicitorPortalAuthContextType {
   acceptTerms: () => Promise<void>;
   completeOnboarding: () => Promise<void>;
   refresh: () => Promise<void>;
-  applySession: (token: string, user: SolicitorPortalUser) => void;
+  applySession: (user: SolicitorPortalUser) => void;
 }
 
 const SolicitorPortalAuthContext = createContext<SolicitorPortalAuthContextType | undefined>(undefined);
@@ -31,19 +28,11 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
   const [previousSeenAt, setPreviousSeenAt] = useState<string | null>(null);
 
   const clearAuthState = useCallback(() => {
-    clearSolicitorSessionToken();
     setUser(null);
     setPreviousSeenAt(null);
   }, []);
 
   const checkSession = useCallback(async () => {
-    const token = getSolicitorSessionToken();
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
     const { data, error } = await invokeSolicitorFunction('solicitor-portal-verify');
     if (error || !data?.valid) {
       clearAuthState();
@@ -69,7 +58,6 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
       return { error: (data as any)?.error || error?.message || 'Login failed' };
     }
 
-    if (data.session_token) persistSolicitorSessionToken(data.session_token);
     setUser(data.user);
     return {};
   }, []);
@@ -132,8 +120,7 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
     setUser((prev) => (prev ? { ...prev, has_completed_onboarding: true } : prev));
   }, []);
 
-  const applySession = useCallback((token: string, nextUser: SolicitorPortalUser) => {
-    persistSolicitorSessionToken(token);
+  const applySession = useCallback((nextUser: SolicitorPortalUser) => {
     setUser(nextUser);
     setLoading(false);
   }, []);

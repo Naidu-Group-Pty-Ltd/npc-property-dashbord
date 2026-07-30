@@ -152,7 +152,6 @@ Deno.serve(async (req) => {
           has_completed_onboarding: false,
           must_change_password: false,
         },
-        session_token: sessionToken,
         expires_at: expiresAt.toISOString(),
       }),
       {
