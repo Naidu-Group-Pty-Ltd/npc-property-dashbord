@@ -1,3 +1,4 @@
+// Map view build marker: 2026-07-30 (forces a fresh production bundle)
 import { useEffect } from 'react';
 import { useMap } from 'react-leaflet';
 import L from 'leaflet';
