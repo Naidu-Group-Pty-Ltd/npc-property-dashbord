@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react';
-import { Helmet } from 'react-helmet-async';
+import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -68,6 +67,10 @@ export default function PartnerAgreements() {
     return { active, inFlight, drafts, total: agreements.length };
   }, [agreements]);
 
+  useEffect(() => {
+    document.title = 'Partner Agreements | Command Centre';
+  }, []);
+
   const openNew = () => {
     setEditing(null);
     setDialogOpen(true);
@@ -81,14 +84,6 @@ export default function PartnerAgreements() {
 
   return (
     <>
-      <Helmet>
-        <title>Partner Agreements | Command Centre</title>
-        <meta
-          name="description"
-          content="Register, execute and version buyer's agency and finance partner referral agreements with structured commercial schedules."
-        />
-      </Helmet>
-
       <div className="space-y-6 p-4 sm:p-6">
         <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
