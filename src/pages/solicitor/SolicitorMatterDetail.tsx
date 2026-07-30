@@ -21,6 +21,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { invokeSolicitorFunction } from '@/lib/solicitorPortal';
 import { SolicitorPortalShell } from '@/components/solicitor-portal/SolicitorPortalShell';
+import { ContractIntelligencePanel } from '@/components/solicitor-portal/ContractIntelligencePanel';
 import {
   MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, MATTER_STATUS_ORDER, MATTER_TYPE_LABELS,
   PARTY_ROLE_LABELS, countdownLabel, formatCurrency, formatMatterDate, formatPropertyAddress,
