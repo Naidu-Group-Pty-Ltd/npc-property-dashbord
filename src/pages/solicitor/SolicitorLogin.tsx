@@ -173,15 +173,14 @@ export default function SolicitorLogin() {
         <div className="absolute -bottom-32 -right-16 h-80 w-80 rounded-full bg-primary/5 blur-3xl" />
 
         <div className="relative flex flex-1 flex-col justify-between p-10">
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
-              <Scale className="h-5 w-5 text-primary" />
-            </div>
-            <div>
-              <div className="text-lg font-bold tracking-tight text-foreground">Solicitor Portal</div>
-              <div className="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Legal Access</div>
-            </div>
-          </div>
+          <BrandLockup
+            slot="auth"
+            meta="Solicitor Portal · Legal Access"
+            logoClassName="h-12 max-w-[220px] object-contain"
+            fallbackClassName="h-11 w-11 border border-primary/20"
+            companyClassName="text-lg font-bold tracking-tight"
+            metaClassName="tracking-[0.2em]"
+          />
 
           <div className="space-y-8">
             <div>
