@@ -492,7 +492,7 @@ Deno.serve(async (req) => {
       // Cleared-funds gate (Doc 2 §5): a commission that requires cleared funds
       // cannot be statemented until the funds have actually been received.
       const all = commissions || [];
-      const lines = body.include_unclearedq === true
+      const lines = body.include_uncleared === true
         ? all
         : all.filter(c => !c.cleared_funds_required || !!c.cleared_funds_received_at);
       const withheld = all.filter(c => c.cleared_funds_required && !c.cleared_funds_received_at);
