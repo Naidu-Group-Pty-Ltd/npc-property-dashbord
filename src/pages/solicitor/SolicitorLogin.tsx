@@ -20,6 +20,8 @@ import { Label } from '@/components/ui/label';
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import { OtpInput } from '@/components/finance-portal/OtpInput';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
+import { BrandLockup, BrandLogo } from '@/components/branding/BrandAssets';
+import { useBrand } from '@/branding/useTokens';
 
 const FEATURES = [
   { icon: Gavel, title: 'Matter Deal Rooms', desc: 'Every conveyancing matter, party and critical date in one workspace.' },
