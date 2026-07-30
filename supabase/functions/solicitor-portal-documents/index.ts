@@ -231,7 +231,18 @@ Deno.serve(async (req) => {
         .createSignedUploadUrl(path);
       if (error) throw error;
 
-      return json({ success: true, path, token: signed?.token, signed_url: signed?.signedUrl, bucket: LEGAL_DOCUMENT_BUCKET });
+      const rawSigned = signed?.signedUrl ?? '';
+      const absolute = rawSigned.startsWith('http')
+        ? rawSigned
+        : `${Deno.env.get('SUPABASE_URL')}/storage/v1${rawSigned.startsWith('/') ? '' : '/'}${rawSigned}`;
+
+      return json({
+        success: true,
+        path,
+        token: signed?.token,
+        signed_url: absolute,
+        bucket: LEGAL_DOCUMENT_BUCKET,
+      });
     }
 
     if (operation === 'attach_upload') {
