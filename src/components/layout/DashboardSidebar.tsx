@@ -14,6 +14,7 @@ import {
   Activity,
   Upload,
   ShieldCheck,
+  Scale,
   Zap,
   Sparkles,
   Phone,
