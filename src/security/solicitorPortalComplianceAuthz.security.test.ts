@@ -24,6 +24,10 @@ describe('solicitor-portal-compliance authorization', () => {
     expect(source.match(/can\(loaded\.perms, 'matters', 'edit'\)/g)?.length).toBeGreaterThanOrEqual(4);
   });
 
+  it('limits conflict candidates to clients assigned to the caller', () => {
+    expect(source).toContain(".in('client_id', assignedClientIds)");
+  });
+
   it('never selects restricted financial or AML data into the compliance pack', () => {
     expect(source).not.toMatch(/borrowing_capacity|purchase_file_decisions|aml_/);
   });

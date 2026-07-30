@@ -244,11 +244,14 @@ Deno.serve(async (req) => {
 
       const matches: any[] = [];
       if (terms.length) {
-        // Search parties on OTHER matters in the same firm.
+        // Search parties only on OTHER matters belonging to clients assigned to
+        // this solicitor. The service-role client bypasses RLS, so both firm and
+        // client scopes must be applied explicitly before party data is loaded.
         const { data: firmMatters } = await supabase
           .from('legal_matters')
           .select('id, matter_reference, title, status, client_id')
           .eq('firm_id', me.firm_id)
+          .in('client_id', assignedClientIds)
           .neq('id', loaded.matter.id)
           .limit(1000);
         const matterMap = new Map((firmMatters || []).map((m: any) => [m.id, m]));
