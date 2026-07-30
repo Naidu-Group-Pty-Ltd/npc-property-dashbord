@@ -36,6 +36,24 @@ import {
 import type {
   LegalCriticalDate, LegalCriticalDateStatus, LegalSettlementTask, RunwaySummary,
 } from '@/lib/legalCriticalDates';
+import {
+  MatterDocumentsPanel, type DocumentDraft,
+} from '@/components/solicitor-portal/MatterDocumentsPanel';
+import {
+  MatterSearchesPanel, type SearchDraft,
+} from '@/components/solicitor-portal/MatterSearchesPanel';
+import {
+  MatterRequisitionsPanel, type RequisitionDraft,
+} from '@/components/solicitor-portal/MatterRequisitionsPanel';
+import {
+  MatterDisbursementsPanel, type DisbursementDraft,
+} from '@/components/solicitor-portal/MatterDisbursementsPanel';
+import {
+  MAX_DOCUMENT_BYTES,
+  type DocumentRegisterSummary, type LegalDocumentStatus, type LegalMatterDisbursement,
+  type LegalMatterDocument, type LegalMatterRequisition, type LegalMatterSearch,
+  type LegalRequisitionStatus, type LegalSearchStatus,
+} from '@/lib/legalDocuments';
 
 type PermissionMatrix = Record<string, { view?: boolean; edit?: boolean; delete?: boolean }>;
 
