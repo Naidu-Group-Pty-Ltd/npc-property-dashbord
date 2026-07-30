@@ -15,7 +15,7 @@ import { createCorsHeaders, createForbiddenResponse, verifyAuth } from "../_shar
 import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
-  MATTER_SELECT,
+  LEGAL_MATTER_COMMAND_CENTRE_SELECT,
   PARTY_SELECT,
   LEGAL_MATTER_STATUSES,
   buildMatterPayload,
@@ -48,11 +48,21 @@ import {
 
 
 const MODULE_KEY = 'solicitor_portal_admin';
+const LEGAL_INTEGRITY_COMMANDS_V1 = Deno.env.get('SOLICITOR_LEGAL_INTEGRITY_V1') !== 'false';
+const TRANSACTION_CASES_V1 = Deno.env.get('TRANSACTION_CASES_V1') !== 'false';
+const CASE_RUNWAY_V1 = Deno.env.get('CASE_RUNWAY_V1') !== 'false';
+const CANONICAL_CONVERSATIONS_V2 = Deno.env.get('CANONICAL_CONVERSATIONS_V2') !== 'false';
+const FINANCE_SOLICITOR_COLLABORATION = Deno.env.get('FINANCE_SOLICITOR_COLLABORATION') === 'true';
 
 const READ_OPS = new Set([
   'list_matters', 'get_matter', 'list_for_deal', 'list_for_client', 'link_options',
   'list_dates', 'list_runway', 'upcoming_dates',
   'list_threads', 'get_thread', 'comms_summary',
+  'list_integration_health',
+  'list_workspace_options', 'list_collaboration_health', 'get_collaboration_inspector',
+  'get_firm_ai_policy',
+  'get_operational_observability',
+  'list_cross_portal_rollouts','get_cross_portal_cutover_readiness',
 ]);
 const DELETE_OPS = new Set(['delete_matter', 'delete_party', 'delete_date']);
 
@@ -133,8 +143,134 @@ Deno.serve(async (req) => {
     };
 
     // ───────────────────────── READS ─────────────────────────
+    if (operation === 'list_workspace_options') {
+      const { data: clients, error } = await supabase.from('clients').select('id,primary_first_name,primary_surname').order('primary_surname').limit(1000);
+      if (error) throw error;
+      return json({ success: true, clients: (clients || []).map((client: any) => ({ id: client.id, name: [client.primary_first_name, client.primary_surname].filter(Boolean).join(' ') || 'Unnamed client' })) });
+    }
+
+    if(operation==='get_firm_ai_policy'){const firmId=String(body.firm_id||'');const {data:firm}=await supabase.from('solicitor_firms').select('id,name').eq('id',firmId).maybeSingle();if(!firm)return json({error:'Practice not found'},404);const {data:policy}=await supabase.from('firm_ai_policies').select('firm_id,external_processing_enabled,consent_version,consented_at,provider,allowed_models,max_input_tokens,max_output_tokens,max_cost_usd,timeout_seconds,redaction_profile,circuit_open_until,consecutive_failures,updated_at').eq('firm_id',firm.id).maybeSingle();return json({success:true,firm,policy});}
+    if(operation==='update_firm_ai_policy'){const firmId=String(body.firm_id||'');const {data:firm}=await supabase.from('solicitor_firms').select('id').eq('id',firmId).maybeSingle();if(!firm)return json({error:'Practice not found'},404);const enabled=body.external_processing_enabled===true,consentVersion=cleanText(body.consent_version,120);if(enabled&&!consentVersion)return json({error:'A consent version is required before enabling external AI'},400);const allowedModels=Array.isArray(body.allowed_models)?body.allowed_models.map((v:any)=>String(v)).filter((v:string)=>['google/gemini-3.6-flash'].includes(v)):['google/gemini-3.6-flash'];const {data:policy,error}=await supabase.from('firm_ai_policies').upsert({firm_id:firm.id,external_processing_enabled:enabled,consent_version:consentVersion,consented_at:enabled?new Date().toISOString():null,consented_by:enabled?staffUserId:null,provider:'lovable_gateway',allowed_models:allowedModels.length?allowedModels:['google/gemini-3.6-flash'],max_input_tokens:Math.min(250000,Math.max(1000,Number(body.max_input_tokens)||120000)),max_output_tokens:Math.min(32000,Math.max(256,Number(body.max_output_tokens)||8000)),max_cost_usd:Math.min(100,Math.max(0,Number(body.max_cost_usd)||5)),timeout_seconds:Math.min(120,Math.max(5,Number(body.timeout_seconds)||90)),redaction_profile:'legal_standard',updated_at:new Date().toISOString()},{onConflict:'firm_id'}).select('*').single();if(error)throw error;await logStaff(enabled?'firm_ai_policy_enabled':'firm_ai_policy_disabled',{entity_type:'solicitor_firm',entity_id:firm.id,metadata:{consent_version:consentVersion,allowed_models:policy.allowed_models}});return json({success:true,policy});}
+    if(operation==='get_operational_observability'){const {data,error}=await supabase.rpc('get_portal_operational_health',{_hours:Math.min(720,Math.max(1,Number(body.hours)||24))});if(error)throw error;return json({success:true,...data});}
+    if(operation==='acknowledge_operational_alert'){const alertId=String(body.alert_id||''),resolve=body.resolve===true,notes=cleanText(body.notes,2000);if(!alertId||resolve&&!notes)return json({error:'alert_id and resolution notes are required'},400);const {data,error}=await supabase.rpc('acknowledge_portal_operational_alert',{_alert_id:alertId,_actor_id:staffUserId,_resolution:resolve,_notes:notes});if(error)throw error;await logStaff(resolve?'operational_alert_resolved':'operational_alert_acknowledged',{entity_type:'portal_operational_alert',entity_id:alertId});return json({success:true,alert:data});}
+    if(operation==='list_cross_portal_rollouts'){const firmId=body.firm_id?String(body.firm_id):null;const [{data:definitions},{data:rollouts},{data:history},{data:approvals}]=await Promise.all([supabase.from('cross_portal_feature_definitions').select('*').order('feature_key'),firmId?supabase.from('cross_portal_firm_rollouts').select('*').eq('firm_id',firmId):Promise.resolve({data:[]}),firmId?supabase.from('cross_portal_rollout_history').select('*').eq('firm_id',firmId).order('changed_at',{ascending:false}).limit(100):Promise.resolve({data:[]}),firmId?supabase.from('cross_portal_cutover_approvals').select('*').eq('firm_id',firmId).is('revoked_at',null):Promise.resolve({data:[]})]);return json({success:true,definitions:definitions||[],rollouts:rollouts||[],history:history||[],approvals:approvals||[]});}
+    if(operation==='get_cross_portal_cutover_readiness'){const {data,error}=await supabase.rpc('get_cross_portal_cutover_readiness',{_firm_id:String(body.firm_id||''),_feature_key:String(body.feature_key||'')});if(error)throw error;return json({success:true,readiness:data});}
+    if(operation==='approve_cross_portal_cutover'){const firmId=String(body.firm_id||''),featureKey=String(body.feature_key||''),approvalType=String(body.approval_type||''),evidence=cleanText(body.evidence_reference,1000);if(!['technical','security','operations','business_owner'].includes(approvalType)||!evidence||!staffUserId)return json({error:'Valid approval type and evidence are required'},400);const {data,error}=await supabase.from('cross_portal_cutover_approvals').upsert({firm_id:firmId,feature_key:featureKey,approved_by:staffUserId,approval_type:approvalType,evidence_reference:evidence,approved_at:new Date().toISOString(),revoked_at:null},{onConflict:'firm_id,feature_key,approval_type'}).select('*').single();if(error)throw error;await logStaff('cross_portal_cutover_approved',{entity_type:'solicitor_firm',entity_id:firmId,metadata:{feature_key:featureKey,approval_type:approvalType}});return json({success:true,approval:data});}
+    if(operation==='set_cross_portal_rollout'){const reason=cleanText(body.reason,2000);if(!reason||!staffUserId)return json({error:'A rollout reason is required'},400);const {data,error}=await supabase.rpc('set_cross_portal_firm_rollout',{_firm_id:String(body.firm_id||''),_feature_key:String(body.feature_key||''),_to_mode:String(body.mode||''),_reason:reason,_actor_id:staffUserId});if(error)return json({error:error.message,code:/READINESS/.test(error.message||'')?'CUTOVER_READINESS_FAILED':'CUTOVER_TRANSITION_FAILED'},409);await logStaff('cross_portal_rollout_changed',{entity_type:'solicitor_firm',entity_id:String(body.firm_id),metadata:{feature_key:body.feature_key,mode:body.mode}});return json({success:true,rollout:data});}
+
+    if (operation === 'list_collaboration_health') {
+      if (!FINANCE_SOLICITOR_COLLABORATION) return json({ error: 'Not found' }, 404);
+      const { data, error } = await supabase.rpc('get_finance_solicitor_collaboration_health', { _stale_minutes: 15 });
+      if (error) throw error;
+      return json({ success: true, ...(data || {}) });
+    }
+
+    if (operation === 'get_collaboration_inspector') {
+      if (!FINANCE_SOLICITOR_COLLABORATION || !body.case_id) return json({ error:'Not found' },404);
+      const { data: caseRow } = await supabase.from('transaction_cases').select('id,client_id,row_version,updated_at').eq('id',body.case_id).maybeSingle();
+      if (!caseRow) return json({ error:'Not found' },404);
+      const { data: link } = await supabase.from('transaction_case_links').select('case_id,legal_matter_id,purchase_file_id,client_deal_id,link_source,linked_at').eq('case_id',caseRow.id).maybeSingle();
+      const [{data:financeProjection},{data:solicitorProjection},{data:clientProjection},{data:healthProjection},{data:issues},{data:participants},{data:access},{data:events},{data:outbox}] = await Promise.all([
+        supabase.from('finance_case_read_model').select('case_id,legal_matter_id,purchase_file_id,legal_status,finance_status,legal_source_version,legal_updated_at,link_health,updated_at').eq('case_id',caseRow.id).maybeSingle(),
+        supabase.from('solicitor_case_read_model').select('case_id,purchase_file_id,legal_status,finance_status,finance_source_version,finance_updated_at,link_health,updated_at').eq('case_id',caseRow.id).maybeSingle(),
+        supabase.from('client_case_read_model').select('case_id,source_version,updated_at').eq('case_id',caseRow.id).maybeSingle(),
+        supabase.from('command_case_health_read_model').select('case_id,link_health,open_issue_count,source_version,updated_at').eq('case_id',caseRow.id).maybeSingle(),
+        supabase.from('transaction_case_reconciliation_issues').select('id,issue_type,expected_client_id,actual_client_id,status,detected_at,resolved_at').or(`legal_matter_id.eq.${link?.legal_matter_id||caseRow.id},purchase_file_id.eq.${link?.purchase_file_id||caseRow.id},client_deal_id.eq.${link?.client_deal_id||caseRow.id}`).order('detected_at',{ascending:false}),
+        supabase.from('conversation_participants').select('id,conversation_id,participant_type,participant_id,role,can_post,added_by_type,joined_at,left_at,conversations!inner(case_id,scope,subject)').eq('conversations.case_id',caseRow.id),
+        link?.legal_matter_id?supabase.from('solicitor_matter_access').select('id,solicitor_user_id,firm_id,access_role,valid_from,valid_until,granted_at,revoked_at,revocation_reason').eq('legal_matter_id',link.legal_matter_id):Promise.resolve({data:[]}),
+        supabase.from('transaction_case_operational_events').select('id,event_type,actor_user_id,reason,metadata,occurred_at').eq('case_id',caseRow.id).order('occurred_at',{ascending:false}).limit(50),
+        supabase.from('integration_outbox').select('id,event_type,attempts,last_error,occurred_at,processed_at,correlation_id').eq('aggregate_type','transaction_case').eq('aggregate_id',caseRow.id).order('occurred_at',{ascending:false}).limit(50),
+      ]);
+      const outboxIds=(outbox||[]).map((row:any)=>row.id);const {data:attempts}=outboxIds.length?await supabase.from('integration_delivery_attempts').select('id,outbox_id,consumer_name,attempt_number,status,error,started_at,completed_at').in('outbox_id',outboxIds).order('started_at',{ascending:false}):{data:[]};
+      return json({success:true,inspector:{case:caseRow,links:link,projections:{finance:financeProjection,solicitor:solicitorProjection,client:clientProjection,command:healthProjection},issues:issues||[],conversation_participants:participants||[],matter_access:access||[],operational_events:events||[],outbox:outbox||[],delivery_attempts:attempts||[]}});
+    }
+
+    if (operation === 'request_case_projection_refresh') {
+      if (!FINANCE_SOLICITOR_COLLABORATION || !body.case_id || !cleanText(body.reason,1000)) return json({error:'case_id and reason are required'},400);
+      const {data,error}=await supabase.rpc('request_case_projection_refresh',{_case_id:body.case_id,_actor_user_id:staffUserId,_reason:cleanText(body.reason,1000)});if(error)return json({error:'Unable to request projection refresh',code:error.message},400);
+      await logStaff('case_projection_refresh_requested',{entity_type:'transaction_case',entity_id:body.case_id,metadata:{outbox_id:data}});return json({success:true,outbox_id:data});
+    }
+
+    if (operation === 'list_integration_health') {
+      const [{ data: pending }, { data: deadLetters }, { data: checkpoints }] = await Promise.all([
+        supabase.from('integration_outbox').select('id,aggregate_type,aggregate_id,event_type,occurred_at,available_at,attempts,last_error,correlation_id').is('processed_at', null).order('occurred_at').limit(200),
+        supabase.from('integration_dead_letters').select('id,outbox_id,aggregate_type,aggregate_id,event_type,attempts,last_error,failed_at,replayed_at').is('replayed_at', null).order('failed_at', { ascending: false }).limit(100),
+        supabase.from('projection_checkpoints').select('consumer_name,last_event_id,last_occurred_at,processed_count,updated_at').order('consumer_name'),
+      ]);
+      return json({ success: true, pending: pending || [], dead_letters: deadLetters || [], checkpoints: checkpoints || [] });
+    }
+
+    if (operation === 'replay_integration_dead_letter') {
+      if (!body.dead_letter_id) return json({ error: 'dead_letter_id is required' }, 400);
+      const { data, error } = await supabase.rpc('replay_integration_dead_letter', { _dead_letter_id: body.dead_letter_id, _actor_user_id: staffUserId });
+      if (error) return json({ error: 'Unable to replay dead letter', code: error.message }, 400);
+      await logStaff('integration_dead_letter_replayed', { entity_type: 'integration_outbox', entity_id: data, metadata: { dead_letter_id: body.dead_letter_id } });
+      return json({ success: true, outbox_id: data });
+    }
+
+    if (operation === 'list_transaction_cases') {
+      if (!TRANSACTION_CASES_V1) return json({ error: 'Transaction cases are temporarily unavailable' }, 503);
+      const { data: cases, error } = await supabase.from('transaction_cases')
+        .select('id, client_id, case_type, property_address_normalized, jurisdiction, shared_lifecycle_status, risk_level, row_version, opened_at, closed_at, updated_at')
+        .order('updated_at', { ascending: false }).limit(250);
+      if (error) throw error;
+      const caseIds = (cases || []).map((record: any) => record.id);
+      const clientIds = Array.from(new Set((cases || []).map((record: any) => record.client_id)));
+      const [{ data: links }, { data: clients }, { data: issues }, { data: health }] = await Promise.all([
+        caseIds.length ? supabase.from('transaction_case_links').select('*').in('case_id', caseIds) : { data: [] },
+        clientIds.length ? supabase.from('clients').select('id, primary_first_name, primary_surname').in('id', clientIds) : { data: [] },
+        supabase.from('transaction_case_reconciliation_issues').select('legal_matter_id, purchase_file_id, client_deal_id, status').eq('status', 'open'),
+        caseIds.length ? supabase.from('command_case_health_read_model').select('*').in('case_id', caseIds) : { data: [] },
+      ]);
+      const linkMap = new Map((links || []).map((link: any) => [link.case_id, link]));
+      const healthMap = new Map((health || []).map((row: any) => [row.case_id, row]));
+      const clientMap = new Map((clients || []).map((client: any) => [client.id, [client.primary_first_name, client.primary_surname].filter(Boolean).join(' ')]));
+      const records = (cases || []).map((record: any) => {
+        const link: any = linkMap.get(record.id) || null;
+        const issueCount = (issues || []).filter((issue: any) => link && (issue.legal_matter_id === link.legal_matter_id || issue.purchase_file_id === link.purchase_file_id || issue.client_deal_id === link.client_deal_id)).length;
+        return { ...record, client_name: clientMap.get(record.client_id) || null, links: link, projection_health: healthMap.get(record.id) || null, open_issue_count: issueCount };
+      });
+      return json({ success: true, records });
+    }
+
+    if (operation === 'get_transaction_case') {
+      if (!TRANSACTION_CASES_V1) return json({ error: 'Transaction cases are temporarily unavailable' }, 503);
+      if (!body.case_id) return json({ error: 'case_id is required' }, 400);
+      const { data, error } = await supabase.rpc('get_transaction_case_health', { _case_id: body.case_id });
+      if (error) throw error;
+      if (!data) return json({ error: 'Transaction case not found' }, 404);
+      return json({ success: true, record: data });
+    }
+
+    if (operation === 'create_transaction_case') {
+      if (!TRANSACTION_CASES_V1) return json({ error: 'Transaction cases are temporarily unavailable' }, 503);
+      if (!body.client_id || !body.case_type) return json({ error: 'client_id and case_type are required' }, 400);
+      const { data, error } = await supabase.rpc('create_transaction_case', { _client_id: body.client_id, _case_type: body.case_type, _property_address: cleanText(body.property_address, 500), _jurisdiction: cleanText(body.jurisdiction, 20), _actor_user_id: staffUserId });
+      if (error) return json({ error: 'Unable to create transaction case', code: error.message }, 400);
+      await logStaff('transaction_case_created', { client_id: body.client_id, entity_type: 'transaction_case', entity_id: data?.id });
+      return json({ success: true, record: data });
+    }
+
+    if (operation === 'link_transaction_case_record' || operation === 'unlink_transaction_case_record') {
+      if (!TRANSACTION_CASES_V1) return json({ error: 'Transaction cases are temporarily unavailable' }, 503);
+      const expectedVersion = Number(body.expected_version);
+      const reason = cleanText(body.reason, 1000);
+      if (!body.case_id || !body.domain_type || !Number.isInteger(expectedVersion) || expectedVersion < 1 || !reason || (operation.startsWith('link_') && !body.domain_record_id)) return json({ error: 'case_id, domain_type, expected_version, reason and record id for links are required' }, 400);
+      const rpc = operation.startsWith('link_') ? 'link_transaction_case_record' : 'unlink_transaction_case_record';
+      const args = operation.startsWith('link_')
+        ? { _case_id: body.case_id, _expected_version: expectedVersion, _domain_type: body.domain_type, _domain_record_id: body.domain_record_id, _actor_user_id: staffUserId, _reason: reason }
+        : { _case_id: body.case_id, _expected_version: expectedVersion, _domain_type: body.domain_type, _actor_user_id: staffUserId, _reason: reason };
+      const { data, error } = await supabase.rpc(rpc, args);
+      if (error) {
+        const conflict = /STALE_VERSION|CROSS_CLIENT_CASE_LINK|DOMAIN_RECORD_ALREADY_LINKED|CASE_DOMAIN_SLOT_OCCUPIED/.test(error.message || '');
+        return json({ error: 'Unable to change transaction case link', code: error.message }, conflict ? 409 : 400);
+      }
+      await logStaff(operation, { entity_type: 'transaction_case', entity_id: body.case_id, metadata: { domain_type: body.domain_type, domain_record_id: body.domain_record_id, row_version: data?.case?.row_version || data?.row_version } });
+      return json({ success: true, record: data });
+    }
+
     if (operation === 'list_matters') {
-      let query = supabase.from('legal_matters').select(MATTER_SELECT)
+      let query = supabase.from('legal_matters').select(LEGAL_MATTER_COMMAND_CENTRE_SELECT)
         .order('created_at', { ascending: false }).limit(500);
 
       const status = cleanEnum(body.status, LEGAL_MATTER_STATUSES);
@@ -158,7 +294,7 @@ Deno.serve(async (req) => {
 
     if (operation === 'get_matter') {
       const { data: matter } = await supabase.from('legal_matters')
-        .select(MATTER_SELECT).eq('id', body.matter_id).maybeSingle();
+        .select(LEGAL_MATTER_COMMAND_CENTRE_SELECT).eq('id', body.matter_id).maybeSingle();
       if (!matter) return json({ error: 'Matter not found' }, 404);
 
       const [{ data: parties }, { data: history }, { data: dates }, { data: tasks }] = await Promise.all([
@@ -190,7 +326,7 @@ Deno.serve(async (req) => {
       const column = operation === 'list_for_deal' ? 'client_deal_id' : 'client_id';
       const value = operation === 'list_for_deal' ? body.client_deal_id : body.client_id;
       if (!value) return json({ error: `${column} is required` }, 400);
-      const { data } = await supabase.from('legal_matters').select(MATTER_SELECT)
+      const { data } = await supabase.from('legal_matters').select(LEGAL_MATTER_COMMAND_CENTRE_SELECT)
         .eq(column, value).order('created_at', { ascending: false });
       return json({ success: true, records: await hydrate(data || []) });
     }
@@ -220,43 +356,27 @@ Deno.serve(async (req) => {
     // ───────────────────────── WRITES ─────────────────────────
     if (operation === 'create_matter') {
       if (!body.client_id) return json({ error: 'A client is required' }, 400);
+      const payload = buildMatterPayload(body, { isCreate: true, audience: 'command_centre' });
 
-      if (body.purchase_file_id) {
-        const { data: pf } = await supabase.from('purchase_files')
-          .select('id, client_id, legal_matter_id').eq('id', body.purchase_file_id).maybeSingle();
-        if (!pf) return json({ error: 'Purchase file not found' }, 404);
-        if (pf.client_id !== body.client_id) {
-          return json({ error: 'The purchase file belongs to a different client' }, 400);
-        }
-        if (pf.legal_matter_id) {
-          return json({ error: 'That purchase file is already linked to another matter' }, 409);
-        }
+      if (body.assigned_solicitor_user_id) {
+        const { data: assignee } = await supabase.from('solicitor_portal_users').select('id, firm_id, is_active').eq('id', body.assigned_solicitor_user_id).maybeSingle();
+        if (!assignee || !assignee.is_active || !body.firm_id || assignee.firm_id !== body.firm_id) return json({ error: 'Responsible solicitor must be active and belong to the exact matter practice' }, 409);
       }
-
-      if (body.client_deal_id) {
-        const { data: deal } = await supabase.from('client_deals')
-          .select('id, client_id').eq('id', body.client_deal_id).maybeSingle();
-        if (!deal) return json({ error: 'Client deal not found' }, 404);
-        if (deal.client_id !== body.client_id) {
-          return json({ error: 'The client deal belongs to a different client' }, 400);
-        }
-      }
-
-      const payload = buildMatterPayload(body, { isCreate: true });
 
       const insert: Record<string, unknown> = {
         ...payload,
         client_id: body.client_id,
         firm_id: body.firm_id ?? null,
         assigned_solicitor_user_id: body.assigned_solicitor_user_id ?? null,
-        purchase_file_id: body.purchase_file_id ?? null,
-        client_deal_id: body.client_deal_id ?? null,
-        status: cleanEnum(body.status, LEGAL_MATTER_STATUSES, 'instructed'),
+        // Cross-domain records are linked only through the verified command.
+        purchase_file_id: null,
+        client_deal_id: null,
+        status: 'instructed',
         created_by: staffUserId,
       };
 
       const { data, error } = await supabase.from('legal_matters')
-        .insert(insert).select(MATTER_SELECT).maybeSingle();
+        .insert(insert).select(LEGAL_MATTER_COMMAND_CENTRE_SELECT).maybeSingle();
       if (error) throw error;
 
       await logStaff('matter_created', {
@@ -267,121 +387,68 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'update_matter') {
+      if (!LEGAL_INTEGRITY_COMMANDS_V1) return json({ error: 'Legal mutations are temporarily unavailable' }, 503);
       if (!body.matter_id) return json({ error: 'matter_id is required' }, 400);
-      const payload = buildMatterPayload(body, { isCreate: false });
+      const expectedVersion = Number(body.expected_version);
+      if (!Number.isInteger(expectedVersion) || expectedVersion < 1) return json({ error: 'expected_version is required' }, 400);
+      const { data: existing } = await supabase.from('legal_matters').select('id, firm_id, client_id, assigned_solicitor_user_id, row_version').eq('id', body.matter_id).maybeSingle();
+      if (!existing) return json({ error: 'Matter not found' }, 404);
+      const payload = buildMatterPayload(body, { isCreate: false, audience: 'command_centre' });
       if ('firm_id' in body) payload.firm_id = body.firm_id || null;
+      if ('firm_id' in body && existing.assigned_solicitor_user_id && !('assigned_solicitor_user_id' in body)) {
+        const { data: currentAssignee } = await supabase.from('solicitor_portal_users').select('id, firm_id, is_active').eq('id', existing.assigned_solicitor_user_id).maybeSingle();
+        if (!currentAssignee || !currentAssignee.is_active || !body.firm_id || currentAssignee.firm_id !== body.firm_id) return json({ error: 'Change or clear the responsible solicitor before changing practice' }, 409);
+      }
       if ('assigned_solicitor_user_id' in body) {
+        const targetFirm = ('firm_id' in body ? body.firm_id : existing.firm_id) || null;
+        if (body.assigned_solicitor_user_id) {
+          const { data: assignee } = await supabase.from('solicitor_portal_users').select('id, firm_id, is_active').eq('id', body.assigned_solicitor_user_id).maybeSingle();
+          if (!assignee || !assignee.is_active || !targetFirm || assignee.firm_id !== targetFirm) return json({ error: 'Responsible solicitor must be active and belong to the exact matter practice' }, 409);
+        }
         payload.assigned_solicitor_user_id = body.assigned_solicitor_user_id || null;
       }
-      if ('status' in body) {
-        const s = cleanEnum(body.status, LEGAL_MATTER_STATUSES);
-        if (s) payload.status = s;
-      }
       if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
-
       const { data, error } = await supabase.from('legal_matters')
-        .update({ ...payload, updated_at: new Date().toISOString() })
-        .eq('id', body.matter_id).select(MATTER_SELECT).maybeSingle();
+        .update({ ...payload, row_version: expectedVersion + 1, updated_at: new Date().toISOString() })
+        .eq('id', body.matter_id).eq('row_version', expectedVersion).select(LEGAL_MATTER_COMMAND_CENTRE_SELECT).maybeSingle();
       if (error) throw error;
-      if (!data) return json({ error: 'Matter not found' }, 404);
-
-      await logStaff('matter_updated', {
-        client_id: data.client_id, legal_matter_id: data.id,
-        entity_type: 'legal_matter', entity_id: data.id,
-        metadata: { fields: Object.keys(payload) },
-      });
+      if (!data) return json({ error: 'This matter was changed by another user', code: 'STALE_VERSION' }, 409);
+      await logStaff('matter_updated', { client_id: data.client_id, legal_matter_id: data.id, entity_type: 'legal_matter', entity_id: data.id, metadata: { fields: Object.keys(payload), row_version: data.row_version } });
       return json({ success: true, matter: data });
     }
 
     if (operation === 'set_status') {
+      if (!LEGAL_INTEGRITY_COMMANDS_V1) return json({ error: 'Legal mutations are temporarily unavailable' }, 503);
       const next = cleanEnum(body.status, LEGAL_MATTER_STATUSES);
-      if (!body.matter_id || !next) return json({ error: 'matter_id and a valid status are required' }, 400);
-
-      const patch: Record<string, unknown> = { status: next, updated_at: new Date().toISOString() };
-      if (next === 'settled') patch.closed_at = new Date().toISOString();
-      if (!['settled', 'terminated', 'post_settlement'].includes(next)) patch.closed_at = null;
-
-      const { data, error } = await supabase.from('legal_matters')
-        .update(patch).eq('id', body.matter_id).select(MATTER_SELECT).maybeSingle();
-      if (error) throw error;
-      if (!data) return json({ error: 'Matter not found' }, 404);
-
-      const { data: latest } = await supabase.from('legal_matter_status_history')
-        .select('id').eq('legal_matter_id', data.id)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (latest) {
-        await supabase.from('legal_matter_status_history').update({
-          changed_by_type: 'staff', changed_by_user_id: staffUserId,
-          reason: cleanText(body.reason, 500),
-        }).eq('id', latest.id);
+      const expectedVersion = Number(body.expected_version);
+      const reason = cleanText(body.reason, 1000);
+      if (!body.matter_id || !next || !Number.isInteger(expectedVersion) || expectedVersion < 1 || !reason) return json({ error: 'matter_id, status, expected_version and reason are required' }, 400);
+      const { data: matter } = await supabase.from('legal_matters').select('id, status, client_id').eq('id', body.matter_id).maybeSingle();
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data, error } = await supabase.rpc('transition_legal_matter', { _matter_id: matter.id, _expected_version: expectedVersion, _from: matter.status, _to: next, _reason: reason, _actor_type: 'staff', _actor_solicitor_user_id: null, _actor_staff_user_id: staffUserId });
+      if (error) {
+        const conflict = /STALE_VERSION|STALE_STATUS|INVALID_TRANSITION/.test(error.message || '');
+        return json({ error: 'Stale write or invalid status transition', code: error.message }, conflict ? 409 : 400);
       }
-
-      await logStaff('matter_status_changed', {
-        client_id: data.client_id, legal_matter_id: data.id,
-        entity_type: 'legal_matter', entity_id: data.id, metadata: { to: next },
-      });
+      await logStaff('matter_status_changed', { client_id: matter.client_id, legal_matter_id: matter.id, entity_type: 'legal_matter', entity_id: matter.id, metadata: { from: matter.status, to: next, row_version: data?.row_version } });
       return json({ success: true, matter: data });
     }
 
-    if (operation === 'link_purchase_file' || operation === 'unlink_purchase_file') {
-      if (!body.matter_id) return json({ error: 'matter_id is required' }, 400);
-      const link = operation === 'link_purchase_file';
-      if (link && !body.purchase_file_id) return json({ error: 'purchase_file_id is required' }, 400);
-
-      if (link) {
-        const { data: pf } = await supabase.from('purchase_files')
-          .select('id, client_id, legal_matter_id').eq('id', body.purchase_file_id).maybeSingle();
-        if (!pf) return json({ error: 'Purchase file not found' }, 404);
-        const { data: matter } = await supabase.from('legal_matters')
-          .select('id, client_id').eq('id', body.matter_id).maybeSingle();
-        if (!matter) return json({ error: 'Matter not found' }, 404);
-        if (pf.client_id !== matter.client_id) {
-          return json({ error: 'The purchase file belongs to a different client' }, 400);
-        }
-        if (pf.legal_matter_id && pf.legal_matter_id !== body.matter_id) {
-          return json({ error: 'That purchase file is already linked to another matter' }, 409);
-        }
+    if (['link_purchase_file', 'unlink_purchase_file', 'link_deal', 'unlink_deal'].includes(operation)) {
+      if (!LEGAL_INTEGRITY_COMMANDS_V1) return json({ error: 'Legal mutations are temporarily unavailable' }, 503);
+      const recordType = operation.includes('purchase_file') ? 'purchase_file' : 'client_deal';
+      const unlink = operation.startsWith('unlink_');
+      const recordId = recordType === 'purchase_file' ? body.purchase_file_id : body.client_deal_id;
+      const expectedVersion = Number(body.expected_version);
+      if (!body.matter_id || (!unlink && !recordId) || !Number.isInteger(expectedVersion) || expectedVersion < 1) return json({ error: 'matter_id, record id and expected_version are required' }, 400);
+      const { data, error } = unlink
+        ? await supabase.rpc('unlink_legal_matter_record', { _matter_id: body.matter_id, _expected_version: expectedVersion, _record_type: recordType, _actor_staff_user_id: staffUserId })
+        : await supabase.rpc('link_legal_matter_record', { _matter_id: body.matter_id, _expected_version: expectedVersion, _record_type: recordType, _record_id: recordId, _actor_staff_user_id: staffUserId });
+      if (error) {
+        const conflict = /STALE_VERSION|CROSS_CLIENT_LINK|RECORD_ALREADY_LINKED/.test(error.message || '');
+        return json({ error: 'Unable to link record', code: error.message }, conflict ? 409 : 400);
       }
-
-      const { data, error } = await supabase.from('legal_matters')
-        .update({ purchase_file_id: link ? body.purchase_file_id : null, updated_at: new Date().toISOString() })
-        .eq('id', body.matter_id).select(MATTER_SELECT).maybeSingle();
-      if (error) throw error;
-
-      await logStaff(link ? 'matter_purchase_file_linked' : 'matter_purchase_file_unlinked', {
-        client_id: data?.client_id ?? null, legal_matter_id: body.matter_id,
-        entity_type: 'purchase_file', entity_id: link ? body.purchase_file_id : null,
-      });
-      return json({ success: true, matter: data });
-    }
-
-    if (operation === 'link_deal' || operation === 'unlink_deal') {
-      if (!body.matter_id) return json({ error: 'matter_id is required' }, 400);
-      const link = operation === 'link_deal';
-      if (link && !body.client_deal_id) return json({ error: 'client_deal_id is required' }, 400);
-
-      if (link) {
-        const { data: deal } = await supabase.from('client_deals')
-          .select('id, client_id').eq('id', body.client_deal_id).maybeSingle();
-        if (!deal) return json({ error: 'Client deal not found' }, 404);
-        const { data: matter } = await supabase.from('legal_matters')
-          .select('id, client_id').eq('id', body.matter_id).maybeSingle();
-        if (!matter) return json({ error: 'Matter not found' }, 404);
-        if (deal.client_id !== matter.client_id) {
-          return json({ error: 'The client deal belongs to a different client' }, 400);
-        }
-      }
-
-      const { data, error } = await supabase.from('legal_matters')
-        .update({ client_deal_id: link ? body.client_deal_id : null, updated_at: new Date().toISOString() })
-        .eq('id', body.matter_id).select(MATTER_SELECT).maybeSingle();
-      if (error) throw error;
-      if (!data) return json({ error: 'Matter not found' }, 404);
-
-      await logStaff(link ? 'matter_deal_linked' : 'matter_deal_unlinked', {
-        client_id: data.client_id, legal_matter_id: data.id,
-        entity_type: 'client_deal', entity_id: link ? body.client_deal_id : null,
-      });
+      await logStaff(unlink ? 'matter_record_unlinked' : 'matter_record_linked', { client_id: data?.client_id, legal_matter_id: body.matter_id, entity_type: recordType, entity_id: recordId, metadata: { row_version: data?.row_version } });
       return json({ success: true, matter: data });
     }
 
@@ -540,6 +607,14 @@ Deno.serve(async (req) => {
     if (operation === 'list_runway') {
       const matter = await requireMatter(body.matter_id);
       if (!matter) return json({ error: 'Matter not found' }, 404);
+      if (CASE_RUNWAY_V1) {
+        const { data: link } = await supabase.from('transaction_case_links').select('case_id').eq('legal_matter_id', matter.id).maybeSingle();
+        if (link?.case_id) {
+          const { data: runway, error } = await supabase.rpc('get_case_runway', { _case_id: link.case_id, _audience: 'command_centre' });
+          if (error) throw error;
+          return json({ success: true, case_id: link.case_id, milestones: runway?.milestones || [], conflicts: runway?.conflicts || [], records: runway?.tasks || [] });
+        }
+      }
       const { data } = await supabase.from('legal_matter_settlement_tasks')
         .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', matter.id)
         .order('sequence', { ascending: true });
@@ -568,6 +643,22 @@ Deno.serve(async (req) => {
       if (!matter) return json({ error: 'Matter not found' }, 404);
       const payload = buildSettlementTaskPayload(body);
       if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
+      if (CASE_RUNWAY_V1 && body.expected_version !== undefined) {
+        const { data: caseLink } = await supabase.from('transaction_case_links').select('case_id').eq('legal_matter_id', matter.id).maybeSingle();
+        const { data: shared } = caseLink?.case_id
+          ? await supabase.from('case_tasks').select('id').eq('id', body.task_id).eq('case_id', caseLink.case_id).maybeSingle()
+          : { data: null };
+        if (shared) {
+          const { data: record, error } = await supabase.rpc('update_case_task_status', {
+            _task_id: shared.id, _expected_version: Number(body.expected_version),
+            _status: payload.status === 'complete' ? 'completed' : payload.status,
+            _actor_type: 'command_user', _actor_id: staffUserId,
+            _reason: String(body.reason || 'Command Centre settlement runway update'), _completion_evidence: body.completion_evidence || {},
+          });
+          if (error) return json({ error: error.message }, /STALE_VERSION|INVALID_TASK_STATUS/.test(error.message || '') ? 409 : 400);
+          return json({ success: true, record });
+        }
+      }
 
       if ('status' in payload) {
         const status = cleanEnum(payload.status, LEGAL_SETTLEMENT_TASK_STATUSES, 'not_started');
@@ -652,10 +743,13 @@ Deno.serve(async (req) => {
       if (error) throw error;
       return data;
     };
+    const caseForMatter=async(matterId:string)=>{const {data}=await supabase.from('transaction_case_links').select('case_id').eq('legal_matter_id',matterId).maybeSingle();return data?.case_id as string|undefined;};
+    const ensureStaffCanonical=async(matter:any)=>{if(!staffUserId)return null;const caseId=await caseForMatter(matter.id);if(!caseId)return null;const {data,error}=await supabase.rpc('ensure_case_conversation',{_case_id:caseId,_scope:'npc_solicitor',_actor_type:'command_user',_actor_id:staffUserId,_subject:`${matter.matter_reference||matter.title||'Matter'} — NPC & solicitor`});if(error)throw error;return {...data.conversation,legal_matter_id:matter.id,scope:'solicitor_npc',unread_count_staff:0};};
 
     if (operation === 'list_threads') {
       const matter = await loadStaffMatter(String(body.matter_id || ''));
       if (!matter) return json({ error: 'Matter not found' }, 404);
+      if(CANONICAL_CONVERSATIONS_V2&&staffUserId){const caseId=await caseForMatter(matter.id);if(caseId){const {data,error}=await supabase.rpc('get_participant_conversations',{_participant_type:'command_user',_participant_id:staffUserId,_case_id:caseId});if(error)throw error;const threads=(data||[]).filter((e:any)=>e.conversation.scope!=='firm_internal').map((e:any)=>({...e.conversation,legal_matter_id:matter.id,scope:e.conversation.scope==='npc_solicitor'?'solicitor_npc':e.conversation.scope,unread_count_staff:Number(e.unread_count||0)}));return json({success:true,threads,summary:{unread:threads.reduce((n:number,t:any)=>n+t.unread_count_staff,0),total:threads.length}});}}
       const { data: threads } = await supabase
         .from('legal_matter_threads').select(THREAD_SELECT)
         .eq('legal_matter_id', matter.id)
@@ -674,6 +768,7 @@ Deno.serve(async (req) => {
       if (!matter) return json({ error: 'Matter not found' }, 404);
       const scope: LegalThreadScope = isValidScope(body.scope) ? body.scope : 'solicitor_npc';
       if (scope === 'firm_internal') return json({ error: 'Thread not available' }, 403);
+      if(CANONICAL_CONVERSATIONS_V2&&scope!=='solicitor_npc')return json({error:'Command Centre is not a participant in that conversation'},403);
 
       let thread: any = null;
       if (body.thread_id) {
@@ -682,9 +777,12 @@ Deno.serve(async (req) => {
           .neq('scope', 'firm_internal').maybeSingle();
         thread = data;
       } else {
-        thread = await ensureStaffThread(matter, scope);
+        thread = CANONICAL_CONVERSATIONS_V2 ? await ensureStaffCanonical(matter) : await ensureStaffThread(matter, scope);
       }
+      if(!thread&&CANONICAL_CONVERSATIONS_V2&&body.thread_id&&staffUserId){const caseId=await caseForMatter(matter.id);const {data}=caseId?await supabase.from('conversations').select('*').eq('id',String(body.thread_id)).eq('case_id',caseId).eq('scope','npc_solicitor').maybeSingle():{data:null};if(data)thread={...data,legal_matter_id:matter.id,scope:'solicitor_npc',unread_count_staff:0};}
       if (!thread) return json({ error: 'Thread not found' }, 404);
+
+      if(CANONICAL_CONVERSATIONS_V2&&thread.case_id&&staffUserId){const {data,error}=await supabase.rpc('get_conversation_messages',{_conversation_id:thread.id,_participant_type:'command_user',_participant_id:staffUserId,_limit:Math.min(Number(body.limit)||100,200),_before:body.before||null});if(error)throw error;if(body.mark_read!==false)await supabase.rpc('mark_conversation_read',{_conversation_id:thread.id,_actor_type:'command_user',_actor_id:staffUserId});return json({success:true,thread,messages:(data||[]).map((m:any)=>({...m,sender_type:m.sender_type==='command_user'?'staff':m.sender_type}))});}
 
       const { data: messages } = await supabase
         .from('legal_matter_messages').select(MESSAGE_SELECT)
@@ -710,12 +808,16 @@ Deno.serve(async (req) => {
       if (!STAFF_POSTABLE_SCOPES.has(scope)) {
         return json({ error: 'That conversation is not available from Command Centre' }, 403);
       }
+      if(CANONICAL_CONVERSATIONS_V2&&scope!=='solicitor_npc')return json({error:'Command Centre is not a participant in that conversation'},403);
       const text = String(body.body || '').trim();
       if (!text) return json({ error: 'A message body is required' }, 400);
       if (text.length > 8000) return json({ error: 'Messages are limited to 8000 characters' }, 400);
 
-      const thread = await ensureStaffThread(matter, scope);
       const senderName = String(body.sender_name || 'NPC Command Centre');
+
+      if(CANONICAL_CONVERSATIONS_V2){const canonical=await ensureStaffCanonical(matter);if(canonical&&staffUserId){const {data:message,error}=await supabase.rpc('post_conversation_message',{_conversation_id:canonical.id,_actor_type:'command_user',_actor_id:staffUserId,_body:text,_idempotency_key:String(body.idempotency_key||`command:${staffUserId}:${crypto.randomUUID()}`),_sender_name:senderName,_reply_to:body.reply_to_message_id||null});if(error)throw error;await logStaff('matter_message_sent',{client_id:matter.client_id,legal_matter_id:matter.id,entity_type:'message',entity_id:message?.id??null,metadata:{scope:'npc_solicitor'}});return json({success:true,message:{...message,sender_type:'staff'},thread_id:canonical.id});}return json({error:'Transaction case link required for canonical conversation',code:'CASE_LINK_REQUIRED'},409);}
+
+      const thread = await ensureStaffThread(matter, scope);
 
       let mirroredFinanceId: string | null = null;
       if (scope === 'solicitor_finance') {

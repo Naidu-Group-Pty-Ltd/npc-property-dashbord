@@ -23,6 +23,7 @@ import { invokeSolicitorFunction } from '@/lib/solicitorPortal';
 import { SolicitorPortalShell } from '@/components/solicitor-portal/SolicitorPortalShell';
 import { ContractIntelligencePanel } from '@/components/solicitor-portal/ContractIntelligencePanel';
 import { MatterCompliancePanel } from '@/components/solicitor-portal/MatterCompliancePanel';
+import { MatterFinanceCoordinationPanel } from '@/components/solicitor-portal/MatterFinanceCoordinationPanel';
 import {
   MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, MATTER_STATUS_ORDER, MATTER_TYPE_LABELS,
   PARTY_ROLE_LABELS, countdownLabel, formatCurrency, formatMatterDate, formatPropertyAddress,
@@ -107,6 +108,7 @@ export default function SolicitorMatterDetail() {
   const [perms, setPerms] = useState<PermissionMatrix>({});
   const [draft, setDraft] = useState<Partial<LegalMatter>>({});
   const [statusDialog, setStatusDialog] = useState(false);
+  const [conflictDialog, setConflictDialog] = useState(false);
   const [nextStatus, setNextStatus] = useState<LegalMatterStatus>('instructed');
   const [statusReason, setStatusReason] = useState('');
   const [partyDialog, setPartyDialog] = useState<typeof EMPTY_PARTY | null>(null);
@@ -267,24 +269,30 @@ export default function SolicitorMatterDetail() {
     due_date: d.due_date || null,
     visible_to_client: d.visible_to_client,
     visible_to_npc: d.visible_to_npc,
+    expected_version: d.id ? documents.find((doc) => doc.id === d.id)?.row_version : undefined,
   }, 'Document saved');
 
-  const setDocumentStatus = (documentId: string, status: LegalDocumentStatus) =>
-    runRegisterOp({ operation: 'set_document_status', document_id: documentId, status });
+  const setDocumentStatus = (documentId: string, status: LegalDocumentStatus) => {
+    const document = documents.find((doc) => doc.id === documentId);
+    return runRegisterOp({ operation: 'set_document_status', document_id: documentId, document_version_id: document?.current_version_id, expected_version: document?.row_version, status });
+  };
 
   const deleteDocument = (documentId: string) =>
     runRegisterOp({ operation: 'delete_document', document_id: documentId }, 'Document removed');
+  const setDocumentAiPermission = (documentId:string, allow:boolean) => runRegisterOp({operation:'set_document_ai_permission',document_id:documentId,allow_external_ai:allow},allow?'AI processing permission enabled':'AI processing permission revoked');
 
   const uploadDocument = async (documentId: string, file: File) => {
     if (file.size > MAX_DOCUMENT_BYTES) { toast.error('Files must be 50 MB or smaller'); return; }
     setRegisterSaving(true);
     try {
+      const document = documents.find((doc) => doc.id === documentId);
       const { data: signed, error: signError } = await callDocs({
         operation: 'upload_url',
         document_id: documentId,
         file_name: file.name,
         mime_type: file.type || 'application/octet-stream',
         file_size: file.size,
+        expected_version: document?.row_version,
       });
       const signMessage = signError?.message || (signed as any)?.error;
       if (signMessage || !signed?.signed_url) { toast.error(signMessage || 'Could not start the upload'); return; }
@@ -303,10 +311,11 @@ export default function SolicitorMatterDetail() {
         file_name: file.name,
         mime_type: file.type || 'application/octet-stream',
         file_size: file.size,
+        version_id: signed.version_id,
       });
       const message = error?.message || (data as any)?.error;
       if (message) { toast.error(message); return; }
-      toast.success('File uploaded');
+      toast.success((data as any)?.processing_status === 'queued' ? 'File uploaded and queued for security scanning' : 'File uploaded');
       await refreshRegisters();
     } finally {
       setRegisterSaving(false);
@@ -394,10 +403,11 @@ export default function SolicitorMatterDetail() {
   const saveMatter = async (fields: Array<keyof LegalMatter>) => {
     if (!matterId) return;
     setSaving(true);
-    const payload: Record<string, unknown> = { operation: 'update_matter', matter_id: matterId };
+    const payload: Record<string, unknown> = { operation: 'update_matter', matter_id: matterId, expected_version: matter?.row_version };
     for (const f of fields) payload[f as string] = (draft as any)[f] ?? null;
     const { data, error } = await invokeSolicitorFunction('solicitor-portal-matters', payload);
     setSaving(false);
+    if (error?.status === 409 || error?.code === 'STALE_VERSION') { setConflictDialog(true); return; }
     if (error) { toast.error(error.message || 'Could not save changes'); return; }
     toast.success('Matter updated');
     if (data?.matter) { setMatter(data.matter); setDraft(data.matter); }
@@ -407,7 +417,8 @@ export default function SolicitorMatterDetail() {
     if (!matterId) return;
     setSaving(true);
     const { error } = await invokeSolicitorFunction('solicitor-portal-matters', {
-      operation: 'set_status', matter_id: matterId, status: nextStatus, reason: statusReason || null,
+      operation: 'set_status', matter_id: matterId, expected_version: matter?.row_version,
+      status: nextStatus, reason: statusReason || null,
     });
     setSaving(false);
     if (error) { toast.error(error.message || 'Could not change status'); return; }
@@ -533,6 +544,7 @@ export default function SolicitorMatterDetail() {
 
         {/* ─────────── OVERVIEW ─────────── */}
         <TabsContent value="overview" className="mt-4 space-y-4">
+          {import.meta.env.VITE_FINANCE_SOLICITOR_COLLABORATION === 'true' && matterId ? <MatterFinanceCoordinationPanel matterId={matterId} /> : null}
           <div className="grid gap-4 lg:grid-cols-3">
             <Card className="lg:col-span-2">
               <CardHeader>
@@ -824,6 +836,7 @@ export default function SolicitorMatterDetail() {
             onUpload={uploadDocument}
             onDownload={downloadDocument}
             onDelete={deleteDocument}
+            onSetAiPermission={setDocumentAiPermission}
           />
         </TabsContent>
 
@@ -938,6 +951,13 @@ export default function SolicitorMatterDetail() {
       </Dialog>
 
       {/* Party dialog */}
+      <Dialog open={conflictDialog} onOpenChange={setConflictDialog}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>This matter changed elsewhere</DialogTitle><DialogDescription>Your draft was not overwritten. Reload the latest version, review it, then apply your change again.</DialogDescription></DialogHeader>
+          <DialogFooter><Button variant="outline" onClick={() => setConflictDialog(false)}>Keep reviewing draft</Button><Button onClick={async () => { setConflictDialog(false); await load(); }}>Reload latest matter</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={!!partyDialog} onOpenChange={(o) => !o && setPartyDialog(null)}>
         <DialogContent className="max-h-[90vh]">
           <DialogHeader>

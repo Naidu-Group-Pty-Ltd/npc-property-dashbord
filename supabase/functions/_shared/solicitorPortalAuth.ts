@@ -1,4 +1,5 @@
-import { extractSolicitorSessionToken } from './solicitorSessionToken.ts';
+import { extractSolicitorSessionCredential, validateSolicitorPortalHeaders } from './solicitorSessionToken.ts';
+import { resolveHashedSolicitorSession } from './solicitorSessions.ts';
 
 /**
  * Shared Solicitor Portal session resolution + permission merging.
@@ -21,6 +22,9 @@ export interface SolicitorSessionUser {
   has_accepted_terms: boolean;
   has_completed_onboarding: boolean;
   last_seen_at: string | null;
+  current_terms_version: string | null;
+  has_accepted_current_terms: boolean;
+  has_completed_mandatory_onboarding: boolean;
   firm: {
     id: string;
     name: string;
@@ -35,11 +39,26 @@ export interface SolicitorSessionResult {
   status: number;
   error?: string;
   user?: SolicitorSessionUser;
-  token?: string;
+  session_id?: string;
+  legacy_token?: string;
 }
 
 /** Permission matrix shape: { key: { view, edit, delete } } */
 export type PermissionMatrix = Record<string, { view?: boolean; edit?: boolean; delete?: boolean }>;
+export type TriStateDecision = 'inherit' | 'allow' | 'deny';
+export type TriStatePermissionMatrix = Record<string, Partial<Record<'view' | 'edit' | 'delete', TriStateDecision>>>;
+
+export interface SolicitorMatterAccess {
+  id: string;
+  solicitor_user_id: string;
+  legal_matter_id: string;
+  firm_id: string;
+  access_role: string;
+  permissions: TriStatePermissionMatrix;
+  valid_from: string;
+  valid_until: string | null;
+  revoked_at: string | null;
+}
 
 /**
  * Keys that are ALWAYS denied to solicitors, regardless of any stored matrix.
@@ -85,20 +104,29 @@ export async function resolveSolicitorSession(
   headers: Headers,
   body?: Record<string, unknown>,
 ): Promise<SolicitorSessionResult> {
-  const token = extractSolicitorSessionToken(headers, body);
-  if (!token) {
+  const credential = extractSolicitorSessionCredential(headers, body);
+  if (!credential) {
     return { ok: false, status: 401, error: 'Session token is required' };
   }
-
-  const { data: user, error } = await supabase
-    .from('solicitor_portal_users')
+  if (!validateSolicitorPortalHeaders(headers, credential.source !== 'cookie')) return { ok: false, status: 401, error: 'Invalid or expired session' };
+  const hashedSession = await resolveHashedSolicitorSession(supabase, credential.token);
+  let legacyToken: string | undefined;
+  let userId = hashedSession?.solicitor_user_id;
+  if (!userId && credential.source !== 'cookie') {
+    const { data: legacy } = await supabase.from('solicitor_portal_users')
+      .select('id').eq('session_token', credential.token).gt('session_expires_at', new Date().toISOString()).maybeSingle();
+    userId = legacy?.id;
+    if (userId) legacyToken = credential.token;
+  }
+  if (!userId) return { ok: false, status: 401, error: 'Invalid or expired session' };
+  const { data: user, error } = await supabase.from('solicitor_portal_users')
     .select(`
       id, firm_id, email, name, phone, position, portal_role,
       is_active, revoked_at, session_expires_at, must_change_password,
       has_accepted_terms, has_completed_onboarding, last_seen_at,
       solicitor_firms:firm_id (id, name, trading_name, practising_states, is_active)
     `)
-    .eq('session_token', token)
+    .eq('id', userId)
     .maybeSingle();
 
   if (error || !user) {
@@ -107,7 +135,7 @@ export async function resolveSolicitorSession(
   if (!user.is_active || user.revoked_at) {
     return { ok: false, status: 403, error: 'Your access has been revoked. Please contact your administrator.' };
   }
-  if (!user.session_expires_at || new Date(user.session_expires_at) < new Date()) {
+  if (legacyToken && (!user.session_expires_at || new Date(user.session_expires_at) < new Date())) {
     return { ok: false, status: 401, error: 'Session expired' };
   }
 
@@ -115,11 +143,22 @@ export async function resolveSolicitorSession(
   if (!firm || !firm.is_active) {
     return { ok: false, status: 403, error: 'The linked legal practice is no longer active.' };
   }
+  const { data: terms } = await supabase.from('portal_terms_versions').select('id, version')
+    .eq('portal', 'solicitor').is('retired_at', null).lte('effective_at', new Date().toISOString())
+    .order('effective_at', { ascending: false }).limit(1).maybeSingle();
+  const [{ data: acceptance }, { data: onboarding }] = await Promise.all([
+    terms ? supabase.from('portal_terms_acceptances').select('id').eq('terms_version_id', terms.id).eq('solicitor_user_id', user.id).maybeSingle() : Promise.resolve({ data: null }),
+    supabase.from('solicitor_onboarding_steps').select('mandatory, completed_at').eq('solicitor_user_id', user.id),
+  ]);
+  const mandatorySteps = (onboarding || []).filter((step: any) => step.mandatory);
+  const mandatoryComplete = mandatorySteps.length > 0
+    && mandatorySteps.every((step: any) => !!step.completed_at);
 
   return {
     ok: true,
     status: 200,
-    token,
+    session_id: hashedSession?.id,
+    legacy_token: legacyToken,
     user: {
       id: user.id,
       firm_id: user.firm_id,
@@ -132,6 +171,9 @@ export async function resolveSolicitorSession(
       has_accepted_terms: !!user.has_accepted_terms,
       has_completed_onboarding: !!user.has_completed_onboarding,
       last_seen_at: user.last_seen_at ?? null,
+      current_terms_version: terms?.version ?? null,
+      has_accepted_current_terms: !!terms && !!acceptance,
+      has_completed_mandatory_onboarding: mandatoryComplete,
       firm: {
         id: firm.id,
         name: firm.name,
@@ -141,6 +183,13 @@ export async function resolveSolicitorSession(
       },
     },
   };
+}
+
+export function solicitorGovernanceError(user: SolicitorSessionUser): string | null {
+  if (user.must_change_password) return 'password_rotation_required';
+  if (!user.has_accepted_current_terms) return 'terms_acceptance_required';
+  if (!user.has_completed_mandatory_onboarding) return 'onboarding_required';
+  return null;
 }
 
 /**
@@ -208,6 +257,112 @@ export function can(
   return !!matrix[key]?.[level];
 }
 
+/** Phase 1 cutover is on by default; set false only for an emergency rollback. */
+export function isMatterAccessV1Enabled(): boolean {
+  return (Deno.env.get('SOLICITOR_MATTER_ACCESS_V1') || 'true').toLowerCase() !== 'false';
+}
+
+function baselineDecision(value: unknown): boolean {
+  return value === true || value === 'allow';
+}
+
+/** Matter allow/deny wins; inherit falls through to a deny-by-default baseline. */
+export function resolveTriStatePermissions(
+  baseline: PermissionMatrix | TriStatePermissionMatrix | null | undefined,
+  matter: TriStatePermissionMatrix | null | undefined,
+): PermissionMatrix {
+  const result: PermissionMatrix = {};
+  for (const key of SOLICITOR_PERMISSION_KEYS) {
+    result[key] = {};
+    for (const level of ['view', 'edit', 'delete'] as const) {
+      const override = matter?.[key]?.[level];
+      result[key][level] = override === 'allow'
+        ? true
+        : override === 'deny'
+          ? false
+          : baselineDecision(baseline?.[key]?.[level]);
+    }
+  }
+  return result;
+}
+
+export async function resolveSolicitorMatterAccess(
+  supabase: any,
+  solicitorUserId: string,
+  solicitorFirmId: string,
+  legalMatterId: string,
+): Promise<SolicitorMatterAccess | null> {
+  const { data: modeValue } = await supabase.rpc('resolve_cross_portal_feature_mode', { _firm_id: solicitorFirmId, _feature_key: 'solicitor_matter_access_v2' });
+  const mode = isMatterAccessV1Enabled() ? String(modeValue || 'cutover') : 'rollback';
+  const { data: matter } = await supabase.from('legal_matters').select('id,client_id,firm_id').eq('id',legalMatterId).maybeSingle();
+  if (!matter || !matter.firm_id || matter.firm_id !== solicitorFirmId) return null;
+  const [{ data: target }, { data: assignment }] = await Promise.all([
+    supabase.from('solicitor_matter_access').select('id,solicitor_user_id,legal_matter_id,firm_id,access_role,permissions,valid_from,valid_until,revoked_at').eq('solicitor_user_id',solicitorUserId).eq('legal_matter_id',legalMatterId).eq('firm_id',solicitorFirmId).is('revoked_at',null).maybeSingle(),
+    supabase.from('solicitor_portal_client_assignments').select('id,permissions,assigned_at').eq('solicitor_user_id',solicitorUserId).eq('client_id',matter.client_id).maybeSingle(),
+  ]);
+  const now=Date.now();
+  const targetActive=!!target&&!!target.valid_from&&new Date(target.valid_from).getTime()<=now&&(!target.valid_until||new Date(target.valid_until).getTime()>now);
+  const legacyActive=!!assignment;
+  if (['shadow','dual_read','dual_write'].includes(mode)) {
+    await supabase.rpc('record_cross_portal_dual_read',{_firm_id:solicitorFirmId,_feature_key:'solicitor_matter_access_v2',_subject_type:'matter_access',_subject_id:legalMatterId,_legacy:{granted:legacyActive},_target:{granted:targetActive},_mismatch_fields:legacyActive===targetActive?[]:['granted'],_correlation_id:crypto.randomUUID()});
+  }
+  if (mode === 'cutover') return targetActive ? target as SolicitorMatterAccess : null;
+  if (!assignment) return null;
+  return { id:`legacy:${assignment.id}`,solicitor_user_id:solicitorUserId,legal_matter_id:legalMatterId,firm_id:solicitorFirmId,access_role:'team_member',permissions:assignment.permissions??{},valid_from:assignment.assigned_at,valid_until:null,revoked_at:null };
+}
+
+export async function resolveMatterPermissions(
+  supabase: any,
+  access: SolicitorMatterAccess,
+): Promise<PermissionMatrix> {
+  const { data: baseline } = await supabase
+    .from('solicitor_portal_default_permissions')
+    .select('permissions')
+    .eq('solicitor_user_id', access.solicitor_user_id)
+    .maybeSingle();
+  if (access.id.startsWith('legacy:')) {
+    return mergePermissions(baseline?.permissions ?? null, access.permissions as PermissionMatrix);
+  }
+  const resolved = resolveTriStatePermissions(baseline?.permissions ?? null, access.permissions ?? null);
+  if (access.access_role === 'read_only') {
+    for (const permission of Object.values(resolved)) {
+      permission.edit = false;
+      permission.delete = false;
+    }
+  }
+  return resolved;
+}
+
+export async function listAccessibleMatterIds(
+  supabase: any,
+  solicitorUserId: string,
+  solicitorFirmId: string,
+  permissionKey: string = 'matters',
+): Promise<string[]> {
+  if (!isMatterAccessV1Enabled()) {
+    const clientIds = await listAssignedClientIds(supabase, solicitorUserId);
+    if (!clientIds.length) return [];
+    const { data: matters } = await supabase.from('legal_matters').select('id')
+      .in('client_id', clientIds).eq('firm_id', solicitorFirmId);
+    return (matters || []).map((row: any) => row.id);
+  }
+  const { data } = await supabase
+    .from('solicitor_matter_access')
+    .select('id, legal_matter_id, access_role, permissions, valid_from, valid_until')
+    .eq('solicitor_user_id', solicitorUserId)
+    .eq('firm_id', solicitorFirmId)
+    .is('revoked_at', null);
+  const { data: baseline } = await supabase
+    .from('solicitor_portal_default_permissions').select('permissions')
+    .eq('solicitor_user_id', solicitorUserId).maybeSingle();
+  const now = Date.now();
+  return (data || [])
+    .filter((row: any) => row.valid_from && new Date(row.valid_from).getTime() <= now
+      && (!row.valid_until || new Date(row.valid_until).getTime() > now))
+    .filter((row: any) => can(resolveTriStatePermissions(baseline?.permissions ?? null, row.permissions), permissionKey, 'view'))
+    .map((row: any) => row.legal_matter_id);
+}
+
 /** List every client_id this solicitor is assigned to. */
 export async function listAssignedClientIds(
   supabase: any,
@@ -239,16 +394,27 @@ export async function logSolicitorActivity(
     visible_to_client?: boolean;
   },
 ): Promise<void> {
+  let auditWritten = false;
   try {
-    await supabase.from('solicitor_portal_activity_log').insert({
-      actor_type: 'solicitor_user',
-      ...entry,
-    });
+    const { error } = await supabase.from('solicitor_portal_activity_log').insert({ actor_type: 'solicitor_user', ...entry });
+    if (error) throw error;
+    auditWritten = true;
   } catch (e) {
     console.error('[solicitor-portal] activity log failed:', e);
   }
+  const dimensions = {
+    _correlation_id: crypto.randomUUID(), _request_id: entry.entity_id ?? null,
+    _actor_type: entry.actor_type ?? 'solicitor_user', _actor_id: entry.solicitor_user_id ?? entry.actor_user_id ?? null,
+    _portal: 'solicitor', _case_id: null, _matter_id: entry.legal_matter_id ?? null, _firm_id: entry.firm_id ?? null, _duration_ms: null,
+  };
+  await supabase.rpc('record_portal_operational_event', auditWritten ? {
+    ...dimensions, _event_name: 'solicitor_command', _severity: 'info', _success: true,
+    _metadata: { action: entry.action, entity_type: entry.entity_type ?? null },
+  } : {
+    ...dimensions, _event_name: 'mandatory_audit_write_failure', _severity: 'critical', _success: false,
+    _metadata: { action: entry.action, error_code: 'activity_log_write_failed' },
+  });
 }
-
 export function requestIp(req: Request): string | null {
   return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
 }

@@ -17,20 +17,18 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
-import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import type { LegalMatterDocument } from '@/lib/legalDocuments';
 import {
   ANALYSIS_STATUS_LABELS,
   analyseContract,
+  getAiPolicyStatus,
   deleteAnalysis,
   listContractAnalyses,
   riskFlagClasses,
   setAnalysisStatus,
   type ContractAnalysis,
 } from '@/lib/solicitorIntelligence';
-
-const NO_DOCUMENT = '__paste__';
 
 /**
  * Contract intelligence for a single matter (Phase 7).
@@ -55,43 +53,38 @@ export function ContractIntelligencePanel({
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [documentId, setDocumentId] = useState<string>(NO_DOCUMENT);
-  const [contractText, setContractText] = useState('');
+  const [documentId, setDocumentId] = useState<string>('');
+  const [policy, setPolicy] = useState<{configured:boolean;enabled:boolean;available:boolean;consent_version?:string;provider?:string}|null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const analysableDocuments = useMemo(
-    () => documents.filter((d) => d.storage_path),
+    () => documents.filter((d) => d.current_version_id && d.malware_scan_status === 'clean' && ['reviewed','retained','legal_hold'].includes(d.lifecycle_status || '')),
     [documents],
   );
 
   const refresh = useCallback(async () => {
-    const { data, error } = await listContractAnalyses(matterId);
+    const [{ data, error },policyResult] = await Promise.all([listContractAnalyses(matterId),getAiPolicyStatus()]);
     setLoading(false);
     if (error) return;
     setAnalyses((data?.records ?? []) as ContractAnalysis[]);
+    setPolicy(policyResult.data?.policy||null);
   }, [matterId]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
   const run = async () => {
-    const useDoc = documentId !== NO_DOCUMENT;
-    if (!useDoc && contractText.trim().length < 200) {
-      toast.error('Paste at least a few paragraphs of the contract, or choose an uploaded document.');
-      return;
-    }
+    if (!policy?.available) { toast.error('Your practice has not enabled external AI processing.'); return; }
+    if (!documentId) { toast.error('Choose a clean, reviewed immutable contract version.'); return; }
     setRunning(true);
     const { error } = await analyseContract({
       matterId,
-      documentId: useDoc ? documentId : null,
-      contractText: useDoc ? undefined : contractText.trim(),
-      sourceLabel: useDoc ? null : 'Pasted contract text',
+      documentId,
     });
     setRunning(false);
     if (error) { toast.error(error.message || 'The analyser could not process that contract'); return; }
     toast.success('Draft analysis ready for your review');
     setDialogOpen(false);
-    setContractText('');
-    setDocumentId(NO_DOCUMENT);
+    setDocumentId('');
     await refresh();
   };
 
@@ -127,20 +120,21 @@ export function ContractIntelligencePanel({
             </CardDescription>
           </div>
           {canEdit ? (
-            <Button size="sm" onClick={() => setDialogOpen(true)}>
+            <Button size="sm" onClick={() => setDialogOpen(true)} disabled={!policy?.available}>
               <FileSearch className="mr-2 h-4 w-4" aria-hidden /> Analyse contract
             </Button>
           ) : null}
         </CardHeader>
         <CardContent>
+          {policy && !policy.available ? <div role="status" className="mb-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm"><p className="font-medium">External AI processing is disabled</p><p className="mt-1 text-muted-foreground">Your practice administrator must record firm consent and enable an approved provider before documents can be analysed.</p></div> : null}
           {loading ? (
             <div className="flex justify-center py-10"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
           ) : analyses.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border/70 px-4 py-10 text-center">
               <p className="text-sm font-medium text-foreground">No contract review yet</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Upload the contract to the Docs register or paste its text, then run an analysis to get a
-                summary, special-conditions list and risk flags in seconds.
+                Upload and review an immutable contract version, explicitly permit external processing,
+                then run an assistive analysis for practitioner review.
               </p>
               {canEdit ? (
                 <Button size="sm" variant="outline" className="mt-4" onClick={() => setDialogOpen(true)}>
@@ -171,8 +165,8 @@ export function ContractIntelligencePanel({
           <DialogHeader>
             <DialogTitle>Analyse contract</DialogTitle>
             <DialogDescription>
-              Choose an uploaded document or paste the contract text. The result is saved as a draft for
-              your review — nothing is applied to the matter automatically.
+              Choose a clean, reviewed immutable document with explicit AI permission. The result is
+              assistive, saved for review, and never applied to the matter automatically.
             </DialogDescription>
           </DialogHeader>
 
@@ -182,10 +176,9 @@ export function ContractIntelligencePanel({
                 <Label htmlFor="analysis-document">Matter document</Label>
                 <Select value={documentId} onValueChange={setDocumentId}>
                   <SelectTrigger id="analysis-document">
-                    <SelectValue placeholder="Paste text instead" />
+                    <SelectValue placeholder="Choose an approved document" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={NO_DOCUMENT}>Paste text instead</SelectItem>
                     {analysableDocuments.map((d) => (
                       <SelectItem key={d.id} value={d.id}>
                         {d.label || d.file_name || 'Untitled document'}
@@ -194,32 +187,17 @@ export function ContractIntelligencePanel({
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  PDF, image and plain-text uploads can be read directly. Scanned pages of poor quality may
-                  need the text pasted instead.
+                  Only the selected immutable version and its SHA-256 provenance are sent. Raw content is never written to application logs.
                 </p>
               </div>
 
-              {documentId === NO_DOCUMENT ? (
-                <div className="space-y-2">
-                  <Label htmlFor="analysis-text">Contract text</Label>
-                  <Textarea
-                    id="analysis-text"
-                    value={contractText}
-                    onChange={(e) => setContractText(e.target.value)}
-                    rows={16}
-                    placeholder="Paste the contract of sale, including the schedule and any special conditions…"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {contractText.trim().length.toLocaleString()} characters
-                  </p>
-                </div>
-              ) : null}
+
             </div>
           </ScrollArea>
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={running}>Cancel</Button>
-            <Button onClick={() => void run()} disabled={running}>
+            <Button onClick={() => void run()} disabled={running || !documentId || !policy?.available}>
               {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : <Sparkles className="mr-2 h-4 w-4" aria-hidden />}
               Run analysis
             </Button>
@@ -260,6 +238,7 @@ function AnalysisCard({
             {new Date(analysis.created_at).toLocaleString('en-AU')}
             {confidence ? ` · ${confidence}` : ''}
           </p>
+          {analysis.governance ? <p className="mt-1 text-xs text-muted-foreground">Assistive AI · {analysis.governance.provider} · {analysis.governance.model} · prompt v{analysis.governance.ai_prompt_versions?.version || '—'} · source {analysis.governance.input_hash.slice(0,12)}…</p> : null}
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline">{ANALYSIS_STATUS_LABELS[analysis.status]}</Badge>
@@ -279,7 +258,7 @@ function AnalysisCard({
               variant="ghost"
               className="h-8 w-8 text-muted-foreground hover:text-destructive"
               disabled={busy}
-              aria-label="Delete analysis"
+              aria-label="Supersede analysis"
               onClick={() => onDelete(analysis.id)}
             >
               <Trash2 className="h-4 w-4" aria-hidden />
@@ -291,7 +270,7 @@ function AnalysisCard({
       {analysis.status === 'draft' ? (
         <p className="mt-3 flex items-start gap-2 rounded-md border border-warning/30 bg-warning/10 p-2 text-xs text-warning">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-          Draft output. Verify every clause reference and date against the executed contract before acting.
+          Assistive draft, not legal advice. Verify every clause reference and date against the immutable source before acting.
         </p>
       ) : null}
 

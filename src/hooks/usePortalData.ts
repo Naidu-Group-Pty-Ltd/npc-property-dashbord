@@ -134,6 +134,16 @@ export function usePortalSendFinanceReply() {
   });
 }
 
+/** Reply in the canonical Client ↔ Solicitor conversation. */
+export function usePortalSendLegalReply() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: { conversation_id: string; message: string; idempotency_key: string }) =>
+      invokePortalEdge('client-portal-comms', { operation: 'send_legal_reply', ...params }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['portal-unified-inbox'] }),
+  });
+}
+
 /**
  * Fetch portal deal progress data
  */

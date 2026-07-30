@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { usePortalAuth } from '@/hooks/usePortalAuth';
-import { usePortalUnifiedInbox, usePortalUpdateData, usePortalSendFinanceReply } from '@/hooks/usePortalData';
+import { usePortalUnifiedInbox, usePortalUpdateData, usePortalSendFinanceReply, usePortalSendLegalReply } from '@/hooks/usePortalData';
 import { smartCapitalize } from '@/lib/nameUtils';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   MessageSquare, Send, Loader2, Headphones,
-  MessageCircle, Phone, Mail, Building2, Landmark,
+  MessageCircle, Phone, Mail, Building2, Landmark, Scale,
 } from 'lucide-react';
 import { format, isToday, isYesterday } from 'date-fns';
 import { toast } from 'sonner';
@@ -41,7 +41,7 @@ function channelBadge(channel: string) {
   );
 }
 
-type ChannelKey = 'command' | 'finance';
+type ChannelKey = 'command' | 'finance' | 'legal';
 
 interface ChannelThreadProps {
   channel: ChannelKey;
@@ -76,8 +76,8 @@ function ChannelThread({ channel, messages, displayName, onSend, sending, disabl
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center">
             <div className="mb-4 rounded-full border border-primary/10 bg-primary/5 p-4 shadow-lg shadow-primary/5">
-              {channel === 'finance'
-                ? <Landmark className="h-10 w-10 text-primary/40" />
+              {channel === 'finance' ? <Landmark className="h-10 w-10 text-primary/40" />
+                : channel === 'legal' ? <Scale className="h-10 w-10 text-primary/40" />
                 : <Building2 className="h-10 w-10 text-primary/40" />}
             </div>
             <p className="text-muted-foreground font-medium">No messages yet</p>
@@ -122,7 +122,7 @@ function ChannelThread({ channel, messages, displayName, onSend, sending, disabl
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder={disabledReason || `Message your ${channel === 'finance' ? 'finance broker' : 'advisor'}...`}
+            placeholder={disabledReason || `Message your ${channel === 'finance' ? 'finance broker' : channel === 'legal' ? 'legal team' : 'advisor'}...`}
             className="flex-1 border-border/60"
             disabled={sending || !!disabledReason}
           />
@@ -136,8 +136,8 @@ function ChannelThread({ channel, messages, displayName, onSend, sending, disabl
           </Button>
         </div>
         <p className="text-[10px] text-muted-foreground/50 mt-2 text-center">
-          {channel === 'finance'
-            ? 'Replies sync to your finance broker and remain visible to Command Centre.'
+          {channel === 'finance' ? 'Replies sync to your finance broker and remain visible to Command Centre.'
+            : channel === 'legal' ? 'Replies stay in the same private conversation with your authorised legal team.'
             : 'Messages go to your Command Centre advisory team.'}
         </p>
       </div>
@@ -150,6 +150,7 @@ export default function PortalMessages() {
   const { data, isLoading } = usePortalUnifiedInbox();
   const updateMutation = usePortalUpdateData();
   const financeReplyMutation = usePortalSendFinanceReply();
+  const legalReplyMutation = usePortalSendLegalReply();
   const [sending, setSending] = useState(false);
   const [localMessages, setLocalMessages] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<ChannelKey>('command');
@@ -160,6 +161,7 @@ export default function PortalMessages() {
     const msg = serverMessages.find((m: any) => m.kind === 'finance' && m.thread_id);
     return msg?.thread_id as string | undefined;
   }, [serverMessages]);
+  const latestLegalConversationId = useMemo(() => serverMessages.find((m:any)=>m.kind==='legal')?.conversation_id as string|undefined,[serverMessages]);
 
   useEffect(() => {
     if (localMessages.length === 0) return;
@@ -185,9 +187,11 @@ export default function PortalMessages() {
     () => allMessages.filter((m) => m.kind === 'finance'),
     [allMessages]
   );
+  const legalMessages = useMemo(() => allMessages.filter((m)=>m.kind==='legal'),[allMessages]);
 
   const commandUnread = commandMessages.filter((m) => m.direction === 'inbound' && m.is_read === false).length;
   const financeUnread = financeMessages.filter((m) => m.direction === 'inbound' && m.is_read === false).length;
+  const legalUnread = legalMessages.filter((m) => m.direction === 'inbound' && m.is_read === false).length;
 
   const sendCommand = async (text: string) => {
     setSending(true);
@@ -234,6 +238,11 @@ export default function PortalMessages() {
       toast.error('Failed to send finance reply. Please try again.');
     } finally { setSending(false); }
   };
+  const sendLegal = async (text:string) => {
+    if(!latestLegalConversationId)return; setSending(true);
+    try { const response=await legalReplyMutation.mutateAsync({conversation_id:latestLegalConversationId,message:text,idempotency_key:crypto.randomUUID()}); const saved=response?.message||response?.data; if(saved?.id)setLocalMessages(cur=>[...cur,{id:saved.id,kind:'legal',channel:'legal',conversation_id:latestLegalConversationId,direction:'outbound',sender_name:saved.sender_name,body:saved.body||text,created_at:saved.created_at||new Date().toISOString(),is_read:true}]); }
+    catch { toast.error('Failed to send legal reply. Please try again.'); } finally { setSending(false); }
+  };
 
   if (isLoading) {
     return (
@@ -252,18 +261,22 @@ export default function PortalMessages() {
           Messages
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Separate threads for your Command Centre advisor and finance broker — both stay in sync with NPC.
+          Separate governed channels for your Command Centre advisor, legal team, and finance broker.
         </p>
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as ChannelKey)} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 md:w-[480px]">
+        <TabsList className="grid w-full grid-cols-3 md:w-[680px]">
           <TabsTrigger value="command" className="gap-2">
             <Building2 className="h-4 w-4" />
             Command Centre
             {commandUnread > 0 && (
               <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">{commandUnread}</Badge>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="legal" className="gap-2">
+            <Scale className="h-4 w-4" /> Legal
+            {legalUnread > 0 && <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-[10px]">{legalUnread}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="finance" className="gap-2">
             <Landmark className="h-4 w-4" />
@@ -295,6 +308,9 @@ export default function PortalMessages() {
             disabledReason={!latestFinanceThreadId ? 'Your finance broker will start this conversation when ready.' : undefined}
             emptyHint="Once your finance broker reaches out, your conversation will appear here."
           />
+        </TabsContent>
+        <TabsContent value="legal" className="m-0">
+          <ChannelThread channel="legal" messages={legalMessages} displayName={displayName||''} onSend={sendLegal} sending={sending} disabledReason={!latestLegalConversationId?'Your legal team will open this channel when your matter is ready.':undefined} emptyHint="Your authorised legal team will use this channel for matter updates and replies." />
         </TabsContent>
       </Tabs>
     </div>

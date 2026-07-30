@@ -58,9 +58,11 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
       return { error: (data as any)?.error || error?.message || 'Login failed' };
     }
 
-    setUser(data.user);
+    // Re-read through the cookie-backed verifier so governance state always comes
+    // from the server, never from login response defaults.
+    await checkSession();
     return {};
-  }, []);
+  }, [checkSession]);
 
   const signOut = useCallback(async () => {
     try {
@@ -111,13 +113,15 @@ export function SolicitorPortalAuthProvider({ children }: { children: ReactNode 
   }, []);
 
   const acceptTerms = useCallback(async () => {
-    await invokeSolicitorFunction('solicitor-portal-verify', { action: 'accept_terms' });
-    setUser((prev) => (prev ? { ...prev, has_accepted_terms: true } : prev));
+    const { error } = await invokeSolicitorFunction('solicitor-portal-verify', { action: 'accept_current_terms' });
+    if (error) throw error;
+    setUser((prev) => (prev ? { ...prev, has_accepted_terms: true, has_accepted_current_terms: true } : prev));
   }, []);
 
   const completeOnboarding = useCallback(async () => {
-    await invokeSolicitorFunction('solicitor-portal-verify', { action: 'complete_onboarding' });
-    setUser((prev) => (prev ? { ...prev, has_completed_onboarding: true } : prev));
+    const { error } = await invokeSolicitorFunction('solicitor-portal-verify', { action: 'complete_onboarding' });
+    if (error) throw error;
+    setUser((prev) => (prev ? { ...prev, has_completed_onboarding: true, has_completed_mandatory_onboarding: true } : prev));
   }, []);
 
   const applySession = useCallback((nextUser: SolicitorPortalUser) => {

@@ -56,6 +56,7 @@ export interface LegalMatter {
   closed_at: string | null;
   created_at: string;
   updated_at: string;
+  row_version: number;
   client_name?: string | null;
   firm_name?: string | null;
   solicitor_name?: string | null;

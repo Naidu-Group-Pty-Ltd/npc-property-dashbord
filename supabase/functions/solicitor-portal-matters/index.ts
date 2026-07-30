@@ -2,7 +2,7 @@
  * Solicitor Portal — Matters (Phase 3)
  *
  * Portal-facing matter workspace. Every operation is scoped by the caller's
- * session, their client assignments AND their firm, then gated on the merged
+ * session, an explicit matter grant AND an exact non-null firm, then gated on the tri-state
  * permission matrix. Financial-position and AML-restricted data is never
  * selected here — tri-portal separation is enforced by the shared whitelists.
  *
@@ -16,23 +16,24 @@ import { createCorsHeaders } from "../_shared/auth.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
-  resolveClientPermissions,
-  listAssignedClientIds,
+  solicitorGovernanceError,
+  resolveSolicitorMatterAccess,
+  resolveMatterPermissions,
+  listAccessibleMatterIds,
   logSolicitorActivity,
   requestIp,
   can,
   type PermissionMatrix,
 } from "../_shared/solicitorPortalAuth.ts";
 import {
-  MATTER_SELECT,
-  SOLICITOR_MATTER_LIST_SELECT,
+  LEGAL_MATTER_SOLICITOR_LIST_SELECT,
+  LEGAL_MATTER_SOLICITOR_DETAIL_SELECT,
   PARTY_SELECT,
   LEGAL_MATTER_STATUSES,
   buildMatterPayload,
   buildPartyPayload,
   cleanEnum,
   cleanText,
-  TERMINAL_STATUSES,
 } from "../_shared/legalMatters.ts";
 import {
   CRITICAL_DATE_SELECT,
@@ -43,6 +44,9 @@ import {
   buildSettlementTaskPayload,
   summariseRunway,
 } from "../_shared/legalCriticalDates.ts";
+
+const LEGAL_INTEGRITY_COMMANDS_V1 = Deno.env.get('SOLICITOR_LEGAL_INTEGRITY_V1') !== 'false';
+const FINANCE_SOLICITOR_COLLABORATION = Deno.env.get('FINANCE_SOLICITOR_COLLABORATION') === 'true';
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
@@ -74,11 +78,13 @@ Deno.serve(async (req) => {
       return json({ error: session.error || 'Unauthorised' }, session.status || 401);
     }
     const me = session.user;
+    const governanceError = solicitorGovernanceError(me);
+    if (governanceError) return json({ error: 'Portal setup required', code: governanceError }, 403);
     const ip = requestIp(req);
     const userAgent = req.headers.get('user-agent');
 
-    const assignedClientIds = await listAssignedClientIds(supabase, me.id);
-    if (!assignedClientIds.length && operation !== 'matter_stats') {
+    const accessibleMatterIds = await listAccessibleMatterIds(supabase, me.id, me.firm_id);
+    if (!accessibleMatterIds.length && operation !== 'matter_stats') {
       if (operation === 'list_matters') return json({ success: true, records: [] });
     }
 
@@ -102,41 +108,73 @@ Deno.serve(async (req) => {
       if (!matterId) return { ok: false, status: 400, error: 'matter_id is required' };
       const { data: matter } = await supabase
         .from('legal_matters')
-        .select(MATTER_SELECT)
+        .select(LEGAL_MATTER_SOLICITOR_DETAIL_SELECT)
         .eq('id', matterId)
         .maybeSingle();
       if (!matter) return { ok: false, status: 404, error: 'Matter not found' };
-      if (matter.firm_id && matter.firm_id !== me.firm_id) {
-        return { ok: false, status: 403, error: 'This matter belongs to another practice' };
+      if (!matter.firm_id || matter.firm_id !== me.firm_id) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      if (!matter.client_id || !assignedClientIds.includes(matter.client_id)) {
-        return { ok: false, status: 403, error: 'You do not have access to this matter' };
+      const access = await resolveSolicitorMatterAccess(supabase, me.id, me.firm_id, matter.id);
+      if (!access) {
+        return { ok: false, status: 404, error: 'Matter not found' };
       }
-      const perms = await resolveClientPermissions(supabase, me.id, matter.client_id);
+      const perms = await resolveMatterPermissions(supabase, access);
       if (!perms || !can(perms, 'matters', 'view')) {
         return { ok: false, status: 403, error: 'You do not have access to this matter' };
       }
       return { ok: true, matter, perms };
     };
 
+    if (operation === 'get_finance_coordination') {
+      if (!FINANCE_SOLICITOR_COLLABORATION) return json({ error: 'Not found' }, 404);
+      const res = await loadMatter(String(body.matter_id || ''));
+      if (!res.ok) return json({ error: res.error }, res.status);
+      if (!can(res.perms, 'finance_status', 'view')) return json({ error: 'Access denied' }, 403);
+      const { data: link } = await supabase.from('transaction_case_links').select('case_id,purchase_file_id').eq('legal_matter_id', res.matter.id).maybeSingle();
+      if (!link?.case_id) return json({ error: 'Transaction case link required', code: 'CASE_LINK_REQUIRED' }, 409);
+      const [{ data: projection }, { data: runway }, { data: solicitorDocs }, { data: financeGrants }, { data: conversations }] = await Promise.all([
+        supabase.from('solicitor_case_read_model').select('case_id,purchase_file_id,finance_status,lender,finance_clause_date,finance_clause_state,finance_contact_name,finance_contact_email,finance_source_version,finance_updated_at,link_health,updated_at').eq('case_id', link.case_id).maybeSingle(),
+        supabase.rpc('get_case_runway', { _case_id: link.case_id, _audience: 'solicitor' }),
+        supabase.rpc('list_accessible_documents', { _case_id: link.case_id, _audience: 'solicitor', _grantee_id: me.id }),
+        supabase.from('document_access_grants').select('document_record_id,document_records!inner(case_id)').eq('audience', 'finance').is('revoked_at', null).eq('document_records.case_id', link.case_id),
+        supabase.rpc('get_participant_conversations', { _participant_type: 'solicitor_user', _participant_id: me.id, _case_id: link.case_id }),
+      ]);
+      if (!projection) return json({ error: 'Finance projection unavailable', code: 'PROJECTION_UNAVAILABLE' }, 409);
+      const financeDocumentIds = new Set((financeGrants || []).map((grant: any) => grant.document_record_id));
+      const sharedDocuments = (solicitorDocs || []).filter((entry: any) => financeDocumentIds.has(entry.record?.id) && entry.version?.malware_scan_status === 'clean' && ['reviewed','retained','legal_hold'].includes(entry.version?.lifecycle_status)).map((entry: any) => ({ id: entry.record.id, title: entry.record.title, category: entry.record.category, current_version: entry.version ? { id: entry.version.id, version_number: entry.version.version_number, filename: entry.version.original_filename, mime_type: entry.version.detected_mime_type, byte_size: entry.version.byte_size, sha256: entry.version.sha256 } : null }));
+      const sharedTasks = (runway?.tasks || []).filter((task: any) => task.visibility === 'shared').map((task: any) => ({ id: task.id, label: task.label, description: task.description, status: task.status, due_at: task.due_at, completed_at: task.completed_at, row_version: task.row_version }));
+      const milestones = (runway?.milestones || []).filter((milestone: any) => milestone.visibility === 'shared').map((milestone: any) => ({ id: milestone.id, milestone_type: milestone.milestone_type, title: milestone.title, due_at: milestone.due_at, status: milestone.status, authority: milestone.authority, row_version: milestone.row_version }));
+      const threads = [];
+      for (const entry of (conversations || []).filter((item: any) => item.conversation?.scope === 'finance_solicitor')) {
+        const { data: messages } = await supabase.rpc('get_conversation_messages', { _conversation_id: entry.conversation.id, _participant_type: 'solicitor_user', _participant_id: me.id, _limit: 100, _before: null });
+        threads.push({ id: entry.conversation.id, subject: entry.conversation.subject, unread_count: entry.unread_count, messages: (messages || []).map((message: any) => ({ id: message.id, sender_type: message.sender_type, sender_name: message.sender_name, body: message.body, created_at: message.created_at })) });
+      }
+      return json({ success: true, coordination: { case: projection, milestones, shared_tasks: sharedTasks, shared_documents: sharedDocuments, conversations: threads, provenance: { finance: { source: 'finance_case_projection', version: projection.finance_source_version, updated_at: projection.finance_updated_at } } } });
+    }
+
     // ───────────────────────── LIST ─────────────────────────
     if (operation === 'list_matters') {
-      const viewableClientIds = await listViewableClientIds();
-      if (!viewableClientIds.length) return json({ success: true, records: [] });
-
+      const page = Math.max(1, Math.floor(Number(body.page) || 1));
+      const pageSize = Math.min(100, Math.max(10, Math.floor(Number(body.page_size) || 25)));
+      const from = (page - 1) * pageSize;
       let query = supabase
         .from('legal_matters')
-        .select(SOLICITOR_MATTER_LIST_SELECT)
-        .in('client_id', viewableClientIds)
-        .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
-        .order('settlement_date', { ascending: true, nullsFirst: false })
-        .limit(500);
+        .select(LEGAL_MATTER_SOLICITOR_LIST_SELECT, { count: 'exact' })
+        .in('id', accessibleMatterIds)
+        .eq('firm_id', me.firm_id)
+        .order('settlement_date', { ascending: true, nullsFirst: false });
 
       const status = cleanEnum(body.status, LEGAL_MATTER_STATUSES);
       if (status) query = query.eq('status', status);
       if (body.mine_only === true) query = query.eq('assigned_solicitor_user_id', me.id);
+      const search = cleanText(body.search, 120);
+      if (search) {
+        const escaped = search.replace(/[%_,()]/g, ' ');
+        query = query.or(`title.ilike.%${escaped}%,matter_reference.ilike.%${escaped}%,property_address.ilike.%${escaped}%,property_suburb.ilike.%${escaped}%`);
+      }
 
-      const { data, error } = await query;
+      const { data, error, count } = await query.range(from, from + pageSize - 1);
       if (error) throw error;
 
       const rows = data || [];
@@ -152,14 +190,10 @@ Deno.serve(async (req) => {
         }
       }
 
-      const search = cleanText(body.search, 120)?.toLowerCase();
       const records = rows
-        .map((r: any) => ({ ...r, client_name: clientMap.get(r.client_id) ?? null }))
-        .filter((r: any) => !search
-          || [r.title, r.matter_reference, r.property_address, r.property_suburb, r.client_name]
-            .some((v) => v && String(v).toLowerCase().includes(search)));
+        .map((r: any) => ({ ...r, client_name: clientMap.get(r.client_id) ?? null }));
 
-      return json({ success: true, records });
+      return json({ success: true, records, pagination: { page, page_size: pageSize, total: count || 0, total_pages: Math.max(1, Math.ceil((count || 0) / pageSize)) } });
     }
 
     // ───────────────────────── DETAIL ─────────────────────────
@@ -179,15 +213,16 @@ Deno.serve(async (req) => {
         supabase.from('clients').select('id, primary_first_name, primary_surname, primary_email, primary_mobile').eq('id', matter.client_id).maybeSingle(),
       ]);
 
-      // Finance clause visibility only — never the client's financial position.
+      // Finance collaboration is projection-only — never the client's financial position.
       let finance_snapshot: Record<string, unknown> | null = null;
-      if (matter.purchase_file_id && can(perms, 'finance_status', 'view')) {
-        const { data: pf } = await supabase
-          .from('purchase_files')
-          .select('id, title, finance_status, finance_clause_date, settlement_date, lender')
-          .eq('id', matter.purchase_file_id)
-          .maybeSingle();
-        if (pf) finance_snapshot = pf;
+      if (can(perms, 'finance_status', 'view')) {
+        const { data: caseLink } = await supabase.from('transaction_case_links').select('case_id').eq('legal_matter_id', matter.id).maybeSingle();
+        if (caseLink?.case_id) {
+          const { data: projectedFinance } = await supabase.from('solicitor_case_read_model')
+            .select('case_id,purchase_file_id,finance_status,lender,finance_clause_date,finance_clause_state,finance_contact_name,finance_contact_email,finance_source_version,finance_updated_at,link_health,updated_at')
+            .eq('case_id', caseLink.case_id).maybeSingle();
+          if (projectedFinance) finance_snapshot = projectedFinance;
+        }
       }
 
       // Phase 4 — typed critical dates + settlement runway.
@@ -236,6 +271,7 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── UPDATE ─────────────────────────
     if (operation === 'update_matter') {
+      if (!LEGAL_INTEGRITY_COMMANDS_V1) return json({ error: 'Legal mutations are temporarily unavailable' }, 503);
       const res = await loadMatter(String(body.matter_id || ''));
       if (!res.ok) return json({ error: res.error }, res.status);
       const { matter, perms } = res;
@@ -243,17 +279,21 @@ Deno.serve(async (req) => {
         return json({ error: 'You do not have permission to edit this matter' }, 403);
       }
 
+      const expectedVersion = Number(body.expected_version);
+      if (!Number.isInteger(expectedVersion) || expectedVersion < 1) return json({ error: 'expected_version is required' }, 400);
       const payload = buildMatterPayload(body, { isCreate: false });
       delete (payload as any).matter_reference; // reference is Command Centre owned
       if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
 
       const { data: updated, error } = await supabase
         .from('legal_matters')
-        .update({ ...payload, updated_at: new Date().toISOString() })
+        .update({ ...payload, row_version: expectedVersion + 1, updated_at: new Date().toISOString() })
         .eq('id', matter.id)
-        .select(MATTER_SELECT)
+        .eq('row_version', expectedVersion)
+        .select(LEGAL_MATTER_SOLICITOR_DETAIL_SELECT)
         .maybeSingle();
       if (error) throw error;
+      if (!updated) { await supabase.rpc('record_portal_operational_event',{_event_name:'stale_write_conflict',_severity:'warning',_correlation_id:crypto.randomUUID(),_request_id:req.headers.get('x-request-id'),_actor_type:'solicitor_user',_actor_id:me.id,_portal:'solicitor',_case_id:null,_matter_id:matter.id,_firm_id:me.firm_id,_duration_ms:null,_success:false,_metadata:{command:'update_matter',expected_version:expectedVersion}}); return json({ error: 'This matter was changed by another user', code: 'STALE_VERSION' }, 409); }
 
       await logSolicitorActivity(supabase, {
         solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_updated',
@@ -267,53 +307,32 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── STATUS ─────────────────────────
     if (operation === 'set_status') {
+      if (!LEGAL_INTEGRITY_COMMANDS_V1) return json({ error: 'Legal mutations are temporarily unavailable' }, 503);
       const res = await loadMatter(String(body.matter_id || ''));
       if (!res.ok) return json({ error: res.error }, res.status);
       const { matter, perms } = res;
-      if (!can(perms, 'matters', 'edit')) {
-        return json({ error: 'You do not have permission to change this matter' }, 403);
-      }
-
+      if (!can(perms, 'matters', 'edit')) return json({ error: 'You do not have permission to change this matter' }, 403);
       const next = cleanEnum(body.status, LEGAL_MATTER_STATUSES);
-      if (!next) return json({ error: 'A valid status is required' }, 400);
-      if (next === matter.status) return json({ success: true, matter });
-      if (TERMINAL_STATUSES.has(matter.status)) {
-        return json({ error: 'This matter is closed. Contact NPC to reopen it.' }, 400);
+      const expectedVersion = Number(body.expected_version);
+      const reason = cleanText(body.reason, 1000);
+      if (!next || !Number.isInteger(expectedVersion) || expectedVersion < 1 || !reason) {
+        return json({ error: 'status, expected_version and reason are required' }, 400);
       }
-
-      const patch: Record<string, unknown> = { status: next, updated_at: new Date().toISOString() };
-      if (next === 'settled') {
-        patch.actual_settlement_date = matter.actual_settlement_date
-          || new Date().toISOString().slice(0, 10);
-        patch.closed_at = new Date().toISOString();
+      const { data: updated, error } = await supabase.rpc('transition_legal_matter', {
+        _matter_id: matter.id, _expected_version: expectedVersion, _from: matter.status,
+        _to: next, _reason: reason, _actor_type: 'solicitor_user',
+        _actor_solicitor_user_id: me.id, _actor_staff_user_id: null,
+      });
+      if (error) {
+        const conflict = /STALE_VERSION|STALE_STATUS|INVALID_TRANSITION/.test(error.message || '');
+        return json({ error: conflict ? 'Stale write or invalid status transition' : 'Unable to transition matter', code: error.message }, conflict ? 409 : 400);
       }
-
-      const { data: updated, error } = await supabase
-        .from('legal_matters').update(patch).eq('id', matter.id)
-        .select(MATTER_SELECT).maybeSingle();
-      if (error) throw error;
-
-      // Attribute the change the DB trigger just recorded.
-      const { data: latest } = await supabase
-        .from('legal_matter_status_history')
-        .select('id').eq('legal_matter_id', matter.id)
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (latest) {
-        await supabase.from('legal_matter_status_history').update({
-          changed_by_type: 'solicitor_user',
-          changed_by_solicitor_user_id: me.id,
-          reason: cleanText(body.reason, 500),
-        }).eq('id', latest.id);
-      }
-
       await logSolicitorActivity(supabase, {
         solicitor_user_id: me.id, firm_id: me.firm_id, action: 'matter_status_changed',
-        client_id: matter.client_id, legal_matter_id: matter.id,
-        entity_type: 'legal_matter', entity_id: matter.id,
-        metadata: { from: matter.status, to: next }, visible_to_client: true,
+        client_id: matter.client_id, legal_matter_id: matter.id, entity_type: 'legal_matter', entity_id: matter.id,
+        metadata: { from: matter.status, to: next, row_version: updated?.row_version }, visible_to_client: true,
         ip_address: ip, user_agent: userAgent,
       });
-
       return json({ success: true, matter: updated });
     }
 
@@ -511,6 +530,14 @@ Deno.serve(async (req) => {
       const res = await loadMatter(String(body.matter_id || ''));
       if (!res.ok) return json({ error: res.error }, res.status);
       if (!can(res.perms, 'settlement', 'view')) return json({ error: 'Access denied' }, 403);
+      if (Deno.env.get('CASE_RUNWAY_V1') !== 'false') {
+        const { data: link } = await supabase.from('transaction_case_links').select('case_id').eq('legal_matter_id', res.matter.id).maybeSingle();
+        if (link?.case_id) {
+          const { data: runway, error } = await supabase.rpc('get_case_runway', { _case_id: link.case_id, _audience: 'solicitor' });
+          if (error) throw error;
+          return json({ success: true, case_id: link.case_id, milestones: runway?.milestones || [], records: runway?.tasks || [] });
+        }
+      }
       const { data } = await supabase.from('legal_matter_settlement_tasks')
         .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', res.matter.id)
         .order('sequence', { ascending: true });
@@ -549,6 +576,27 @@ Deno.serve(async (req) => {
       const payload = buildSettlementTaskPayload(body);
       if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
 
+      if (Deno.env.get('CASE_RUNWAY_V1') !== 'false' && body.expected_version !== undefined) {
+        const { data: caseLink } = await supabase.from('transaction_case_links').select('case_id').eq('legal_matter_id', res.matter.id).maybeSingle();
+        const { data: sharedTask } = caseLink?.case_id
+          ? await supabase.from('case_tasks').select('id,case_id').eq('id', body.task_id).eq('case_id', caseLink.case_id).maybeSingle()
+          : { data: null };
+        if (sharedTask) {
+          const status = payload.status === 'complete' ? 'completed' : payload.status;
+          const { data: record, error } = await supabase.rpc('update_case_task_status', {
+            _task_id: sharedTask.id, _expected_version: Number(body.expected_version), _status: status,
+            _actor_type: 'solicitor_user', _actor_id: me.id,
+            _reason: String(body.reason || 'Solicitor settlement runway update'),
+            _completion_evidence: body.completion_evidence || {},
+          });
+          if (error) {
+            const conflict = /STALE_VERSION|INVALID_TASK_STATUS|TASK_DOMAIN_FORBIDDEN/.test(error.message || '');
+            return json({ error: error.message }, conflict ? 409 : 400);
+          }
+          return json({ success: true, record });
+        }
+      }
+
       if ('status' in payload) {
         const status = cleanEnum(payload.status, LEGAL_SETTLEMENT_TASK_STATUSES, 'not_started');
         if (status === 'complete') {
@@ -582,15 +630,8 @@ Deno.serve(async (req) => {
 
     // ─────────────── UPCOMING DATES ACROSS THE PRACTICE ───────────────
     if (operation === 'upcoming_dates') {
-      if (!assignedClientIds.length) return json({ success: true, records: [] });
-      const permittedClientIds = (await Promise.all(assignedClientIds.map(async (clientId) => {
-        const perms = await resolveClientPermissions(supabase, me.id, clientId);
-        return can(perms, 'matters', 'view') && can(perms, 'critical_dates', 'view')
-          ? clientId
-          : null;
-      }))).filter((clientId): clientId is string => clientId !== null);
-      if (!permittedClientIds.length) return json({ success: true, records: [] });
-
+      const dateMatterIds = await listAccessibleMatterIds(supabase, me.id, me.firm_id, 'critical_dates');
+      if (!dateMatterIds.length) return json({ success: true, records: [] });
       const horizonDays = Math.min(Math.max(Number(body.days) || 30, 1), 120);
       const horizon = new Date();
       horizon.setDate(horizon.getDate() + horizonDays);
@@ -598,8 +639,8 @@ Deno.serve(async (req) => {
       const { data: matters } = await supabase
         .from('legal_matters')
         .select('id, title, property_address, property_suburb, status, client_id, firm_id')
-        .in('client_id', permittedClientIds)
-        .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
+        .in('id', dateMatterIds)
+        .eq('firm_id', me.firm_id)
         .limit(500);
 
       const matterMap = new Map<string, any>((matters || []).map((m: any) => [m.id, m]));
@@ -625,15 +666,14 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── STATS ─────────────────────────
     if (operation === 'matter_stats') {
-      const viewableClientIds = await listViewableClientIds();
-      if (!viewableClientIds.length) {
+      if (!accessibleMatterIds.length) {
         return json({ success: true, stats: { total: 0, by_status: {}, settling_30d: 0, at_risk: 0 } });
       }
       const { data } = await supabase
         .from('legal_matters')
         .select('id, status, settlement_date, risk_flag')
-        .in('client_id', viewableClientIds)
-        .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`);
+        .in('id', accessibleMatterIds)
+        .eq('firm_id', me.firm_id);
 
       const rows = data || [];
       const byStatus: Record<string, number> = {};

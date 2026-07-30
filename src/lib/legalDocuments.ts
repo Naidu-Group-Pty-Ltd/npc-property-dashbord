@@ -60,6 +60,11 @@ export interface LegalMatterDocument {
   source: string;
   created_at: string;
   updated_at: string;
+  row_version?: number;
+  current_version_id?: string | null;
+  malware_scan_status?: 'pending' | 'scanning' | 'clean' | 'infected' | 'error' | 'legacy_unverified' | null;
+  lifecycle_status?: string | null;
+  allow_external_ai?: boolean;
 }
 
 export interface LegalMatterSearch {

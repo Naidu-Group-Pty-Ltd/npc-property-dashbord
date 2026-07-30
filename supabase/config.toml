@@ -1013,3 +1013,15 @@ verify_jwt = false
 
 [functions.legal-matters-admin]
 verify_jwt = true
+
+[functions.cross-portal-outbox-worker]
+verify_jwt = false
+
+[functions.legal-document-processor]
+verify_jwt = false
+
+[functions.client-legal-workspace]
+verify_jwt = false
+
+[functions.finance-legal-coordination]
+verify_jwt = false

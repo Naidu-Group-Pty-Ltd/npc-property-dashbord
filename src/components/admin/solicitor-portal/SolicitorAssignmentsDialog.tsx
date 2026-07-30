@@ -4,294 +4,97 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
-import { Loader2, Plus, Search, Settings2, Trash2, Users } from 'lucide-react';
-import {
-  SolicitorPermissionMatrixEditor,
-  EMPTY_SOLICITOR_MATRIX,
-  normalizeSolicitorMatrix,
-  type SolicitorPermissionMatrix,
-} from './SolicitorPermissionMatrix';
+import { Loader2, Plus, Search, Settings2, ShieldX, Users } from 'lucide-react';
+import { SOLICITOR_PERMISSION_AREAS } from './SolicitorPermissionMatrix';
 
-interface AssignmentRow {
-  id: string;
-  client_id: string;
-  client_name: string;
-  client_email: string | null;
-  deal_status: string | null;
-  permissions: unknown;
-  assigned_at: string;
-}
+type Decision = 'inherit' | 'allow' | 'deny';
+type TriStateMatrix = Record<string, Record<'view' | 'edit' | 'delete', Decision>>;
+interface MatterSummary { id: string; client_id: string; client_name: string | null; matter_reference: string | null; title: string; property_address: string | null; property_suburb: string | null; firm_id: string; assigned_solicitor_user_id: string | null; status: string }
+interface AccessRow { id: string; legal_matter_id: string; access_role: string; permissions: unknown; effective_permissions: unknown; valid_from: string; valid_until: string | null; revoked_at: string | null; revocation_reason: string | null; client_name: string | null; matter: MatterSummary | null }
+interface Props { open: boolean; onOpenChange: (open: boolean) => void; user: { id: string; name: string; firm_name?: string | null } | null; onChanged?: () => void }
 
-interface ClientRow {
-  id: string;
-  primary_contact_name: string | null;
-  secondary_contact_name: string | null;
-  primary_email: string | null;
-  deal_status: string | null;
-}
-
-interface Props {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  user: { id: string; name: string } | null;
-  onChanged?: () => void;
-}
+const emptyMatrix = (): TriStateMatrix => Object.fromEntries(SOLICITOR_PERMISSION_AREAS.map(({ key }) => [key, { view: 'inherit', edit: 'inherit', delete: 'inherit' }]));
+const normalize = (value: unknown): TriStateMatrix => {
+  const matrix = emptyMatrix();
+  if (!value || typeof value !== 'object') return matrix;
+  for (const { key } of SOLICITOR_PERMISSION_AREAS) for (const level of ['view', 'edit', 'delete'] as const) {
+    const decision = (value as any)?.[key]?.[level];
+    matrix[key][level] = decision === 'allow' || decision === 'deny' ? decision : 'inherit';
+  }
+  return matrix;
+};
 
 export function SolicitorAssignmentsDialog({ open, onOpenChange, user, onChanged }: Props) {
   const [loading, setLoading] = useState(false);
-  const [assignments, setAssignments] = useState<AssignmentRow[]>([]);
-  const [clients, setClients] = useState<ClientRow[]>([]);
+  const [access, setAccess] = useState<AccessRow[]>([]);
+  const [matters, setMatters] = useState<MatterSummary[]>([]);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState<string | null>(null);
-  const [editing, setEditing] = useState<AssignmentRow | null>(null);
-  const [matrix, setMatrix] = useState<SolicitorPermissionMatrix>(EMPTY_SOLICITOR_MATRIX);
+  const [editing, setEditing] = useState<AccessRow | null>(null);
+  const [matrix, setMatrix] = useState<TriStateMatrix>(emptyMatrix);
 
   const load = async () => {
     if (!user) return;
     setLoading(true);
     try {
-      const [aRes, cRes] = await Promise.all([
-        invokeSecureFunction('solicitor-portal-admin', {
-          operation: 'get_assignments', solicitor_user_id: user.id,
-        }),
-        invokeSecureFunction('solicitor-portal-admin', { operation: 'list_clients' }),
+      const [accessResult, matterResult] = await Promise.all([
+        invokeSecureFunction('solicitor-portal-admin', { operation: 'get_matter_access', solicitor_user_id: user.id }),
+        invokeSecureFunction('solicitor-portal-admin', { operation: 'list_matter_access_candidates', solicitor_user_id: user.id }),
       ]);
-      if (aRes.error) throw new Error(aRes.error.message);
-      if (cRes.error) throw new Error(cRes.error.message);
-      setAssignments(aRes.data?.records || []);
-      setClients(cRes.data?.records || []);
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to load assignments');
-    } finally {
-      setLoading(false);
-    }
+      if (accessResult.error || matterResult.error) throw new Error(accessResult.error?.message || matterResult.error?.message);
+      setAccess(accessResult.data?.records || []);
+      setMatters(matterResult.data?.records || []);
+    } catch (error: any) { toast.error(error.message || 'Failed to load matter access'); }
+    finally { setLoading(false); }
   };
+  useEffect(() => { if (open && user) { setEditing(null); setSearch(''); void load(); } }, [open, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    if (!open || !user) return;
-    setEditing(null);
-    setSearch('');
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, user?.id]);
+  const activeMatterIds = useMemo(() => new Set(access.filter(row => !row.revoked_at).map(row => row.legal_matter_id)), [access]);
+  const candidates = useMemo(() => matters.filter(matter => !activeMatterIds.has(matter.id)).filter(matter => {
+    const query = search.trim().toLowerCase();
+    return !query || [matter.client_name, matter.matter_reference, matter.title, matter.property_address].some(value => value?.toLowerCase().includes(query));
+  }).slice(0, 60), [matters, activeMatterIds, search]);
 
-  const assignedIds = useMemo(() => new Set(assignments.map(a => a.client_id)), [assignments]);
-
-  const candidates = useMemo(() => {
-    const s = search.trim().toLowerCase();
-    return clients
-      .filter(c => !assignedIds.has(c.id))
-      .filter(c => {
-        if (!s) return true;
-        return (
-          (c.primary_contact_name || '').toLowerCase().includes(s) ||
-          (c.secondary_contact_name || '').toLowerCase().includes(s) ||
-          (c.primary_email || '').toLowerCase().includes(s)
-        );
-      })
-      .slice(0, 40);
-  }, [clients, assignedIds, search]);
-
-  const assign = async (clientId: string) => {
-    if (!user) return;
-    setBusy(clientId);
+  const mutate = async (body: Record<string, unknown>, success: string) => {
+    setBusy(String(body.legal_matter_id || body.access_id || body.client_id || 'save'));
     try {
-      const { data, error } = await invokeSecureFunction('solicitor-portal-admin', {
-        operation: 'upsert_assignment',
-        solicitor_user_id: user.id,
-        client_id: clientId,
-        permissions: null,
-      });
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
-      toast.success('Client assigned');
-      await load();
-      onChanged?.();
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to assign client');
-    } finally {
-      setBusy(null);
-    }
+      const { data, error } = await invokeSecureFunction('solicitor-portal-admin', body);
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+      toast.success(success); setEditing(null); await load(); onChanged?.();
+    } catch (error: any) { toast.error(error.message || 'Matter access update failed'); }
+    finally { setBusy(null); }
   };
 
-  const unassign = async (clientId: string) => {
-    if (!user) return;
-    setBusy(clientId);
-    try {
-      const { data, error } = await invokeSecureFunction('solicitor-portal-admin', {
-        operation: 'delete_assignment',
-        solicitor_user_id: user.id,
-        client_id: clientId,
-      });
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
-      toast.success('Client unassigned');
-      if (editing?.client_id === clientId) setEditing(null);
-      await load();
-      onChanged?.();
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to unassign client');
-    } finally {
-      setBusy(null);
-    }
-  };
+  const updateDecision = (key: string, level: 'view' | 'edit' | 'delete', decision: Decision) =>
+    setMatrix(current => ({ ...current, [key]: { ...current[key], [level]: decision } }));
 
-  const openMatrix = (row: AssignmentRow) => {
-    setEditing(row);
-    setMatrix(normalizeSolicitorMatrix(row.permissions));
-  };
-
-  const saveMatrix = async () => {
-    if (!user || !editing) return;
-    setBusy(editing.client_id);
-    try {
-      const { data, error } = await invokeSecureFunction('solicitor-portal-admin', {
-        operation: 'upsert_assignment',
-        solicitor_user_id: user.id,
-        client_id: editing.client_id,
-        permissions: matrix,
-      });
-      if (error) throw new Error(error.message);
-      if (data?.error) throw new Error(data.error);
-      toast.success('Permissions updated');
-      setEditing(null);
-      await load();
-      onChanged?.();
-    } catch (e: any) {
-      toast.error(e.message || 'Failed to save permissions');
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[90vh] max-w-4xl flex-col">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Users className="h-4 w-4 text-primary" />
-            Client Assignments
-          </DialogTitle>
-          <DialogDescription>
-            {user ? <>Clients that <span className="font-medium text-foreground">{user.name}</span> can act for in the Solicitor Portal.</> : null}
-          </DialogDescription>
-        </DialogHeader>
-
-        {loading ? (
-          <div className="flex flex-1 items-center justify-center">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
-        ) : editing ? (
-          <>
-            <ScrollArea className="flex-1 pr-3">
-              <div className="space-y-4 pb-2">
-                <div className="rounded-lg border border-border bg-muted/30 px-4 py-3">
-                  <div className="text-sm font-medium">{editing.client_name}</div>
-                  <p className="text-xs text-muted-foreground">
-                    Per-client overrides. These are merged with the solicitor&apos;s baseline permissions.
-                  </p>
-                </div>
-                <SolicitorPermissionMatrixEditor matrix={matrix} onChange={setMatrix} />
-              </div>
-            </ScrollArea>
-            <div className="flex justify-end gap-2 border-t border-border pt-3">
-              <Button variant="outline" onClick={() => setEditing(null)}>Back</Button>
-              <Button onClick={saveMatrix} disabled={!!busy}>Save permissions</Button>
-            </div>
-          </>
-        ) : (
-          <ScrollArea className="flex-1 pr-3">
-            <div className="space-y-6 pb-2">
-              <div className="space-y-2">
-                <div className="text-sm font-semibold">
-                  Assigned clients <Badge variant="secondary" className="ml-1">{assignments.length}</Badge>
-                </div>
-                {assignments.length === 0 ? (
-                  <div className="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
-                    No clients assigned yet. Assign one below to give this solicitor a matter to work on.
-                  </div>
-                ) : (
-                  <div className="overflow-hidden rounded-lg border">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Client</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Overrides</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {assignments.map(a => (
-                          <TableRow key={a.id}>
-                            <TableCell>
-                              <div className="font-medium">{a.client_name}</div>
-                              <div className="text-xs text-muted-foreground">{a.client_email || '—'}</div>
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground">{a.deal_status || '—'}</TableCell>
-                            <TableCell>
-                              <Badge variant={a.permissions ? 'default' : 'outline'} className="text-xs">
-                                {a.permissions ? 'Custom' : 'Baseline only'}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <div className="flex justify-end gap-2">
-                                <Button variant="outline" size="sm" onClick={() => openMatrix(a)} className="gap-1">
-                                  <Settings2 className="h-3 w-3" /> Permissions
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  disabled={busy === a.client_id}
-                                  onClick={() => unassign(a.client_id)}
-                                  className="text-destructive hover:text-destructive"
-                                >
-                                  <Trash2 className="h-3 w-3" />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <div className="text-sm font-semibold">Assign a client</div>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    placeholder="Search clients by name or email..."
-                    className="pl-9"
-                  />
-                </div>
-                <div className="max-h-64 space-y-1 overflow-y-auto rounded-lg border p-2">
-                  {candidates.length === 0 ? (
-                    <div className="py-6 text-center text-sm text-muted-foreground">No matching unassigned clients.</div>
-                  ) : candidates.map(c => (
-                    <div key={c.id} className="flex items-center justify-between rounded-md px-2 py-1.5 hover:bg-muted/50">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{c.primary_contact_name || c.primary_email || 'Unnamed client'}</div>
-                        <div className="truncate text-xs text-muted-foreground">{c.primary_email || '—'}</div>
-                      </div>
-                      <Button size="sm" variant="outline" disabled={busy === c.id} onClick={() => assign(c.id)} className="gap-1">
-                        <Plus className="h-3 w-3" /> Assign
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </ScrollArea>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
+  return <Dialog open={open} onOpenChange={onOpenChange}>
+    <DialogContent className="flex h-[90vh] max-w-5xl flex-col">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2"><Users className="h-4 w-4 text-primary" />Matter Access</DialogTitle>
+        <DialogDescription>{user ? <>Explicit matters accessible to <span className="font-medium text-foreground">{user.name}</span>. Client identity never grants access to future matters.</> : null}</DialogDescription>
+      </DialogHeader>
+      {loading ? <div className="flex flex-1 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin" /></div> : editing ? <>
+        <ScrollArea className="flex-1 pr-3"><div className="space-y-4">
+          <div className="rounded-lg border bg-muted/30 p-3"><p className="font-medium">{editing.matter?.title || editing.legal_matter_id}</p><p className="text-xs text-muted-foreground">Matter decisions override the baseline. Deny always reduces a baseline allow.</p></div>
+          {SOLICITOR_PERMISSION_AREAS.map(area => <div key={area.key} className="grid grid-cols-[1fr_repeat(3,120px)] items-center gap-2 border-b pb-2">
+            <div><p className="text-sm font-medium">{area.label}</p><p className="text-xs text-muted-foreground">{area.hint}</p></div>
+            {(['view','edit','delete'] as const).map(level => <Select key={level} value={matrix[area.key][level]} onValueChange={value => updateDecision(area.key, level, value as Decision)}><SelectTrigger aria-label={`${area.label} ${level}`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="inherit">Inherit</SelectItem><SelectItem value="allow">Allow</SelectItem><SelectItem value="deny">Deny</SelectItem></SelectContent></Select>)}</div>)}
+        </div></ScrollArea>
+        <div className="flex justify-end gap-2 border-t pt-3"><Button variant="outline" onClick={() => setEditing(null)}>Back</Button><Button disabled={!!busy} onClick={() => void mutate({ operation: 'upsert_matter_access', solicitor_user_id: user?.id, legal_matter_id: editing.legal_matter_id, access_role: editing.access_role, valid_from: editing.valid_from, valid_until: editing.valid_until, permissions: matrix }, 'Matter permissions saved')}>Save policy</Button></div>
+      </> : <ScrollArea className="flex-1 pr-3"><div className="space-y-6">
+        <section className="space-y-2"><div className="text-sm font-semibold">Granted matters <Badge variant="secondary">{access.filter(row => !row.revoked_at).length}</Badge></div>
+          {access.length === 0 ? <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">No matter access. Grant an existing matter below; future matters are never included automatically.</div> : access.map(row => <div key={row.id} className="flex items-center justify-between rounded-lg border p-3">
+            <div><div className="flex items-center gap-2"><span className="font-medium">{row.matter?.matter_reference || row.matter?.title || 'Unknown matter'}</span>{row.revoked_at && <Badge variant="destructive">Revoked</Badge>}<Badge variant="outline">{row.access_role}</Badge></div><p className="text-xs text-muted-foreground">{row.client_name || 'Unknown client'} · {row.matter?.property_address || 'No property'} · Practice: {user?.firm_name || row.matter?.firm_id || '—'}</p><p className="text-xs text-muted-foreground">Responsible: {row.matter?.assigned_solicitor_user_id || 'Unassigned'} · From {new Date(row.valid_from).toLocaleDateString()} {row.valid_until ? `to ${new Date(row.valid_until).toLocaleDateString()}` : 'without expiry'} · Policy: matter override + baseline</p></div>
+            {!row.revoked_at && <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => { setEditing(row); setMatrix(normalize(row.permissions)); }}><Settings2 className="mr-1 h-3 w-3" />Policy</Button><Button size="sm" variant="ghost" className="text-destructive" onClick={() => void mutate({ operation: 'revoke_matter_access', access_id: row.id, reason: 'Revoked in Command Centre' }, 'Matter access revoked')}><ShieldX className="h-3 w-3" /></Button></div>}
+          </div>)}</section>
+        <section className="space-y-2"><div className="text-sm font-semibold">Grant an existing matter</div><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input className="pl-9" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search client, matter reference or property" /></div>
+          {candidates.length === 0 ? <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">No matching ungranted matters.</p> : candidates.map(matter => <div key={matter.id} className="flex items-center justify-between rounded-lg border p-3"><div><p className="font-medium">{matter.matter_reference || matter.title}</p><p className="text-xs text-muted-foreground">{matter.client_name} · {matter.property_address || 'No property'} · Responsible: {matter.assigned_solicitor_user_id || 'Unassigned'}</p></div><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => void mutate({ operation: 'grant_all_current_client_matters', solicitor_user_id: user?.id, client_id: matter.client_id }, 'Access granted to all current client matters')}>Current client matters</Button><Button size="sm" onClick={() => void mutate({ operation: 'upsert_matter_access', solicitor_user_id: user?.id, legal_matter_id: matter.id, permissions: emptyMatrix() }, 'Matter access granted')}><Plus className="mr-1 h-3 w-3" />Grant matter</Button></div></div>)}
+        </section>
+      </div></ScrollArea>}
+    </DialogContent>
+  </Dialog>;
 }

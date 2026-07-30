@@ -76,6 +76,17 @@ Deno.serve(async (req) => {
     if (!assignment) return json({ error: 'Not assigned' }, 403);
 
     if (op === 'list_tasks') {
+      if (Deno.env.get('CASE_RUNWAY_V1') !== 'false') {
+        const { data: link } = await supabase.from('transaction_case_links').select('case_id').eq('purchase_file_id', fileId).maybeSingle();
+        if (link?.case_id) {
+          const { data: runway, error } = await supabase.rpc('get_case_runway', { _case_id: link.case_id, _audience: 'finance' });
+          if (error) return json({ error: error.message }, 500);
+          const list = runway?.tasks || [];
+          const required = list.filter((t: any) => t.is_required && t.status !== 'not_applicable');
+          const completed = required.filter((t: any) => t.status === 'completed').length;
+          return json({ case_id: link.case_id, tasks: list, milestones: runway?.milestones || [], progress: { total: required.length, completed, percent: required.length ? Math.round(completed / required.length * 100) : 0 }, settlement_date: file.settlement_date });
+        }
+      }
       const { data: tasks } = await supabase
         .from('purchase_file_settlement_tasks')
         .select('*')
@@ -116,6 +127,21 @@ Deno.serve(async (req) => {
       }
 
       if (taskId) {
+        if (Deno.env.get('CASE_RUNWAY_V1') !== 'false' && body.expected_version !== undefined) {
+          const { data: caseLink } = await supabase.from('transaction_case_links').select('case_id').eq('purchase_file_id', fileId).maybeSingle();
+          const { data: shared } = caseLink?.case_id
+            ? await supabase.from('case_tasks').select('id').eq('id', taskId).eq('case_id', caseLink.case_id).maybeSingle()
+            : { data: null };
+          if (shared) {
+            const { data, error } = await supabase.rpc('update_case_task_status', {
+              _task_id: taskId, _expected_version: Number(body.expected_version), _status: String(body.status),
+              _actor_type: 'finance_user', _actor_id: portalUser.id,
+              _reason: String(body.reason || 'Finance settlement runway update'), _completion_evidence: body.completion_evidence || {},
+            });
+            if (error) return json({ error: error.message }, /STALE_VERSION|INVALID_TASK_STATUS|TASK_DOMAIN_FORBIDDEN/.test(error.message || '') ? 409 : 400);
+            return json({ task: data });
+          }
+        }
         const { data, error } = await supabase
           .from('purchase_file_settlement_tasks')
           .update(patch).eq('id', taskId).eq('purchase_file_id', fileId)

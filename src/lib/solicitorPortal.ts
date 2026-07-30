@@ -1,9 +1,8 @@
 /**
  * Solicitor Portal client-side API wrapper.
  *
- * Uses the portal-scoped HttpOnly cookie issued by the solicitor auth functions,
- * keeping the Command Centre, Client Portal, Finance Portal and Solicitor Portal
- * sessions separate without exposing bearer credentials to JavaScript.
+ * Mirrors the Finance Portal transport: cookie-authenticated edge invocation using an HttpOnly portal-scoped session so the Command Centre,
+ * Client Portal, Finance Portal and Solicitor Portal never share a session.
  */
 
 const SUPABASE_URL = 'https://dduzbchuswwbefdunfct.supabase.co';
@@ -23,12 +22,16 @@ export interface SolicitorPortalUser {
   has_accepted_terms: boolean;
   has_completed_onboarding: boolean;
   must_change_password: boolean;
+  current_terms_version: string | null;
+  has_accepted_current_terms: boolean;
+  has_completed_mandatory_onboarding: boolean;
 }
 
 export async function invokeSolicitorFunction<T = any>(
   functionName: string,
   body: Record<string, unknown> = {},
-): Promise<{ data: T | null; error: { message: string } | null }> {
+  options: { signal?: AbortSignal } = {},
+): Promise<{ data: T | null; error: { message: string; code?: string; status?: number } | null }> {
   try {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
       method: 'POST',
@@ -36,14 +39,16 @@ export async function invokeSolicitorFunction<T = any>(
         'Content-Type': 'application/json',
         apikey: SUPABASE_ANON_KEY,
         Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        'X-Portal-Request': 'solicitor-portal',
       },
       credentials: 'include',
+      signal: options.signal,
       body: JSON.stringify(body),
     });
 
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      return { data, error: { message: (data as any)?.error || `HTTP ${response.status}` } };
+      return { data, error: { message: (data as any)?.error || `HTTP ${response.status}`, code: (data as any)?.code, status: response.status } };
     }
     return { data, error: null };
   } catch (error: any) {

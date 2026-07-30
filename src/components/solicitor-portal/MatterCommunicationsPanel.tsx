@@ -36,8 +36,8 @@ function timestamp(value: string): string {
 /**
  * Matter conversation workspace (Solicitor Portal — Phase 6).
  *
- * One tab per counterparty. Client and finance conversations mirror into their
- * respective portals; firm-internal notes never leave the practice.
+ * One canonical participant-based conversation per counterparty. Firm-internal
+ * messages never leave the practice.
  */
 export function MatterCommunicationsPanel({ matterId, canEdit, onError }: MatterCommunicationsPanelProps) {
   const [scope, setScope] = useState<LegalThreadScope>('solicitor_npc');
@@ -183,7 +183,7 @@ export function MatterCommunicationsPanel({ matterId, canEdit, onError }: Matter
               <p className="text-xs text-muted-foreground">
                 {scope === 'firm_internal'
                   ? 'Private note — stays inside your practice.'
-                  : 'Delivered instantly and mirrored to the recipient’s portal.'}
+                  : 'Saved once and immediately visible to authorised conversation participants.'}
               </p>
               <Button size="sm" onClick={() => void send()} disabled={sending || !draft.trim()}>
                 {sending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden /> : <Send className="mr-2 h-4 w-4" aria-hidden />}

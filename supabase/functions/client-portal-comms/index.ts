@@ -118,7 +118,7 @@ Deno.serve(async (req) => {
       const limit = Math.min(Number(body.limit) || 100, 300);
       const channels: string[] | null = Array.isArray(body.channels) ? body.channels : null;
 
-      const [portalMsgs, ghlConv, outbound, financeThreads] = await Promise.all([
+      const [portalMsgs, ghlConv, outbound, financeThreads, canonicalConversations] = await Promise.all([
         supabase
           .from('client_portal_messages')
           .select('id, sender_type, sender_name, message, is_read, read_at, created_at, visibility_scope, thread_type, allocation_status')
@@ -145,6 +145,9 @@ Deno.serve(async (req) => {
           .in('visibility_scope', ['finance_client_with_command_visibility', 'command_client_with_finance_allocated'])
           .order('last_message_at', { ascending: false, nullsFirst: false })
           .limit(25),
+        Deno.env.get('CANONICAL_CONVERSATIONS_V2') !== 'false'
+          ? supabase.rpc('get_participant_conversations', { _participant_type: 'client_user', _participant_id: portalUser.id, _case_id: null })
+          : Promise.resolve({ data: [] }),
       ]);
 
       let financeMsgs: any[] = [];
@@ -175,6 +178,10 @@ Deno.serve(async (req) => {
       }
 
       const unified: any[] = [];
+      for (const entry of (canonicalConversations.data || []).filter((e:any)=>e.conversation.scope==='client_solicitor')) {
+        const { data: canonicalMessages } = await supabase.rpc('get_conversation_messages', { _conversation_id: entry.conversation.id, _participant_type:'client_user', _participant_id:portalUser.id, _limit:limit, _before:null });
+        for (const m of canonicalMessages || []) unified.push({ id:m.id, kind:'legal', channel:'legal', conversation_id:entry.conversation.id, direction:m.sender_type==='client_user'?'outbound':'inbound', sender_name:m.sender_name, body:m.body, subject:entry.conversation.subject, created_at:m.created_at, is_read:m.sender_type==='client_user'||Number(entry.unread_count||0)===0 });
+      }
       for (const m of portalMsgs.data ?? []) {
         unified.push({
           id: `portal:${m.id}`,
@@ -245,6 +252,18 @@ Deno.serve(async (req) => {
       filtered.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
       return json({ success: true, messages: filtered.slice(0, limit) });
+    }
+
+    if (operation === 'send_legal_reply') {
+      const conversationId=String(body.conversation_id||''); const message=String(body.message||'').trim();
+      if(!conversationId||!message)return json({error:'conversation_id and message required',success:false},400);
+      const { data: conversation }=await supabase.from('conversations').select('id,case_id,scope').eq('id',conversationId).eq('scope','client_solicitor').maybeSingle();
+      if(!conversation)return json({error:'Conversation not found',success:false},404);
+      const { data: ownedCase }=await supabase.from('transaction_cases').select('id').eq('id',conversation.case_id).eq('client_id',clientId).maybeSingle();
+      if(!ownedCase)return json({error:'Conversation not found',success:false},404);
+      const { data: inserted,error }=await supabase.rpc('post_conversation_message',{_conversation_id:conversationId,_actor_type:'client_user',_actor_id:portalUser.id,_body:message,_idempotency_key:String(body.idempotency_key||`client:${portalUser.id}:${crypto.randomUUID()}`),_sender_name:portalUser.email||'Client',_reply_to:body.reply_to_message_id||null});
+      if(error)return json({error:error.message,success:false},/CONVERSATION_ACCESS_DENIED/.test(error.message||'')?403:400);
+      return json({success:true,message:inserted});
     }
 
     if (operation === 'send_finance_reply') {
