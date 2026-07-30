@@ -220,6 +220,28 @@ Deno.serve(async (req) => {
     // ───────────────────────── WRITES ─────────────────────────
     if (operation === 'create_matter') {
       if (!body.client_id) return json({ error: 'A client is required' }, 400);
+
+      if (body.purchase_file_id) {
+        const { data: pf } = await supabase.from('purchase_files')
+          .select('id, client_id, legal_matter_id').eq('id', body.purchase_file_id).maybeSingle();
+        if (!pf) return json({ error: 'Purchase file not found' }, 404);
+        if (pf.client_id !== body.client_id) {
+          return json({ error: 'The purchase file belongs to a different client' }, 400);
+        }
+        if (pf.legal_matter_id) {
+          return json({ error: 'That purchase file is already linked to another matter' }, 409);
+        }
+      }
+
+      if (body.client_deal_id) {
+        const { data: deal } = await supabase.from('client_deals')
+          .select('id, client_id').eq('id', body.client_deal_id).maybeSingle();
+        if (!deal) return json({ error: 'Client deal not found' }, 404);
+        if (deal.client_id !== body.client_id) {
+          return json({ error: 'The client deal belongs to a different client' }, 400);
+        }
+      }
+
       const payload = buildMatterPayload(body, { isCreate: true });
 
       const insert: Record<string, unknown> = {
@@ -337,6 +359,18 @@ Deno.serve(async (req) => {
       if (!body.matter_id) return json({ error: 'matter_id is required' }, 400);
       const link = operation === 'link_deal';
       if (link && !body.client_deal_id) return json({ error: 'client_deal_id is required' }, 400);
+
+      if (link) {
+        const { data: deal } = await supabase.from('client_deals')
+          .select('id, client_id').eq('id', body.client_deal_id).maybeSingle();
+        if (!deal) return json({ error: 'Client deal not found' }, 404);
+        const { data: matter } = await supabase.from('legal_matters')
+          .select('id, client_id').eq('id', body.matter_id).maybeSingle();
+        if (!matter) return json({ error: 'Matter not found' }, 404);
+        if (deal.client_id !== matter.client_id) {
+          return json({ error: 'The client deal belongs to a different client' }, 400);
+        }
+      }
 
       const { data, error } = await supabase.from('legal_matters')
         .update({ client_deal_id: link ? body.client_deal_id : null, updated_at: new Date().toISOString() })
