@@ -430,6 +430,23 @@ Deno.serve(async (req) => {
         payload.benefit_disclosed_at = new Date().toISOString();
       }
 
+      // Re-gate whenever the assignment changes on this edit.
+      if ('assigned_finance_user_id' in payload &&
+          payload.assigned_finance_user_id &&
+          payload.assigned_finance_user_id !== existing.assigned_finance_user_id) {
+        const gate = await gateLoanWriterAssignment(supabase, {
+          direction: existing.direction,
+          financeUserId: payload.assigned_finance_user_id as string,
+          financeAgentContactId: (payload.finance_agent_contact_id as string) ?? existing.finance_agent_contact_id ?? null,
+          undertakingId: (body.loan_writer_undertaking_id as string) ?? null,
+        });
+        if (!gate.ok) return json({ error: gate.error, message: gate.message }, corsHeaders, 422);
+        if (gate.undertaking) {
+          payload.loan_writer_undertaking_id = gate.undertaking.id;
+          payload.assigned_loan_writer_name = payload.assigned_loan_writer_name || gate.undertaking.writer_full_name;
+        }
+      }
+
       const changedKeys = Object.keys(payload).filter(
         (k) => String(existing[k] ?? '') !== String(payload[k] ?? ''),
       );
