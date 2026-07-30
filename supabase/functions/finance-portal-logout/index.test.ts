@@ -13,6 +13,12 @@ describe('finance portal logout session termination', () => {
 
   it('uses the shared cookie-aware extractor and clears the finance cookie', () => {
     expect(functionSource).toContain('extractFinanceSessionToken(req.headers, body)');
-    expect(functionSource).toContain("'Set-Cookie': createClearFinanceSessionCookie()");
+    expect(functionSource).toContain("headers.append('Set-Cookie', createClearFinanceSessionCookie())");
+  });
+
+  it('only accepts POST requests and enforces CSRF protection', () => {
+    expect(functionSource).toContain("if (req.method !== 'POST')");
+    expect(functionSource).toContain('const csrf = enforceCsrf(req)');
+    expect(functionSource).toContain('if (!csrf.ok) return csrfDenied(corsHeaders, csrf)');
   });
 });
