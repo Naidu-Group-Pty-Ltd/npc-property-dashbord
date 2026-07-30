@@ -4216,6 +4216,56 @@ export type Database = {
           },
         ]
       }
+      client_legal_case_summary: {
+        Row: {
+          case_id: string | null
+          client_id: string
+          friendly_status: string
+          id: string
+          legal_matter_id: string
+          matter_reference: string | null
+          next_client_action: string | null
+          property_address: string | null
+          settlement_date: string | null
+          shared_summary: string | null
+          updated_at: string
+        }
+        Insert: {
+          case_id?: string | null
+          client_id: string
+          friendly_status: string
+          id?: string
+          legal_matter_id: string
+          matter_reference?: string | null
+          next_client_action?: string | null
+          property_address?: string | null
+          settlement_date?: string | null
+          shared_summary?: string | null
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string | null
+          client_id?: string
+          friendly_status?: string
+          id?: string
+          legal_matter_id?: string
+          matter_reference?: string | null
+          next_client_action?: string | null
+          property_address?: string | null
+          settlement_date?: string | null
+          shared_summary?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_legal_case_summary_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: true
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_liabilities: {
         Row: {
           client_id: string
@@ -13832,6 +13882,7 @@ export type Database = {
           lot_plan: string | null
           matter_reference: string | null
           matter_type: Database["public"]["Enums"]["legal_matter_type"]
+          npc_internal_notes: string | null
           opened_at: string
           other_side_firm: string | null
           pexa_workspace_id: string | null
@@ -13885,6 +13936,7 @@ export type Database = {
           lot_plan?: string | null
           matter_reference?: string | null
           matter_type?: Database["public"]["Enums"]["legal_matter_type"]
+          npc_internal_notes?: string | null
           opened_at?: string
           other_side_firm?: string | null
           pexa_workspace_id?: string | null
@@ -13938,6 +13990,7 @@ export type Database = {
           lot_plan?: string | null
           matter_reference?: string | null
           matter_type?: Database["public"]["Enums"]["legal_matter_type"]
+          npc_internal_notes?: string | null
           opened_at?: string
           other_side_firm?: string | null
           pexa_workspace_id?: string | null
@@ -17462,6 +17515,90 @@ export type Database = {
           welcome_banner_url?: string | null
           welcome_message?: string | null
           welcome_title?: string | null
+        }
+        Relationships: []
+      }
+      portal_terms_acceptances: {
+        Row: {
+          accepted_at: string
+          id: string
+          ip_hash: string | null
+          portal: string
+          solicitor_user_id: string
+          terms_version_id: string
+          user_agent_hash: string | null
+        }
+        Insert: {
+          accepted_at?: string
+          id?: string
+          ip_hash?: string | null
+          portal: string
+          solicitor_user_id: string
+          terms_version_id: string
+          user_agent_hash?: string | null
+        }
+        Update: {
+          accepted_at?: string
+          id?: string
+          ip_hash?: string | null
+          portal?: string
+          solicitor_user_id?: string
+          terms_version_id?: string
+          user_agent_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_terms_acceptances_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portal_terms_acceptances_terms_version_id_fkey"
+            columns: ["terms_version_id"]
+            isOneToOne: false
+            referencedRelation: "portal_terms_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      portal_terms_versions: {
+        Row: {
+          content_markdown: string
+          created_at: string
+          created_by: string | null
+          effective_at: string
+          id: string
+          portal: string
+          published_at: string
+          retired_at: string | null
+          title: string
+          version: string
+        }
+        Insert: {
+          content_markdown: string
+          created_at?: string
+          created_by?: string | null
+          effective_at?: string
+          id?: string
+          portal: string
+          published_at?: string
+          retired_at?: string | null
+          title: string
+          version: string
+        }
+        Update: {
+          content_markdown?: string
+          created_at?: string
+          created_by?: string | null
+          effective_at?: string
+          id?: string
+          portal?: string
+          published_at?: string
+          retired_at?: string | null
+          title?: string
+          version?: string
         }
         Relationships: []
       }
@@ -21307,6 +21444,51 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "solicitor_notification_prefs_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solicitor_onboarding_steps: {
+        Row: {
+          completed_at: string | null
+          completed_session_id: string | null
+          created_at: string
+          id: string
+          mandatory: boolean
+          solicitor_user_id: string
+          step_key: string
+        }
+        Insert: {
+          completed_at?: string | null
+          completed_session_id?: string | null
+          created_at?: string
+          id?: string
+          mandatory?: boolean
+          solicitor_user_id: string
+          step_key: string
+        }
+        Update: {
+          completed_at?: string | null
+          completed_session_id?: string | null
+          created_at?: string
+          id?: string
+          mandatory?: boolean
+          solicitor_user_id?: string
+          step_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_onboarding_steps_completed_session_id_fkey"
+            columns: ["completed_session_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_onboarding_steps_solicitor_user_id_fkey"
             columns: ["solicitor_user_id"]
             isOneToOne: false
             referencedRelation: "solicitor_portal_users"
