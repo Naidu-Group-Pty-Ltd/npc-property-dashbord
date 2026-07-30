@@ -12645,6 +12645,93 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_matter_critical_dates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          date_type: Database["public"]["Enums"]["legal_critical_date_type"]
+          due_date: string | null
+          due_time: string | null
+          extended_from_date: string | null
+          id: string
+          is_key: boolean
+          label: string
+          last_reminder_sent_at: string | null
+          legal_matter_id: string
+          notes: string | null
+          owner: string
+          reminder_days: number[]
+          satisfied_at: string | null
+          satisfied_by_solicitor_user_id: string | null
+          satisfied_by_type: string | null
+          source: string
+          status: Database["public"]["Enums"]["legal_critical_date_status"]
+          updated_at: string
+          visible_to_client: boolean
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          date_type?: Database["public"]["Enums"]["legal_critical_date_type"]
+          due_date?: string | null
+          due_time?: string | null
+          extended_from_date?: string | null
+          id?: string
+          is_key?: boolean
+          label: string
+          last_reminder_sent_at?: string | null
+          legal_matter_id: string
+          notes?: string | null
+          owner?: string
+          reminder_days?: number[]
+          satisfied_at?: string | null
+          satisfied_by_solicitor_user_id?: string | null
+          satisfied_by_type?: string | null
+          source?: string
+          status?: Database["public"]["Enums"]["legal_critical_date_status"]
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          date_type?: Database["public"]["Enums"]["legal_critical_date_type"]
+          due_date?: string | null
+          due_time?: string | null
+          extended_from_date?: string | null
+          id?: string
+          is_key?: boolean
+          label?: string
+          last_reminder_sent_at?: string | null
+          legal_matter_id?: string
+          notes?: string | null
+          owner?: string
+          reminder_days?: number[]
+          satisfied_at?: string | null
+          satisfied_by_solicitor_user_id?: string | null
+          satisfied_by_type?: string | null
+          source?: string
+          status?: Database["public"]["Enums"]["legal_critical_date_status"]
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_critical_dates_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_critical_dates_satisfied_by_solicitor_user_id_fkey"
+            columns: ["satisfied_by_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       legal_matter_parties: {
         Row: {
           address: string | null
@@ -12697,6 +12784,78 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "legal_matter_parties_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matter_settlement_tasks: {
+        Row: {
+          blocked_reason: string | null
+          completed_at: string | null
+          completed_by_solicitor_user_id: string | null
+          completed_by_type: string | null
+          created_at: string
+          due_date: string | null
+          id: string
+          label: string
+          legal_matter_id: string
+          notes: string | null
+          offset_days: number | null
+          owner: string
+          sequence: number
+          status: Database["public"]["Enums"]["legal_settlement_task_status"]
+          task_key: Database["public"]["Enums"]["legal_settlement_task_key"]
+          updated_at: string
+        }
+        Insert: {
+          blocked_reason?: string | null
+          completed_at?: string | null
+          completed_by_solicitor_user_id?: string | null
+          completed_by_type?: string | null
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          label: string
+          legal_matter_id: string
+          notes?: string | null
+          offset_days?: number | null
+          owner?: string
+          sequence?: number
+          status?: Database["public"]["Enums"]["legal_settlement_task_status"]
+          task_key: Database["public"]["Enums"]["legal_settlement_task_key"]
+          updated_at?: string
+        }
+        Update: {
+          blocked_reason?: string | null
+          completed_at?: string | null
+          completed_by_solicitor_user_id?: string | null
+          completed_by_type?: string | null
+          created_at?: string
+          due_date?: string | null
+          id?: string
+          label?: string
+          legal_matter_id?: string
+          notes?: string | null
+          offset_days?: number | null
+          owner?: string
+          sequence?: number
+          status?: Database["public"]["Enums"]["legal_settlement_task_status"]
+          task_key?: Database["public"]["Enums"]["legal_settlement_task_key"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_settlement_tasks_completed_by_solicitor_user__fkey"
+            columns: ["completed_by_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_settlement_tasks_legal_matter_id_fkey"
             columns: ["legal_matter_id"]
             isOneToOne: false
             referencedRelation: "legal_matters"
@@ -22418,6 +22577,10 @@ export type Database = {
       }
       resume_migration_job: { Args: { p_job_id: string }; Returns: undefined }
       retry_failed_bulk_items: { Args: { p_job_id: string }; Returns: number }
+      seed_legal_matter_settlement_tasks: {
+        Args: { _matter_id: string }
+        Returns: number
+      }
       seed_sample_schools: { Args: never; Returns: undefined }
       seed_settlement_runway: { Args: { _file_id: string }; Returns: undefined }
       template_finalize: {
@@ -22815,6 +22978,30 @@ export type Database = {
         | "signed"
         | "voided"
         | "expired"
+      legal_critical_date_status:
+        | "pending"
+        | "at_risk"
+        | "satisfied"
+        | "waived"
+        | "extended"
+        | "missed"
+        | "not_applicable"
+      legal_critical_date_type:
+        | "contract_date"
+        | "exchange"
+        | "cooling_off_expiry"
+        | "deposit_due"
+        | "balance_deposit_due"
+        | "finance_approval"
+        | "building_pest"
+        | "strata_report"
+        | "survey"
+        | "sunset_date"
+        | "notice_to_complete"
+        | "stamp_duty_due"
+        | "settlement"
+        | "pexa_lodgement"
+        | "other"
       legal_matter_status:
         | "instructed"
         | "contract_review"
@@ -22849,6 +23036,27 @@ export type Database = {
         | "trustee"
         | "accountant"
         | "other"
+      legal_settlement_task_key:
+        | "title_search"
+        | "contract_review"
+        | "requisitions_on_title"
+        | "transfer_prepared"
+        | "stamp_duty_assessed"
+        | "stamp_duty_paid"
+        | "discharge_authority"
+        | "pexa_workspace"
+        | "settlement_figures"
+        | "adjustments_agreed"
+        | "final_inspection"
+        | "funds_confirmed"
+        | "settlement_booked"
+        | "post_settlement_notices"
+      legal_settlement_task_status:
+        | "not_started"
+        | "in_progress"
+        | "blocked"
+        | "complete"
+        | "not_applicable"
       lender_doc_status: "required" | "received" | "verified" | "waived"
       lender_loan_purpose: "OWNER_OCCUPIED" | "INVESTMENT"
       lender_repayment_type: "PRINCIPAL_AND_INTEREST" | "INTEREST_ONLY"
@@ -23445,6 +23653,32 @@ export const Constants = {
         "voided",
         "expired",
       ],
+      legal_critical_date_status: [
+        "pending",
+        "at_risk",
+        "satisfied",
+        "waived",
+        "extended",
+        "missed",
+        "not_applicable",
+      ],
+      legal_critical_date_type: [
+        "contract_date",
+        "exchange",
+        "cooling_off_expiry",
+        "deposit_due",
+        "balance_deposit_due",
+        "finance_approval",
+        "building_pest",
+        "strata_report",
+        "survey",
+        "sunset_date",
+        "notice_to_complete",
+        "stamp_duty_due",
+        "settlement",
+        "pexa_lodgement",
+        "other",
+      ],
       legal_matter_status: [
         "instructed",
         "contract_review",
@@ -23481,6 +23715,29 @@ export const Constants = {
         "trustee",
         "accountant",
         "other",
+      ],
+      legal_settlement_task_key: [
+        "title_search",
+        "contract_review",
+        "requisitions_on_title",
+        "transfer_prepared",
+        "stamp_duty_assessed",
+        "stamp_duty_paid",
+        "discharge_authority",
+        "pexa_workspace",
+        "settlement_figures",
+        "adjustments_agreed",
+        "final_inspection",
+        "funds_confirmed",
+        "settlement_booked",
+        "post_settlement_notices",
+      ],
+      legal_settlement_task_status: [
+        "not_started",
+        "in_progress",
+        "blocked",
+        "complete",
+        "not_applicable",
       ],
       lender_doc_status: ["required", "received", "verified", "waived"],
       lender_loan_purpose: ["OWNER_OCCUPIED", "INVESTMENT"],

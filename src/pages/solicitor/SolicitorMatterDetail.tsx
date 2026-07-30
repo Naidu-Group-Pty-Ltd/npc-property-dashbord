@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, Building2, CalendarClock, Contact, FileText, Landmark, Loader2,
-  Pencil, Plus, Save, ShieldAlert, Trash2, Users,
+  Pencil, Plus, Route, Save, ShieldAlert, Trash2, Users,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -27,6 +27,15 @@ import {
   type LegalMatter, type LegalMatterParty, type LegalMatterStatus, type LegalMatterStatusEvent,
   type LegalPartyRole,
 } from '@/lib/legalMatters';
+import {
+  CriticalDatesPanel, type DateDraft,
+} from '@/components/solicitor-portal/CriticalDatesPanel';
+import {
+  SettlementRunwayPanel, type TaskDraft,
+} from '@/components/solicitor-portal/SettlementRunwayPanel';
+import type {
+  LegalCriticalDate, LegalCriticalDateStatus, LegalSettlementTask, RunwaySummary,
+} from '@/lib/legalCriticalDates';
 
 type PermissionMatrix = Record<string, { view?: boolean; edit?: boolean; delete?: boolean }>;
 
@@ -69,6 +78,11 @@ export default function SolicitorMatterDetail() {
   const [nextStatus, setNextStatus] = useState<LegalMatterStatus>('instructed');
   const [statusReason, setStatusReason] = useState('');
   const [partyDialog, setPartyDialog] = useState<typeof EMPTY_PARTY | null>(null);
+  const [criticalDates, setCriticalDates] = useState<LegalCriticalDate[]>([]);
+  const [runwayTasks, setRunwayTasks] = useState<LegalSettlementTask[]>([]);
+  const [runway, setRunway] = useState<RunwaySummary | null>(null);
+  const [datesSaving, setDatesSaving] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   const canEdit = !!perms.matters?.edit;
   const canEditParties = !!perms.parties?.edit;
@@ -91,9 +105,88 @@ export default function SolicitorMatterDetail() {
     setHistory((data.status_history || []) as LegalMatterStatusEvent[]);
     setFinance(data.finance_snapshot ?? null);
     setPerms((data.permissions || {}) as PermissionMatrix);
+    setCriticalDates((data.critical_dates || []) as LegalCriticalDate[]);
+    setRunwayTasks((data.settlement_tasks || []) as LegalSettlementTask[]);
+    setRunway((data.runway ?? null) as RunwaySummary | null);
     setNextStatus((data.matter as LegalMatter).status);
     setLoading(false);
   }, [matterId]);
+
+  const callMatters = useCallback(
+    async (payload: Record<string, unknown>) =>
+      invokeSolicitorFunction('solicitor-portal-matters', { ...payload, matter_id: matterId }),
+    [matterId],
+  );
+
+  const refreshDates = useCallback(async () => {
+    const [dates, tasks] = await Promise.all([
+      callMatters({ operation: 'list_dates' }),
+      callMatters({ operation: 'list_runway' }),
+    ]);
+    if (dates.data?.records) setCriticalDates(dates.data.records as LegalCriticalDate[]);
+    if (tasks.data?.records) setRunwayTasks(tasks.data.records as LegalSettlementTask[]);
+    if (tasks.data?.runway) setRunway(tasks.data.runway as RunwaySummary);
+  }, [callMatters]);
+
+  const saveCriticalDate = async (d: DateDraft) => {
+    setDatesSaving(true);
+    const { error } = await callMatters({
+      operation: 'upsert_date',
+      date_id: d.id,
+      date_type: d.date_type,
+      label: d.label,
+      due_date: d.due_date || null,
+      owner: d.owner,
+      status: d.status,
+      is_key: d.is_key,
+      visible_to_client: d.visible_to_client,
+      reminder_days: d.reminder_days,
+      notes: d.notes || null,
+    });
+    setDatesSaving(false);
+    if (error) { toast.error(error.message || 'Could not save the date'); return; }
+    toast.success('Critical date saved');
+    await refreshDates();
+  };
+
+  const setCriticalDateStatus = async (dateId: string, status: LegalCriticalDateStatus) => {
+    const { error } = await callMatters({ operation: 'set_date_status', date_id: dateId, status });
+    if (error) { toast.error(error.message || 'Could not update the status'); return; }
+    await refreshDates();
+  };
+
+  const deleteCriticalDate = async (dateId: string) => {
+    const { error } = await callMatters({ operation: 'delete_date', date_id: dateId });
+    if (error) { toast.error(error.message || 'Could not remove the date'); return; }
+    toast.success('Critical date removed');
+    await refreshDates();
+  };
+
+  const seedRunway = async () => {
+    setSeeding(true);
+    const { error } = await callMatters({ operation: 'seed_runway' });
+    setSeeding(false);
+    if (error) { toast.error(error.message || 'Could not generate the runway'); return; }
+    toast.success('Settlement runway generated');
+    await refreshDates();
+  };
+
+  const updateRunwayTask = async (t: TaskDraft, quick = false) => {
+    setDatesSaving(true);
+    const payload: Record<string, unknown> = {
+      operation: 'update_task', task_id: t.id, status: t.status,
+    };
+    if (!quick) {
+      payload.due_date = t.due_date || null;
+      payload.blocked_reason = t.blocked_reason || null;
+      payload.notes = t.notes || null;
+    }
+    const { error } = await callMatters(payload);
+    setDatesSaving(false);
+    if (error) { toast.error(error.message || 'Could not update the step'); return; }
+    await refreshDates();
+  };
+
 
   useEffect(() => { void load(); }, [load]);
 
@@ -217,6 +310,7 @@ export default function SolicitorMatterDetail() {
           <TabsTrigger value="overview" className="gap-2"><FileText className="h-4 w-4" /> Overview</TabsTrigger>
           <TabsTrigger value="parties" className="gap-2"><Users className="h-4 w-4" /> Parties</TabsTrigger>
           <TabsTrigger value="dates" className="gap-2"><CalendarClock className="h-4 w-4" /> Dates</TabsTrigger>
+          <TabsTrigger value="settlement" className="gap-2"><Route className="h-4 w-4" /> Settlement</TabsTrigger>
           <TabsTrigger value="notes" className="gap-2"><Contact className="h-4 w-4" /> Notes</TabsTrigger>
         </TabsList>
 
@@ -404,12 +498,12 @@ export default function SolicitorMatterDetail() {
         </TabsContent>
 
         {/* ─────────── DATES ─────────── */}
-        <TabsContent value="dates" className="mt-4">
+        <TabsContent value="dates" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Key dates</CardTitle>
+              <CardTitle className="text-base">Contract dates</CardTitle>
               <CardDescription>
-                Typed critical dates and the settlement runway arrive in the next release; these drive the countdowns today.
+                These fields drive the synced entries in the critical date register below.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -443,7 +537,36 @@ export default function SolicitorMatterDetail() {
               ) : null}
             </CardContent>
           </Card>
+
+          {perms.critical_dates?.view === false ? null : (
+            <CriticalDatesPanel
+              dates={criticalDates}
+              canEdit={!!perms.critical_dates?.edit}
+              canDelete={!!perms.critical_dates?.delete}
+              saving={datesSaving}
+              onSave={saveCriticalDate}
+              onSetStatus={setCriticalDateStatus}
+              onDelete={deleteCriticalDate}
+            />
+          )}
         </TabsContent>
+
+        {/* ─────────── SETTLEMENT ─────────── */}
+        <TabsContent value="settlement" className="mt-4">
+          <SettlementRunwayPanel
+            tasks={runwayTasks}
+            runway={runway}
+            canEdit={!!perms.settlement?.edit}
+            saving={datesSaving}
+            seeding={seeding}
+            onUpdateTask={updateRunwayTask}
+            onQuickStatus={(taskId, status) => updateRunwayTask({
+              id: taskId, status, due_date: '', blocked_reason: '', notes: '',
+            }, true)}
+            onSeed={seedRunway}
+          />
+        </TabsContent>
+
 
         {/* ─────────── NOTES ─────────── */}
         <TabsContent value="notes" className="mt-4">
