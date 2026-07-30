@@ -30,7 +30,7 @@ describe('render-investment-report-pdf insight wrapping contract', () => {
     const result = wrapInlineInsightParagraphs(html, insightOptions);
 
     expect(performance.now() - startedAt).toBeLessThan(250);
-    expect(result).toEndWith('</div><div>unexpected</div>');
+    expect(result.endsWith('</div><div>unexpected</div>')).toBe(true);
   });
 });
 

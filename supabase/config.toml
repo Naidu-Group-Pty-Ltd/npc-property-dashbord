@@ -552,6 +552,12 @@ request_timeout = 300
 [functions.google-places-autocomplete]
 verify_jwt = false
 
+[functions.resolve-listing-coordinates]
+verify_jwt = false
+
+[functions.street-view]
+verify_jwt = false
+
 [functions.manychat-proxy]
 verify_jwt = false
 

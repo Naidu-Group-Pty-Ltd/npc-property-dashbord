@@ -13202,6 +13202,36 @@ export type Database = {
           },
         ]
       }
+      listing_geocodes: {
+        Row: {
+          lat: number | null
+          listing_hash: string
+          lng: number | null
+          precision: string | null
+          provider: string
+          resolved_at: string
+          status: string
+        }
+        Insert: {
+          lat?: number | null
+          listing_hash: string
+          lng?: number | null
+          precision?: string | null
+          provider?: string
+          resolved_at?: string
+          status?: string
+        }
+        Update: {
+          lat?: number | null
+          listing_hash?: string
+          lng?: number | null
+          precision?: string | null
+          provider?: string
+          resolved_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
       llm_integration_settings: {
         Row: {
           created_at: string
