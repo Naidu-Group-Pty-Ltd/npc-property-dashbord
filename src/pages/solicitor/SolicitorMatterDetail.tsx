@@ -27,6 +27,15 @@ import {
   type LegalMatter, type LegalMatterParty, type LegalMatterStatus, type LegalMatterStatusEvent,
   type LegalPartyRole,
 } from '@/lib/legalMatters';
+import {
+  CriticalDatesPanel, type DateDraft,
+} from '@/components/solicitor-portal/CriticalDatesPanel';
+import {
+  SettlementRunwayPanel, type TaskDraft,
+} from '@/components/solicitor-portal/SettlementRunwayPanel';
+import type {
+  LegalCriticalDate, LegalCriticalDateStatus, LegalSettlementTask, RunwaySummary,
+} from '@/lib/legalCriticalDates';
 
 type PermissionMatrix = Record<string, { view?: boolean; edit?: boolean; delete?: boolean }>;
 
