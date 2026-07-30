@@ -15,7 +15,7 @@ import {
   RefreshCw, Download, DollarSign, Wallet, Hourglass,
   CalendarCheck, TrendingUp, TrendingDown, Minus,
   FileText, FileSpreadsheet, Receipt, BarChart3,
-  CalendarRange, Filter, X, ChevronRight, ListTree
+  CalendarRange, Filter, X, ChevronRight, ListTree, AlertTriangle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
