@@ -752,6 +752,60 @@ export default function SolicitorMatterDetail() {
           />
         </TabsContent>
 
+        {/* ─────────── DOCS ─────────── */}
+        <TabsContent value="docs" className="mt-4 space-y-4">
+          {registerSummary ? (
+            <p className="text-sm text-muted-foreground">
+              {registerSummary.documents_outstanding} outstanding · {registerSummary.documents_overdue} overdue
+            </p>
+          ) : null}
+          <MatterDocumentsPanel
+            documents={documents}
+            canEdit={!!perms.documents?.edit}
+            canDelete={!!perms.documents?.delete}
+            saving={registerSaving}
+            onSave={saveDocument}
+            onSetStatus={setDocumentStatus}
+            onUpload={uploadDocument}
+            onDownload={downloadDocument}
+            onDelete={deleteDocument}
+          />
+        </TabsContent>
+
+        {/* ─────────── SEARCHES & REQUISITIONS ─────────── */}
+        <TabsContent value="searches" className="mt-4 space-y-4">
+          <MatterSearchesPanel
+            searches={searches}
+            canEdit={!!perms.searches?.edit}
+            canDelete={!!perms.searches?.delete}
+            saving={registerSaving}
+            onSave={saveSearch}
+            onSetStatus={setSearchStatus}
+            onDelete={deleteSearch}
+          />
+          <MatterRequisitionsPanel
+            requisitions={requisitions}
+            canEdit={!!perms.searches?.edit}
+            canDelete={!!perms.searches?.delete}
+            saving={registerSaving}
+            onSave={saveRequisition}
+            onSetStatus={setRequisitionStatus}
+            onDelete={deleteRequisition}
+          />
+        </TabsContent>
+
+        {/* ─────────── COSTS ─────────── */}
+        <TabsContent value="costs" className="mt-4">
+          <MatterDisbursementsPanel
+            disbursements={disbursements}
+            canEdit={!!perms.disbursements?.edit}
+            canDelete={!!perms.disbursements?.delete}
+            saving={registerSaving}
+            onSave={saveDisbursement}
+            onDelete={deleteDisbursement}
+          />
+        </TabsContent>
+
 
         {/* ─────────── NOTES ─────────── */}
         <TabsContent value="notes" className="mt-4">
