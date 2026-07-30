@@ -492,7 +492,7 @@ export default function SolicitorMatterDetail() {
         </Card>
       ) : null}
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="overview" className="gap-2"><FileText className="h-4 w-4" /> Overview</TabsTrigger>
           <TabsTrigger value="parties" className="gap-2"><Users className="h-4 w-4" /> Parties</TabsTrigger>
@@ -501,8 +501,22 @@ export default function SolicitorMatterDetail() {
           <TabsTrigger value="docs" className="gap-2"><FileText className="h-4 w-4" /> Docs</TabsTrigger>
           <TabsTrigger value="searches" className="gap-2"><FileText className="h-4 w-4" /> Searches</TabsTrigger>
           <TabsTrigger value="costs" className="gap-2"><FileText className="h-4 w-4" /> Costs</TabsTrigger>
+          <TabsTrigger value="messages" className="gap-2"><MessagesSquare className="h-4 w-4" /> Messages</TabsTrigger>
           <TabsTrigger value="notes" className="gap-2"><Contact className="h-4 w-4" /> Notes</TabsTrigger>
         </TabsList>
+
+        {/* ─────────── MESSAGES ─────────── */}
+        <TabsContent value="messages" className="mt-4 space-y-4">
+          {matterId ? (
+            <MatterCommunicationsPanel
+              matterId={matterId}
+              canEdit={!!perms.messages?.edit}
+              onError={(message) => toast.error(message)}
+            />
+          ) : null}
+        </TabsContent>
+
+
 
         {/* ─────────── OVERVIEW ─────────── */}
         <TabsContent value="overview" className="mt-4 space-y-4">
