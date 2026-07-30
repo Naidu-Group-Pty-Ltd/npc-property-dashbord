@@ -468,6 +468,11 @@ export default function SolicitorPortalAdmin() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ───────────── MATTERS ───────────── */}
+        <TabsContent value="matters" className="mt-4">
+          <AdminLegalMattersPanel />
+        </TabsContent>
       </Tabs>
 
       <SolicitorFirmDialog
