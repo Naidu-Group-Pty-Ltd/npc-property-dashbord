@@ -54,6 +54,7 @@ export function AdminLegalMattersPanel() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [commsMatter, setCommsMatter] = useState<{ id: string; title: string } | null>(null);
   const [form, setForm] = useState({ ...BLANK });
 
   const load = useCallback(async () => {
