@@ -32,6 +32,20 @@ import {
   buildSettlementTaskPayload,
   summariseRunway,
 } from "../_shared/legalCriticalDates.ts";
+import {
+  THREAD_SELECT,
+  MESSAGE_SELECT,
+  STAFF_POSTABLE_SCOPES,
+  isValidScope,
+  scopeLabel,
+  preview,
+  notifySolicitors,
+  mirrorToFinancePortal,
+  summariseThreads,
+  type LegalThreadScope,
+} from "../_shared/legalComms.ts";
+
+
 
 const MODULE_KEY = 'solicitor_portal_admin';
 
