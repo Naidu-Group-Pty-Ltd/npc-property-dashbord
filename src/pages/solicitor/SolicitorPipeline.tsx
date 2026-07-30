@@ -17,6 +17,8 @@ import {
   formatCompactCurrency, moveMatter, type MatterRiskAssessment,
 } from '@/lib/solicitorIntelligence';
 
+const TERMINAL_STATUSES = new Set<LegalMatterStatus>(['settled', 'post_settlement', 'terminated']);
+
 /**
  * Matter pipeline board (Phase 7).
  *
@@ -67,7 +69,7 @@ export default function SolicitorPipeline() {
     setDropTarget(null);
     if (!matterId) return;
     const matter = matters.find((m) => m.id === matterId);
-    if (!matter || matter.status === stage) return;
+    if (!matter || matter.status === stage || TERMINAL_STATUSES.has(matter.status)) return;
 
     const previous = matters;
     setMatters((rows) => rows.map((m) => (m.id === matterId ? { ...m, status: stage } : m)));
@@ -146,14 +148,16 @@ export default function SolicitorPipeline() {
                     </p>
                   ) : laneMatters.map((m) => {
                     const assessment = riskById.get(m.id);
+                    const isTerminal = TERMINAL_STATUSES.has(m.status);
                     return (
                       <article
                         key={m.id}
-                        draggable
+                        draggable={!isTerminal}
                         onDragStart={() => setDragging(m.id)}
                         onDragEnd={() => { setDragging(null); setDropTarget(null); }}
                         className={cn(
-                          'cursor-grab rounded-lg border border-border/70 bg-card p-3 shadow-sm transition-opacity active:cursor-grabbing',
+                          'rounded-lg border border-border/70 bg-card p-3 shadow-sm transition-opacity',
+                          !isTerminal && 'cursor-grab active:cursor-grabbing',
                           dragging === m.id && 'opacity-50',
                         )}
                       >
