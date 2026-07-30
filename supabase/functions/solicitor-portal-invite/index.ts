@@ -5,6 +5,7 @@ import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts"
 import { getBrandConfig } from "../_shared/brand-config.ts"
 
 const INVITE_EXPIRY_HOURS = 72;
+const MODULE_KEY = 'solicitor_portal_admin';
 // Hard-pinned production origin — APP_URL is intentionally ignored so preview
 // URLs can never leak into an invite email.
 const APP_URL = 'https://command-centre.npcservices.com.au';
@@ -38,6 +39,15 @@ Deno.serve(async (req) => {
     const auth = await verifyAuth(supabase, req.headers, body)
     if (auth.error || !auth.userId) {
       return json({ error: 'Admin authentication required' }, 401)
+    }
+    const permission = await requireModulePermission(
+      supabase,
+      { userId: auth.userId, authMethod: auth.authMethod },
+      MODULE_KEY,
+      action === 'check_status' ? 'can_view' : 'can_edit',
+    )
+    if (!permission.ok) {
+      return createForbiddenResponse('Solicitor portal administration access denied', corsHeaders)
     }
 
     const authorization = await requireModulePermission(
@@ -174,13 +184,16 @@ Deno.serve(async (req) => {
 
     const { data: portalUser } = await supabase
       .from('solicitor_portal_users')
-      .select('id, firm_id, email, name, is_active, revoked_at, solicitor_firms:firm_id (name, trading_name)')
+      .select('id, firm_id, email, name, is_active, revoked_at, invite_accepted_at, password_hash, solicitor_firms:firm_id (name, trading_name)')
       .eq('id', targetUserId)
       .maybeSingle()
 
     if (!portalUser) return json({ error: 'Solicitor portal user not found' }, 404)
     if (portalUser.revoked_at || !portalUser.is_active) {
       return json({ error: 'This user has been revoked. Restore access before re-inviting.' }, 400)
+    }
+    if (portalUser.invite_accepted_at || portalUser.password_hash) {
+      return json({ error: 'This account is already active. Use the password reset flow instead.' }, 400)
     }
 
     const inviteToken = crypto.randomUUID() + '-' + crypto.randomUUID();
@@ -240,7 +253,7 @@ Deno.serve(async (req) => {
         console.error('[solicitor-portal-invite] email send failed:', e)
       }
     } else {
-      console.warn('[solicitor-portal-invite] RESEND_API_KEY unset — returning invite link only')
+      console.warn('[solicitor-portal-invite] RESEND_API_KEY unset — invite email was not sent')
     }
 
     await supabase.from('solicitor_portal_activity_log').insert({
@@ -258,7 +271,6 @@ Deno.serve(async (req) => {
       success: true,
       solicitor_user_id: portalUser.id,
       email_sent: emailSent,
-      invite_url: inviteUrl,
       expires_at: inviteExpiresAt.toISOString(),
     })
   } catch (error: any) {
