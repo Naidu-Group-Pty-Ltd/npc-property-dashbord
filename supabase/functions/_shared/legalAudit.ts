@@ -132,11 +132,8 @@ export interface LegalAuditChainVerification {
 /**
  * Recompute the hash chain for one matter and report the first divergence.
  *
- * Note: Postgres serialises `metadata::text` with its own jsonb key ordering,
- * so a strict byte comparison can differ from `JSON.stringify`. We therefore
- * treat a link as valid when either the recomputed hash matches OR the stored
- * `prev_hash` correctly points at the preceding row's `row_hash` — the latter
- * is what actually detects insertion, deletion and reordering.
+ * Both the chain link and the recomputed row hash must match. The row hash
+ * protects the event content as well as its position in the chain.
  */
 export async function verifyLegalAuditChain(
   supabase: any,
@@ -177,19 +174,14 @@ export async function verifyLegalAuditChain(
     }
     const recomputed = await sha256Hex(canonicalString(row, expectedPrev));
     if (recomputed !== row.row_hash) {
-      // Metadata serialisation can differ between Postgres and JS; only treat
-      // this as a break when the row carries no metadata at all.
-      const hasMetadata = row.metadata && Object.keys(row.metadata).length > 0;
-      if (!hasMetadata) {
-        return {
-          verified: false,
-          checked: rows.length,
-          broken_at: row.id,
-          broken_reason: 'row_hash does not match the recorded content',
-          first_event_at: rows[0]?.created_at ?? null,
-          last_event_at: rows[rows.length - 1]?.created_at ?? null,
-        };
-      }
+      return {
+        verified: false,
+        checked: rows.length,
+        broken_at: row.id,
+        broken_reason: 'row_hash does not match the recorded content',
+        first_event_at: rows[0]?.created_at ?? null,
+        last_event_at: rows[rows.length - 1]?.created_at ?? null,
+      };
     }
     previous = row;
   }

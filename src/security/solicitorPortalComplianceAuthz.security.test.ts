@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { verifyLegalAuditChain } from '../../supabase/functions/_shared/legalAudit';
 
 const source = readFileSync('supabase/functions/solicitor-portal-compliance/index.ts', 'utf8');
 const audit = readFileSync('supabase/functions/_shared/legalAudit.ts', 'utf8');
@@ -39,5 +40,37 @@ describe('legal audit chain integrity', () => {
   it('never throws out of the recorder', () => {
     expect(audit).toContain("console.error('[legal-audit] insert failed:'");
     expect(audit).toContain("console.error('[legal-audit] insert threw:'");
+  });
+
+  it('rejects a row hash mismatch when the event has metadata', async () => {
+    const rows = [{
+      id: 'event-1',
+      legal_matter_id: 'matter-1',
+      actor_type: 'solicitor_user',
+      actor_solicitor_user_id: 'user-1',
+      category: 'document',
+      action: 'DELETE_DOCUMENT',
+      target_type: 'document',
+      target_id: 'document-1',
+      metadata: { source: 'portal' },
+      prev_hash: null,
+      row_hash: 'stored-hash-for-different-content',
+      created_at: '2026-07-30T12:00:00.000Z',
+    }];
+    const query = {
+      select: () => query,
+      eq: () => query,
+      order: () => query,
+      then: (resolve: (value: unknown) => unknown) => resolve({ data: rows, error: null }),
+    };
+    const supabase = { from: () => query };
+
+    const result = await verifyLegalAuditChain(supabase, 'matter-1');
+
+    expect(result).toMatchObject({
+      verified: false,
+      broken_at: 'event-1',
+      broken_reason: 'row_hash does not match the recorded content',
+    });
   });
 });
