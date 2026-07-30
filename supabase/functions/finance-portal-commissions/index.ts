@@ -239,10 +239,35 @@ Deno.serve(async (req) => {
         .select('name, company, gst_registered, default_commission_rate_pct')
         .eq('id', partnerId).maybeSingle();
 
-      const rate = Number(body.rate_pct ?? pc?.default_commission_rate_pct ?? 0);
+      // Phase 4 — the signed agreement schedule outranks the partner default rate.
+      const { data: termsRows } = await supabase.rpc('fp_resolve_partner_agreement', {
+        _finance_contact_id: partnerId,
+        _direction: body.direction || 'outbound_finance_referral',
+      });
+      const terms = (termsRows || [])[0] || null;
+
+      let rateSource: 'manual' | 'agreement_schedule' | 'partner_default' = 'partner_default';
+      let rate: number;
+      if (body.rate_pct != null && body.rate_pct !== '') {
+        rate = Number(body.rate_pct);
+        rateSource = 'manual';
+      } else if (terms && Number(terms.upfront_share_pct || 0) > 0) {
+        rate = Number(terms.upfront_share_pct);
+        rateSource = 'agreement_schedule';
+      } else {
+        rate = Number(pc?.default_commission_rate_pct ?? 0);
+      }
+
       const basis = Number(body.basis_amount ?? 0);
-      const gross = body.gross_amount != null ? Number(body.gross_amount) : Math.round(basis * rate / 100 * 100) / 100;
-      const gst = pc?.gst_registered ? Math.round(gross * 0.10 * 100) / 100 : 0;
+      let gross = body.gross_amount != null ? Number(body.gross_amount) : Math.round(basis * rate / 100 * 100) / 100;
+      if (terms?.fee_cap != null && gross > Number(terms.fee_cap)) gross = Number(terms.fee_cap);
+      if (terms?.fee_minimum != null && gross > 0 && gross < Number(terms.fee_minimum)) gross = Number(terms.fee_minimum);
+
+      const gstTreatment = terms?.gst_treatment ?? null;
+      const gstApplies = gstTreatment
+        ? /plus\s*gst|exclusive/i.test(String(gstTreatment))
+        : !!pc?.gst_registered;
+      const gst = gstApplies ? Math.round(gross * 0.10 * 100) / 100 : 0;
       const net = Math.round((gross - gst) * 100) / 100;
 
       let clientName: string | null = null;
@@ -251,17 +276,22 @@ Deno.serve(async (req) => {
         clientName = c ? [c.first_name, c.last_name].filter(Boolean).join(' ') : null;
       }
 
+      const dueDate = terms?.payment_business_days
+        ? new Date(Date.now() + Number(terms.payment_business_days) * 86400000).toISOString().slice(0, 10)
+        : null;
+
       const { data, error } = await supabase
         .from('finance_partner_commissions')
         .insert({
           finance_contact_id: partnerId,
           client_id: body.client_id || null,
           deal_id: body.deal_id || null,
+          referral_id: body.referral_id || null,
           partner_name_snapshot: pc?.name || null,
           partner_company_snapshot: pc?.company || null,
           client_name_snapshot: clientName,
           deal_type_snapshot: body.deal_type || null,
-          commission_basis: body.commission_basis || 'manual',
+          commission_basis: body.commission_basis || terms?.commission_basis || 'manual',
           basis_amount: basis,
           rate_pct: rate,
           gross_amount: gross,
@@ -271,10 +301,20 @@ Deno.serve(async (req) => {
           status: body.status || 'pending',
           notes: body.notes || null,
           created_by: adminUserId,
+          agreement_id: terms?.agreement_id || null,
+          agreement_version: terms?.agreement_version || null,
+          rate_source: rateSource,
+          gst_treatment: gstTreatment,
+          qualifying_event: terms?.qualifying_event || null,
+          invoice_process: terms?.invoice_process || null,
+          cleared_funds_required: !!terms?.cleared_funds_required,
+          payment_due_date: dueDate,
+          schedule_snapshot: terms || {},
         })
         .select('*')
         .single();
       if (error) throw error;
+
       return new Response(JSON.stringify({ success: true, commission: data }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
