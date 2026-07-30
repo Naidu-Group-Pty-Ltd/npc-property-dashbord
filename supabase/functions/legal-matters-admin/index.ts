@@ -136,16 +136,29 @@ Deno.serve(async (req) => {
         .select(MATTER_SELECT).eq('id', body.matter_id).maybeSingle();
       if (!matter) return json({ error: 'Matter not found' }, 404);
 
-      const [{ data: parties }, { data: history }] = await Promise.all([
+      const [{ data: parties }, { data: history }, { data: dates }, { data: tasks }] = await Promise.all([
         supabase.from('legal_matter_parties').select(PARTY_SELECT)
           .eq('legal_matter_id', matter.id).order('created_at', { ascending: true }),
         supabase.from('legal_matter_status_history')
           .select('id, from_status, to_status, changed_by_type, reason, created_at')
           .eq('legal_matter_id', matter.id).order('created_at', { ascending: false }).limit(100),
+        supabase.from('legal_matter_critical_dates').select(CRITICAL_DATE_SELECT)
+          .eq('legal_matter_id', matter.id)
+          .order('due_date', { ascending: true, nullsFirst: false }),
+        supabase.from('legal_matter_settlement_tasks').select(SETTLEMENT_TASK_SELECT)
+          .eq('legal_matter_id', matter.id).order('sequence', { ascending: true }),
       ]);
 
       const [hydrated] = await hydrate([matter]);
-      return json({ success: true, matter: hydrated, parties: parties || [], status_history: history || [] });
+      return json({
+        success: true,
+        matter: hydrated,
+        parties: parties || [],
+        status_history: history || [],
+        critical_dates: dates || [],
+        settlement_tasks: tasks || [],
+        runway: summariseRunway((dates || []) as any[], (tasks || []) as any[]),
+      });
     }
 
     if (operation === 'list_for_deal' || operation === 'list_for_client') {
