@@ -226,12 +226,19 @@ export default function SolicitorPortalAdmin() {
                 <CardDescription>Solicitors, conveyancers and practice staff with Solicitor Portal access.</CardDescription>
               </div>
               <Button
-                onClick={() => setUserDialog({ open: true, user: null })}
-                disabled={firms.filter(f => f.is_active).length === 0}
+                onClick={() => {
+                  if (firms.filter(f => f.is_active).length === 0) {
+                    toast.info('Create an active legal practice first — portal users must belong to one.');
+                    setFirmDialog({ open: true, firm: null });
+                    return;
+                  }
+                  setUserDialog({ open: true, user: null });
+                }}
                 className="gap-2"
               >
                 <Plus className="h-4 w-4" /> New User
               </Button>
+
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="flex flex-wrap gap-2">
@@ -264,9 +271,26 @@ export default function SolicitorPortalAdmin() {
                   <Scale className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
                   <p className="text-sm font-medium">No portal users yet</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Create a legal practice first, then add the solicitors who will work your matters.
+                    {firms.filter(f => f.is_active).length === 0
+                      ? 'You need an active legal practice before a portal user can be created.'
+                      : 'Add the solicitors, conveyancers and practice staff who will work your matters.'}
                   </p>
+                  <Button
+                    variant="outline"
+                    className="mt-4 gap-2"
+                    onClick={() => {
+                      if (firms.filter(f => f.is_active).length === 0) {
+                        setFirmDialog({ open: true, firm: null });
+                      } else {
+                        setUserDialog({ open: true, user: null });
+                      }
+                    }}
+                  >
+                    <Plus className="h-4 w-4" />
+                    {firms.filter(f => f.is_active).length === 0 ? 'Create legal practice' : 'New user'}
+                  </Button>
                 </div>
+
               ) : (
                 <div className="overflow-hidden rounded-lg border">
                   <Table>
