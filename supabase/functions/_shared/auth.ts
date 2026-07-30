@@ -444,11 +444,12 @@ export const CORS_ALLOWED_REQUEST_HEADERS = [
   // Observability + step-up (sent by src/lib/secureInvoke.ts).
   'x-correlation-id',
   'x-step-up-token',
-  // Session carriers for the staff / client / finance portals.
+  // Session carriers for the staff / client / finance / solicitor portals.
   'x-session-token',
   'x-command-centre-session-token',
   'x-portal-session-token',
   'x-finance-session-token',
+  'x-solicitor-session-token',
   'x-session-id',
   'x-generation-run-id',
 ].join(', ');
