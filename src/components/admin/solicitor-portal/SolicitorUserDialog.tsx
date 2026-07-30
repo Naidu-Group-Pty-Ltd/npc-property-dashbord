@@ -179,7 +179,7 @@ export function SolicitorUserDialog({ open, onOpenChange, user, firms, defaultFi
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-          <Button onClick={save} disabled={saving} className="gap-2">
+          <Button onClick={save} disabled={saving || activeFirms.length === 0} className="gap-2">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {user ? 'Save changes' : 'Create user'}
           </Button>
