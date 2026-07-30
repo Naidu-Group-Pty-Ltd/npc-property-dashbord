@@ -61,7 +61,7 @@ export function AdminLegalMattersPanel() {
     const [matterRes, firmRes, clientRes] = await Promise.all([
       invokeSecureFunction('legal-matters-admin', { operation: 'list_matters' }),
       invokeSecureFunction('solicitor-portal-admin', { operation: 'list_users' }),
-      supabase.from('clients').select('id, name').order('name').limit(1000),
+      supabase.from('clients').select('id, primary_first_name, primary_surname').order('primary_surname').limit(1000),
     ]);
     if (matterRes.error) toast.error(matterRes.error.message || 'Could not load matters');
     else setMatters((matterRes.data?.records || []) as LegalMatter[]);
