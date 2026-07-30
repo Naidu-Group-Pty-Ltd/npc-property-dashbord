@@ -16,7 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import {
-  Loader2, Plus, RefreshCw, FileText, DollarSign, Download, Search, ArrowLeft,
+  Loader2, Plus, RefreshCw, FileText, DollarSign, Download, Search, ArrowLeft, AlertTriangle, ShieldCheck,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
@@ -42,6 +42,11 @@ interface Commission {
   notes: string | null;
   created_at: string;
   statement_id: string | null;
+  agreement_version: number | null;
+  rate_source: string | null;
+  qualifying_event: string | null;
+  cleared_funds_required: boolean | null;
+  cleared_funds_received_at: string | null;
 }
 
 interface Statement {
@@ -60,7 +65,32 @@ interface Statement {
   remittance_csv_path: string | null;
   issued_at: string | null;
   paid_at: string | null;
+  agreement_version: number | null;
+  dispute_window_days: number | null;
+  dispute_deadline: string | null;
+  dispute_status: string | null;
+  open_dispute_count: number | null;
 }
+
+interface Dispute {
+  id: string;
+  statement_id: string;
+  finance_contact_id: string;
+  commission_id: string | null;
+  raised_by_type: string;
+  raised_by_name: string | null;
+  raised_at: string;
+  within_window: boolean;
+  reason_category: string;
+  reason: string;
+  disputed_amount: number | null;
+  status: string;
+  resolution_outcome: string | null;
+  resolution_notes: string | null;
+  adjustment_amount: number | null;
+  resolved_at: string | null;
+}
+
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   pending: 'secondary',
@@ -74,10 +104,11 @@ const fmt = (n: number) =>
   `$${(Number(n) || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function FinancePortalCommissions() {
-  const [tab, setTab] = useState<'commissions' | 'statements'>('commissions');
+  const [tab, setTab] = useState<'commissions' | 'statements' | 'disputes'>('commissions');
   const [loading, setLoading] = useState(true);
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [statements, setStatements] = useState<Statement[]>([]);
+  const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [partners, setPartners] = useState<{ id: string; name: string; company: string | null }[]>([]);
   const [filterPartner, setFilterPartner] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -89,17 +120,20 @@ export default function FinancePortalCommissions() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const [cRes, sRes, pRes] = await Promise.all([
+      const [cRes, sRes, dRes, pRes] = await Promise.all([
         invokeSecureFunction('finance-portal-commissions', { operation: 'list_commissions' }),
         invokeSecureFunction('finance-portal-commissions', { operation: 'list_statements' }),
+        invokeSecureFunction('finance-portal-commissions', { operation: 'list_disputes' }),
         invokeSecureFunction('finance-portal-admin', { operation: 'list_users' }),
       ]);
       if (cRes.error) throw new Error(cRes.error.message);
       if (sRes.error) throw new Error(sRes.error.message);
       setCommissions(cRes.data?.commissions || []);
       setStatements(sRes.data?.statements || []);
+      setDisputes(dRes.data?.disputes || []);
       const users = pRes.data?.users || [];
       setPartners(users.map((u: any) => ({ id: u.id, name: u.name, company: u.company })));
+
     } catch (e: any) {
       toast.error('Failed to load: ' + e.message);
     } finally {
@@ -143,6 +177,18 @@ export default function FinancePortalCommissions() {
     void refresh();
   };
 
+  const bulkSetClearedFunds = async (received: boolean) => {
+    if (selected.size === 0) return;
+    const reference = received ? (window.prompt('Cleared funds reference (optional):') || null) : null;
+    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+      operation: 'set_cleared_funds', ids: Array.from(selected), received, reference,
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success(received ? 'Cleared funds recorded' : 'Cleared funds cleared');
+    setSelected(new Set());
+    void refresh();
+  };
+
   const issueStatement = async (id: string) => {
     const { error } = await invokeSecureFunction('finance-portal-commissions', { operation: 'issue_statement', id });
     if (error) { toast.error(error.message); return; }
@@ -151,14 +197,40 @@ export default function FinancePortalCommissions() {
   };
 
   const markPaid = async (id: string) => {
+    const openCount = disputes.filter(d => d.statement_id === id && ['open', 'under_review'].includes(d.status)).length;
+    if (openCount > 0 && !window.confirm(`This statement has ${openCount} open dispute${openCount === 1 ? '' : 's'}. Pay anyway?`)) return;
     const ref = window.prompt('Payment reference (optional):') || null;
-    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+    const { data, error } = await invokeSecureFunction('finance-portal-commissions', {
       operation: 'mark_statement_paid', id, paid_reference: ref,
+      ...(openCount > 0 ? { override_dispute: true } : {}),
     });
     if (error) { toast.error(error.message); return; }
+    if ((data as any)?.error) { toast.error((data as any).error); return; }
     toast.success('Statement marked paid');
     void refresh();
   };
+
+  const resolveDispute = async (id: string, status: string) => {
+    const notes = window.prompt('Resolution notes (optional):') || null;
+    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+      operation: 'resolve_dispute', id, status, resolution_notes: notes,
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success('Dispute updated');
+    void refresh();
+  };
+
+  const raiseDispute = async (statementId: string) => {
+    const reason = window.prompt('Reason for the dispute:');
+    if (!reason) return;
+    const { error } = await invokeSecureFunction('finance-portal-commissions', {
+      operation: 'raise_dispute', statement_id: statementId, reason, reason_category: 'other',
+    });
+    if (error) { toast.error(error.message); return; }
+    toast.success('Dispute raised');
+    void refresh();
+  };
+
 
   const downloadStatement = async (path: string) => {
     const { data, error } = await invokeSecureFunction('finance-portal-commissions', {
@@ -204,7 +276,14 @@ export default function FinancePortalCommissions() {
           aria-pressed={tab === 'statements'}
           className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'statements' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
         ><FileText className="inline h-4 w-4 mr-1" />Statements ({statements.length})</button>
+        <button
+          type="button"
+          onClick={() => setTab('disputes')}
+          aria-pressed={tab === 'disputes'}
+          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'disputes' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
+        ><AlertTriangle className="inline h-4 w-4 mr-1" />Disputes ({disputes.filter(d => ['open', 'under_review'].includes(d.status)).length})</button>
       </DashboardThemeFrame>
+
 
       {tab === 'commissions' && (
         <DashboardThemeFrame variant="section" className="p-0">
@@ -255,6 +334,10 @@ export default function FinancePortalCommissions() {
                 <Button size="sm" variant="outline" onClick={() => bulkSetStatus('invoiced')}>Mark invoiced</Button>
                 <Button size="sm" variant="outline" onClick={() => bulkSetStatus('paid')}>Mark paid</Button>
                 <Button size="sm" variant="outline" onClick={() => bulkSetStatus('void')}>Void</Button>
+                <Button size="sm" variant="outline" onClick={() => bulkSetClearedFunds(true)}>
+                  <ShieldCheck className="h-3.5 w-3.5 mr-1" />Funds cleared
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => bulkSetClearedFunds(false)}>Undo funds cleared</Button>
                 <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>Clear</Button>
               </div>
             )}
@@ -275,14 +358,17 @@ export default function FinancePortalCommissions() {
                     <TableHead>Trigger</TableHead>
                     <TableHead className="text-right">Basis</TableHead>
                     <TableHead className="text-right">Rate</TableHead>
+                    <TableHead>Rate source</TableHead>
                     <TableHead className="text-right">Net</TableHead>
+                    <TableHead>Funds</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Created</TableHead>
                   </TableRow>
+
                 </TableHeader>
                 <TableBody>
                   {filteredCommissions.length === 0 && (
-                    <TableRow><TableCell colSpan={9} className="text-center text-muted-foreground py-8">No commissions found</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">No commissions found</TableCell></TableRow>
                   )}
                   {filteredCommissions.map(c => (
                     <TableRow key={c.id} className="transition-colors hover:bg-primary/5">
@@ -295,12 +381,28 @@ export default function FinancePortalCommissions() {
                         <div>{c.client_name_snapshot || '—'}</div>
                         <div className="text-xs text-muted-foreground">{c.deal_type_snapshot || ''}</div>
                       </TableCell>
-                      <TableCell><span className="text-xs">{c.trigger_event || '—'}</span></TableCell>
+                      <TableCell><span className="text-xs">{c.qualifying_event || c.trigger_event || '—'}</span></TableCell>
                       <TableCell className="text-right">{fmt(c.basis_amount)}</TableCell>
                       <TableCell className="text-right">{Number(c.rate_pct).toFixed(2)}%</TableCell>
+                      <TableCell>
+                        <span className="text-xs text-muted-foreground">
+                          {(c.rate_source || 'partner_default').replace(/_/g, ' ')}
+                          {c.agreement_version ? ` · v${c.agreement_version}` : ''}
+                        </span>
+                      </TableCell>
                       <TableCell className="text-right font-semibold">{fmt(c.net_amount)}</TableCell>
+                      <TableCell>
+                        {!c.cleared_funds_required ? (
+                          <span className="text-xs text-muted-foreground">n/a</span>
+                        ) : c.cleared_funds_received_at ? (
+                          <Badge variant="default" className="text-xs">Cleared</Badge>
+                        ) : (
+                          <Badge variant="destructive" className="text-xs">Awaiting funds</Badge>
+                        )}
+                      </TableCell>
                       <TableCell><Badge variant={STATUS_VARIANT[c.status] || 'outline'}>{c.status}</Badge></TableCell>
                       <TableCell className="text-xs">{format(new Date(c.created_at), 'd MMM yyyy')}</TableCell>
+
                     </TableRow>
                   ))}
                 </TableBody>
@@ -330,15 +432,18 @@ export default function FinancePortalCommissions() {
                     <TableHead>Period</TableHead>
                     <TableHead className="text-right">Lines</TableHead>
                     <TableHead className="text-right">Net</TableHead>
+                    <TableHead>Dispute window</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {statements.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">No statements yet</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground py-8">No statements yet</TableCell></TableRow>
                   )}
-                  {statements.map(s => (
+                  {statements.map(s => {
+                    const open = disputes.filter(d => d.statement_id === s.id && ['open', 'under_review'].includes(d.status)).length;
+                    return (
                     <TableRow key={s.id} className="transition-colors hover:bg-primary/5">
                       <TableCell>
                         <div className="font-medium">{s.partner_name_snapshot}</div>
@@ -347,6 +452,14 @@ export default function FinancePortalCommissions() {
                       <TableCell className="text-sm">{s.period_start} → {s.period_end}</TableCell>
                       <TableCell className="text-right">{s.line_count}</TableCell>
                       <TableCell className="text-right font-semibold">{fmt(s.total_net)}</TableCell>
+                      <TableCell className="text-xs">
+                        {s.dispute_deadline
+                          ? <>Closes {s.dispute_deadline}{s.dispute_window_days ? ` (${s.dispute_window_days}d)` : ''}</>
+                          : <span className="text-muted-foreground">—</span>}
+                        {open > 0 && (
+                          <Badge variant="destructive" className="ml-2 text-[10px]">{open} open</Badge>
+                        )}
+                      </TableCell>
                       <TableCell><Badge variant={STATUS_VARIANT[s.status] || 'outline'}>{s.status}</Badge></TableCell>
                       <TableCell className="text-right space-x-1">
                         {s.status === 'draft' && (
@@ -355,6 +468,12 @@ export default function FinancePortalCommissions() {
                         {s.status === 'issued' && (
                           <Button size="sm" variant="outline" onClick={() => markPaid(s.id)}>Mark paid</Button>
                         )}
+                        {s.status !== 'draft' && (
+                          <Button size="sm" variant="ghost" onClick={() => raiseDispute(s.id)} aria-label={`Raise dispute on statement ${s.id}`}>
+                            <AlertTriangle className="h-4 w-4" />
+                          </Button>
+                        )}
+
                         {s.pdf_storage_path && (
                           <>
                             <Button size="sm" variant="ghost" onClick={() => downloadStatement(s.pdf_storage_path!)} aria-label={`Download statement ${s.id}`}>
@@ -376,6 +495,79 @@ export default function FinancePortalCommissions() {
                         )}
                       </TableCell>
                     </TableRow>
+                  ); })}
+                </TableBody>
+              </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        </DashboardThemeFrame>
+      )}
+
+      {tab === 'disputes' && (
+        <DashboardThemeFrame variant="section" className="p-0">
+        <Card className="border-0 bg-transparent shadow-none">
+          <CardHeader className="border-b border-border/60 bg-gradient-to-r from-card/80 to-muted/25 p-4 sm:p-5">
+            <CardTitle className="text-base">Statement disputes</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 sm:p-5">
+            {loading ? (
+              <div className="flex items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-5 w-5 mr-2 animate-spin" />Loading…
+              </div>
+            ) : disputes.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                No disputes raised. Partners can raise a dispute from their earnings statement within the agreed window.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-border/70 bg-card/75 shadow-inner shadow-black/5 dark:bg-background/35">
+              <Table className="min-w-[900px]" aria-label="Commission statement disputes">
+                <TableHeader className="bg-muted/35">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Raised</TableHead>
+                    <TableHead>By</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Window</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {disputes.map(d => (
+                    <TableRow key={d.id} className="transition-colors hover:bg-primary/5">
+                      <TableCell className="text-xs">{format(new Date(d.raised_at), 'd MMM yyyy')}</TableCell>
+                      <TableCell className="text-xs">
+                        <div className="font-medium">{d.raised_by_name || d.raised_by_type}</div>
+                        <div className="text-muted-foreground">{d.raised_by_type}</div>
+                      </TableCell>
+                      <TableCell className="max-w-[320px]">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{(d.reason_category || '').replace(/_/g, ' ')}</div>
+                        <div className="text-sm">{d.reason}</div>
+                        {d.resolution_notes && (
+                          <div className="mt-1 text-xs text-muted-foreground">Resolution: {d.resolution_notes}</div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">{d.disputed_amount != null ? fmt(d.disputed_amount) : '—'}</TableCell>
+                      <TableCell>
+                        <Badge variant={d.within_window ? 'secondary' : 'destructive'} className="text-xs">
+                          {d.within_window ? 'In window' : 'Out of window'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell><Badge variant={['resolved'].includes(d.status) ? 'default' : d.status === 'rejected' ? 'destructive' : 'secondary'}>{d.status.replace(/_/g, ' ')}</Badge></TableCell>
+                      <TableCell className="text-right space-x-1">
+                        {['open', 'under_review'].includes(d.status) && (
+                          <>
+                            {d.status === 'open' && (
+                              <Button size="sm" variant="ghost" onClick={() => resolveDispute(d.id, 'under_review')}>Review</Button>
+                            )}
+                            <Button size="sm" variant="outline" onClick={() => resolveDispute(d.id, 'resolved')}>Resolve</Button>
+                            <Button size="sm" variant="ghost" onClick={() => resolveDispute(d.id, 'rejected')}>Reject</Button>
+                          </>
+                        )}
+                      </TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
@@ -385,6 +577,7 @@ export default function FinancePortalCommissions() {
         </Card>
         </DashboardThemeFrame>
       )}
+
     </DashboardThemeFrame>
   );
 }

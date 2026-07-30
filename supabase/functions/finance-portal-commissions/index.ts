@@ -52,22 +52,30 @@ function escapeHtml(s: any) {
 }
 
 function buildStatementHtml(statement: any, lines: any[], brandName: string) {
+  const cell = 'padding:8px;border-bottom:1px solid #1f2a44';
   const rows = lines.map((l, i) => `
     <tr>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${i + 1}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${escapeHtml(l.client_name_snapshot || '—')}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${escapeHtml(l.deal_type_snapshot || '—')}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44">${escapeHtml(l.trigger_event_snapshot || '—')}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right">${escapeHtml(l.rate_pct_snapshot ?? '—')}%</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right">${fmtMoney(l.gross_snapshot)}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right">${fmtMoney(l.gst_snapshot)}</td>
-      <td style="padding:8px;border-bottom:1px solid #1f2a44;text-align:right;color:#BF9B50;font-weight:600">${fmtMoney(l.net_snapshot)}</td>
+      <td style="${cell}">${i + 1}</td>
+      <td style="${cell}">${escapeHtml(l.client_name_snapshot || '—')}</td>
+      <td style="${cell}">${escapeHtml(l.deal_type_snapshot || '—')}</td>
+      <td style="${cell}">${escapeHtml(l.qualifying_event_snapshot || l.trigger_event_snapshot || '—')}</td>
+      <td style="${cell}">${escapeHtml(l.basis_snapshot || '—')}${l.basis_amount_snapshot != null ? ` · ${fmtMoney(l.basis_amount_snapshot)}` : ''}</td>
+      <td style="${cell};text-align:right">${escapeHtml(l.rate_pct_snapshot ?? '—')}%</td>
+      <td style="${cell};font-size:11px;color:#94a3b8">${escapeHtml((l.rate_source_snapshot || 'partner_default').replace(/_/g, ' '))}${l.agreement_version_snapshot ? ` v${l.agreement_version_snapshot}` : ''}</td>
+      <td style="${cell};text-align:right">${fmtMoney(l.gross_snapshot)}</td>
+      <td style="${cell};text-align:right">${fmtMoney(l.gst_snapshot)}</td>
+      <td style="${cell};text-align:right">${Number(l.adjustment_snapshot || 0) !== 0 ? fmtMoney(l.adjustment_snapshot) : '—'}</td>
+      <td style="${cell};text-align:right;color:#BF9B50;font-weight:600">${fmtMoney(Number(l.net_snapshot || 0) + Number(l.adjustment_snapshot || 0))}</td>
     </tr>
   `).join('');
 
+  const disputeNote = statement.dispute_deadline
+    ? `Any discrepancy must be raised in writing by <strong>${escapeHtml(statement.dispute_deadline)}</strong> (${statement.dispute_window_days} day dispute window per the executed agreement).`
+    : 'Any discrepancy should be raised in writing as soon as practicable.';
+
   return `<!doctype html><html><head><meta charset="utf-8"/><title>Commission Statement</title></head>
 <body style="margin:0;padding:0;background:#0D264D;color:#e8ecf3;font-family:Helvetica,Arial,sans-serif">
-  <div style="max-width:840px;margin:0 auto;padding:48px 56px">
+  <div style="max-width:960px;margin:0 auto;padding:48px 56px">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #BF9B50;padding-bottom:24px;margin-bottom:32px">
       <div>
         <div style="color:#BF9B50;letter-spacing:.18em;font-size:11px;text-transform:uppercase">${brandName}</div>
@@ -80,23 +88,27 @@ function buildStatementHtml(statement: any, lines: any[], brandName: string) {
         <div style="font-weight:600">${statement.period_start} → ${statement.period_end}</div>
         <div style="color:#94a3b8;font-size:12px;margin-top:8px">Issued</div>
         <div style="font-weight:600">${statement.issued_at ? new Date(statement.issued_at).toLocaleDateString('en-AU') : 'Draft'}</div>
+        ${statement.agreement_version ? `<div style="color:#94a3b8;font-size:12px;margin-top:8px">Agreement</div><div style="font-weight:600">Version ${statement.agreement_version}</div>` : ''}
       </div>
     </div>
 
-    <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
       <thead>
         <tr style="color:#BF9B50;text-align:left;border-bottom:1px solid #BF9B50">
           <th style="padding:8px">#</th>
           <th style="padding:8px">Client</th>
           <th style="padding:8px">Deal</th>
-          <th style="padding:8px">Trigger</th>
+          <th style="padding:8px">Qualifying event</th>
+          <th style="padding:8px">Calculation basis</th>
           <th style="padding:8px;text-align:right">Rate</th>
+          <th style="padding:8px">Source</th>
           <th style="padding:8px;text-align:right">Gross</th>
           <th style="padding:8px;text-align:right">GST</th>
+          <th style="padding:8px;text-align:right">Adj.</th>
           <th style="padding:8px;text-align:right">Net</th>
         </tr>
       </thead>
-      <tbody>${rows || '<tr><td colspan="8" style="padding:24px;text-align:center;color:#94a3b8">No commission lines</td></tr>'}</tbody>
+      <tbody>${rows || '<tr><td colspan="11" style="padding:24px;text-align:center;color:#94a3b8">No commission lines</td></tr>'}</tbody>
     </table>
 
     <div style="margin-top:32px;display:flex;justify-content:flex-end">
@@ -108,7 +120,15 @@ function buildStatementHtml(statement: any, lines: any[], brandName: string) {
       </table>
     </div>
 
-    <div style="margin-top:48px;padding-top:18px;border-top:1px solid #1f2a44;color:#94a3b8;font-size:11px;text-align:center">
+    <div style="margin-top:36px;padding:16px 18px;border:1px solid #1f2a44;border-radius:8px;color:#cbd5e1;font-size:11px;line-height:1.6">
+      <div style="color:#BF9B50;text-transform:uppercase;letter-spacing:.14em;font-size:10px;margin-bottom:6px">Calculation &amp; dispute basis</div>
+      Commission lines are calculated on the basis shown against each line. Where the rate source is
+      "agreement schedule", the rate is taken from the executed Commission &amp; Payment Schedule at the
+      version noted. Amounts subject to a cleared-funds condition are only included once funds have been
+      received. ${disputeNote}
+    </div>
+
+    <div style="margin-top:32px;padding-top:18px;border-top:1px solid #1f2a44;color:#94a3b8;font-size:11px;text-align:center">
       This statement is generated by ${brandName} Command Centre. Payments are processed per the partner agreement on file.
     </div>
   </div>
@@ -116,21 +136,28 @@ function buildStatementHtml(statement: any, lines: any[], brandName: string) {
 }
 
 function buildRemittanceCsv(statement: any, lines: any[]) {
-  const header = 'line,client,deal_type,trigger,rate_pct,gross,gst,net,accrual_date';
+  const header = 'line,client,deal_type,qualifying_event,basis,basis_amount,rate_pct,rate_source,agreement_version,gross,gst,adjustment,net,cleared_funds_received_at,accrual_date';
   const body = lines.map((l, i) => [
     i + 1,
     JSON.stringify(l.client_name_snapshot || ''),
     JSON.stringify(l.deal_type_snapshot || ''),
-    JSON.stringify(l.trigger_event_snapshot || ''),
+    JSON.stringify(l.qualifying_event_snapshot || l.trigger_event_snapshot || ''),
+    JSON.stringify(l.basis_snapshot || ''),
+    l.basis_amount_snapshot ?? '',
     l.rate_pct_snapshot ?? '',
+    JSON.stringify(l.rate_source_snapshot || ''),
+    l.agreement_version_snapshot ?? '',
     l.gross_snapshot ?? 0,
     l.gst_snapshot ?? 0,
-    l.net_snapshot ?? 0,
+    l.adjustment_snapshot ?? 0,
+    Number(l.net_snapshot || 0) + Number(l.adjustment_snapshot || 0),
+    JSON.stringify(l.cleared_funds_received_at_snapshot || ''),
     l.accrual_date ?? '',
   ].join(',')).join('\n');
-  const totals = `\n,,,,TOTAL,${statement.total_gross},${statement.total_gst},${statement.total_net},`;
+  const totals = `\n,,,,,,,,TOTAL,${statement.total_gross},${statement.total_gst},,${statement.total_net},,`;
   return header + '\n' + body + totals;
 }
+
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 async function resolvePartnerFromSession(supabase: any, sessionToken?: string) {
@@ -165,8 +192,10 @@ Deno.serve(async (req) => {
     const { operation } = body;
 
     const PARTNER_OPS = new Set([
-      'partner_summary', 'partner_commissions', 'partner_statements', 'partner_statement_pdf_url'
+      'partner_summary', 'partner_commissions', 'partner_statements', 'partner_statement_pdf_url',
+      'partner_statement_detail', 'partner_raise_dispute', 'partner_disputes',
     ]);
+
 
     let adminUserId: string | null = null;
     let partner: any = null;
@@ -237,10 +266,35 @@ Deno.serve(async (req) => {
         .select('name, company, gst_registered, default_commission_rate_pct')
         .eq('id', partnerId).maybeSingle();
 
-      const rate = Number(body.rate_pct ?? pc?.default_commission_rate_pct ?? 0);
+      // Phase 4 — the signed agreement schedule outranks the partner default rate.
+      const { data: termsRows } = await supabase.rpc('fp_resolve_partner_agreement', {
+        _finance_contact_id: partnerId,
+        _direction: body.direction || 'outbound_finance_referral',
+      });
+      const terms = (termsRows || [])[0] || null;
+
+      let rateSource: 'manual' | 'agreement_schedule' | 'partner_default' = 'partner_default';
+      let rate: number;
+      if (body.rate_pct != null && body.rate_pct !== '') {
+        rate = Number(body.rate_pct);
+        rateSource = 'manual';
+      } else if (terms && Number(terms.upfront_share_pct || 0) > 0) {
+        rate = Number(terms.upfront_share_pct);
+        rateSource = 'agreement_schedule';
+      } else {
+        rate = Number(pc?.default_commission_rate_pct ?? 0);
+      }
+
       const basis = Number(body.basis_amount ?? 0);
-      const gross = body.gross_amount != null ? Number(body.gross_amount) : Math.round(basis * rate / 100 * 100) / 100;
-      const gst = pc?.gst_registered ? Math.round(gross * 0.10 * 100) / 100 : 0;
+      let gross = body.gross_amount != null ? Number(body.gross_amount) : Math.round(basis * rate / 100 * 100) / 100;
+      if (terms?.fee_cap != null && gross > Number(terms.fee_cap)) gross = Number(terms.fee_cap);
+      if (terms?.fee_minimum != null && gross > 0 && gross < Number(terms.fee_minimum)) gross = Number(terms.fee_minimum);
+
+      const gstTreatment = terms?.gst_treatment ?? null;
+      const gstApplies = gstTreatment
+        ? /plus\s*gst|exclusive/i.test(String(gstTreatment))
+        : !!pc?.gst_registered;
+      const gst = gstApplies ? Math.round(gross * 0.10 * 100) / 100 : 0;
       const net = Math.round((gross - gst) * 100) / 100;
 
       let clientName: string | null = null;
@@ -249,17 +303,22 @@ Deno.serve(async (req) => {
         clientName = c ? [c.first_name, c.last_name].filter(Boolean).join(' ') : null;
       }
 
+      const dueDate = terms?.payment_business_days
+        ? new Date(Date.now() + Number(terms.payment_business_days) * 86400000).toISOString().slice(0, 10)
+        : null;
+
       const { data, error } = await supabase
         .from('finance_partner_commissions')
         .insert({
           finance_contact_id: partnerId,
           client_id: body.client_id || null,
           deal_id: body.deal_id || null,
+          referral_id: body.referral_id || null,
           partner_name_snapshot: pc?.name || null,
           partner_company_snapshot: pc?.company || null,
           client_name_snapshot: clientName,
           deal_type_snapshot: body.deal_type || null,
-          commission_basis: body.commission_basis || 'manual',
+          commission_basis: body.commission_basis || terms?.commission_basis || 'manual',
           basis_amount: basis,
           rate_pct: rate,
           gross_amount: gross,
@@ -269,10 +328,20 @@ Deno.serve(async (req) => {
           status: body.status || 'pending',
           notes: body.notes || null,
           created_by: adminUserId,
+          agreement_id: terms?.agreement_id || null,
+          agreement_version: terms?.agreement_version || null,
+          rate_source: rateSource,
+          gst_treatment: gstTreatment,
+          qualifying_event: terms?.qualifying_event || null,
+          invoice_process: terms?.invoice_process || null,
+          cleared_funds_required: !!terms?.cleared_funds_required,
+          payment_due_date: dueDate,
+          schedule_snapshot: terms || {},
         })
         .select('*')
         .single();
       if (error) throw error;
+
       return new Response(JSON.stringify({ success: true, commission: data }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
@@ -343,12 +412,137 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // ── Phase 4: agreement-derived commercial terms ────────────────────────
+    if (operation === 'resolve_terms') {
+      const { partner_id, direction } = body;
+      if (!partner_id) throw new Error('partner_id required');
+      const { data, error } = await supabase.rpc('fp_resolve_partner_agreement', {
+        _finance_contact_id: partner_id,
+        _direction: direction || 'outbound_finance_referral',
+      });
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, terms: (data || [])[0] || null }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // Record (or clear) receipt of cleared funds for one or more commissions.
+    if (operation === 'set_cleared_funds') {
+      const ids: string[] = body.ids || (body.id ? [body.id] : []);
+      if (!ids.length) throw new Error('ids required');
+      const received = body.received !== false;
+      const { data, error } = await supabase
+        .from('finance_partner_commissions')
+        .update({
+          cleared_funds_received_at: received ? (body.received_at || new Date().toISOString()) : null,
+          cleared_funds_reference: received ? (body.reference || null) : null,
+        })
+        .in('id', ids)
+        .select('id, cleared_funds_received_at');
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, commissions: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ── Phase 4: disputes (clause 5.3) ─────────────────────────────────────
+    if (operation === 'list_disputes') {
+      let q = supabase.from('finance_partner_statement_disputes').select('*')
+        .order('raised_at', { ascending: false }).limit(300);
+      if (body.statement_id) q = q.eq('statement_id', body.statement_id);
+      if (body.partner_id) q = q.eq('finance_contact_id', body.partner_id);
+      if (body.status) q = q.eq('status', body.status);
+      const { data, error } = await q;
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, disputes: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'raise_dispute' || operation === 'partner_raise_dispute') {
+      const statementId = body.statement_id;
+      if (!statementId) throw new Error('statement_id required');
+      if (!body.reason) throw new Error('reason required');
+
+      const { data: stmt } = await supabase.from('finance_partner_statements')
+        .select('id, finance_contact_id, status, dispute_deadline')
+        .eq('id', statementId).maybeSingle();
+      if (!stmt) throw new Error('Statement not found');
+
+      const isPartner = operation === 'partner_raise_dispute';
+      if (isPartner && stmt.finance_contact_id !== partner.finance_contact_id) {
+        return new Response(JSON.stringify({ error: 'Not found' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (isPartner && stmt.status === 'draft') {
+        return new Response(JSON.stringify({ error: 'Statement not yet issued' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      const withinWindow = !stmt.dispute_deadline
+        || new Date().toISOString().slice(0, 10) <= stmt.dispute_deadline;
+
+      const { data, error } = await supabase.from('finance_partner_statement_disputes')
+        .insert({
+          statement_id: statementId,
+          finance_contact_id: stmt.finance_contact_id,
+          commission_id: body.commission_id || null,
+          raised_by_type: isPartner ? 'partner' : 'staff',
+          raised_by_id: isPartner ? partner.id : adminUserId,
+          raised_by_name: body.raised_by_name || null,
+          within_window: withinWindow,
+          reason_category: body.reason_category || 'other',
+          reason: String(body.reason).slice(0, 4000),
+          disputed_amount: body.disputed_amount != null ? Number(body.disputed_amount) : null,
+        })
+        .select('*').single();
+      if (error) throw error;
+
+      return new Response(JSON.stringify({ success: true, dispute: data, within_window: withinWindow }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'resolve_dispute') {
+      const { id, status } = body;
+      if (!id) throw new Error('id required');
+      const next = status || 'resolved';
+      const terminal = ['resolved', 'withdrawn', 'rejected'].includes(next);
+      const { data, error } = await supabase.from('finance_partner_statement_disputes')
+        .update({
+          status: next,
+          resolution_outcome: body.resolution_outcome || null,
+          resolution_notes: body.resolution_notes || null,
+          adjustment_amount: body.adjustment_amount != null ? Number(body.adjustment_amount) : null,
+          resolved_at: terminal ? new Date().toISOString() : null,
+          resolved_by: terminal ? adminUserId : null,
+          resolved_by_name: terminal ? (body.resolved_by_name || null) : null,
+        })
+        .eq('id', id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, dispute: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'partner_disputes') {
+      const { data, error } = await supabase.from('finance_partner_statement_disputes')
+        .select('*')
+        .eq('finance_contact_id', partner.finance_contact_id)
+        .order('raised_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, disputes: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     if (operation === 'generate_statement') {
       const { partner_id, period_start, period_end } = body;
       if (!partner_id || !period_start || !period_end) throw new Error('partner_id, period_start, period_end required');
 
       const { data: pc } = await supabase.from('finance_agent_contacts')
         .select('name, company').eq('id', partner_id).maybeSingle();
+
+      // Agreement-derived terms drive the dispute window and provenance.
+      const { data: termsRows } = await supabase.rpc('fp_resolve_partner_agreement', {
+        _finance_contact_id: partner_id,
+        _direction: 'outbound_finance_referral',
+      });
+      const terms = (termsRows || [])[0] || null;
 
       // Pull eligible commissions (pending or invoiced, not on a statement)
       const { data: commissions, error: cErr } = await supabase
@@ -362,10 +556,23 @@ Deno.serve(async (req) => {
         .order('created_at', { ascending: true });
       if (cErr) throw cErr;
 
-      const lines = commissions || [];
-      const totalGross = lines.reduce((s, c) => s + Number(c.gross_amount || 0), 0);
-      const totalGst = lines.reduce((s, c) => s + Number(c.gst_amount || 0), 0);
-      const totalNet = lines.reduce((s, c) => s + Number(c.net_amount || 0), 0);
+      // Cleared-funds gate (Doc 2 §5): a commission that requires cleared funds
+      // cannot be statemented until the funds have actually been received.
+      const all = commissions || [];
+      const lines = body.include_uncleared === true
+        ? all
+        : all.filter(c => !c.cleared_funds_required || !!c.cleared_funds_received_at);
+      const withheld = all.filter(c => c.cleared_funds_required && !c.cleared_funds_received_at);
+
+      const round2 = (n: number) => Math.round(n * 100) / 100;
+      const totalGross = round2(lines.reduce((s, c) => s + Number(c.gross_amount || 0), 0));
+      const totalGst = round2(lines.reduce((s, c) => s + Number(c.gst_amount || 0), 0));
+      const totalNet = round2(lines.reduce((s, c) => s + Number(c.net_amount || 0) + Number(c.adjustment_amount || 0), 0));
+
+      const disputeWindowDays = terms?.dispute_window_days ?? null;
+      const deadline = disputeWindowDays
+        ? new Date(Date.now() + disputeWindowDays * 86400000).toISOString().slice(0, 10)
+        : null;
 
       const { data: stmt, error: sErr } = await supabase
         .from('finance_partner_statements')
@@ -377,6 +584,10 @@ Deno.serve(async (req) => {
           total_gross: totalGross, total_gst: totalGst, total_net: totalNet,
           line_count: lines.length,
           status: 'draft',
+          agreement_id: terms?.agreement_id || null,
+          agreement_version: terms?.agreement_version || null,
+          dispute_window_days: disputeWindowDays,
+          dispute_deadline: deadline,
         })
         .select('*').single();
       if (sErr) throw sErr;
@@ -394,6 +605,15 @@ Deno.serve(async (req) => {
           gst_snapshot: c.gst_amount,
           net_snapshot: c.net_amount,
           accrual_date: (c.created_at || '').slice(0, 10),
+          agreement_id: c.agreement_id || terms?.agreement_id || null,
+          agreement_version_snapshot: c.agreement_version || terms?.agreement_version || null,
+          rate_source_snapshot: c.rate_source || null,
+          gst_treatment_snapshot: c.gst_treatment || terms?.gst_treatment || null,
+          qualifying_event_snapshot: c.qualifying_event || terms?.qualifying_event || null,
+          basis_amount_snapshot: c.basis_amount ?? null,
+          cleared_funds_received_at_snapshot: c.cleared_funds_received_at || null,
+          adjustment_snapshot: Number(c.adjustment_amount || 0),
+          adjustment_reason_snapshot: c.adjustment_reason || null,
         }));
         await supabase.from('finance_partner_statement_lines').insert(lineRows);
         await supabase.from('finance_partner_commissions')
@@ -401,11 +621,17 @@ Deno.serve(async (req) => {
           .in('id', lines.map(l => l.id));
       }
 
-      return new Response(JSON.stringify({ success: true, statement: stmt, line_count: lines.length }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      return new Response(JSON.stringify({
+        success: true,
+        statement: stmt,
+        line_count: lines.length,
+        withheld_count: withheld.length,
+        withheld_net: round2(withheld.reduce((s, c) => s + Number(c.net_amount || 0), 0)),
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
     if (operation === 'issue_statement') {
+
       const { id } = body;
       const { data: stmt, error: sErr } = await supabase
         .from('finance_partner_statements').select('*').eq('id', id).maybeSingle();
@@ -453,11 +679,24 @@ Deno.serve(async (req) => {
 
     if (operation === 'mark_statement_paid') {
       const { id, paid_reference } = body;
+
+      // Clause 5.3 — an open dispute blocks payment unless explicitly overridden.
+      const { data: openDisputes } = await supabase
+        .from('finance_partner_statement_disputes')
+        .select('id').eq('statement_id', id).in('status', ['open', 'under_review']);
+      if ((openDisputes?.length || 0) > 0 && body.override_dispute !== true) {
+        return new Response(JSON.stringify({
+          error: 'Statement has an open dispute — resolve it or pass override_dispute',
+          open_dispute_count: openDisputes?.length || 0,
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       const { data: updated, error } = await supabase
         .from('finance_partner_statements')
         .update({ status: 'paid', paid_at: new Date().toISOString(), paid_reference: paid_reference || null })
         .eq('id', id).select('*').single();
       if (error) throw error;
+
 
       await supabase.from('finance_partner_commissions')
         .update({ status: 'paid', paid_at: new Date().toISOString() })

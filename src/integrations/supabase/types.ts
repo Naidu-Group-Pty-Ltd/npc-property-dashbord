@@ -10154,8 +10154,15 @@ export type Database = {
       }
       finance_partner_commissions: {
         Row: {
+          adjustment_amount: number
+          adjustment_reason: string | null
+          agreement_id: string | null
+          agreement_version: number | null
           basis_amount: number
           build_payment_id: string | null
+          cleared_funds_received_at: string | null
+          cleared_funds_reference: string | null
+          cleared_funds_required: boolean
           client_id: string | null
           client_name_snapshot: string | null
           commission_basis: string
@@ -10166,8 +10173,10 @@ export type Database = {
           finance_contact_id: string
           gross_amount: number
           gst_amount: number
+          gst_treatment: string | null
           id: string
           invoice_date: string | null
+          invoice_process: string | null
           invoice_ref: string | null
           milestone: string | null
           net_amount: number
@@ -10175,16 +10184,28 @@ export type Database = {
           paid_at: string | null
           partner_company_snapshot: string | null
           partner_name_snapshot: string | null
+          payment_due_date: string | null
           purchase_file_id: string | null
+          qualifying_event: string | null
           rate_pct: number
+          rate_source: string
+          referral_id: string | null
+          schedule_snapshot: Json
           statement_id: string | null
           status: string
           trigger_event: string | null
           updated_at: string
         }
         Insert: {
+          adjustment_amount?: number
+          adjustment_reason?: string | null
+          agreement_id?: string | null
+          agreement_version?: number | null
           basis_amount?: number
           build_payment_id?: string | null
+          cleared_funds_received_at?: string | null
+          cleared_funds_reference?: string | null
+          cleared_funds_required?: boolean
           client_id?: string | null
           client_name_snapshot?: string | null
           commission_basis?: string
@@ -10195,8 +10216,10 @@ export type Database = {
           finance_contact_id: string
           gross_amount?: number
           gst_amount?: number
+          gst_treatment?: string | null
           id?: string
           invoice_date?: string | null
+          invoice_process?: string | null
           invoice_ref?: string | null
           milestone?: string | null
           net_amount?: number
@@ -10204,16 +10227,28 @@ export type Database = {
           paid_at?: string | null
           partner_company_snapshot?: string | null
           partner_name_snapshot?: string | null
+          payment_due_date?: string | null
           purchase_file_id?: string | null
+          qualifying_event?: string | null
           rate_pct?: number
+          rate_source?: string
+          referral_id?: string | null
+          schedule_snapshot?: Json
           statement_id?: string | null
           status?: string
           trigger_event?: string | null
           updated_at?: string
         }
         Update: {
+          adjustment_amount?: number
+          adjustment_reason?: string | null
+          agreement_id?: string | null
+          agreement_version?: number | null
           basis_amount?: number
           build_payment_id?: string | null
+          cleared_funds_received_at?: string | null
+          cleared_funds_reference?: string | null
+          cleared_funds_required?: boolean
           client_id?: string | null
           client_name_snapshot?: string | null
           commission_basis?: string
@@ -10224,8 +10259,10 @@ export type Database = {
           finance_contact_id?: string
           gross_amount?: number
           gst_amount?: number
+          gst_treatment?: string | null
           id?: string
           invoice_date?: string | null
+          invoice_process?: string | null
           invoice_ref?: string | null
           milestone?: string | null
           net_amount?: number
@@ -10233,14 +10270,26 @@ export type Database = {
           paid_at?: string | null
           partner_company_snapshot?: string | null
           partner_name_snapshot?: string | null
+          payment_due_date?: string | null
           purchase_file_id?: string | null
+          qualifying_event?: string | null
           rate_pct?: number
+          rate_source?: string
+          referral_id?: string | null
+          schedule_snapshot?: Json
           statement_id?: string | null
           status?: string
           trigger_event?: string | null
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "finance_partner_commissions_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "finance_partner_commissions_build_payment_id_fkey"
             columns: ["build_payment_id"]
@@ -10296,6 +10345,13 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_purchase_file_deal_drift"
             referencedColumns: ["purchase_file_id"]
+          },
+          {
+            foreignKeyName: "finance_partner_commissions_referral_id_fkey"
+            columns: ["referral_id"]
+            isOneToOne: false
+            referencedRelation: "partner_referrals"
+            referencedColumns: ["id"]
           },
           {
             foreignKeyName: "fpc_statement_fk"
@@ -10561,49 +10617,166 @@ export type Database = {
           },
         ]
       }
+      finance_partner_statement_disputes: {
+        Row: {
+          adjustment_amount: number | null
+          commission_id: string | null
+          created_at: string
+          disputed_amount: number | null
+          finance_contact_id: string | null
+          id: string
+          raised_at: string
+          raised_by_id: string | null
+          raised_by_name: string | null
+          raised_by_type: string
+          reason: string
+          reason_category: string
+          resolution_notes: string | null
+          resolution_outcome: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          resolved_by_name: string | null
+          statement_id: string
+          status: string
+          updated_at: string
+          within_window: boolean
+        }
+        Insert: {
+          adjustment_amount?: number | null
+          commission_id?: string | null
+          created_at?: string
+          disputed_amount?: number | null
+          finance_contact_id?: string | null
+          id?: string
+          raised_at?: string
+          raised_by_id?: string | null
+          raised_by_name?: string | null
+          raised_by_type?: string
+          reason: string
+          reason_category?: string
+          resolution_notes?: string | null
+          resolution_outcome?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_by_name?: string | null
+          statement_id: string
+          status?: string
+          updated_at?: string
+          within_window?: boolean
+        }
+        Update: {
+          adjustment_amount?: number | null
+          commission_id?: string | null
+          created_at?: string
+          disputed_amount?: number | null
+          finance_contact_id?: string | null
+          id?: string
+          raised_at?: string
+          raised_by_id?: string | null
+          raised_by_name?: string | null
+          raised_by_type?: string
+          reason?: string
+          reason_category?: string
+          resolution_notes?: string | null
+          resolution_outcome?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          resolved_by_name?: string | null
+          statement_id?: string
+          status?: string
+          updated_at?: string
+          within_window?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finance_partner_statement_disputes_commission_id_fkey"
+            columns: ["commission_id"]
+            isOneToOne: false
+            referencedRelation: "finance_partner_commissions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_partner_statement_disputes_statement_id_fkey"
+            columns: ["statement_id"]
+            isOneToOne: false
+            referencedRelation: "finance_partner_statements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       finance_partner_statement_lines: {
         Row: {
           accrual_date: string | null
+          adjustment_reason_snapshot: string | null
+          adjustment_snapshot: number
+          agreement_id: string | null
+          agreement_version_snapshot: number | null
+          basis_amount_snapshot: number | null
           basis_snapshot: string | null
+          cleared_funds_received_at_snapshot: string | null
           client_name_snapshot: string | null
           commission_id: string
           created_at: string
           deal_type_snapshot: string | null
           gross_snapshot: number | null
           gst_snapshot: number | null
+          gst_treatment_snapshot: string | null
           id: string
           net_snapshot: number | null
+          qualifying_event_snapshot: string | null
           rate_pct_snapshot: number | null
+          rate_source_snapshot: string | null
+          referral_reference_snapshot: string | null
           statement_id: string
           trigger_event_snapshot: string | null
         }
         Insert: {
           accrual_date?: string | null
+          adjustment_reason_snapshot?: string | null
+          adjustment_snapshot?: number
+          agreement_id?: string | null
+          agreement_version_snapshot?: number | null
+          basis_amount_snapshot?: number | null
           basis_snapshot?: string | null
+          cleared_funds_received_at_snapshot?: string | null
           client_name_snapshot?: string | null
           commission_id: string
           created_at?: string
           deal_type_snapshot?: string | null
           gross_snapshot?: number | null
           gst_snapshot?: number | null
+          gst_treatment_snapshot?: string | null
           id?: string
           net_snapshot?: number | null
+          qualifying_event_snapshot?: string | null
           rate_pct_snapshot?: number | null
+          rate_source_snapshot?: string | null
+          referral_reference_snapshot?: string | null
           statement_id: string
           trigger_event_snapshot?: string | null
         }
         Update: {
           accrual_date?: string | null
+          adjustment_reason_snapshot?: string | null
+          adjustment_snapshot?: number
+          agreement_id?: string | null
+          agreement_version_snapshot?: number | null
+          basis_amount_snapshot?: number | null
           basis_snapshot?: string | null
+          cleared_funds_received_at_snapshot?: string | null
           client_name_snapshot?: string | null
           commission_id?: string
           created_at?: string
           deal_type_snapshot?: string | null
           gross_snapshot?: number | null
           gst_snapshot?: number | null
+          gst_treatment_snapshot?: string | null
           id?: string
           net_snapshot?: number | null
+          qualifying_event_snapshot?: string | null
           rate_pct_snapshot?: number | null
+          rate_source_snapshot?: string | null
+          referral_reference_snapshot?: string | null
           statement_id?: string
           trigger_event_snapshot?: string | null
         }
@@ -10626,13 +10799,19 @@ export type Database = {
       }
       finance_partner_statements: {
         Row: {
+          agreement_id: string | null
+          agreement_version: number | null
           created_at: string
+          dispute_deadline: string | null
+          dispute_status: string
+          dispute_window_days: number | null
           finance_contact_id: string
           id: string
           issued_at: string | null
           issued_by: string | null
           line_count: number
           notes: string | null
+          open_dispute_count: number
           paid_at: string | null
           paid_reference: string | null
           partner_company_snapshot: string | null
@@ -10648,13 +10827,19 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          agreement_id?: string | null
+          agreement_version?: number | null
           created_at?: string
+          dispute_deadline?: string | null
+          dispute_status?: string
+          dispute_window_days?: number | null
           finance_contact_id: string
           id?: string
           issued_at?: string | null
           issued_by?: string | null
           line_count?: number
           notes?: string | null
+          open_dispute_count?: number
           paid_at?: string | null
           paid_reference?: string | null
           partner_company_snapshot?: string | null
@@ -10670,13 +10855,19 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          agreement_id?: string | null
+          agreement_version?: number | null
           created_at?: string
+          dispute_deadline?: string | null
+          dispute_status?: string
+          dispute_window_days?: number | null
           finance_contact_id?: string
           id?: string
           issued_at?: string | null
           issued_by?: string | null
           line_count?: number
           notes?: string | null
+          open_dispute_count?: number
           paid_at?: string | null
           paid_reference?: string | null
           partner_company_snapshot?: string | null
@@ -10692,6 +10883,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "finance_partner_statements_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "finance_partner_statements_finance_contact_id_fkey"
             columns: ["finance_contact_id"]
@@ -27229,6 +27427,29 @@ export type Database = {
           id: string
           row_count: number
           status: string
+        }[]
+      }
+      fp_resolve_partner_agreement: {
+        Args: { _direction?: string; _finance_contact_id: string }
+        Returns: {
+          agreement_id: string
+          agreement_version: number
+          clawback_repayment_days: number
+          clawback_treatment: string
+          cleared_funds_required: boolean
+          commission_basis: string
+          dispute_window_days: number
+          fee_amount: number
+          fee_cap: number
+          fee_minimum: number
+          fee_model: string
+          fee_percentage: number
+          gst_treatment: string
+          invoice_process: string
+          payment_business_days: number
+          qualifying_event: string
+          trail_share_pct: number
+          upfront_share_pct: number
         }[]
       }
       fp_resolve_partner_for_deal: {
