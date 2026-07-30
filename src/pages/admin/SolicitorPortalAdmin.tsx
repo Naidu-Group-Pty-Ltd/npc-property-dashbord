@@ -17,9 +17,10 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import { formatDistanceToNow } from 'date-fns';
 import {
-  Building2, Gavel, History, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
+  Briefcase, Building2, Gavel, History, Loader2, Mail, MoreHorizontal, Plus, RefreshCw, Scale, Search,
   Settings2, Shield, Trash2, Unlock, UserCheck, Users, UserX,
 } from 'lucide-react';
+import { AdminLegalMattersPanel } from '@/components/admin/solicitor-portal/AdminLegalMattersPanel';
 import { SolicitorFirmDialog, type SolicitorFirm } from '@/components/admin/solicitor-portal/SolicitorFirmDialog';
 import { SolicitorUserDialog, type SolicitorUserRow } from '@/components/admin/solicitor-portal/SolicitorUserDialog';
 import { SolicitorAssignmentsDialog } from '@/components/admin/solicitor-portal/SolicitorAssignmentsDialog';
@@ -213,6 +214,7 @@ export default function SolicitorPortalAdmin() {
         <TabsList>
           <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Portal Users</TabsTrigger>
           <TabsTrigger value="firms" className="gap-2"><Building2 className="h-4 w-4" /> Legal Practices</TabsTrigger>
+          <TabsTrigger value="matters" className="gap-2"><Briefcase className="h-4 w-4" /> Matters</TabsTrigger>
         </TabsList>
 
         {/* ───────────── USERS ───────────── */}
@@ -465,6 +467,11 @@ export default function SolicitorPortalAdmin() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ───────────── MATTERS ───────────── */}
+        <TabsContent value="matters" className="mt-4">
+          <AdminLegalMattersPanel />
         </TabsContent>
       </Tabs>
 

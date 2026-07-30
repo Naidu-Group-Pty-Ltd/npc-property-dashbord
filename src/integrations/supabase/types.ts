@@ -12645,6 +12645,299 @@ export type Database = {
         }
         Relationships: []
       }
+      legal_matter_parties: {
+        Row: {
+          address: string | null
+          created_at: string
+          created_by: string | null
+          email: string | null
+          id: string
+          is_primary_contact: boolean
+          legal_matter_id: string
+          name: string
+          notes: string | null
+          organisation: string | null
+          phone: string | null
+          reference: string | null
+          role: Database["public"]["Enums"]["legal_party_role"]
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          id?: string
+          is_primary_contact?: boolean
+          legal_matter_id: string
+          name: string
+          notes?: string | null
+          organisation?: string | null
+          phone?: string | null
+          reference?: string | null
+          role?: Database["public"]["Enums"]["legal_party_role"]
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          created_at?: string
+          created_by?: string | null
+          email?: string | null
+          id?: string
+          is_primary_contact?: boolean
+          legal_matter_id?: string
+          name?: string
+          notes?: string | null
+          organisation?: string | null
+          phone?: string | null
+          reference?: string | null
+          role?: Database["public"]["Enums"]["legal_party_role"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_parties_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matter_status_history: {
+        Row: {
+          changed_by_solicitor_user_id: string | null
+          changed_by_type: string
+          changed_by_user_id: string | null
+          created_at: string
+          from_status: Database["public"]["Enums"]["legal_matter_status"] | null
+          id: string
+          legal_matter_id: string
+          metadata: Json
+          reason: string | null
+          to_status: Database["public"]["Enums"]["legal_matter_status"]
+        }
+        Insert: {
+          changed_by_solicitor_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?:
+            | Database["public"]["Enums"]["legal_matter_status"]
+            | null
+          id?: string
+          legal_matter_id: string
+          metadata?: Json
+          reason?: string | null
+          to_status: Database["public"]["Enums"]["legal_matter_status"]
+        }
+        Update: {
+          changed_by_solicitor_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?:
+            | Database["public"]["Enums"]["legal_matter_status"]
+            | null
+          id?: string
+          legal_matter_id?: string
+          metadata?: Json
+          reason?: string | null
+          to_status?: Database["public"]["Enums"]["legal_matter_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_status_history_changed_by_solicitor_user_id_fkey"
+            columns: ["changed_by_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_status_history_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matters: {
+        Row: {
+          actual_settlement_date: string | null
+          assigned_solicitor_user_id: string | null
+          build_job_id: string | null
+          building_pest_date: string | null
+          client_deal_id: string | null
+          client_id: string | null
+          closed_at: string | null
+          contract_date: string | null
+          cooling_off_expiry: string | null
+          created_at: string
+          created_by: string | null
+          deposit_amount: number | null
+          deposit_percent: number | null
+          exchange_date: string | null
+          finance_clause_date: string | null
+          firm_id: string | null
+          id: string
+          internal_notes: string | null
+          lot_plan: string | null
+          matter_reference: string | null
+          matter_type: Database["public"]["Enums"]["legal_matter_type"]
+          opened_at: string
+          other_side_firm: string | null
+          pexa_workspace_id: string | null
+          property_address: string | null
+          property_postcode: string | null
+          property_state: string | null
+          property_suburb: string | null
+          purchase_file_id: string | null
+          purchase_price: number | null
+          risk_flag: boolean
+          risk_notes: string | null
+          settlement_date: string | null
+          shared_summary: string | null
+          status: Database["public"]["Enums"]["legal_matter_status"]
+          sunset_date: string | null
+          title: string
+          title_reference: string | null
+          updated_at: string
+        }
+        Insert: {
+          actual_settlement_date?: string | null
+          assigned_solicitor_user_id?: string | null
+          build_job_id?: string | null
+          building_pest_date?: string | null
+          client_deal_id?: string | null
+          client_id?: string | null
+          closed_at?: string | null
+          contract_date?: string | null
+          cooling_off_expiry?: string | null
+          created_at?: string
+          created_by?: string | null
+          deposit_amount?: number | null
+          deposit_percent?: number | null
+          exchange_date?: string | null
+          finance_clause_date?: string | null
+          firm_id?: string | null
+          id?: string
+          internal_notes?: string | null
+          lot_plan?: string | null
+          matter_reference?: string | null
+          matter_type?: Database["public"]["Enums"]["legal_matter_type"]
+          opened_at?: string
+          other_side_firm?: string | null
+          pexa_workspace_id?: string | null
+          property_address?: string | null
+          property_postcode?: string | null
+          property_state?: string | null
+          property_suburb?: string | null
+          purchase_file_id?: string | null
+          purchase_price?: number | null
+          risk_flag?: boolean
+          risk_notes?: string | null
+          settlement_date?: string | null
+          shared_summary?: string | null
+          status?: Database["public"]["Enums"]["legal_matter_status"]
+          sunset_date?: string | null
+          title: string
+          title_reference?: string | null
+          updated_at?: string
+        }
+        Update: {
+          actual_settlement_date?: string | null
+          assigned_solicitor_user_id?: string | null
+          build_job_id?: string | null
+          building_pest_date?: string | null
+          client_deal_id?: string | null
+          client_id?: string | null
+          closed_at?: string | null
+          contract_date?: string | null
+          cooling_off_expiry?: string | null
+          created_at?: string
+          created_by?: string | null
+          deposit_amount?: number | null
+          deposit_percent?: number | null
+          exchange_date?: string | null
+          finance_clause_date?: string | null
+          firm_id?: string | null
+          id?: string
+          internal_notes?: string | null
+          lot_plan?: string | null
+          matter_reference?: string | null
+          matter_type?: Database["public"]["Enums"]["legal_matter_type"]
+          opened_at?: string
+          other_side_firm?: string | null
+          pexa_workspace_id?: string | null
+          property_address?: string | null
+          property_postcode?: string | null
+          property_state?: string | null
+          property_suburb?: string | null
+          purchase_file_id?: string | null
+          purchase_price?: number | null
+          risk_flag?: boolean
+          risk_notes?: string | null
+          settlement_date?: string | null
+          shared_summary?: string | null
+          status?: Database["public"]["Enums"]["legal_matter_status"]
+          sunset_date?: string | null
+          title?: string
+          title_reference?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matters_assigned_solicitor_user_id_fkey"
+            columns: ["assigned_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matters_client_deal_id_fkey"
+            columns: ["client_deal_id"]
+            isOneToOne: false
+            referencedRelation: "client_deals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matters_client_deal_id_fkey"
+            columns: ["client_deal_id"]
+            isOneToOne: false
+            referencedRelation: "v_purchase_file_deal_drift"
+            referencedColumns: ["client_deal_id"]
+          },
+          {
+            foreignKeyName: "legal_matters_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matters_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matters_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_files"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matters_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: false
+            referencedRelation: "v_purchase_file_deal_drift"
+            referencedColumns: ["purchase_file_id"]
+          },
+        ]
+      }
       lender_comparison_sheets: {
         Row: {
           client_id: string | null
@@ -18186,6 +18479,7 @@ export type Database = {
           last_partner_action_at: string | null
           lease_in_place: boolean | null
           lease_term_months: number | null
+          legal_matter_id: string | null
           lender: string | null
           max_approved_budget: number | null
           net_rental_yield: number | null
@@ -18232,6 +18526,7 @@ export type Database = {
           last_partner_action_at?: string | null
           lease_in_place?: boolean | null
           lease_term_months?: number | null
+          legal_matter_id?: string | null
           lender?: string | null
           max_approved_budget?: number | null
           net_rental_yield?: number | null
@@ -18278,6 +18573,7 @@ export type Database = {
           last_partner_action_at?: string | null
           lease_in_place?: boolean | null
           lease_term_months?: number | null
+          legal_matter_id?: string | null
           lender?: string | null
           max_approved_budget?: number | null
           net_rental_yield?: number | null
@@ -18328,6 +18624,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_files_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
             referencedColumns: ["id"]
           },
         ]
@@ -19849,6 +20152,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "solicitor_assignments_matter_fk"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "solicitor_portal_client_assignments_solicitor_user_id_fkey"
             columns: ["solicitor_user_id"]
@@ -22505,6 +22815,40 @@ export type Database = {
         | "signed"
         | "voided"
         | "expired"
+      legal_matter_status:
+        | "instructed"
+        | "contract_review"
+        | "exchanged"
+        | "cooling_off"
+        | "conditions"
+        | "unconditional"
+        | "pre_settlement"
+        | "settled"
+        | "post_settlement"
+        | "terminated"
+        | "on_hold"
+      legal_matter_type:
+        | "purchase"
+        | "sale"
+        | "transfer"
+        | "off_the_plan"
+        | "house_and_land"
+        | "refinance"
+        | "commercial"
+        | "other"
+      legal_party_role:
+        | "buyer"
+        | "seller"
+        | "buyer_solicitor"
+        | "seller_solicitor"
+        | "agent"
+        | "lender"
+        | "broker"
+        | "builder"
+        | "guarantor"
+        | "trustee"
+        | "accountant"
+        | "other"
       lender_doc_status: "required" | "received" | "verified" | "waived"
       lender_loan_purpose: "OWNER_OCCUPIED" | "INVESTMENT"
       lender_repayment_type: "PRINCIPAL_AND_INTEREST" | "INTEREST_ONLY"
@@ -23100,6 +23444,43 @@ export const Constants = {
         "signed",
         "voided",
         "expired",
+      ],
+      legal_matter_status: [
+        "instructed",
+        "contract_review",
+        "exchanged",
+        "cooling_off",
+        "conditions",
+        "unconditional",
+        "pre_settlement",
+        "settled",
+        "post_settlement",
+        "terminated",
+        "on_hold",
+      ],
+      legal_matter_type: [
+        "purchase",
+        "sale",
+        "transfer",
+        "off_the_plan",
+        "house_and_land",
+        "refinance",
+        "commercial",
+        "other",
+      ],
+      legal_party_role: [
+        "buyer",
+        "seller",
+        "buyer_solicitor",
+        "seller_solicitor",
+        "agent",
+        "lender",
+        "broker",
+        "builder",
+        "guarantor",
+        "trustee",
+        "accountant",
+        "other",
       ],
       lender_doc_status: ["required", "received", "verified", "waived"],
       lender_loan_purpose: ["OWNER_OCCUPIED", "INVESTMENT"],
