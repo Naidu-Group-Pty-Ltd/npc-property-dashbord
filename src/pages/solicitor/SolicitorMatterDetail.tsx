@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowLeft, Building2, CalendarClock, Contact, FileText, Landmark, Loader2,
-  MessagesSquare, Pencil, Plus, Route, Save, ShieldAlert, Sparkles, Trash2, Users,
+  MessagesSquare, Pencil, Plus, Route, Save, ShieldAlert, ShieldCheck, Sparkles, Trash2, Users,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { invokeSolicitorFunction } from '@/lib/solicitorPortal';
 import { SolicitorPortalShell } from '@/components/solicitor-portal/SolicitorPortalShell';
 import { ContractIntelligencePanel } from '@/components/solicitor-portal/ContractIntelligencePanel';
+import { MatterCompliancePanel } from '@/components/solicitor-portal/MatterCompliancePanel';
 import {
   MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, MATTER_STATUS_ORDER, MATTER_TYPE_LABELS,
   PARTY_ROLE_LABELS, countdownLabel, formatCurrency, formatMatterDate, formatPropertyAddress,
@@ -513,6 +514,7 @@ export default function SolicitorMatterDetail() {
           <TabsTrigger value="costs" className="gap-2"><FileText className="h-4 w-4" /> Costs</TabsTrigger>
           <TabsTrigger value="messages" className="gap-2"><MessagesSquare className="h-4 w-4" /> Messages</TabsTrigger>
           <TabsTrigger value="intelligence" className="gap-2"><Sparkles className="h-4 w-4" /> Intelligence</TabsTrigger>
+          <TabsTrigger value="compliance" className="gap-2"><ShieldCheck className="h-4 w-4" /> Compliance</TabsTrigger>
           <TabsTrigger value="notes" className="gap-2"><Contact className="h-4 w-4" /> Notes</TabsTrigger>
         </TabsList>
 
@@ -783,6 +785,17 @@ export default function SolicitorMatterDetail() {
         </TabsContent>
 
         {/* ─────────── CONTRACT INTELLIGENCE ─────────── */}
+        {/* ─────────── COMPLIANCE ─────────── */}
+        <TabsContent value="compliance" className="mt-4">
+          {matterId ? (
+            <MatterCompliancePanel
+              matterId={matterId}
+              matterReference={matter.matter_reference}
+              canEdit={canEdit}
+            />
+          ) : null}
+        </TabsContent>
+
         <TabsContent value="intelligence" className="mt-4">
           <ContractIntelligencePanel
             matterId={matterId!}

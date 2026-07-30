@@ -1008,5 +1008,8 @@ verify_jwt = false
 [functions.solicitor-portal-intelligence]
 verify_jwt = false
 
+[functions.solicitor-portal-compliance]
+verify_jwt = false
+
 [functions.legal-matters-admin]
 verify_jwt = true
