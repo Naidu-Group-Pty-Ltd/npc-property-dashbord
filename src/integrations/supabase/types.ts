@@ -1404,6 +1404,190 @@ export type Database = {
           },
         ]
       }
+      ai_analysis_reviews: {
+        Row: {
+          id: string
+          notes: string | null
+          review_status: string
+          reviewed_at: string
+          reviewer_id: string
+          run_id: string
+        }
+        Insert: {
+          id?: string
+          notes?: string | null
+          review_status: string
+          reviewed_at?: string
+          reviewer_id: string
+          run_id: string
+        }
+        Update: {
+          id?: string
+          notes?: string | null
+          review_status?: string
+          reviewed_at?: string
+          reviewer_id?: string
+          run_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_analysis_reviews_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "ai_analysis_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_analysis_runs: {
+        Row: {
+          completed_at: string | null
+          cost_usd: number | null
+          created_at: string
+          error_code: string | null
+          firm_id: string
+          id: string
+          idempotency_key: string
+          input_hash: string
+          input_tokens: number | null
+          jurisdiction: string
+          legacy_analysis_id: string | null
+          legal_matter_id: string
+          model: string
+          output_hash: string | null
+          output_tokens: number | null
+          prompt_version_id: string
+          provider: string
+          redaction_profile: string
+          request_correlation_id: string
+          requested_by: string
+          review_status: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          cost_usd?: number | null
+          created_at?: string
+          error_code?: string | null
+          firm_id: string
+          id?: string
+          idempotency_key: string
+          input_hash: string
+          input_tokens?: number | null
+          jurisdiction: string
+          legacy_analysis_id?: string | null
+          legal_matter_id: string
+          model: string
+          output_hash?: string | null
+          output_tokens?: number | null
+          prompt_version_id: string
+          provider: string
+          redaction_profile: string
+          request_correlation_id?: string
+          requested_by: string
+          review_status?: string
+          started_at?: string | null
+          status: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          cost_usd?: number | null
+          created_at?: string
+          error_code?: string | null
+          firm_id?: string
+          id?: string
+          idempotency_key?: string
+          input_hash?: string
+          input_tokens?: number | null
+          jurisdiction?: string
+          legacy_analysis_id?: string | null
+          legal_matter_id?: string
+          model?: string
+          output_hash?: string | null
+          output_tokens?: number | null
+          prompt_version_id?: string
+          provider?: string
+          redaction_profile?: string
+          request_correlation_id?: string
+          requested_by?: string
+          review_status?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_analysis_runs_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_analysis_runs_legacy_analysis_id_fkey"
+            columns: ["legacy_analysis_id"]
+            isOneToOne: false
+            referencedRelation: "legal_contract_analyses"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_analysis_runs_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_analysis_runs_prompt_version_id_fkey"
+            columns: ["prompt_version_id"]
+            isOneToOne: false
+            referencedRelation: "ai_prompt_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_analysis_sources: {
+        Row: {
+          document_version_id: string
+          id: string
+          permission_confirmed_at: string
+          run_id: string
+          source_sha256: string
+        }
+        Insert: {
+          document_version_id: string
+          id?: string
+          permission_confirmed_at: string
+          run_id: string
+          source_sha256: string
+        }
+        Update: {
+          document_version_id?: string
+          id?: string
+          permission_confirmed_at?: string
+          run_id?: string
+          source_sha256?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_analysis_sources_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_analysis_sources_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "ai_analysis_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_coach_insights: {
         Row: {
           action_label: string | null
@@ -1636,6 +1820,42 @@ export type Database = {
             referencedColumns: ["purchase_file_id"]
           },
         ]
+      }
+      ai_prompt_versions: {
+        Row: {
+          active: boolean
+          content: string
+          content_sha256: string
+          created_at: string
+          created_by: string | null
+          id: string
+          jurisdiction: string
+          prompt_key: string
+          version: number
+        }
+        Insert: {
+          active?: boolean
+          content: string
+          content_sha256: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          jurisdiction?: string
+          prompt_key: string
+          version: number
+        }
+        Update: {
+          active?: boolean
+          content?: string
+          content_sha256?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          jurisdiction?: string
+          prompt_key?: string
+          version?: number
+        }
+        Relationships: []
       }
       ai_risk_alerts: {
         Row: {
@@ -8098,6 +8318,7 @@ export type Database = {
       }
       document_records: {
         Row: {
+          allow_external_ai: boolean
           case_id: string
           category: string
           client_visible: boolean
@@ -8118,6 +8339,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          allow_external_ai?: boolean
           case_id: string
           category: string
           client_visible?: boolean
@@ -8138,6 +8360,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          allow_external_ai?: boolean
           case_id?: string
           category?: string
           client_visible?: boolean
@@ -11372,6 +11595,71 @@ export type Database = {
             columns: ["finance_contact_id"]
             isOneToOne: true
             referencedRelation: "finance_agent_contacts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      firm_ai_policies: {
+        Row: {
+          allowed_models: string[]
+          circuit_open_until: string | null
+          consecutive_failures: number
+          consent_version: string | null
+          consented_at: string | null
+          consented_by: string | null
+          external_processing_enabled: boolean
+          firm_id: string
+          id: string
+          max_cost_usd: number
+          max_input_tokens: number
+          max_output_tokens: number
+          provider: string
+          redaction_profile: string
+          timeout_seconds: number
+          updated_at: string
+        }
+        Insert: {
+          allowed_models?: string[]
+          circuit_open_until?: string | null
+          consecutive_failures?: number
+          consent_version?: string | null
+          consented_at?: string | null
+          consented_by?: string | null
+          external_processing_enabled?: boolean
+          firm_id: string
+          id?: string
+          max_cost_usd?: number
+          max_input_tokens?: number
+          max_output_tokens?: number
+          provider?: string
+          redaction_profile?: string
+          timeout_seconds?: number
+          updated_at?: string
+        }
+        Update: {
+          allowed_models?: string[]
+          circuit_open_until?: string | null
+          consecutive_failures?: number
+          consent_version?: string | null
+          consented_at?: string | null
+          consented_by?: string | null
+          external_processing_enabled?: boolean
+          firm_id?: string
+          id?: string
+          max_cost_usd?: number
+          max_input_tokens?: number
+          max_output_tokens?: number
+          provider?: string
+          redaction_profile?: string
+          timeout_seconds?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "firm_ai_policies_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: true
+            referencedRelation: "solicitor_firms"
             referencedColumns: ["id"]
           },
         ]
@@ -26415,6 +26703,15 @@ export type Database = {
       }
       resume_migration_job: { Args: { p_job_id: string }; Returns: undefined }
       retry_failed_bulk_items: { Args: { p_job_id: string }; Returns: number }
+      review_ai_analysis_run: {
+        Args: {
+          _notes: string
+          _reviewer_id: string
+          _run_id: string
+          _status: string
+        }
+        Returns: Json
+      }
       review_document_version: {
         Args: {
           _actor_id: string
