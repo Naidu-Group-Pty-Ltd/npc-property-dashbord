@@ -314,6 +314,29 @@ const App = () => (
                           </FinancePortalAuthProvider>
                         } />
 
+                        {/* Solicitor Portal Routes - single provider wrapping all /solicitor/* */}
+                        <Route path="/solicitor/*" element={
+                          <SolicitorPortalAuthProvider>
+                            <Routes>
+                              <Route path="login" element={<SolicitorLogin />} />
+                              <Route path="accept-invite" element={<SolicitorAcceptInvite />} />
+                              <Route path="forgot-password" element={<SolicitorForgotPassword />} />
+                              <Route path="change-password" element={
+                                <SolicitorPortalProtectedRoute>
+                                  <SolicitorChangePassword />
+                                </SolicitorPortalProtectedRoute>
+                              } />
+                              <Route path="" element={
+                                <SolicitorPortalProtectedRoute>
+                                  <SolicitorDashboard />
+                                </SolicitorPortalProtectedRoute>
+                              } />
+                            </Routes>
+                          </SolicitorPortalAuthProvider>
+                        } />
+
+
+
                         {/* Internal Dashboard Routes */}
                         <Route path="/auth" element={<Auth />} />
                         <Route path="/accept-invite" element={<AcceptInvite />} />
