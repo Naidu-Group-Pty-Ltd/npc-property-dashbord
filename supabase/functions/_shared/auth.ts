@@ -617,6 +617,27 @@ export function createClearFinanceSessionCookie(): string {
 }
 
 /**
+ * Solicitor-portal-scoped session cookie. Same rationale as the finance
+ * variant: a dedicated `__Host-`-prefixed name so signing into the Command
+ * Centre, the Client Portal or the Finance Portal never clobbers the
+ * solicitor's session (all edge functions share the *.supabase.co origin).
+ */
+export function createSolicitorSessionCookie(
+  sessionToken: string,
+  expiresAt: Date,
+  options?: { clear?: boolean }
+): string {
+  const maxAge = options?.clear ? 0 : Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+  const expires = options?.clear ? new Date(0).toUTCString() : expiresAt.toUTCString();
+  return `__Host-solicitor_session_token=${options?.clear ? '' : sessionToken}; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}; Expires=${expires}; Path=/`;
+}
+
+export function createClearSolicitorSessionCookie(): string {
+  return createSolicitorSessionCookie('', new Date(0), { clear: true });
+}
+
+
+/**
  * Create an unauthorized response with proper CORS headers
  */
 export function createUnauthorizedResponse(
