@@ -44,6 +44,7 @@ import {
   ChevronDown,
   Search,
   X as XIcon,
+  ArrowLeftRight,
 } from 'lucide-react';
 import {
   Sidebar,

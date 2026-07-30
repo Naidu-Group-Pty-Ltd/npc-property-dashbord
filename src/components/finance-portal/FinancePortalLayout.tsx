@@ -4,6 +4,7 @@ import { useFinancePortalAuth } from '@/hooks/useFinancePortalAuth';
 import { Button } from '@/components/ui/button';
 import {
   Building2, LayoutDashboard, Users, LogOut, Menu, MessageSquare, Wallet, X, Shield, Briefcase, BookOpen, BarChart3, Settings as SettingsIcon, Inbox, Layers, Trophy, ArrowLeft,
+  ArrowLeftRight,
 } from 'lucide-react';
 
 import {
