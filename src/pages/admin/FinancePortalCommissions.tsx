@@ -42,6 +42,11 @@ interface Commission {
   notes: string | null;
   created_at: string;
   statement_id: string | null;
+  agreement_version: number | null;
+  rate_source: string | null;
+  qualifying_event: string | null;
+  cleared_funds_required: boolean | null;
+  cleared_funds_received_at: string | null;
 }
 
 interface Statement {
@@ -60,7 +65,32 @@ interface Statement {
   remittance_csv_path: string | null;
   issued_at: string | null;
   paid_at: string | null;
+  agreement_version: number | null;
+  dispute_window_days: number | null;
+  dispute_deadline: string | null;
+  dispute_status: string | null;
+  open_dispute_count: number | null;
 }
+
+interface Dispute {
+  id: string;
+  statement_id: string;
+  finance_contact_id: string;
+  commission_id: string | null;
+  raised_by_type: string;
+  raised_by_name: string | null;
+  raised_at: string;
+  within_window: boolean;
+  reason_category: string;
+  reason: string;
+  disputed_amount: number | null;
+  status: string;
+  resolution_outcome: string | null;
+  resolution_notes: string | null;
+  adjustment_amount: number | null;
+  resolved_at: string | null;
+}
+
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   pending: 'secondary',
