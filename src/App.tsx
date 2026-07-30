@@ -341,6 +341,16 @@ const App = () => (
                                   <SolicitorDashboard />
                                 </SolicitorPortalProtectedRoute>
                               } />
+                              <Route path="matters" element={
+                                <SolicitorPortalProtectedRoute>
+                                  <SolicitorMatters />
+                                </SolicitorPortalProtectedRoute>
+                              } />
+                              <Route path="matters/:matterId" element={
+                                <SolicitorPortalProtectedRoute>
+                                  <SolicitorMatterDetail />
+                                </SolicitorPortalProtectedRoute>
+                              } />
                             </Routes>
                           </SolicitorPortalAuthProvider>
                         } />
