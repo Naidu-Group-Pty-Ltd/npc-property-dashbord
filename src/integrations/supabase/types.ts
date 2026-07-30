@@ -12732,6 +12732,219 @@ export type Database = {
           },
         ]
       }
+      legal_matter_disbursements: {
+        Row: {
+          amount: number
+          category: string | null
+          created_at: string
+          created_by: string | null
+          gst_amount: number
+          id: string
+          include_in_settlement: boolean
+          incurred_on: string | null
+          invoice_reference: string | null
+          label: string
+          legal_matter_id: string
+          notes: string | null
+          paid_on: string | null
+          payable_to: string | null
+          search_id: string | null
+          status: Database["public"]["Enums"]["legal_disbursement_status"]
+          updated_at: string
+          visible_to_client: boolean
+        }
+        Insert: {
+          amount?: number
+          category?: string | null
+          created_at?: string
+          created_by?: string | null
+          gst_amount?: number
+          id?: string
+          include_in_settlement?: boolean
+          incurred_on?: string | null
+          invoice_reference?: string | null
+          label: string
+          legal_matter_id: string
+          notes?: string | null
+          paid_on?: string | null
+          payable_to?: string | null
+          search_id?: string | null
+          status?: Database["public"]["Enums"]["legal_disbursement_status"]
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Update: {
+          amount?: number
+          category?: string | null
+          created_at?: string
+          created_by?: string | null
+          gst_amount?: number
+          id?: string
+          include_in_settlement?: boolean
+          incurred_on?: string | null
+          invoice_reference?: string | null
+          label?: string
+          legal_matter_id?: string
+          notes?: string | null
+          paid_on?: string | null
+          payable_to?: string | null
+          search_id?: string | null
+          status?: Database["public"]["Enums"]["legal_disbursement_status"]
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_disbursements_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_disbursements_search_id_fkey"
+            columns: ["search_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matter_searches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matter_documents: {
+        Row: {
+          category: Database["public"]["Enums"]["legal_document_category"]
+          client_id: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          due_date: string | null
+          file_name: string | null
+          file_size: number | null
+          firm_id: string | null
+          id: string
+          label: string
+          legal_matter_id: string
+          mime_type: string | null
+          owner: Database["public"]["Enums"]["legal_document_owner"]
+          requested_at: string | null
+          review_notes: string | null
+          reviewed_at: string | null
+          reviewed_by_solicitor_user_id: string | null
+          source: string
+          status: Database["public"]["Enums"]["legal_document_status"]
+          storage_bucket: string | null
+          storage_path: string | null
+          supersedes_document_id: string | null
+          updated_at: string
+          uploaded_at: string | null
+          uploaded_by_solicitor_user_id: string | null
+          uploaded_by_type: string | null
+          version: number
+          visible_to_client: boolean
+          visible_to_npc: boolean
+        }
+        Insert: {
+          category?: Database["public"]["Enums"]["legal_document_category"]
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          due_date?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          firm_id?: string | null
+          id?: string
+          label: string
+          legal_matter_id: string
+          mime_type?: string | null
+          owner?: Database["public"]["Enums"]["legal_document_owner"]
+          requested_at?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by_solicitor_user_id?: string | null
+          source?: string
+          status?: Database["public"]["Enums"]["legal_document_status"]
+          storage_bucket?: string | null
+          storage_path?: string | null
+          supersedes_document_id?: string | null
+          updated_at?: string
+          uploaded_at?: string | null
+          uploaded_by_solicitor_user_id?: string | null
+          uploaded_by_type?: string | null
+          version?: number
+          visible_to_client?: boolean
+          visible_to_npc?: boolean
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["legal_document_category"]
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          due_date?: string | null
+          file_name?: string | null
+          file_size?: number | null
+          firm_id?: string | null
+          id?: string
+          label?: string
+          legal_matter_id?: string
+          mime_type?: string | null
+          owner?: Database["public"]["Enums"]["legal_document_owner"]
+          requested_at?: string | null
+          review_notes?: string | null
+          reviewed_at?: string | null
+          reviewed_by_solicitor_user_id?: string | null
+          source?: string
+          status?: Database["public"]["Enums"]["legal_document_status"]
+          storage_bucket?: string | null
+          storage_path?: string | null
+          supersedes_document_id?: string | null
+          updated_at?: string
+          uploaded_at?: string | null
+          uploaded_by_solicitor_user_id?: string | null
+          uploaded_by_type?: string | null
+          version?: number
+          visible_to_client?: boolean
+          visible_to_npc?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_documents_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_documents_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_documents_reviewed_by_solicitor_user_id_fkey"
+            columns: ["reviewed_by_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_documents_supersedes_document_id_fkey"
+            columns: ["supersedes_document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matter_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_documents_uploaded_by_solicitor_user_id_fkey"
+            columns: ["uploaded_by_solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       legal_matter_parties: {
         Row: {
           address: string | null
@@ -12784,6 +12997,165 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "legal_matter_parties_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matter_requisitions: {
+        Row: {
+          answered_at: string | null
+          created_at: string
+          created_by: string | null
+          detail: string | null
+          direction: Database["public"]["Enums"]["legal_requisition_direction"]
+          document_id: string | null
+          id: string
+          is_blocking: boolean
+          legal_matter_id: string
+          notes: string | null
+          raised_on: string | null
+          reference: string | null
+          response: string | null
+          response_due: string | null
+          status: Database["public"]["Enums"]["legal_requisition_status"]
+          subject: string
+          updated_at: string
+          visible_to_client: boolean
+        }
+        Insert: {
+          answered_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          detail?: string | null
+          direction?: Database["public"]["Enums"]["legal_requisition_direction"]
+          document_id?: string | null
+          id?: string
+          is_blocking?: boolean
+          legal_matter_id: string
+          notes?: string | null
+          raised_on?: string | null
+          reference?: string | null
+          response?: string | null
+          response_due?: string | null
+          status?: Database["public"]["Enums"]["legal_requisition_status"]
+          subject: string
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Update: {
+          answered_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          detail?: string | null
+          direction?: Database["public"]["Enums"]["legal_requisition_direction"]
+          document_id?: string | null
+          id?: string
+          is_blocking?: boolean
+          legal_matter_id?: string
+          notes?: string | null
+          raised_on?: string | null
+          reference?: string | null
+          response?: string | null
+          response_due?: string | null
+          status?: Database["public"]["Enums"]["legal_requisition_status"]
+          subject?: string
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_requisitions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matter_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_requisitions_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      legal_matter_searches: {
+        Row: {
+          cost_amount: number | null
+          created_at: string
+          created_by: string | null
+          document_id: string | null
+          due_date: string | null
+          id: string
+          issue_flag: boolean
+          label: string
+          legal_matter_id: string
+          notes: string | null
+          ordered_at: string | null
+          provider: string | null
+          received_at: string | null
+          reference: string | null
+          result_summary: string | null
+          search_type: Database["public"]["Enums"]["legal_search_type"]
+          status: Database["public"]["Enums"]["legal_search_status"]
+          updated_at: string
+          visible_to_client: boolean
+        }
+        Insert: {
+          cost_amount?: number | null
+          created_at?: string
+          created_by?: string | null
+          document_id?: string | null
+          due_date?: string | null
+          id?: string
+          issue_flag?: boolean
+          label: string
+          legal_matter_id: string
+          notes?: string | null
+          ordered_at?: string | null
+          provider?: string | null
+          received_at?: string | null
+          reference?: string | null
+          result_summary?: string | null
+          search_type?: Database["public"]["Enums"]["legal_search_type"]
+          status?: Database["public"]["Enums"]["legal_search_status"]
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Update: {
+          cost_amount?: number | null
+          created_at?: string
+          created_by?: string | null
+          document_id?: string | null
+          due_date?: string | null
+          id?: string
+          issue_flag?: boolean
+          label?: string
+          legal_matter_id?: string
+          notes?: string | null
+          ordered_at?: string | null
+          provider?: string | null
+          received_at?: string | null
+          reference?: string | null
+          result_summary?: string | null
+          search_type?: Database["public"]["Enums"]["legal_search_type"]
+          status?: Database["public"]["Enums"]["legal_search_status"]
+          updated_at?: string
+          visible_to_client?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legal_matter_searches_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matter_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legal_matter_searches_legal_matter_id_fkey"
             columns: ["legal_matter_id"]
             isOneToOne: false
             referencedRelation: "legal_matters"
@@ -23002,6 +23374,47 @@ export type Database = {
         | "settlement"
         | "pexa_lodgement"
         | "other"
+      legal_disbursement_status:
+        | "estimated"
+        | "incurred"
+        | "invoiced"
+        | "paid"
+        | "waived"
+      legal_document_category:
+        | "contract"
+        | "title"
+        | "plan"
+        | "disclosure_statement"
+        | "strata_report"
+        | "building_pest"
+        | "identity_voi"
+        | "transfer"
+        | "stamp_duty"
+        | "settlement_statement"
+        | "discharge"
+        | "trust_receipt"
+        | "correspondence"
+        | "search_result"
+        | "requisition"
+        | "authority"
+        | "other"
+      legal_document_owner:
+        | "client"
+        | "solicitor"
+        | "npc"
+        | "other_side"
+        | "lender"
+        | "builder"
+        | "agent"
+        | "other"
+      legal_document_status:
+        | "requested"
+        | "uploaded"
+        | "under_review"
+        | "accepted"
+        | "rejected"
+        | "superseded"
+        | "not_required"
       legal_matter_status:
         | "instructed"
         | "contract_review"
@@ -23035,6 +23448,38 @@ export type Database = {
         | "guarantor"
         | "trustee"
         | "accountant"
+        | "other"
+      legal_requisition_direction: "sent" | "received"
+      legal_requisition_status:
+        | "draft"
+        | "sent"
+        | "received"
+        | "answered"
+        | "satisfied"
+        | "disputed"
+        | "withdrawn"
+      legal_search_status:
+        | "not_ordered"
+        | "ordered"
+        | "received"
+        | "reviewed"
+        | "issue"
+        | "not_required"
+      legal_search_type:
+        | "title_search"
+        | "plan_search"
+        | "council_certificate"
+        | "water_certificate"
+        | "land_tax_clearance"
+        | "strata_inspection"
+        | "owners_corp"
+        | "planning_certificate"
+        | "sewer_diagram"
+        | "company_search"
+        | "bankruptcy_search"
+        | "asic_search"
+        | "pexa_verification"
+        | "rates_certificate"
         | "other"
       legal_settlement_task_key:
         | "title_search"
@@ -23679,6 +24124,51 @@ export const Constants = {
         "pexa_lodgement",
         "other",
       ],
+      legal_disbursement_status: [
+        "estimated",
+        "incurred",
+        "invoiced",
+        "paid",
+        "waived",
+      ],
+      legal_document_category: [
+        "contract",
+        "title",
+        "plan",
+        "disclosure_statement",
+        "strata_report",
+        "building_pest",
+        "identity_voi",
+        "transfer",
+        "stamp_duty",
+        "settlement_statement",
+        "discharge",
+        "trust_receipt",
+        "correspondence",
+        "search_result",
+        "requisition",
+        "authority",
+        "other",
+      ],
+      legal_document_owner: [
+        "client",
+        "solicitor",
+        "npc",
+        "other_side",
+        "lender",
+        "builder",
+        "agent",
+        "other",
+      ],
+      legal_document_status: [
+        "requested",
+        "uploaded",
+        "under_review",
+        "accepted",
+        "rejected",
+        "superseded",
+        "not_required",
+      ],
       legal_matter_status: [
         "instructed",
         "contract_review",
@@ -23714,6 +24204,41 @@ export const Constants = {
         "guarantor",
         "trustee",
         "accountant",
+        "other",
+      ],
+      legal_requisition_direction: ["sent", "received"],
+      legal_requisition_status: [
+        "draft",
+        "sent",
+        "received",
+        "answered",
+        "satisfied",
+        "disputed",
+        "withdrawn",
+      ],
+      legal_search_status: [
+        "not_ordered",
+        "ordered",
+        "received",
+        "reviewed",
+        "issue",
+        "not_required",
+      ],
+      legal_search_type: [
+        "title_search",
+        "plan_search",
+        "council_certificate",
+        "water_certificate",
+        "land_tax_clearance",
+        "strata_inspection",
+        "owners_corp",
+        "planning_certificate",
+        "sewer_diagram",
+        "company_search",
+        "bankruptcy_search",
+        "asic_search",
+        "pexa_verification",
+        "rates_certificate",
         "other",
       ],
       legal_settlement_task_key: [
