@@ -404,12 +404,12 @@ export default function SolicitorMatterDetail() {
         </TabsContent>
 
         {/* ─────────── DATES ─────────── */}
-        <TabsContent value="dates" className="mt-4">
+        <TabsContent value="dates" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Key dates</CardTitle>
+              <CardTitle className="text-base">Contract dates</CardTitle>
               <CardDescription>
-                Typed critical dates and the settlement runway arrive in the next release; these drive the countdowns today.
+                These fields drive the synced entries in the critical date register below.
               </CardDescription>
             </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
@@ -443,7 +443,36 @@ export default function SolicitorMatterDetail() {
               ) : null}
             </CardContent>
           </Card>
+
+          {perms.critical_dates?.view === false ? null : (
+            <CriticalDatesPanel
+              dates={criticalDates}
+              canEdit={!!perms.critical_dates?.edit}
+              canDelete={!!perms.critical_dates?.delete}
+              saving={datesSaving}
+              onSave={saveCriticalDate}
+              onSetStatus={setCriticalDateStatus}
+              onDelete={deleteCriticalDate}
+            />
+          )}
         </TabsContent>
+
+        {/* ─────────── SETTLEMENT ─────────── */}
+        <TabsContent value="settlement" className="mt-4">
+          <SettlementRunwayPanel
+            tasks={runwayTasks}
+            runway={runway}
+            canEdit={!!perms.settlement?.edit}
+            saving={datesSaving}
+            seeding={seeding}
+            onUpdateTask={updateRunwayTask}
+            onQuickStatus={(taskId, status) => updateRunwayTask({
+              id: taskId, status, due_date: '', blocked_reason: '', notes: '',
+            }, true)}
+            onSeed={seedRunway}
+          />
+        </TabsContent>
+
 
         {/* ─────────── NOTES ─────────── */}
         <TabsContent value="notes" className="mt-4">
