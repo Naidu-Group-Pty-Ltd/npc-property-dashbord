@@ -22654,6 +22654,233 @@ export type Database = {
         }
         Relationships: []
       }
+      transaction_case_link_history: {
+        Row: {
+          action: string
+          actor_user_id: string | null
+          case_id: string
+          domain_record_id: string
+          domain_type: string
+          id: string
+          link_source: string
+          occurred_at: string
+          reason: string | null
+        }
+        Insert: {
+          action: string
+          actor_user_id?: string | null
+          case_id: string
+          domain_record_id: string
+          domain_type: string
+          id?: string
+          link_source: string
+          occurred_at?: string
+          reason?: string | null
+        }
+        Update: {
+          action?: string
+          actor_user_id?: string | null
+          case_id?: string
+          domain_record_id?: string
+          domain_type?: string
+          id?: string
+          link_source?: string
+          occurred_at?: string
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transaction_case_link_history_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      transaction_case_links: {
+        Row: {
+          case_id: string
+          client_deal_id: string | null
+          id: string
+          legal_matter_id: string | null
+          link_source: string
+          linked_at: string
+          linked_by: string | null
+          purchase_file_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          case_id: string
+          client_deal_id?: string | null
+          id?: string
+          legal_matter_id?: string | null
+          link_source: string
+          linked_at?: string
+          linked_by?: string | null
+          purchase_file_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          case_id?: string
+          client_deal_id?: string | null
+          id?: string
+          legal_matter_id?: string | null
+          link_source?: string
+          linked_at?: string
+          linked_by?: string | null
+          purchase_file_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transaction_case_links_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: true
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transaction_case_links_client_deal_id_fkey"
+            columns: ["client_deal_id"]
+            isOneToOne: true
+            referencedRelation: "client_deals"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transaction_case_links_client_deal_id_fkey"
+            columns: ["client_deal_id"]
+            isOneToOne: true
+            referencedRelation: "v_purchase_file_deal_drift"
+            referencedColumns: ["client_deal_id"]
+          },
+          {
+            foreignKeyName: "transaction_case_links_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: true
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transaction_case_links_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: true
+            referencedRelation: "purchase_files"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transaction_case_links_purchase_file_id_fkey"
+            columns: ["purchase_file_id"]
+            isOneToOne: true
+            referencedRelation: "v_purchase_file_deal_drift"
+            referencedColumns: ["purchase_file_id"]
+          },
+        ]
+      }
+      transaction_case_reconciliation_issues: {
+        Row: {
+          actual_client_id: string | null
+          client_deal_id: string | null
+          details: Json
+          detected_at: string
+          expected_client_id: string | null
+          id: string
+          issue_key: string | null
+          issue_type: string
+          legal_matter_id: string | null
+          purchase_file_id: string | null
+          resolved_at: string | null
+          status: string
+        }
+        Insert: {
+          actual_client_id?: string | null
+          client_deal_id?: string | null
+          details?: Json
+          detected_at?: string
+          expected_client_id?: string | null
+          id?: string
+          issue_key?: string | null
+          issue_type: string
+          legal_matter_id?: string | null
+          purchase_file_id?: string | null
+          resolved_at?: string | null
+          status?: string
+        }
+        Update: {
+          actual_client_id?: string | null
+          client_deal_id?: string | null
+          details?: Json
+          detected_at?: string
+          expected_client_id?: string | null
+          id?: string
+          issue_key?: string | null
+          issue_type?: string
+          legal_matter_id?: string | null
+          purchase_file_id?: string | null
+          resolved_at?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      transaction_cases: {
+        Row: {
+          canonical_property_id: string | null
+          case_type: string
+          client_id: string
+          closed_at: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          jurisdiction: string | null
+          opened_at: string
+          property_address_normalized: string | null
+          risk_level: string
+          row_version: number
+          shared_lifecycle_status: string
+          updated_at: string
+        }
+        Insert: {
+          canonical_property_id?: string | null
+          case_type?: string
+          client_id: string
+          closed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          jurisdiction?: string | null
+          opened_at?: string
+          property_address_normalized?: string | null
+          risk_level?: string
+          row_version?: number
+          shared_lifecycle_status?: string
+          updated_at?: string
+        }
+        Update: {
+          canonical_property_id?: string | null
+          case_type?: string
+          client_id?: string
+          closed_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          jurisdiction?: string | null
+          opened_at?: string
+          property_address_normalized?: string | null
+          risk_level?: string
+          row_version?: number
+          shared_lifecycle_status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transaction_cases_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       transport_data_cache: {
         Row: {
           created_at: string
@@ -23561,6 +23788,16 @@ export type Database = {
           user_id: string
         }[]
       }
+      create_transaction_case: {
+        Args: {
+          _actor_user_id: string
+          _case_type: string
+          _client_id: string
+          _jurisdiction: string
+          _property_address: string
+        }
+        Returns: Json
+      }
       cron_invoke_signed_function: {
         Args: { body?: Json; caller?: string; function_name: string }
         Returns: number
@@ -23770,6 +24007,7 @@ export type Database = {
           role: string
         }[]
       }
+      get_transaction_case_health: { Args: { _case_id: string }; Returns: Json }
       get_user_activity_summary: {
         Args: { p_days_back?: number; p_user_id: string }
         Returns: {
@@ -23838,6 +24076,17 @@ export type Database = {
           _matter_id: string
           _record_id: string
           _record_type: string
+        }
+        Returns: Json
+      }
+      link_transaction_case_record: {
+        Args: {
+          _actor_user_id: string
+          _case_id: string
+          _domain_record_id: string
+          _domain_type: string
+          _expected_version: number
+          _reason: string
         }
         Returns: Json
       }
@@ -24193,6 +24442,16 @@ export type Database = {
           _expected_version: number
           _matter_id: string
           _record_type: string
+        }
+        Returns: Json
+      }
+      unlink_transaction_case_record: {
+        Args: {
+          _actor_user_id: string
+          _case_id: string
+          _domain_type: string
+          _expected_version: number
+          _reason: string
         }
         Returns: Json
       }
