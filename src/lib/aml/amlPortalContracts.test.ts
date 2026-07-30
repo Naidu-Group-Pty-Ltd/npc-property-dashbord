@@ -1103,6 +1103,28 @@ describe("self-hosted verification stack", () => {
     expect(branch).toContain("expires_in_seconds: 120");
   });
 
+  it("authorizes verification data against the target case tenant", () => {
+    const helper = verifySource.slice(
+      verifySource.indexOf("async function hasCaseAccess"),
+      verifySource.indexOf("import { reserveTokens"));
+    expect(helper).toContain('rpc("has_any_tenant_aml_role"');
+    expect(helper).toContain('rpc("has_tenant_aml_role"');
+    expect(helper).toContain('_tenant_id: caseRow.tenant_id');
+
+    for (const op of [
+      "list_verification_checks",
+      "run_verification",
+      "record_document_sighting",
+      "get_biometric_url",
+      "list_biometric_access",
+    ]) {
+      const start = verifySource.indexOf(`case "${op}"`);
+      const end = verifySource.indexOf('\n      case "', start + 1);
+      const branch = verifySource.slice(start, end < 0 ? undefined : end);
+      expect(branch).toContain("hasCaseAccess(admin, userId");
+    }
+  });
+
   it("does not consume an attempt when our own service fails", () => {
     const branch = verifySource.slice(verifySource.indexOf('case "run_verification"'));
     expect(branch).toContain("service_unavailable");

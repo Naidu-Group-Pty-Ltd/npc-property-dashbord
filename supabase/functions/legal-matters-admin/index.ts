@@ -705,11 +705,15 @@ Deno.serve(async (req) => {
       }).select(MESSAGE_SELECT).maybeSingle();
       if (error) throw error;
 
-      // Notify every solicitor assigned to this client.
-      const { data: assignments } = await supabase
+      // Notify only assigned solicitors whose practice can access this matter.
+      let assignmentsQuery = supabase
         .from('solicitor_portal_client_assignments')
-        .select('solicitor_user_id')
+        .select('solicitor_user_id, solicitor_portal_users!inner(firm_id)')
         .eq('client_id', matter.client_id);
+      if (matter.firm_id) {
+        assignmentsQuery = assignmentsQuery.eq('solicitor_portal_users.firm_id', matter.firm_id);
+      }
+      const { data: assignments } = await assignmentsQuery;
       await notifySolicitors(supabase, {
         solicitorUserIds: (assignments || []).map((a: any) => a.solicitor_user_id),
         firmId: matter.firm_id,

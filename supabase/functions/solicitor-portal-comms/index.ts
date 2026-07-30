@@ -17,6 +17,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
   resolveClientPermissions,
@@ -51,6 +52,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   const json = (payload: unknown, status = 200) => new Response(
     JSON.stringify(payload),
@@ -99,6 +103,27 @@ Deno.serve(async (req) => {
         return { ok: false, status: 403, error: 'You do not have access to matter messages' };
       }
       return { ok: true, matter, perms };
+    };
+
+    const permissionCache = new Map<string, PermissionMatrix | null>();
+    const canViewNotification = async (notification: any): Promise<boolean> => {
+      const clientId = notification.client_id;
+      if (clientId && !assignedClientIds.includes(clientId)) return false;
+      if (notification.notification_type !== 'message_received') return true;
+      if (!clientId) return false;
+
+      if (!permissionCache.has(clientId)) {
+        permissionCache.set(
+          clientId,
+          await resolveClientPermissions(supabase, me.id, clientId),
+        );
+      }
+      return can(permissionCache.get(clientId) ?? null, 'messages', 'view');
+    };
+
+    const filterViewableNotifications = async (notifications: any[]) => {
+      const allowed = await Promise.all(notifications.map(canViewNotification));
+      return notifications.filter((_, index) => allowed[index]);
     };
 
     const audit = (
@@ -159,13 +184,20 @@ Deno.serve(async (req) => {
         });
       }
 
-      if (assignedClientIds.length === 0) {
+      const permittedClientIds = (await Promise.all(
+        assignedClientIds.map(async (clientId) => {
+          const perms = await resolveClientPermissions(supabase, me.id, clientId);
+          return perms && can(perms, 'messages', 'view') ? clientId : null;
+        }),
+      )).filter((clientId): clientId is string => clientId !== null);
+
+      if (permittedClientIds.length === 0) {
         return json({ success: true, threads: [], summary: summariseThreads([], 'solicitor') });
       }
       const { data: threads } = await supabase
         .from('legal_matter_threads')
         .select(`${THREAD_SELECT}, legal_matters:legal_matter_id (id, title, matter_reference)`)
-        .in('client_id', assignedClientIds)
+        .in('client_id', permittedClientIds)
         .eq('firm_id', me.firm_id)
         .eq('is_archived', false)
         .order('last_message_at', { ascending: false, nullsFirst: false })
@@ -317,19 +349,20 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'unread_summary') {
-      const [{ data: threads }, { count: notificationCount }] = await Promise.all([
+      const [{ data: threads }, { data: unreadNotifications }] = await Promise.all([
         assignedClientIds.length
           ? supabase.from('legal_matter_threads').select(THREAD_SELECT)
               .in('client_id', assignedClientIds).eq('firm_id', me.firm_id).eq('is_archived', false)
           : Promise.resolve({ data: [] as any[] }),
         supabase.from('solicitor_portal_notifications')
-          .select('id', { count: 'exact', head: true })
+          .select('id, client_id, notification_type')
           .eq('solicitor_user_id', me.id).eq('is_read', false),
       ]);
+      const viewableUnread = await filterViewableNotifications(unreadNotifications || []);
       return json({
         success: true,
         messages: summariseThreads((threads || []) as any[], 'solicitor'),
-        unread_notifications: notificationCount || 0,
+        unread_notifications: viewableUnread.length,
       });
     }
 
@@ -344,15 +377,25 @@ Deno.serve(async (req) => {
         .limit(limit);
       if (body.unread_only) query = query.eq('is_read', false);
       const { data: notifications } = await query;
-      const unread = (notifications || []).filter((n: any) => !n.is_read).length;
-      return json({ success: true, notifications: notifications || [], unread });
+      const viewable = await filterViewableNotifications(notifications || []);
+      const unread = viewable.filter((n: any) => !n.is_read).length;
+      return json({ success: true, notifications: viewable, unread });
     }
 
     if (operation === 'mark_notification_read') {
+      const { data: notification } = await supabase
+        .from('solicitor_portal_notifications')
+        .select(NOTIFICATION_SELECT)
+        .eq('id', String(body.notification_id || ''))
+        .eq('solicitor_user_id', me.id)
+        .maybeSingle();
+      if (!notification || !(await canViewNotification(notification))) {
+        return json({ error: 'Notification not found' }, 404);
+      }
       const { data } = await supabase
         .from('solicitor_portal_notifications')
         .update({ is_read: true, read_at: new Date().toISOString() })
-        .eq('id', String(body.notification_id || ''))
+        .eq('id', notification.id)
         .eq('solicitor_user_id', me.id)
         .select(NOTIFICATION_SELECT)
         .maybeSingle();
@@ -360,11 +403,19 @@ Deno.serve(async (req) => {
     }
 
     if (operation === 'mark_all_notifications_read') {
-      await supabase
+      const { data: unreadNotifications } = await supabase
         .from('solicitor_portal_notifications')
-        .update({ is_read: true, read_at: new Date().toISOString() })
+        .select('id, client_id, notification_type')
         .eq('solicitor_user_id', me.id)
         .eq('is_read', false);
+      const viewable = await filterViewableNotifications(unreadNotifications || []);
+      if (viewable.length > 0) {
+        await supabase
+          .from('solicitor_portal_notifications')
+          .update({ is_read: true, read_at: new Date().toISOString() })
+          .eq('solicitor_user_id', me.id)
+          .in('id', viewable.map((notification: any) => notification.id));
+      }
       return json({ success: true });
     }
 

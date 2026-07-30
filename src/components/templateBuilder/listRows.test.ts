@@ -34,4 +34,12 @@ describe('list row shape helpers', () => {
       { q: 'Updated question', a: 'Answer' },
     ]);
   });
+
+  it('preserves a boolean array when updating one of its values', () => {
+    const rows = [{ flags: [true, false], label: 'Checks' }];
+
+    expect(updateListRowValue(rows, 0, 'flags', true, 1)).toEqual([
+      { flags: [true, true], label: 'Checks' },
+    ]);
+  });
 });

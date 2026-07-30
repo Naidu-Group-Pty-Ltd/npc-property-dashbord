@@ -13,6 +13,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
   resolveClientPermissions,
@@ -24,6 +25,7 @@ import {
 } from "../_shared/solicitorPortalAuth.ts";
 import {
   MATTER_SELECT,
+  SOLICITOR_MATTER_LIST_SELECT,
   PARTY_SELECT,
   LEGAL_MATTER_STATUSES,
   buildMatterPayload,
@@ -49,6 +51,9 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
+
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   const json = (payload: unknown, status = 200) => new Response(
     JSON.stringify(payload),
@@ -77,6 +82,19 @@ Deno.serve(async (req) => {
       if (operation === 'list_matters') return json({ success: true, records: [] });
     }
 
+    /** Assigned clients for which the merged permission matrix allows matter visibility. */
+    const listViewableClientIds = async (): Promise<string[]> => {
+      const permissions = await Promise.all(
+        assignedClientIds.map(async (clientId) => ({
+          clientId,
+          matrix: await resolveClientPermissions(supabase, me.id, clientId),
+        })),
+      );
+      return permissions
+        .filter(({ matrix }) => can(matrix, 'matters', 'view'))
+        .map(({ clientId }) => clientId);
+    };
+
     /** Load a matter and confirm this solicitor may see it. */
     const loadMatter = async (matterId: string): Promise<
       { ok: true; matter: any; perms: PermissionMatrix } | { ok: false; status: number; error: string }
@@ -103,10 +121,13 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── LIST ─────────────────────────
     if (operation === 'list_matters') {
+      const viewableClientIds = await listViewableClientIds();
+      if (!viewableClientIds.length) return json({ success: true, records: [] });
+
       let query = supabase
         .from('legal_matters')
-        .select(MATTER_SELECT)
-        .in('client_id', assignedClientIds)
+        .select(SOLICITOR_MATTER_LIST_SELECT)
+        .in('client_id', viewableClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
         .order('settlement_date', { ascending: true, nullsFirst: false })
         .limit(500);
@@ -562,6 +583,14 @@ Deno.serve(async (req) => {
     // ─────────────── UPCOMING DATES ACROSS THE PRACTICE ───────────────
     if (operation === 'upcoming_dates') {
       if (!assignedClientIds.length) return json({ success: true, records: [] });
+      const permittedClientIds = (await Promise.all(assignedClientIds.map(async (clientId) => {
+        const perms = await resolveClientPermissions(supabase, me.id, clientId);
+        return can(perms, 'matters', 'view') && can(perms, 'critical_dates', 'view')
+          ? clientId
+          : null;
+      }))).filter((clientId): clientId is string => clientId !== null);
+      if (!permittedClientIds.length) return json({ success: true, records: [] });
+
       const horizonDays = Math.min(Math.max(Number(body.days) || 30, 1), 120);
       const horizon = new Date();
       horizon.setDate(horizon.getDate() + horizonDays);
@@ -569,7 +598,7 @@ Deno.serve(async (req) => {
       const { data: matters } = await supabase
         .from('legal_matters')
         .select('id, title, property_address, property_suburb, status, client_id, firm_id')
-        .in('client_id', assignedClientIds)
+        .in('client_id', permittedClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
         .limit(500);
 
@@ -596,13 +625,14 @@ Deno.serve(async (req) => {
 
     // ───────────────────────── STATS ─────────────────────────
     if (operation === 'matter_stats') {
-      if (!assignedClientIds.length) {
+      const viewableClientIds = await listViewableClientIds();
+      if (!viewableClientIds.length) {
         return json({ success: true, stats: { total: 0, by_status: {}, settling_30d: 0, at_risk: 0 } });
       }
       const { data } = await supabase
         .from('legal_matters')
         .select('id, status, settlement_date, risk_flag')
-        .in('client_id', assignedClientIds)
+        .in('client_id', viewableClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`);
 
       const rows = data || [];

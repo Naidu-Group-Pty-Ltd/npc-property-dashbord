@@ -53,6 +53,13 @@ export const MATTER_SELECT = `
   created_at, updated_at
 `;
 
+/** Minimal matter summary returned by solicitor portal list surfaces. */
+export const SOLICITOR_MATTER_LIST_SELECT = `
+  id, matter_reference, title, matter_type, status, client_id,
+  property_address, property_suburb, property_state, property_postcode,
+  settlement_date, risk_flag
+`;
+
 export const PARTY_SELECT = `
   id, legal_matter_id, role, name, organisation, email, phone, address,
   reference, is_primary_contact, notes, created_at, updated_at
