@@ -214,6 +214,7 @@ export default function SolicitorPortalAdmin() {
         <TabsList>
           <TabsTrigger value="users" className="gap-2"><Users className="h-4 w-4" /> Portal Users</TabsTrigger>
           <TabsTrigger value="firms" className="gap-2"><Building2 className="h-4 w-4" /> Legal Practices</TabsTrigger>
+          <TabsTrigger value="matters" className="gap-2"><Briefcase className="h-4 w-4" /> Matters</TabsTrigger>
         </TabsList>
 
         {/* ───────────── USERS ───────────── */}
