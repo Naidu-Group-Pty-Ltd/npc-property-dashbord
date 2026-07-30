@@ -104,10 +104,11 @@ const fmt = (n: number) =>
   `$${(Number(n) || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function FinancePortalCommissions() {
-  const [tab, setTab] = useState<'commissions' | 'statements'>('commissions');
+  const [tab, setTab] = useState<'commissions' | 'statements' | 'disputes'>('commissions');
   const [loading, setLoading] = useState(true);
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [statements, setStatements] = useState<Statement[]>([]);
+  const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [partners, setPartners] = useState<{ id: string; name: string; company: string | null }[]>([]);
   const [filterPartner, setFilterPartner] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -119,17 +120,20 @@ export default function FinancePortalCommissions() {
   const refresh = async () => {
     setLoading(true);
     try {
-      const [cRes, sRes, pRes] = await Promise.all([
+      const [cRes, sRes, dRes, pRes] = await Promise.all([
         invokeSecureFunction('finance-portal-commissions', { operation: 'list_commissions' }),
         invokeSecureFunction('finance-portal-commissions', { operation: 'list_statements' }),
+        invokeSecureFunction('finance-portal-commissions', { operation: 'list_disputes' }),
         invokeSecureFunction('finance-portal-admin', { operation: 'list_users' }),
       ]);
       if (cRes.error) throw new Error(cRes.error.message);
       if (sRes.error) throw new Error(sRes.error.message);
       setCommissions(cRes.data?.commissions || []);
       setStatements(sRes.data?.statements || []);
+      setDisputes(dRes.data?.disputes || []);
       const users = pRes.data?.users || [];
       setPartners(users.map((u: any) => ({ id: u.id, name: u.name, company: u.company })));
+
     } catch (e: any) {
       toast.error('Failed to load: ' + e.message);
     } finally {
