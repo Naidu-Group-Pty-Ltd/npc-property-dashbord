@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { supabase } from '@/integrations/supabase/client';
+import { AdminMatterCommsDialog } from '@/components/admin/solicitor-portal/AdminMatterCommsDialog';
 import {
   AU_STATE_OPTIONS, MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, MATTER_STATUS_ORDER,
   MATTER_TYPE_LABELS, formatMatterDate, formatPropertyAddress,
