@@ -32,6 +32,15 @@ import {
   cleanText,
   TERMINAL_STATUSES,
 } from "../_shared/legalMatters.ts";
+import {
+  CRITICAL_DATE_SELECT,
+  SETTLEMENT_TASK_SELECT,
+  LEGAL_CRITICAL_DATE_STATUSES,
+  LEGAL_SETTLEMENT_TASK_STATUSES,
+  buildCriticalDatePayload,
+  buildSettlementTaskPayload,
+  summariseRunway,
+} from "../_shared/legalCriticalDates.ts";
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
