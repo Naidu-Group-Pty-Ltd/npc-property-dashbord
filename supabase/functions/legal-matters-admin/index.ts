@@ -38,6 +38,7 @@ const MODULE_KEY = 'solicitor_portal_admin';
 const READ_OPS = new Set([
   'list_matters', 'get_matter', 'list_for_deal', 'list_for_client', 'link_options',
   'list_dates', 'list_runway', 'upcoming_dates',
+  'list_threads', 'get_thread', 'comms_summary',
 ]);
 const DELETE_OPS = new Set(['delete_matter', 'delete_party', 'delete_date']);
 
