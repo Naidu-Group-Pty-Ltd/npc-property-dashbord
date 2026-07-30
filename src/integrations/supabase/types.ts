@@ -3881,15 +3881,69 @@ export type Database = {
           },
         ]
       }
+      client_case_activity_read_model: {
+        Row: {
+          activity_type: string
+          case_id: string
+          client_id: string
+          created_at: string
+          event_key: string
+          id: string
+          occurred_at: string
+          source_version: number
+          summary: string | null
+          title: string
+        }
+        Insert: {
+          activity_type: string
+          case_id: string
+          client_id: string
+          created_at?: string
+          event_key: string
+          id?: string
+          occurred_at: string
+          source_version?: number
+          summary?: string | null
+          title: string
+        }
+        Update: {
+          activity_type?: string
+          case_id?: string
+          client_id?: string
+          created_at?: string
+          event_key?: string
+          id?: string
+          occurred_at?: string
+          source_version?: number
+          summary?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_case_activity_read_model_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_case_read_model: {
         Row: {
           case_id: string
           client_id: string
           friendly_status: string
+          legal_matter_id: string | null
+          matter_reference: string | null
           next_client_action: string | null
+          practice_email: string | null
+          practice_name: string | null
+          practice_phone: string | null
           property_address: string | null
           settlement_date: string | null
           shared_summary: string | null
+          solicitor_email: string | null
+          solicitor_name: string | null
           source_version: number
           updated_at: string
         }
@@ -3897,10 +3951,17 @@ export type Database = {
           case_id: string
           client_id: string
           friendly_status: string
+          legal_matter_id?: string | null
+          matter_reference?: string | null
           next_client_action?: string | null
+          practice_email?: string | null
+          practice_name?: string | null
+          practice_phone?: string | null
           property_address?: string | null
           settlement_date?: string | null
           shared_summary?: string | null
+          solicitor_email?: string | null
+          solicitor_name?: string | null
           source_version: number
           updated_at?: string
         }
@@ -3908,10 +3969,17 @@ export type Database = {
           case_id?: string
           client_id?: string
           friendly_status?: string
+          legal_matter_id?: string | null
+          matter_reference?: string | null
           next_client_action?: string | null
+          practice_email?: string | null
+          practice_name?: string | null
+          practice_phone?: string | null
           property_address?: string | null
           settlement_date?: string | null
           shared_summary?: string | null
+          solicitor_email?: string | null
+          solicitor_name?: string | null
           source_version?: number
           updated_at?: string
         }
@@ -3921,6 +3989,13 @@ export type Database = {
             columns: ["case_id"]
             isOneToOne: true
             referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_case_read_model_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
             referencedColumns: ["id"]
           },
         ]
@@ -4102,6 +4177,74 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "v_purchase_file_deal_drift"
             referencedColumns: ["purchase_file_id"]
+          },
+        ]
+      }
+      client_document_acknowledgements: {
+        Row: {
+          acknowledged_at: string
+          acknowledgement_type: string
+          case_id: string
+          client_portal_user_id: string
+          correlation_id: string
+          document_record_id: string
+          document_version_id: string
+          id: string
+          ip_hash: string | null
+          user_agent_hash: string | null
+        }
+        Insert: {
+          acknowledged_at?: string
+          acknowledgement_type?: string
+          case_id: string
+          client_portal_user_id: string
+          correlation_id?: string
+          document_record_id: string
+          document_version_id: string
+          id?: string
+          ip_hash?: string | null
+          user_agent_hash?: string | null
+        }
+        Update: {
+          acknowledged_at?: string
+          acknowledgement_type?: string
+          case_id?: string
+          client_portal_user_id?: string
+          correlation_id?: string
+          document_record_id?: string
+          document_version_id?: string
+          id?: string
+          ip_hash?: string | null
+          user_agent_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_document_acknowledgements_case_id_fkey"
+            columns: ["case_id"]
+            isOneToOne: false
+            referencedRelation: "transaction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_document_acknowledgements_client_portal_user_id_fkey"
+            columns: ["client_portal_user_id"]
+            isOneToOne: false
+            referencedRelation: "client_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_document_acknowledgements_document_record_id_fkey"
+            columns: ["document_record_id"]
+            isOneToOne: false
+            referencedRelation: "document_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_document_acknowledgements_document_version_id_fkey"
+            columns: ["document_version_id"]
+            isOneToOne: false
+            referencedRelation: "document_versions"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -25095,6 +25238,19 @@ export type Database = {
       }
     }
     Functions: {
+      acknowledge_client_document: {
+        Args: {
+          _acknowledgement_type: string
+          _case_id: string
+          _client_user_id: string
+          _correlation_id?: string
+          _document_record_id: string
+          _document_version_id: string
+          _ip_hash: string
+          _user_agent_hash: string
+        }
+        Returns: Json
+      }
       acquire_market_ingestion_run: {
         Args: {
           p_requested_by?: string
