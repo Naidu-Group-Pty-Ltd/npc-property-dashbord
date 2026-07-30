@@ -112,10 +112,20 @@ Deno.serve(async (req) => {
     /** All matters this solicitor may see, with client display names attached. */
     const loadVisibleMatters = async () => {
       if (!assignedClientIds.length) return [] as any[];
+      const permissionChecks = await Promise.all(
+        assignedClientIds.map(async (clientId) => ({
+          clientId,
+          permissions: await resolveClientPermissions(supabase, me.id, clientId),
+        })),
+      );
+      const visibleClientIds = permissionChecks
+        .filter(({ permissions }) => can(permissions, 'matters', 'view'))
+        .map(({ clientId }) => clientId);
+      if (!visibleClientIds.length) return [] as any[];
       const { data, error } = await supabase
         .from('legal_matters')
         .select(MATTER_SELECT)
-        .in('client_id', assignedClientIds)
+        .in('client_id', visibleClientIds)
         .or(`firm_id.is.null,firm_id.eq.${me.firm_id}`)
         .limit(1000);
       if (error) throw error;
