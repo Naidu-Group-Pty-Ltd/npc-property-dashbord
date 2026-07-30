@@ -393,6 +393,189 @@ Deno.serve(async (req) => {
       return json({ success: true });
     }
 
+    // ─────────────── CRITICAL DATES (Phase 4) ───────────────
+    const requireMatter = async (id: unknown) => {
+      const { data } = await supabase.from('legal_matters')
+        .select('id, client_id, settlement_date').eq('id', String(id || '')).maybeSingle();
+      return data;
+    };
+
+    if (operation === 'list_dates') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data } = await supabase.from('legal_matter_critical_dates')
+        .select(CRITICAL_DATE_SELECT).eq('legal_matter_id', matter.id)
+        .order('due_date', { ascending: true, nullsFirst: false });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'upsert_date') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const isCreate = !body.date_id;
+      const payload = buildCriticalDatePayload(body, { isCreate });
+      if (isCreate && !payload.label) return json({ error: 'A label is required' }, 400);
+
+      let record: any;
+      if (isCreate) {
+        const { data, error } = await supabase.from('legal_matter_critical_dates')
+          .insert({ ...payload, legal_matter_id: matter.id, source: 'manual' })
+          .select(CRITICAL_DATE_SELECT).maybeSingle();
+        if (error) throw error;
+        record = data;
+      } else {
+        const { data: existing } = await supabase.from('legal_matter_critical_dates')
+          .select('id, source').eq('id', body.date_id).eq('legal_matter_id', matter.id).maybeSingle();
+        if (!existing) return json({ error: 'Critical date not found' }, 404);
+        if (existing.source === 'matter_field') delete (payload as any).due_date;
+        const { data, error } = await supabase.from('legal_matter_critical_dates')
+          .update({ ...payload, updated_at: new Date().toISOString() })
+          .eq('id', existing.id).select(CRITICAL_DATE_SELECT).maybeSingle();
+        if (error) throw error;
+        record = data;
+      }
+
+      await logStaff(isCreate ? 'matter_date_added' : 'matter_date_updated', {
+        client_id: matter.client_id, entity_type: 'legal_matter_critical_date',
+        entity_id: record?.id ?? null,
+      });
+      return json({ success: true, record });
+    }
+
+    if (operation === 'set_date_status') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const status = cleanEnum(body.status, LEGAL_CRITICAL_DATE_STATUSES);
+      if (!status) return json({ error: 'A valid status is required' }, 400);
+
+      const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
+      if (status === 'satisfied') {
+        patch.satisfied_at = new Date().toISOString();
+        patch.satisfied_by_type = 'staff';
+      } else {
+        patch.satisfied_at = null;
+        patch.satisfied_by_type = null;
+      }
+
+      const { data: record, error } = await supabase.from('legal_matter_critical_dates')
+        .update(patch).eq('id', body.date_id).eq('legal_matter_id', matter.id)
+        .select(CRITICAL_DATE_SELECT).maybeSingle();
+      if (error) throw error;
+      if (!record) return json({ error: 'Critical date not found' }, 404);
+
+      await logStaff('matter_date_status_changed', {
+        client_id: matter.client_id, entity_type: 'legal_matter_critical_date', entity_id: record.id,
+      });
+      return json({ success: true, record });
+    }
+
+    if (operation === 'delete_date') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data: existing } = await supabase.from('legal_matter_critical_dates')
+        .select('id, source').eq('id', body.date_id).eq('legal_matter_id', matter.id).maybeSingle();
+      if (!existing) return json({ error: 'Critical date not found' }, 404);
+      if (existing.source === 'matter_field') {
+        return json({ error: 'Derived contract dates follow the matter — clear the matter field instead.' }, 400);
+      }
+      const { error } = await supabase.from('legal_matter_critical_dates').delete().eq('id', existing.id);
+      if (error) throw error;
+
+      await logStaff('matter_date_removed', {
+        client_id: matter.client_id, entity_type: 'legal_matter_critical_date', entity_id: existing.id,
+      });
+      return json({ success: true });
+    }
+
+    // ─────────────── SETTLEMENT RUNWAY (Phase 4) ───────────────
+    if (operation === 'list_runway') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { data } = await supabase.from('legal_matter_settlement_tasks')
+        .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', matter.id)
+        .order('sequence', { ascending: true });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'seed_runway') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const { error } = await supabase.rpc('seed_legal_matter_settlement_tasks', {
+        _matter_id: matter.id,
+      });
+      if (error) throw error;
+      const { data } = await supabase.from('legal_matter_settlement_tasks')
+        .select(SETTLEMENT_TASK_SELECT).eq('legal_matter_id', matter.id)
+        .order('sequence', { ascending: true });
+
+      await logStaff('matter_runway_seeded', {
+        client_id: matter.client_id, entity_type: 'legal_matter', entity_id: matter.id,
+      });
+      return json({ success: true, records: data || [] });
+    }
+
+    if (operation === 'update_task') {
+      const matter = await requireMatter(body.matter_id);
+      if (!matter) return json({ error: 'Matter not found' }, 404);
+      const payload = buildSettlementTaskPayload(body);
+      if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
+
+      if ('status' in payload) {
+        const status = cleanEnum(payload.status, LEGAL_SETTLEMENT_TASK_STATUSES, 'not_started');
+        if (status === 'complete') {
+          payload.completed_at = new Date().toISOString();
+          payload.completed_by_type = 'staff';
+        } else {
+          payload.completed_at = null;
+          payload.completed_by_type = null;
+        }
+        if (status !== 'blocked') payload.blocked_reason = null;
+      }
+
+      const { data: record, error } = await supabase.from('legal_matter_settlement_tasks')
+        .update({ ...payload, updated_at: new Date().toISOString() })
+        .eq('id', body.task_id).eq('legal_matter_id', matter.id)
+        .select(SETTLEMENT_TASK_SELECT).maybeSingle();
+      if (error) throw error;
+      if (!record) return json({ error: 'Settlement task not found' }, 404);
+
+      await logStaff('matter_runway_task_updated', {
+        client_id: matter.client_id, entity_type: 'legal_matter_settlement_task', entity_id: record.id,
+      });
+      return json({ success: true, record });
+    }
+
+    // ─────────────── UPCOMING DATES (portfolio-wide) ───────────────
+    if (operation === 'upcoming_dates') {
+      const horizonDays = Math.min(Math.max(Number(body.days) || 30, 1), 120);
+      const horizon = new Date();
+      horizon.setDate(horizon.getDate() + horizonDays);
+
+      const { data: dates } = await supabase
+        .from('legal_matter_critical_dates')
+        .select(CRITICAL_DATE_SELECT)
+        .not('due_date', 'is', null)
+        .lte('due_date', horizon.toISOString().slice(0, 10))
+        .in('status', ['pending', 'at_risk', 'extended', 'missed'])
+        .order('due_date', { ascending: true })
+        .limit(300);
+
+      const matterIds = Array.from(new Set((dates || []).map((d: any) => d.legal_matter_id)));
+      const matterMap = new Map<string, any>();
+      if (matterIds.length) {
+        const { data: matters } = await supabase.from('legal_matters')
+          .select('id, title, property_address, property_suburb, status, client_id, firm_id')
+          .in('id', matterIds);
+        for (const m of matters || []) matterMap.set(m.id, m);
+      }
+
+      return json({
+        success: true,
+        records: (dates || []).map((d: any) => ({ ...d, matter: matterMap.get(d.legal_matter_id) ?? null })),
+      });
+    }
+
+
     return json({ error: `Unknown operation: ${operation || '(none)'}` }, 400);
   } catch (error: any) {
     console.error('[legal-matters-admin] error:', error);
