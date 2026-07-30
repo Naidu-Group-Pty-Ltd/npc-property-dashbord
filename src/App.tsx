@@ -116,6 +116,9 @@ import Checklists from "./pages/Checklists";
 import Agreements from "./pages/Agreements";
 import PartnerAgreements from "./pages/PartnerAgreements";
 import PartnerReferrals from "./pages/PartnerReferrals";
+import LoanWriterUndertakings from "./pages/LoanWriterUndertakings";
+import PublicPartnerConsent from "./pages/PublicPartnerConsent";
+
 import GamePlan from "./pages/GamePlan";
 import Commissions from "./pages/Commissions";
 import ReportsAnalytics from "./pages/ReportsAnalytics";
