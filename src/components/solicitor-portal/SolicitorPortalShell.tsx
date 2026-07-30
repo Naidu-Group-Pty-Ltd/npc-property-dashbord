@@ -4,6 +4,7 @@ import { Briefcase, LayoutDashboard, LogOut, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
+import { SolicitorNotificationBell } from '@/components/solicitor-portal/SolicitorNotificationBell';
 
 const NAV = [
   { to: '/solicitor', label: 'Dashboard', icon: LayoutDashboard, exact: true },
