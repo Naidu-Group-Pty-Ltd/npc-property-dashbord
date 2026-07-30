@@ -254,7 +254,20 @@ export function AdminLegalMattersPanel() {
                     <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
                       {formatMatterDate(m.settlement_date)}
                     </TableCell>
+                    <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 gap-1"
+                        onClick={() => setCommsMatter({ id: m.id, title: m.title })}
+                        aria-label={`Open conversation for ${m.title}`}
+                      >
+                        <MessagesSquare className="h-4 w-4" aria-hidden />
+                        <span className="hidden lg:inline">Messages</span>
+                      </Button>
+                    </TableCell>
                   </TableRow>
+
                 ))}
               </TableBody>
             </Table>
