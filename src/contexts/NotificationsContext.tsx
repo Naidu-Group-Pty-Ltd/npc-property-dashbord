@@ -85,7 +85,6 @@ export interface Notification {
   message: string;
   reportId?: string;
 
-  reportId?: string;
   entityId?: string;
   targetUserId?: string;
   timestamp: Date;
