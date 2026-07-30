@@ -781,6 +781,18 @@ export default function SolicitorMatterDetail() {
           />
         </TabsContent>
 
+        {/* ─────────── CONTRACT INTELLIGENCE ─────────── */}
+        <TabsContent value="intelligence" className="mt-4">
+          <ContractIntelligencePanel
+            matterId={matterId!}
+            documents={documents}
+            canEdit={perms.contract?.edit !== false}
+            canDelete={!!perms.contract?.delete}
+          />
+        </TabsContent>
+
+
+
         {/* ─────────── DOCS ─────────── */}
         <TabsContent value="docs" className="mt-4 space-y-4">
           {registerSummary ? (
