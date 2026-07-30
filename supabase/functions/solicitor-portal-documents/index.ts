@@ -16,7 +16,7 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { createCorsHeaders } from "../_shared/auth.ts";
-import { csrfDenied, enforceCsrf } from "../_shared/csrfGuard.ts";
+import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   resolveSolicitorSession,
   resolveClientPermissions,
