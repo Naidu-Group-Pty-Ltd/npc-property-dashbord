@@ -87,13 +87,13 @@ Deno.serve(async (req) => {
       const pfIds = Array.from(new Set(rows.map((r) => r.purchase_file_id).filter(Boolean)));
 
       const [clients, firms, users, files] = await Promise.all([
-        clientIds.length ? supabase.from('clients').select('id, name').in('id', clientIds) : { data: [] },
+        clientIds.length ? supabase.from('clients').select('id, primary_first_name, primary_surname').in('id', clientIds) : { data: [] },
         firmIds.length ? supabase.from('solicitor_firms').select('id, name').in('id', firmIds) : { data: [] },
         userIds.length ? supabase.from('solicitor_portal_users').select('id, name, email').in('id', userIds) : { data: [] },
         pfIds.length ? supabase.from('purchase_files').select('id, title, finance_status').in('id', pfIds) : { data: [] },
       ]);
 
-      const cm = new Map((clients.data || []).map((c: any) => [c.id, c.name]));
+      const cm = new Map((clients.data || []).map((c: any) => [c.id, [c.primary_first_name, c.primary_surname].filter(Boolean).join(' ')]));
       const fm = new Map((firms.data || []).map((f: any) => [f.id, f.name]));
       const um = new Map((users.data || []).map((u: any) => [u.id, u.name || u.email]));
       const pm = new Map((files.data || []).map((p: any) => [p.id, p]));

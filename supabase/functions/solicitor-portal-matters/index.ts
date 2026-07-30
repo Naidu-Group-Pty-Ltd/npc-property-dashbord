@@ -115,9 +115,11 @@ Deno.serve(async (req) => {
       if (clientIds.length) {
         const { data: clients } = await supabase
           .from('clients')
-          .select('id, name')
+          .select('id, primary_first_name, primary_surname')
           .in('id', clientIds);
-        for (const c of clients || []) clientMap.set(c.id, c.name);
+        for (const c of clients || []) {
+          clientMap.set(c.id, [c.primary_first_name, c.primary_surname].filter(Boolean).join(' '));
+        }
       }
 
       const search = cleanText(body.search, 120)?.toLowerCase();
@@ -144,7 +146,7 @@ Deno.serve(async (req) => {
         supabase.from('legal_matter_status_history')
           .select('id, from_status, to_status, changed_by_type, reason, created_at')
           .eq('legal_matter_id', matter.id).order('created_at', { ascending: false }).limit(50),
-        supabase.from('clients').select('id, name, email, phone').eq('id', matter.client_id).maybeSingle(),
+        supabase.from('clients').select('id, primary_first_name, primary_surname, primary_email, primary_phone').eq('id', matter.client_id).maybeSingle(),
       ]);
 
       // Finance clause visibility only — never the client's financial position.
@@ -166,7 +168,12 @@ Deno.serve(async (req) => {
 
       return json({
         success: true,
-        matter: { ...matter, client_name: client?.name ?? null },
+        matter: {
+          ...matter,
+          client_name: client
+            ? [client.primary_first_name, client.primary_surname].filter(Boolean).join(' ')
+            : null,
+        },
         client: client ?? null,
         parties: parties || [],
         status_history: history || [],
