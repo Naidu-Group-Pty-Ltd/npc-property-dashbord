@@ -39,6 +39,7 @@ const formVariants = {
 
 export default function SolicitorLogin() {
   const { user, loading, signIn, requestPasswordReset, verifyOtp, resetPassword } = useSolicitorPortalAuth();
+  const { settings } = useBrand();
   const navigate = useNavigate();
   const formRef = useRef<HTMLDivElement>(null);
 
