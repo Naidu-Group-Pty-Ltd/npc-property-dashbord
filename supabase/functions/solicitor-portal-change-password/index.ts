@@ -66,7 +66,6 @@ Deno.serve(async (req) => {
       .update({
         password_hash: passwordHash,
         must_change_password: false,
-        password_changed_at: new Date().toISOString(),
         reset_token: null,
         reset_token_expires_at: null,
         reset_attempts: 0,

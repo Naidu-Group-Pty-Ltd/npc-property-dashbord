@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
       if (!solicitor_user_id) return json({ error: 'solicitor_user_id is required' }, 400)
       const { data: portalUser } = await supabase
         .from('solicitor_portal_users')
-        .select('id, email, is_active, revoked_at, invite_sent_at, invite_accepted_at, invite_token_expires_at, last_login_at, has_accepted_terms')
+        .select('id, email, is_active, revoked_at, invited_at, invite_accepted_at, invite_token_expires_at, last_login_at, has_accepted_terms')
         .eq('id', solicitor_user_id)
         .maybeSingle()
 
@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
             position: position ?? null,
             portal_role: portal_role || 'solicitor',
             is_active: true,
-            created_by: auth.userId,
+
           })
           .select('id, firm_id')
           .single()
@@ -180,7 +180,7 @@ Deno.serve(async (req) => {
       .update({
         invite_token: inviteToken,
         invite_token_expires_at: inviteExpiresAt.toISOString(),
-        invite_sent_at: new Date().toISOString(),
+        invited_at: new Date().toISOString(),
         invited_by: auth.userId,
       })
       .eq('id', portalUser.id)
