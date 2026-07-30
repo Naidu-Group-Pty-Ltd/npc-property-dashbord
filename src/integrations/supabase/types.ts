@@ -21134,6 +21134,139 @@ export type Database = {
         }
         Relationships: []
       }
+      solicitor_matter_access: {
+        Row: {
+          access_role: string
+          created_at: string
+          firm_id: string
+          granted_at: string
+          granted_by: string | null
+          id: string
+          legal_matter_id: string
+          permissions: Json
+          revocation_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          solicitor_user_id: string
+          source_assignment_id: string | null
+          updated_at: string
+          valid_from: string
+          valid_until: string | null
+        }
+        Insert: {
+          access_role?: string
+          created_at?: string
+          firm_id: string
+          granted_at?: string
+          granted_by?: string | null
+          id?: string
+          legal_matter_id: string
+          permissions?: Json
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          solicitor_user_id: string
+          source_assignment_id?: string | null
+          updated_at?: string
+          valid_from?: string
+          valid_until?: string | null
+        }
+        Update: {
+          access_role?: string
+          created_at?: string
+          firm_id?: string
+          granted_at?: string
+          granted_by?: string | null
+          id?: string
+          legal_matter_id?: string
+          permissions?: Json
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          solicitor_user_id?: string
+          source_assignment_id?: string | null
+          updated_at?: string
+          valid_from?: string
+          valid_until?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_matter_access_firm_id_fkey"
+            columns: ["firm_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_firms"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_matter_access_legal_matter_id_fkey"
+            columns: ["legal_matter_id"]
+            isOneToOne: false
+            referencedRelation: "legal_matters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_matter_access_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "solicitor_matter_access_source_assignment_id_fkey"
+            columns: ["source_assignment_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_client_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solicitor_matter_access_migration_exceptions: {
+        Row: {
+          client_id: string | null
+          created_at: string
+          details: Json
+          exception_code: string
+          id: string
+          legal_matter_id: string | null
+          resolved_at: string | null
+          resolved_by: string | null
+          solicitor_user_id: string | null
+          source_assignment_id: string | null
+        }
+        Insert: {
+          client_id?: string | null
+          created_at?: string
+          details?: Json
+          exception_code: string
+          id?: string
+          legal_matter_id?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          solicitor_user_id?: string | null
+          source_assignment_id?: string | null
+        }
+        Update: {
+          client_id?: string | null
+          created_at?: string
+          details?: Json
+          exception_code?: string
+          id?: string
+          legal_matter_id?: string | null
+          resolved_at?: string | null
+          resolved_by?: string | null
+          solicitor_user_id?: string | null
+          source_assignment_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_matter_access_migration_exc_source_assignment_id_fkey"
+            columns: ["source_assignment_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_client_assignments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       solicitor_notification_prefs: {
         Row: {
           channels: string[]
@@ -21387,6 +21520,62 @@ export type Database = {
           },
           {
             foreignKeyName: "solicitor_portal_notifications_solicitor_user_id_fkey"
+            columns: ["solicitor_user_id"]
+            isOneToOne: false
+            referencedRelation: "solicitor_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      solicitor_portal_sessions: {
+        Row: {
+          absolute_expires_at: string
+          created_at: string
+          device_label: string | null
+          id: string
+          idle_expires_at: string
+          ip_hash: string | null
+          last_used_at: string
+          legacy_migrated_at: string | null
+          revoked_at: string | null
+          revoked_reason: string | null
+          solicitor_user_id: string
+          token_hash: string
+          user_agent_hash: string | null
+        }
+        Insert: {
+          absolute_expires_at: string
+          created_at?: string
+          device_label?: string | null
+          id?: string
+          idle_expires_at: string
+          ip_hash?: string | null
+          last_used_at?: string
+          legacy_migrated_at?: string | null
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          solicitor_user_id: string
+          token_hash: string
+          user_agent_hash?: string | null
+        }
+        Update: {
+          absolute_expires_at?: string
+          created_at?: string
+          device_label?: string | null
+          id?: string
+          idle_expires_at?: string
+          ip_hash?: string | null
+          last_used_at?: string
+          legacy_migrated_at?: string | null
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          solicitor_user_id?: string
+          token_hash?: string
+          user_agent_hash?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "solicitor_portal_sessions_solicitor_user_id_fkey"
             columns: ["solicitor_user_id"]
             isOneToOne: false
             referencedRelation: "solicitor_portal_users"
@@ -23639,6 +23828,14 @@ export type Database = {
       }
       seed_sample_schools: { Args: never; Returns: undefined }
       seed_settlement_runway: { Args: { _file_id: string }; Returns: undefined }
+      solicitor_legacy_permissions_to_tri_state: {
+        Args: { value: Json }
+        Returns: Json
+      }
+      solicitor_tri_state_permissions_valid: {
+        Args: { value: Json }
+        Returns: boolean
+      }
       template_finalize: {
         Args: {
           p_description: string
