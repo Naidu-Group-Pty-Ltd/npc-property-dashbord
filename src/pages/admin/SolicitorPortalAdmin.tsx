@@ -271,9 +271,26 @@ export default function SolicitorPortalAdmin() {
                   <Scale className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
                   <p className="text-sm font-medium">No portal users yet</p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Create a legal practice first, then add the solicitors who will work your matters.
+                    {firms.filter(f => f.is_active).length === 0
+                      ? 'You need an active legal practice before a portal user can be created.'
+                      : 'Add the solicitors, conveyancers and practice staff who will work your matters.'}
                   </p>
+                  <Button
+                    variant="outline"
+                    className="mt-4 gap-2"
+                    onClick={() => {
+                      if (firms.filter(f => f.is_active).length === 0) {
+                        setFirmDialog({ open: true, firm: null });
+                      } else {
+                        setUserDialog({ open: true, user: null });
+                      }
+                    }}
+                  >
+                    <Plus className="h-4 w-4" />
+                    {firms.filter(f => f.is_active).length === 0 ? 'Create legal practice' : 'New user'}
+                  </Button>
                 </div>
+
               ) : (
                 <div className="overflow-hidden rounded-lg border">
                   <Table>
