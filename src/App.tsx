@@ -158,6 +158,8 @@ import SolicitorAcceptInvite from "@/pages/solicitor/SolicitorAcceptInvite";
 import SolicitorForgotPassword from "@/pages/solicitor/SolicitorForgotPassword";
 import SolicitorChangePassword from "@/pages/solicitor/SolicitorChangePassword";
 import SolicitorDashboard from "@/pages/solicitor/SolicitorDashboard";
+import SolicitorMatters from "@/pages/solicitor/SolicitorMatters";
+import SolicitorMatterDetail from "@/pages/solicitor/SolicitorMatterDetail";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
