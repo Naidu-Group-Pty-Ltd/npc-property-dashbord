@@ -276,7 +276,14 @@ export default function FinancePortalCommissions() {
           aria-pressed={tab === 'statements'}
           className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'statements' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
         ><FileText className="inline h-4 w-4 mr-1" />Statements ({statements.length})</button>
+        <button
+          type="button"
+          onClick={() => setTab('disputes')}
+          aria-pressed={tab === 'disputes'}
+          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'disputes' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
+        ><AlertTriangle className="inline h-4 w-4 mr-1" />Disputes ({disputes.filter(d => ['open', 'under_review'].includes(d.status)).length})</button>
       </DashboardThemeFrame>
+
 
       {tab === 'commissions' && (
         <DashboardThemeFrame variant="section" className="p-0">
