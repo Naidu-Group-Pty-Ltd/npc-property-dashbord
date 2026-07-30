@@ -75,7 +75,10 @@ export function AdminLegalMattersPanel() {
       for (const u of users) if (u.firm_id && u.firm_name) seen.set(u.firm_id, u.firm_name);
       setFirms([...seen].map(([id, name]) => ({ id, name })));
     }
-    setClients(((clientRes.data || []) as ClientOption[]));
+    setClients((clientRes.data || []).map((c) => ({
+      id: c.id,
+      name: [c.primary_first_name, c.primary_surname].filter(Boolean).join(' ') || 'Unnamed client',
+    })));
     setLoading(false);
   }, []);
 
