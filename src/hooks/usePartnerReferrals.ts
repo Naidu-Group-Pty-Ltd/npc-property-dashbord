@@ -295,6 +295,8 @@ export function usePartnerReferralMutations() {
     setEligibility,
     runPriorClientCheck,
     convertToClient,
+    assignLoanWriter,
+
     addNote,
     deleteDraft,
   };
