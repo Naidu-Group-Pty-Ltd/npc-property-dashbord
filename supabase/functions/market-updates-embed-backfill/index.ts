@@ -2,7 +2,7 @@
 // Cron: hourly. Embeds up to 200 market_updates rows where embedding IS NULL
 // using openai/text-embedding-3-small (1536 dims) via Lovable AI Gateway.
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import { verifyRequiredCronSecret, verifySignedInternal } from '../_shared/requestSecurity.ts';
+import { enforceRawBodyLimit, verifyRequiredCronSecret, verifySignedInternal } from '../_shared/requestSecurity.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -18,6 +18,7 @@ const corsHeaders = {
 const BATCH_SIZE = 50;
 const MAX_BATCHES = 4; // 200 per run
 const EMBED_MODEL = 'openai/text-embedding-3-small';
+const MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
 async function embedBatch(inputs: string[]): Promise<number[][]> {
   const res = await fetch('https://ai.gateway.lovable.dev/v1/embeddings', {
@@ -42,7 +43,9 @@ function buildText(row: any): string {
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
-  const rawBody = await req.text();
+  const boundedBody = await enforceRawBodyLimit(req, MAX_REQUEST_BODY_BYTES);
+  if (!boundedBody.ok) return boundedBody.error;
+  const rawBody = boundedBody.raw;
   const sb = createClient(SUPABASE_URL, SERVICE_KEY);
   const cronOk = verifyRequiredCronSecret(CRON_SECRET, req.headers.get('x-cron-secret')) ||
     (await verifySignedInternal(sb, req, rawBody, ['pg_cron'])).ok;
