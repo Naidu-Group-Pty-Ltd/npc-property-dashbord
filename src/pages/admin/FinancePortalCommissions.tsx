@@ -495,6 +495,79 @@ export default function FinancePortalCommissions() {
                         )}
                       </TableCell>
                     </TableRow>
+                  ); })}
+                </TableBody>
+              </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        </DashboardThemeFrame>
+      )}
+
+      {tab === 'disputes' && (
+        <DashboardThemeFrame variant="section" className="p-0">
+        <Card className="border-0 bg-transparent shadow-none">
+          <CardHeader className="border-b border-border/60 bg-gradient-to-r from-card/80 to-muted/25 p-4 sm:p-5">
+            <CardTitle className="text-base">Statement disputes</CardTitle>
+          </CardHeader>
+          <CardContent className="p-4 sm:p-5">
+            {loading ? (
+              <div className="flex items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-5 w-5 mr-2 animate-spin" />Loading…
+              </div>
+            ) : disputes.length === 0 ? (
+              <div className="py-10 text-center text-sm text-muted-foreground">
+                No disputes raised. Partners can raise a dispute from their earnings statement within the agreed window.
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-border/70 bg-card/75 shadow-inner shadow-black/5 dark:bg-background/35">
+              <Table className="min-w-[900px]" aria-label="Commission statement disputes">
+                <TableHeader className="bg-muted/35">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead>Raised</TableHead>
+                    <TableHead>By</TableHead>
+                    <TableHead>Reason</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Window</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {disputes.map(d => (
+                    <TableRow key={d.id} className="transition-colors hover:bg-primary/5">
+                      <TableCell className="text-xs">{format(new Date(d.raised_at), 'd MMM yyyy')}</TableCell>
+                      <TableCell className="text-xs">
+                        <div className="font-medium">{d.raised_by_name || d.raised_by_type}</div>
+                        <div className="text-muted-foreground">{d.raised_by_type}</div>
+                      </TableCell>
+                      <TableCell className="max-w-[320px]">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{(d.reason_category || '').replace(/_/g, ' ')}</div>
+                        <div className="text-sm">{d.reason}</div>
+                        {d.resolution_notes && (
+                          <div className="mt-1 text-xs text-muted-foreground">Resolution: {d.resolution_notes}</div>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">{d.disputed_amount != null ? fmt(d.disputed_amount) : '—'}</TableCell>
+                      <TableCell>
+                        <Badge variant={d.within_window ? 'secondary' : 'destructive'} className="text-xs">
+                          {d.within_window ? 'In window' : 'Out of window'}
+                        </Badge>
+                      </TableCell>
+                      <TableCell><Badge variant={['resolved'].includes(d.status) ? 'default' : d.status === 'rejected' ? 'destructive' : 'secondary'}>{d.status.replace(/_/g, ' ')}</Badge></TableCell>
+                      <TableCell className="text-right space-x-1">
+                        {['open', 'under_review'].includes(d.status) && (
+                          <>
+                            {d.status === 'open' && (
+                              <Button size="sm" variant="ghost" onClick={() => resolveDispute(d.id, 'under_review')}>Review</Button>
+                            )}
+                            <Button size="sm" variant="outline" onClick={() => resolveDispute(d.id, 'resolved')}>Resolve</Button>
+                            <Button size="sm" variant="ghost" onClick={() => resolveDispute(d.id, 'rejected')}>Reject</Button>
+                          </>
+                        )}
+                      </TableCell>
+                    </TableRow>
                   ))}
                 </TableBody>
               </Table>
@@ -504,6 +577,7 @@ export default function FinancePortalCommissions() {
         </Card>
         </DashboardThemeFrame>
       )}
+
     </DashboardThemeFrame>
   );
 }
