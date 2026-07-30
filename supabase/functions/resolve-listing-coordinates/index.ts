@@ -1,6 +1,16 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
-import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import {
+  enforceActorQuota,
+  enforceGlobalDailyQuota,
+  enforceIpQuota,
+  fetchWithTimeout,
+  getClientIp,
+  killSwitchActive,
+  redactError,
+} from '../_shared/publicAbuseControls.ts';
 
 // Resolves map coordinates for property listings WITHOUT any browser-side
 // geocoding. Order of resolution per listing:
@@ -20,6 +30,7 @@ interface ListingInput {
 
 const MAX_BATCH = 300;
 const MAX_LOOKUPS_PER_REQUEST = 40;
+const CIRCUIT_SCOPE = 'google_listing_geocoding';
 
 function clean(value: unknown, max = 160): string {
   if (typeof value !== 'string') return '';
@@ -72,8 +83,10 @@ Deno.serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({} as Record<string, unknown>));
-    const { error: authError } = await verifyAuth(supabase, req.headers, body as { session_token?: string });
-    if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body as { session_token?: string });
+    if (authError || !userId) return createUnauthorizedResponse(authError || 'Authentication required', corsHeaders);
+    const permission = await requireModulePermission(supabase, { userId, authMethod }, 'listings', 'can_view');
+    if (!permission.ok) return createForbiddenResponse(permission.error || 'Listings access required', corsHeaders);
 
     const rawListings = Array.isArray((body as { listings?: unknown }).listings)
       ? ((body as { listings: ListingInput[] }).listings).slice(0, MAX_BATCH)
@@ -132,10 +145,24 @@ Deno.serve(async (req) => {
     const seenHashes = new Set<string>();
     const inserts: Array<Record<string, unknown>> = [];
 
-    if (apiKey) {
+    if (apiKey && !killSwitchActive('GOOGLE_GEOCODING_KILL_SWITCH')) {
+      const actorQuota = await enforceActorQuota(supabase, userId, CIRCUIT_SCOPE, { limit: 10, windowMs: 60_000 });
+      const ipQuota = await enforceIpQuota(supabase, getClientIp(req), CIRCUIT_SCOPE, { limit: 20, windowMs: 60_000 });
+      if (!actorQuota.ok || !ipQuota.ok) return j({ error: 'rate_limited', success: false }, 429);
+
+      const { data: circuitOpen, error: circuitReadError } = await supabase.rpc('provider_circuit_is_open', { p_scope: CIRCUIT_SCOPE });
+      if (circuitReadError || circuitOpen === true) return j({ error: 'temporarily_unavailable', success: false }, 503);
+
       for (const item of needsLookup) {
         if (remaining <= 0) break;
         if (seenHashes.has(item.hash)) continue;
+
+        const globalQuota = await enforceGlobalDailyQuota(
+          supabase,
+          CIRCUIT_SCOPE,
+          Number(Deno.env.get('GOOGLE_GEOCODING_DAILY_LIMIT') ?? '5000'),
+        );
+        if (!globalQuota.ok) break;
         seenHashes.add(item.hash);
         remaining -= 1;
 
@@ -145,13 +172,11 @@ Deno.serve(async (req) => {
             components: 'country:AU',
             key: apiKey,
           });
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), 6000);
-          const response = await fetch(
+          const response = await fetchWithTimeout(
             `https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`,
-            { signal: controller.signal },
+            {},
+            6000,
           );
-          clearTimeout(timer);
           const data = await response.json().catch(() => ({}));
 
           if (data.status === 'OK' && Array.isArray(data.results) && data.results[0]?.geometry?.location) {
@@ -182,12 +207,18 @@ Deno.serve(async (req) => {
               resolved_at: new Date().toISOString(),
             });
           } else {
+            await supabase.rpc('provider_circuit_record_failure', { p_scope: CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
             console.warn('[resolve-listing-coordinates] geocode status', data.status);
+            continue;
           }
+          await supabase.rpc('provider_circuit_record_success', { p_scope: CIRCUIT_SCOPE });
         } catch (e) {
-          console.warn('[resolve-listing-coordinates] lookup failed', e instanceof Error ? e.message : 'unknown');
+          await supabase.rpc('provider_circuit_record_failure', { p_scope: CIRCUIT_SCOPE, p_threshold: 20, p_open_seconds: 60 });
+          console.warn('[resolve-listing-coordinates] lookup failed', redactError(e));
         }
       }
+    } else if (killSwitchActive('GOOGLE_GEOCODING_KILL_SWITCH')) {
+      return j({ error: 'temporarily_unavailable', success: false }, 503);
     } else {
       console.warn('[resolve-listing-coordinates] GOOGLE_MAPS_API_KEY not configured');
     }
