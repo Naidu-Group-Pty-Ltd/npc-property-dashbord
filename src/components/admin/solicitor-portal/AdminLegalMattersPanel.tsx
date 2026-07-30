@@ -406,6 +406,13 @@ export function AdminLegalMattersPanel() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AdminMatterCommsDialog
+        matterId={commsMatter?.id ?? null}
+        matterTitle={commsMatter?.title}
+        open={!!commsMatter}
+        onOpenChange={(next) => { if (!next) setCommsMatter(null); }}
+      />
     </Card>
   );
 }
