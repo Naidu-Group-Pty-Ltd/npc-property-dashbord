@@ -58,11 +58,24 @@ Deno.serve(async (req) => {
 
     const { data: user } = await supabase
       .from('solicitor_portal_users')
-      .select('id, firm_id, email, name, is_active, revoked_at')
+      .select('id, firm_id, email, name, is_active, revoked_at, password_hash, invited_at, solicitor_firms:firm_id (is_active)')
       .eq('email', normalizedEmail)
       .maybeSingle()
 
     if (!user || !user.is_active || user.revoked_at) {
+      return genericOk();
+    }
+
+    // A reset code must never resurrect an account whose practice is deactivated —
+    // login would reject it anyway, so issuing a code only leaks account existence.
+    const firm = (user as any).solicitor_firms as { is_active?: boolean } | null;
+    if (!firm || firm.is_active !== true) {
+      return genericOk();
+    }
+
+    // Never let password recovery bypass the invite flow: an account that has
+    // never been invited and has no password must be onboarded via its invite.
+    if (!user.password_hash && !user.invited_at) {
       return genericOk();
     }
 
