@@ -96,7 +96,7 @@ export const DEFAULT_BACKGROUND_IMAGES: Record<string, string> = {
   cashflow: PRIMARY_COVER,
   portfolio: PRIMARY_COVER,
   borrowing_capacity: PRIMARY_COVER,
-  vownet: PRIMARY_COVER,
+  formara: PRIMARY_COVER,
   suburb: PRIMARY_COVER,
   postcode: PRIMARY_COVER,
   statewide: PRIMARY_COVER,
