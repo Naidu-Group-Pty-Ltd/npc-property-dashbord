@@ -94,7 +94,7 @@ function getAccessToken(): string | null {
  */
 async function tryRefreshAccessToken(): Promise<string | null> {
   try {
-    const resp = await fetch(`${SUPABASE_URL}/functions/v1/custom-auth-verify`, {
+    const resp = await fetch(`${SUPABASE_URL}/functions/v1/custom-auth-verify-v2`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -228,7 +228,7 @@ export async function invokeSecureFunction<T = any>(
         ));
 
       // ── One-shot token refresh + retry on auth failure ──
-      if (isAuthFailure && !options?._isRetry && functionName !== 'custom-auth-verify') {
+      if (isAuthFailure && !options?._isRetry && functionName !== 'custom-auth-verify-v2') {
         const refreshed = await tryRefreshAccessToken();
         if (refreshed) {
           console.log('[invokeSecureFunction] Access token refreshed, retrying', functionName);
@@ -301,7 +301,7 @@ export async function invokeSecureFunction<T = any>(
  * Best-effort check for an active session. The staff session lives in an
  * HttpOnly cookie that JS cannot read, so this reflects only whether a
  * (tab-scoped) access token is present; the authoritative check is a
- * cookie-authenticated custom-auth-verify call.
+ * cookie-authenticated custom-auth-verify-v2 call.
  */
 export function hasActiveSession(): boolean {
   return Boolean(getAccessToken());
