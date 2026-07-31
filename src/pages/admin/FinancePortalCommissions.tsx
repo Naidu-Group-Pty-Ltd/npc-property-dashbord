@@ -17,7 +17,11 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import {
   Loader2, Plus, RefreshCw, FileText, DollarSign, Download, Search, ArrowLeft, AlertTriangle, ShieldCheck,
+  ShieldAlert, Receipt, Landmark,
 } from 'lucide-react';
+import { ClawbackRegisterPanel } from '@/components/admin/finance-portal/ClawbackRegisterPanel';
+import { TaxInvoiceRegisterPanel } from '@/components/admin/finance-portal/TaxInvoiceRegisterPanel';
+import { PartnerBankingPanel } from '@/components/admin/finance-portal/PartnerBankingPanel';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
