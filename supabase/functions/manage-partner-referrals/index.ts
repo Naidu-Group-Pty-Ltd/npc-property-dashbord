@@ -16,6 +16,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
+
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 import {
   UNDERTAKING_TABLE,
