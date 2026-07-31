@@ -729,6 +729,395 @@ Deno.serve(async (req) => {
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // PHASE 5 — CLAWBACKS (Doc 2 §6)
+    // ════════════════════════════════════════════════════════════════════════
+    if (operation === 'list_clawbacks') {
+      let q = supabase.from('finance_partner_clawbacks').select('*')
+        .order('created_at', { ascending: false }).limit(500);
+      if (body.partner_id) q = q.eq('finance_contact_id', body.partner_id);
+      if (body.status) q = q.eq('status', body.status);
+      const { data, error } = await q;
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, clawbacks: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'clawback_preview_cap') {
+      // §6.3 — recovery can never exceed commission actually paid on that loan.
+      const { finance_contact_id, commission_id, deal_id } = body;
+      if (!finance_contact_id) throw new Error('finance_contact_id required');
+      let q = supabase.from('finance_partner_commissions')
+        .select('id, net_amount, adjustment_amount, deal_id, status, client_name_snapshot')
+        .eq('finance_contact_id', finance_contact_id).eq('status', 'paid');
+      if (commission_id) q = q.eq('id', commission_id);
+      else if (deal_id) q = q.eq('deal_id', deal_id);
+      else q = q.limit(0);
+      const { data, error } = await q;
+      if (error) throw error;
+      const cap = (data || []).reduce((s: number, c: any) =>
+        s + Number(c.net_amount || 0) + Number(c.adjustment_amount || 0), 0);
+      return new Response(JSON.stringify({
+        success: true, cap_amount: Math.round(cap * 100) / 100, contributing_lines: data || [],
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'create_clawback') {
+      const partnerId = body.finance_contact_id;
+      if (!partnerId) throw new Error('finance_contact_id required');
+      if (!body.reason) throw new Error('reason required');
+
+      const { data: pc } = await supabase.from('finance_agent_contacts')
+        .select('name, company').eq('id', partnerId).maybeSingle();
+
+      const { data: invRows } = await supabase.rpc('fp_resolve_partner_invoicing', {
+        _finance_contact_id: partnerId, _direction: 'outbound_finance_referral',
+      });
+      const inv = (invRows || [])[0] || null;
+
+      let commission: any = null;
+      if (body.commission_id) {
+        const { data: c } = await supabase.from('finance_partner_commissions')
+          .select('*').eq('id', body.commission_id).maybeSingle();
+        commission = c;
+      }
+
+      const repaymentDays = body.repayment_days ?? inv?.clawback_repayment_days ?? null;
+      const dueDate = repaymentDays
+        ? new Date(Date.now() + Number(repaymentDays) * 86400000).toISOString().slice(0, 10)
+        : null;
+
+      const { data, error } = await supabase.from('finance_partner_clawbacks').insert({
+        finance_contact_id: partnerId,
+        commission_id: body.commission_id || null,
+        deal_id: body.deal_id || commission?.deal_id || null,
+        client_id: body.client_id || commission?.client_id || null,
+        agreement_id: inv?.agreement_id || commission?.agreement_id || null,
+        agreement_version: inv?.agreement_version || commission?.agreement_version || null,
+        partner_name_snapshot: pc?.name || null,
+        partner_company_snapshot: pc?.company || null,
+        client_name_snapshot: commission?.client_name_snapshot || body.client_name || null,
+        loan_reference: body.loan_reference || null,
+        lender_name: body.lender_name || null,
+        settlement_date: body.settlement_date || null,
+        discharge_date: body.discharge_date || null,
+        reason_category: body.reason_category || 'other',
+        reason: body.reason,
+        clawback_treatment_snapshot: inv?.clawback_treatment || null,
+        lender_clawback_amount: body.lender_clawback_amount ?? null,
+        clawback_amount: Number(body.clawback_amount ?? body.lender_clawback_amount ?? 0),
+        repayment_days: repaymentDays,
+        repayment_due_date: dueDate,
+        notes: body.notes || null,
+        status: 'draft',
+        created_by: adminUserId,
+      }).select('*').single();
+      if (error) throw error;
+
+      return new Response(JSON.stringify({ success: true, clawback: data, capped: data.capped }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'update_clawback') {
+      const patch: Record<string, any> = {};
+      ['reason', 'reason_category', 'clawback_amount', 'lender_clawback_amount', 'loan_reference',
+       'lender_name', 'settlement_date', 'discharge_date', 'repayment_due_date', 'notes',
+      ].forEach(k => { if (k in body) patch[k] = body[k]; });
+      const { data, error } = await supabase.from('finance_partner_clawbacks')
+        .update(patch).eq('id', body.id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, clawback: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'upload_clawback_evidence') {
+      const { id, filename, content_base64, content_type } = body;
+      if (!id || !content_base64) throw new Error('id and content_base64 required');
+      await ensureBucket(supabase);
+      const bin = Uint8Array.from(atob(String(content_base64).split(',').pop() || ''), c => c.charCodeAt(0));
+      const path = `clawbacks/${id}/${Date.now()}-${(filename || 'evidence').replace(/[^\w.\-]/g, '_')}`;
+      const { error: upErr } = await supabase.storage.from(STATEMENT_BUCKET)
+        .upload(path, bin, { upsert: true, contentType: content_type || 'application/octet-stream' });
+      if (upErr) throw upErr;
+      const { data, error } = await supabase.from('finance_partner_clawbacks').update({
+        evidence_path: path,
+        evidence_filename: filename || 'evidence',
+        evidence_uploaded_at: new Date().toISOString(),
+      }).eq('id', id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, clawback: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'issue_clawback') {
+      const { data: cb } = await supabase.from('finance_partner_clawbacks')
+        .select('*').eq('id', body.id).maybeSingle();
+      if (!cb) throw new Error('Clawback not found');
+      // §6.2 — a clawback must be evidenced before it is issued to the partner.
+      if (!cb.evidence_path && body.override_evidence !== true) {
+        return new Response(JSON.stringify({
+          error: 'Clawback evidence is required before issuing (clause 6.2)',
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      if (Number(cb.clawback_amount) <= 0) {
+        return new Response(JSON.stringify({
+          error: 'No commission was actually paid on this loan — nothing is recoverable (clause 6.3)',
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+      const { data, error } = await supabase.from('finance_partner_clawbacks').update({
+        status: 'issued', issued_at: new Date().toISOString(), issued_by: adminUserId,
+      }).eq('id', body.id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, clawback: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'record_clawback_recovery') {
+      const { id, amount, method, offset_statement_id } = body;
+      const { data: cb } = await supabase.from('finance_partner_clawbacks')
+        .select('amount_recovered, clawback_amount').eq('id', id).maybeSingle();
+      if (!cb) throw new Error('Clawback not found');
+      const nextTotal = Math.min(
+        Number(cb.clawback_amount || 0),
+        Math.round((Number(cb.amount_recovered || 0) + Number(amount || 0)) * 100) / 100,
+      );
+      const { data, error } = await supabase.from('finance_partner_clawbacks').update({
+        amount_recovered: nextTotal,
+        recovery_method: method || 'direct_payment',
+        offset_statement_id: offset_statement_id || null,
+      }).eq('id', id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, clawback: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'waive_clawback') {
+      const { data, error } = await supabase.from('finance_partner_clawbacks').update({
+        status: 'waived', waived_at: new Date().toISOString(),
+        waived_reason: body.reason || null, recovery_method: 'waived',
+      }).eq('id', body.id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, clawback: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PHASE 5 — RCTI / TAX INVOICES (Doc 2 §7.3)
+    // ════════════════════════════════════════════════════════════════════════
+    if (operation === 'list_invoices') {
+      let q = supabase.from('partner_tax_invoices').select('*')
+        .order('invoice_date', { ascending: false }).limit(500);
+      if (body.partner_id) q = q.eq('finance_contact_id', body.partner_id);
+      if (body.status) q = q.eq('status', body.status);
+      const { data, error } = await q;
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, invoices: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'create_invoice') {
+      const { statement_id } = body;
+      if (!statement_id) throw new Error('statement_id required');
+      const { data: stmt } = await supabase.from('finance_partner_statements')
+        .select('*').eq('id', statement_id).maybeSingle();
+      if (!stmt) throw new Error('Statement not found');
+      if (stmt.status === 'draft') throw new Error('Issue the statement before raising an invoice');
+
+      const { data: invRows } = await supabase.rpc('fp_resolve_partner_invoicing', {
+        _finance_contact_id: stmt.finance_contact_id, _direction: 'outbound_finance_referral',
+      });
+      const terms = (invRows || [])[0] || null;
+      const mode = body.invoice_mode || terms?.invoice_mode || 'rcti';
+
+      const { data: pc } = await supabase.from('finance_agent_contacts')
+        .select('name, company, abn, gst_registered').eq('id', stmt.finance_contact_id).maybeSingle();
+      const brandCfg = await getBrandConfig();
+
+      const number = body.invoice_number
+        || `${mode === 'rcti' ? 'RCTI' : 'INV'}-${String(stmt.period_end || '').replace(/-/g, '')}-${String(stmt.id).slice(0, 6).toUpperCase()}`;
+
+      const payload = {
+        finance_contact_id: stmt.finance_contact_id,
+        statement_id: stmt.id,
+        agreement_id: stmt.agreement_id || terms?.agreement_id || null,
+        invoice_mode: mode,
+        invoice_number: number,
+        invoice_date: body.invoice_date || new Date().toISOString().slice(0, 10),
+        due_date: body.due_date || null,
+        supplier_name: pc?.company || pc?.name || null,
+        supplier_abn: pc?.abn || null,
+        supplier_gst_registered: pc?.gst_registered ?? null,
+        recipient_name: brandCfg.companyName,
+        recipient_abn: body.recipient_abn || null,
+        subtotal_amount: Number(stmt.total_net || 0),
+        gst_amount: Number(stmt.total_gst || 0),
+        total_amount: Number(stmt.total_net || 0) + Number(stmt.total_gst || 0),
+        gst_treatment: terms?.gst_treatment || null,
+        status: 'issued',
+        issued_by: adminUserId,
+        notes: body.notes || null,
+      };
+
+      const { data, error } = await supabase.from('partner_tax_invoices')
+        .insert(payload).select('*').single();
+      if (error) {
+        // Duplicate-invoice guard (§7.3)
+        if (String(error.message || '').includes('uq_pti_partner_invoice_number')) {
+          return new Response(JSON.stringify({ error: `Invoice number "${number}" already exists for this partner` }),
+            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        if (String(error.message || '').includes('uq_pti_statement_live')) {
+          return new Response(JSON.stringify({ error: 'This statement already has a live invoice' }),
+            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+        throw error;
+      }
+
+      await supabase.from('finance_partner_statements').update({
+        invoice_mode: mode, invoice_id: data.id, invoice_number: number,
+      }).eq('id', stmt.id);
+
+      return new Response(JSON.stringify({ success: true, invoice: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'cancel_invoice') {
+      const { data, error } = await supabase.from('partner_tax_invoices').update({
+        status: 'cancelled', cancelled_at: new Date().toISOString(),
+        cancelled_reason: body.reason || null,
+      }).eq('id', body.id).select('*').single();
+      if (error) throw error;
+      if (data?.statement_id) {
+        await supabase.from('finance_partner_statements')
+          .update({ invoice_id: null, invoice_number: null }).eq('id', data.statement_id);
+      }
+      return new Response(JSON.stringify({ success: true, invoice: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // PHASE 5 — RESTRICTED BANKING DETAILS (Annexure C / §9.3)
+    // ════════════════════════════════════════════════════════════════════════
+    if (operation === 'banking_queue') {
+      const { data, error } = await supabase.from('finance_partner_bank_details')
+        .select('*').neq('status', 'superseded')
+        .order('updated_at', { ascending: false }).limit(300);
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, records: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'get_bank_details') {
+      const partnerId = body.partner_id;
+      if (!partnerId) throw new Error('partner_id required');
+      const { data, error } = await supabase.from('finance_partner_bank_details')
+        .select('*').eq('finance_contact_id', partnerId)
+        .order('version', { ascending: false });
+      if (error) throw error;
+      const rows = data || [];
+      return new Response(JSON.stringify({
+        success: true,
+        current: rows.find((r: any) => r.status !== 'superseded') || null,
+        history: rows,
+      }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'upsert_bank_details') {
+      const partnerId = body.partner_id;
+      if (!partnerId) throw new Error('partner_id required');
+      const accountNumber = String(body.account_number || '').replace(/\s/g, '');
+      const last4 = accountNumber ? accountNumber.slice(-4) : null;
+      const masked = accountNumber ? `${'•'.repeat(Math.max(0, accountNumber.length - 4))}${last4}` : null;
+
+      const { data: existing } = await supabase.from('finance_partner_bank_details')
+        .select('*').eq('finance_contact_id', partnerId)
+        .neq('status', 'superseded').maybeSingle();
+
+      const changed = !existing
+        || (body.bsb && body.bsb !== existing.bsb)
+        || (last4 && last4 !== existing.account_number_last4)
+        || (body.account_name && body.account_name !== existing.account_name);
+
+      if (existing && !changed) {
+        // Non-identity fields only — update in place, verification survives.
+        const { data, error } = await supabase.from('finance_partner_bank_details').update({
+          entity_name: body.entity_name ?? existing.entity_name,
+          abn: body.abn ?? existing.abn,
+          gst_registered: body.gst_registered ?? existing.gst_registered,
+          accounts_email: body.accounts_email ?? existing.accounts_email,
+          rcti_email: body.rcti_email ?? existing.rcti_email,
+        }).eq('id', existing.id).select('*').single();
+        if (error) throw error;
+        return new Response(JSON.stringify({ success: true, record: data, reverification_required: false }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
+      if (existing) {
+        await supabase.from('finance_partner_bank_details').update({
+          status: 'superseded', superseded_at: new Date().toISOString(), superseded_by: adminUserId,
+        }).eq('id', existing.id);
+      }
+
+      const { data, error } = await supabase.from('finance_partner_bank_details').insert({
+        finance_contact_id: partnerId,
+        agreement_id: body.agreement_id || null,
+        version: (existing?.version || 0) + 1,
+        entity_name: body.entity_name || null,
+        abn: body.abn || null,
+        gst_registered: body.gst_registered ?? null,
+        accounts_email: body.accounts_email || null,
+        rcti_email: body.rcti_email || null,
+        account_name: body.account_name || null,
+        bsb: body.bsb || null,
+        account_number_last4: last4,
+        account_number_masked: masked,
+        change_reason: body.change_reason || (existing ? 'Bank details changed' : 'Initial registration'),
+        status: 'pending_verification',
+        created_by: adminUserId,
+      }).select('*').single();
+      if (error) throw error;
+
+      return new Response(JSON.stringify({ success: true, record: data, reverification_required: true }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'verify_bank_details') {
+      // Clause 9.3 — independent verification (callback on a previously known number).
+      const { id, verification_method, verification_contact_number, verification_notes } = body;
+      if (!id) throw new Error('id required');
+      if (!verification_method) throw new Error('verification_method required');
+      if (verification_method === 'callback_known_number' && !verification_contact_number) {
+        throw new Error('verification_contact_number required for a callback verification');
+      }
+      const { data: actor } = adminUserId
+        ? await supabase.from('custom_users').select('full_name, email').eq('id', adminUserId).maybeSingle()
+        : { data: null } as any;
+
+      const { data, error } = await supabase.from('finance_partner_bank_details').update({
+        status: 'verified',
+        independent_verification_date: body.verification_date || new Date().toISOString().slice(0, 10),
+        verified_by: adminUserId,
+        verified_by_name: actor?.full_name || actor?.email || null,
+        verification_method,
+        verification_contact_number: verification_contact_number || null,
+        verification_notes: verification_notes || null,
+      }).eq('id', id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, record: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'reject_bank_details') {
+      const { data, error } = await supabase.from('finance_partner_bank_details').update({
+        status: 'rejected', verification_notes: body.reason || null,
+      }).eq('id', body.id).select('*').single();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, record: data }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+
+
+    // ════════════════════════════════════════════════════════════════════════
     // PARTNER OPS  (scoped by session token)
     // ════════════════════════════════════════════════════════════════════════
     if (operation === 'partner_summary') {
