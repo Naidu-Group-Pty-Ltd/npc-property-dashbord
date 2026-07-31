@@ -80,11 +80,15 @@ export function useListingCoordinates(listings: PropertyListing[]) {
   const [points, setPoints] = useState<Record<string, ResolvedPoint>>(() => {
     const seed: Record<string, ResolvedPoint> = {};
     for (const listing of listings) {
-      const hit = coordinateCache.get(listing.id);
+      const hit = readCachedPoint(
+        listing.id,
+        addressFingerprint([listing.address, listing.suburb, listing.state, listing.zipCode]),
+      );
       if (hit) seed[listing.id] = hit;
     }
     return seed;
   });
+
   const [isResolving, setIsResolving] = useState(false);
   const [failure, setFailure] = useState<CoordinateFailure | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
