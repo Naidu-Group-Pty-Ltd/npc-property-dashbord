@@ -33,6 +33,8 @@ const MAX_REQUESTS_PER_PASS = 8;
 /** Give up on a listing the server has fully processed but could not place. */
 const MAX_ATTEMPTS = 2;
 const CACHE_LIMIT = 5000;
+const RETRY_BASE_MS = 2_000;
+const RETRY_MAX_MS = 60_000;
 
 /**
  * Coordinates survive unmount, so flipping between table and map view (or
@@ -116,6 +118,8 @@ export function useListingCoordinates(listings: PropertyListing[]) {
   const restartRef = useRef(false);
   const stoppedRef = useRef(false);
   const unmountedRef = useRef(false);
+  const retryTimerRef = useRef<number | null>(null);
+  const transientFailuresRef = useRef(0);
 
   // `payload` is derived straight from props, so it is always current. `points`
   // is deliberately NOT mirrored here: the running pass advances `pointsRef`
@@ -126,6 +130,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
   useEffect(
     () => () => {
       unmountedRef.current = true;
+      if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
     },
     [],
   );
@@ -200,11 +205,24 @@ export function useListingCoordinates(listings: PropertyListing[]) {
         if (unmountedRef.current) return;
 
         if (error) {
-          // Rate limited or provider circuit open: back off without burning the
-          // listings' attempts, so a later pass can still place them.
+          // Back off automatically without burning listing attempts. A manual
+          // retry remains available, but the map no longer stays empty forever
+          // merely because the first request landed during provider pressure.
           if (error.status === 429 || error.status === 503) {
             stoppedRef.current = true;
             setFailure(error.status === 429 ? 'rate_limited' : 'unavailable');
+            transientFailuresRef.current += 1;
+            const delay = Math.min(
+              RETRY_MAX_MS,
+              RETRY_BASE_MS * 2 ** Math.min(transientFailuresRef.current - 1, 5),
+            );
+            if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = window.setTimeout(() => {
+              retryTimerRef.current = null;
+              if (unmountedRef.current) return;
+              stoppedRef.current = false;
+              setRetryNonce((n) => n + 1);
+            }, delay);
             return;
           }
           if (error.status === 401 || error.status === 403) {
@@ -226,6 +244,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
           source: ResolvedPoint['source'];
         }>;
         if (resolved.length > 0) setFailure(null);
+        transientFailuresRef.current = 0;
         commit(resolved);
 
         // The server geocodes a bounded number of fresh addresses per call and
@@ -267,7 +286,12 @@ export function useListingCoordinates(listings: PropertyListing[]) {
 
   /** Clears the back-off so the user can ask for another pass. */
   const retry = useCallback(() => {
+    if (retryTimerRef.current !== null) {
+      window.clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     stoppedRef.current = false;
+    transientFailuresRef.current = 0;
     attemptsRef.current.clear();
     setFailure(null);
     setRetryNonce((n) => n + 1);

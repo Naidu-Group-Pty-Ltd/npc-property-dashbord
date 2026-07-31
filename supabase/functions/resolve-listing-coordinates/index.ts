@@ -3,11 +3,8 @@ import { verifyAuth, createForbiddenResponse, createUnauthorizedResponse, create
 import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import {
-  enforceActorQuota,
   enforceGlobalDailyQuota,
-  enforceIpQuota,
   fetchWithTimeout,
-  getClientIp,
   killSwitchActive,
   redactError,
 } from '../_shared/publicAbuseControls.ts';
@@ -145,10 +142,16 @@ Deno.serve(async (req) => {
     const seenHashes = new Set<string>();
     const inserts: Array<Record<string, unknown>> = [];
 
+    if (needsLookup.length === 0) {
+      return j({ success: true, results, pendingLookups: 0 });
+    }
+
     if (apiKey && !killSwitchActive('GOOGLE_GEOCODING_KILL_SWITCH')) {
-      const actorQuota = await enforceActorQuota(supabase, userId, CIRCUIT_SCOPE, { limit: 10, windowMs: 60_000 });
-      const ipQuota = await enforceIpQuota(supabase, getClientIp(req), CIRCUIT_SCOPE, { limit: 20, windowMs: 60_000 });
-      if (!actorQuota.ok || !ipQuota.ok) return j({ error: 'rate_limited', success: false }, 429);
+      // This endpoint is already protected by staff authentication and the
+      // listings permission. Per-request actor/IP throttles caused normal map
+      // pagination to lock itself out and, worse, discarded cache hits with a
+      // blanket 429. Provider spend remains bounded by the global daily quota,
+      // the per-request lookup cap, and the circuit breaker below.
 
       const { data: circuitOpen, error: circuitReadError } = await supabase.rpc('provider_circuit_is_open', { p_scope: CIRCUIT_SCOPE });
       if (circuitReadError || circuitOpen === true) return j({ error: 'temporarily_unavailable', success: false }, 503);
@@ -162,7 +165,10 @@ Deno.serve(async (req) => {
           CIRCUIT_SCOPE,
           Number(Deno.env.get('GOOGLE_GEOCODING_DAILY_LIMIT') ?? '5000'),
         );
-        if (!globalQuota.ok) break;
+        if (!globalQuota.ok) {
+          console.warn('[resolve-listing-coordinates] global daily lookup budget exhausted');
+          break;
+        }
         seenHashes.add(item.hash);
         remaining -= 1;
 

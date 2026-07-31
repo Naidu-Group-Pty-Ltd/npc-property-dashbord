@@ -422,6 +422,14 @@ const LEGACY_FALLBACK_ORIGINS = [
   'https://npc-property-dashbord.lovable.app',
 ];
 
+// Exact, project-owned preview origins. These are safe to include regardless
+// of ALLOWED_ORIGINS and avoid credentialed auth requests failing CORS when the
+// preview host differs from the published host. Deliberately no suffix match.
+const PROJECT_PREVIEW_ORIGINS = [
+  'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
+  'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com',
+];
+
 /**
  * CORS-REQ-HEADERS: canonical allowlist of REQUEST headers the browser may send.
  *
@@ -503,6 +511,7 @@ function lovablePreviewSuffixAllowed(origin: string): boolean {
 export function createCorsHeaders(origin: string | null = null): Record<string, string> {
   const allowedOrigins = [
     ...parseAllowedOrigins(),
+    ...PROJECT_PREVIEW_ORIGINS,
     'http://localhost:5173',
     'http://localhost:8080',
   ];
