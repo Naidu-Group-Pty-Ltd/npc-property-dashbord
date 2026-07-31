@@ -414,9 +414,9 @@
           "binding": ""
         },
         {
-          "title": "Appendix — evidence index",
+          "title": "Evidence index",
           "component": "appendix_opener",
-          "purpose": "Document register with dates and sources.",
+          "purpose": "Appendix A — document register with dates and sources.",
           "optional": false,
           "repeats": false,
           "binding": ""

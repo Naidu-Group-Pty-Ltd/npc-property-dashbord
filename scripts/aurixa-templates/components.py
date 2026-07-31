@@ -174,6 +174,92 @@ def _blank_first(part) -> None:
     first.add_run().font.size = Pt(1)
 
 
+def begin_landscape(doc, theme: Theme, doc_title: str) -> Theme:
+    """Start a landscape section and return the theme sized for it.
+
+    Word applies orientation per section, so a wide table needs its own section
+    rather than a scaled-down font. The header and footer are rebuilt at the new
+    width — inheriting the portrait ones would leave a 178mm rule on a 265mm
+    page, which reads as a mistake rather than a design.
+    """
+    from docx.enum.section import WD_ORIENT, WD_SECTION
+
+    landscape = theme.landscape
+    section = doc.add_section(WD_SECTION.NEW_PAGE)
+    section.orientation = WD_ORIENT.LANDSCAPE
+    configure_section(section, landscape)
+    section.different_first_page_header_footer = False
+    section.header.is_linked_to_previous = False
+    section.footer.is_linked_to_previous = False
+    _rebuild_running(section, landscape, doc_title)
+    return landscape
+
+
+def end_landscape(doc, theme: Theme, doc_title: str) -> None:
+    """Return to portrait for the remainder of the document."""
+    from docx.enum.section import WD_ORIENT, WD_SECTION
+
+    section = doc.add_section(WD_SECTION.NEW_PAGE)
+    section.orientation = WD_ORIENT.PORTRAIT
+    configure_section(section, theme)
+    section.different_first_page_header_footer = False
+    section.header.is_linked_to_previous = False
+    section.footer.is_linked_to_previous = False
+    _rebuild_running(section, theme, doc_title)
+
+
+def _rebuild_running(section, theme: Theme, doc_title: str) -> None:
+    """Draw the running header and footer into a mid-document section."""
+    header = section.header
+    for stale in list(header.paragraphs)[1:]:
+        stale._p.getparent().remove(stale._p)
+    if theme.family.header_style != "none":
+        half = theme.width / 2
+        table = new_table(header, 1, 2, [half, half])
+        left, right = (clear(c) for c in table.rows[0].cells)
+        for cell in (left, right):
+            cell_margins(cell, 0, 0, 70, 0)
+            cell_borders(cell, bottom=(6, theme.accent), top=None, left=None, right=None)
+        para(left, theme.brand.organisation_name, font=theme.body,
+             size=theme.type_scale.micro, bold=True, caps=True,
+             tracking=theme.family.label_tracking, colour=theme.palette.ink_soft,
+             before=0, after=0)
+        para(right, doc_title, font=theme.body, size=theme.type_scale.micro, bold=True,
+             caps=True, tracking=theme.family.label_tracking,
+             colour=theme.palette.ink_soft, before=0, after=0,
+             align=WD_ALIGN_PARAGRAPH.RIGHT)
+    _blank_first(header)
+
+    footer = section.footer
+    for stale in list(footer.paragraphs)[1:]:
+        stale._p.getparent().remove(stale._p)
+    table = new_table(footer, 1, 2, [theme.width * 0.56, theme.width * 0.44])
+    left, right = (clear(c) for c in table.rows[0].cells)
+    for cell in (left, right):
+        cell_margins(cell, 70, 0, 40, 0)
+        cell_borders(cell, top=(4, theme.palette.line), bottom=None, left=None, right=None)
+    p = para(left, theme.brand.confidentiality, font=theme.body,
+             size=theme.type_scale.micro, bold=True, caps=True,
+             tracking=theme.family.label_tracking, colour=theme.accent, before=0, after=0)
+    write(p, f"    {theme.brand.document_reference}", font=theme.body,
+          size=theme.type_scale.micro, colour=theme.palette.ink_faint)
+    p = para(right, "", before=0, after=0, align=WD_ALIGN_PARAGRAPH.RIGHT)
+    if theme.brand.powered_by:
+        write(p, f"{theme.brand.powered_by}    |    ", font=theme.body,
+              size=theme.type_scale.micro, colour=theme.palette.ink_faint)
+    write(p, f"v{theme.brand.version}", font=theme.body, size=theme.type_scale.micro,
+          bold=True, colour=theme.palette.ink_soft)
+    write(p, "    |    Page ", font=theme.body, size=theme.type_scale.micro,
+          colour=theme.palette.ink_faint)
+    page_field(p, "PAGE", font=theme.body, size=theme.type_scale.micro, bold=True,
+               colour=theme.palette.ink_soft)
+    write(p, " of ", font=theme.body, size=theme.type_scale.micro,
+          colour=theme.palette.ink_faint)
+    page_field(p, "NUMPAGES", font=theme.body, size=theme.type_scale.micro, bold=True,
+               colour=theme.palette.ink_soft)
+    _blank_first(footer)
+
+
 def running_header(section, theme: Theme, doc_title: str) -> None:
     """Organisation left, document title right, family-appropriate rule.
 
@@ -430,7 +516,7 @@ def _cover_editorial(container, theme, title, subtitle, eyebrow_text,
              colour=p.ink_faint, align=WD_ALIGN_PARAGRAPH.CENTER, before=5, after=0)
 
     spacer(container, 16)
-    _logo_slot(container, theme, theme.brand.logo_placeholder, 54.0, on_dark=False)
+    _logo_slot(container, theme, theme.brand.logo_placeholder, 68.0, on_dark=False)
     spacer(container, 14)
     if eyebrow_text:
         para(container, eyebrow_text, font=theme.body, size=ts.cover_eyebrow,
@@ -815,6 +901,55 @@ def definition_grid(container, theme: Theme, fields: list[tuple[str, str]],
             para(blank, "", before=0, after=0)
 
 
+def responsibility_columns(container, theme: Theme, left: tuple[str, list[str]],
+                           right: tuple[str, list[str]],
+                           tones: tuple[str, str] = ("brand", "gold")) -> None:
+    """Two headed lists side by side — strengths and concerns, included and
+    excluded, may and must not.
+
+    A comparison a reader takes in without reading. The two columns are always
+    the same width, so neither side reads as the more important one, and the
+    tone pair carries the polarity without either column needing the word
+    "not" in its first line.
+    """
+    half = theme.width / 2
+    table = new_table(container, 2, 2, [half, half])
+    keep_row_together(table.rows[0])
+    p = theme.palette
+    palettes = {
+        "brand": (theme.accent, theme.accent_tint),
+        "gold": (theme.primary, p.cloud),
+        "success": (p.success, p.success_soft),
+        "alert": (p.alert, p.alert_soft),
+        "info": (p.info, p.info_soft),
+        "warning": (p.warning, p.warning_soft),
+    }
+
+    for index, ((title, items), tone) in enumerate(zip((left, right), tones)):
+        accent, tint = palettes.get(tone, palettes["brand"])
+        head = clear(table.rows[0].cells[index])
+        shade(head, accent)
+        cell_margins(head, *theme.cell_pad)
+        cell_borders(head, top=None, left=None, bottom=None,
+                     right=(30, p.paper) if index == 0 else None)
+        para(head, title, font=theme.body, size=theme.type_scale.label + 0.5, bold=True,
+             caps=True, tracking=theme.family.label_tracking, colour=p.ink_invert,
+             before=0, after=0, line=1.15, keep_with_next=True)
+
+        cell = clear(table.rows[1].cells[index])
+        shade(cell, tint)
+        cell_margins(cell, theme.cell_pad[0] + 40, theme.cell_pad[1])
+        cell_borders(cell, top=None, left=None, bottom=(4, p.line),
+                     right=(30, p.paper) if index == 0 else None)
+        for item_index, item in enumerate(items):
+            para_p = para(cell, "", before=0 if item_index == 0 else 4, after=0,
+                          line=theme.family.body_line, left_indent=10, hanging=10)
+            write(para_p, f"{BULLET}  ", font=theme.body,
+                  size=theme.type_scale.body_sm, bold=True, colour=accent)
+            write(para_p, item, font=theme.body, size=theme.type_scale.body_sm,
+                  colour=p.ink)
+
+
 def adviser_profile(container, theme: Theme, *, bio: str = "",
                     credentials: list[str] | None = None) -> None:
     photo_w = 30.0
@@ -1012,7 +1147,7 @@ def comparison_table(container, theme: Theme, *, subject_labels: list[str],
 
 def status_table(container, theme: Theme, *, headers: list[str],
                  rows: list[tuple[list[str], str]], widths: list[float] | None = None,
-                 status_col: int = -1, caption: str = "") -> None:
+                 status_col: int = -1, caption: str = "", note: str = "") -> None:
     """Compliance/verification table where one column is a status chip.
 
     ``rows`` is ``(values, status_keyword)``. The status cell renders as a
@@ -1059,6 +1194,10 @@ def status_table(container, theme: Theme, *, headers: list[str],
                  colour=ink if is_status else _placeholder_colour(theme, value),
                  italic=_is_token(value) and not is_status,
                  before=0, after=0, line=1.22)
+
+    if note:
+        para(container, note, font=theme.body, size=theme.type_scale.micro, italic=True,
+             colour=theme.palette.ink_faint, before=4, after=0, line=1.24)
 
 
 def bar_chart(container, theme: Theme, *, rows: list[tuple[str, float, str]],
@@ -1162,6 +1301,7 @@ def chart_frame(container, theme: Theme, *, title: str, kind: str,
     if alt_text:
         meta.append(f"Alt text: {alt_text}")
     if meta:
+        cell.paragraphs[-1].paragraph_format.keep_with_next = True
         para(container, "   ·   ".join(meta), font=theme.body, size=ts.micro,
              italic=True, colour=p.ink_faint, before=4, after=0, line=1.24)
 
@@ -1189,6 +1329,7 @@ def image_frame(container, theme: Theme, *, caption: str = "", height_mm: float 
          align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=0)
     lines = [t for t in (caption, f"Alt text: {alt_text}" if alt_text else "") if t]
     if lines:
+        cell.paragraphs[-1].paragraph_format.keep_with_next = True
         para(container, "   ·   ".join(lines), font=theme.body, size=ts.micro,
              italic=True, colour=p.ink_faint, before=3, after=0, line=1.22)
 

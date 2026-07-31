@@ -538,7 +538,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "document-collection-checklist"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "property-acquisition-recommendation",
@@ -667,7 +667,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "property-acquisition-recommendation"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "suburb-analysis-report",
@@ -1293,7 +1293,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "finance-strategy-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "lending-recommendation-report",
@@ -1533,7 +1533,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "portfolio-review-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "serviceability-assessment",
@@ -1887,7 +1887,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "client-proposal"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "investor-goals-questionnaire",
@@ -2300,7 +2300,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "file-review-summary"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "compliance-review-report",
@@ -2673,7 +2673,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "executive-business-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "board-report",

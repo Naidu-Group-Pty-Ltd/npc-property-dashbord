@@ -165,7 +165,7 @@ Structured pre-exchange investigation: title, planning, building, environmental 
 | 9 | Risks & mitigations | `risk_box` | Residual risk after investigation. | — |
 | 10 | Conclusion | `recommendation_box` | Proceed / proceed with conditions / do not proceed. | — |
 | 11 | Approvals | `approval_block` | Preparer, reviewer, sign-off dates. | — |
-| 12 | Appendix — evidence index | `appendix_opener` | Document register with dates and sources. | — |
+| 12 | Evidence index | `appendix_opener` | Appendix A — document register with dates and sources. | — |
 | 13 | Important information | `disclaimer_page` | Disclaimer, privacy, terms. | — |
 
 ↻ marks a repeating section — it grows with the record count.
@@ -236,7 +236,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You are making the investment case → `property-investment-report`
 - You need a short checklist to work from, not a report → `document-collection-checklist`
 
-**Library metadata** — tier `growth` · priority `P1` · data `medium` · images `low` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P1` · data `medium` · images `low` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -440,7 +440,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You are comparing loans rather than properties → `loan-comparison-report`
 - The client has already chosen → `property-acquisition-recommendation`
 
-**Library metadata** — tier `growth` · priority `P1` · data `high` · images `high` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P1` · data `high` · images `high` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1473,7 +1473,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The question is how much, not which → `borrowing-capacity-report`
 - The whole debt structure is under review → `finance-strategy-report`
 
-**Library metadata** — tier `growth` · priority `P1` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P1` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1878,7 +1878,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The question is capacity → `borrowing-capacity-report`
 - The subject is a whole portfolio → `portfolio-review-report`
 
-**Library metadata** — tier `growth` · priority `P1` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P1` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -2485,7 +2485,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You need the client's financial position → `client-fact-find-form`
 - You are pitching, not onboarding → `client-proposal`
 
-**Library metadata** — tier `launch` · priority `P1` · data `low` · images `none` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `launch` · priority `P1` · data `low` · images `none` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -3192,7 +3192,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You need the full due-diligence record → `aml-kyc-assessment`
 - You are reviewing a file for completeness → `file-review-summary`
 
-**Library metadata** — tier `launch` · priority `P1` · data `low` · images `none` · formality `formal` · audience `internal` · generator not yet implemented
+**Library metadata** — tier `launch` · priority `P1` · data `low` · images `none` · formality `formal` · audience `internal` · generator implemented
 
 ---
 
@@ -3817,7 +3817,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The proposal is to another business, not a client → `partnership-proposal`
 - The audience wants analysis, not persuasion → `executive-business-report`
 
-**Library metadata** — tier `growth` · priority `P1` · data `low` · images `medium` · formality `presentation` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P1` · data `low` · images `medium` · formality `presentation` · audience `client-facing` · generator implemented
 
 ---
 

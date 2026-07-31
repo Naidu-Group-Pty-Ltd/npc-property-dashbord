@@ -418,15 +418,15 @@ knowing and neither shows up in a success-rate metric.
 
 | Phase | Work | Outcome |
 | --- | --- | --- |
-| 1 | Generation service; `command_center_templates` and `org_template_settings`; seed from the detail payload | The 8 built templates generate end to end |
+| 1 | Generation service; `command_center_templates` and `org_template_settings`; seed from the detail payload | The 15 built templates generate end to end |
 | 2 | Library grid, filters, shelves, detail drawer, preview | Users can browse and preview |
 | 3 | Configure and generate flow; section picker; brand application; DOCX and PDF export | The feature is usable |
-| 4 | Remaining 7 P1 templates | Category coverage for the core workflows |
-| 5 | Admin surface: publish, approve, assign, test injection, analytics | Operable without engineering |
-| 6 | Remaining 16 P2 templates; visual regression baselines | Library complete for Growth and Scale |
-| 7 | Remaining 9 P3 templates; Enterprise bespoke family capability | Full library and the commercial upside |
+| 4 | Admin surface: publish, approve, assign, test injection, analytics | Operable without engineering |
+| 5 | Remaining 16 P2 templates; visual regression baselines | Library complete for Growth and Scale |
+| 6 | Remaining 9 P3 templates; Enterprise bespoke family capability | Full library and the commercial upside |
 
 Phases 1–3 are the minimum that delivers value; the library is worth nothing
-until a user can select a template and get a document out of it. Building all 40
-templates before the selection flow exists would be 32 templates of inventory
-risk against zero validated demand.
+until a user can select a template and get a document out of it. All P1
+templates are built, so phases 1–3 have every template they need. Building the
+remaining 25 before the selection flow exists would be inventory risk against
+zero validated demand.

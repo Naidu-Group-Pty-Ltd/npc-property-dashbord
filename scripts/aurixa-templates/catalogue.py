@@ -113,7 +113,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="property-due-diligence-report", name="Property Due-Diligence Report",
-        category="property", family="compliance-structured",
+        category="property", family="compliance-structured", built=True,
         summary="Structured pre-exchange investigation: title, planning, building, "
                 "environmental and contractual findings against a numbered checklist.",
         audience="Buyer's agents, conveyancers, investor clients",
@@ -151,8 +151,8 @@ CATALOGUE: list[T] = [
             S("Risks & mitigations", "risk_box", "Residual risk after investigation."),
             S("Conclusion", "recommendation_box", "Proceed / proceed with conditions / do not proceed."),
             S("Approvals", "approval_block", "Preparer, reviewer, sign-off dates."),
-            S("Appendix — evidence index", "appendix_opener",
-              "Document register with dates and sources."),
+            S("Evidence index", "appendix_opener",
+              "Appendix A — document register with dates and sources."),
             S("Important information", "disclaimer_page", "Disclaimer, privacy, terms."),
         ),
         components=("cover", "table_of_contents", "highlight_box", "executive_summary",
@@ -228,7 +228,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="property-comparison-report", name="Property Comparison Report",
-        category="property", family="property-visual",
+        category="property", family="property-visual", built=True,
         summary="Two to five properties assessed side by side against a common set of "
                 "attributes, with a ranked outcome.",
         audience="Investor and owner-occupier clients",
@@ -781,7 +781,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="loan-comparison-report", name="Loan Comparison Report",
-        category="finance", family="financial-analytical",
+        category="finance", family="financial-analytical", built=True,
         summary="Side-by-side comparison of shortlisted loan products on rate, fees, "
                 "features, true cost over the intended hold period, and policy fit.",
         audience="Clients, brokers",
@@ -799,7 +799,7 @@ CATALOGUE: list[T] = [
               "Every product on rate, comparison rate, fees, features.",
               repeats=True, binding="{{products[]}}"),
             S("True cost over term", "bar_chart",
-              "Total cost over the assumed hold period per product."),
+              "Total cost over the assumed hold period per product.", headed=False),
             S("Feature matrix", "status_table",
               "Offset, redraw, split, portability, construction — available or not.",
               binding="{{products[].features}}"),
@@ -959,7 +959,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="cash-flow-net-position-report", name="Cash-Flow & Net Position Report",
-        category="finance", family="financial-analytical",
+        category="finance", family="financial-analytical", built=True,
         summary="Projected cash flow and net position over one to ten years, with the "
                 "assumptions, the year-by-year detail and the sensitivity.",
         audience="Investor clients, accountants",
@@ -981,7 +981,7 @@ CATALOGUE: list[T] = [
               "Income, expenses, interest, depreciation, tax, net position by year.",
               repeats=True, binding="{{cashflow.years[]}}"),
             S("Net position over time", "chart_frame", "Cumulative net position line chart.",
-              binding="{{cashflow.series}}"),
+              headed=False, binding="{{cashflow.series}}"),
             S("Expense breakdown", "bar_chart", "Where the money goes in year one."),
             S("Sensitivity", "comparison_table", "Rate +1%/+2%, vacancy, rent variance.",
               binding="{{sensitivity[]}}"),
@@ -1246,7 +1246,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="client-onboarding-form", name="Client Onboarding Form",
-        category="forms", family="minimal-professional",
+        category="forms", family="minimal-professional", built=True,
         summary="Engagement-level onboarding: parties, scope of service, fees, authorities, "
                 "communication preferences and consents.",
         audience="New clients",
@@ -1267,8 +1267,10 @@ CATALOGUE: list[T] = [
             S("Communication preferences", "definition_grid", "Channel, frequency, contacts."),
             S("Consents", "checklist", "Privacy, credit reporting, marketing — each separate."),
             S("What happens next", "process_flow", "The first three steps of the engagement."),
-            S("Signatures", "signature_block", "Client and organisation signatures."),
-            S("Privacy & terms", "disclaimer_page", "Privacy notice and terms of engagement."),
+            S("Signatures", "signature_block", "Client and organisation signatures.",
+              headed=False),
+            S("Privacy & terms", "disclaimer_page",
+              "Privacy notice and terms of engagement.", headed=False),
         ),
         components=("cover", "definition_grid", "info_card", "data_table", "checklist",
                     "process_flow", "signature_block", "disclaimer_page"),
@@ -1570,7 +1572,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="client-verification-summary", name="Client Verification Summary",
-        category="compliance", family="compliance-structured",
+        category="compliance", family="compliance-structured", built=True,
         summary="A one-to-three page confirmation that identity verification was completed, "
                 "by what method, on what date, with what result.",
         audience="Internal staff, third parties requiring evidence of verification",
@@ -1584,7 +1586,7 @@ CATALOGUE: list[T] = [
         sections=(
             S("Header", "cover", "Customer, verification date, verifier, reference."),
             S("Verification outcome", "metric_panel",
-              "Status, method, date, expiry of the verification."),
+              "Status, method, date, expiry of the verification.", headed=False),
             S("Customer", "info_card", "Verified name, date of birth, address."),
             S("Documents verified", "status_table",
               "Type, number, issuer, expiry, verification method, status.",
@@ -1851,7 +1853,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="client-proposal", name="Client Proposal",
-        category="business", family="luxury-presentation",
+        category="business", family="luxury-presentation", built=True,
         summary="A commercial proposal: the client's situation, the proposed approach, the "
                 "team, the fees, and why this organisation.",
         audience="Prospective clients",
@@ -1880,7 +1882,7 @@ CATALOGUE: list[T] = [
             S("Why us", "highlight_box", "Evidence, not adjectives.", optional=True),
             S("Case study", "info_card", "One relevant example with an outcome.",
               optional=True, binding="{{caseStudy}}"),
-            S("Next steps", "process_flow", "How to accept."),
+            S("Next steps", "process_flow", "How to accept.", headed=False),
             S("Acceptance", "signature_block", "Client acceptance block.", optional=True),
             S("Terms", "disclaimer_page", "Terms, validity period, privacy."),
             S("Back cover", "back_cover", "Contact block."),

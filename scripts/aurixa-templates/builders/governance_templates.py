@@ -504,3 +504,424 @@ def executive_business_report(doc, theme: Theme, f: Fill) -> None:
         "Approve the transfer of four delivery staff.",
         "Note the advisory client concentration risk and the mitigation target.",
     ]), title="Decisions required", columns=1)
+
+
+# ==========================================================================
+# Client Onboarding Form — Minimal Professional
+# ==========================================================================
+
+def client_onboarding_form(doc, theme: Theme, f: Fill) -> None:
+    C.cover(
+        doc, theme,
+        eyebrow_text="Engagement",
+        title=f("form.title", "Client Onboarding"),
+        subtitle=f("form.subtitle",
+                   "The scope of our engagement, what it costs, what you authorise us to "
+                   "do, and the consents we need."),
+        prepared_for=False)
+    C.gap(doc, theme, 0.6)
+    C.definition_grid(doc, theme, [
+        ("Engagement reference", f("engagement.reference", "{{engagement.reference}}")),
+        ("Date", f("document.issueDate", "{{document.issueDate}}")),
+        ("Adviser", f("author.name", "{{author.name}}")),
+        ("Start date", f("engagement.startDate", "{{engagement.startDate}}")),
+    ])
+    C.gap(doc, theme, 0.7)
+    C.prose(doc, theme, f.text("engagement.welcome", [
+        "Thank you for engaging us. This form records what we have agreed: the work we "
+        "will do, the work we will not do, what it costs, and what you are authorising. "
+        "Please read it, complete the fields, and sign at the end. Ask us about anything "
+        "that is unclear before you sign — that is a better use of your time than "
+        "discovering it later.",
+    ]))
+    page_break(doc)
+
+    C.section_opener(doc, theme, "1", "Your details", "Who we are acting for")
+    C.gap(doc, theme)
+    C.definition_grid(doc, theme, [
+        ("Client name(s)", BLANK), ("Preferred name", BLANK),
+        ("Entity name (if applicable)", BLANK), ("ABN / ACN", BLANK),
+        ("Postal address", BLANK), ("Email", BLANK),
+        ("Mobile", BLANK), ("Best contact time", BLANK),
+    ], columns=2, input_style=True)
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "2", "Engagement scope", "What is and is not included")
+    C.gap(doc, theme)
+    C.responsibility_columns(
+        doc, theme,
+        ("Included in this engagement", f.items("engagement.included", [
+            "Property strategy and brief development.",
+            "Search, shortlisting and inspection across the agreed area.",
+            "Comparable sales research and price assessment.",
+            "Due diligence coordination and reporting.",
+            "Negotiation and offer management to exchange.",
+            "Settlement coordination with your conveyancer.",
+        ], count=5)),
+        ("Not included", f.items("engagement.excluded", [
+            "Credit assistance, loan advice or lender recommendations.",
+            "Legal advice on the contract of sale.",
+            "Structural engineering, survey or valuation services.",
+            "Tax or financial product advice.",
+            "Property management after settlement.",
+        ], count=5)),
+        tones=("success", "alert"))
+    C.gap(doc, theme)
+    C.highlight_box(
+        doc, theme, tone="info", title="Where you will need another professional",
+        text=f("engagement.referrals",
+               "We will tell you when something falls outside our scope and, where you "
+               "ask us to, introduce you to a suitably qualified professional. Any "
+               "referral benefit we receive will be disclosed to you before the "
+               "introduction is made."))
+    page_break(doc)
+
+    C.section_opener(doc, theme, "3", "Fees", "What this costs and when")
+    C.gap(doc, theme)
+    C.data_table(
+        doc, theme, ["Fee", "Basis", "Amount", "When payable"],
+        f.rows("fees", [
+            ["Engagement fee", "Fixed", BLANK, "On signing this form"],
+            ["Success fee", "Percentage of purchase price", BLANK, "On exchange"],
+            ["Disbursements", "At cost", BLANK, "As incurred, with receipts"],
+        ], ["{{fee}}", "{{basis}}", "{{amount}}", "{{when}}"], count=3),
+        widths=[46, 52, 34, 46], caption="Fee schedule",
+        note="All amounts are inclusive of GST unless stated otherwise. We will not "
+             "incur a disbursement above $250 without your prior approval.")
+    C.gap(doc, theme, 0.7)
+    C.definition_grid(doc, theme, [
+        ("Refund position", f("fees.refund",
+                              "Engagement fee is non-refundable after 14 days")),
+        ("Payment method", BLANK),
+        ("Invoice email", BLANK),
+        ("Purchase-order reference", BLANK),
+    ], columns=2, input_style=True)
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "4", "Authorities", "What you authorise us to do")
+    C.gap(doc, theme)
+    C.checklist(doc, theme, f.items("authorities", [
+        "Make enquiries of selling agents on my behalf.",
+        "Inspect properties on my behalf and report to me.",
+        "Request contracts of sale and supporting documents.",
+        "Negotiate on my behalf within limits I set in writing.",
+        "Submit offers on my behalf within limits I set in writing.",
+        "Liaise with my conveyancer, broker and other advisers.",
+    ], count=6), title="I authorise you to", columns=1)
+    C.gap(doc, theme, 0.6)
+    C.highlight_box(
+        doc, theme, tone="warning", title="Limits on authority",
+        text=f("authorities.limits",
+               "We will not sign anything on your behalf, will not exceed a price limit "
+               "you have not confirmed in writing, and will not commit you to any "
+               "contract. Every offer requires your written authority for that specific "
+               "property at that specific price."))
+    page_break(doc)
+
+    C.section_opener(doc, theme, "5", "Communication preferences", "How and how often")
+    C.gap(doc, theme)
+    C.definition_grid(doc, theme, [
+        ("Preferred channel", BLANK), ("Update frequency", BLANK),
+        ("Secondary contact name", BLANK), ("Secondary contact details", BLANK),
+        ("May we contact your broker?", BLANK), ("May we contact your conveyancer?", BLANK),
+    ], columns=2, input_style=True)
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "6", "Consents", "Each one separately")
+    C.gap(doc, theme)
+    C.checklist(doc, theme, f.items("consents", [
+        "I consent to the collection and use of my personal information as described in "
+        "the privacy notice at the end of this form.",
+        "I consent to my information being shared with the third parties I have "
+        "authorised above, for the purposes of this engagement only.",
+        "I consent to receiving service-related communications by email and SMS.",
+        "I consent to receiving marketing communications. (Optional — you may decline "
+        "this and still engage us.)",
+    ], count=4), title="Consents", columns=1)
+    C.gap(doc, theme, 0.6)
+    C.highlight_box(
+        doc, theme, tone="info", title="These are separate on purpose",
+        text="Each consent above is a separate decision and each is separately "
+             "revocable. Declining the marketing consent has no effect on the engagement "
+             "or on the service you receive.")
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "7", "What happens next", "The first three steps")
+    C.gap(doc, theme)
+    C.process_flow(doc, theme, f.tuples("engagement.nextSteps", [
+        ("Brief", "We meet to develop your property brief and agree the search mandate."),
+        ("Search", "We begin searching and report on shortlisted properties."),
+        ("Act", "We inspect, assess, negotiate and manage the acquisition to settlement."),
+    ], ("{{step.name}}", "{{step.detail}}"), count=3))
+    C.gap(doc, theme)
+    C.signature_block(doc, theme, [
+        ("Client", ["Full name:", "Signature:", "Date:  ____ / ____ / ______"]),
+        ("For the organisation", [f"Name: {f('author.name', '{{author.name}}')}",
+                                  "Signature:", "Date:  ____ / ____ / ______"]),
+    ])
+    C.disclaimer_page(doc, theme, extra_sections=[
+        ("Terms of engagement",
+         "This engagement continues until the agreed work is complete or either party "
+         "ends it by written notice. Fees accrued before the end date remain payable. "
+         "Nothing in this form limits any right you have under the Australian Consumer "
+         "Law."),
+    ])
+
+
+# ==========================================================================
+# Client Verification Summary — Compliance Structured
+# ==========================================================================
+
+def client_verification_summary(doc, theme: Theme, f: Fill) -> None:
+    C.cover(
+        doc, theme,
+        eyebrow_text="Verification record — internal",
+        title=f("report.title", "Client Verification Summary"),
+        subtitle=f("report.subtitle",
+                   "Confirmation that identity verification was completed, by what "
+                   "method, on what date, with what result."),
+        chips=["INTERNAL", "RETAINED"],
+        prepared_for=False)
+    C.gap(doc, theme, 0.7)
+    C.definition_grid(doc, theme, [
+        ("Customer", f("customer.legalName", "{{customer.legalName}}")),
+        ("Case reference", f("case.reference", "{{case.reference}}")),
+        ("Verified on", f("verification.date", "{{verification.date}}")),
+        ("Verified by", f("verification.verifier", "{{verification.verifier}}")),
+    ])
+    C.gap(doc, theme, 0.8)
+
+    C.metric_panel(doc, theme, [
+        ("STATUS", f("verification.status", "VERIFIED"), "All checks complete"),
+        ("METHOD", f("verification.method", "Electronic + visual"), "Primary documents"),
+        ("COMPLETED", f("verification.date", "29/07/2026"), "Assessment date"),
+        ("RE-VERIFY BY", f("verification.expiry", "29/07/2029"), "Or on trigger event"),
+    ])
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "1", "Customer", "Verified particulars")
+    C.gap(doc, theme)
+    C.info_card(doc, theme, title="Verified identity", columns=2, fields=[
+        ("Full legal name", f("customer.legalName", "Jordan Lee Nguyen")),
+        ("Date of birth", f("customer.dob", "12/04/1988")),
+        ("Residential address", f("customer.address",
+                                  "12 Example Street, Northbridge NSW 2063")),
+        ("Customer type", f("customer.type", "Individual")),
+        ("Relationship", f("customer.relationship", "Investor client")),
+        ("Onboarded", f("customer.onboardedAt", "29/07/2026")),
+    ])
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "2", "Documents verified", "Primary evidence")
+    C.gap(doc, theme)
+    C.status_table(
+        doc, theme,
+        headers=["Ref", "Document", "Number", "Issuer", "Expiry", "Method", "Status"],
+        rows=f.tuples("identity.documents", [
+            (["2.1", "Australian passport", "PA1234567", "DFAT", "04/2031",
+              "Electronic + visual", "Pass"], "pass"),
+            (["2.2", "Driver licence (NSW)", "12345678", "TfNSW", "09/2029",
+              "Electronic", "Pass"], "pass"),
+            (["2.3", "Medicare card", "2345 67890 1", "Services Australia", "08/2028",
+              "Visual", "Pass"], "pass"),
+        ], (["{{ref}}", "{{document}}", "{{number}}", "{{issuer}}", "{{expiry}}",
+             "{{method}}", "Pending"], "pending"), count=3),
+        widths=[16, 44, 32, 38, 24, 40, 26], caption="Documents sighted and verified")
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "3", "Screening", "PEP, sanctions and adverse media")
+    C.gap(doc, theme)
+    C.status_table(
+        doc, theme, headers=["Ref", "Check", "Provider", "Date", "Result", "Status"],
+        rows=f.tuples("screening", [
+            (["3.1", "Sanctions", "Screening provider", "29/07/2026", "No match",
+              "Clear"], "clear"),
+            (["3.2", "PEP", "Screening provider", "29/07/2026", "No match", "Clear"], "clear"),
+            (["3.3", "Adverse media", "Screening provider", "29/07/2026", "No match",
+              "Clear"], "clear"),
+        ], (["{{ref}}", "{{check}}", "{{provider}}", "{{date}}", "{{result}}", "Pending"],
+            "pending"), count=3),
+        widths=[16, 42, 44, 28, 50, 26], caption="Screening result")
+    C.gap(doc, theme)
+    C.highlight_box(
+        doc, theme, tone="warning", title="Verifier declaration",
+        text=f("verification.declaration",
+               "I confirm that I sighted the documents listed above in the manner "
+               "recorded, that the person presenting them appeared to be the person to "
+               "whom they relate, that the screening checks were performed on the dates "
+               "shown, and that copies of all documents and screening reports have been "
+               "retained in the customer file."))
+    C.gap(doc, theme, 0.7)
+    C.approval_block(doc, theme, f.tuples("approvals", [
+        ("Verifier", f("verification.verifier", "A. Nguyen, Client Services"), "Complete"),
+        ("Reviewer", f("verification.reviewer", "R. Patel, Compliance"), "Complete"),
+    ], ("{{role}}", "{{name}}", "Pending"), count=2))
+    C.gap(doc, theme)
+    C.highlight_box(
+        doc, theme, tone="alert", title="Circulation",
+        text="This summary is an internal record. It may be provided to a third party "
+             "only where the organisation's policy permits and the customer has "
+             "consented. The full due-diligence file is not to be circulated.")
+
+
+# ==========================================================================
+# Client Proposal — Luxury Presentation
+# ==========================================================================
+
+def client_proposal(doc, theme: Theme, f: Fill) -> None:
+    C.cover(
+        doc, theme,
+        eyebrow_text="Proposal",
+        title=f("proposal.title", "A Proposal to Acquire"),
+        subtitle=f("proposal.subtitle",
+                   f"Prepared for {theme.brand.client_name} — our understanding of your "
+                   "position, what we propose to do, and what it will cost."),
+        image_caption=f("proposal.coverCaption", ""),
+        prepared_for=False)
+    C.gap(doc, theme, 0.8)
+    C.definition_grid(doc, theme, [
+        ("Prepared for", f("client.name", "{{client.name}}")),
+        ("Prepared by", f("author.name", "{{author.name}}")),
+        ("Date", f("document.issueDate", "{{document.issueDate}}")),
+        ("Valid until", f("proposal.validity", "{{proposal.validity}}")),
+    ])
+    page_break(doc)
+
+    C.section_opener(doc, theme, "", "Your situation", "")
+    C.gap(doc, theme)
+    C.prose(doc, theme, f.text("proposal.situation", [
+        "You are looking to add a third investment property to a portfolio you have "
+        "built over eleven years, and you have told us the last acquisition took "
+        "fourteen months and did not, in the end, meet the brief you set for it.",
+        "The constraint is not capital and it is not appetite. It is time, and access. "
+        "You have neither the hours to inspect forty properties nor the standing "
+        "relationships that surface the ones that never reach a portal.",
+        "That is a specific problem, and it is the one we are proposing to solve.",
+    ]), size=theme.type_scale.body + 0.5)
+    C.gap(doc, theme)
+    C.recommendation_box(
+        doc, theme, title="What we propose",
+        recommendation=f("proposal.approach",
+                         "A six-month retained search across three target corridors, "
+                         "with a written brief agreed up front and a weekly report, "
+                         "concluding at unconditional exchange."),
+        rationale=f.text("proposal.approachRationale", [
+            "Retained rather than success-only, because a success-only mandate rewards "
+            "transacting rather than transacting well, and you have already had one "
+            "acquisition that met the deadline and missed the brief.",
+        ]),
+        confidence="")
+    page_break(doc)
+
+    C.section_opener(doc, theme, "", "Scope of work", "")
+    C.gap(doc, theme)
+    C.process_flow(doc, theme, f.tuples("scope.phases", [
+        ("Brief", "Two sessions to agree the mandate, the scoring criteria and the "
+                  "walk-away conditions, in writing."),
+        ("Search", "Weekly search across three corridors, on and off market, with a "
+                   "written shortlist report every Friday."),
+        ("Assess", "Full investment analysis and due-diligence coordination on every "
+                   "property that reaches the shortlist."),
+        ("Negotiate", "Offer strategy, negotiation and management to exchange."),
+        ("Settle", "Coordination with your conveyancer and broker to settlement, and a "
+                   "post-purchase plan."),
+    ], ("{{phase.name}}", "{{phase.detail}}"), count=5))
+    C.gap(doc, theme)
+    C.checklist(doc, theme, f.items("deliverables", [
+        "A written property brief, agreed and signed.",
+        "A weekly shortlist report for the duration of the search.",
+        "A full investment report on every shortlisted property.",
+        "A due-diligence report before any offer is made.",
+        "A written negotiation strategy for each offer.",
+        "A post-purchase plan within 14 days of settlement.",
+    ], count=6), title="What you receive", columns=1)
+    page_break(doc)
+
+    C.section_opener(doc, theme, "", "Your team", "")
+    C.gap(doc, theme)
+    C.adviser_profile(doc, theme,
+                      bio=f("team.0.bio",
+                            "Leads the engagement. Eighteen years in buyer advocacy "
+                            "across the lower north shore, with a particular focus on "
+                            "established stock and off-market acquisition."),
+                      credentials=f.items("team.0.credentials", [
+                          "Licensed real estate agent (NSW)",
+                          "Member, Real Estate Buyers Agents Association",
+                          "310 acquisitions completed",
+                      ], count=3))
+    C.gap(doc, theme, 0.6)
+    C.adviser_profile(doc, theme,
+                      bio=f("team.1.bio",
+                            "Runs research and due diligence. Prepares the analysis "
+                            "behind every shortlist and coordinates the investigation "
+                            "on every property that reaches an offer."),
+                      credentials=f.items("team.1.credentials", [
+                          "Certified Practising Valuer",
+                          "Nine years in property research",
+                      ], count=2))
+    C.gap(doc, theme)
+    C.timeline(doc, theme, f.tuples("timeline", [
+        ("Week 1", "Engagement and brief", "Two sessions; written brief agreed"),
+        ("Weeks 2–24", "Search and shortlist", "Weekly reporting"),
+        ("On shortlist", "Analysis and due diligence", "Per property"),
+        ("On agreement", "Negotiate and exchange", "Offer strategy agreed in writing"),
+        ("Post exchange", "Settlement and plan", "To settlement plus 14 days"),
+    ], ("{{when}}", "{{what}}", "{{detail}}"), count=5), caption="Indicative timeline")
+    page_break(doc)
+
+    C.section_opener(doc, theme, "", "Investment", "")
+    C.gap(doc, theme)
+    C.data_table(
+        doc, theme, ["Item", "Basis", "Amount", "When payable"],
+        f.rows("fees", [
+            ["Retainer", "Fixed, six months", "$8,800", "On engagement"],
+            ["Success fee", "1.65% of purchase price", "Est. $14,270", "On exchange"],
+            ["Disbursements", "At cost, pre-approved above $250", "Est. $1,400",
+             "As incurred"],
+        ], ["{{item}}", "{{basis}}", "{{amount}}", "{{when}}"], count=3),
+        widths=[44, 62, 34, 38], numeric_cols={2},
+        total_row=["Estimated total", "On an $865,000 acquisition", "$24,470", ""],
+        caption="Fees",
+        note="All amounts include GST. The retainer is credited against the success fee, "
+             "so the total does not change if we find the property in week three.")
+    C.gap(doc, theme)
+    C.highlight_box(
+        doc, theme, tone="info", title="Why us",
+        text=f("proposal.whyUs", ""),
+        items=f.items("proposal.evidence", [
+            "310 acquisitions completed; 41% sourced off market.",
+            "Median time from brief to exchange, last 24 months: 11 weeks.",
+            "Average purchase price against our own pre-offer assessment: 2.1% below.",
+            "Client references available on request, including three in your corridor.",
+        ], count=4))
+    C.gap(doc, theme)
+    C.info_card(doc, theme, title="Case study", columns=1, fields=[
+        ("Brief", f("caseStudy.brief",
+                    "Investment house, 500m²+, within 12km, yield above 4.2%")),
+        ("Constraint", f("caseStudy.constraint",
+                         "Client had searched for nine months without success")),
+        ("What we did", f("caseStudy.action",
+                          "Narrowed to two corridors; sourced off market in week seven")),
+        ("Outcome", f("caseStudy.outcome",
+                      "Exchanged 3.4% below the vendor's guide; 4.7% gross yield")),
+    ])
+    C.gap(doc, theme)
+    C.process_flow(doc, theme, f.tuples("nextSteps", [
+        ("Accept", "Sign below and return, or tell us what you would like changed."),
+        ("Brief", "We book the two briefing sessions within five business days."),
+        ("Begin", "The search starts the week the brief is signed."),
+    ], ("{{step.name}}", "{{step.detail}}"), count=3))
+    C.gap(doc, theme)
+    C.signature_block(doc, theme, [
+        ("Accepted by the client", ["Full name:", "Signature:",
+                                    "Date:  ____ / ____ / ______"]),
+        ("For the organisation", [f"Name: {f('author.name', '{{author.name}}')}",
+                                  "Signature:", "Date:  ____ / ____ / ______"]),
+    ])
+    C.disclaimer_page(doc, theme, extra_sections=[
+        ("Validity",
+         "This proposal is valid for 30 days from the date on the cover. Fees quoted are "
+         "estimates where they depend on a purchase price that is not yet known; the "
+         "basis of calculation is fixed and is stated in the fee table."),
+    ])
+    C.back_cover(doc, theme)

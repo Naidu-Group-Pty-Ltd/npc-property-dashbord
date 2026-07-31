@@ -648,6 +648,16 @@ class Theme:
     def col(self, count: int, gutter_mm: float = 4.0) -> float:
         return self.geometry.col(count, gutter_mm)
 
+    @property
+    def landscape(self) -> "Theme":
+        """The same theme on landscape geometry.
+
+        Wide financial tables get a landscape section rather than a smaller type
+        size. Shrinking an eleven-column ledger to fit portrait is how a table
+        becomes unreadable while still technically fitting.
+        """
+        return replace(self, geometry=GEOMETRY_LANDSCAPE)
+
     # ---- fonts
     @property
     def display(self) -> str:

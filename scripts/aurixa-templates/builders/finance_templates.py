@@ -300,3 +300,302 @@ def finance_strategy_report(doc, theme: Theme, f: Fill) -> None:
         "Confirm the target acquisition timeline has not changed.",
     ]), title="What we need from you", columns=1)
     C.disclaimer_page(doc, theme)
+
+
+# ==========================================================================
+# Loan Comparison Report — Financial Analytical
+# ==========================================================================
+
+def loan_comparison_report(doc, theme: Theme, f: Fill) -> None:
+    C.cover(
+        doc, theme,
+        eyebrow_text="Product shortlist",
+        title=f("report.title", "Loan Comparison Report"),
+        subtitle=f("report.subtitle",
+                   "Four shortlisted products compared on rate, fees, features, policy "
+                   "fit and true cost over your intended hold period."),
+        chips=["4 PRODUCTS", "TRUE COST", "AS AT 31/07/26"])
+    page_break(doc)
+
+    C.section_opener(doc, theme, "01", "What was compared", "Method and basis")
+    C.gap(doc, theme)
+    C.highlight_box(
+        doc, theme, tone="info", title="Comparison basis",
+        text=f("comparison.basis",
+               "Every figure below is calculated on the same loan amount, the same hold "
+               "period and the same repayment type. A comparison run on different "
+               "assumptions is not a comparison."),
+        items=f.items("comparison.basisItems", [
+            "Loan amount: $648,000 (80% of $810,000).",
+            "Repayment type: interest only for five years, then principal and interest.",
+            "Assumed hold period: seven years.",
+            "Rates as at 31 July 2026; all lenders on the panel were assessed.",
+            "True cost includes interest, establishment, ongoing and discharge fees.",
+        ]))
+    C.gap(doc, theme)
+    C.metric_panel(doc, theme, [
+        ("LOWEST RATE", f("comparison.lowestRate", "6.09%"), "Lender C"),
+        ("LOWEST TRUE COST", f("comparison.lowestCost", "$281,940"), "Lender A, 7 years"),
+        ("SPREAD", f("comparison.spread", "$18,620"), "Best to worst"),
+        ("RECOMMENDED", f("comparison.recommended", "Lender A"), "See section 05"),
+    ])
+    page_break(doc)
+
+    C.section_opener(doc, theme, "02", "Product comparison", "Rate, fees and structure")
+    C.gap(doc, theme)
+    C.comparison_table(
+        doc, theme,
+        subject_labels=[f("products.0.short", "Lender A"), f("products.1.short", "Lender B"),
+                        f("products.2.short", "Lender C"), f("products.3.short", "Lender D")],
+        attributes=[
+            ("Product", ["Investment IO Package", "Investor Variable",
+                         "Basic Investor", "Investor Plus"]),
+            ("Interest rate", ["6.14%", "6.22%", "6.09%", "6.34%"]),
+            ("Comparison rate", ["6.41%", "6.38%", "6.12%", "6.59%"]),
+            ("Establishment fee", ["$0", "$395", "$0", "$600"]),
+            ("Annual package fee", ["$395", "$0", "$0", "$395"]),
+            ("Discharge fee", ["$350", "$350", "$300", "$395"]),
+            ("Offset account", ["Included", "Included", "Not available", "Included"]),
+            ("Redraw", ["Free", "Free", "$25 per redraw", "Free"]),
+            ("Splits", ["Up to 6, no fee", "Up to 4, no fee", "Not available",
+                        "Up to 8, no fee"]),
+            ("Rate lock", ["Available, $750", "Available, $500", "Not available",
+                           "Available, $600"]),
+            ("True cost, 7 years", ["$281,940", "$285,610", "$283,180", "$300,560"]),
+        ],
+        caption="Shortlisted products", winner_index=0)
+    C.gap(doc, theme)
+    C.bar_chart(doc, theme, caption="True cost over the assumed seven-year hold",
+                rows=f.tuples("products.trueCost", [
+                    ("Lender A", 281940, "$281,940"),
+                    ("Lender C", 283180, "$283,180"),
+                    ("Lender B", 285610, "$285,610"),
+                    ("Lender D", 300560, "$300,560"),
+                ], ("{{product.short}}", 1, "{{product.trueCost}}"), count=4),
+                note="True cost is total interest plus all fees over seven years on the "
+                     "stated assumptions. It is not the comparison rate, which assumes a "
+                     "25-year term on a $150,000 loan.")
+    page_break(doc)
+
+    C.section_opener(doc, theme, "03", "Feature matrix", "Available or not")
+    C.gap(doc, theme)
+    C.status_table(
+        doc, theme, headers=["Feature", "Lender A", "Lender B", "Lender C", "Availability"],
+        rows=f.tuples("products.features", [
+            (["100% offset", "Yes", "Yes", "No", "Pass"], "pass"),
+            (["Free redraw", "Yes", "Yes", "No", "Pass"], "pass"),
+            (["Unlimited splits", "6 max", "4 max", "None", "Review"], "review"),
+            (["Portability", "Yes", "Yes", "Yes", "Pass"], "pass"),
+            (["Construction option", "No", "Yes", "No", "Review"], "review"),
+            (["Fixed-rate option", "Yes", "Yes", "Yes", "Pass"], "pass"),
+            (["Rate lock at application", "Yes, $750", "Yes, $500", "No", "Review"],
+             "review"),
+        ], (["{{feature}}", "{{a}}", "{{b}}", "{{c}}", "Pending"], "pending"), count=6),
+        widths=[52, 30, 30, 30, 30], caption="Features by product",
+        note="Feature availability is stated as a word as well as a fill, so this table "
+             "reads correctly in grayscale.")
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "04", "Policy fit", "How each lender treats your position")
+    C.gap(doc, theme)
+    C.status_table(
+        doc, theme, headers=["Ref", "Your circumstance", "Lender treatment", "Lender", "Status"],
+        rows=f.tuples("products.policy", [
+            (["4.1", "Bonus income, two-year history", "Accepted at 80%", "Lender A",
+              "Pass"], "pass"),
+            (["4.2", "Bonus income, two-year history", "Accepted at 50%", "Lender B",
+              "Review"], "review"),
+            (["4.3", "Rental income from two properties", "Shaded to 90%", "Lender A",
+              "Pass"], "pass"),
+            (["4.4", "Rental income from two properties", "Shaded to 80%", "Lender C",
+              "Review"], "review"),
+            (["4.5", "Credit card limits of $28,000", "Assessed at 3.8% of limit", "All",
+              "Review"], "review"),
+            (["4.6", "Existing exposure with Lender A", "Within single-lender limit",
+              "Lender A", "Pass"], "pass"),
+        ], (["{{ref}}", "{{circumstance}}", "{{treatment}}", "{{lender}}", "Pending"],
+            "pending"), count=6),
+        widths=[16, 56, 52, 30, 26], caption="Policy assessment")
+    C.gap(doc, theme)
+    C.recommendation_box(
+        doc, theme,
+        recommendation=f("report.recommendation",
+                         "Lender A, Investment IO Package. Lowest true cost over seven "
+                         "years, the only lender accepting your bonus income at 80%, and "
+                         "the full feature set you asked for."),
+        rationale=f.text("report.rationale", [
+            "Lender C has the lowest headline rate but no offset account, and on the "
+            "$40,000 balance you typically hold that costs approximately $2,440 a year in "
+            "forgone interest offset — more than the 0.05% rate difference saves.",
+            "Lender A's $395 annual package fee is recovered by the offset benefit inside "
+            "the first year, and its bonus-income treatment materially improves your "
+            "capacity for the next acquisition.",
+        ]),
+        actions=f.items("report.nextSteps", [
+            "Confirm you want the offset account and are comfortable with the package fee.",
+            "Decide whether to pay $750 to lock the rate at application.",
+            "Provide the last two years of bonus statements.",
+        ]),
+        confidence=f("report.confidence", "High"))
+    C.disclaimer_page(doc, theme, extra_sections=[
+        ("Comparison basis and currency",
+         "Rates, fees and policies are as at the date stated on the cover and change "
+         "without notice. This report compares products; it is not an application, an "
+         "approval or an offer of credit, and no lender is bound by anything in it."),
+    ])
+
+
+# ==========================================================================
+# Cash-Flow & Net Position Report — Financial Analytical
+# ==========================================================================
+
+def cash_flow_net_position_report(doc, theme: Theme, f: Fill) -> None:
+    title = "Cash-Flow & Net Position Report"
+    C.cover(
+        doc, theme,
+        eyebrow_text="Ten-year projection",
+        title=f("report.title", title),
+        subtitle=f("report.subtitle",
+                   "What this asset costs or returns, year by year, after tax — with the "
+                   "assumptions that produced it and the sensitivity around them."),
+        chips=["10 YEARS", "AFTER TAX", "STRESS-TESTED"])
+    page_break(doc)
+
+    C.section_opener(doc, theme, "01", "Position summary", "Headline outcome")
+    C.gap(doc, theme)
+    C.metric_panel(doc, theme, [
+        ("YEAR 1 NET", f("summary.year1", "-$4,368"), "After tax, per year"),
+        ("10-YEAR CUMULATIVE", f("summary.cumulative", "$68,420"), "Nominal, after tax"),
+        ("BREAK-EVEN YEAR", f("summary.breakEven", "Year 6"), "Cash-flow positive"),
+        ("WEEKLY COST, YEAR 1", f("summary.weekly", "$84"), "After tax"),
+    ])
+    C.gap(doc, theme)
+    C.executive_summary(
+        doc, theme, title="What this means",
+        headline=f("report.headline",
+                   "The property costs $84 a week after tax in year one and turns "
+                   "cash-flow positive in year six."),
+        paragraphs=f.text("report.summary", [
+            "On the assumptions in section two, the property runs at a small after-tax "
+            "deficit for the first five years and is cash-flow positive from year six. "
+            "Cumulative after-tax cash flow over ten years is positive at $68,420, before "
+            "any capital growth.",
+            "The projection is most sensitive to the interest rate. A sustained two "
+            "percentage point rise moves the year-one weekly cost from $84 to $214 and "
+            "pushes break-even from year six to year nine.",
+        ]))
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "02", "Assumptions", "Every input, with its basis")
+    C.gap(doc, theme)
+    C.chart_frame(doc, theme, title="Cumulative after-tax net position",
+                  kind="line chart", binding="{{cashflow.series}}", height_mm=54,
+                  caption="Ten years, nominal", source="Aurixa cash-flow model",
+                  alt_text="Cumulative after-tax position crosses zero during year six "
+                           "and reaches $68,420 by year ten")
+    C.gap(doc, theme, 0.6)
+    C.info_card(doc, theme, title="Projection assumptions", columns=2, fields=[
+        ("Purchase price", f("assumptions.price", "$865,000")),
+        ("Loan amount", f("assumptions.loan", "$692,000 (80% LVR)")),
+        ("Interest rate", f("assumptions.rate", "6.40%, interest only 5 years")),
+        ("Capital growth", f("assumptions.growth", "4.5% p.a. — 10-year suburb average")),
+        ("Starting rent", f("assumptions.rent", "$765 per week — appraised")),
+        ("Rental growth", f("assumptions.rentGrowth", "3.0% p.a.")),
+        ("Vacancy allowance", f("assumptions.vacancy", "2 weeks per year")),
+        ("Management fee", f("assumptions.management", "6.9% incl. GST")),
+        ("Expense inflation", f("assumptions.inflation", "2.5% p.a.")),
+        ("Marginal tax rate", f("assumptions.taxRate", "39% incl. Medicare levy")),
+        ("Depreciation", f("assumptions.depreciation", "Quantity surveyor schedule")),
+        ("Ownership", f("assumptions.ownership", "Joint, 50/50")),
+    ], footnote="Projections are not forecasts. Every figure that follows depends on "
+                "these assumptions holding, and none of them will hold exactly.")
+    C.gap(doc, theme)
+    C.chart_frame(doc, theme, title="Cumulative after-tax net position",
+                  kind="line chart", binding="{{cashflow.series}}", height_mm=58,
+                  caption="Ten years, nominal", source="Aurixa cash-flow model",
+                  alt_text="Cumulative after-tax position crosses zero during year six "
+                           "and reaches $68,420 by year ten")
+
+    # The eleven-column projection needs the width; the alternative is shrinking
+    # the type until the table is unreadable.
+    # A Word section is a page-setup marker in the same body, so the container
+    # stays `doc` and only the theme changes to the landscape geometry.
+    land = C.begin_landscape(doc, theme, title)
+    C.section_opener(doc, land, "03", "Year-by-year projection", "The model output")
+    C.gap(doc, land)
+    C.data_table(
+        doc, land,
+        ["Year", "Rent", "Vacancy", "Expenses", "Interest", "Pre-tax", "Deprec.",
+         "Taxable", "Tax effect", "After tax", "Cumulative"],
+        f.rows("cashflow.years", [
+            ["1", "$39,780", "-$1,530", "-$9,215", "-$44,288", "-$15,253", "-$11,400",
+             "-$26,653", "$10,395", "-$4,858", "-$4,858"],
+            ["2", "$40,973", "-$1,576", "-$9,445", "-$44,288", "-$14,336", "-$9,800",
+             "-$24,136", "$9,413", "-$4,923", "-$9,781"],
+            ["3", "$42,202", "-$1,623", "-$9,682", "-$44,288", "-$13,391", "-$8,600",
+             "-$21,991", "$8,576", "-$4,815", "-$14,596"],
+            ["4", "$43,468", "-$1,672", "-$9,924", "-$44,288", "-$12,416", "-$7,700",
+             "-$20,116", "$7,845", "-$4,571", "-$19,167"],
+            ["5", "$44,772", "-$1,722", "-$10,172", "-$44,288", "-$11,410", "-$7,000",
+             "-$18,410", "$7,180", "-$4,230", "-$23,397"],
+            ["6", "$46,115", "-$1,774", "-$10,426", "-$42,104", "-$8,189", "-$6,400",
+             "-$14,589", "$5,690", "-$2,499", "-$25,896"],
+            ["7", "$47,499", "-$1,827", "-$10,687", "-$40,982", "-$5,997", "-$5,900",
+             "-$11,897", "$4,640", "-$1,357", "-$27,253"],
+            ["8", "$48,924", "-$1,882", "-$10,954", "-$39,798", "-$3,710", "-$5,500",
+             "-$9,210", "$3,592", "-$118", "-$27,371"],
+            ["9", "$50,392", "-$1,938", "-$11,228", "-$38,549", "-$1,323", "-$5,100",
+             "-$6,423", "$2,505", "$1,182", "-$26,189"],
+            ["10", "$51,904", "-$1,996", "-$11,509", "-$37,232", "$1,167", "-$4,800",
+             "-$3,633", "$1,417", "$2,584", "-$23,605"],
+        ], ["{{year}}", "{{rent}}", "{{vacancy}}", "{{expenses}}", "{{interest}}",
+            "{{preTax}}", "{{depreciation}}", "{{taxable}}", "{{taxEffect}}",
+            "{{afterTax}}", "{{cumulative}}"], count=10),
+        widths=[16, 26, 24, 26, 26, 24, 24, 24, 25, 25, 26],
+        numeric_cols={1, 2, 3, 4, 5, 6, 7, 8, 9, 10},
+        total_row=["Total", "$456,029", "-$17,540", "-$103,242", "-$420,105", "-$84,858",
+                   "-$72,200", "-$157,058", "$61,253", "-$23,605", ""],
+        caption="Ten-year after-tax cash flow",
+        note="Negative figures are outflows. 'Tax effect' is the reduction in tax payable "
+             "from the taxable loss at the stated marginal rate; it is a benefit only to "
+             "the extent there is other income to offset.")
+    C.end_landscape(doc, theme, title)
+
+    C.section_opener(doc, theme, "04", "Expense breakdown", "Where year one goes")
+    C.gap(doc, theme)
+    C.bar_chart(doc, theme, caption="Year-one expenses by category",
+                rows=f.tuples("expenses.breakdown", [
+                    ("Loan interest", 44288, "$44,288"),
+                    ("Property management", 2745, "$2,745"),
+                    ("Council rates", 2140, "$2,140"),
+                    ("Insurance", 1650, "$1,650"),
+                    ("Repairs allowance", 1500, "$1,500"),
+                    ("Water and sewer", 1180, "$1,180"),
+                ], ("{{expense.name}}", 1, "{{expense.amount}}"), count=5),
+                note="Interest is 82% of year-one outgoings, which is why the projection "
+                     "is more sensitive to rates than to anything else.")
+    C.gap(doc, theme)
+
+    C.section_opener(doc, theme, "05", "Sensitivity", "What changes the answer")
+    C.gap(doc, theme)
+    C.comparison_table(
+        doc, theme,
+        subject_labels=["Base", "Rate +1%", "Rate +2%", "Vacancy 6 wks", "Rent -10%"],
+        attributes=[
+            ("Year-1 after tax", ["-$4,858", "-$9,077", "-$13,296", "-$7,655", "-$7,285"]),
+            ("Year-1 weekly", ["-$93", "-$175", "-$256", "-$147", "-$140"]),
+            ("Break-even year", ["Year 6", "Year 8", "Year 9", "Year 7", "Year 8"]),
+            ("10-year cumulative", ["-$23,605", "-$58,420", "-$93,235", "-$41,180",
+                                    "-$52,940"]),
+        ],
+        caption="After-tax position under stress", winner_index=0)
+    C.gap(doc, theme)
+    C.highlight_box(
+        doc, theme, tone="warning", title="Read this alongside the projection",
+        text=f("report.caveat",
+               "This is a projection on stated assumptions, not a forecast. It excludes "
+               "capital growth, which is the return most investors are actually buying, "
+               "and it excludes selling costs and capital gains tax. It is not tax advice; "
+               "the depreciation and tax figures should be confirmed with the client's "
+               "accountant against their whole position."))
+    C.disclaimer_page(doc, theme)
