@@ -45,11 +45,13 @@ interface BrandMarkProps {
  * Renders the brand's mark in its official color.
  * Priority: inline SVG (for brands Simple Icons dropped for trademark reasons)
  *   → Simple Icons CDN (tinted server-side via the colored CDN path)
+ *   → locally vendored mark harvested from the vendor's own site (tinted via
+ *     CSS mask, for brands neither icon library carries)
  *   → thesvg.org CDN (fallback brand library, tinted client-side via CSS mask
  *     so it matches the Simple Icons treatment)
  *   → provided lucide fallback.
  *
- * Near-black marks resolve to a light tint in dark mode (both libraries).
+ * Near-black marks resolve to a light tint in dark mode (every source).
  */
 export function BrandMark({ integrationId, fallback, size = 24, className }: BrandMarkProps) {
   const profile = getBrandProfile(integrationId);
@@ -62,11 +64,12 @@ export function BrandMark({ integrationId, fallback, size = 24, className }: Bra
   const Inline = getInlineGlyph(integrationId);
 
   const useSimpleIcons = !Inline && Boolean(profile?.slug) && !simpleIconsFailed;
-  const useSvgOrg = !Inline && !useSimpleIcons && Boolean(profile?.svgOrgSlug) && !svgOrgFailed;
+  const localSrc = !Inline && !useSimpleIcons && profile ? getLocalBrandAsset(integrationId) : undefined;
+  const useSvgOrg = !Inline && !useSimpleIcons && !localSrc && Boolean(profile?.svgOrgSlug) && !svgOrgFailed;
   const svgOrgSrc = useSvgOrg ? svgOrgLogoUrl(profile!.svgOrgSlug!) : null;
 
-  // The masked render can't surface a load error, so probe the fallback asset
-  // before painting it and drop to the lucide fallback when it 404s.
+  // The masked render can't surface a load error, so probe the remote fallback
+  // asset before painting it and drop to the lucide fallback when it 404s.
   const [svgOrgReady, setSvgOrgReady] = useState(false);
   useEffect(() => {
     if (!svgOrgSrc) {
@@ -82,6 +85,29 @@ export function BrandMark({ integrationId, fallback, size = 24, className }: Bra
       cancelled = true;
     };
   }, [svgOrgSrc]);
+
+  // CSS mask keeps the glyph shape while forcing the resolved brand hex,
+  // matching how Simple Icons marks are tinted.
+  const maskedMark = (src: string) => (
+    <span
+      aria-hidden="true"
+      className={className}
+      style={{
+        display: 'inline-block',
+        width: size,
+        height: size,
+        backgroundColor: `#${markHex}`,
+        maskImage: `url(${src})`,
+        WebkitMaskImage: `url(${src})`,
+        maskRepeat: 'no-repeat',
+        WebkitMaskRepeat: 'no-repeat',
+        maskPosition: 'center',
+        WebkitMaskPosition: 'center',
+        maskSize: 'contain',
+        WebkitMaskSize: 'contain',
+      }}
+    />
+  );
 
   if (Inline) {
     return <Inline size={size} color={markHex ? `#${markHex}` : undefined} className={className} />;
@@ -106,30 +132,14 @@ export function BrandMark({ integrationId, fallback, size = 24, className }: Bra
     );
   }
 
+  if (localSrc) {
+    return maskedMark(localSrc);
+  }
+
   if (svgOrgSrc && svgOrgReady) {
-    // CSS mask keeps the glyph shape while forcing the resolved brand hex,
-    // matching how Simple Icons marks are tinted.
-    return (
-      <span
-        aria-hidden="true"
-        className={className}
-        style={{
-          display: 'inline-block',
-          width: size,
-          height: size,
-          backgroundColor: `#${markHex}`,
-          maskImage: `url(${svgOrgSrc})`,
-          WebkitMaskImage: `url(${svgOrgSrc})`,
-          maskRepeat: 'no-repeat',
-          WebkitMaskRepeat: 'no-repeat',
-          maskPosition: 'center',
-          WebkitMaskPosition: 'center',
-          maskSize: 'contain',
-          WebkitMaskSize: 'contain',
-        }}
-      />
-    );
+    return maskedMark(svgOrgSrc);
   }
 
   return <>{fallback}</>;
+
 }
