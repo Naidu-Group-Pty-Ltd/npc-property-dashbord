@@ -264,7 +264,7 @@ export function ClientReportsTab({
   const allReports: UnifiedReport[] = useMemo(() => {
     const reports: UnifiedReport[] = [];
 
-    // Vownet forms from files
+    // Formara forms from files
     reportFiles
       .filter((f: any) => f.is_vownet_form)
       .forEach((f: any) => {

@@ -65,7 +65,7 @@ const GATEWAY_MODELS: ModelEntry[] = [
 const NATIVE_MODELS: ModelEntry[] = [
   // --- OpenAI (direct OPENAI_API_KEY)
   { id: 'gpt-4.1', displayName: 'GPT-4.1', provider: 'openai', route: 'native', status: 'available', releaseTier: 'flagship', capabilities: ['text', 'vision'] },
-  { id: 'gpt-4o', displayName: 'GPT-4o', provider: 'openai', route: 'native', status: 'available', releaseTier: 'balanced', capabilities: ['text', 'vision', 'audio'], notes: 'Used in PDF parsing & VowNet extraction.' },
+  { id: 'gpt-4o', displayName: 'GPT-4o', provider: 'openai', route: 'native', status: 'available', releaseTier: 'balanced', capabilities: ['text', 'vision', 'audio'], notes: 'Used in PDF parsing & Formara extraction.' },
   { id: 'gpt-4o-mini', displayName: 'GPT-4o Mini', provider: 'openai', route: 'native', status: 'available', releaseTier: 'fast', capabilities: ['text', 'vision'], notes: 'Used in Email Copilot, transcript cleaning, chart analysis.' },
 
   // --- Perplexity (direct PERPLEXITY_API_KEY)

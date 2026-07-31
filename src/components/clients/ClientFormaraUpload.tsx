@@ -24,12 +24,12 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { parseExcelToClients, type ParsedClient, type ParsedProperty } from '@/utils/excelClientParser';
-import { parseVownetPdf } from '@/utils/vownetPdfParser';
+import { parseFormaraPdf } from '@/utils/formaraPdfParser';
 import { useAuth } from '@/hooks/useAuth';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
 
-interface ClientVownetUploadProps {
+interface ClientFormaraUploadProps {
   clientId: string;
   clientName: string;
   existingProperties: Array<{
@@ -55,12 +55,12 @@ interface PropertyMergeItem {
 
 type UploadStatus = 'idle' | 'parsing' | 'preview' | 'importing' | 'complete' | 'error';
 
-export function ClientVownetUpload({ 
+export function ClientFormaraUpload({ 
   clientId, 
   clientName,
   existingProperties, 
   onComplete 
-}: ClientVownetUploadProps) {
+}: ClientFormaraUploadProps) {
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -107,7 +107,7 @@ export function ClientVownetUpload({
       
       if (isPdf) {
         // Parse PDF using AI extraction
-        client = await parseVownetPdf(file, (progress) => {
+        client = await parseFormaraPdf(file, (progress) => {
           if (progress.stage === 'extracting') {
             setProgress(10 + (progress.current / progress.total) * 30);
           } else if (progress.stage === 'parsing') {
@@ -252,7 +252,7 @@ export function ClientVownetUpload({
         setProgress((processed / selectedItems.length) * 100);
       }
 
-      // Store the Vownet form in secure storage
+      // Store the Formara form in secure storage
       if (uploadedFile) {
         const filePath = `${clientId}/${Date.now()}_${uploadedFile.name}`;
         const uploadResult = await secureStorageUpload('client-documents', filePath, uploadedFile, {
@@ -272,7 +272,7 @@ export function ClientVownetUpload({
               file_size: uploadedFile.size,
               file_type: uploadedFile.type,
               category: 'vownet',
-              document_type: 'vownet_form',
+              document_type: 'formara_form',
               is_vownet_form: true,
               uploaded_by: user?.id
             }

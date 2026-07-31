@@ -831,7 +831,7 @@ Object storage (Supabase Storage) for:
 
 **Client Documents**:
 - Uploaded client files
-- VowNet forms and documents
+- Formara forms and documents
 - Identification documents
 
 **Branding Assets**:

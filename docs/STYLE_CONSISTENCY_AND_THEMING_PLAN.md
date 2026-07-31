@@ -437,7 +437,7 @@ Suggested batch order (ratcheting CI baseline down each PR):
 `CallLogs`/call-logs/* → `gameplan/*` → `reports/*` (Cash Flow modal) → remainder.
 
 **PDF/report generators** (`htmlRenderer.ts`, `_shared.html.ts`,
-`VownetPDFGenerator`, `PortfolioAnalysisPDFGenerator`) render static HTML/PDF and
+`FormaraPDFGenerator`, `PortfolioAnalysisPDFGenerator`) render static HTML/PDF and
 **cannot read runtime CSS vars**. Give them a shared `brandPalette.ts` + font
 resolved from the same brand config at generation time — one constants module, not
 scattered hexes.

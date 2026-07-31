@@ -47,7 +47,7 @@ Deno.serve(async (req) => {
 
     console.log(`[parse-vownet-pdf] Processing ${truncatedText.length} chars of PDF text`);
 
-    const systemPrompt = `You are a data extraction specialist. You will receive text extracted from a VowNet financial form PDF. 
+    const systemPrompt = `You are a data extraction specialist. You will receive text extracted from a Formara financial form PDF. 
 Extract ALL structured client data and return it as a JSON object matching the schema below EXACTLY.
 
 IMPORTANT RULES:
@@ -84,7 +84,7 @@ JSON Schema:
       agentKey: 'pdf_vownet_extraction',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: `Extract all client data from this VowNet form PDF text:\n\n${truncatedText}` },
+        { role: 'user', content: `Extract all client data from this Formara form PDF text:\n\n${truncatedText}` },
       ],
       temperature: 0.1,
       responseFormat: { type: 'json_object' },

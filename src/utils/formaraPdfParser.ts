@@ -1,5 +1,5 @@
 /**
- * Vownet PDF Parser
+ * Formara PDF Parser
  * Extracts text from PDF client-side, then sends to AI for structured data extraction.
  */
 import { extractPdfTextClientSide } from '@/lib/pdfClientExtractor';
@@ -12,11 +12,11 @@ export type PdfParseProgress =
   | { stage: 'complete' };
 
 /**
- * Parse a VowNet PDF file into structured client data.
+ * Parse a Formara PDF file into structured client data.
  * 1. Extract text client-side using PDF parser
  * 2. Send to edge function for AI-powered structured extraction
  */
-export async function parseVownetPdf(
+export async function parseFormaraPdf(
   file: File,
   onProgress?: (progress: PdfParseProgress) => void
 ): Promise<ParsedClient> {
@@ -31,7 +31,7 @@ export async function parseVownetPdf(
     throw new Error('Could not extract sufficient text from the PDF. The file may be scanned/image-based or empty.');
   }
 
-  console.log(`[vownetPdfParser] Extracted ${extraction.text.length} chars from ${extraction.extractedPages}/${extraction.totalPages} pages`);
+  console.log(`[formaraPdfParser] Extracted ${extraction.text.length} chars from ${extraction.extractedPages}/${extraction.totalPages} pages`);
 
   // Step 2: Send to AI for structured parsing
   onProgress?.({ stage: 'parsing', message: 'Analysing form data with AI...' });

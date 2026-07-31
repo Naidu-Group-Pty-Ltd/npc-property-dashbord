@@ -507,8 +507,8 @@ export const userGuideKnowledge: GuideSection[] = [
         ],
       },
       {
-        title: 'VowNet Forms',
-        description: 'Import client data from VowNet form submissions.',
+        title: 'Formara Forms',
+        description: 'Import client data from Formara form submissions.',
         features: [
           'Automatic form parsing',
           'Client profile creation',

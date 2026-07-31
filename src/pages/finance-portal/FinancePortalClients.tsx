@@ -34,7 +34,7 @@ import { cn } from '@/lib/utils';
 import { smartCapitalize } from '@/lib/nameUtils';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useBrand } from '@/branding/useBrand';
-import { parseVownetPdf } from '@/utils/vownetPdfParser';
+import { parseFormaraPdf } from '@/utils/formaraPdfParser';
 import type { ParsedClient } from '@/utils/excelClientParser';
 import { GHLExportDialog } from '@/components/shared/GHLExportDialog';
 
@@ -194,7 +194,7 @@ function CreateClientDialog({
     setParseProgress(5);
 
     try {
-      const parsed = await parseVownetPdf(file, (progress) => {
+      const parsed = await parseFormaraPdf(file, (progress) => {
         if (progress.stage === 'extracting') {
           const total = Math.max(progress.total, 1);
           setParseProgress(Math.round((progress.current / total) * 55));
@@ -325,7 +325,7 @@ function CreateClientDialog({
                   {parsingPdf ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
                 </div>
                 <p className="font-medium text-foreground">
-                  {isDragActive ? 'Drop the VowNet PDF here' : 'Drag and drop a VowNet PDF here'}
+                  {isDragActive ? 'Drop the Formara PDF here' : 'Drag and drop a Formara PDF here'}
                 </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   We’ll parse the document, prefill the client details, then create the client through the same finance intake path.

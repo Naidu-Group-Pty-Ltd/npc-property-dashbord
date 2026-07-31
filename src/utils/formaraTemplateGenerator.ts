@@ -90,7 +90,7 @@ interface LiabilityData {
   repayment_type?: string | null;
 }
 
-export interface VownetExportData {
+export interface FormaraExportData {
   client: ClientData;
   properties: PropertyData[];
   employment?: EmploymentData[];
@@ -100,12 +100,12 @@ export interface VownetExportData {
 }
 
 /**
- * Generate a Vownet-formatted Excel file from client data
+ * Generate a Formara-formatted Excel file from client data
  */
-export function generateVownetTemplate(data: VownetExportData): XLSX.WorkBook {
+export function generateFormaraTemplate(data: FormaraExportData): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
   
-  // Create main data array matching Vownet form structure
+  // Create main data array matching Formara form structure
   const formData: (string | number | null)[][] = [];
 
   // Header with date
@@ -248,19 +248,19 @@ function formatPercent(value: number | null | undefined): string {
 /**
  * Download the workbook as an Excel file
  */
-export function downloadVownetTemplate(data: VownetExportData, filename?: string): void {
-  const wb = generateVownetTemplate(data);
+export function downloadFormaraTemplate(data: FormaraExportData, filename?: string): void {
+  const wb = generateFormaraTemplate(data);
   const clientName = `${data.client.primary_first_name}_${data.client.primary_surname}`.replace(/\s+/g, '_');
-  const defaultFilename = `Vownet_Form_${clientName}_${new Date().toISOString().split('T')[0]}.xlsx`;
+  const defaultFilename = `Formara_Form_${clientName}_${new Date().toISOString().split('T')[0]}.xlsx`;
   
   XLSX.writeFile(wb, filename || defaultFilename);
 }
 
 /**
- * Generate a blank Vownet template
+ * Generate a blank Formara template
  */
-export function downloadBlankVownetTemplate(): void {
-  const blankData: VownetExportData = {
+export function downloadBlankFormaraTemplate(): void {
+  const blankData: FormaraExportData = {
     client: {
       id: '',
       primary_first_name: '',
@@ -269,6 +269,6 @@ export function downloadBlankVownetTemplate(): void {
     properties: [],
   };
   
-  const wb = generateVownetTemplate(blankData);
-  XLSX.writeFile(wb, `Vownet_Form_Template_Blank.xlsx`);
+  const wb = generateFormaraTemplate(blankData);
+  XLSX.writeFile(wb, `Formara_Form_Template_Blank.xlsx`);
 }

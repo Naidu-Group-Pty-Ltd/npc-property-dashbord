@@ -421,7 +421,7 @@ export function BorrowingCapacityModal({
 
   // Process liabilities breakdown with overrides — delegates to the shared
   // householdFinance engine so credit-card 3% / BNPL 5% / HECS / P&I fallbacks
-  // stay in lockstep with VownetPDFGenerator and the BC PDF sections.
+  // stay in lockstep with FormaraPDFGenerator and the BC PDF sections.
   const liabilitiesBreakdown: LiabilityBreakdownItem[] = useMemo(() => {
     const items: LiabilityBreakdownItem[] = (clientData?.liabilities || []).map(lib => {
       const override = liabilityOverrides.get(lib.id);

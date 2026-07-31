@@ -132,7 +132,7 @@ Template Builder production routing is adapter-driven. The generic router never 
 | Cash Flow | Preview only | Legacy generator remains the production path until an adapter is added. |
 | Borrowing Capacity | Preview only | Legacy generator remains the production path until an adapter is added. |
 | Q&A Export | Preview only | Legacy generator remains the production path until an adapter is added. |
-| Suburb / Postcode / Statewide / Comparison / Vownet | Preview only | Available for template design and sample-data validation; production routing is intentionally disabled. |
+| Suburb / Postcode / Statewide / Comparison / Formara | Preview only | Available for template design and sample-data validation; production routing is intentionally disabled. |
 
 The editor settings panel shows the selected report type's adapter status as **Production enabled**, **Preview only**, or **Not configured**. Activation readiness also blocks preview-only types so production cannot accidentally route through an incomplete adapter.
 

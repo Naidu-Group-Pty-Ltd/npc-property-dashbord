@@ -64,8 +64,8 @@ import { ClientFiles } from './ClientFiles';
 import { ClientScoreCard } from './ClientScoreCard';
 import { BorrowingCapacityCard, BorrowingCapacityModal } from '@/components/borrowing-capacity';
 import { ClientAIInsights } from './ClientAIInsights';
-import { ClientVownetUpload } from './ClientVownetUpload';
-import { ClientVownetForms } from './ClientVownetForms';
+import { ClientFormaraUpload } from './ClientFormaraUpload';
+import { ClientFormaraForms } from './ClientFormaraForms';
 import { PropertyManualEntry } from './PropertyManualEntry';
 import { PersonalDetailsManualEntry } from './PersonalDetailsManualEntry';
 import { EmploymentManualEntry } from './EmploymentManualEntry';
@@ -75,10 +75,10 @@ import { IncomeManualEntry } from './IncomeManualEntry';
 import { AssetManualEntry } from './AssetManualEntry';
 import { LiabilityManualEntry } from './LiabilityManualEntry';
 import { ExpenseManualEntry } from './ExpenseManualEntry';
-import { ExportVownetButton } from './ExportVownetButton';
+import { ExportFormaraButton } from './ExportFormaraButton';
 import { ClientEmailCompose } from './ClientEmailCompose';
 import { ClientReportsTab } from './ClientReportsTab';
-import { VownetPDFGenerator } from './VownetPDFGenerator';
+import { FormaraPDFGenerator } from './FormaraPDFGenerator';
 import { PropertyEditSheet } from './PropertyEditSheet';
 import { ClientPropertyInvestmentReport } from './ClientPropertyInvestmentReport';
 import { CGTCalculator } from './CGTCalculator';
@@ -266,7 +266,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
         isMobile ? "pb-2 border-b border-border mb-2" : "mr-10 pr-2"
       )}>
 
-        <VownetPDFGenerator
+        <FormaraPDFGenerator
           data={{
             client: (fullClient || {
               id: client.id,
@@ -308,7 +308,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
           />
         )}
 
-        <VownetPDFGenerator
+        <FormaraPDFGenerator
           data={{
             client: (fullClient || client) as any,
             properties: properties as any[], employment: employment as any[], income: income as any[], incomeSources: incomeSources as any[],
@@ -538,7 +538,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
               />
             </TabsContent>
 
-            {/* Personal Details Tab - Vownet Mirror */}
+            {/* Personal Details Tab - Formara Mirror */}
             <TabsContent value="personal" className="mt-4">
               <PersonalDetailsManualEntry 
                 clientId={client.id} 
@@ -603,7 +603,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
                       refetchClient();
                     }} 
                   />
-                  <ExportVownetButton 
+                  <ExportFormaraButton 
                     clientId={client.id} 
                     clientName={`${client.primary_first_name} ${client.primary_surname}`}
                   />
@@ -611,7 +611,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
               </div>
 
               {/* Client Detail Form Upload Section */}
-              <ClientVownetUpload
+              <ClientFormaraUpload
                 clientId={client.id}
                 clientName={`${client.primary_first_name} ${client.primary_surname}`}
                 existingProperties={properties.map(p => ({
@@ -917,7 +917,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
             </TabsContent>
 
             <TabsContent value="vownet-forms" className={cn("mt-4", !isMobile && "max-w-3xl mx-auto w-full")}>
-              <ClientVownetForms 
+              <ClientFormaraForms 
                 clientId={client.id}
                 clientName={`${client.primary_first_name} ${client.primary_surname}`}
               />
