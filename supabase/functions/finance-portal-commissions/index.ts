@@ -1234,6 +1234,40 @@ Deno.serve(async (req) => {
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
 
+    // ── Phase 5 partner read surfaces ───────────────────────────────────────
+    if (operation === 'partner_clawbacks') {
+      const { data, error } = await supabase.from('finance_partner_clawbacks')
+        .select('id, loan_reference, lender_name, client_name_snapshot, reason_category, reason, clawback_amount, cap_amount, amount_recovered, repayment_due_date, status, issued_at, settled_at, created_at')
+        .eq('finance_contact_id', partner.finance_contact_id)
+        .neq('status', 'draft')
+        .order('created_at', { ascending: false }).limit(200);
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, clawbacks: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'partner_invoices') {
+      const { data, error } = await supabase.from('partner_tax_invoices')
+        .select('id, statement_id, invoice_mode, invoice_number, invoice_date, due_date, subtotal_amount, gst_amount, total_amount, gst_treatment, status')
+        .eq('finance_contact_id', partner.finance_contact_id)
+        .order('invoice_date', { ascending: false }).limit(200);
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, invoices: data || [] }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
+    if (operation === 'partner_banking') {
+      // Masked only — full account numbers are never returned to the portal.
+      const { data, error } = await supabase.from('finance_partner_bank_details')
+        .select('id, entity_name, abn, gst_registered, accounts_email, rcti_email, account_name, bsb, account_number_masked, status, independent_verification_date, version')
+        .eq('finance_contact_id', partner.finance_contact_id)
+        .neq('status', 'superseded')
+        .order('version', { ascending: false }).maybeSingle();
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true, banking: data || null }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    }
+
     return new Response(JSON.stringify({ error: `Unknown operation: ${operation}` }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
   } catch (e: any) {
