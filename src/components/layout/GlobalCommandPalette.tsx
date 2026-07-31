@@ -22,6 +22,7 @@ import {
   Activity,
   Upload,
   ShieldCheck,
+  HardHat,
   Scale,
   Zap,
   Sparkles,
@@ -138,6 +139,7 @@ const ADMIN_ENTRIES: NavEntry[] = [
   { title: 'User Management', url: '/admin/users', icon: Users, moduleKey: 'user_management', group: 'Admin' },
   { title: 'Finance Portal (Admin)', url: '/admin/finance-portal', icon: ShieldCheck, moduleKey: 'finance_portal_admin', group: 'Admin' },
   { title: 'Solicitor Portal (Admin)', url: '/admin/solicitor-portal', icon: Scale, moduleKey: 'solicitor_portal_admin', group: 'Admin', keywords: ['solicitor', 'conveyancer', 'legal', 'matter'] },
+  { title: 'Builder / Developer Portal (Admin)', url: '/admin/builder-portal', icon: HardHat, moduleKey: 'builder_portal_admin', group: 'Admin', keywords: ['builder', 'developer', 'construction', 'project', 'organisation'] },
   { title: 'Client Portal', url: '/portal-config', icon: Globe, moduleKey: 'portal_config', group: 'Admin', keywords: ['portal config', 'portal configuration'] },
   { title: 'Sources', url: '/sources', icon: Mail, moduleKey: 'sources', group: 'Admin' },
 ];

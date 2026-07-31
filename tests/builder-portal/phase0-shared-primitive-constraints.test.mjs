@@ -37,12 +37,12 @@ const checkListsFor = (column) => {
 
 // --- GEN-01 / GEN-02: portal terms -----------------------------------------
 
-test('GEN-01 portal_terms_versions.portal admits only the solicitor portal', () => {
+test('GEN-01 the original single-portal DDL is preserved in the corpus', () => {
+  // Migrations are append-only: the Phase 3 DDL still declares the original
+  // single-portal CHECK, and the Phase 1 widening replaces it at run time.
+  // Both must be present for the corpus to describe the true history.
   assert.match(migrations, /portal text NOT NULL CHECK\(portal IN \('solicitor'\)\)/);
-  assert.ok(
-    !/portal text NOT NULL CHECK\(portal IN \([^)]*'builder'/.test(migrations),
-    "portal_terms_versions already admits 'builder' — GEN-01 has landed, update this test",
-  );
+  assert.match(migrations, /CHECK \(portal IN \('solicitor','builder'\)\)/);
 });
 
 test('GEN-01 the one-current-terms index is already portal-generic', () => {
@@ -54,17 +54,50 @@ test('GEN-01 the one-current-terms index is already portal-generic', () => {
   );
 });
 
-test('GEN-02 portal_terms_acceptances is single-owner and NOT NULL on the solicitor user', () => {
-  assert.match(migrations, /portal text NOT NULL CHECK\(portal='solicitor'\)/);
-  assert.match(
-    migrations,
-    /solicitor_user_id uuid NOT NULL REFERENCES public\.solicitor_portal_users\(id\) ON DELETE CASCADE, accepted_at/,
-  );
-  assert.match(migrations, /UNIQUE\(terms_version_id,solicitor_user_id\)/);
+test('GEN-02 LANDED: portal_terms_acceptances is multi-portal with enforced ownership', () => {
+  // GEN-02 was the highest-risk widening in the programme (MIG-01) because it
+  // drops a NOT NULL, which is one-way once a Builder row exists. Phase 1
+  // performed it; this assertion is updated in the same PR, as ADR 020 requires,
+  // so the new shape is reviewed rather than silently absorbed.
+  //
+  // The original single-portal DDL is still in the corpus — migrations are
+  // append-only — so the assertions below check the widening migration itself.
+  const widening = readFileSync(
+    join(migrationsDir, '20260801000300_portal_terms_multi_portal.sql'), 'utf8');
+
+  // Ownership stays a real foreign key, never a generic unenforced user_id.
+  assert.match(widening, /builder_user_id uuid\s*\n?\s*REFERENCES public\.builder_portal_users\(id\) ON DELETE CASCADE/);
+  // Exactly one owner, validated.
+  assert.match(widening, /CHECK \(num_nonnulls\(solicitor_user_id, builder_user_id\) = 1\) NOT VALID/);
+  assert.match(widening, /VALIDATE CONSTRAINT portal_terms_acceptances_single_owner/);
+  // The owner column must agree with the portal discriminator.
+  assert.match(widening, /portal_terms_acceptances_portal_owner_agree/);
+  // Replacement uniqueness must be created BEFORE the old constraint is dropped.
   assert.ok(
-    !migrations.includes('builder_user_id'),
-    'portal_terms_acceptances already has a builder owner — GEN-02 has landed, update this test',
+    widening.indexOf('portal_terms_acceptances_builder_key')
+      < widening.indexOf('ALTER COLUMN solicitor_user_id DROP NOT NULL'),
+    'the NOT NULL was dropped before the replacement uniqueness existed',
   );
+  // Both portals are now storable.
+  assert.match(widening, /CHECK \(portal IN \('solicitor','builder'\)\)/);
+});
+
+test('GEN-01 LANDED: portal_terms_versions admits both portals', () => {
+  const widening = readFileSync(
+    join(migrationsDir, '20260801000300_portal_terms_multi_portal.sql'), 'utf8');
+  assert.match(widening, /ADD CONSTRAINT portal_terms_versions_portal_check\s*\n\s*CHECK \(portal IN \('solicitor','builder'\)\)/);
+  // The one-current-version-per-portal index generalises without change.
+  assert.doesNotMatch(widening, /DROP INDEX[\s\S]*?portal_terms_one_current_idx/);
+});
+
+test('GEN-10 LANDED: the cutover plane accepts a builder organisation owner', () => {
+  const widening = readFileSync(
+    join(migrationsDir, '20260801000400_cross_portal_rollout_org_generalisation.sql'), 'utf8');
+  assert.match(widening, /builder_organisation_id uuid\s*\n?\s*REFERENCES public\.builder_organisations\(id\)/);
+  assert.match(widening, /resolve_cross_portal_feature_mode_for/);
+  // The Solicitor caller's signature must survive untouched.
+  assert.match(widening,
+    /CREATE OR REPLACE FUNCTION public\.resolve_cross_portal_feature_mode\(_firm_id uuid, _feature_key text\)/);
 });
 
 // --- GEN-03 … GEN-06: milestones and tasks ---------------------------------

@@ -24,7 +24,21 @@ const notes = [];
 const check = (condition, message) => { if (!condition) failures.push(message); };
 
 // ---------------------------------------------------------------------------
-// 1. Phase 0 non-behavioural invariants
+// 0. Phase detection
+//
+// The non-behavioural assertions below describe the Phase 0 pull request. Once
+// Phase 1 lands they are no longer true and no longer meaningful: Phase 1
+// deliberately creates Builder identity tables and an administration module.
+// The script stays useful by scoping those assertions to Phase 0 and switching
+// to the Phase 1 boundary once Phase 1 migrations are present.
+// ---------------------------------------------------------------------------
+const migrationNamesForPhase = readdirSync(join(root, 'supabase/migrations'))
+  .filter((name) => name.endsWith('.sql'));
+const PHASE_1_LANDED = migrationNamesForPhase.some((name) =>
+  /_builder_portal_phase1_/.test(name));
+
+// ---------------------------------------------------------------------------
+// 1. Phase invariants
 // ---------------------------------------------------------------------------
 
 const PHASE_0_ALLOWED_PREFIXES = [
@@ -55,24 +69,38 @@ const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTyp
   .filter((entry) => entry.isDirectory())
   .map((entry) => entry.name);
 
-check(
-  functionDirs.filter((name) => name.startsWith('builder-portal-')).length === 0,
-  'Phase 0 created a builder-portal Edge Function; Phase 0 must add no executable server code',
-);
-
 const app = read('src/App.tsx');
-check(!/path=["'`]\/builder/.test(app), 'Phase 0 added a /builder route to src/App.tsx');
-check(!app.includes('BuilderPortalAuthProvider'), 'Phase 0 mounted a Builder auth provider');
-check(!app.includes('builder_portal_admin'), 'Phase 0 added the builder_portal_admin module guard');
+const builderFunctions = functionDirs.filter((name) => name.startsWith('builder-portal-')).sort();
+
+if (!PHASE_1_LANDED) {
+  notes.push('Phase: 0 (no Phase 1 migrations present)');
+  check(builderFunctions.length === 0,
+    'Phase 0 created a builder-portal Edge Function; Phase 0 must add no executable server code');
+  check(!app.includes('builder_portal_admin'), 'Phase 0 added the builder_portal_admin module guard');
+} else {
+  notes.push('Phase: 1 has landed — Phase 0 non-behavioural assertions no longer apply');
+  // Phase 1 delivers the INTERNAL administration function only. The external
+  // portal family belongs to a later phase.
+  check(builderFunctions.length === 1 && builderFunctions[0] === 'builder-portal-admin',
+    `expected only builder-portal-admin, found [${builderFunctions.join(', ')}]`);
+  check(app.includes('moduleKey="builder_portal_admin"'),
+    'Phase 1 landed but the administration route is not module-guarded');
+}
+
+// True in every phase until the external portal is built.
+check(!/path=["'`]\/builder\b/.test(app), 'a /builder external route exists before its phase');
+check(!app.includes('BuilderPortalAuthProvider'), 'a Builder auth provider is mounted before its phase');
 
 const migrationsDir = join(root, 'supabase/migrations');
 const migrationNames = readdirSync(migrationsDir).filter((name) => name.endsWith('.sql'));
 const migrations = migrationNames.map((name) => readFileSync(join(migrationsDir, name), 'utf8')).join('\n');
 
-check(
-  !migrationNames.some((name) => /builder[-_]portal|builder[-_]domain/i.test(name)),
-  'Phase 0 added a Builder migration; Phase 0 creates no production Builder tables',
-);
+if (!PHASE_1_LANDED) {
+  check(
+    !migrationNames.some((name) => /builder[-_]portal|builder[-_]domain/i.test(name)),
+    'Phase 0 added a Builder migration; Phase 0 creates no production Builder tables',
+  );
+}
 
 // ---------------------------------------------------------------------------
 // 2. Re-derive the Phase 0 findings
@@ -92,16 +120,36 @@ const BUILDER_DOMAIN_TABLES = [
   'builder_transactions', 'builder_variations', 'builder_progress_claims',
   'builder_inspections', 'builder_defects', 'builder_case_read_model',
 ];
-for (const table of BUILDER_DOMAIN_TABLES) {
-  check(!declaredTables.has(table), `Builder domain table ${table} exists; Phase 0 asserts a greenfield domain`);
+const PHASE_1_IDENTITY_TABLES = [
+  'builder_organisations', 'builder_portal_users', 'builder_organisation_memberships',
+  'builder_portal_sessions', 'builder_permission_keys',
+  'builder_role_default_permissions', 'builder_membership_permissions',
+];
+const PHASE_2_DOMAIN_TABLES = BUILDER_DOMAIN_TABLES.filter((t) => !PHASE_1_IDENTITY_TABLES.includes(t));
+
+if (PHASE_1_LANDED) {
+  for (const table of PHASE_1_IDENTITY_TABLES) {
+    check(declaredTables.has(table), `Phase 1 identity table ${table} is missing`);
+  }
+} else {
+  for (const table of PHASE_1_IDENTITY_TABLES) {
+    check(!declaredTables.has(table), `Builder identity table ${table} exists before Phase 1`);
+  }
+}
+// The Phase 2 business domain must be absent in both phases.
+for (const table of PHASE_2_DOMAIN_TABLES) {
+  check(!declaredTables.has(table), `Phase 2 domain table ${table} exists before Phase 2`);
 }
 notes.push(`Tables declared in the migration corpus: ${declaredTables.size}`);
 
-// Finding: the only builder-named tables are the two Finance-owned deal records.
-const builderNamed = [...declaredTables].filter((name) => name.includes('build')).sort();
+// Finding: the Finance-owned builder-named pair must remain exactly two. They
+// are enumerated explicitly because Phase 1 adds its own builder_* tables and a
+// substring match would sweep them in.
+const financeOwned = [...declaredTables]
+  .filter((name) => name.startsWith('build_') || name === 'builder_invoices').sort();
 check(
-  builderNamed.length === 2 && builderNamed[0] === 'build_progress_payments' && builderNamed[1] === 'builder_invoices',
-  `expected exactly [build_progress_payments, builder_invoices]; found [${builderNamed.join(', ')}]`,
+  financeOwned.length === 2 && financeOwned[0] === 'build_progress_payments' && financeOwned[1] === 'builder_invoices',
+  `expected exactly [build_progress_payments, builder_invoices]; found [${financeOwned.join(', ')}]`,
 );
 
 // Finding: those two tables carry commission data (security risk SEC-06).
@@ -189,8 +237,32 @@ const DELIVERABLES = [
   'scripts/builder-portal/phase-0-inspection.mjs',
   'scripts/builder-portal/phase-0-reconciliation.sql',
 ];
+
+const PHASE_1_DELIVERABLES = [
+  'supabase/migrations/20260801000000_builder_portal_phase1_organisations_users.sql',
+  'supabase/migrations/20260801000100_builder_portal_phase1_permissions.sql',
+  'supabase/migrations/20260801000200_builder_portal_phase1_sessions.sql',
+  'supabase/migrations/20260801000300_portal_terms_multi_portal.sql',
+  'supabase/migrations/20260801000400_cross_portal_rollout_org_generalisation.sql',
+  'supabase/migrations/20260801000500_builder_portal_admin_module.sql',
+  'supabase/functions/builder-portal-admin/index.ts',
+  'src/pages/admin/BuilderPortalAdmin.tsx',
+  'tests/builder-portal/phase1-identity-access.test.mjs',
+  'scripts/builder-portal/local-db/00-supabase-bootstrap.sql',
+  'scripts/builder-portal/local-db/01-upstream-fixture.sql',
+  'scripts/builder-portal/local-db/reset.mjs',
+  'scripts/builder-portal/local-db/verify-phase-1.mjs',
+  'scripts/builder-portal/local-db/generate-builder-types.mjs',
+  'docs/architecture/adr/021-portal-terms-multi-portal-ownership.md',
+  'docs/builder-portal/12-phase-1-report.md',
+];
 for (const path of DELIVERABLES) {
   check(existsSync(join(root, path)), `missing Phase 0 deliverable: ${path}`);
+}
+if (PHASE_1_LANDED) {
+  for (const path of PHASE_1_DELIVERABLES) {
+    check(existsSync(join(root, path)), `missing Phase 1 deliverable: ${path}`);
+  }
 }
 
 // Every document must cite the baseline commit so a stale copy is obvious.
