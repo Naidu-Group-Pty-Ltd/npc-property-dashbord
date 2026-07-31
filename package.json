@@ -35,6 +35,7 @@
     "pdf-import:v3:env": "node scripts/regression/pdf-extraction-v3/environment-profile.mjs",
     "test:e2e": "playwright test",
     "typecheck:portals": "tsc -p tsconfig.portals-strict.json --pretty false",
+    "typecheck:builder-edge": "deno check --config supabase/functions/builder-portal-admin/deno.json supabase/functions/builder-portal-admin/index.ts",
     "test:solicitor-portal": "node --test tests/solicitor-portal/*.test.mjs",
     "test:builder-portal": "node --test tests/builder-portal/*.test.mjs",
     "builder:phase-0-inspect": "node scripts/builder-portal/phase-0-inspection.mjs",

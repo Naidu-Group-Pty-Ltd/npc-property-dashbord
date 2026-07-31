@@ -53,7 +53,7 @@ only production-adjacent change is two additive `package.json` script entries.
 ## Verification
 
 ```bash
-npm run test:builder-portal        # 148 contract tests, no dependencies
+npm run test:builder-portal        # 166 contract tests, no dependencies
 npm run builder:phase-0-inspect    # phase-aware invariants + findings re-derivation
 ```
 
@@ -61,8 +61,9 @@ Against a local PostgreSQL cluster (see `scripts/builder-portal/local-db/`):
 
 ```bash
 npm run builder:db:reset           # clean full-corpus migration replay
-npm run builder:db:verify          # 102 behavioural assertions for Phase 1
+npm run builder:db:verify          # 135 behavioural assertions for Phase 1
 npm run builder:types:check        # Supabase types are current
+npm run typecheck:builder-edge     # Deno type check for builder-portal-admin
 ```
 
 Against a database, with a read-only role:

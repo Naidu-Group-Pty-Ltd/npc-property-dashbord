@@ -106,28 +106,46 @@ Deno.serve(async (req) => {
 
   // 1. Command Centre session. A Builder Portal cookie is not a staff session
   //    and cannot satisfy this.
+  //
+  //    P3: authentication failure is 401, not 403. createForbiddenResponse()
+  //    takes (message, corsHeaders) and always returns 403, so it is used only
+  //    for the authorization failure below — matching solicitor-portal-admin,
+  //    which returns json({...}, 401) here and createForbiddenResponse() there.
   const auth = await verifyAuth(supabase, req.headers, body);
   if (auth.error || !auth.userId) {
-    return createForbiddenResponse(auth.error || 'Authentication required', cors, 401);
+    return json({ error: auth.error || 'Authentication required' }, 401, cors);
   }
 
   // 2. CSRF on every mutation — the staff session is cookie-carried.
+  //    P1: the established signature is csrfDenied(corsHeaders, csrfResult).
+  //    Reversing them spread the CsrfCheckResult into the response headers and
+  //    dropped Access-Control-Allow-Origin, so the browser saw a CORS error
+  //    instead of the CSRF failure detail.
   if (!READ_OPERATIONS.has(operation)) {
     const csrf = enforceCsrf(req);
-    if (!csrf.ok) return csrfDenied(csrf, cors);
+    if (!csrf.ok) return csrfDenied(cors, csrf);
   }
 
   // 3. Deny-by-default module permission. A missing module registration or a
-  //    missing permission row denies.
+  //    missing permission row denies. Authenticated-but-not-permitted is 403.
   const authz = await requireModulePermission(
     supabase, { userId: auth.userId, authMethod: auth.authMethod },
     MODULE_KEY, requiredPermFor(operation),
   );
   if (!authz.ok) {
-    return createForbiddenResponse(authz.error || 'Not authorized', cors, 403);
+    return createForbiddenResponse(authz.error || 'Not authorized', cors);
   }
 
-  const actorId = auth.userId;
+  // P2: verifyAuth() returns the literal string 'service_role' as the identity
+  // for a verified internal call (see _shared/auth.ts). That is not a uuid, so
+  // writing it into created_by / updated_by / granted_by / invited_by or into a
+  // uuid RPC argument fails with 22P02. Solicitor guards this the same way.
+  //
+  // auth.userId stays the permission-check identity; adminUserId is the only
+  // value that reaches a uuid column.
+  const isServiceRoleActor = auth.userId === 'service_role';
+  const adminUserId: string | null = isServiceRoleActor ? null : auth.userId;
+  const actorType = isServiceRoleActor ? 'service_role' : 'command_user';
 
   /** Re-read a parent server-side. A browser-supplied id is a request, not an authority. */
   const loadOrganisation = async (organisationId: string | null) => {
@@ -138,6 +156,46 @@ Deno.serve(async (req) => {
     return data ?? null;
   };
 
+  /**
+   * P4: access-control mutations run through guarded database commands that
+   * write the state change AND the trusted audit record in one transaction. A
+   * failed audit write aborts the mutation, so nothing can be reported as
+   * successfully completed without evidence (Phase 0 NOCOPY-04).
+   *
+   * The commands signal failure as PostgreSQL exceptions; this maps them onto
+   * the HTTP contract Phase 1 already established.
+   */
+  const RPC_STATUS: Array<[RegExp, number, string | undefined]> = [
+    [/BUILDER_STALE_WRITE/, 409, 'stale_write'],
+    [/BUILDER_ORG_CLOSED/, 409, 'organisation_closed'],
+    [/BUILDER_USER_REVOKED/, 409, 'user_revoked'],
+    [/BUILDER_MEMBERSHIP_NOT_FOUND_OR_REVOKED/, 409, 'membership_not_found'],
+    [/BUILDER_ORG_NOT_FOUND/, 404, undefined],
+    [/BUILDER_USER_NOT_FOUND/, 404, undefined],
+    [/BUILDER_UNKNOWN_USER_STATUS|BUILDER_UNKNOWN_ORG_STATUS/, 400, undefined],
+    [/BUILDER_FORBIDDEN_PERMISSION_KEY|BUILDER_UNKNOWN_PERMISSION_KEY/, 400, 'forbidden_permission_key'],
+    [/BUILDER_PROJECTION_NOT_WRITABLE/, 400, 'projection_not_writable'],
+    [/BUILDER_SCOPE_NOT_AVAILABLE/, 400, 'scope_not_available'],
+    [/BUILDER_AUDIT_WRITE_FAILED|BUILDER_ACTIVITY_LOG_APPEND_ONLY/, 500, 'audit_write_failed'],
+    [/duplicate key value|23505/, 409, 'duplicate'],
+  ];
+
+  const rpcFailure = (error: { message?: string; details?: string; code?: string }) => {
+    const text = `${error?.message ?? ''} ${error?.details ?? ''} ${error?.code ?? ''}`;
+    for (const [pattern, status, code] of RPC_STATUS) {
+      if (pattern.test(text)) {
+        const currentVersion = /current_version=(\d+)/.exec(text)?.[1];
+        return json({
+          error: error?.message || 'Operation failed',
+          ...(code ? { code } : {}),
+          ...(currentVersion ? { current_version: Number(currentVersion) } : {}),
+        }, status, cors);
+      }
+    }
+    return json({ error: error?.message || 'Operation failed' }, 500, cors);
+  };
+
+  /** Best-effort observability. Never the only record of an access-control change. */
   const auditRows: Array<Record<string, unknown>> = [];
 
   try {
@@ -181,7 +239,7 @@ Deno.serve(async (req) => {
           state: state ? state.toUpperCase() : null,
           postcode: trimmed(body.postcode),
           notes: trimmed(body.notes),
-          updated_by: actorId,
+          updated_by: adminUserId,
         };
 
         const organisationId = trimmed(body.organisation_id);
@@ -189,7 +247,7 @@ Deno.serve(async (req) => {
           // Creation always starts pending_activation. Status is a separate,
           // audited transition — never a field on the create form.
           const { data, error } = await supabase.from('builder_organisations')
-            .insert({ ...payload, status: 'pending_activation', is_active: false, created_by: actorId })
+            .insert({ ...payload, status: 'pending_activation', is_active: false, created_by: adminUserId })
             .select(ORG_SELECT).single();
           if (error) throw error;
           auditRows.push({ action: 'builder_organisation_created', entity_id: data.id });
@@ -222,52 +280,29 @@ Deno.serve(async (req) => {
       }
 
       case 'set_organisation_status': {
+        // Access-control mutation: guarded command, trusted audit, one
+        // transaction. Session revocation for the organisation's members
+        // happens inside the same transaction.
         const organisationId = trimmed(body.organisation_id);
         const status = trimmed(body.status);
         if (!organisationId) return json({ error: 'organisation_id is required' }, 400, cors);
         if (!status || !ORG_STATUSES.has(status)) {
           return json({ error: 'Unknown organisation status' }, 400, cors);
         }
-        const existing = await loadOrganisation(organisationId);
-        if (!existing) return json({ error: 'Organisation not found' }, 404, cors);
-
         const expectedVersion = Number(body.expected_version);
-        if (!Number.isFinite(expectedVersion) || existing.row_version !== expectedVersion) {
-          return json({
-            error: 'This organisation changed since you loaded it. Reload and try again.',
-            code: 'stale_write', current_version: existing.row_version,
-          }, 409, cors);
+        if (!Number.isFinite(expectedVersion)) {
+          return json({ error: 'expected_version is required' }, 400, cors);
         }
 
-        const now = new Date().toISOString();
-        const patch: Record<string, unknown> = {
-          status,
-          is_active: status === 'active',
-          updated_by: actorId,
-          activated_at: status === 'active' ? now : null,
-          suspended_at: status === 'suspended' ? now : null,
-          suspension_reason: status === 'suspended' ? trimmed(body.reason) : null,
-        };
-
-        const { data, error } = await supabase.from('builder_organisations')
-          .update(patch).eq('id', organisationId).eq('row_version', expectedVersion)
-          .select(ORG_SELECT).maybeSingle();
-        if (error) throw error;
-        if (!data) return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
-
-        // Deactivating an organisation must not leave usable sessions behind.
-        // The database revokes on membership loss; this covers the org-level
-        // transition, which membership rows do not observe.
-        if (status !== 'active') {
-          const { data: members } = await supabase
-            .from('builder_organisation_memberships').select('builder_user_id')
-            .eq('organisation_id', organisationId).is('revoked_at', null);
-          for (const member of members ?? []) {
-            await supabase.rpc('builder_revoke_user_sessions', {
-              _user_id: member.builder_user_id, _reason: `organisation_${status}`, _except_session_id: null,
-            });
-          }
-        }
+        const { data, error } = await supabase.rpc('builder_admin_set_organisation_status', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _organisation_id: organisationId,
+          _status: status,
+          _expected_version: expectedVersion,
+          _reason: trimmed(body.reason),
+        });
+        if (error) return rpcFailure(error);
 
         auditRows.push({ action: `builder_organisation_${status}`, entity_id: organisationId });
         return json({ organisation: data }, 200, cors);
@@ -310,8 +345,8 @@ Deno.serve(async (req) => {
           job_title: trimmed(body.job_title),
           status: 'invited', is_active: false,
           must_change_password: true,
-          invited_by: actorId, invited_at: new Date().toISOString(),
-          created_by: actorId,
+          invited_by: adminUserId, invited_at: new Date().toISOString(),
+          created_by: adminUserId,
         }).select(USER_SELECT).single();
         if (error) {
           if ((error as any).code === '23505') {
@@ -343,7 +378,7 @@ Deno.serve(async (req) => {
           name: trimmed(body.name) ?? undefined,
           phone: trimmed(body.phone),
           job_title: trimmed(body.job_title),
-          updated_by: actorId,
+          updated_by: adminUserId,
         }).eq('id', userId).eq('row_version', expectedVersion).select(USER_SELECT).maybeSingle();
         if (error) throw error;
         if (!data) return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
@@ -371,24 +406,16 @@ Deno.serve(async (req) => {
           }, 409, cors);
         }
 
-        const now = new Date().toISOString();
-        const { data, error } = await supabase.from('builder_portal_users').update({
-          status,
-          is_active: status === 'active',
-          revoked_at: status === 'revoked' ? now : null,
-          revoked_reason: status === 'revoked' ? (trimmed(body.reason) ?? 'revoked by administrator') : null,
-          updated_by: actorId,
-        }).eq('id', userId).eq('row_version', expectedVersion).select(USER_SELECT).maybeSingle();
-        if (error) throw error;
-        if (!data) return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
+        const { data, error } = await supabase.rpc('builder_admin_set_user_status', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _builder_user_id: userId,
+          _status: status,
+          _expected_version: expectedVersion,
+          _reason: trimmed(body.reason),
+        });
+        if (error) return rpcFailure(error);
 
-        // The database revokes sessions on deactivation; this is belt and braces
-        // for the invited -> suspended path, which the trigger does not cover.
-        if (status !== 'active') {
-          await supabase.rpc('builder_revoke_user_sessions', {
-            _user_id: userId, _reason: `user_${status}`, _except_session_id: null,
-          });
-        }
         auditRows.push({ action: `builder_user_${status}`, entity_id: userId });
         return json({ user: data }, 200, cors);
       }
@@ -433,36 +460,32 @@ Deno.serve(async (req) => {
           .select('id, row_version').eq('builder_user_id', userId)
           .eq('organisation_id', organisationId).is('revoked_at', null).maybeSingle();
 
-        if (existing) {
-          const expectedVersion = Number(body.expected_version);
-          if (!Number.isFinite(expectedVersion) || existing.row_version !== expectedVersion) {
-            return json({
-              error: 'This membership changed since you loaded it. Reload and try again.',
-              code: 'stale_write', current_version: existing.row_version,
-            }, 409, cors);
-          }
-          const { data, error } = await supabase.from('builder_organisation_memberships')
-            .update({ membership_role: role, is_primary: body.is_primary === true })
-            .eq('id', existing.id).eq('row_version', expectedVersion)
-            .select(MEMBERSHIP_SELECT).maybeSingle();
-          if (error) throw error;
-          if (!data) return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
-          auditRows.push({ action: 'builder_membership_updated', entity_id: existing.id });
-          return json({ membership: data }, 200, cors);
+        const expectedVersion = existing ? Number(body.expected_version) : null;
+        if (existing && !Number.isFinite(expectedVersion as number)) {
+          return json({
+            error: 'This membership changed since you loaded it. Reload and try again.',
+            code: 'stale_write', current_version: existing.row_version,
+          }, 409, cors);
         }
 
-        const { data, error } = await supabase.from('builder_organisation_memberships').insert({
-          builder_user_id: userId, organisation_id: organisationId,
-          membership_role: role, is_primary: body.is_primary === true,
-          status: 'active', granted_by: actorId,
-        }).select(MEMBERSHIP_SELECT).single();
-        if (error) {
-          if ((error as any).code === '23505') {
-            return json({ error: 'A live membership already exists', code: 'duplicate_membership' }, 409, cors);
-          }
-          throw error;
-        }
-        auditRows.push({ action: 'builder_membership_granted', entity_id: data.id });
+        // Access-control mutation: the grant or role change and its trusted
+        // audit record commit together, or neither commits.
+        const { data, error } = await supabase.rpc('builder_admin_upsert_membership', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _builder_user_id: userId,
+          _organisation_id: organisationId,
+          _membership_role: role,
+          _is_primary: body.is_primary === true,
+          _expected_version: expectedVersion,
+          _reason: trimmed(body.reason),
+        });
+        if (error) return rpcFailure(error);
+
+        auditRows.push({
+          action: existing ? 'builder_membership_role_changed' : 'builder_membership_granted',
+          entity_id: (data as any)?.id ?? null,
+        });
         return json({ membership: data }, 200, cors);
       }
 
@@ -470,15 +493,17 @@ Deno.serve(async (req) => {
         const membershipId = trimmed(body.membership_id);
         if (!membershipId) return json({ error: 'membership_id is required' }, 400, cors);
 
-        const { data, error } = await supabase.from('builder_organisation_memberships')
-          .update({
-            status: 'revoked', revoked_at: new Date().toISOString(),
-            revoked_reason: trimmed(body.reason) ?? 'revoked by administrator',
-          })
-          .eq('id', membershipId).is('revoked_at', null)
-          .select(MEMBERSHIP_SELECT).maybeSingle();
-        if (error) throw error;
-        if (!data) return json({ error: 'Membership not found or already revoked' }, 409, cors);
+        // Access-control mutation: revocation and its trusted audit record
+        // commit together. The Phase 1 trigger that ends the user's sessions
+        // when their last membership goes fires inside the same transaction.
+        const { data, error } = await supabase.rpc('builder_admin_revoke_membership', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _membership_id: membershipId,
+          _reason: trimmed(body.reason),
+        });
+        if (error) return rpcFailure(error);
+
         auditRows.push({ action: 'builder_membership_revoked', entity_id: membershipId });
         return json({ membership: data }, 200, cors);
       }
@@ -538,28 +563,30 @@ Deno.serve(async (req) => {
           if (allowed.get(key) === 'inbound_projection') { edit = 'inherit'; del = 'inherit'; }
           if (view === 'inherit' && edit === 'inherit' && del === 'inherit') continue;
           rows.push({
-            membership_id: membershipId, permission_key: key, scope_type: 'organisation',
+            permission_key: key,
             view_decision: view, edit_decision: edit, delete_decision: del,
-            reason: trimmed(entry?.reason), granted_by: actorId,
+            reason: trimmed(entry?.reason),
           });
         }
 
-        // Replace the organisation-scoped override set atomically enough for an
-        // administrative surface: delete then insert, both scoped to this
-        // membership. Project scopes are untouched because none can exist yet.
-        const { error: delErr } = await supabase.from('builder_membership_permissions')
-          .delete().eq('membership_id', membershipId).eq('scope_type', 'organisation');
-        if (delErr) throw delErr;
-        if (rows.length) {
-          const { error: insErr } = await supabase.from('builder_membership_permissions').insert(rows);
-          if (insErr) throw insErr;
-        }
+        // Access-control mutation: the guarded command replaces the
+        // organisation-scoped override set and writes the before/after audit
+        // record in one transaction. Project scopes are untouched because none
+        // can exist yet.
+        const { data: applied, error } = await supabase.rpc('builder_admin_set_membership_permissions', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _membership_id: membershipId,
+          _overrides: rows,
+          _reason: trimmed(body.reason),
+        });
+        if (error) return rpcFailure(error);
 
         auditRows.push({
-          action: 'builder_membership_permissions_updated', entity_id: membershipId,
-          metadata: { applied: rows.length, rejected_keys: rejected },
+          action: 'builder_membership_permissions_changed', entity_id: membershipId,
+          metadata: { applied, rejected_keys: rejected },
         });
-        return json({ applied: rows.length, rejected_keys: rejected }, 200, cors);
+        return json({ applied: applied ?? 0, rejected_keys: rejected }, 200, cors);
       }
 
       // ------------------------------------------------------------ sessions
@@ -576,14 +603,17 @@ Deno.serve(async (req) => {
       }
 
       case 'revoke_user_sessions': {
+        // Access-control mutation: revocation and its trusted audit record
+        // commit together.
         const userId = trimmed(body.builder_user_id);
         if (!userId) return json({ error: 'builder_user_id is required' }, 400, cors);
-        const { data, error } = await supabase.rpc('builder_revoke_user_sessions', {
-          _user_id: userId,
-          _reason: trimmed(body.reason) ?? 'revoked by administrator',
-          _except_session_id: null,
+        const { data, error } = await supabase.rpc('builder_admin_revoke_user_sessions', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _builder_user_id: userId,
+          _reason: trimmed(body.reason),
         });
-        if (error) throw error;
+        if (error) return rpcFailure(error);
         auditRows.push({ action: 'builder_sessions_revoked', entity_id: userId, metadata: { revoked: data } });
         return json({ revoked: data ?? 0 }, 200, cors);
       }
@@ -595,15 +625,16 @@ Deno.serve(async (req) => {
     console.error('[builder-portal-admin] operation failed', { operation, message: error?.message });
     return json({ error: error?.message || 'Operation failed' }, 500, cors);
   } finally {
-    // Best-effort activity trail. Phase 2 introduces the trusted, fail-closed
-    // Builder audit record for high-risk mutations (Phase 0 finding NOCOPY-04);
-    // Phase 1 has no such mutation, so this remains observational.
+    // Best-effort operational event, for observability only. Access-control
+    // mutations already wrote a trusted, fail-closed record to
+    // builder_portal_activity_log inside their own transaction, so a failure
+    // here loses a metric, never the audit trail (Phase 0 NOCOPY-04).
     for (const entry of auditRows) {
       try {
         await supabase.rpc('record_portal_operational_event', {
           _event_name: 'builder_admin_command', _severity: 'info',
           _correlation_id: crypto.randomUUID(), _request_id: null,
-          _actor_type: 'command_user', _actor_id: actorId, _portal: 'builder',
+          _actor_type: actorType, _actor_id: adminUserId, _portal: 'builder',
           _case_id: null, _matter_id: null, _firm_id: null, _duration_ms: null,
           _success: true, _metadata: entry,
         });

@@ -7,7 +7,7 @@
 | Baseline commit | `43b67c8ed4879435d2f8b0dd4e6635fc2be98058` (merge of PR #1747, Phase 0) |
 | Supabase project inspected | `dduzbchuswwbefdunfct` — "NPC Property Dashboard" (read-only) |
 | Production deployment | **Not applied.** Migrations are finished and locally verified, awaiting explicit authorisation. |
-| Status | Complete. Phase 2 not started. |
+| Status | Complete, with alignment-review corrections P1–P4 applied. Phase 2 not started. |
 
 ## 1. What was built
 
@@ -15,7 +15,7 @@ Identity and access only. No development, project, stage, lot, unit,
 reservation, sale, construction milestone, variation, progress claim,
 inspection, defect, handover or warranty object exists.
 
-### Migrations (6, timestamped, all additive)
+### Migrations (7, timestamped, all additive)
 
 | Migration | Contents |
 | --- | --- |
@@ -25,18 +25,19 @@ inspection, defect, handover or warranty object exists.
 | `20260801000300_portal_terms_multi_portal.sql` | GEN-01 / GEN-02 — portal terms generalised to Builder with pre- and post-migration assertions |
 | `20260801000400_cross_portal_rollout_org_generalisation.sql` | GEN-10 — cutover control plane generalised to Builder organisations |
 | `20260801000500_builder_portal_admin_module.sql` | `builder_portal_admin` registration + `solicitor_portal_admin` drift repair |
+| `20260801000600_builder_portal_activity_log.sql` | Trusted fail-closed audit log and six guarded access-control commands (correction P4) |
 
 No migration drops a table, column or policy. No migration truncates or deletes
 production rows. Five `NOT NULL` constraints are relaxed: one on
 `portal_terms_acceptances.solicitor_user_id` (ADR 021) and four on
 `cross_portal_*.firm_id`, each replaced by a stronger discriminated-owner CHECK.
 
-### Tables created (7)
+### Tables created (8)
 
 `builder_organisations` · `builder_portal_users` ·
 `builder_organisation_memberships` · `builder_permission_keys` ·
 `builder_role_default_permissions` · `builder_membership_permissions` ·
-`builder_portal_sessions`
+`builder_portal_sessions` · `builder_portal_activity_log`
 
 ### Tables changed (7, all additively)
 
@@ -108,7 +109,7 @@ keys whose edit and delete levels can never resolve true.
 
 ## 4. RLS policies
 
-Every one of the seven Builder tables has RLS enabled with exactly one policy,
+Every one of the eight Builder tables has RLS enabled with exactly one policy,
 scoped `TO service_role` with the grounded predicate
 `auth.role() = 'service_role'`. **No policy uses an unrestricted `USING (true)`.**
 There is no `anon` or `authenticated` policy at all, so RLS denies them outright,
@@ -297,6 +298,130 @@ Production inspection established three facts used in this phase:
    "migration-corpus drift".
 
 The migrations are complete and awaiting authorisation.
+
+## 11a. Solicitor Portal alignment corrections (P1–P4)
+
+An alignment review of PR #1749 against the Solicitor Portal found four confirmed
+defects. All four are fixed. Section 3 of that review (optional architectural
+differences) was deliberately **not** acted on.
+
+### P1 — `csrfDenied` argument order
+
+`builder-portal-admin` called `csrfDenied(csrf, cors)`. The signature is
+`csrfDenied(cors, detail)` and all ~40 other call sites in the repository use
+that order. The reversal spread the `CsrfCheckResult` into the response headers
+and dropped `Access-Control-Allow-Origin`, so a CSRF denial reached the browser
+as a CORS error rather than the intended detail. The request was still denied, so
+this was never an authentication bypass.
+
+**Fix:** `csrfDenied(cors, csrf)`. Verified by `deno check` (TS2345 when reversed)
+and pinned by two contract tests, one of which reads the helper signature so a
+future change to `csrfGuard.ts` fails here rather than silently.
+
+### P2 — service-role actor written into uuid columns
+
+`verifyAuth()` returns the literal string `'service_role'` as the identity for a
+verified internal call (`_shared/auth.ts:193`, `:227`). Phase 1 passed that value
+straight into eight `uuid` columns and into `_actor_id uuid`. Any service-role
+administration call would have failed with `22P02 invalid input syntax for type
+uuid`.
+
+**Fix:** the Solicitor guard, verbatim in intent —
+`const adminUserId = auth.userId === 'service_role' ? null : auth.userId`.
+`auth.userId` remains the identity used for the permission check;
+`adminUserId` is the only value that reaches a uuid column. The actor is
+recorded honestly as `actor_type = 'service_role'` with a NULL `actor_user_id`
+rather than being coerced.
+
+TypeScript cannot catch this — `'service_role'` is a runtime value, not a
+distinct type — so it is covered by six live-database assertions including a
+direct proof that the literal string is not a storable uuid actor.
+
+### P3 — authentication returned 403 instead of 401
+
+`createForbiddenResponse(message, corsHeaders)` takes two parameters and
+hardcodes 403. Phase 1 passed a third `401` argument, which was silently ignored,
+so a caller could not distinguish "not signed in" from "not permitted".
+
+**Fix:** authentication failure returns `json({ error }, 401, cors)`;
+authorization failure keeps `createForbiddenResponse(message, cors)` at 403 —
+the same split `solicitor-portal-admin` uses. Verified by `deno check` (TS2554
+with the extra argument).
+
+### P4 — trusted, fail-closed audit for access-control mutations
+
+The Phase 1 report claimed "Phase 1 has no high-risk mutation". That was wrong:
+granting and revoking organisation membership is the access-control decision for
+the entire portal. Audit was best-effort and swallowed, which is precisely the
+Solicitor defect Phase 0 recorded as NOCOPY-04.
+
+**Fix**, using the closest existing Solicitor pattern rather than a new
+architecture:
+
+- `builder_portal_activity_log`, modelled on `solicitor_portal_activity_log`,
+  carrying actor, action, entity, organisation, target user, previous state, new
+  state, reason and timestamp. Append-only: a trigger rejects UPDATE and DELETE.
+- `builder_log_activity()` **raises** on failure instead of swallowing — the
+  inverse of `logSolicitorActivity()`.
+- Six guarded commands perform the state change and the audit write in one
+  transaction, so a failed audit aborts the mutation:
+  `builder_admin_upsert_membership`, `builder_admin_revoke_membership`,
+  `builder_admin_set_user_status`, `builder_admin_set_organisation_status`,
+  `builder_admin_set_membership_permissions`,
+  `builder_admin_revoke_user_sessions`.
+
+All seven required events are covered: membership granted, membership role
+changed, membership revoked, permission overrides changed, user suspended or
+revoked, organisation suspended or closed, administrative session revocation.
+
+The existing best-effort operational event remains for observability. It is no
+longer the only record.
+
+Fail-closed is proven by execution, not asserted: the harness installs a trigger
+that forces every audit insert to fail, then confirms a membership grant and a
+user suspension both raise **and leave no state change behind**, and that both
+succeed again once audit is restored.
+
+Nothing in the session, membership, permission, terms or rollout model was
+redesigned. The guarded commands wrap writes the Edge Function was already
+making.
+
+### Edge Function type checking
+
+No `tsconfig` in the repository covers `supabase/functions/`, which is why P1–P3
+reached the PR. `npm run typecheck:builder-edge` runs `deno check` against
+`builder-portal-admin` and its shared imports only — the other 360 historical
+Edge Functions are deliberately untouched.
+
+Proven to catch this defect class by reintroducing each bug:
+
+| Defect | Detected | Error |
+| --- | --- | --- |
+| P1 reversed `csrfDenied` args | yes | `TS2345` |
+| P3 extra status argument | yes | `TS2554` |
+| P2 `'service_role'` string | **no** | runtime value, not a type — covered by database tests instead |
+
+### Correction validation
+
+| Command | Result |
+| --- | --- |
+| `npm run builder:db:verify` | **135/135** (was 102; +33 for P2 and P4) |
+| `npm run test:builder-portal` | **166 tests, 166 pass** (was 148; +18) |
+| `npm run typecheck:builder-edge` | passed (exit 0) |
+| `npm run builder:db:reset` | 754 migrations, 470 applied, **0 Builder defects** |
+| `npm run builder:phase-0-inspect` | passed |
+| `npm run test:cross-portal-contracts` | 4/4 |
+| `npm run security:solicitor-portal` | passed |
+| `npm run security:registry` | 26 issues — unchanged from baseline |
+| `npm run build` | ✓ built in 1m 34s |
+
+Pre-existing failures, unchanged: `test:solicitor-portal` 1 fail,
+`typecheck:portals` 4 errors, `lint` 43 errors, `audit:style` ratchet,
+`vitest` 39 files / 53 tests, `security:test` exit 1.
+
+**Production was not modified.** `apply_migration` was never called; the new
+migration `20260801000600_builder_portal_activity_log.sql` exists on the branch
+and is locally verified only.
 
 ## 12. Recommended Phase 2 scope
 

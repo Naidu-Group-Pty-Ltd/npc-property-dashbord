@@ -3035,6 +3035,75 @@ export type Database = {
         }
         Relationships: []
       }
+      builder_portal_activity_log: {
+        Row: {
+          action: string
+          actor_type: string
+          actor_user_id: string | null
+          builder_user_id: string | null
+          created_at: string
+          entity_id: string | null
+          entity_type: string | null
+          id: string
+          ip_address: string | null
+          metadata: Json
+          new_state: Json | null
+          organisation_id: string | null
+          previous_state: Json | null
+          reason: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          actor_type?: string
+          actor_user_id?: string | null
+          builder_user_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          id?: string
+          ip_address?: string | null
+          metadata?: Json
+          new_state?: Json | null
+          organisation_id?: string | null
+          previous_state?: Json | null
+          reason?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          actor_type?: string
+          actor_user_id?: string | null
+          builder_user_id?: string | null
+          created_at?: string
+          entity_id?: string | null
+          entity_type?: string | null
+          id?: string
+          ip_address?: string | null
+          metadata?: Json
+          new_state?: Json | null
+          organisation_id?: string | null
+          previous_state?: Json | null
+          reason?: string | null
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_portal_activity_log_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_portal_activity_log_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_portal_sessions: {
         Row: {
           absolute_expires_at: string

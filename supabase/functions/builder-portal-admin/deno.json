@@ -1,0 +1,26 @@
+{
+  "//": [
+    "Type-check scope for the Builder Portal administration Edge Function.",
+    "",
+    "No tsconfig in this repository covers supabase/functions, so helper-signature",
+    "errors in Edge Functions are invisible to CI. That is how the alignment review",
+    "findings P1 (csrfDenied argument order), P2 (service_role written into a uuid",
+    "column) and P3 (an ignored status argument) reached PR #1749.",
+    "",
+    "This config is deliberately scoped to builder-portal-admin and the shared",
+    "modules it imports. It does not attempt to type-check or repair the 360 other",
+    "historical Edge Functions.",
+    "",
+    "Run with: npm run typecheck:builder-edge"
+  ],
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "lib": ["deno.window", "esnext"]
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

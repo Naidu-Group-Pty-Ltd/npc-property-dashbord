@@ -30,6 +30,7 @@ const PHASE_1_MIGRATIONS = [
   '20260801000300_portal_terms_multi_portal.sql',
   '20260801000400_cross_portal_rollout_org_generalisation.sql',
   '20260801000500_builder_portal_admin_module.sql',
+  '20260801000600_builder_portal_activity_log.sql',
 ];
 
 const run = (args, db = DB) =>
@@ -616,6 +617,207 @@ expectEqual('a client-supplied row_version cannot be forced',
                 WHERE id='11111111-1111-1111-1111-111111111111' RETURNING row_version)
    SELECT CASE WHEN (SELECT row_version FROM upd) = 999 THEN 'forced' ELSE 'server_owned' END`,
   'server_owned');
+
+// ===========================================================================
+// Alignment-review corrections P2 and P4
+// ===========================================================================
+console.log('\nP2 — service-role actor is uuid-safe');
+
+// verifyAuth() returns the literal string 'service_role' as the identity for a
+// verified internal call. The Edge Function maps that to NULL; these assertions
+// prove the guarded commands accept NULL and never raise 22P02.
+const P2_ORG = '44444444-4444-4444-4444-444444444444';
+const P2_USER = 'aaaaaaaa-0000-0000-0000-000000000010';
+run(['-c', `
+  INSERT INTO builder_organisations(id, legal_name, org_type, status, is_active, activated_at)
+  VALUES ('${P2_ORG}','Service Role Test Pty Ltd','builder','active',true,now());
+  INSERT INTO builder_portal_users(id, email, name, status, is_active)
+  VALUES ('${P2_USER}','svc@harbourline.test','Service Role Target','active',true);
+`]);
+
+expectEqual('a NULL actor grants a membership without 22P02',
+  `SELECT (builder_admin_upsert_membership(
+     NULL, 'service_role', '${P2_USER}', '${P2_ORG}', 'member', false, NULL, 'internal call')).membership_role`,
+  'member');
+
+expectEqual('the audit row records service_role in actor_type, not in a uuid column',
+  `SELECT actor_type FROM builder_portal_activity_log
+   WHERE action='builder_membership_granted' ORDER BY created_at DESC LIMIT 1`, 'service_role');
+
+expectEqual('the service-role audit row has a NULL actor_user_id',
+  `SELECT actor_user_id IS NULL FROM builder_portal_activity_log
+   WHERE action='builder_membership_granted' ORDER BY created_at DESC LIMIT 1`, 't');
+
+expectRejection('the literal string service_role is not a storable uuid actor',
+  `INSERT INTO builder_portal_activity_log(actor_user_id, actor_type, action)
+   VALUES ('service_role','command_user','probe')`,
+  '22P02', 'invalid input syntax for type uuid');
+
+for (const [label, statement] of [
+  ['set_user_status', `SELECT builder_admin_set_user_status(NULL,'service_role','${P2_USER}','suspended',
+      (SELECT row_version FROM builder_portal_users WHERE id='${P2_USER}'),'internal')`],
+  ['set_organisation_status', `SELECT builder_admin_set_organisation_status(NULL,'service_role','${P2_ORG}','suspended',
+      (SELECT row_version FROM builder_organisations WHERE id='${P2_ORG}'),'internal')`],
+  ['revoke_user_sessions', `SELECT builder_admin_revoke_user_sessions(NULL,'service_role','${P2_USER}','internal')`],
+]) {
+  let ok = true; let detail = '';
+  try { run(['-c', statement]); } catch (error) {
+    const message = String(error.stderr || error.message);
+    ok = !message.includes('22P02');
+    detail = message.trim().split('\n')[0];
+  }
+  record(`${label} accepts a NULL service-role actor without 22P02`, ok, detail);
+}
+
+console.log('\nP4 — trusted, fail-closed audit for access-control mutations');
+
+expectEqual('the builder activity log exists',
+  `SELECT count(*) FROM information_schema.tables
+   WHERE table_schema='public' AND table_name='builder_portal_activity_log'`, 1);
+
+const P4_ORG = '55555555-5555-5555-5555-555555555555';
+const P4_USER = 'aaaaaaaa-0000-0000-0000-000000000011';
+run(['-c', `
+  INSERT INTO builder_organisations(id, legal_name, org_type, status, is_active, activated_at)
+  VALUES ('${P4_ORG}','Audit Test Pty Ltd','developer','active',true,now());
+  INSERT INTO builder_portal_users(id, email, name, status, is_active)
+  VALUES ('${P4_USER}','audit@northpoint.test','Audit Target','active',true);
+`]);
+
+const ACTOR = '99999999-9999-9999-9999-999999999999';
+run(['-c', `SELECT builder_admin_upsert_membership(
+  '${ACTOR}','command_user','${P4_USER}','${P4_ORG}','member',true,NULL,'granting');`]);
+
+expectEqual('membership granted writes a trusted audit record',
+  `SELECT count(*) FROM builder_portal_activity_log
+   WHERE action='builder_membership_granted' AND organisation_id='${P4_ORG}'`, 1);
+expectEqual('the audit record captures the acting internal user',
+  `SELECT actor_user_id FROM builder_portal_activity_log
+   WHERE action='builder_membership_granted' AND organisation_id='${P4_ORG}'`, ACTOR);
+expectEqual('the audit record captures the target, organisation and new state',
+  `SELECT (builder_user_id='${P4_USER}' AND entity_type='membership'
+           AND new_state->>'membership_role'='member' AND reason='granting')
+   FROM builder_portal_activity_log
+   WHERE action='builder_membership_granted' AND organisation_id='${P4_ORG}'`, 't');
+
+run(['-c', `SELECT builder_admin_upsert_membership('${ACTOR}','command_user','${P4_USER}','${P4_ORG}','manager',true,
+  (SELECT row_version FROM builder_organisation_memberships
+     WHERE builder_user_id='${P4_USER}' AND organisation_id='${P4_ORG}' AND revoked_at IS NULL),'promoting');`]);
+expectEqual('membership role change records previous and new state',
+  `SELECT (previous_state->>'membership_role'='member' AND new_state->>'membership_role'='manager')
+   FROM builder_portal_activity_log WHERE action='builder_membership_role_changed'
+   ORDER BY created_at DESC LIMIT 1`, 't');
+
+run(['-c', `SELECT builder_admin_set_membership_permissions('${ACTOR}','command_user',
+  (SELECT id FROM builder_organisation_memberships
+     WHERE builder_user_id='${P4_USER}' AND organisation_id='${P4_ORG}' AND revoked_at IS NULL),
+  '[{"permission_key":"documents","view_decision":"deny"}]'::jsonb, 'tightening');`]);
+expectEqual('permission override change is audited with before and after',
+  `SELECT count(*) FROM builder_portal_activity_log
+   WHERE action='builder_membership_permissions_changed'
+     AND previous_state='[]'::jsonb AND jsonb_array_length(new_state)=1`, 1);
+
+expectRejection('a forbidden key inside the guarded command rolls the whole command back',
+  `SELECT builder_admin_set_membership_permissions('${ACTOR}','command_user',
+     (SELECT id FROM builder_organisation_memberships
+        WHERE builder_user_id='${P4_USER}' AND organisation_id='${P4_ORG}' AND revoked_at IS NULL),
+     '[{"permission_key":"commissions","view_decision":"allow"}]'::jsonb, 'bad')`,
+  'BUILDER_FORBIDDEN_PERMISSION_KEY');
+expectEqual('the rejected permission change left the previous overrides intact',
+  `SELECT count(*) FROM builder_membership_permissions p
+   JOIN builder_organisation_memberships m ON m.id = p.membership_id
+   WHERE m.builder_user_id='${P4_USER}' AND m.organisation_id='${P4_ORG}'
+     AND p.permission_key='documents' AND p.view_decision='deny'`, 1);
+expectEqual('and the forbidden key was not persisted',
+  `SELECT count(*) FROM builder_membership_permissions WHERE permission_key='commissions'`, 0);
+
+run(['-c', `SELECT builder_admin_revoke_membership('${ACTOR}','command_user',
+  (SELECT id FROM builder_organisation_memberships
+     WHERE builder_user_id='${P4_USER}' AND organisation_id='${P4_ORG}' AND revoked_at IS NULL),'no longer employed');`]);
+expectEqual('membership revocation is audited with its reason',
+  `SELECT reason FROM builder_portal_activity_log
+   WHERE action='builder_membership_revoked' ORDER BY created_at DESC LIMIT 1`, 'no longer employed');
+
+expectEqual('user suspension applies and is audited',
+  `SELECT (builder_admin_set_user_status('${ACTOR}','command_user','${P4_USER}','suspended',
+     (SELECT row_version FROM builder_portal_users WHERE id='${P4_USER}'),'policy breach')).status`,
+  'suspended');
+expectEqual('the user suspension audit records previous and new status',
+  `SELECT (previous_state->>'status'='active' AND new_state->>'status'='suspended')
+   FROM builder_portal_activity_log WHERE action='builder_user_suspended'
+   ORDER BY created_at DESC LIMIT 1`, 't');
+
+expectEqual('organisation suspension applies and is audited',
+  `SELECT (builder_admin_set_organisation_status('${ACTOR}','command_user','${P4_ORG}','suspended',
+     (SELECT row_version FROM builder_organisations WHERE id='${P4_ORG}'),'commercial hold')).status`,
+  'suspended');
+expectEqual('the organisation suspension audit records the reason',
+  `SELECT reason FROM builder_portal_activity_log WHERE action='builder_organisation_suspended'
+   ORDER BY created_at DESC LIMIT 1`, 'commercial hold');
+
+expectEqual('administrative session revocation is audited',
+  `SELECT builder_admin_revoke_user_sessions('${ACTOR}','command_user','${P4_USER}','security review') >= 0`, 't');
+expectEqual('the session revocation audit names the target user',
+  `SELECT builder_user_id FROM builder_portal_activity_log WHERE action='builder_sessions_revoked'
+   ORDER BY created_at DESC LIMIT 1`, P4_USER);
+
+expectEqual('every access-control action in the P4 list is represented',
+  `SELECT count(DISTINCT action) FROM builder_portal_activity_log WHERE action IN
+   ('builder_membership_granted','builder_membership_role_changed','builder_membership_revoked',
+    'builder_membership_permissions_changed','builder_user_suspended',
+    'builder_organisation_suspended','builder_sessions_revoked')`, 7);
+
+// Fail-closed: break the audit path and prove the mutation does not commit.
+console.log('\nP4 — fail-closed proof');
+const P4B_USER = 'aaaaaaaa-0000-0000-0000-000000000012';
+const P4B_ORG = '66666666-6666-6666-6666-666666666666';
+run(['-c', `
+  INSERT INTO builder_organisations(id, legal_name, org_type, status, is_active, activated_at)
+  VALUES ('${P4B_ORG}','Fail Closed Pty Ltd','builder','active',true,now());
+  INSERT INTO builder_portal_users(id, email, name, status, is_active)
+  VALUES ('${P4B_USER}','failclosed@harbourline.test','Fail Closed Target','active',true);
+`]);
+
+// Force every audit insert to fail, exactly as a broken audit path would.
+run(['-c', `
+  CREATE OR REPLACE FUNCTION public.force_audit_failure() RETURNS trigger
+  LANGUAGE plpgsql AS $fn$ BEGIN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='SIMULATED_AUDIT_OUTAGE';
+  END $fn$;
+  CREATE TRIGGER trg_force_audit_failure BEFORE INSERT ON public.builder_portal_activity_log
+    FOR EACH ROW EXECUTE FUNCTION public.force_audit_failure();
+`]);
+
+expectRejection('a membership grant fails when the trusted audit write fails',
+  `SELECT builder_admin_upsert_membership('${ACTOR}','command_user','${P4B_USER}','${P4B_ORG}','member',false,NULL,'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and the membership was NOT created — the mutation rolled back with the audit',
+  `SELECT count(*) FROM builder_organisation_memberships
+   WHERE builder_user_id='${P4B_USER}' AND organisation_id='${P4B_ORG}'`, 0);
+
+expectRejection('a user suspension fails when the trusted audit write fails',
+  `SELECT builder_admin_set_user_status('${ACTOR}','command_user','${P4B_USER}','suspended',
+     (SELECT row_version FROM builder_portal_users WHERE id='${P4B_USER}'),'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and the user is still active — the status change rolled back',
+  `SELECT status FROM builder_portal_users WHERE id='${P4B_USER}'`, 'active');
+
+run(['-c', 'DROP TRIGGER trg_force_audit_failure ON public.builder_portal_activity_log;']);
+expectEqual('with audit restored, the same grant succeeds',
+  `SELECT (builder_admin_upsert_membership(
+     '${ACTOR}','command_user','${P4B_USER}','${P4B_ORG}','member',false,NULL,'x')).status`, 'active');
+
+expectRejection('the audit trail is append-only: rows cannot be updated',
+  `UPDATE builder_portal_activity_log SET action='tampered' WHERE action='builder_membership_granted'`,
+  'BUILDER_ACTIVITY_LOG_APPEND_ONLY');
+expectRejection('the audit trail is append-only: rows cannot be deleted',
+  `DELETE FROM builder_portal_activity_log WHERE action='builder_membership_granted'`,
+  'BUILDER_ACTIVITY_LOG_APPEND_ONLY');
+
+expectEqual('the activity log is RLS-protected like every other builder table',
+  `SELECT relrowsecurity FROM pg_class WHERE relname='builder_portal_activity_log'`, 't');
+expectRejection('anonymous SELECT on the activity log is denied',
+  'SET LOCAL ROLE anon; SELECT count(*) FROM public.builder_portal_activity_log;', 'permission denied');
 
 // ===========================================================================
 // Summary

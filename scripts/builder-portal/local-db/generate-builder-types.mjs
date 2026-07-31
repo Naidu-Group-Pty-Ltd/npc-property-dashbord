@@ -34,6 +34,7 @@ const TABLES = [
   'builder_organisation_memberships',
   'builder_organisations',
   'builder_permission_keys',
+  'builder_portal_activity_log',
   'builder_portal_sessions',
   'builder_portal_users',
   'builder_role_default_permissions',

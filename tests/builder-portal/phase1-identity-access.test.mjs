@@ -27,6 +27,7 @@ const MIGRATIONS = {
   terms: '20260801000300_portal_terms_multi_portal.sql',
   rollouts: '20260801000400_cross_portal_rollout_org_generalisation.sql',
   adminModule: '20260801000500_builder_portal_admin_module.sql',
+  activityLog: '20260801000600_builder_portal_activity_log.sql',
 };
 
 const sql = Object.fromEntries(
@@ -63,12 +64,30 @@ test('every Phase 1 migration exists and is timestamped after the baseline', () 
 });
 
 test('no Phase 1 migration drops an existing table, column or policy', () => {
+  // Destructive DML is judged at MIGRATION time. A scoped DELETE inside a
+  // CREATE FUNCTION body is runtime behaviour of a guarded command, not
+  // something the migration performs, so function bodies are excluded.
+  const withoutFunctionBodies = (body) =>
+    body.replace(/CREATE OR REPLACE FUNCTION[\s\S]*?\$\$;/g, '');
+
   for (const [key, body] of Object.entries(sql)) {
+    const migrationTime = withoutFunctionBodies(body);
     assert.doesNotMatch(body, /DROP\s+TABLE(?!\s+IF\s+EXISTS\s+_)/i, `${key} drops a table`);
     assert.doesNotMatch(body, /DROP\s+COLUMN/i, `${key} drops a column`);
     assert.doesNotMatch(body, /TRUNCATE/i, `${key} truncates`);
-    assert.doesNotMatch(body, /DELETE\s+FROM\s+public\./i, `${key} deletes production rows`);
+    assert.doesNotMatch(migrationTime, /DELETE\s+FROM\s+public\./i,
+      `${key} deletes production rows at migration time`);
   }
+});
+
+test('the only runtime DELETE is the scoped permission-override replacement', () => {
+  // builder_admin_set_membership_permissions replaces one membership's
+  // organisation-scoped overrides. It is scoped to that membership and runs in
+  // the same transaction as its audit record, so a failure rolls it back.
+  const deletes = [...allPhase1Sql.matchAll(/DELETE FROM public\.(\w+)/gi)].map((m) => m[1]);
+  assert.deepEqual(deletes, ['builder_membership_permissions']);
+  assert.match(sql.activityLog,
+    /DELETE FROM public\.builder_membership_permissions\s*\n\s*WHERE membership_id = _membership_id AND scope_type = 'organisation';/);
 });
 
 test('the only NOT NULL relaxed is the documented one-way portal terms change', () => {
@@ -593,5 +612,187 @@ test('the local harness files are present', () => {
     'scripts/builder-portal/local-db/generate-builder-types.mjs',
   ]) {
     assert.ok(existsSync(join(root, path)), `missing harness file ${path}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Alignment-review corrections P1 – P4
+//
+// These four defects were found by comparing builder-portal-admin against the
+// Solicitor Portal. Each is pinned here so a regression fails before review.
+// ---------------------------------------------------------------------------
+
+test('P1: csrfDenied is called with the repository-wide argument order', () => {
+  // csrfDenied(corsHeaders, detail). Reversing them spread the CsrfCheckResult
+  // into the response headers and dropped Access-Control-Allow-Origin.
+  assert.match(adminFn, /csrfDenied\(cors, csrf\)/);
+  assert.doesNotMatch(adminFn, /csrfDenied\(csrf, cors\)/);
+});
+
+test('P1: the Builder call matches every other csrfDenied call site in the repo', () => {
+  const guard = read('supabase/functions/_shared/csrfGuard.ts');
+  const signature = /export function csrfDenied\(\s*(\w+): Record<string, string>,\s*(\w+): CsrfCheckResult/.exec(guard);
+  assert.ok(signature, 'csrfDenied signature changed — re-verify every call site');
+  // First parameter is the CORS headers, second is the check result.
+  assert.equal(signature[1], 'cors');
+  assert.equal(signature[2], 'detail');
+});
+
+test('P2: the service_role identity never reaches a uuid column', () => {
+  assert.match(adminFn, /const isServiceRoleActor = auth\.userId === 'service_role'/);
+  assert.match(adminFn, /const adminUserId: string \| null = isServiceRoleActor \? null : auth\.userId/);
+  // Nothing may write the raw auth.userId into a uuid-bearing field.
+  const code = stripJsComments(adminFn);
+  for (const column of ['created_by', 'updated_by', 'granted_by', 'invited_by', '_actor_user_id', '_actor_id']) {
+    assert.ok(!new RegExp(`${column}:\\s*auth\\.userId`).test(code),
+      `${column} is assigned the raw auth.userId, which may be the string service_role`);
+    assert.ok(!new RegExp(`${column}:\\s*actorId`).test(code),
+      `${column} still uses the pre-correction actorId binding`);
+  }
+});
+
+test('P2: the permission check still uses the authenticated identity', () => {
+  // adminUserId is uuid-safe but null for service-role callers; authorization
+  // must keep using auth.userId or an internal call would be denied.
+  assert.match(adminFn, /requireModulePermission\(\s*\n?\s*supabase, \{ userId: auth\.userId, authMethod: auth\.authMethod \}/);
+});
+
+test('P2: the actor type records service_role instead of coercing it', () => {
+  assert.match(adminFn, /const actorType = isServiceRoleActor \? 'service_role' : 'command_user'/);
+  assert.match(sql.activityLog, /CHECK \(actor_type IN\s*\n?\s*\('command_user', 'service_role', 'builder_user', 'system'\)\)/);
+});
+
+test('P3: authentication failure returns 401 and authorization failure returns 403', () => {
+  assert.match(adminFn, /if \(auth\.error \|\| !auth\.userId\) \{\s*\n\s*return json\(\{ error: auth\.error \|\| 'Authentication required' \}, 401, cors\);/);
+  assert.match(adminFn, /if \(!authz\.ok\) \{\s*\n\s*return createForbiddenResponse\(authz\.error \|\| 'Not authorized', cors\);/);
+});
+
+test('P3: createForbiddenResponse is never passed an unused status argument', () => {
+  const auth = read('supabase/functions/_shared/auth.ts');
+  // The helper takes (message, corsHeaders) with defaults and hardcodes 403.
+  // The default value contains parentheses, so the parameter list is matched
+  // up to the closing brace of the declaration rather than with [^)]*.
+  const declaration = auth.slice(auth.indexOf('export function createForbiddenResponse'));
+  const signature = /^export function createForbiddenResponse\(([\s\S]*?)\): Response \{/.exec(declaration);
+  assert.ok(signature, 'createForbiddenResponse signature changed — re-verify callers');
+  // Count parameters at bracket depth 0: the types contain commas
+  // (Record<string, string>) and the defaults contain parentheses
+  // (createCorsHeaders()), so a naive split miscounts.
+  let depth = 0;
+  let topLevelCommas = 0;
+  for (const char of signature[1]) {
+    if ('(<[{'.includes(char)) depth += 1;
+    else if (')>]}'.includes(char)) depth -= 1;
+    else if (char === ',' && depth === 0) topLevelCommas += 1;
+  }
+  assert.equal(topLevelCommas, 1, `expected 2 parameters, found ${topLevelCommas + 1}`);
+  assert.match(declaration, /status: 403/);
+  assert.ok(!/status\s*[:?]/.test(signature[1]),
+    'createForbiddenResponse gained a status parameter — revisit the 401/403 split');
+  // Two arguments only; the helper hardcodes 403.
+  assert.doesNotMatch(adminFn, /createForbiddenResponse\([^)]*,[^)]*,[^)]*\)/);
+});
+
+test('P4: the Builder activity log exists and mirrors the Solicitor shape', () => {
+  assert.match(sql.activityLog, /CREATE TABLE IF NOT EXISTS public\.builder_portal_activity_log/);
+  for (const column of [
+    'actor_user_id', 'actor_type', 'action', 'entity_type', 'entity_id',
+    'organisation_id', 'builder_user_id', 'previous_state', 'new_state',
+    'reason', 'created_at',
+  ]) {
+    assert.ok(sql.activityLog.includes(column), `activity log is missing ${column}`);
+  }
+});
+
+test('P4: the audit writer raises rather than swallowing (NOCOPY-04)', () => {
+  const writer = sql.activityLog.slice(
+    sql.activityLog.indexOf('CREATE OR REPLACE FUNCTION public.builder_log_activity'),
+    sql.activityLog.indexOf('COMMENT ON FUNCTION public.builder_log_activity'));
+  assert.match(writer, /BUILDER_AUDIT_WRITE_FAILED/);
+  assert.ok(!/EXCEPTION\s+WHEN/i.test(writer),
+    'the audit writer swallows exceptions — it must fail closed');
+});
+
+test('P4: every access-control mutation has a guarded command', () => {
+  for (const command of [
+    'builder_admin_upsert_membership', 'builder_admin_revoke_membership',
+    'builder_admin_set_user_status', 'builder_admin_set_organisation_status',
+    'builder_admin_set_membership_permissions', 'builder_admin_revoke_user_sessions',
+  ]) {
+    assert.ok(sql.activityLog.includes(`CREATE OR REPLACE FUNCTION public.${command}`),
+      `guarded command ${command} is missing`);
+    assert.ok(adminFn.includes(`'${command}'`),
+      `the admin function does not route through ${command}`);
+  }
+});
+
+test('P4: each guarded command writes its audit inside its own transaction', () => {
+  const commands = sql.activityLog.split(/CREATE OR REPLACE FUNCTION public\.builder_admin_/).slice(1);
+  assert.equal(commands.length, 6, `expected 6 guarded commands, found ${commands.length}`);
+  for (const command of commands) {
+    const name = command.slice(0, command.indexOf('('));
+    assert.match(command, /PERFORM public\.builder_log_activity\(/,
+      `builder_admin_${name} does not write a trusted audit record`);
+    assert.ok(!/EXCEPTION\s+WHEN/i.test(command),
+      `builder_admin_${name} swallows an exception — the audit must be able to abort it`);
+  }
+});
+
+test('P4: the admin function no longer writes access-control changes directly', () => {
+  const code = stripJsComments(adminFn);
+  // Direct table writes to membership and status columns would bypass the
+  // guarded commands and therefore the trusted audit.
+  assert.ok(!/from\('builder_organisation_memberships'\)\s*\n?\s*\.(insert|update|delete)/.test(code),
+    'membership is still mutated directly, bypassing the guarded command');
+  assert.ok(!/from\('builder_membership_permissions'\)\s*\.(insert|delete)/.test(code),
+    'permission overrides are still mutated directly, bypassing the guarded command');
+});
+
+test('P4: the best-effort operational event is not the only record', () => {
+  assert.match(adminFn, /Best-effort operational event, for observability only/);
+  assert.match(adminFn, /record_portal_operational_event/);
+  // and the trusted path exists alongside it
+  assert.match(adminFn, /builder_admin_upsert_membership/);
+});
+
+test('P4: the audit trail is append-only', () => {
+  assert.match(sql.activityLog, /BUILDER_ACTIVITY_LOG_APPEND_ONLY/);
+  assert.match(sql.activityLog, /BEFORE UPDATE OR DELETE ON public\.builder_portal_activity_log/);
+});
+
+test('P4: the activity log is RLS-protected like every other builder table', () => {
+  assert.match(sql.activityLog, /ALTER TABLE public\.builder_portal_activity_log ENABLE ROW LEVEL SECURITY/);
+  assert.match(sql.activityLog, /REVOKE ALL ON public\.builder_portal_activity_log FROM anon, authenticated/);
+  assert.doesNotMatch(sql.activityLog, /USING \(true\)/);
+});
+
+test('the Edge Function type check is wired and scoped to builder-portal-admin', () => {
+  const pkg = JSON.parse(read('package.json'));
+  assert.ok(pkg.scripts['typecheck:builder-edge'], 'typecheck:builder-edge script is missing');
+  assert.match(pkg.scripts['typecheck:builder-edge'], /deno check/);
+  assert.match(pkg.scripts['typecheck:builder-edge'], /builder-portal-admin/);
+  // Scoped deliberately: the other 360 historical Edge Functions are untouched.
+  assert.ok(!pkg.scripts['typecheck:builder-edge'].includes('supabase/functions/*'),
+    'the type check was widened beyond builder-portal-admin');
+  assert.ok(existsSync(join(root, 'supabase/functions/builder-portal-admin/deno.json')));
+});
+
+test('the P2/P4 corrections are covered by the live database harness', () => {
+  const verify = read('scripts/builder-portal/local-db/verify-phase-1.mjs');
+  for (const condition of [
+    'a NULL actor grants a membership without 22P02',
+    'the literal string service_role is not a storable uuid actor',
+    'membership granted writes a trusted audit record',
+    'membership role change records previous and new state',
+    'permission override change is audited with before and after',
+    'membership revocation is audited with its reason',
+    'user suspension applies and is audited',
+    'organisation suspension applies and is audited',
+    'administrative session revocation is audited',
+    'a membership grant fails when the trusted audit write fails',
+    'and the membership was NOT created — the mutation rolled back with the audit',
+    'the audit trail is append-only: rows cannot be updated',
+  ]) {
+    assert.ok(verify.includes(condition), `live verification is missing: ${condition}`);
   }
 });
