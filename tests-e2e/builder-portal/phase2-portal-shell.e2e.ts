@@ -177,7 +177,8 @@ test.describe('Builder Portal shell', () => {
     await stubFunctions(page, sessionFixture('clear'));
     await page.goto(`${BASE}/builder`);
     const navigation = page.getByRole('navigation', { name: 'Builder portal' });
-    for (const label of ['Projects', 'Transactions', 'Pipeline', 'Messages', 'Tasks']) {
+    // Projects became available in Phase 3 and is asserted by that suite.
+    for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
       const control = navigation.getByRole('button', { name: label });
       await expect(control).toBeDisabled();
     }
@@ -198,7 +199,9 @@ test.describe('Builder Portal shell', () => {
 
   test('an unknown Builder path returns to the portal entry, not a blank screen', async ({ page }) => {
     await stubFunctions(page, sessionFixture('clear'));
-    await page.goto(`${BASE}/builder/projects/does-not-exist`);
+    // Deliberately a path with no route at all — /builder/projects/:projectId
+    // became a real route in Phase 3.
+    await page.goto(`${BASE}/builder/not-a-real-surface`);
     await expect(page).toHaveURL(/\/builder$/);
   });
 });

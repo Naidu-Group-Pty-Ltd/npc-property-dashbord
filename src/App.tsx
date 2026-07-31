@@ -192,6 +192,8 @@ import BuilderTerms from "@/pages/builder/BuilderTerms";
 import BuilderOnboarding from "@/pages/builder/BuilderOnboarding";
 import BuilderDashboard from "@/pages/builder/BuilderDashboard";
 import BuilderSettings from "@/pages/builder/BuilderSettings";
+import BuilderProjects from "@/pages/builder/BuilderProjects";
+import BuilderProjectDetail from "@/pages/builder/BuilderProjectDetail";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
@@ -420,6 +422,8 @@ const App = () => (
                                 <Route element={<BuilderPortalLayout />}>
                                   <Route index element={<BuilderDashboard />} />
                                   <Route path="dashboard" element={<BuilderDashboard />} />
+                                  <Route path="projects" element={<BuilderProjects />} />
+                                  <Route path="projects/:projectId" element={<BuilderProjectDetail />} />
                                   <Route path="settings" element={<BuilderSettings />} />
                                 </Route>
                               </Route>

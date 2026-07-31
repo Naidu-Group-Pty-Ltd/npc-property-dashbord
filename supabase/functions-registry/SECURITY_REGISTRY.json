@@ -370,9 +370,21 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
+    "builder-portal-projects": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
     "builder-portal-reset-password": {
       "verify_jwt": false,
       "exposure_class": "public-auth",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-projects-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
       "owner": "builder-portal-program",
       "reviewed": true
     },

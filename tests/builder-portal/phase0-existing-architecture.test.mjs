@@ -73,15 +73,15 @@ test('builder_portal_admin is registered and guarded (updated by Phase 1)', () =
   assert.match(app, /moduleKey="builder_portal_admin"/);
 });
 
-test('the Builder function family is exactly the identity surface (updated by Phase 2)', () => {
-  // Phase 0 asserted no builder-portal function existed; Phase 1 allowed one.
-  // Phase 2 adds the external authentication family. The list stays exhaustive
-  // so a business-domain function cannot appear without this test failing —
-  // that is the boundary Phase 0 was protecting.
+test('the Builder function family is exactly identity plus projects (updated by Phase 3)', () => {
+  // Phase 0 asserted no builder-portal function existed; Phase 1 allowed one;
+  // Phase 2 added the external authentication family; Phase 3 adds the project
+  // module. The list stays exhaustive so a later-phase function cannot appear
+  // without this test failing — that is the boundary Phase 0 was protecting.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
-  assert.deepEqual(functionDirs.filter((name) => name.startsWith('builder-portal-')).sort(), [
+  assert.deepEqual(functionDirs.filter((name) => /^builder-/.test(name)).sort(), [
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
@@ -89,15 +89,17 @@ test('the Builder function family is exactly the identity surface (updated by Ph
     'builder-portal-invite',
     'builder-portal-login',
     'builder-portal-logout',
+    'builder-portal-projects',
     'builder-portal-reset-password',
     'builder-portal-verify',
+    'builder-projects-admin',
   ]);
 });
 
-test('only Phase 1 identity tables exist; the Phase 2 domain is still greenfield', () => {
-  // Phase 0 asserted the whole Builder domain was absent. Phase 1 adds identity
-  // and access only, so the assertion is split: identity must now be present,
-  // and the Phase 2 business domain must still be absent.
+test('the Builder schema stops at identity, governance and projects (updated by Phase 3)', () => {
+  // Phase 0 asserted the whole Builder domain was absent; Phase 1 added identity;
+  // Phase 3 adds the project module. What is still enforced is the ceiling: no
+  // inventory, reservation, transaction or construction table may exist yet.
   const created = new Set(
     [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
       .map((match) => match[1].toLowerCase()),
@@ -106,19 +108,20 @@ test('only Phase 1 identity tables exist; the Phase 2 domain is still greenfield
     'builder_organisations', 'builder_portal_users', 'builder_organisation_memberships',
     'builder_portal_sessions', 'builder_permission_keys',
     'builder_role_default_permissions', 'builder_membership_permissions',
+    'builder_developments', 'builder_projects', 'builder_project_parties',
+    'builder_project_access',
   ]) {
-    assert.ok(created.has(table), `Phase 1 identity table ${table} is missing`);
+    assert.ok(created.has(table), `expected Builder table missing: ${table}`);
   }
   for (const table of [
-    'builder_developments', 'builder_projects', 'builder_project_stages',
-    'builder_project_parties', 'property_units', 'property_reservations',
-    'construction_cases', 'builder_transactions', 'builder_variations',
-    'builder_progress_claims', 'builder_inspections', 'builder_defects',
-    'builder_case_read_model',
+    'builder_stages', 'builder_lots', 'builder_units', 'builder_inventory',
+    'builder_reservations', 'builder_transactions', 'builder_variations',
+    'builder_progress_claims', 'builder_inspections', 'builder_defects', 'builder_handovers',
   ]) {
-    assert.ok(!created.has(table), `Phase 2 domain table ${table} exists before Phase 2`);
+    assert.ok(!created.has(table), `later-phase Builder table created too early: ${table}`);
   }
 });
+
 
 test('the Finance-owned builder-named tables remain exactly two (updated by Phase 1)', () => {
   // The trap this guards: builder_invoices and build_progress_payments are
