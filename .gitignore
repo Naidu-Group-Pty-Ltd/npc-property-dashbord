@@ -47,3 +47,7 @@ playwright-report/
 # Python bytecode from the verification service
 __pycache__/
 *.py[cod]
+
+# Deno lockfile written when the CLI is invoked at the repo root.
+# The Builder Edge Function type check keeps its own scoped lock next to its config.
+/deno.lock

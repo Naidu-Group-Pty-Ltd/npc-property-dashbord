@@ -1,7 +1,7 @@
 # Builder / Developer Portal programme
 
 **Baseline:** `a2ec188faa806ff97cb272f7f5a8bcf56b984cb1`
-**Current phase:** 0 — complete. Phase 1 has not started.
+**Current phase:** 1 — complete. Phase 2 has not started.
 
 The Builder / Developer Portal is the fourth external portal alongside Client,
 Finance and Solicitor. The Solicitor Portal is the architectural reference and is
@@ -31,6 +31,7 @@ only production-adjacent change is two additive `package.json` script entries.
 | 09 | [Migration risks](./09-migration-risks.md) | MIG-01 … MIG-10 with mitigations |
 | 10 | [Security risks](./10-security-risks.md) | SEC-01 … SEC-14 with controls |
 | 11 | [Phase 0 report](./11-phase-0-report.md) | Findings, decisions, evidence, test results, Phase 1 recommendation |
+| 12 | [Phase 1 report](./12-phase-1-report.md) | Identity and access foundation: schema, permissions, sessions, generalisations, test results, Phase 2 recommendation |
 
 ## Architecture documents
 
@@ -47,12 +48,22 @@ only production-adjacent change is two additive `package.json` script entries.
 | [018](../architecture/adr/018-builder-portal-separation.md) | The Builder Portal is a separate external portal with its own login |
 | [019](../architecture/adr/019-builder-domain-model.md) | Builder domain records are separate from `transaction_cases` |
 | [020](../architecture/adr/020-shared-portal-primitive-generalisation.md) | Legal-coupled shared primitives are generalised, not duplicated |
+| [021](../architecture/adr/021-portal-terms-multi-portal-ownership.md) | Portal terms acceptances use a discriminated owner, not a generic user id |
 
 ## Verification
 
 ```bash
-npm run test:builder-portal        # 80 characterisation tests, no dependencies
-npm run builder:phase-0-inspect    # non-behavioural check + findings re-derivation
+npm run test:builder-portal        # 166 contract tests, no dependencies
+npm run builder:phase-0-inspect    # phase-aware invariants + findings re-derivation
+```
+
+Against a local PostgreSQL cluster (see `scripts/builder-portal/local-db/`):
+
+```bash
+npm run builder:db:reset           # clean full-corpus migration replay
+npm run builder:db:verify          # 135 behavioural assertions for Phase 1
+npm run builder:types:check        # Supabase types are current
+npm run typecheck:builder-edge     # Deno type check for builder-portal-admin
 ```
 
 Against a database, with a read-only role:

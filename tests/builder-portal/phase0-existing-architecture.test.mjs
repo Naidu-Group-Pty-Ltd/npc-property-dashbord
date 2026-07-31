@@ -50,47 +50,63 @@ test('no /builder route exists in the application route tree', () => {
   assert.ok(!/BuilderPortalAuthProvider/.test(app), 'a Builder auth provider is already mounted');
 });
 
-test('no builder_portal_admin module key is referenced anywhere', () => {
-  for (const path of srcFiles) {
-    assert.ok(
-      !readFileSync(path, 'utf8').includes('builder_portal_admin'),
-      `builder_portal_admin already referenced in ${path.slice(root.length)}`,
-    );
-  }
-  assert.ok(!migrations.includes('builder_portal_admin'), 'builder_portal_admin already in migrations');
+test('builder_portal_admin is registered and guarded (updated by Phase 1)', () => {
+  // Phase 0 asserted this key did not exist. Phase 1 introduced it, so the
+  // assertion is inverted here rather than deleted: the key must now be
+  // registered in migrations AND enforced at the route, never one without the
+  // other. A route guard with no dashboard_modules row denies every
+  // non-superadmin user silently (Phase 0 finding NOCOPY-03).
+  assert.match(migrations, /INSERT INTO public\.dashboard_modules[\s\S]*?'builder_portal_admin'/);
+  assert.match(app, /moduleKey="builder_portal_admin"/);
 });
 
-test('no builder-portal Edge Function family exists', () => {
+test('only the internal Builder administration function exists (updated by Phase 1)', () => {
+  // Phase 0 asserted no builder-portal function existed. Phase 1 adds exactly
+  // one, and it serves the INTERNAL surface. The external portal family
+  // (login, verify, logout, invite) belongs to a later phase.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
-  assert.deepEqual(functionDirs.filter((name) => name.startsWith('builder-portal-')), []);
+  assert.deepEqual(functionDirs.filter((name) => name.startsWith('builder-portal-')).sort(),
+    ['builder-portal-admin']);
 });
 
-test('no Builder domain table exists in the migration corpus', () => {
+test('only Phase 1 identity tables exist; the Phase 2 domain is still greenfield', () => {
+  // Phase 0 asserted the whole Builder domain was absent. Phase 1 adds identity
+  // and access only, so the assertion is split: identity must now be present,
+  // and the Phase 2 business domain must still be absent.
   const created = new Set(
     [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
       .map((match) => match[1].toLowerCase()),
   );
   for (const table of [
-    'builder_organisations', 'builder_organizations', 'builder_portal_users',
-    'builder_portal_sessions', 'builder_developments', 'builder_projects',
-    'builder_project_stages', 'builder_project_parties', 'builder_user_access',
-    'property_units', 'property_reservations', 'construction_cases',
-    'builder_transactions', 'builder_variations', 'builder_progress_claims',
-    'builder_inspections', 'builder_defects', 'builder_case_read_model',
+    'builder_organisations', 'builder_portal_users', 'builder_organisation_memberships',
+    'builder_portal_sessions', 'builder_permission_keys',
+    'builder_role_default_permissions', 'builder_membership_permissions',
   ]) {
-    assert.ok(!created.has(table), `Builder domain table ${table} already exists`);
+    assert.ok(created.has(table), `Phase 1 identity table ${table} is missing`);
+  }
+  for (const table of [
+    'builder_developments', 'builder_projects', 'builder_project_stages',
+    'builder_project_parties', 'property_units', 'property_reservations',
+    'construction_cases', 'builder_transactions', 'builder_variations',
+    'builder_progress_claims', 'builder_inspections', 'builder_defects',
+    'builder_case_read_model',
+  ]) {
+    assert.ok(!created.has(table), `Phase 2 domain table ${table} exists before Phase 2`);
   }
 });
 
-test('the only builder-named tables are the Finance-owned deal records', () => {
+test('the Finance-owned builder-named tables remain exactly two (updated by Phase 1)', () => {
+  // The trap this guards: builder_invoices and build_progress_payments are
+  // Finance-owned despite their names. Phase 1 adds its own builder_* tables, so
+  // the set is enumerated explicitly and the Finance pair must stay unchanged.
   const created = new Set(
     [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
       .map((match) => match[1].toLowerCase()),
   );
-  const builderNamed = [...created].filter((name) => name.includes('build')).sort();
-  assert.deepEqual(builderNamed, ['build_progress_payments', 'builder_invoices']);
+  const financeOwned = [...created].filter((name) => name.startsWith('build_') || name === 'builder_invoices').sort();
+  assert.deepEqual(financeOwned, ['build_progress_payments', 'builder_invoices']);
 });
 
 test('the two builder-named tables are keyed on client_deals, not on any builder identity', () => {
@@ -202,14 +218,14 @@ test('no navigation surface links the external Solicitor Portal as an internal m
   }
 });
 
-test('KNOWN GAP: solicitor_portal_admin is not registered in dashboard_modules', () => {
-  // Finding NOCOPY-03 / MIG-10. This test documents the gap rather than hiding it.
-  // If it starts failing, the gap has been repaired and this test should be
-  // inverted in the same PR that repairs it.
-  assert.ok(
-    !/dashboard_modules[\s\S]{0,4000}?'solicitor_portal_admin'/.test(migrations),
-    'solicitor_portal_admin is now registered in dashboard_modules — invert this test',
-  );
+test('REPAIRED: solicitor_portal_admin is registered in dashboard_modules', () => {
+  // Phase 0 recorded this as an open gap (NOCOPY-03 / MIG-10): the key was used
+  // by ModuleGuard, three navigation surfaces and three Edge Functions, but no
+  // migration created it. Production had the row; the migration corpus did not,
+  // so a fresh environment would have denied every non-superadmin user.
+  // Phase 1 repaired it with an idempotent insert. The test is inverted here,
+  // in the PR that performed the repair, exactly as Phase 0 required.
+  assert.match(migrations, /dashboard_modules[\s\S]{0,4000}?'solicitor_portal_admin'/);
   assert.match(migrations, /'finance_portal_admin'/, 'finance_portal_admin registration disappeared');
 });
 

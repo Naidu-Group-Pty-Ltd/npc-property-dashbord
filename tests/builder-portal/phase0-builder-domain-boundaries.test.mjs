@@ -315,20 +315,34 @@ const builderFunctionDirs = readdirSync(functionsDir, { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && entry.name.startsWith('builder-portal-'))
   .map((entry) => entry.name);
 
+/**
+ * Strip comments before asserting a table is never touched. Builder functions
+ * document the Finance-owned boundary in prose, so an un-stripped search matches
+ * the documentation and reports a violation that does not exist.
+ */
+const stripJsComments = (body) =>
+  body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+const builderFunctionSources = builderFunctionDirs.flatMap((dir) =>
+  readdirSync(join(functionsDir, dir), { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.ts$/.test(entry.name))
+    .map((entry) => ({ dir, code: stripJsComments(readFileSync(join(functionsDir, dir, entry.name), 'utf8')) })));
+
 test('SEC-06: no builder-portal function reads the commission-bearing deal tables', () => {
-  // Vacuously true at baseline (no such functions exist). The assertion is
-  // written so it becomes a real gate the moment the family is created.
-  for (const dir of builderFunctionDirs) {
-    const files = readdirSync(join(functionsDir, dir), { withFileTypes: true })
-      .filter((entry) => entry.isFile())
-      .map((entry) => join(functionsDir, dir, entry.name));
-    for (const file of files) {
-      const source = readFileSync(file, 'utf8');
-      for (const table of ['builder_invoices', 'build_progress_payments']) {
-        assert.ok(!source.includes(table), `${dir} reads the Finance-owned table ${table}`);
-      }
+  // Became a live gate in Phase 1, when builder-portal-admin was created.
+  assert.ok(builderFunctionSources.length > 0,
+    'no builder-portal function sources found — this gate must not be vacuous once the family exists');
+  for (const { dir, code } of builderFunctionSources) {
+    for (const table of ['builder_invoices', 'build_progress_payments']) {
+      assert.ok(!code.includes(table), `${dir} references the Finance-owned table ${table} in code`);
+      assert.ok(!new RegExp(`from\\(['"\`]${table}`).test(code), `${dir} queries ${table}`);
     }
   }
+});
+
+test('SEC-06: the Finance-owned boundary stays documented in the code that must honour it', () => {
+  const adminFn = readFileSync(join(functionsDir, 'builder-portal-admin/index.ts'), 'utf8');
+  assert.match(adminFn, /builder_invoices` and `build_progress_payments` are Finance-owned/);
 });
 
 test('SEC-05: no builder-portal function touches a restricted finance, AML or legal table', () => {
@@ -337,7 +351,7 @@ test('SEC-05: no builder-portal function touches a restricted finance, AML or le
       .filter((entry) => entry.isFile())
       .map((entry) => join(functionsDir, dir, entry.name));
     for (const file of files) {
-      const source = readFileSync(file, 'utf8');
+      const source = stripJsComments(readFileSync(file, 'utf8'));
       for (const table of [
         'client_income', 'client_expenses', 'client_assets', 'client_liabilities',
         'client_employment', 'borrowing_capacity_assessments', 'commission_ledger',
