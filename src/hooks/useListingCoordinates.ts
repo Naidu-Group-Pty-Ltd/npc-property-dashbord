@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import {
+  addressFingerprint,
+  readCachedPoint,
+  writeCachedPoint,
+} from '@/lib/listingCoordinateCache';
 import type { PropertyListing } from '@/lib/airtable';
 
 export interface ResolvedPoint {
@@ -32,23 +37,12 @@ const BATCH_SIZE = 150;
 const MAX_REQUESTS_PER_PASS = 8;
 /** Give up on a listing the server has fully processed but could not place. */
 const MAX_ATTEMPTS = 2;
-const CACHE_LIMIT = 5000;
 const RETRY_BASE_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
 
-/**
- * Coordinates survive unmount, so flipping between table and map view (or
- * re-opening the page) does not re-request everything from scratch.
- */
-const coordinateCache = new Map<string, ResolvedPoint>();
+const fingerprintOf = (row: ListingPayload): string =>
+  addressFingerprint([row.address, row.suburb, row.state, row.postcode]);
 
-function rememberPoint(id: string, point: ResolvedPoint): void {
-  if (coordinateCache.size >= CACHE_LIMIT) {
-    const oldest = coordinateCache.keys().next();
-    if (!oldest.done) coordinateCache.delete(oldest.value);
-  }
-  coordinateCache.set(id, point);
-}
 
 function numeric(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
