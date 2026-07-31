@@ -12,6 +12,8 @@
     "lint": "eslint .",
     "audit:style": "node scripts/audit-style-tokens.cjs",
     "audit:style:report": "node scripts/audit-style-tokens.cjs --report",
+    "templates:finance-portal": "python3 scripts/finance-portal-templates/build_all.py",
+    "templates:finance-portal:verify": "python3 scripts/finance-portal-templates/verify_templates.py",
     "preview": "vite preview",
     "test": "vitest run",
     "test:market-source-reconciliation": "node scripts/validate-market-source-reconciliation.mjs",
