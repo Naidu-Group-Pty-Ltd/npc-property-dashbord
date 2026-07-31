@@ -177,6 +177,7 @@ import SolicitorMatterDetail from "@/pages/solicitor/SolicitorMatterDetail";
 import SolicitorTerms from "@/pages/solicitor/SolicitorTerms";
 import SolicitorOnboarding from "@/pages/solicitor/SolicitorOnboarding";
 import SolicitorSecurity from "@/pages/solicitor/SolicitorSecurity";
+import SolicitorSettings from "@/pages/solicitor/SolicitorSettings";
 import SolicitorWorkspacePage from "@/pages/solicitor/SolicitorWorkspacePage";
 import { BuilderPortalAuthProvider } from "@/hooks/useBuilderPortalAuth";
 import { BuilderPortalProtectedRoute } from "@/components/builder-portal/BuilderPortalProtectedRoute";
@@ -388,7 +389,7 @@ const App = () => (
                                   <Route path="messages" element={<SolicitorWorkspacePage kind="messages" />} />
                                   <Route path="tasks" element={<SolicitorWorkspacePage kind="tasks" />} />
                                   <Route path="notifications" element={<SolicitorWorkspacePage kind="notifications" />} />
-                                  <Route path="settings" element={<SolicitorWorkspacePage kind="settings" />} />
+                                  <Route path="settings" element={<SolicitorSettings />} />
                                   <Route path="settings/security" element={<SolicitorSecurity />} />
                                 </Route>
                               </Route>

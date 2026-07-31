@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { smartCapitalize } from '@/lib/nameUtils';
 import { useSolicitorPortalAuth } from '@/hooks/useSolicitorPortalAuth';
 import { invokeSolicitorFunction } from '@/lib/solicitorPortal';
 import { SolicitorPortalShell } from '@/components/solicitor-portal/SolicitorPortalShell';
@@ -54,8 +55,11 @@ export default function SolicitorDashboard() {
 
   if (authLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="flex items-center justify-center py-16">
+        <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/60 bg-card/70 px-6 py-7 shadow-lg shadow-primary/5">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden />
+          <p className="text-sm text-muted-foreground">Loading your dashboard…</p>
+        </div>
       </div>
     );
   }
@@ -68,7 +72,8 @@ export default function SolicitorDashboard() {
 
   return (
     <SolicitorPortalShell
-      title={`Welcome back, ${user?.name ?? ''}`.trim()}
+      eyebrow="Welcome back"
+      title={smartCapitalize(user?.name) || 'Solicitor'}
       description="Your conveyancing workload across every NPC client shared with your practice."
       actions={
         <Button asChild size="sm">
@@ -80,13 +85,14 @@ export default function SolicitorDashboard() {
     >
       <div className="grid gap-3 sm:grid-cols-3">
         {tiles.map(({ label, value, icon: Icon }) => (
-          <Card key={label}>
+          <Card key={label} className="solicitor-portal-stat-card">
+            <div className="absolute inset-x-0 top-0 h-[2px] bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
             <CardContent className="flex items-center gap-3 pt-6">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/25 bg-primary/10">
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-primary/25 bg-primary/10">
                 <Icon className="h-5 w-5 text-primary" aria-hidden />
               </div>
               <div>
-                <p className="text-2xl font-semibold text-foreground">{value}</p>
+                <p className="text-2xl font-semibold tabular-nums text-foreground">{value}</p>
                 <p className="text-xs text-muted-foreground">{label}</p>
               </div>
             </CardContent>
