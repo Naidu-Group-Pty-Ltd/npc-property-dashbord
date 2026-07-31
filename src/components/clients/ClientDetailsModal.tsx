@@ -154,7 +154,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
     }
   }, [client.id, viewAsClientBusy]);
 
-  const tabOrder = ['overview', 'personal', 'properties', 'deals', 'employment', 'financials', 'reports', 'sent-reports', 'report-requests', 'emails', 'conversations', 'appointments', 'notes', 'reminders', 'vownet-forms', 'files', 'activity', 'insights'];
+  const tabOrder = ['overview', 'personal', 'properties', 'deals', 'employment', 'financials', 'reports', 'sent-reports', 'report-requests', 'emails', 'conversations', 'appointments', 'notes', 'reminders', 'formara-forms', 'files', 'activity', 'insights'];
 
   const tabSwipeHandlers = useSwipeGesture(
     useCallback(() => {
@@ -412,7 +412,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
             </TabsTrigger>
             <TabsTrigger value="notes" className="min-h-9 px-3 py-1.5 text-sm font-medium">Notes</TabsTrigger>
             <TabsTrigger value="reminders" className="min-h-9 px-3 py-1.5 text-sm font-medium">Reminders</TabsTrigger>
-            <TabsTrigger value="vownet-forms" className="min-h-9 px-3 py-1.5 text-sm font-medium">Client Forms</TabsTrigger>
+            <TabsTrigger value="formara-forms" className="min-h-9 px-3 py-1.5 text-sm font-medium">Client Forms</TabsTrigger>
             <TabsTrigger value="files" className="min-h-9 px-3 py-1.5 text-sm font-medium">Files</TabsTrigger>
             <TabsTrigger value="activity" className="min-h-9 px-3 py-1.5 text-sm font-medium">Activity / Documents</TabsTrigger>
             <TabsTrigger value="borrowing" className="min-h-9 px-3 py-1.5 text-sm font-medium">Borrowing Capacity</TabsTrigger>
@@ -916,7 +916,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
               <ClientReminders clientId={client.id} followUpDate={fullClient?.follow_up_date} />
             </TabsContent>
 
-            <TabsContent value="vownet-forms" className={cn("mt-4", !isMobile && "max-w-3xl mx-auto w-full")}>
+            <TabsContent value="formara-forms" className={cn("mt-4", !isMobile && "max-w-3xl mx-auto w-full")}>
               <ClientFormaraForms 
                 clientId={client.id}
                 clientName={`${client.primary_first_name} ${client.primary_surname}`}

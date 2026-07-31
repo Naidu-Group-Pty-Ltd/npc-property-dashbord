@@ -229,7 +229,7 @@
       "outlook-manage-subscription/index.ts",
       "parse-property-pdf/index.ts",
       "parse-template-document/index.ts",
-      "parse-vownet-pdf/index.ts",
+      "parse-formara-pdf/index.ts",
       "pdf-import-client-report/index.ts",
       "pdf-import-diagnostics/index.ts",
       "pdf-import-monitoring/index.ts",

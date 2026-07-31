@@ -124,10 +124,10 @@ export const AGENT_SURFACES = {
     slots: [{ key: 'pdf_property_extraction', slotLabel: 'Primary' }],
   },
   pdfFormaraExtraction: {
-    id: 'pdf_vownet_extraction',
+    id: 'pdf_formara_extraction',
     label: 'Formara PDF Extraction',
     category: 'extraction',
-    slots: [{ key: 'pdf_vownet_extraction', slotLabel: 'Primary' }],
+    slots: [{ key: 'pdf_formara_extraction', slotLabel: 'Primary' }],
   },
   transcriptCleaning: {
     id: 'transcript_cleaning',

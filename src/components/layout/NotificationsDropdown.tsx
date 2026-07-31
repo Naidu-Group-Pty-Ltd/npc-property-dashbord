@@ -71,9 +71,9 @@ export function NotificationsDropdown() {
         return <UserCheck className="h-4 w-4 text-info-foreground0" />;
       case 'portfolio_updated':
         return <Wallet className="h-4 w-4 text-accent-foreground0" />;
-      case 'vownet_form_uploaded':
+      case 'formara_form_uploaded':
         return <FileSpreadsheet className="h-4 w-4 text-success-foreground0" />;
-      case 'vownet_form_exported':
+      case 'formara_form_exported':
         return <Download className="h-4 w-4 text-info-foreground0" />;
       case 'finance_agent_notified':
         return <Send className="h-4 w-4 text-primary" />;

@@ -3,7 +3,8 @@ import { invokeSecureFunction } from "@/lib/secureInvoke";
 type StorageBucket = 
   | 'client-files'
   | 'client-documents' 
-  | 'vownet-forms'
+  | 'formara-forms'
+  | 'vownet-forms' // legacy: read-only access to pre-rename objects
   | 'investment-reports'
   | 'quantitative-reports'
   | 'report-templates'

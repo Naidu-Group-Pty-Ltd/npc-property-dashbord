@@ -22,7 +22,7 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
   previewOnlyAdapter('comparison', 'Comparison Report'),
-  previewOnlyAdapter('vownet', 'Formara / Client Form'),
+  previewOnlyAdapter('formara', 'Formara / Client Form'),
 ];
 
 const ALIASES: Record<string, string> = {

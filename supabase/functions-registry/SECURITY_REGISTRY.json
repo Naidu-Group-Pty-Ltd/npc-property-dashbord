@@ -1801,7 +1801,7 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
-    "parse-vownet-pdf": {
+    "parse-formara-pdf": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",

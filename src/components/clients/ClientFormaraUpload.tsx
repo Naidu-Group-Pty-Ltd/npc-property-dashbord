@@ -271,9 +271,9 @@ export function ClientFormaraUpload({
               file_path: uploadResult.path || filePath,
               file_size: uploadedFile.size,
               file_type: uploadedFile.type,
-              category: 'vownet',
+              category: 'formara',
               document_type: 'formara_form',
-              is_vownet_form: true,
+              is_formara_form: true,
               uploaded_by: user?.id
             }
           });
@@ -302,7 +302,7 @@ export function ClientFormaraUpload({
       
       // Send notifications
       addNotification({
-        type: 'vownet_form_uploaded',
+        type: 'formara_form_uploaded',
         title: 'Client Detail Form Uploaded',
         message: `Client detail form uploaded for ${clientName}`,
         entityId: clientId
