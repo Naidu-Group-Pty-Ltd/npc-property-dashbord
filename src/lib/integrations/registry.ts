@@ -18,6 +18,12 @@ export type IntegrationCategoryId =
   | 'communications'
   | 'documents'
   | 'automation'
+  | 'payments'
+  | 'compliance'
+  | 'analytics'
+  | 'productivity'
+  | 'storage'
+  | 'media'
   | 'infrastructure';
 
 export interface IntegrationCategory {
