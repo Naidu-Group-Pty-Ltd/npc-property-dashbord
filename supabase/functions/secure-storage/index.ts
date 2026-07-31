@@ -41,7 +41,7 @@ const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024; // 25 MB binary
 const BUCKET_POLICIES: Record<string, BucketPolicy> = {
   'client-files':         { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
   'client-documents':     { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
-  'vownet-forms':         { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
+  'formara-forms':         { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
   // investment-reports is PRIVATE (STOR-005). Report PDFs and hero/visual
   // assets are served via short-lived signed URLs (report pipeline + hero
   // functions sign from storage_path); publicUrl is no longer offered.

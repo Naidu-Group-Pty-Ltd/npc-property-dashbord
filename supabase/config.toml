@@ -479,7 +479,7 @@ verify_jwt = false
 verify_jwt = false
 request_timeout = 300
 
-[functions.parse-vownet-pdf]
+[functions.parse-formara-pdf]
 verify_jwt = false
 request_timeout = 120
 

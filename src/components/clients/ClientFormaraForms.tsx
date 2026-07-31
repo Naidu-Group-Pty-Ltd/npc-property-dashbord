@@ -56,13 +56,13 @@ interface ImportSummary {
 
 /**
  * Normalize legacy file_path values. Some older records stored the entire
- * upload-response JSON (e.g. '{"success":true,"path":"vownet-forms/...","fullPath":"client-files/vownet-forms/..."}')
+ * upload-response JSON (e.g. '{"success":true,"path":"formara-forms/...","fullPath":"client-files/formara-forms/..."}')
  * as the file_path. Returns { bucket, key } for the storage call.
  *
- * The actual files live in the "client-files" bucket under the "vownet-forms/" prefix
- * (legacy upload behaviour), even though new uploads target the "vownet-forms" bucket.
+ * The actual files live in the "client-files" bucket under the "formara-forms/" prefix
+ * (legacy upload behaviour), even though new uploads target the "formara-forms" bucket.
  */
-type FormaraStorageBucket = 'vownet-forms' | 'client-files' | 'client-documents';
+type FormaraStorageBucket = 'formara-forms' | 'client-files' | 'client-documents';
 
 function resolveStorageLocations(raw: string, storageBucket?: string | null): Array<{ bucket: FormaraStorageBucket; key: string }> {
   if (!raw) return [];
@@ -83,16 +83,16 @@ function resolveStorageLocations(raw: string, storageBucket?: string | null): Ar
       if (fullPath.startsWith('client-files/')) {
         add('client-files', fullPath.replace(/^client-files\//, ''));
       }
-      if (fullPath.startsWith('vownet-forms/')) {
-        // fullPath prefixed with bucket "vownet-forms" but files actually live in client-files
-        add('vownet-forms', fullPath.replace(/^vownet-forms\//, ''));
+      if (fullPath.startsWith('formara-forms/')) {
+        // fullPath prefixed with bucket "formara-forms" but files actually live in client-files
+        add('formara-forms', fullPath.replace(/^formara-forms\//, ''));
         add('client-files', fullPath);
       }
       if (path) {
-        // Path from upload response is typically "vownet-forms/<clientId>/<file>" —
+        // Path from upload response is typically "formara-forms/<clientId>/<file>" —
         // the object physically lives in the client-files bucket with that full key.
-        add('vownet-forms', path.replace(/^vownet-forms\//, ''));
-        add('client-files', path.startsWith('vownet-forms/') ? path : `vownet-forms/${path}`);
+        add('formara-forms', path.replace(/^formara-forms\//, ''));
+        add('client-files', path.startsWith('formara-forms/') ? path : `formara-forms/${path}`);
       }
     } catch {
       /* fall through */
@@ -110,11 +110,11 @@ function resolveStorageLocations(raw: string, storageBucket?: string | null): Ar
     // Plain storage key; continue below.
   }
   trimmed = trimmed.replace(/^\/+/, '');
-  const configuredBucket = storageBucket === 'vownet-forms' || storageBucket === 'client-files' || storageBucket === 'client-documents'
+  const configuredBucket = storageBucket === 'formara-forms' || storageBucket === 'client-files' || storageBucket === 'client-documents'
     ? storageBucket : null;
   if (configuredBucket) add(configuredBucket, trimmed.replace(new RegExp(`^${configuredBucket}/`), ''));
-  if (trimmed.startsWith('vownet-forms/')) {
-    add('vownet-forms', trimmed.replace(/^vownet-forms\//, ''));
+  if (trimmed.startsWith('formara-forms/')) {
+    add('formara-forms', trimmed.replace(/^formara-forms\//, ''));
     add('client-files', trimmed);
   } else {
     add('client-documents', trimmed.replace(/^client-documents\//, ''));
@@ -134,7 +134,7 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
 
   // Fetch Formara forms for this client
   const { data: formaraForms = [], isLoading } = useQuery({
-    queryKey: ['client-vownet-forms', clientId],
+    queryKey: ['client-formara-forms', clientId],
     queryFn: async () => {
       const { data, error } = await invokeSecureFunction('get-client-data', {
         clientId,
@@ -144,7 +144,7 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
       if (error) throw new Error(error.message);
       if (!data?.success) throw new Error(data?.error || 'Failed to fetch formara forms');
       
-      return (data.files || []).filter((f: any) => f.is_vownet_form);
+      return (data.files || []).filter((f: any) => f.is_formara_form);
     }
   });
 
@@ -444,7 +444,7 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
 
       // 8. Store the file in storage via secure Edge Function
       const filePath = `${clientId}/${Date.now()}_${file.name}`;
-      const uploadResult = await secureStorageUpload('vownet-forms', filePath, file, {
+      const uploadResult = await secureStorageUpload('formara-forms', filePath, file, {
         contentType: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
       });
 
@@ -457,12 +457,12 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
             client_id: clientId,
             file_name: file.name,
             file_path: uploadResult.path || filePath,
-            storage_bucket: 'vownet-forms',
+            storage_bucket: 'formara-forms',
             file_size: file.size,
             file_type: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            category: 'vownet',
+            category: 'formara',
             document_type: 'formara_form',
-            is_vownet_form: true,
+            is_formara_form: true,
             uploaded_by: user?.id
           }
         });
@@ -473,7 +473,7 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
       setUploadStatus('complete');
 
       // Invalidate all related queries
-      queryClient.invalidateQueries({ queryKey: ['client-vownet-forms', clientId] });
+      queryClient.invalidateQueries({ queryKey: ['client-formara-forms', clientId] });
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       queryClient.invalidateQueries({ queryKey: ['client-details', clientId] });
       queryClient.invalidateQueries({ queryKey: ['client-properties', clientId] });
@@ -485,7 +485,7 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
       toast.success('Client detail form imported successfully');
       
       addNotification({
-        type: 'vownet_form_uploaded',
+        type: 'formara_form_uploaded',
         title: 'Client Detail Form Imported',
         message: `Client data imported for ${clientName}`,
         entityId: clientId
@@ -545,7 +545,7 @@ export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsP
     },
     onSuccess: () => {
       // Invalidate all related queries to refresh UI
-      queryClient.invalidateQueries({ queryKey: ['client-vownet-forms', clientId] });
+      queryClient.invalidateQueries({ queryKey: ['client-formara-forms', clientId] });
       queryClient.invalidateQueries({ queryKey: ['clients'] });
       queryClient.invalidateQueries({ queryKey: ['client-details', clientId] });
       queryClient.invalidateQueries({ queryKey: ['client-properties', clientId] });

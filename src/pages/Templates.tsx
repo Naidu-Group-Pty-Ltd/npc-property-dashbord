@@ -84,7 +84,7 @@ const REPORT_TYPE_LABELS: Record<string, string> = {
   postcode: 'Postcode Analysis',
   statewide: 'Statewide Analysis',
   comparison: 'Comparison Report',
-  vownet: 'Formara / Client Form',
+  formara: 'Formara / Client Form',
 };
 
 const REPORT_FORMATS: ReportFormatConfig[] = [

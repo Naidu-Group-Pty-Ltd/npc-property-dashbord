@@ -11,7 +11,7 @@ describe('report template adapter registry', () => {
   });
 
   it('marks future report types as preview-only until adapters are implemented', () => {
-    const previewOnlyTypes = ['portfolio', 'cashflow', 'borrowing_capacity', 'qa', 'suburb', 'postcode', 'statewide', 'comparison', 'vownet'];
+    const previewOnlyTypes = ['portfolio', 'cashflow', 'borrowing_capacity', 'qa', 'suburb', 'postcode', 'statewide', 'comparison', 'formara'];
 
     expect(listAdapters().map((adapter) => adapter.reportType)).toEqual(expect.arrayContaining(['investment', ...previewOnlyTypes]));
     for (const reportType of previewOnlyTypes) {

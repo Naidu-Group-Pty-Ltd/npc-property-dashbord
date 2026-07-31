@@ -64,7 +64,7 @@ Run on `eacd2418` after `npm ci` (which **succeeded** — the lockfile is in syn
 
 ### Serverless (Supabase Edge Functions, Deno) — all present
 Core PDF-import lane: `pdf-parse-dispatch`, `pdf-parse-callback`, `pdf-parse-chunk-callback`, `pdf-parse-recover-stuck-jobs`, `template-import-pdf`, `pdf-import-diagnostics`, `template-design-agent`.
-Adjacent: `template-import-finalize-worker`, `pdf-import-client-report`, `pdf-import-monitoring`, `pdf-import-retention`, `pdf-import-ssim-score`, `render-source`, `render-template-pdf`, `template-ai-author`, `parse-property-pdf`, `parse-template-document`, `parse-vownet-pdf`.
+Adjacent: `template-import-finalize-worker`, `pdf-import-client-report`, `pdf-import-monitoring`, `pdf-import-retention`, `pdf-import-ssim-score`, `render-source`, `render-template-pdf`, `template-ai-author`, `parse-property-pdf`, `parse-template-document`, `parse-formara-pdf`.
 
 ### Call graph
 ```

@@ -3,7 +3,7 @@ import { invokeSecureFunction } from "@/lib/secureInvoke";
 type StorageBucket = 
   | 'client-files'
   | 'client-documents' 
-  | 'vownet-forms'
+  | 'formara-forms'
   | 'investment-reports'
   | 'quantitative-reports'
   | 'report-templates'

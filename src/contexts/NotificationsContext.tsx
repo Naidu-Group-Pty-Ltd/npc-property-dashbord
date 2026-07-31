@@ -31,8 +31,8 @@ export type NotificationType =
   | 'client_created'
   | 'client_updated'
   | 'portfolio_updated'
-  | 'vownet_form_uploaded'
-  | 'vownet_form_exported'
+  | 'formara_form_uploaded'
+  | 'formara_form_exported'
   | 'finance_agent_notified'
   | 'client_file_shared'
   // Phase 4 additions - System & User
@@ -298,8 +298,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       case 'client_created':
       case 'client_updated':
       case 'portfolio_updated':
-      case 'vownet_form_uploaded':
-      case 'vownet_form_exported':
+      case 'formara_form_uploaded':
+      case 'formara_form_exported':
       case 'finance_agent_notified':
       case 'client_file_shared':
         if (notification.entityId) {

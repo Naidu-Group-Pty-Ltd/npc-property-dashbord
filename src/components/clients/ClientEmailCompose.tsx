@@ -56,7 +56,7 @@ interface ClientEmailComposeProps {
     file_name: string;
     file_path: string;
     file_size?: number | null;
-    is_vownet_form?: boolean;
+    is_formara_form?: boolean;
   }>;
   preSelectedAttachmentId?: string;
   defaultSubject?: string;
@@ -385,7 +385,7 @@ export function ClientEmailCompose({
                       className="cursor-pointer transition-colors"
                       onClick={() => toggleAttachment(attachment.id)}
                     >
-                      {attachment.is_vownet_form && (
+                      {attachment.is_formara_form && (
                         <span className="text-xs mr-1">📊</span>
                       )}
                       {attachment.file_name}

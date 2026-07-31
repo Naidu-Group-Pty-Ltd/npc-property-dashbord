@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
     // Truncate to ~60k chars to stay within token limits
     const truncatedText = extractedText.slice(0, 60000);
 
-    console.log(`[parse-vownet-pdf] Processing ${truncatedText.length} chars of PDF text`);
+    console.log(`[parse-formara-pdf] Processing ${truncatedText.length} chars of PDF text`);
 
     const systemPrompt = `You are a data extraction specialist. You will receive text extracted from a Formara financial form PDF. 
 Extract ALL structured client data and return it as a JSON object matching the schema below EXACTLY.
@@ -81,7 +81,7 @@ JSON Schema:
 
     const { callLLMRaw } = await import('../_shared/llmRouter.ts');
     const response = await callLLMRaw({
-      agentKey: 'pdf_vownet_extraction',
+      agentKey: 'pdf_formara_extraction',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Extract all client data from this Formara form PDF text:\n\n${truncatedText}` },
@@ -92,7 +92,7 @@ JSON Schema:
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error(`[parse-vownet-pdf] OpenAI error: ${response.status}`, errText);
+      console.error(`[parse-formara-pdf] OpenAI error: ${response.status}`, errText);
       return new Response(
         JSON.stringify({ success: false, error: `AI parsing failed: ${response.status}` }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -110,7 +110,7 @@ JSON Schema:
     }
 
     const parsedData = JSON.parse(content);
-    console.log(`[parse-vownet-pdf] Successfully parsed PDF data`);
+    console.log(`[parse-formara-pdf] Successfully parsed PDF data`);
 
     return new Response(
       JSON.stringify({ success: true, data: parsedData }),
@@ -118,7 +118,7 @@ JSON Schema:
     );
 
   } catch (error) {
-    console.error('[parse-vownet-pdf] Error:', error);
+    console.error('[parse-formara-pdf] Error:', error);
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

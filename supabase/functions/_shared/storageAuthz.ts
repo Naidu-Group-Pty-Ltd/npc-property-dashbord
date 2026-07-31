@@ -27,7 +27,7 @@ export type StorageSensitivity = 'sensitive' | 'restricted' | 'internal' | 'publ
 export const BUCKET_SENSITIVITY: Record<string, StorageSensitivity> = {
   'client-files':         'sensitive',
   'client-documents':     'sensitive',
-  'vownet-forms':         'sensitive',
+  'formara-forms':         'sensitive',
   'investment-reports':   'sensitive',
   'quantitative-reports': 'sensitive',
   'qa_exports':           'sensitive',

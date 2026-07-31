@@ -384,7 +384,7 @@ export function FormaraPDFGenerator({
   // Persist Formara PDF to storage + client_files in background
   const persistFormaraPdf = async (blob: Blob, fileName: string, clientIdVal: string) => {
     try {
-      const storagePath = `vownet-forms/${clientIdVal}/${fileName}`;
+      const storagePath = `formara-forms/${clientIdVal}/${fileName}`;
       const file = new File([blob], fileName, { type: 'application/pdf' });
       const uploadResult = await secureStorageUpload('client-files', storagePath, file, {
         contentType: 'application/pdf',
@@ -398,12 +398,12 @@ export function FormaraPDFGenerator({
           table: 'client_files',
           clientId: clientIdVal,
           data: {
-            category: 'vownet',
+            category: 'formara',
             file_name: fileName,
             file_path: persistedPath,
             file_type: 'application/pdf',
             file_size: blob.size,
-            is_vownet_form: true,
+            is_formara_form: true,
             description: `Client Details Form - ${new Date().toLocaleDateString('en-AU')}`,
           },
         });
@@ -478,7 +478,7 @@ export function FormaraPDFGenerator({
       };
 
       // Pre-load cover image as data URL to avoid cross-origin / hanging issues
-      const coverDataUrl = await preloadImageAsDataUrl('/templates/npc-vownet-cover.jpg', 5000);
+      const coverDataUrl = await preloadImageAsDataUrl('/templates/npc-formara-cover.jpg', 5000);
 
       // ── Render inside an isolated iframe to avoid dashboard DOM interference ──
       // The main page has 1000+ DOM nodes (charts, listings, modals) that cause
@@ -2372,7 +2372,7 @@ function generateHTMLContent(
     </head>
     <body>
       <!-- COVER PAGE - Using exact template image -->
-      <div class="page cover-page-image" style="background-image: url('/templates/npc-vownet-cover.jpg'); background-size: cover; background-position: center;">
+      <div class="page cover-page-image" style="background-image: url('/templates/npc-formara-cover.jpg'); background-size: cover; background-position: center;">
         <!-- Overlay content positioned on the template -->
         <div class="cover-overlay">
           <div class="cover-content-positioned">

@@ -36,7 +36,7 @@ export async function parseFormaraPdf(
   // Step 2: Send to AI for structured parsing
   onProgress?.({ stage: 'parsing', message: 'Analysing form data with AI...' });
 
-  const { data, error } = await invokeSecureFunction('parse-vownet-pdf', {
+  const { data, error } = await invokeSecureFunction('parse-formara-pdf', {
     extractedText: extraction.text,
   });
 

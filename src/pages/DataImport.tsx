@@ -444,7 +444,7 @@ export default function DataImport() {
               </p>
               <div className="flex flex-wrap items-center gap-1.5 pt-2">
                 <LiveModelBadge agentKey="pdf_property_extraction" size="sm" showSlot />
-                <LiveModelBadge agentKey="pdf_vownet_extraction" size="sm" showSlot />
+                <LiveModelBadge agentKey="pdf_formara_extraction" size="sm" showSlot />
                 <ModelUpgradeButton agentKey="pdf_property_extraction" />
               </div>
             </div>

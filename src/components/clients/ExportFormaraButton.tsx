@@ -84,12 +84,12 @@ export function ExportFormaraButton({
         entityType: 'client',
         entityId: clientId,
         entityName: clientName,
-        metadata: { format: 'vownet_excel', type: 'prefilled' }
+        metadata: { format: 'formara_excel', type: 'prefilled' }
       });
       toast.success('Client detail form exported successfully');
       
       addNotification({
-        type: 'vownet_form_exported',
+        type: 'formara_form_exported',
         title: 'Client Detail Form Exported',
         message: `Client detail form exported for ${clientName}`,
         entityId: clientId

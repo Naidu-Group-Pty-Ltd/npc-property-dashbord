@@ -70,12 +70,12 @@ interface ClientReportsTabProps {
   onOpenEmailCompose: () => void;
 }
 
-type ReportType = 'all' | 'portfolio' | 'vownet' | 'investment' | 'property' | 'borrowing' | 'published';
+type ReportType = 'all' | 'portfolio' | 'formara' | 'investment' | 'property' | 'borrowing' | 'published';
 type SortMode = 'newest' | 'oldest' | 'name';
 
 interface UnifiedReport {
   id: string;
-  type: 'vownet' | 'portfolio' | 'property' | 'investment' | 'borrowing' | 'published';
+  type: 'formara' | 'portfolio' | 'property' | 'investment' | 'borrowing' | 'published';
   name: string;
   generatedAt: string;
   status: 'completed' | 'pending' | 'failed';
@@ -126,7 +126,7 @@ export function ClientReportsTab({
         return [];
       }
 
-      return (data.files || []).filter((f: any) => f.is_vownet_form || f.report_type);
+      return (data.files || []).filter((f: any) => f.is_formara_form || f.report_type);
     },
   });
 
@@ -266,11 +266,11 @@ export function ClientReportsTab({
 
     // Formara forms from files
     reportFiles
-      .filter((f: any) => f.is_vownet_form)
+      .filter((f: any) => f.is_formara_form)
       .forEach((f: any) => {
         reports.push({
           id: f.id,
-          type: 'vownet',
+          type: 'formara',
           name: f.file_name || 'Client Detail Form',
           generatedAt: f.uploaded_at,
           status: 'completed',
@@ -281,7 +281,7 @@ export function ClientReportsTab({
 
     // Other report files (property reports etc) — exclude portfolio type (handled below)
     reportFiles
-      .filter((f: any) => f.report_type && !f.is_vownet_form && f.report_type !== 'portfolio')
+      .filter((f: any) => f.report_type && !f.is_formara_form && f.report_type !== 'portfolio')
       .forEach((f: any) => {
         reports.push({
           id: f.id,
@@ -373,7 +373,7 @@ export function ClientReportsTab({
   const typeCounts = useMemo(() => ({
     all: allReports.length,
     portfolio: allReports.filter(r => r.type === 'portfolio').length,
-    vownet: allReports.filter(r => r.type === 'vownet').length,
+    formara: allReports.filter(r => r.type === 'formara').length,
     investment: allReports.filter(r => r.type === 'investment').length,
     property: allReports.filter(r => r.type === 'property').length,
     borrowing: allReports.filter(r => r.type === 'borrowing').length,
@@ -382,7 +382,7 @@ export function ClientReportsTab({
 
   const getReportIcon = (type: string) => {
     switch (type) {
-      case 'vownet': return <FileSpreadsheet className="h-4 w-4" />;
+      case 'formara': return <FileSpreadsheet className="h-4 w-4" />;
       case 'portfolio': return <PieChart className="h-4 w-4" />;
       case 'borrowing': return <Landmark className="h-4 w-4" />;
       case 'property':
@@ -394,7 +394,7 @@ export function ClientReportsTab({
 
   const getTypeBadgeClass = (type: string) => {
     switch (type) {
-      case 'vownet': return 'bg-primary/10 text-primary border-primary/20';
+      case 'formara': return 'bg-primary/10 text-primary border-primary/20';
       case 'portfolio': return 'bg-accent/50 text-accent-foreground border-accent';
       case 'investment': return 'bg-secondary/50 text-secondary-foreground border-secondary';
       case 'borrowing': return 'bg-primary/15 text-primary border-primary/25';
@@ -538,7 +538,7 @@ export function ClientReportsTab({
       investment: 'investment',
       portfolio: 'portfolio',
       borrowing: 'borrowing_capacity',
-      vownet: 'cash_flow',
+      formara: 'cash_flow',
       property: 'investment',
     };
 
@@ -640,7 +640,7 @@ export function ClientReportsTab({
     { key: 'all', label: 'All' },
     { key: 'portfolio', label: 'Portfolio' },
     { key: 'borrowing', label: 'Borrowing' },
-    { key: 'vownet', label: 'Client Forms' },
+    { key: 'formara', label: 'Client Forms' },
     { key: 'investment', label: 'Investment' },
     { key: 'property', label: 'Property' },
     { key: 'published', label: 'Published' },
