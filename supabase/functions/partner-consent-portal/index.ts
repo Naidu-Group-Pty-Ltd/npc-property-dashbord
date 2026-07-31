@@ -55,10 +55,10 @@ function publicView(request: Record<string, any>, referral: Record<string, any> 
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
-  const corsHeaders = {
-    ...createCorsHeaders(origin),
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  };
+  // CORS-CONTRACT: the canonical allowlist comes from `createCorsHeaders`.
+  // The local literal this replaced dropped every custom header — including
+  // `x-correlation-id` — so any caller attaching one failed the preflight.
+  const corsHeaders = createCorsHeaders(origin);
 
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 

@@ -222,11 +222,11 @@ async function priorClientCheck(
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
-  const corsHeaders = {
-    ...createCorsHeaders(origin),
-    'Access-Control-Allow-Headers':
-      'authorization, x-client-info, apikey, content-type, x-correlation-id, x-finance-session-token, x-session-token',
-  };
+  // CORS-CONTRACT: the canonical allowlist comes from `createCorsHeaders`.
+  // Overriding `Access-Control-Allow-Headers` locally only ever narrows it
+  // (this copy had already fallen behind on `x-step-up-token`), which fails the
+  // browser preflight as an opaque "Failed to fetch".
+  const corsHeaders = createCorsHeaders(origin);
 
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });

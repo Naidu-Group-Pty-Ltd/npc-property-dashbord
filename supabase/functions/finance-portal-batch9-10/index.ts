@@ -21,15 +21,6 @@ import { canAccessFinanceClient, canAccessPurchaseFile } from '../_shared/financ
 import { consumeRateLimit } from '../_shared/requestSecurity.ts';
 import { createCorsHeaders } from '../_shared/auth.ts';
 
-const corsHeaderDefaults = {
-  ...createCorsHeaders(null),
-  'Access-Control-Allow-Headers':
-    'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-session-token',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Expose-Headers':
-    'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-};
-
 const jsonWithHeaders = (d: unknown, responseCorsHeaders: Record<string, string>, s = 200) =>
   new Response(JSON.stringify(d), {
     status: s,
@@ -37,10 +28,15 @@ const jsonWithHeaders = (d: unknown, responseCorsHeaders: Record<string, string>
   });
 
 Deno.serve(async (req) => {
+  // CORS-CONTRACT: `createCorsHeaders` is the single source of the allow/expose
+  // lists. The module-level `corsHeaderDefaults` object this replaced existed
+  // only to copy those two lists back over the spread, and its `Allow-Headers`
+  // copy had gone stale — dropping every portal session carrier — which narrows
+  // the preflight allowlist and fails the request as an opaque "Failed to
+  // fetch". Only the method narrowing below is a real local policy.
   const corsHeaders = {
     ...createCorsHeaders(req.headers.get('origin')),
-    'Access-Control-Allow-Headers': corsHeaderDefaults['Access-Control-Allow-Headers'],
-    'Access-Control-Expose-Headers': corsHeaderDefaults['Access-Control-Expose-Headers'],
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
   };
   const json = (data: unknown, status = 200) => jsonWithHeaders(data, corsHeaders, status);
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
