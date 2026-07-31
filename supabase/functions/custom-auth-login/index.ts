@@ -1,7 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
 import { verifyPassword, isLegacyPassword, hashPassword } from "../_shared/password.ts"
-import { createSessionCookie } from "../_shared/auth.ts"
-import { createAuthCorsHeaders } from "../_shared/authCorsExactV2.ts"
+import { createCorsHeaders, createSessionCookie } from "../_shared/auth.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 import { hashSessionToken, isSessionHashConfigured, computeIdleExpiry } from "../_shared/sessionHash.ts"
 
@@ -12,7 +11,13 @@ Deno.serve(async (req) => {
   // Keep this entrypoint deployment coupled to the shared exact-origin CORS
   // contract; shared-file-only deployments are not always rebundled upstream.
   const origin = req.headers.get('origin');
-  const corsHeaders = createAuthCorsHeaders(origin);
+  const corsHeaders = createCorsHeaders(origin);
+  // The runtime ALLOWED_ORIGINS override can lag behind ephemeral project
+  // preview hosts. Reflect only this project's exact preview origin here;
+  // never trust a shared lovableproject.com suffix.
+  if (origin === 'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com') {
+    corsHeaders['Access-Control-Allow-Origin'] = origin;
+  }
 
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })

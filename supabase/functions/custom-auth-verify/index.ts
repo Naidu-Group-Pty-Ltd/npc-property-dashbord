@@ -1,13 +1,15 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { extractSessionToken, verifySession } from "../_shared/auth.ts"
-import { createAuthCorsHeaders } from "../_shared/authCorsExactV2.ts"
+import { extractSessionToken, verifySession, createCorsHeaders } from "../_shared/auth.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 
 Deno.serve(async (req) => {
   // Keep this entrypoint deployment coupled to the shared exact-origin CORS
   // contract; shared-file-only deployments are not always rebundled upstream.
   const origin = req.headers.get('origin');
-  const corsHeaders = createAuthCorsHeaders(origin);
+  const corsHeaders = createCorsHeaders(origin);
+  if (origin === 'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com') {
+    corsHeaders['Access-Control-Allow-Origin'] = origin;
+  }
 
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
