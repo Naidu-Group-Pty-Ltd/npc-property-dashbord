@@ -39,7 +39,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { cn } from '@/lib/utils';
 import { PropertyListing } from '@/lib/airtable';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
-import { useListingCoordinates } from '@/hooks/useListingCoordinates';
+import { useListingCoordinates, type CoordinateFailure } from '@/hooks/useListingCoordinates';
 import { HeatLayer } from './ListingsHeatLayer';
 import { StreetViewPanel } from './StreetViewPanel';
 import {
@@ -376,6 +376,29 @@ function MapIconButton({
   );
 }
 
+const FAILURE_COPY: Record<CoordinateFailure, { title: string; detail: string }> = {
+  rate_limited: {
+    title: 'Address lookups are rate limited',
+    detail:
+      'The location service is throttling this session. Listings already placed stay on the map — try again in a minute for the rest.',
+  },
+  unavailable: {
+    title: 'The location service is unavailable',
+    detail:
+      'Address resolution is paused while the upstream provider recovers. Listings with saved coordinates are still shown.',
+  },
+  unauthorized: {
+    title: 'Not permitted to resolve addresses',
+    detail:
+      'Your session cannot use the location service. Sign out and back in, or ask an administrator to grant Listings access.',
+  },
+  failed: {
+    title: 'Some addresses could not be resolved',
+    detail:
+      'The location service returned an error for part of this result set. Listings it did place are shown below.',
+  },
+};
+
 const PIN_TIER_LEGEND: Array<{ tier: PriceTier; label: string }> = [
   { tier: 'low', label: 'Lower quartile' },
   { tier: 'mid', label: 'Below median' },
@@ -552,7 +575,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
   const programmaticUntilRef = useRef(0);
   const reducedMotion = useMemo(prefersReducedMotion, []);
 
-  const { points, isResolving } = useListingCoordinates(listings);
+  const { points, isResolving, failure, retry } = useListingCoordinates(listings);
 
   const markers = useMemo<ListingMarker[]>(() => {
     const rows: ListingMarker[] = [];
@@ -1091,8 +1114,29 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
         </MapIconButton>
       </div>
 
+      {/* Lookup failure --------------------------------------------------- */}
+      {failure && !isResolving && (
+        <div className="absolute inset-x-4 bottom-16 z-[500] rounded-xl border border-warning/40 bg-background/95 p-4 text-sm shadow-md backdrop-blur sm:max-w-md">
+          <p className="flex items-center gap-2 font-semibold text-foreground">
+            <AlertTriangle className="h-4 w-4 text-warning" />
+            {FAILURE_COPY[failure].title}
+          </p>
+          <p className="mt-1 text-muted-foreground">{FAILURE_COPY[failure].detail}</p>
+          <div className="mt-3 flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={retry}>
+              Try again
+            </Button>
+            {markers.length > 0 && (
+              <span className="text-xs text-muted-foreground">
+                <span className="tabular-nums">{markers.length}</span> already placed
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Empty state ------------------------------------------------------ */}
-      {listings.length > 0 && markers.length === 0 && !isResolving && (
+      {listings.length > 0 && markers.length === 0 && !isResolving && !failure && (
         <div className="pointer-events-none absolute inset-x-4 bottom-16 z-[500] rounded-xl border border-border/60 bg-background/90 p-4 text-sm shadow-md backdrop-blur">
           <p className="flex items-center gap-2 font-semibold text-foreground">
             <AlertTriangle className="h-4 w-4 text-warning" />

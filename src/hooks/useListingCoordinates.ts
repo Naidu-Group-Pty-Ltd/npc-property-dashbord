@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { PropertyListing } from '@/lib/airtable';
 
@@ -8,7 +8,45 @@ export interface ResolvedPoint {
   source: 'record' | 'cache' | 'geocoded';
 }
 
+/**
+ * Why a pass stopped early. Surfaced so the map can say "the lookup service
+ * refused" instead of blaming the listing addresses.
+ */
+export type CoordinateFailure = 'rate_limited' | 'unavailable' | 'unauthorized' | 'failed';
+
+interface ListingPayload {
+  id: string;
+  address: string | null;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  latitude: number | string | null;
+  longitude: number | string | null;
+}
+
 const BATCH_SIZE = 150;
+/**
+ * The edge function allows 10 calls per actor per minute. Staying under that in
+ * a single pass keeps a large dataset from rate-limiting itself into a blank map.
+ */
+const MAX_REQUESTS_PER_PASS = 8;
+/** Give up on a listing the server has fully processed but could not place. */
+const MAX_ATTEMPTS = 2;
+const CACHE_LIMIT = 5000;
+
+/**
+ * Coordinates survive unmount, so flipping between table and map view (or
+ * re-opening the page) does not re-request everything from scratch.
+ */
+const coordinateCache = new Map<string, ResolvedPoint>();
+
+function rememberPoint(id: string, point: ResolvedPoint): void {
+  if (coordinateCache.size >= CACHE_LIMIT) {
+    const oldest = coordinateCache.keys().next();
+    if (!oldest.done) coordinateCache.delete(oldest.value);
+  }
+  coordinateCache.set(id, point);
+}
 
 function numeric(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -20,16 +58,42 @@ function isValid(lat: number | null, lng: number | null): boolean {
   return lat !== null && lng !== null && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
+/** Enough of an address for the server to have any chance of placing it. */
+function isResolvable(row: ListingPayload): boolean {
+  const parts = [row.address, row.suburb, row.state, row.postcode]
+    .map((p) => (typeof p === 'string' ? p.trim() : ''))
+    .filter((p) => p.length > 0 && p.toLowerCase() !== 'unknown');
+  return parts.join(', ').length >= 6;
+}
+
 /**
  * Resolves map coordinates for listings entirely server-side.
  * The browser never contacts a third-party location provider directly.
+ *
+ * The resolution pass is deliberately decoupled from the effect lifecycle. An
+ * earlier version marked listings as "requested" up front and aborted the
+ * in-flight batch whenever the `listings` prop changed identity — which any
+ * react-query refetch, search keystroke, or filter change does. The already
+ * fetched results were dropped, and because every id was still flagged as
+ * requested, nothing was ever asked for again: the map stayed permanently empty
+ * at "0 of N plotted". Now a single pass drains the queue, only true unmount
+ * stops it, and ids are recorded as resolved (or exhausted) rather than merely
+ * requested.
  */
 export function useListingCoordinates(listings: PropertyListing[]) {
-  const [points, setPoints] = useState<Record<string, ResolvedPoint>>({});
+  const [points, setPoints] = useState<Record<string, ResolvedPoint>>(() => {
+    const seed: Record<string, ResolvedPoint> = {};
+    for (const listing of listings) {
+      const hit = coordinateCache.get(listing.id);
+      if (hit) seed[listing.id] = hit;
+    }
+    return seed;
+  });
   const [isResolving, setIsResolving] = useState(false);
-  const requestedRef = useRef<Set<string>>(new Set());
+  const [failure, setFailure] = useState<CoordinateFailure | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
 
-  const payload = useMemo(
+  const payload = useMemo<ListingPayload[]>(
     () =>
       listings.map((l) => ({
         id: l.id,
@@ -43,63 +107,171 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     [listings],
   );
 
-  useEffect(() => {
-    let cancelled = false;
+  // Refs the running pass reads, so it always sees the newest data without
+  // being torn down and restarted.
+  const payloadRef = useRef<ListingPayload[]>(payload);
+  const pointsRef = useRef(points);
+  const attemptsRef = useRef(new Map<string, number>());
+  const runningRef = useRef(false);
+  const restartRef = useRef(false);
+  const stoppedRef = useRef(false);
+  const unmountedRef = useRef(false);
 
-    // Immediately surface listings that already carry coordinates.
+  // `payload` is derived straight from props, so it is always current. `points`
+  // is deliberately NOT mirrored here: the running pass advances `pointsRef`
+  // itself, and a render landing between that update and React flushing the
+  // state would otherwise roll the ref back and re-request resolved listings.
+  payloadRef.current = payload;
+
+  useEffect(
+    () => () => {
+      unmountedRef.current = true;
+    },
+    [],
+  );
+
+  // Listings that already carry coordinates need no lookup at all.
+  useEffect(() => {
     const immediate: Record<string, ResolvedPoint> = {};
-    payload.forEach((row) => {
+    for (const row of payload) {
       const lat = numeric(row.latitude);
       const lng = numeric(row.longitude);
       if (isValid(lat, lng)) {
         immediate[row.id] = { lat: lat as number, lng: lng as number, source: 'record' };
       }
-    });
-    if (Object.keys(immediate).length > 0) {
-      setPoints((prev) => ({ ...immediate, ...prev }));
     }
+    const ids = Object.keys(immediate);
+    if (ids.length === 0) return;
 
-    const outstanding = payload.filter(
-      (row) => !immediate[row.id] && !requestedRef.current.has(row.id),
-    );
-    if (outstanding.length === 0) return;
-
-    outstanding.forEach((row) => requestedRef.current.add(row.id));
-
-    (async () => {
-      setIsResolving(true);
-      try {
-        for (let i = 0; i < outstanding.length; i += BATCH_SIZE) {
-          if (cancelled) break;
-          const batch = outstanding.slice(i, i + BATCH_SIZE);
-          const { data, error } = await invokeSecureFunction('resolve-listing-coordinates', {
-            listings: batch,
-          });
-          if (error || cancelled) continue;
-          const resolved = (data?.results ?? []) as Array<{
-            id: string;
-            lat: number;
-            lng: number;
-            source: ResolvedPoint['source'];
-          }>;
-          if (resolved.length === 0) continue;
-          setPoints((prev) => {
-            const next = { ...prev };
-            resolved.forEach((r) => {
-              if (isValid(r.lat, r.lng)) next[r.id] = { lat: r.lat, lng: r.lng, source: r.source };
-            });
-            return next;
-          });
-        }
-      } finally {
-        if (!cancelled) setIsResolving(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    pointsRef.current = { ...pointsRef.current, ...immediate };
+    setPoints((prev) => {
+      // Record coordinates are authoritative, so they win over a cached lookup.
+      const changed = ids.some(
+        (id) =>
+          prev[id]?.lat !== immediate[id].lat ||
+          prev[id]?.lng !== immediate[id].lng ||
+          prev[id]?.source !== 'record',
+      );
+      return changed ? { ...prev, ...immediate } : prev;
+    });
   }, [payload]);
 
-  return { points, isResolving };
+  useEffect(() => {
+    const pending = (): ListingPayload[] =>
+      payloadRef.current.filter(
+        (row) =>
+          !pointsRef.current[row.id] &&
+          !isValid(numeric(row.latitude), numeric(row.longitude)) &&
+          (attemptsRef.current.get(row.id) ?? 0) < MAX_ATTEMPTS &&
+          isResolvable(row),
+      );
+
+    const commit = (
+      resolved: Array<{ id: string; lat: number; lng: number; source: ResolvedPoint['source'] }>,
+    ) => {
+      const next: Record<string, ResolvedPoint> = {};
+      for (const r of resolved) {
+        if (!isValid(r.lat, r.lng)) continue;
+        const point: ResolvedPoint = { lat: r.lat, lng: r.lng, source: r.source ?? 'geocoded' };
+        next[r.id] = point;
+        rememberPoint(r.id, point);
+      }
+      if (Object.keys(next).length === 0) return;
+      // Keep the ref in step immediately: the next batch is queued from it
+      // before React has had a chance to re-render.
+      pointsRef.current = { ...pointsRef.current, ...next };
+      setPoints((prev) => ({ ...prev, ...next }));
+    };
+
+    /** One drain of the queue, bounded by the per-minute request budget. */
+    const runPass = async () => {
+      let budget = MAX_REQUESTS_PER_PASS;
+
+      while (budget > 0 && !unmountedRef.current && !stoppedRef.current) {
+        const todo = pending();
+        if (todo.length === 0) break;
+
+        const batch = todo.slice(0, BATCH_SIZE);
+        budget -= 1;
+
+        const { data, error } = await invokeSecureFunction('resolve-listing-coordinates', {
+          listings: batch,
+        });
+        if (unmountedRef.current) return;
+
+        if (error) {
+          // Rate limited or provider circuit open: back off without burning the
+          // listings' attempts, so a later pass can still place them.
+          if (error.status === 429 || error.status === 503) {
+            stoppedRef.current = true;
+            setFailure(error.status === 429 ? 'rate_limited' : 'unavailable');
+            return;
+          }
+          if (error.status === 401 || error.status === 403) {
+            stoppedRef.current = true;
+            setFailure('unauthorized');
+            return;
+          }
+          setFailure('failed');
+          batch.forEach((row) =>
+            attemptsRef.current.set(row.id, (attemptsRef.current.get(row.id) ?? 0) + 1),
+          );
+          continue;
+        }
+
+        const resolved = (data?.results ?? []) as Array<{
+          id: string;
+          lat: number;
+          lng: number;
+          source: ResolvedPoint['source'];
+        }>;
+        if (resolved.length > 0) setFailure(null);
+        commit(resolved);
+
+        // The server geocodes a bounded number of fresh addresses per call and
+        // reports the remainder. Those were never looked at, so they must not
+        // count as a failed attempt — the next iteration picks them up.
+        const truncated = Number(data?.pendingLookups ?? 0) > 0;
+        if (!truncated) {
+          const placed = new Set(resolved.map((r) => r.id));
+          batch.forEach((row) => {
+            if (placed.has(row.id)) return;
+            attemptsRef.current.set(row.id, (attemptsRef.current.get(row.id) ?? 0) + 1);
+          });
+        }
+      }
+    };
+
+    if (pending().length === 0) return;
+
+    if (runningRef.current) {
+      // A pass is already draining; tell it to look again before it finishes.
+      restartRef.current = true;
+      return;
+    }
+
+    runningRef.current = true;
+    setIsResolving(true);
+    void (async () => {
+      try {
+        do {
+          restartRef.current = false;
+          await runPass();
+        } while (restartRef.current && !unmountedRef.current && !stoppedRef.current);
+      } finally {
+        runningRef.current = false;
+        if (!unmountedRef.current) setIsResolving(false);
+      }
+    })();
+  }, [payload, retryNonce]);
+
+  /** Clears the back-off so the user can ask for another pass. */
+  const retry = useCallback(() => {
+    stoppedRef.current = false;
+    attemptsRef.current.clear();
+    setFailure(null);
+    setRetryNonce((n) => n + 1);
+  }, []);
+
+  return { points, isResolving, failure, retry };
 }
