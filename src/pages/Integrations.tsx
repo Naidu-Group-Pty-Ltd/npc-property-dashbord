@@ -413,8 +413,8 @@ export default function Integrations() {
 
 
   const getFieldGridClass = (integration: IntegrationConfig) => {
-    if (integration.id === 'microsoft' || integration.id === 'cloudflare') {
-      return 'grid min-w-0 gap-3 lg:grid-cols-3';
+    if (integration.fields.length >= 3) {
+      return 'grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3';
     }
 
     if (integration.fields.length > 1) {
@@ -423,6 +423,7 @@ export default function Integrations() {
 
     return 'grid min-w-0 gap-3';
   };
+
 
   const getFieldSpanClass = (integrationId: string, fieldKey: string) => {
     if (integrationId === 'make' || fieldKey.includes('WEBHOOK_URL')) {
