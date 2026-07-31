@@ -10,23 +10,46 @@ const corsHeaders = {
 
 // Map of integration IDs to their secret names
 const integrationSecretMap: Record<string, string[]> = {
-  'airtable': ['AIRTABLE_TOKEN', 'AIRTABLE_BASE_ID', 'AIRTABLE_TABLE_NAME'],
-  'vapi': ['VAPI_API_KEY'],
-  'gohighlevel': ['GOHIGHLEVEL_API_KEY', 'GOHIGHLEVEL_LOCATION_ID'],
+  // AI & models
   'openai': ['OPENAI_API_KEY'],
-  'perplexity': ['PERPLEXITY_API_KEY'],
   'anthropic': ['ANTHROPIC_API_KEY'],
   'gemini': ['GEMINI_API_KEY'],
+  'perplexity': ['PERPLEXITY_API_KEY'],
   'openrouter': ['OPENROUTER_API_KEY'],
-  'microsoft': ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_TENANT_ID', 'MICROSOFT_MAILBOX_EMAIL'],
-  'resend': ['RESEND_API_KEY'],
+  // Property & market data
+  'airtable': ['AIRTABLE_TOKEN', 'AIRTABLE_BASE_ID', 'AIRTABLE_TABLE_NAME'],
+  'cotality': ['COTALITY_API_KEY'],
   'domain': ['DOMAIN_API_KEY'],
   'google': ['GOOGLE_MAPS_API_KEY'],
-  'firecrawl': ['FIRECRAWL_API_KEY'],
-  'cloudflare': ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_ACCOUNT_ID'],
+  // CRM & marketing
+  'gohighlevel': ['GOHIGHLEVEL_API_KEY', 'GOHIGHLEVEL_LOCATION_ID'],
+  'gohighlevel_new': ['GOHIGHLEVEL_API_KEY_NEW', 'GOHIGHLEVEL_LOCATION_ID_NEW'],
   'meta_ads': ['META_ADS_ACCESS_TOKEN', 'META_ADS_AD_ACCOUNT_ID'],
   'manychat': ['MANYCHAT_API_KEY'],
+  // Communications
+  'resend': ['RESEND_API_KEY'],
+  'microsoft': ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_TENANT_ID', 'MICROSOFT_MAILBOX_EMAIL'],
+  'twilio': ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN'],
+  'vapi': ['VAPI_API_KEY'],
+  'webpush': ['VAPID_PUBLIC_KEY', 'VAPID_PRIVATE_KEY'],
+  // Documents & rendering
+  'docusign': ['DOCUSIGN_INTEGRATION_KEY', 'DOCUSIGN_USER_ID', 'DOCUSIGN_ACCOUNT_ID', 'DOCUSIGN_RSA_PRIVATE_KEY'],
+  'gamma': ['GAMMA_API_KEY'],
+  'api2pdf': ['API2PDF_API_KEY'],
+  'weasyprint': ['WEASYPRINT_SERVICE_URL', 'WEASYPRINT_SERVICE_TOKEN'],
+  'pdf_parse': ['PDF_PARSE_SERVICE_URL', 'PDF_PARSE_SERVICE_TOKEN'],
+  'render_source': ['RENDER_SOURCE_URL', 'RENDER_SOURCE_TOKEN'],
+  // Automation & workflows
+  'make': ['MAKE_WEBHOOK_URL'],
+  'firecrawl': ['FIRECRAWL_API_KEY'],
+  'mission_control': ['MISSION_CONTROL_URL', 'MISSION_CONTROL_CLONE_API_KEY'],
+  // Infrastructure & security
+  'cloudflare': ['CLOUDFLARE_API_TOKEN', 'CLOUDFLARE_ZONE_ID', 'CLOUDFLARE_ACCOUNT_ID'],
+  'supabase': ['SUPABASE_ACCESS_TOKEN'],
+  'turnstile': ['TURNSTILE_SECRET_KEY'],
+  'figma': ['FIGMA_API_TOKEN'],
 };
+
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
