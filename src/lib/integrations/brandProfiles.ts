@@ -99,3 +99,11 @@ export function getBrandProfile(id: string): BrandProfile | undefined {
 export function brandLogoUrl(slug: string, colorHex: string): string {
   return `https://cdn.simpleicons.org/${slug}/${colorHex}`;
 }
+
+/**
+ * Fallback mark from thesvg.org — used when Simple Icons has no entry
+ * (or dropped one for trademark reasons). Served as-is in brand colours.
+ */
+export function svgOrgLogoUrl(slug: string): string {
+  return `https://thesvg.org/icons/${slug}/default.svg`;
+}
