@@ -98,6 +98,21 @@ export default function Integrations() {
   const [loadingSecrets, setLoadingSecrets] = useState(false);
   const [syncingToSupabase, setSyncingToSupabase] = useState<string | null>(null);
   const [supabaseSetupRequired, setSupabaseSetupRequired] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusTab, setStatusTab] = useState('all');
+  const [activeCategory, setActiveCategory] = useState<IntegrationCategoryId | 'all'>('all');
+
+  const visibleIntegrations = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return INTEGRATIONS.filter((integration) => {
+      if (activeCategory !== 'all' && integration.category !== activeCategory) return false;
+      if (!query) return true;
+      return query
+        .split(/\s+/)
+        .every((token) => integrationSearchIndex(integration).includes(token));
+    });
+  }, [search, activeCategory]);
+
 
   // Load saved integration configs from database
   useEffect(() => {
