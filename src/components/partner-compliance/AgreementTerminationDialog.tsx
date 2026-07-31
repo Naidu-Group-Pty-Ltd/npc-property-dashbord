@@ -24,7 +24,7 @@ const currency = (n: number) =>
 export default function AgreementTerminationDialog({ open, onOpenChange, agreementId, agreementLabel }: Props) {
   const { preview, execute } = useTerminationWorkflow();
   const [entitlements, setEntitlements] = useState<AccruedEntitlements | null>(null);
-  const [retentionUntil, setRetentionUntil] = useState<string | null>(null);
+  const [openReferrals, setOpenReferrals] = useState<number>(0);
   const [reason, setReason] = useState('');
   const [effectiveDate, setEffectiveDate] = useState(new Date().toISOString().slice(0, 10));
   const [cutoffDate, setCutoffDate] = useState('');
@@ -34,13 +34,13 @@ export default function AgreementTerminationDialog({ open, onOpenChange, agreeme
     setEntitlements(null);
     preview.mutate(agreementId, {
       onSuccess: (res: any) => {
-        setEntitlements(res.entitlements ?? null);
-        setRetentionUntil(res.projected_retention_until ?? null);
-        if (res.suggested_cutoff_date) setCutoffDate(res.suggested_cutoff_date);
+        setEntitlements(res.accrued ?? null);
+        setOpenReferrals(res.open_referrals ?? 0);
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, agreementId]);
+
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
