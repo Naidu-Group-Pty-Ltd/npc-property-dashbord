@@ -104,7 +104,7 @@ const fmt = (n: number) =>
   `$${(Number(n) || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function FinancePortalCommissions() {
-  const [tab, setTab] = useState<'commissions' | 'statements' | 'disputes'>('commissions');
+  const [tab, setTab] = useState<'commissions' | 'statements' | 'disputes' | 'clawbacks' | 'invoices' | 'banking'>('commissions');
   const [loading, setLoading] = useState(true);
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [statements, setStatements] = useState<Statement[]>([]);
