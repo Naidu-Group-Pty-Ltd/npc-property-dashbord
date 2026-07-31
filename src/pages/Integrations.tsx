@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -28,158 +27,58 @@ import {
   RefreshCw,
   Upload,
   AlertCircle,
-  Shield
+  Shield,
+  Search,
+  Map as MapIcon,
+  FileText,
+  Sparkles,
+  Megaphone,
+  Bell,
+  CreditCard,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { PlannedIntegrations } from '@/components/integrations/PlannedIntegrations';
 import { BrandMark } from '@/components/integrations/BrandMark';
 import { getBrandProfile } from '@/lib/integrations/brandProfiles';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
+import {
+  INTEGRATIONS,
+  INTEGRATION_CATEGORIES,
+  getSupabaseSecretName,
+  integrationSearchIndex,
+  type IntegrationCategoryId,
+  type IntegrationDefinition,
+} from '@/lib/integrations/registry';
 
-interface IntegrationConfig {
-  id: string;
-  name: string;
-  description: string;
-  icon: React.ReactNode;
-  fields: {
-    key: string;
-    label: string;
-    placeholder: string;
-    type: 'text' | 'password';
-    required?: boolean;
-  }[];
-  docsUrl?: string;
-}
+type IntegrationConfig = IntegrationDefinition;
 
-const integrations: IntegrationConfig[] = [
-  {
-    id: 'airtable',
-    name: 'Airtable',
-    description: 'Connect to Airtable for property listings and data management',
-    icon: <Database className="h-6 w-6" />,
-    docsUrl: 'https://airtable.com/developers/web/api/introduction',
-    fields: [
-      { key: 'AIRTABLE_API_KEY', label: 'API Key', placeholder: 'pat...', type: 'password', required: true },
-      { key: 'AIRTABLE_BASE_ID', label: 'Base ID', placeholder: 'app...', type: 'text', required: true },
-    ],
-  },
-  {
-    id: 'vapi',
-    name: 'Vapi',
-    description: 'Voice AI platform for call handling and transcription',
-    icon: <Phone className="h-6 w-6" />,
-    docsUrl: 'https://docs.vapi.ai',
-    fields: [
-      { key: 'VAPI_API_KEY', label: 'API Key', placeholder: 'Enter Vapi API key', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'gohighlevel',
-    name: 'GoHighLevel',
-    description: 'CRM and marketing automation platform integration',
-    icon: <Settings2 className="h-6 w-6" />,
-    docsUrl: 'https://highlevel.stoplight.io/docs/integrations',
-    fields: [
-      { key: 'GHL_API_KEY', label: 'API Key', placeholder: 'Enter GHL API key', type: 'password', required: true },
-      { key: 'GHL_LOCATION_ID', label: 'Location ID', placeholder: 'Enter location ID', type: 'text', required: true },
-    ],
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    description: 'AI-powered analysis, chart generation, and report Q&A',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://platform.openai.com/docs',
-    fields: [
-      { key: 'OPENAI_API_KEY', label: 'API Key', placeholder: 'sk-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'perplexity',
-    name: 'Perplexity',
-    description: 'AI search for report regeneration and research',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://docs.perplexity.ai',
-    fields: [
-      { key: 'PERPLEXITY_API_KEY', label: 'API Key', placeholder: 'pplx-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic Claude',
-    description: 'Native Claude models (Sonnet, Opus, Haiku) for reasoning-heavy agents. Unlocks Claude in the Model Hub.',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://docs.anthropic.com/en/api/getting-started',
-    fields: [
-      { key: 'ANTHROPIC_API_KEY', label: 'API Key', placeholder: 'sk-ant-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini (Native)',
-    description: 'Direct Gemini API access. Use this for native Gemini calls outside the Lovable Gateway.',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://ai.google.dev/gemini-api/docs',
-    fields: [
-      { key: 'GEMINI_API_KEY', label: 'API Key', placeholder: 'AIza...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    description: 'Unified gateway to 300+ models (Claude, GPT, Llama, Mistral, DeepSeek, Qwen, etc.). Enabling this unlocks an OpenRouter section in the Model Hub.',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://openrouter.ai/docs',
-    fields: [
-      { key: 'OPENROUTER_API_KEY', label: 'API Key', placeholder: 'sk-or-v1-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'twilio',
-    name: 'Twilio',
-    description: 'SMS and voice communication services',
-    icon: <Phone className="h-6 w-6" />,
-    docsUrl: 'https://www.twilio.com/docs',
-    fields: [
-      { key: 'TWILIO_ACCOUNT_SID', label: 'Account SID', placeholder: 'AC...', type: 'text', required: true },
-      { key: 'TWILIO_AUTH_TOKEN', label: 'Auth Token', placeholder: 'Enter auth token', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'microsoft',
-    name: 'Microsoft / Outlook',
-    description: 'Email sync and calendar integration via Microsoft Graph',
-    icon: <Mail className="h-6 w-6" />,
-    docsUrl: 'https://learn.microsoft.com/en-us/graph/overview',
-    fields: [
-      { key: 'MICROSOFT_CLIENT_ID', label: 'Client ID', placeholder: 'Enter client ID', type: 'text', required: true },
-      { key: 'MICROSOFT_CLIENT_SECRET', label: 'Client Secret', placeholder: 'Enter client secret', type: 'password', required: true },
-      { key: 'MICROSOFT_TENANT_ID', label: 'Tenant ID', placeholder: 'Enter tenant ID', type: 'text', required: true },
-    ],
-  },
-  {
-    id: 'make',
-    name: 'Make.com',
-    description: 'Workflow automation webhooks',
-    icon: <Webhook className="h-6 w-6" />,
-    docsUrl: 'https://www.make.com/en/help',
-    fields: [
-      { key: 'MAKE_WEBHOOK_URL', label: 'Webhook URL', placeholder: 'https://hook.make.com/...', type: 'text' },
-    ],
-  },
-  {
-    id: 'cloudflare',
-    name: 'Cloudflare',
-    description: 'CDN, analytics, Workers, and firewall management',
-    icon: <Shield className="h-6 w-6" />,
-    docsUrl: 'https://developers.cloudflare.com/api',
-    fields: [
-      { key: 'CLOUDFLARE_API_TOKEN', label: 'API Token', placeholder: 'Enter Cloudflare API token', type: 'password', required: true },
-      { key: 'CLOUDFLARE_ZONE_ID', label: 'Zone ID', placeholder: 'Enter zone ID', type: 'text', required: true },
-      { key: 'CLOUDFLARE_ACCOUNT_ID', label: 'Account ID', placeholder: 'Enter account ID', type: 'text', required: true },
-    ],
-  },
-];
+const FALLBACK_ICONS: Record<IntegrationDefinition['fallbackIcon'], React.ReactNode> = {
+  brain: <Brain className="h-6 w-6" />,
+  database: <Database className="h-6 w-6" />,
+  phone: <Phone className="h-6 w-6" />,
+  mail: <Mail className="h-6 w-6" />,
+  webhook: <Webhook className="h-6 w-6" />,
+  shield: <Shield className="h-6 w-6" />,
+  cloud: <Cloud className="h-6 w-6" />,
+  map: <MapIcon className="h-6 w-6" />,
+  file: <FileText className="h-6 w-6" />,
+  sparkles: <Sparkles className="h-6 w-6" />,
+  megaphone: <Megaphone className="h-6 w-6" />,
+  settings: <Settings2 className="h-6 w-6" />,
+  bell: <Bell className="h-6 w-6" />,
+  creditCard: <CreditCard className="h-6 w-6" />,
+};
+
+/** Brand-profile key for an integration (differs where the brand is shared). */
+const BRAND_ID_OVERRIDES: Record<string, string> = {
+  google: 'google_maps',
+};
+
+const brandIdFor = (integrationId: string) => BRAND_ID_OVERRIDES[integrationId] ?? integrationId;
+
+const integrations: IntegrationConfig[] = INTEGRATIONS;
+
 
 interface SupabaseSecretStatus {
   configured: boolean;
@@ -199,6 +98,21 @@ export default function Integrations() {
   const [loadingSecrets, setLoadingSecrets] = useState(false);
   const [syncingToSupabase, setSyncingToSupabase] = useState<string | null>(null);
   const [supabaseSetupRequired, setSupabaseSetupRequired] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusTab, setStatusTab] = useState('all');
+  const [activeCategory, setActiveCategory] = useState<IntegrationCategoryId | 'all'>('all');
+
+  const visibleIntegrations = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return INTEGRATIONS.filter((integration) => {
+      if (activeCategory !== 'all' && integration.category !== activeCategory) return false;
+      if (!query) return true;
+      return query
+        .split(/\s+/)
+        .every((token) => integrationSearchIndex(integration).includes(token));
+    });
+  }, [search, activeCategory]);
+
 
   // Load saved integration configs from database
   useEffect(() => {
@@ -321,15 +235,8 @@ export default function Integrations() {
     }
   };
 
-  // Map frontend field keys to Supabase secret names
-  const getSupabaseSecretName = (fieldKey: string): string => {
-    const keyMap: Record<string, string> = {
-      'AIRTABLE_API_KEY': 'AIRTABLE_TOKEN',
-      'GHL_API_KEY': 'GOHIGHLEVEL_API_KEY',
-      'GHL_LOCATION_ID': 'GOHIGHLEVEL_LOCATION_ID',
-    };
-    return keyMap[fieldKey] || fieldKey;
-  };
+  // Frontend field key → Supabase secret name mapping lives in the registry.
+
 
   const syncToSupabase = async (integrationId: string) => {
     const integration = integrations.find(i => i.id === integrationId);
@@ -521,8 +428,8 @@ export default function Integrations() {
 
 
   const getFieldGridClass = (integration: IntegrationConfig) => {
-    if (integration.id === 'microsoft' || integration.id === 'cloudflare') {
-      return 'grid min-w-0 gap-3 lg:grid-cols-3';
+    if (integration.fields.length >= 3) {
+      return 'grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3';
     }
 
     if (integration.fields.length > 1) {
@@ -531,6 +438,7 @@ export default function Integrations() {
 
     return 'grid min-w-0 gap-3';
   };
+
 
   const getFieldSpanClass = (integrationId: string, fieldKey: string) => {
     if (integrationId === 'make' || fieldKey.includes('WEBHOOK_URL')) {
@@ -616,7 +524,7 @@ export default function Integrations() {
 
   const renderIntegrationCard = (integration: IntegrationConfig) => {
     const status = getIntegrationStatus(integration);
-    const tone = getIntegrationTone(integration.id);
+    const tone = getIntegrationTone(brandIdFor(integration.id));
     const trustSummary = getCredentialTrustSummary(integration);
 
     return (
@@ -630,7 +538,7 @@ export default function Integrations() {
           <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border backdrop-blur-sm transition-all duration-300 ${tone.icon}`}>
-                <BrandMark integrationId={integration.id} fallback={integration.icon} size={26} />
+                <BrandMark integrationId={brandIdFor(integration.id)} fallback={FALLBACK_ICONS[integration.fallbackIcon]} size={26} />
               </div>
               <div className="min-w-0 space-y-1">
                 <CardTitle className="break-words text-lg font-semibold leading-tight tracking-tight text-foreground">
@@ -754,7 +662,50 @@ export default function Integrations() {
     );
   };
 
+  const renderGroupedIntegrations = (list: IntegrationConfig[], emptyMessage: string) => {
+    if (list.length === 0) {
+      return (
+        <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-border/70 bg-[linear-gradient(135deg,hsl(var(--card)/0.78),hsl(var(--muted)/0.24))] px-6 py-12 text-center text-muted-foreground shadow-inner shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+            <Search className="h-5 w-5" />
+          </div>
+          <p className="max-w-md text-sm font-medium">{emptyMessage}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-8">
+        {INTEGRATION_CATEGORIES.map((category) => {
+          const items = list.filter((i) => i.category === category.id);
+          if (items.length === 0) return null;
+
+          return (
+            <section key={category.id} aria-labelledby={`integration-group-${category.id}`} className="min-w-0 space-y-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-border/50 pb-3">
+                <h2
+                  id={`integration-group-${category.id}`}
+                  className="text-base font-semibold tracking-tight text-foreground sm:text-lg"
+                >
+                  {category.label}
+                </h2>
+                <Badge variant="outline" className="rounded-full border-primary/25 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+                  {items.length}
+                </Badge>
+                <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground sm:text-sm">{category.description}</p>
+              </div>
+              <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
+                {items.map(renderIntegrationCard)}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
+
     <DashboardThemeFrame
       as="main"
       variant="page"
@@ -773,7 +724,7 @@ export default function Integrations() {
             <div className="min-w-0">
               <h1 className="truncate text-2xl font-bold tracking-tight text-foreground sm:text-3xl">Integrations</h1>
               <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Configure API keys and credentials for external services
+                Search, group and configure credentials for every external service this platform connects to
               </p>
             </div>
           </div>
@@ -823,48 +774,89 @@ export default function Integrations() {
         </Alert>
       )}
 
-      <Tabs defaultValue="all" className="w-full min-w-0">
+      <Tabs value={statusTab} onValueChange={setStatusTab} className="w-full min-w-0">
         <DashboardThemeFrame
           variant="toolbar"
-          className="overflow-x-auto overscroll-x-contain rounded-3xl border-primary/15 bg-[linear-gradient(135deg,hsl(var(--card)/0.92),hsl(var(--background)/0.72))] p-1.5 shadow-xl shadow-sm dark:shadow-black/25 [scrollbar-color:hsl(var(--primary)/0.35)_transparent]"
+          className="flex min-w-0 flex-col gap-3 rounded-3xl border-primary/15 bg-[linear-gradient(135deg,hsl(var(--card)/0.92),hsl(var(--background)/0.72))] p-3 shadow-xl shadow-sm dark:shadow-black/25"
         >
-          <TabsList aria-label="Filter integrations by status" className="inline-flex h-auto w-auto min-w-max gap-1 bg-transparent p-0">
-            <TabsTrigger value="all" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">All</TabsTrigger>
-            <TabsTrigger value="configured" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Configured</TabsTrigger>
-            <TabsTrigger value="pending" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Pending</TabsTrigger>
-            <TabsTrigger value="planned" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Roadmap</TabsTrigger>
-          </TabsList>
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0 overflow-x-auto overscroll-x-contain [scrollbar-color:hsl(var(--primary)/0.35)_transparent]">
+              <TabsList aria-label="Filter integrations by status" className="inline-flex h-auto w-auto min-w-max gap-1 bg-transparent p-0">
+                <TabsTrigger value="all" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">All</TabsTrigger>
+                <TabsTrigger value="configured" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Configured</TabsTrigger>
+                <TabsTrigger value="pending" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Pending</TabsTrigger>
+                <TabsTrigger value="planned" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Roadmap</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <div className="relative min-w-0 lg:w-80">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search integrations, services or keys…"
+                aria-label="Search integrations"
+                className="min-h-11 rounded-2xl border-border/70 bg-card/80 pl-9 pr-3 shadow-inner transition-all placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/35"
+              />
+            </div>
+          </div>
+
+          {statusTab !== 'planned' && (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 border-t border-border/40 pt-3">
+              <span className="mr-1 inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                Category
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant={activeCategory === 'all' ? 'default' : 'outline'}
+                onClick={() => setActiveCategory('all')}
+                aria-pressed={activeCategory === 'all'}
+                className="h-8 rounded-full px-3 text-xs font-semibold"
+              >
+                All ({INTEGRATIONS.length})
+              </Button>
+              {INTEGRATION_CATEGORIES.map((category) => {
+                const count = INTEGRATIONS.filter((i) => i.category === category.id).length;
+                const isActive = activeCategory === category.id;
+                return (
+                  <Button
+                    key={category.id}
+                    type="button"
+                    size="sm"
+                    variant={isActive ? 'default' : 'outline'}
+                    onClick={() => setActiveCategory(category.id)}
+                    aria-pressed={isActive}
+                    className="h-8 rounded-full px-3 text-xs font-semibold"
+                  >
+                    {category.label} ({count})
+                  </Button>
+                );
+              })}
+            </div>
+          )}
         </DashboardThemeFrame>
 
         <TabsContent value="all" className="mt-5 sm:mt-6">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
-            {integrations.map(renderIntegrationCard)}
-          </div>
+          {renderGroupedIntegrations(visibleIntegrations, 'No integrations match your search or category filter.')}
         </TabsContent>
 
         <TabsContent value="configured" className="mt-5 sm:mt-6">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
-            {integrations
-              .filter(i => getIntegrationStatus(i) === 'configured')
-              .map(renderIntegrationCard)}
-            {integrations.filter(i => getIntegrationStatus(i) === 'configured').length === 0 && (
-              <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-border/70 bg-[linear-gradient(135deg,hsl(var(--card)/0.78),hsl(var(--muted)/0.24))] px-6 py-12 text-center text-muted-foreground shadow-inner shadow-sm xl:col-span-2">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-success/20 bg-success/10 text-success-foreground0 dark:text-success">
-                  <CheckCircle2 className="h-5 w-5" />
-                </div>
-                <p className="max-w-md text-sm font-medium">No integrations have been fully configured yet.</p>
-              </div>
-            )}
-          </div>
+          {renderGroupedIntegrations(
+            visibleIntegrations.filter((i) => getIntegrationStatus(i) === 'configured'),
+            'No integrations have been fully configured yet.',
+          )}
         </TabsContent>
 
         <TabsContent value="pending" className="mt-5 sm:mt-6">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
-            {integrations
-              .filter(i => getIntegrationStatus(i) !== 'configured')
-              .map(renderIntegrationCard)}
-          </div>
+          {renderGroupedIntegrations(
+            visibleIntegrations.filter((i) => getIntegrationStatus(i) !== 'configured'),
+            'Every matching integration is fully configured.',
+          )}
         </TabsContent>
+
 
         {/* Planned Integrations Roadmap */}
         <TabsContent value="planned" className="mt-5 sm:mt-6">
