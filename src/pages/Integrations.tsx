@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { Input } from '@/components/ui/input';
@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -28,158 +27,58 @@ import {
   RefreshCw,
   Upload,
   AlertCircle,
-  Shield
+  Shield,
+  Search,
+  Map as MapIcon,
+  FileText,
+  Sparkles,
+  Megaphone,
+  Bell,
+  CreditCard,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { PlannedIntegrations } from '@/components/integrations/PlannedIntegrations';
 import { BrandMark } from '@/components/integrations/BrandMark';
 import { getBrandProfile } from '@/lib/integrations/brandProfiles';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
+import {
+  INTEGRATIONS,
+  INTEGRATION_CATEGORIES,
+  getSupabaseSecretName,
+  integrationSearchIndex,
+  type IntegrationCategoryId,
+  type IntegrationDefinition,
+} from '@/lib/integrations/registry';
 
-interface IntegrationConfig {
-  id: string;
-  name: string;
-  description: string;
-  icon: React.ReactNode;
-  fields: {
-    key: string;
-    label: string;
-    placeholder: string;
-    type: 'text' | 'password';
-    required?: boolean;
-  }[];
-  docsUrl?: string;
-}
+type IntegrationConfig = IntegrationDefinition;
 
-const integrations: IntegrationConfig[] = [
-  {
-    id: 'airtable',
-    name: 'Airtable',
-    description: 'Connect to Airtable for property listings and data management',
-    icon: <Database className="h-6 w-6" />,
-    docsUrl: 'https://airtable.com/developers/web/api/introduction',
-    fields: [
-      { key: 'AIRTABLE_API_KEY', label: 'API Key', placeholder: 'pat...', type: 'password', required: true },
-      { key: 'AIRTABLE_BASE_ID', label: 'Base ID', placeholder: 'app...', type: 'text', required: true },
-    ],
-  },
-  {
-    id: 'vapi',
-    name: 'Vapi',
-    description: 'Voice AI platform for call handling and transcription',
-    icon: <Phone className="h-6 w-6" />,
-    docsUrl: 'https://docs.vapi.ai',
-    fields: [
-      { key: 'VAPI_API_KEY', label: 'API Key', placeholder: 'Enter Vapi API key', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'gohighlevel',
-    name: 'GoHighLevel',
-    description: 'CRM and marketing automation platform integration',
-    icon: <Settings2 className="h-6 w-6" />,
-    docsUrl: 'https://highlevel.stoplight.io/docs/integrations',
-    fields: [
-      { key: 'GHL_API_KEY', label: 'API Key', placeholder: 'Enter GHL API key', type: 'password', required: true },
-      { key: 'GHL_LOCATION_ID', label: 'Location ID', placeholder: 'Enter location ID', type: 'text', required: true },
-    ],
-  },
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    description: 'AI-powered analysis, chart generation, and report Q&A',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://platform.openai.com/docs',
-    fields: [
-      { key: 'OPENAI_API_KEY', label: 'API Key', placeholder: 'sk-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'perplexity',
-    name: 'Perplexity',
-    description: 'AI search for report regeneration and research',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://docs.perplexity.ai',
-    fields: [
-      { key: 'PERPLEXITY_API_KEY', label: 'API Key', placeholder: 'pplx-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'anthropic',
-    name: 'Anthropic Claude',
-    description: 'Native Claude models (Sonnet, Opus, Haiku) for reasoning-heavy agents. Unlocks Claude in the Model Hub.',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://docs.anthropic.com/en/api/getting-started',
-    fields: [
-      { key: 'ANTHROPIC_API_KEY', label: 'API Key', placeholder: 'sk-ant-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'gemini',
-    name: 'Google Gemini (Native)',
-    description: 'Direct Gemini API access. Use this for native Gemini calls outside the Lovable Gateway.',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://ai.google.dev/gemini-api/docs',
-    fields: [
-      { key: 'GEMINI_API_KEY', label: 'API Key', placeholder: 'AIza...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    description: 'Unified gateway to 300+ models (Claude, GPT, Llama, Mistral, DeepSeek, Qwen, etc.). Enabling this unlocks an OpenRouter section in the Model Hub.',
-    icon: <Brain className="h-6 w-6" />,
-    docsUrl: 'https://openrouter.ai/docs',
-    fields: [
-      { key: 'OPENROUTER_API_KEY', label: 'API Key', placeholder: 'sk-or-v1-...', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'twilio',
-    name: 'Twilio',
-    description: 'SMS and voice communication services',
-    icon: <Phone className="h-6 w-6" />,
-    docsUrl: 'https://www.twilio.com/docs',
-    fields: [
-      { key: 'TWILIO_ACCOUNT_SID', label: 'Account SID', placeholder: 'AC...', type: 'text', required: true },
-      { key: 'TWILIO_AUTH_TOKEN', label: 'Auth Token', placeholder: 'Enter auth token', type: 'password', required: true },
-    ],
-  },
-  {
-    id: 'microsoft',
-    name: 'Microsoft / Outlook',
-    description: 'Email sync and calendar integration via Microsoft Graph',
-    icon: <Mail className="h-6 w-6" />,
-    docsUrl: 'https://learn.microsoft.com/en-us/graph/overview',
-    fields: [
-      { key: 'MICROSOFT_CLIENT_ID', label: 'Client ID', placeholder: 'Enter client ID', type: 'text', required: true },
-      { key: 'MICROSOFT_CLIENT_SECRET', label: 'Client Secret', placeholder: 'Enter client secret', type: 'password', required: true },
-      { key: 'MICROSOFT_TENANT_ID', label: 'Tenant ID', placeholder: 'Enter tenant ID', type: 'text', required: true },
-    ],
-  },
-  {
-    id: 'make',
-    name: 'Make.com',
-    description: 'Workflow automation webhooks',
-    icon: <Webhook className="h-6 w-6" />,
-    docsUrl: 'https://www.make.com/en/help',
-    fields: [
-      { key: 'MAKE_WEBHOOK_URL', label: 'Webhook URL', placeholder: 'https://hook.make.com/...', type: 'text' },
-    ],
-  },
-  {
-    id: 'cloudflare',
-    name: 'Cloudflare',
-    description: 'CDN, analytics, Workers, and firewall management',
-    icon: <Shield className="h-6 w-6" />,
-    docsUrl: 'https://developers.cloudflare.com/api',
-    fields: [
-      { key: 'CLOUDFLARE_API_TOKEN', label: 'API Token', placeholder: 'Enter Cloudflare API token', type: 'password', required: true },
-      { key: 'CLOUDFLARE_ZONE_ID', label: 'Zone ID', placeholder: 'Enter zone ID', type: 'text', required: true },
-      { key: 'CLOUDFLARE_ACCOUNT_ID', label: 'Account ID', placeholder: 'Enter account ID', type: 'text', required: true },
-    ],
-  },
-];
+const FALLBACK_ICONS: Record<IntegrationDefinition['fallbackIcon'], React.ReactNode> = {
+  brain: <Brain className="h-6 w-6" />,
+  database: <Database className="h-6 w-6" />,
+  phone: <Phone className="h-6 w-6" />,
+  mail: <Mail className="h-6 w-6" />,
+  webhook: <Webhook className="h-6 w-6" />,
+  shield: <Shield className="h-6 w-6" />,
+  cloud: <Cloud className="h-6 w-6" />,
+  map: <MapIcon className="h-6 w-6" />,
+  file: <FileText className="h-6 w-6" />,
+  sparkles: <Sparkles className="h-6 w-6" />,
+  megaphone: <Megaphone className="h-6 w-6" />,
+  settings: <Settings2 className="h-6 w-6" />,
+  bell: <Bell className="h-6 w-6" />,
+  creditCard: <CreditCard className="h-6 w-6" />,
+};
+
+/** Brand-profile key for an integration (differs where the brand is shared). */
+const BRAND_ID_OVERRIDES: Record<string, string> = {
+  google: 'google_maps',
+};
+
+const brandIdFor = (integrationId: string) => BRAND_ID_OVERRIDES[integrationId] ?? integrationId;
+
+const integrations: IntegrationConfig[] = INTEGRATIONS;
+
 
 interface SupabaseSecretStatus {
   configured: boolean;
