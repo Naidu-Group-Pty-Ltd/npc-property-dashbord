@@ -211,8 +211,42 @@ export function brandLogoUrl(slug: string, colorHex: string): string {
 
 /**
  * Fallback mark from thesvg.org — used when Simple Icons has no entry
- * (or dropped one for trademark reasons). Served as-is in brand colours.
+ * (or dropped one for trademark reasons). The raw file is rendered through a
+ * CSS mask by `BrandMark`, so it receives the same brand-colour treatment as
+ * Simple Icons marks (which are tinted server-side via the CDN path).
  */
 export function svgOrgLogoUrl(slug: string): string {
   return `https://thesvg.org/icons/${slug}/default.svg`;
 }
+
+/** Relative luminance (0–1) of a `RRGGBB` hex string. */
+function hexLuminance(hex: string): number {
+  const clean = hex.replace('#', '');
+  if (clean.length !== 6) return 0.5;
+  const channel = (start: number) => {
+    const value = parseInt(clean.slice(start, start + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4);
+}
+
+/** Brand marks this dark disappear against a dark surface. */
+const NEAR_BLACK_LUMINANCE = 0.06;
+
+/** Light substitute used for near-black marks in dark mode. */
+export const DARK_MODE_MARK_HEX = 'F4F4F5';
+
+export function isNearBlackBrandColor(colorHex: string): boolean {
+  return hexLuminance(colorHex) <= NEAR_BLACK_LUMINANCE;
+}
+
+/**
+ * Resolve the hex a brand mark should render in for the active theme.
+ * Near-black marks (X/xAI, Resend, Vercel-likes) flip to a light tint in dark
+ * mode so they stay visible; every other brand keeps its official colour.
+ */
+export function resolveBrandMarkHex(colorHex: string, isDark: boolean): string {
+  const clean = colorHex.replace('#', '');
+  return isDark && isNearBlackBrandColor(clean) ? DARK_MODE_MARK_HEX : clean;
+}
+
