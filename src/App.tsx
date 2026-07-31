@@ -385,6 +385,8 @@ const App = () => (
 
                         {/* Internal Dashboard Routes */}
                         <Route path="/auth" element={<Auth />} />
+                        <Route path="/__map-harness" element={<MapHarnessPage />} />
+
                         <Route path="/accept-invite" element={<AcceptInvite />} />
                         <Route path="/" element={
                           <ProtectedRoute>
