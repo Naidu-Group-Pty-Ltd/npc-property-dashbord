@@ -68,7 +68,22 @@ const FALLBACK_ICONS: Record<IntegrationDefinition['fallbackIcon'], React.ReactN
   settings: <Settings2 className="h-6 w-6" />,
   bell: <Bell className="h-6 w-6" />,
   creditCard: <CreditCard className="h-6 w-6" />,
+  barChart: <BarChart3 className="h-6 w-6" />,
+  users: <Users className="h-6 w-6" />,
+  lock: <Lock className="h-6 w-6" />,
+  image: <ImageIcon className="h-6 w-6" />,
+  calendar: <Calendar className="h-6 w-6" />,
+  package: <Package className="h-6 w-6" />,
+  code: <Code2 className="h-6 w-6" />,
+  video: <Video className="h-6 w-6" />,
+  coins: <Coins className="h-6 w-6" />,
+  building: <Building2 className="h-6 w-6" />,
+  mic: <Mic className="h-6 w-6" />,
+  globe: <Globe className="h-6 w-6" />,
+  message: <MessageSquare className="h-6 w-6" />,
+  cart: <ShoppingCart className="h-6 w-6" />,
 };
+
 
 /** Brand-profile key for an integration (differs where the brand is shared). */
 const BRAND_ID_OVERRIDES: Record<string, string> = {
