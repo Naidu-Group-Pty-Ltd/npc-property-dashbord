@@ -53,6 +53,12 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const ACCESS_TOKEN_KEY = 'supabase_access_token';
 const SESSION_TOKEN_KEY = 'session_token';
 
+const COMMAND_CENTRE_AUTH_FUNCTIONS = {
+  login: 'custom-auth-login-v2',
+  verify: 'custom-auth-verify-v2',
+  logout: 'custom-auth-logout-v2',
+} as const;
+
 // ── Auth version epoch ──
 // Bump this number whenever the auth flow changes in a way that invalidates old tokens.
 // On mount, if the stored version doesn't match, stale tokens are auto-cleared
@@ -214,7 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // from JavaScript. Always ask the server; `credentials: 'include'`
       // sends the cookie. If neither the cookie nor a stored access token
       // is available the server returns `valid:false` and we clear state.
-      const { data, error } = await invokeEdgeFunction('custom-auth-verify');
+      const { data, error } = await invokeEdgeFunction(COMMAND_CENTRE_AUTH_FUNCTIONS.verify);
 
 
       if (error) {
@@ -276,7 +282,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const cancelPendingSession = async () => {
     pendingSessionRef.current = null;
-    try { await invokeEdgeFunction('custom-auth-logout'); } catch { /* ignore */ }
+    try { await invokeEdgeFunction(COMMAND_CENTRE_AUTH_FUNCTIONS.logout); } catch { /* ignore */ }
     clearAuthState();
   };
 
@@ -329,7 +335,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearStoredValue(SESSION_TOKEN_KEY);
       pendingSessionRef.current = null;
 
-      const { data, error } = await invokeEdgeFunction('custom-auth-login', {
+      const { data, error } = await invokeEdgeFunction(COMMAND_CENTRE_AUTH_FUNCTIONS.login, {
         username,
         password,
         turnstile_token: turnstileToken,
@@ -393,7 +399,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try { await releaseCurrentDevice('user_signed_out'); } catch { /* best effort */ }
 
     try {
-      await invokeEdgeFunction('custom-auth-logout');
+      await invokeEdgeFunction(COMMAND_CENTRE_AUTH_FUNCTIONS.logout);
     } catch (error) {
       console.error('Logout error:', error);
     }
