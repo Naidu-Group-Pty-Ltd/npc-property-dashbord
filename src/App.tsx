@@ -13,6 +13,8 @@ import { useBuildVersionCheck } from "@/hooks/useBuildVersionCheck";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import MapHarnessPage from "@/pages/__MapHarness";
+
 import { ModuleGuard } from "@/components/auth/ModuleGuard";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
 import { BackgroundJobTracker } from "./components/BackgroundJobTracker";
