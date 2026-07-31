@@ -3,6 +3,8 @@ import { extractSessionToken, verifySession, createCorsHeaders } from "../_share
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 
 Deno.serve(async (req) => {
+  // Keep this entrypoint deployment coupled to the shared exact-origin CORS
+  // contract; shared-file-only deployments are not always rebundled upstream.
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
 

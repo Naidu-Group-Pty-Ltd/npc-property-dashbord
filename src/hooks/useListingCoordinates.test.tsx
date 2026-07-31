@@ -192,18 +192,25 @@ describe('useListingCoordinates', () => {
   });
 
   it('backs off instead of hammering a rate-limited endpoint', async () => {
+    vi.useFakeTimers();
     const a = uniqueId('limited');
     const b = uniqueId('limited');
-    invokeSecureFunction.mockResolvedValue({
-      data: null,
-      error: { message: 'rate_limited', status: 429 },
-    });
+    invokeSecureFunction
+      .mockResolvedValueOnce({
+        data: null,
+        error: { message: 'rate_limited', status: 429 },
+      })
+      .mockResolvedValueOnce(okResponse([a, b], { pendingLookups: 0 }));
 
     render(<Harness listings={[listing(a), listing(b)]} onState={() => undefined} />);
 
-    await waitFor(() => expect(invokeSecureFunction).toHaveBeenCalledTimes(1));
-    await settle();
+    await act(async () => { await Promise.resolve(); });
     expect(invokeSecureFunction).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(invokeSecureFunction).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 
   it('never asks about listings with too little address to place', async () => {

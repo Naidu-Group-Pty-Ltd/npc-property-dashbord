@@ -6,6 +6,27 @@ import { useAuth } from './useAuth';
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
 
+let cachedToken: string | null | undefined;
+let cachedClient: SupabaseClient<Database> | null = null;
+
+function clientForToken(accessToken: string | null): SupabaseClient<Database> {
+  if (cachedClient && cachedToken === accessToken) return cachedClient;
+
+  cachedToken = accessToken;
+  cachedClient = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    ...(accessToken
+      ? { global: { headers: { Authorization: `Bearer ${accessToken}` } } }
+      : {}),
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+      storageKey: 'npc-custom-auth-query-client',
+    },
+  });
+  return cachedClient;
+}
+
 /**
  * Hook that provides an authenticated Supabase client using the custom JWT.
  * This client will be recognized as 'authenticated' role by Supabase RLS.
@@ -22,28 +43,7 @@ export function useAuthenticatedSupabase() {
   const { accessToken, user } = useAuth();
 
   const supabase = useMemo<SupabaseClient<Database>>(() => {
-    if (accessToken) {
-      // Create client with custom JWT for authenticated requests
-      return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        global: {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        },
-        auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-        },
-      });
-    }
-
-    // Fallback to anon client if no token
-    return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
+    return clientForToken(accessToken);
   }, [accessToken]);
 
   return {
@@ -65,24 +65,5 @@ export function getAuthenticatedSupabaseClient(): SupabaseClient<Database> {
   let accessToken: string | null = null;
   try { accessToken = sessionStorage.getItem('supabase_access_token'); } catch { /* ignore */ }
 
-  if (accessToken) {
-    return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
-      global: {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      },
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-      },
-    });
-  }
-
-  return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    auth: {
-      persistSession: false,
-      autoRefreshToken: false,
-    },
-  });
+  return clientForToken(accessToken);
 }

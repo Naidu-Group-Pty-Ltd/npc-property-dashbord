@@ -8,6 +8,8 @@ const MAX_FAILED_ATTEMPTS = 5;
 const LOCKOUT_MINUTES = 15;
 
 Deno.serve(async (req) => {
+  // Keep this entrypoint deployment coupled to the shared exact-origin CORS
+  // contract; shared-file-only deployments are not always rebundled upstream.
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
 
