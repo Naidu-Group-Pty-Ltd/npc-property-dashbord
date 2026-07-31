@@ -519,7 +519,10 @@ Keep it professional, warm, and action-oriented. No generic "contact us" languag
 // ─── Main Handler ────────────────────────────────────────────────────────────
 
 const __miReportHandler = async (req: Request): Promise<Response> => {
-  const corsHeaders = createCorsHeaders();
+  // CORS-ORIGINS: must be the CALLER's origin. `createCorsHeaders()` with no
+  // argument pins every response to the first allow-listed origin, so the
+  // browser rejects the response for every other origin as "Failed to fetch".
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
@@ -967,7 +970,7 @@ Tone: Authoritative, data-backed, actionable. Use bold for key figures. Position
     return new Response(JSON.stringify({
       error: error instanceof Error ? error.message : 'Internal error'
     }), {
-      status: 500, headers: { ...createCorsHeaders(), 'Content-Type': 'application/json' },
+      status: 500, headers: { ...createCorsHeaders(req.headers.get('origin')), 'Content-Type': 'application/json' },
     });
   }
 };

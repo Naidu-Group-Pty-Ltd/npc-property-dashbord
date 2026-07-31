@@ -8,6 +8,8 @@
  * (Phase 0 NOCOPY-02).
  */
 
+import { isOriginAllowed } from './allowedOrigins.ts';
+
 export const BUILDER_SESSION_COOKIE = '__Host-builder_session_token';
 export const BUILDER_PORTAL_HEADER = 'builder-portal';
 
@@ -33,28 +35,21 @@ export function extractBuilderSessionToken(headers: Headers): string | null {
   return token.length ? token : null;
 }
 
-const FALLBACK_ORIGINS = [
-  'https://command-centre.npcservices.com.au',
-  'https://npc-property-dashbord.lovable.app',
-  'http://localhost:5173',
-  'http://localhost:8080',
-];
-
-function allowedOrigins(): string[] {
-  const configured = ((globalThis as any).Deno?.env?.get?.('ALLOWED_ORIGINS') || '')
-    .split(',').map((value: string) => value.trim()).filter(Boolean);
-  return [...configured, ...FALLBACK_ORIGINS];
-}
-
 /**
  * Every Builder Portal request must carry the portal discriminator AND an
  * allow-listed Origin. A missing Origin is rejected rather than tolerated,
  * matching `validateSolicitorPortalHeaders`.
+ *
+ * CORS-ORIGINS: the allowlist is the shared one — the `ALLOWED_ORIGINS` secret
+ * plus this project's own preview and localhost origins (see
+ * `_shared/allowedOrigins.ts`). The local fallback list this replaced omitted
+ * the project preview origins, so the Builder Portal was rejected in the
+ * Lovable editor even though CORS allowed the request.
  */
 export function validateBuilderPortalHeaders(headers: Headers): boolean {
   if (headers.get('x-portal-request') !== BUILDER_PORTAL_HEADER) return false;
   const origin = headers.get('origin');
-  return !!origin && allowedOrigins().includes(origin);
+  return !!origin && isOriginAllowed(origin);
 }
 
 export function validateBuilderPortalRequest(req: Request): boolean {

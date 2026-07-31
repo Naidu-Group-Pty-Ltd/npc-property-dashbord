@@ -417,18 +417,14 @@ export function extractSessionToken(
  * production origin so existing deployments never break. Set `ALLOWED_ORIGINS`.
  */
 
-const LEGACY_FALLBACK_ORIGINS = [
-  'https://command-centre.npcservices.com.au',
-  'https://npc-property-dashbord.lovable.app',
-];
-
-// Exact, project-owned preview origins. These are safe to include regardless
-// of ALLOWED_ORIGINS and avoid credentialed auth requests failing CORS when the
-// preview host differs from the published host. Deliberately no suffix match.
-const PROJECT_PREVIEW_ORIGINS = [
-  'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
-  'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com',
-];
+// CORS-ORIGINS: the allowlist lives in `_shared/allowedOrigins.ts` so the CORS
+// layer, the CSRF guard and the portal validators cannot drift apart — they had,
+// and `…lovableproject.com` was passing CORS while failing CSRF as a result.
+import {
+  describeOriginRejection,
+  fallbackOrigin,
+  isOriginAllowed,
+} from './allowedOrigins.ts';
 
 /**
  * CORS-REQ-HEADERS: canonical allowlist of REQUEST headers the browser may send.
@@ -479,51 +475,23 @@ export const CORS_EXPOSED_RESPONSE_HEADERS = [
   'x-duration-ms',
 ].join(', ');
 
-function parseAllowedOrigins(): string[] {
-  const raw = Deno.env.get('ALLOWED_ORIGINS') || '';
-  const fromEnv = raw
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-  if (fromEnv.length > 0) {
-    return fromEnv;
-  }
-  console.warn('[auth.cors] ALLOWED_ORIGINS env var is unset; using legacy fallback origins. Set ALLOWED_ORIGINS to override.');
-  return LEGACY_FALLBACK_ORIGINS;
-}
-
-/**
- * Opt-in, non-production escape hatch for Lovable preview iframes. OFF unless
- * `CORS_ALLOW_LOVABLE_PREVIEW=true` is explicitly set. Production leaves this
- * unset, so suffix origins are NOT trusted for credentialed responses.
- */
-function lovablePreviewSuffixAllowed(origin: string): boolean {
-  if ((Deno.env.get('CORS_ALLOW_LOVABLE_PREVIEW') || '').trim().toLowerCase() !== 'true') return false;
-  try {
-    const host = new URL(origin).hostname;
-    return host.endsWith('.lovable.app') || host.endsWith('.lovableproject.com');
-  } catch {
-    return false;
-  }
-}
-
 export function createCorsHeaders(origin: string | null = null): Record<string, string> {
-  const allowedOrigins = [
-    ...parseAllowedOrigins(),
-    ...PROJECT_PREVIEW_ORIGINS,
-    'http://localhost:5173',
-    'http://localhost:8080',
-  ];
-
-  // Exact-origin allowlist only. Suffix matching is gated behind an explicit,
-  // default-off preview flag (see lovablePreviewSuffixAllowed). A disallowed
-  // origin gets a mismatched ACAO (allowedOrigins[0]) that the browser refuses
-  // to expose to the caller.
-  const allowedOrigin = origin && (
-    allowedOrigins.includes(origin) ||
-    lovablePreviewSuffixAllowed(origin)
-  ) ? origin : allowedOrigins[0];
+  // Exact-origin allowlist only (see _shared/allowedOrigins.ts). A disallowed
+  // origin gets a mismatched ACAO that the browser refuses to expose to the
+  // caller — opaquely, as `TypeError: Failed to fetch`. Log it, or a
+  // misconfigured allowlist is indistinguishable from the function being down.
+  //
+  // NOTE: passing `origin` is not optional in practice. Calling
+  // `createCorsHeaders()` with no argument pins the response to the first
+  // allow-listed origin for EVERY caller, which breaks the function for all
+  // other origins; `check-cors-contract.mjs` rejects that call shape.
+  let allowedOrigin: string;
+  if (isOriginAllowed(origin)) {
+    allowedOrigin = origin as string;
+  } else {
+    allowedOrigin = fallbackOrigin();
+    if (origin) console.warn(describeOriginRejection(origin));
+  }
 
   return {
     'Access-Control-Allow-Origin': allowedOrigin,

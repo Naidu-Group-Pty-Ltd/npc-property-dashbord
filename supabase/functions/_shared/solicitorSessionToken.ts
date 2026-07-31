@@ -1,3 +1,5 @@
+import { isOriginAllowed } from './allowedOrigins.ts';
+
 /** Cookie-first credential extraction; headers/body exist only for one legacy migration window. */
 export interface SolicitorCredential { token: string; source: 'cookie' | 'legacy_header' | 'legacy_body' }
 export function extractSolicitorSessionCredential(headers: Headers, body?: Record<string, unknown>): SolicitorCredential | null {
@@ -13,13 +15,18 @@ export function extractSolicitorSessionCredential(headers: Headers, body?: Recor
 }
 export function extractSolicitorSessionToken(headers: Headers, body?: Record<string, unknown>): string | null { return extractSolicitorSessionCredential(headers, body)?.token || null; }
 
-const fallbacks = ['https://command-centre.npcservices.com.au','https://npc-property-dashbord.lovable.app','http://localhost:5173','http://localhost:8080'];
 export function validateSolicitorPortalRequest(req: Request): boolean {
   return validateSolicitorPortalHeaders(req.headers);
 }
+/**
+ * CORS-ORIGINS: the origin is checked against the shared allowlist — the
+ * `ALLOWED_ORIGINS` secret plus this project's own preview and localhost
+ * origins (see `_shared/allowedOrigins.ts`). The local fallback list this
+ * replaced omitted the project preview origins, so the Solicitor Portal was
+ * rejected in the Lovable editor even though CORS allowed the request.
+ */
 export function validateSolicitorPortalHeaders(headers: Headers, allowLegacyCarrier = false): boolean {
   if (headers.get('x-portal-request') !== 'solicitor-portal' && !(allowLegacyCarrier && headers.get('x-solicitor-session-token'))) return false;
   const origin = headers.get('origin');
-  const configured = ((globalThis as any).Deno?.env?.get?.('ALLOWED_ORIGINS') || '').split(',').map((v: string) => v.trim()).filter(Boolean);
-  return !!origin && [...configured, ...fallbacks].includes(origin);
+  return !!origin && isOriginAllowed(origin);
 }

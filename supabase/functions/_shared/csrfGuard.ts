@@ -20,42 +20,18 @@
  * does not apply.
  */
 
+// CORS-ORIGINS: the allowlist (`ALLOWED_ORIGINS` plus this project's own
+// preview and localhost origins) comes from the shared resolver. This module
+// used to keep its own fallback copy, which omitted the project preview
+// origins that the CORS layer allowed — so a request the browser was told was
+// legal answered `403 csrf_denied`. SEC5-CORS: exact-origin only; suffix match
+// stays gated behind the default-off preview flag.
+import { isOriginAllowed } from './allowedOrigins.ts';
+
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-const LEGACY_FALLBACK = [
-  'https://command-centre.npcservices.com.au',
-  'https://npc-property-dashbord.lovable.app',
-];
-
-function parseAllowedOrigins(): string[] {
-  const raw = (globalThis as any).Deno?.env?.get?.('ALLOWED_ORIGINS') || '';
-  const fromEnv = raw
-    .split(',')
-    .map((s: string) => s.trim())
-    .filter((s: string) => s.length > 0);
-  return fromEnv.length > 0 ? fromEnv : LEGACY_FALLBACK;
-}
-
-function lovablePreviewSuffixAllowed(origin: string): boolean {
-  if (((globalThis as any).Deno?.env?.get?.('CORS_ALLOW_LOVABLE_PREVIEW') || '').trim().toLowerCase() !== 'true') return false;
-  try {
-    const host = new URL(origin).hostname;
-    return host.endsWith('.lovable.app') || host.endsWith('.lovableproject.com');
-  } catch {
-    return false;
-  }
-}
 
 function originAllowed(origin: string | null): boolean {
-  if (!origin) return false;
-  const list = [
-    ...parseAllowedOrigins(),
-    'http://localhost:5173',
-    'http://localhost:8080',
-  ];
-  if (list.includes(origin)) return true;
-  // SEC5-CORS: exact-origin only; suffix match is gated behind the default-off
-  // preview flag so production cookie mutations require an exact allowlisted origin.
-  return lovablePreviewSuffixAllowed(origin);
+  return isOriginAllowed(origin);
 }
 
 export interface CsrfCheckResult {

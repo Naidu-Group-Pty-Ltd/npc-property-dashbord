@@ -229,6 +229,41 @@ function walkFunctions(dir, out = []) {
   return out;
 }
 
+// ── createCorsHeaders must be given the CALLER's origin ────────────────────
+// `createCorsHeaders()` / `createCorsHeaders(null)` resolves to the FIRST
+// allow-listed origin for every caller, so the response only ever matches one
+// origin and the browser rejects it for all the others as an opaque
+// "Failed to fetch". Four functions shipped this way — including
+// `security-step-up` — and were dead for every origin but the first.
+//
+// A null-origin call is legitimate only when the result is a template that is
+// rebuilt per request (the function also calls it with a real origin), so this
+// only fires when a function NEVER passes an origin.
+for (const file of walkFunctions(FUNC_DIR)) {
+  if (file === AUTH_TS || file.includes('/_shared/')) continue;
+  const src = readFileSync(file, 'utf8');
+  const args = [...src.matchAll(/createCorsHeaders\s*\(\s*([^)]*?)\s*\)/g)].map((m) => m[1].trim());
+  if (args.length === 0) continue;
+  if (args.some((a) => a !== '' && a !== 'null')) continue;
+  errors.push(`${file}: only ever calls createCorsHeaders(${args[0] === '' ? '' : 'null'}) — never with the request origin. Every response then carries the first allow-listed origin, which the browser rejects for every other caller as "Failed to fetch". Pass req.headers.get('origin').`);
+}
+
+// ── The origin allowlist must not be re-implemented ────────────────────────
+// `ALLOWED_ORIGINS` was read in four modules, each with its own hardcoded
+// fallback. They drifted: the CORS layer allowed this project's Lovable
+// preview origins while the CSRF guard did not, so requests the browser was
+// told were legal came back `403 csrf_denied`. `_shared/allowedOrigins.ts` is
+// now the only module permitted to read the secret.
+const ORIGINS_MODULE = `${FUNC_DIR}/_shared/allowedOrigins.ts`;
+for (const file of walkFunctions(FUNC_DIR)) {
+  if (file === ORIGINS_MODULE) continue;
+  const src = readFileSync(file, 'utf8');
+  if (!/['"]ALLOWED_ORIGINS['"]/.test(src)) continue;
+  // A doc comment naming the secret is fine; reading it is not.
+  if (!/env\??\.?(?:get)?\??\.?\(\s*['"]ALLOWED_ORIGINS['"]\s*\)/.test(src)) continue;
+  errors.push(`${file}: reads the ALLOWED_ORIGINS env var directly. Import isOriginAllowed / resolveAllowedOrigins from _shared/allowedOrigins.ts instead — divergent copies of this list are what let an origin pass CORS but fail CSRF.`);
+}
+
 // ── createCorsHeaders() must not be overridden ─────────────────────────────
 // Spreading the shared helper and then restating Allow-/Expose-Headers pins the
 // function to a snapshot of the canonical lists taken on the day it was

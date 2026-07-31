@@ -2,9 +2,12 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
-const corsHeaders = createCorsHeaders();
-
 Deno.serve(async (req) => {
+  // CORS-ORIGINS: resolved per request. This was a module-level
+  // `createCorsHeaders()` with no argument, which pinned every response to the
+  // first allow-listed origin — so the browser rejected the response for every
+  // other origin as an opaque "Failed to fetch".
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }

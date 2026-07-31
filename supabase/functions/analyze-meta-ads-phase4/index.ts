@@ -309,7 +309,10 @@ async function extractMarketEvents(_apiKey: string): Promise<any> {
 // ─── Main Handler ────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
-  const corsHeaders = createCorsHeaders();
+  // CORS-ORIGINS: must be the CALLER's origin. `createCorsHeaders()` with no
+  // argument pins every response to the first allow-listed origin, so the
+  // browser rejects the response for every other origin as "Failed to fetch".
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).

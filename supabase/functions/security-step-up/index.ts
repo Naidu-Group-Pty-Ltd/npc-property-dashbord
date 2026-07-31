@@ -35,7 +35,6 @@ import {
   verifyAssertion,
 } from '../_shared/webauthn.ts';
 
-const corsHeaders = createCorsHeaders();
 const STEP_UP_TTL_MS = 15 * 60 * 1000; // 15 min
 const RECOVERY_CODE_ATTEMPTS_PER_WINDOW = 5;
 const RECOVERY_CODE_WINDOW_SECONDS = 15 * 60;
@@ -56,6 +55,11 @@ function encodeOtpAuthLabel(value: string): string {
 }
 
 Deno.serve(async (req) => {
+  // CORS-ORIGINS: resolved per request. This was a module-level
+  // `createCorsHeaders()` with no argument, which pinned every response to the
+  // first allow-listed origin — so the browser rejected step-up for every
+  // other origin as an opaque "Failed to fetch".
+  const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
   // SEC5-CSRF: reject cross-site cookie-authenticated mutations (exact-origin).
