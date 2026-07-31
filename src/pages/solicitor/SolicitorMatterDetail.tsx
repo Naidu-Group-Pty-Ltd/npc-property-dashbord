@@ -484,6 +484,7 @@ export default function SolicitorMatterDetail() {
 
   return (
     <SolicitorPortalShell
+      eyebrow="Matter"
       title={matter.title}
       description={formatPropertyAddress(matter)}
       actions={

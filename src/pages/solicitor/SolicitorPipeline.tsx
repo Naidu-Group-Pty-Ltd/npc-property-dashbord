@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { AlertTriangle, KanbanSquare, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { SolicitorEmptyState } from '@/components/solicitor-portal/SolicitorEmptyState';
 import { SolicitorPortalShell } from '@/components/solicitor-portal/SolicitorPortalShell';
 import {
   MATTER_STATUS_CLASSES, MATTER_STATUS_LABELS, countdownLabel, formatMatterDate,
@@ -34,6 +35,7 @@ export default function SolicitorPipeline() {
   const [mineOnly, setMineOnly] = useState(false);
   const [dragging, setDragging] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<LegalMatterStatus | null>(null);
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,15 +106,18 @@ export default function SolicitorPipeline() {
       {loading && matters.length === 0 ? (
         <div className="flex justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
       ) : matters.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border/70 px-4 py-16 text-center">
-          <KanbanSquare className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden />
-          <p className="mt-3 text-sm font-medium text-foreground">No matters on the board</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Matters appear here as soon as NPC shares a client file with your practice.
-          </p>
-        </div>
+        <SolicitorEmptyState
+          icon={<KanbanSquare className="h-6 w-6" aria-hidden />}
+          title="No matters on the board"
+          description="Matters appear here as soon as NPC shares a client file with your practice."
+          actionLabel="Refresh board"
+          onAction={() => void load()}
+          secondaryLabel="Back to dashboard"
+          onSecondaryAction={() => navigate('/solicitor')}
+          hint="Drag cards between stages to progress a matter"
+        />
       ) : (
-        <div className="-mx-4 overflow-x-auto px-4 pb-2 sm:-mx-6 sm:px-6">
+        <div className="-mx-4 overflow-x-auto px-4 pb-2 md:-mx-8 md:px-8 lg:-mx-10 lg:px-10">
           <div className="flex min-w-max gap-3">
             {lanes.map(({ stage, matters: laneMatters, value }) => (
               <section
