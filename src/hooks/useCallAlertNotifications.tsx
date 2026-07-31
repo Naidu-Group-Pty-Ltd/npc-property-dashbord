@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useNotifications } from '@/contexts/NotificationsContext';
+import { useNotificationsOptional } from '@/contexts/NotificationsContext';
 
 /**
  * Hook that monitors call alert history.
@@ -10,10 +10,12 @@ import { useNotifications } from '@/contexts/NotificationsContext';
  * on vapi_call_logs (the table's RLS blocks client-side realtime for anon users).
  */
 export function useCallAlertNotifications() {
-  const { addNotification } = useNotifications();
+  const notifications = useNotificationsOptional();
+  const addNotification = notifications?.addNotification;
   const processedAlertIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!addNotification) return;
     console.log('[CallAlertNotifications] Setting up realtime subscription');
 
     // Subscribe to call_alert_history for triggered alerts (has open public SELECT)
@@ -33,7 +35,7 @@ export function useCallAlertNotifications() {
           if (processedAlertIds.current.has(alert.id)) return;
           processedAlertIds.current.add(alert.id);
 
-          await addNotification({
+          await addNotification?.({
             type: 'call_alert_triggered',
             title: `Alert: ${alert.rule_name}`,
             message: alert.message || 'A call alert rule was triggered',
