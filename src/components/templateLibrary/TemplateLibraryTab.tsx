@@ -21,7 +21,7 @@ import {
 import type { TemplateLibraryFilters as Filters, TemplateLibraryListEntry } from '@/lib/templateLibrary/types';
 import { TemplateLibraryCard } from './TemplateLibraryCard';
 import { TemplateLibraryFilters } from './TemplateLibraryFilters';
-import { TemplatePreviewDialog } from './TemplatePreviewDialog';
+import { TemplateReaderDialog } from './TemplateReaderDialog';
 import { UseTemplateDialog } from './UseTemplateDialog';
 import { TemplateLibraryAdminPanel } from './TemplateLibraryAdminPanel';
 
@@ -50,8 +50,8 @@ export function TemplateLibraryTab() {
         <div>
           <h2 className="text-xl font-semibold">Template Library</h2>
           <p className="max-w-2xl text-sm text-muted-foreground">
-            Professionally designed report templates. Preview one, then create your own editable copy
-            — the original stays untouched, and your copy opens in the Template Builder.
+            Read any template end to end, filled with sample data, then create your own editable
+            copy — the original stays untouched, and your copy opens in the Template Builder.
           </p>
         </div>
         <Button
@@ -93,8 +93,8 @@ export function TemplateLibraryTab() {
           />
 
           {isLoading && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-[420px]" />)}
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              {[0, 1, 2, 3, 4, 5].map((i) => <Skeleton key={i} className="h-[520px] rounded-xl" />)}
             </div>
           )}
 
@@ -124,7 +124,7 @@ export function TemplateLibraryTab() {
           )}
 
           {!isLoading && visible.length > 0 && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
               {visible.map((entry) => (
                 <TemplateLibraryCard
                   key={entry.id}
@@ -141,7 +141,7 @@ export function TemplateLibraryTab() {
 
       {isSuperadmin && <TemplateLibraryAdminPanel />}
 
-      <TemplatePreviewDialog
+      <TemplateReaderDialog
         entry={previewEntry}
         open={!!previewEntry}
         onOpenChange={(open) => { if (!open) setPreviewEntry(null); }}

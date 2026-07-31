@@ -4313,3 +4313,41 @@
     }
   }
 }
+
+@layer components {
+  /*
+   * Template Library reader — a document viewport that must look scrollable.
+   *
+   * The reader always scrolled, but on a dark surface the platform's overlay
+   * scrollbar was effectively invisible, so a ten-page report read as a single
+   * static page. Nothing about the content says "there is more below" when the
+   * page you are looking at is a full-bleed cover. A permanently visible track
+   * and thumb is the conventional signal, and the one users look for first.
+   */
+  .template-reader-scroll {
+    /*
+     * Deliberately NOT setting `scrollbar-width` / `scrollbar-color`: current
+     * Chrome ignores every `::-webkit-scrollbar` rule as soon as either
+     * standard property is set, falling back to an overlay bar that reserves no
+     * layout space and is all but invisible on this surface. `scrollbar-gutter`
+     * keeps the reserved lane stable so the document does not shift when the
+     * bar appears.
+     */
+    scrollbar-gutter: stable;
+  }
+
+  .template-reader-scroll::-webkit-scrollbar {
+    width: 14px;
+  }
+  .template-reader-scroll::-webkit-scrollbar-track {
+    @apply bg-muted;
+  }
+  .template-reader-scroll::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-primary;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  .template-reader-scroll::-webkit-scrollbar-thumb:hover {
+    @apply bg-primary/80;
+  }
+}

@@ -1,19 +1,29 @@
 /**
- * One template in the browse grid: schematic preview, identity, compatibility.
+ * One template in the browse grid.
  *
- * The compatibility badge is the honest bit. Only the investment report-type
- * family has a production adapter today, so most library templates can be
- * copied and edited but not activated for live report generation. Saying so on
- * the card is better than letting a user discover it after they have invested
- * an afternoon in edits.
+ * ## The design position
+ *
+ * The template *is* the product, so the document gets the space and everything
+ * else gets out of its way. The card presents a real rendered first page as a
+ * sheet of paper on a dark surface — a light table — because these are printed
+ * client deliverables and that is what they look like in the world. Metadata is
+ * deliberately quiet: two lines and a thin row of facts under the sheet.
+ *
+ * The earlier version led with badges and gave the document a 180px box. That
+ * reads as a settings panel, not a catalogue. Here the sheet is the largest
+ * thing on the card and the only thing with colour of its own.
+ *
+ * Compatibility stays honest and visible: only the investment report family has
+ * a production adapter, so most templates can be copied and edited but not
+ * activated for live generation. Saying so on the card beats letting a user find
+ * out after an afternoon of edits.
  */
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Eye, FileStack, Plus, ShieldCheck, TriangleAlert } from 'lucide-react';
-import { TemplatePreviewSvg } from './TemplatePreviewSvg';
-import { categoryLabel, reportTypeLabel, styleLabel } from '@/lib/templateLibrary/taxonomy';
+import { TemplateDocumentPreview } from './TemplateDocumentPreview';
+import { categoryLabel, reportTypeLabel } from '@/lib/templateLibrary/taxonomy';
 import type { TemplateLibraryListEntry } from '@/lib/templateLibrary/types';
 
 interface Props {
@@ -25,73 +35,139 @@ interface Props {
 
 export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) {
   const compat = entry.compatibility;
+  const premium = entry.accessTier !== 'standard';
 
   return (
-    <Card className="flex flex-col overflow-hidden transition-colors hover:border-primary/40">
+    <article
+      className={[
+        'group relative flex flex-col overflow-hidden rounded-xl border bg-card',
+        'transition-[transform,box-shadow,border-color] duration-300 ease-out',
+        'hover:-translate-y-1 hover:shadow-xl focus-within:-translate-y-1 focus-within:shadow-xl',
+        'motion-reduce:transform-none motion-reduce:transition-none',
+        premium ? 'border-primary/25 hover:border-primary/50' : 'border-border hover:border-primary/30',
+      ].join(' ')}
+    >
+      {/* ── The sheet ───────────────────────────────────────────────────── */}
       <button
         type="button"
         onClick={() => onPreview(entry)}
-        className="group relative block w-full border-b border-border bg-muted/30 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         aria-label={`Preview ${entry.name}`}
+        className={[
+          'relative block w-full overflow-hidden px-6 pb-8 pt-6 text-left',
+          // The light table: a soft pool of light behind the paper, so a white
+          // page and a near-black cover both sit on the same surface.
+          'bg-[radial-gradient(120%_80%_at_50%_0%,hsl(var(--muted)/0.55),transparent_70%)]',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+        ].join(' ')}
       >
-        <div className="mx-auto aspect-[210/297] w-full max-w-[180px] overflow-hidden rounded-sm border border-border shadow-sm">
-          <TemplatePreviewSvg
-            schema={entry.previewSchema}
-            className="h-full w-full"
-            label={`Schematic preview of ${entry.name}, page 1 of ${entry.pageCount}`}
-          />
+        {/* The whole of page one, never a crop. Nine of these templates open on
+            a cover whose title sits at the optical centre of the sheet, so a
+            top-crop showed an empty rectangle for exactly the templates whose
+            covers are their strongest asset.
+
+            Behind it, the edges of the pages underneath. It reads as a
+            multi-page document at a glance — which a single sheet never does —
+            and it is drawn from `pageCount`, so a two-page snapshot and a
+            ten-page dossier look different before either is opened. */}
+        <div className="relative mx-auto w-full">
+          {entry.pageCount > 1 && (
+            <span
+              aria-hidden="true"
+              className="absolute inset-x-2 -bottom-1 top-1.5 rounded-[2px] bg-foreground/15 shadow-sm"
+            />
+          )}
+          {entry.pageCount > 3 && (
+            <span
+              aria-hidden="true"
+              className="absolute inset-x-4 -bottom-2 top-3 rounded-[2px] bg-foreground/10"
+            />
+          )}
+          <div
+            className={[
+              'relative w-full overflow-hidden rounded-[2px] ring-1 ring-black/10',
+              'shadow-[0_2px_6px_rgba(0,0,0,0.16),0_18px_40px_-12px_rgba(0,0,0,0.45)]',
+              'transition-transform duration-300 ease-out group-hover:scale-[1.015]',
+              'motion-reduce:transform-none motion-reduce:transition-none',
+            ].join(' ')}
+          >
+            <TemplateDocumentPreview
+              schema={entry.previewSchema}
+              variant="page"
+              lazy
+              label={`First page of ${entry.name}, rendered with sample data`}
+              className="w-full"
+            />
+          </div>
         </div>
-        <span className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-card px-3 py-1.5 text-xs font-medium shadow-md">
-            <Eye className="h-3.5 w-3.5" aria-hidden="true" /> Preview
+
+        {/* Hover affordance — names the action rather than just dimming. */}
+        <span
+          className={[
+            'pointer-events-none absolute inset-0 flex items-center justify-center',
+            'bg-background/45 backdrop-blur-[1px]',
+            'opacity-0 transition-opacity duration-200',
+            'group-hover:opacity-100 group-focus-within:opacity-100',
+            'motion-reduce:transition-none',
+          ].join(' ')}
+        >
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-3.5 py-1.5 text-xs font-medium shadow-lg">
+            <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+            Read full template
           </span>
         </span>
+
+        {premium && (
+          <span className="absolute right-4 top-4 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-primary backdrop-blur">
+            {entry.accessTier}
+          </span>
+        )}
       </button>
 
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0 flex-1">
-            <CardTitle className="truncate text-base">{entry.name}</CardTitle>
-            <CardDescription className="mt-1 line-clamp-2 text-xs">
-              {entry.description || 'No description'}
-            </CardDescription>
-          </div>
-          {entry.accessTier !== 'standard' && (
-            <Badge variant="default" className="shrink-0 text-xs capitalize">
-              {entry.accessTier}
-            </Badge>
-          )}
+      {/* ── Identity ────────────────────────────────────────────────────── */}
+      <div className="flex flex-1 flex-col gap-3 border-t border-border/60 p-5">
+        <div>
+          <h3 className="text-[15px] font-semibold leading-snug tracking-[-0.01em]">{entry.name}</h3>
+          <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-muted-foreground">
+            {entry.description || 'No description'}
+          </p>
         </div>
-      </CardHeader>
 
-      <CardContent className="flex flex-1 flex-col justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5 text-xs">
-          <Badge variant="secondary">{categoryLabel(entry.category)}</Badge>
-          {entry.reportType && <Badge variant="outline">{reportTypeLabel(entry.reportType)}</Badge>}
-          {entry.style && <Badge variant="outline">{styleLabel(entry.style)}</Badge>}
-          <Badge variant="outline" className="gap-1">
+        {/* One quiet line of facts, separated by hairlines rather than chips. */}
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground/80">{categoryLabel(entry.category)}</span>
+          {entry.reportType && (
+            <>
+              <span aria-hidden="true" className="text-border">·</span>
+              <span>{reportTypeLabel(entry.reportType)}</span>
+            </>
+          )}
+          <span aria-hidden="true" className="text-border">·</span>
+          <span className="inline-flex items-center gap-1">
             <FileStack className="h-3 w-3" aria-hidden="true" />
             {entry.pageCount} page{entry.pageCount === 1 ? '' : 's'}
-          </Badge>
+          </span>
         </div>
 
         <TooltipProvider>
-          <div className="flex flex-wrap gap-1.5 text-xs">
+          <div className="flex flex-wrap gap-1.5">
             <Tooltip>
               <TooltipTrigger asChild>
-                <Badge
-                  variant="outline"
-                  className={
-                    compat.productionReady
-                      ? 'gap-1 border-success/40 text-success'
-                      : 'gap-1 border-warning/40 text-warning'
-                  }
-                >
-                  {compat.productionReady
-                    ? <ShieldCheck className="h-3 w-3" aria-hidden="true" />
-                    : <TriangleAlert className="h-3 w-3" aria-hidden="true" />}
-                  {compat.productionReady ? 'Report-ready' : 'Preview only'}
-                </Badge>
+                {/* Badge does not forward refs, so the trigger holds a span. */}
+                <span tabIndex={0} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <Badge
+                    variant="outline"
+                    className={
+                      compat.productionReady
+                        ? 'gap-1 border-success/40 text-success'
+                        : 'gap-1 border-warning/40 text-warning'
+                    }
+                  >
+                    {compat.productionReady
+                      ? <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                      : <TriangleAlert className="h-3 w-3" aria-hidden="true" />}
+                    {compat.productionReady ? 'Report-ready' : 'Preview only'}
+                  </Badge>
+                </span>
               </TooltipTrigger>
               <TooltipContent className="max-w-xs">
                 {compat.productionReady
@@ -103,7 +179,9 @@ export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) 
             {compat.brandSafe && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Badge variant="outline" className="gap-1">White-label ready</Badge>
+                  <span tabIndex={0} className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    <Badge variant="outline" className="gap-1">White-label ready</Badge>
+                  </span>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs">
                   Every colour is a brand token, so a partner palette applies in full.
@@ -113,7 +191,7 @@ export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) 
           </div>
         </TooltipProvider>
 
-        <div className="flex gap-2 pt-1">
+        <div className="mt-auto flex gap-2 pt-1">
           <Button size="sm" variant="outline" className="flex-1" onClick={() => onPreview(entry)}>
             <Eye className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Preview
           </Button>
@@ -123,7 +201,7 @@ export function TemplateLibraryCard({ entry, canUse, onPreview, onUse }: Props) 
             </Button>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </article>
   );
 }

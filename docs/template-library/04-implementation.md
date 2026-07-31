@@ -445,3 +445,188 @@ first validated against the twelve rows already in production, so the
 comparison itself is known-good rather than assumed.
 
 The migration ledger was also repaired; see the runbook for why that mattered.
+
+---
+
+## 8. Making the catalogue sell
+
+Reported after the catalogue went to forty: the page *worked* but had "no
+commercialisation feel", was "very basic", and gave no way to view a template
+"in its entirety, with sample information integrated".
+
+That is a fair reading of what was there. The grid drew schematic outlines and
+the preview showed one page of grey bands at a time. It answered "what blocks
+are on page 3" — an authoring question. Someone choosing a template is asking
+"is this the report I want to send my client?", and the only honest answer to
+that is the document.
+
+### 8.1 The position: the template is the product
+
+So the document stops being described and starts being shown. Both surfaces now
+run the schema through `renderTemplateToHtml` — **the same function that
+produces the customer's PDF** — and display the result. Real typography, real
+tables, real palette, at full fidelity.
+
+Everything else is arranged to get out of its way. Cards present a rendered
+first page as a sheet of paper on a dark surface, because these are printed
+client deliverables and that is what they look like in the world. Metadata drops
+to two lines and a thin row of facts under the sheet. The page-edge stack behind
+each sheet is drawn from `page_count`, so a two-page snapshot and a ten-page
+dossier are distinguishable before either is opened.
+
+### 8.2 Sample data — 1,590 bindings, all of them
+
+A rendered template with empty fields looks worse than a schematic, so
+`src/lib/templateLibrary/sampleReportData.ts` covers **every binding the
+catalogue references — 1,590 across 46 namespaces, at 100%**. It is one
+coherent fictional engagement (the Nguyen family buying in Leichhardt through
+Meridian Property Advisory) rather than forty unrelated fragments, because
+consistency across templates is most of what makes a catalogue feel considered.
+
+Coverage is a test, not a claim: `seedCatalogue.spec.ts` asserts per template
+that every binding it uses resolves to a non-empty value, so a new template
+cannot ship with a half-filled preview. The spec now renders with the same
+dataset the UI does, so the tests guard the actual browse experience.
+
+It is labelled as sample everywhere it appears, and the label is deliberately
+not responsive — it must not be the element that drops at a narrow breakpoint.
+The data is preview-only and is never written to a report, a template or the
+database.
+
+### 8.3 The reader
+
+`TemplateReaderDialog` replaces the page-tab dialog: full height, a contents
+rail, one continuous scroll of real pages, zoom, keyboard paging, and the
+commercial facts to one side.
+
+Two implementation notes worth keeping:
+
+- **The document is a sandboxed, script-free iframe.** The rendered page is a
+  complete HTML document with its own stylesheet sized in points; dropping that
+  into the dashboard would put two design systems in conflict over `table`,
+  `h1` and `img`. The frame is sized to its full height with internal scrolling
+  off, so the *outer* container scrolls and page offsets are ordinary
+  arithmetic — no scripting into the frame, which is what keeps `sandbox=""`
+  affordable.
+- **`bareLayout` already existed on the shared Dialog.** Without it
+  `sm:max-w-lg` wins and a document reader renders in a 32rem column. Using the
+  existing prop meant `dialog.tsx` — shared by every dialog in the app — did not
+  have to change for one screen.
+
+### 8.4 Defects found by looking at it
+
+Three, each caught by rendering in a real browser rather than by reasoning:
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| Cover-led templates showed as empty rectangles | Cards cropped to the top 260px; nine templates put their title at the optical centre of the cover | Show page one whole, never a crop |
+| Reader opened showing the top two-thirds of a page | Zoom fitted the column width, so an A4 sheet was taller than the viewport at every size | Fit whichever of width or height binds first; 100% now means one whole page |
+| Reader rendered the page at the 240px floor | The scroll viewport is portalled, so an effect keyed on `open` ran before the node existed and never re-ran — leaving the fit maths dividing by a zero height | Measure from a callback ref, which attaches with the node |
+
+### 8.5 Verification
+
+| Check | Result |
+| --- | --- |
+| Sample-data coverage | **1,590 / 1,590 bindings (100%)**, asserted per template |
+| `vitest src/lib/templateLibrary` | ✅ 682 passed |
+| `vitest src/lib/reportTemplate` | ✅ 18 failures here, 18 on `origin/main`, by test name — **0 new** |
+| `npm run lint` | ✅ 43 errors / 2,077 warnings — identical to `origin/main` |
+| `npm run audit:style` | ✅ 846/341/97/25 — byte-identical to `origin/main` |
+| `tsc --noEmit` / `npm run build` | ✅ clean / succeeds |
+| Browser | ✅ grid, reader, mobile and tablet checked in Chromium; console clean; no horizontal overflow at 390px |
+| Accessibility | ✅ reviewed against the Web Interface Guidelines — `overscroll-contain` on modal scroll regions, `aria-live` page announcements, visible focus on the scroll viewport, `prefers-reduced-motion` honoured for page jumps and hover motion |
+
+`TemplatePreviewSvg` is retained deliberately: it is the fallback when the full
+schema cannot be fetched, so a preview failure degrades to an outline instead of
+blocking the decision to copy.
+
+The Reporting Engine Builder is untouched. `htmlRenderer` is imported and read;
+nothing under `src/lib/reportTemplate/**` is modified.
+
+---
+
+## 9. Making the document obviously readable
+
+Reported next: *"there is no scrollable aspect for users to view the information
+in the report."*
+
+### 9.1 It scrolled; nothing said so
+
+Measured before changing anything: with the reader open on a ten-page template,
+a wheel gesture over the document moved `scrollTop` from 0 to 900 of a
+`scrollHeight` of 8,020, and the page indicator advanced to "Page 2 of 10". The
+mechanism was working.
+
+What was missing was any signal that it would. Three things combined:
+
+1. **The scrollbar was invisible.** The viewport used the platform's overlay
+   scrollbar, which reserves no layout space and is close to indistinguishable
+   on this surface (`offsetWidth - clientWidth` measured **0**).
+2. **The first page gives no internal cue.** Nine templates open on a
+   full-bleed cover — no text runs to a bottom edge, so nothing implies
+   continuation.
+3. **Nothing counted the pages in the document area.** The page total sat in
+   the footer and the contents rail, both easy to read past.
+
+A working control that nobody can see is a broken control. Fixed as a defect,
+not a preference.
+
+### 9.2 What was added
+
+| Signal | Behaviour |
+| --- | --- |
+| **A real scrollbar** | `.template-reader-scroll` in `components.css`, 14px, permanent track and primary-coloured thumb, `scrollbar-gutter: stable` so the document does not shift when it appears |
+| **A scroll prompt** | "Scroll to read all N pages" over the foot of the document, shown only for multi-page templates, retiring itself on the first scroll |
+| **A progress bar** | A hairline across the top of the footer tracking position through the whole document |
+| **Page peek** | The gutter and the top edge of page two are visible below page one at the default fit |
+
+> **`scrollbar-width` had to be removed to get a visible scrollbar.** Current
+> Chrome ignores *every* `::-webkit-scrollbar` rule the moment either
+> `scrollbar-width` or `scrollbar-color` is set, and silently falls back to the
+> overlay bar. The first attempt set both, which is why it still measured a
+> zero-width gutter. Dropping the standard properties took the measured gutter
+> from 0 to 14.
+>
+> **Not visually confirmed:** headless Chromium does not paint custom
+> scrollbars into screenshots — verified with an isolated page that reserved a
+> 14px gutter and still screenshotted as bare background. The reserved gutter
+> and computed pseudo-element styles (`rgb(217, 165, 32)` thumb on an
+> `rgb(31, 31, 31)` track) are the evidence; the painted result should be
+> checked in a real browser. Every other signal above *was* confirmed visually.
+
+### 9.3 Previewing with real report data
+
+The same request asked to see templates rendered "with example **or real
+previously accumulated data**". That is now a control in the reader footer.
+
+It reuses what already exists rather than adding a data path:
+`investmentReportAdapter.buildBindingContext()` — the same adapter the
+production PDF route uses — via the `get-investment-reports` edge function, so
+the existing `reports` module permission applies unchanged. **No new table, no
+new endpoint, no widened access.** A user without `reports:view` sees no
+reports to pick.
+
+**Sample data stays the default, deliberately.** A real report only fills the
+namespaces its adapter emits — `property.*`, `financials.*`, `scores.*`,
+`demographics.*`, `economic.*`, `location.*`, `sections.*`. The catalogue also
+binds `market.*`, `client.*`, `risks.*` and others that no adapter produces
+today, so a real-data render is legitimately patchy. Opening on it would make
+every template look broken.
+
+So the gap is reported rather than hidden: when a real report is selected the
+control states what percentage of that template's fields came back empty, and
+offers one click back to sample. The control is hidden entirely for templates
+whose report type has no production adapter — which is 30 of the 40 — rather
+than offered and then failing.
+
+### 9.4 Verification
+
+| Check | Result |
+| --- | --- |
+| Wheel-over-document scrolling | ✅ measured: `scrollTop` 0 → 900, `scrollHeight` 8,020, indicator "Page 2 of 10" |
+| Scrollbar lane reserved | ✅ `offsetWidth - clientWidth` 0 → **14** |
+| Scroll prompt / progress bar / page peek | ✅ confirmed visually in Chromium |
+| `vitest src/lib/templateLibrary` | ✅ 682 passed |
+| `npm run lint` | ✅ 43 errors / 2,077 warnings — unchanged |
+| `npm run audit:style` | ✅ 846/341/97/25 — unchanged |
+| `tsc --noEmit` / `npm run build` | ✅ clean / succeeds |

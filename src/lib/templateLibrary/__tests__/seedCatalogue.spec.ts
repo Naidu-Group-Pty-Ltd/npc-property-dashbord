@@ -16,39 +16,7 @@ import {
 import { PRODUCTION_SAFE_BLOCK_TYPES } from '../../../../supabase/functions/_shared/productionBlockTypes';
 import { SEED_TEMPLATES } from '../../../../scripts/template-library/templates';
 
-/**
- * Sample data covering the bindings the seeded templates reference.
- *
- * Note the convention: the `percent` filter formats the number it is given and
- * does NOT multiply by 100, so a 3.84% yield is supplied as `3.84`, not
- * `0.0384`. Getting this wrong renders "0.04%" in a customer's report.
- */
-const SAMPLE = {
-  property: {
-    address: '14 Marlborough Street, Leichhardt NSW 2040',
-    suburb: 'Leichhardt',
-    type: 'Freestanding house',
-    configuration: '3 bed · 2 bath · 1 car',
-    landArea: '412 m²',
-    yearBuilt: '1928',
-    zoning: 'R2 Low Density Residential',
-    tenancy: 'Vacant possession',
-    rationale: 'Land-rich holding inside the 8km ring with a compliant granny-flat footprint.',
-  },
-  client: { name: 'J. & S. Nguyen', email: 'j.nguyen@example.com.au' },
-  financials: {
-    purchasePrice: 1285000, weeklyRent: 950, grossYield: 3.84, cashOnCash: 2.1,
-    annualRent: 49400, weeklyRepayment: 1180, annualRepayment: 61360,
-    weeklyNet: -312, annualNet: -16224, totalCost: 1352400,
-  },
-  market: {
-    medianPrice: 1420000, growth12m: 6.1, medianRent: 890, vacancy: 1.4,
-    daysOnMarket: 21, source: 'CoreLogic, quarter close', postcode: '2040', state: 'NSW',
-  },
-  reportType: 'investment',
-  author: { name: 'A. Nguyen', title: 'Senior Adviser' },
-  org: { name: 'Example Advisory', abn: '12 600 123 456' },
-};
+import { SAMPLE_REPORT_DATA as SAMPLE } from '../sampleReportData';
 
 describe('seeded catalogue', () => {
   it('ships a catalogue rather than an empty grid', () => {
@@ -201,6 +169,37 @@ describe('seeded catalogue', () => {
           }
         }
       }
+    });
+
+    it('has every binding populated by the preview sample data', () => {
+      // The Library renders these templates with SAMPLE_REPORT_DATA on the
+      // browse and preview surfaces. A binding with no sample value renders as
+      // an empty cell, so a gap here is a visibly half-filled document in the
+      // catalogue — the exact "looks unfinished" problem the previews exist to
+      // solve. Asserted per template so a new template cannot quietly ship
+      // without its data.
+      const read = (path: string) =>
+        path.split('.').reduce<unknown>(
+          (acc, key) => (acc == null ? acc : (acc as Record<string, unknown>)[key]),
+          SAMPLE,
+        );
+
+      const bindings = new Set<string>();
+      const walk = (node: unknown): void => {
+        if (typeof node === 'string') {
+          for (const m of node.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)/g)) bindings.add(m[1]);
+          return;
+        }
+        if (Array.isArray(node)) { node.forEach(walk); return; }
+        if (node && typeof node === 'object') Object.values(node).forEach(walk);
+      };
+      walk(template.schema.pages);
+
+      const missing = [...bindings].filter((b) => {
+        const v = read(b);
+        return v === undefined || v === null || v === '';
+      });
+      expect(missing.sort()).toEqual([]);
     });
 
     it('has descriptive catalogue metadata', () => {
