@@ -691,9 +691,28 @@ Deno.serve(async (req) => {
         }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       }
 
+      // Clause 9.3 — no payout until banking details have been independently verified.
+      const { data: stmtRow } = await supabase.from('finance_partner_statements')
+        .select('finance_contact_id').eq('id', id).maybeSingle();
+      const { data: bankRows } = await supabase.rpc('fp_partner_banking_verified', {
+        _finance_contact_id: stmtRow?.finance_contact_id,
+      });
+      const banking = (bankRows || [])[0] || null;
+      if (!banking?.verified && body.override_banking !== true) {
+        return new Response(JSON.stringify({
+          error: banking
+            ? `Banking details are ${String(banking.status).replace(/_/g, ' ')} — independent verification is required before payment`
+            : 'No banking details on file for this partner — register and verify them before payment',
+          banking_status: banking?.status || 'missing',
+        }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
+
       const { data: updated, error } = await supabase
         .from('finance_partner_statements')
-        .update({ status: 'paid', paid_at: new Date().toISOString(), paid_reference: paid_reference || null })
+        .update({
+          status: 'paid', paid_at: new Date().toISOString(), paid_reference: paid_reference || null,
+          banking_verified_at_issue: !!banking?.verified,
+        })
         .eq('id', id).select('*').single();
       if (error) throw error;
 
