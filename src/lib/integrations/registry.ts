@@ -1862,7 +1862,7 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
     ],
   },
   {
-    id: 'sendbird',
+    id: 'segment',
     name: 'Twilio Segment',
     description: 'Customer data platform for unified event streaming.',
     category: 'infrastructure',
