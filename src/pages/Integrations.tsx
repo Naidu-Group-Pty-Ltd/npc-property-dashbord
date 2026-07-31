@@ -647,7 +647,50 @@ export default function Integrations() {
     );
   };
 
+  const renderGroupedIntegrations = (list: IntegrationConfig[], emptyMessage: string) => {
+    if (list.length === 0) {
+      return (
+        <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-border/70 bg-[linear-gradient(135deg,hsl(var(--card)/0.78),hsl(var(--muted)/0.24))] px-6 py-12 text-center text-muted-foreground shadow-inner shadow-sm">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10 text-primary">
+            <Search className="h-5 w-5" />
+          </div>
+          <p className="max-w-md text-sm font-medium">{emptyMessage}</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-8">
+        {INTEGRATION_CATEGORIES.map((category) => {
+          const items = list.filter((i) => i.category === category.id);
+          if (items.length === 0) return null;
+
+          return (
+            <section key={category.id} aria-labelledby={`integration-group-${category.id}`} className="min-w-0 space-y-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-3 border-b border-border/50 pb-3">
+                <h2
+                  id={`integration-group-${category.id}`}
+                  className="text-base font-semibold tracking-tight text-foreground sm:text-lg"
+                >
+                  {category.label}
+                </h2>
+                <Badge variant="outline" className="rounded-full border-primary/25 bg-primary/10 px-2.5 py-0.5 text-[11px] font-semibold text-primary">
+                  {items.length}
+                </Badge>
+                <p className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground sm:text-sm">{category.description}</p>
+              </div>
+              <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
+                {items.map(renderIntegrationCard)}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
+
     <DashboardThemeFrame
       as="main"
       variant="page"
