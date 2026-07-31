@@ -1,10 +1,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { extractSessionToken, createCorsHeaders, createClearSessionCookie } from "../_shared/auth.ts"
+import { extractSessionToken, createClearSessionCookie } from "../_shared/auth.ts"
+import { createAuthCorsHeaders } from "../_shared/authCorsExactV2.ts"
 import { hashSessionToken, isSessionHashConfigured } from "../_shared/sessionHash.ts"
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
-  const corsHeaders = createCorsHeaders(origin);
+  const corsHeaders = createAuthCorsHeaders(origin);
 
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -95,4 +96,4 @@ Deno.serve(async (req) => {
   }
 })
 
-// redeploy 1785437383
+// Auth bundle epoch 2026-07-31T17:15Z — forces shared CORS/JWT helpers into deployment.

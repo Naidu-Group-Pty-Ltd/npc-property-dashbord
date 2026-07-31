@@ -1,12 +1,13 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0'
-import { extractSessionToken, verifySession, createCorsHeaders } from "../_shared/auth.ts"
+import { extractSessionToken, verifySession } from "../_shared/auth.ts"
+import { createAuthCorsHeaders } from "../_shared/authCorsExactV2.ts"
 import { generateSupabaseJWT } from "../_shared/jwt.ts"
 
 Deno.serve(async (req) => {
   // Keep this entrypoint deployment coupled to the shared exact-origin CORS
   // contract; shared-file-only deployments are not always rebundled upstream.
   const origin = req.headers.get('origin');
-  const corsHeaders = createCorsHeaders(origin);
+  const corsHeaders = createAuthCorsHeaders(origin);
 
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -122,4 +123,4 @@ Deno.serve(async (req) => {
   }
 })
 
-// redeploy 1785437383
+// Auth bundle epoch 2026-07-31T17:15Z — forces shared CORS/JWT helpers into deployment.
