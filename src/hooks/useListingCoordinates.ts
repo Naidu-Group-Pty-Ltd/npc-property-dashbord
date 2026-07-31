@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import {
+  addressFingerprint,
+  readCachedPoint,
+  writeCachedPoint,
+} from '@/lib/listingCoordinateCache';
 import type { PropertyListing } from '@/lib/airtable';
 
 export interface ResolvedPoint {
@@ -32,23 +37,12 @@ const BATCH_SIZE = 150;
 const MAX_REQUESTS_PER_PASS = 8;
 /** Give up on a listing the server has fully processed but could not place. */
 const MAX_ATTEMPTS = 2;
-const CACHE_LIMIT = 5000;
 const RETRY_BASE_MS = 2_000;
 const RETRY_MAX_MS = 60_000;
 
-/**
- * Coordinates survive unmount, so flipping between table and map view (or
- * re-opening the page) does not re-request everything from scratch.
- */
-const coordinateCache = new Map<string, ResolvedPoint>();
+const fingerprintOf = (row: ListingPayload): string =>
+  addressFingerprint([row.address, row.suburb, row.state, row.postcode]);
 
-function rememberPoint(id: string, point: ResolvedPoint): void {
-  if (coordinateCache.size >= CACHE_LIMIT) {
-    const oldest = coordinateCache.keys().next();
-    if (!oldest.done) coordinateCache.delete(oldest.value);
-  }
-  coordinateCache.set(id, point);
-}
 
 function numeric(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -86,11 +80,15 @@ export function useListingCoordinates(listings: PropertyListing[]) {
   const [points, setPoints] = useState<Record<string, ResolvedPoint>>(() => {
     const seed: Record<string, ResolvedPoint> = {};
     for (const listing of listings) {
-      const hit = coordinateCache.get(listing.id);
+      const hit = readCachedPoint(
+        listing.id,
+        addressFingerprint([listing.address, listing.suburb, listing.state, listing.zipCode]),
+      );
       if (hit) seed[listing.id] = hit;
     }
     return seed;
   });
+
   const [isResolving, setIsResolving] = useState(false);
   const [failure, setFailure] = useState<CoordinateFailure | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
@@ -161,6 +159,21 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     });
   }, [payload]);
 
+  // Listings whose coordinates we already geocoded in a previous session /
+  // view: reuse the persisted result instead of calling the edge function.
+  useEffect(() => {
+    const cached: Record<string, ResolvedPoint> = {};
+    for (const row of payload) {
+      if (pointsRef.current[row.id]) continue;
+      if (isValid(numeric(row.latitude), numeric(row.longitude))) continue;
+      const hit = readCachedPoint(row.id, fingerprintOf(row));
+      if (hit) cached[row.id] = hit;
+    }
+    if (Object.keys(cached).length === 0) return;
+    pointsRef.current = { ...pointsRef.current, ...cached };
+    setPoints((prev) => ({ ...cached, ...prev }));
+  }, [payload]);
+
   useEffect(() => {
     const pending = (): ListingPayload[] =>
       payloadRef.current.filter(
@@ -175,12 +188,15 @@ export function useListingCoordinates(listings: PropertyListing[]) {
       resolved: Array<{ id: string; lat: number; lng: number; source: ResolvedPoint['source'] }>,
     ) => {
       const next: Record<string, ResolvedPoint> = {};
+      const fingerprints = new Map(payloadRef.current.map((row) => [row.id, fingerprintOf(row)]));
       for (const r of resolved) {
         if (!isValid(r.lat, r.lng)) continue;
         const point: ResolvedPoint = { lat: r.lat, lng: r.lng, source: r.source ?? 'geocoded' };
         next[r.id] = point;
-        rememberPoint(r.id, point);
+        const fp = fingerprints.get(r.id);
+        if (fp) writeCachedPoint(r.id, fp, point);
       }
+
       if (Object.keys(next).length === 0) return;
       // Keep the ref in step immediately: the next batch is queued from it
       // before React has had a chance to re-render.
