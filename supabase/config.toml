@@ -213,6 +213,15 @@ verify_jwt = false
 [functions.custom-auth-verify]
 verify_jwt = false
 
+[functions.custom-auth-login-v2]
+verify_jwt = false
+
+[functions.custom-auth-logout-v2]
+verify_jwt = false
+
+[functions.custom-auth-verify-v2]
+verify_jwt = false
+
 [functions.airtable-proxy]
 verify_jwt = false
 
