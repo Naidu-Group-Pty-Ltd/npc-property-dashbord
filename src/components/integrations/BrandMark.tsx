@@ -2,10 +2,12 @@ import { useEffect, useState, type ReactNode } from 'react';
 import {
   brandLogoUrl,
   getBrandProfile,
+  getLocalBrandAsset,
   resolveBrandMarkHex,
   svgOrgLogoUrl,
 } from '@/lib/integrations/brandProfiles';
 import { getInlineGlyph } from './brandGlyphs';
+
 
 /**
  * Reads dark mode straight off the `dark` class the theme provider toggles on
