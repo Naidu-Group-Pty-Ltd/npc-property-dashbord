@@ -56,7 +56,7 @@ export default function PartnerCompliance() {
   const verifyChain = useVerifyPartnerChain();
 
   const incidents = usePrivacyIncidents(incidentStatus === 'all' ? {} : { status: incidentStatus });
-  const retention = useRetentionRegister(retentionState === 'all' ? {} : { state: retentionState });
+  const retention = useRetentionRegister(retentionState === 'all' ? {} : { retention_state: retentionState });
   const { resolveEntitlements } = useTerminationWorkflow();
 
   const agreementOptions = useMemo(
