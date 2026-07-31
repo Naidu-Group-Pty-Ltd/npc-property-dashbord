@@ -1,5 +1,38 @@
 # Template Library — Deployment Runbook
 
+> ## Deployment status — production (`dduzbchuswwbefdunfct`)
+>
+> | Step | Status |
+> | --- | --- |
+> | `20260801090000_create_template_library.sql` | ✅ applied |
+> | `20260801093000_seed_template_library.sql` | ✅ applied — 12 published, 4 production-ready |
+> | `manage-template-library` edge function | ✅ deployed v1, ACTIVE, verify_jwt on |
+> | `manage-templates` redeploy (insert gate) | ❌ **NOT deployed — still v9** |
+>
+> Verified in production after applying: 3 tables created with RLS; 12 entries
+> published across all 8 categories; `report_templates` unchanged at 80 rows;
+> zero library rows leaked into `report_templates`; RLS confirmed by role —
+> `authenticated` sees 12, `anon` sees 0, `authenticated` INSERT refused;
+> the function returns a clean 401 to an unauthenticated caller rather than
+> crashing, which proves it booted and its imports resolved.
+>
+> **Outstanding: `manage-templates` still runs v9, without the insert gate.**
+> The Management API refused the update — `POST …/functions/deploy?slug=` returns
+> 409 `deployment already exists` for a function that already exists, and
+> `PATCH …/functions/{slug}` with a multipart body returns a 500. The Supabase
+> CLI could not be used from that environment because its HTTP client does not
+> honour the outbound proxy. Hand-bundling the live Builder write path through
+> an unsupported route was not worth the risk, so it was left alone.
+>
+> This is a safe state, not a broken one: v9 is the working pre-existing
+> version, the Template Library does not call `manage-templates` at all, and the
+> only thing outstanding is a security hardening of a hole that predates this
+> work. Deploy it with `supabase functions deploy manage-templates` from a
+> machine where the CLI has network access. The previously deployed v9 bundle is
+> archived as a rollback artefact.
+
+---
+
 Merging the code is not the same as the feature working. Three things have to be
 in place, in this order, or the Library tab renders its error state:
 
