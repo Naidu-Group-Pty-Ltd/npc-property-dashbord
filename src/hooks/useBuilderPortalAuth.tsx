@@ -143,7 +143,7 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
 
   const selectOrganisation = useCallback(async (organisationId: string) => {
     const { data, error } = await builderSelectOrganisation(organisationId);
-    if (error || !data?.success) {
+    if (error || !data) {
       return { error: (data as any)?.error || error?.message || 'Could not switch organisation' };
     }
     await checkSession();
