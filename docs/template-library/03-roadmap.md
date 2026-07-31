@@ -3,8 +3,17 @@
 Six pull requests. Each is independently revertable, and each leaves the existing
 Reporting Engine Builder untouched.
 
-The feature flag `templateLibrary` (added in PR 1, default **OFF**) stays off
-until PR 6 signs off. Every PR up to that point is dark in production.
+> **Status.** PR 1 is merged-ready as the foundation branch. **PR 2–5 are
+> delivered together** on `feature/template-library-implementation`, because the
+> instruction was to make the functionality visible and usable rather than to
+> land it dark — a data foundation with no UI is not usable, and a UI with no
+> "Use template" is not functionality. The three review passes described in
+> PR 2, PR 3 and PR 4 below still apply and are the recommended way to read the
+> diff. What actually shipped is recorded in
+> [`04-implementation.md`](./04-implementation.md).
+>
+> The `templateLibrary` flag now defaults **ON** and remains as a one-flip
+> kill-switch. PR 6 (release hardening) is outstanding.
 
 ---
 
