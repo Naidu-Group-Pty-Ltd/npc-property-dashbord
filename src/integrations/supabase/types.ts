@@ -4612,7 +4612,7 @@ export type Database = {
           file_size: number | null
           file_type: string | null
           id: string
-          is_vownet_form: boolean | null
+          is_formara_form: boolean | null
           last_sync_error: string | null
           last_synced_at: string | null
           report_type: string | null
@@ -4646,7 +4646,7 @@ export type Database = {
           file_size?: number | null
           file_type?: string | null
           id?: string
-          is_vownet_form?: boolean | null
+          is_formara_form?: boolean | null
           last_sync_error?: string | null
           last_synced_at?: string | null
           report_type?: string | null
@@ -4680,7 +4680,7 @@ export type Database = {
           file_size?: number | null
           file_type?: string | null
           id?: string
-          is_vownet_form?: boolean | null
+          is_formara_form?: boolean | null
           last_sync_error?: string | null
           last_synced_at?: string | null
           report_type?: string | null
