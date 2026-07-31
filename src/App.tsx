@@ -13,6 +13,7 @@ import { useBuildVersionCheck } from "@/hooks/useBuildVersionCheck";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+
 import { ModuleGuard } from "@/components/auth/ModuleGuard";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
 import { BackgroundJobTracker } from "./components/BackgroundJobTracker";
@@ -385,6 +386,7 @@ const App = () => (
 
                         {/* Internal Dashboard Routes */}
                         <Route path="/auth" element={<Auth />} />
+
                         <Route path="/accept-invite" element={<AcceptInvite />} />
                         <Route path="/" element={
                           <ProtectedRoute>
