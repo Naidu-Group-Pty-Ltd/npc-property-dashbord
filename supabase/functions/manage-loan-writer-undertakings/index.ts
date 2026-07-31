@@ -80,11 +80,14 @@ function decorate(row: Record<string, unknown>) {
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
-  const corsHeaders = {
-    ...createCorsHeaders(origin),
-    'Access-Control-Allow-Headers':
-      'authorization, x-client-info, apikey, content-type, x-correlation-id, x-finance-session-token, x-session-token',
-  };
+  // CORS-CONTRACT: no hand-rolled `Access-Control-Allow-Headers` here.
+  // `createCorsHeaders` already answers the canonical
+  // `CORS_ALLOWED_REQUEST_HEADERS` list. A local literal can only ever be a
+  // stale snapshot of it, and because it overrides the spread it silently
+  // NARROWS the allowlist — the preflight then fails for any header added to
+  // the canonical list later (this one had already fallen behind on
+  // `x-step-up-token`), surfacing as an opaque "Failed to fetch".
+  const corsHeaders = createCorsHeaders(origin);
 
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 

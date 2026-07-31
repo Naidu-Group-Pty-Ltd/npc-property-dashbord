@@ -127,11 +127,12 @@ async function logNotificationFailure(supabase: any, params: {
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
-  const corsHeaders = {
-    ...createCorsHeaders(origin),
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-finance-session-token, x-portal-session-token, x-session-token, x-command-centre-session-token, x-session-id',
-    'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-  };
+  // CORS-CONTRACT: both lists come from `createCorsHeaders`. The literals this
+  // replaced restated the canonical values verbatim except for the carriers
+  // they had fallen behind on (`x-solicitor-session-token`, `x-portal-request`,
+  // `x-generation-run-id`), and because they overrode the spread they narrowed
+  // the allowlist rather than extending it.
+  const corsHeaders = createCorsHeaders(origin);
 
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 

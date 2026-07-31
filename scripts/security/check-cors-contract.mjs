@@ -120,28 +120,99 @@ if (!tokenAuthMatch) {
   errors.push(`${SHARED_TRANSPORT}: could not parse TOKEN_AUTH_FUNCTIONS — the credentialed-CORS gate depends on it.`);
 }
 
-// Functions invoked through the credentialed transport (literal names).
-const credentialed = new Set();
+// `invokeSecureFunction` is not the only transport. The Finance, Solicitor and
+// Builder portals each post to edge functions through their own wrapper, and
+// two of those attach a custom request header (`X-Portal-Request`) on every
+// call. Checking only `secureInvoke` left those surfaces — several hundred
+// invocations — entirely outside this gate, so each entry below names the
+// module that defines the transport and the headers it attaches are read from
+// that source rather than restated here (a restated list goes stale in exactly
+// the way the edge-function header copies did).
+const TRANSPORTS = [
+  { name: 'invokeSecureFunction', module: 'src/lib/secureInvoke.ts' },
+  { name: 'invokeAmlFunction', module: 'src/lib/aml/invokeAmlFunction.ts' },
+  { name: 'streamSecureFunction', module: 'src/lib/streamSecureFunction.ts' },
+  { name: 'invokeSolicitorFunction', module: 'src/lib/solicitorPortal.ts' },
+  { name: 'invokeBuilderFunction', module: 'src/lib/builderPortal.ts' },
+  { name: 'invokeFinanceFunction', module: 'src/hooks/useFinancePortalAuth.tsx' },
+];
+
+for (const t of TRANSPORTS) {
+  let modSrc;
+  try {
+    modSrc = readFileSync(t.module, 'utf8');
+  } catch {
+    errors.push(`${t.module}: transport module defining \`${t.name}\` not found — the credentialed-CORS gate depends on it. Update TRANSPORTS in this script if the module moved.`);
+    t.headers = [];
+    t.credentialed = false;
+    continue;
+  }
+  t.credentialed = /credentials:\s*['"]include['"]/.test(modSrc);
+  t.headers = [...new Set(
+    [...modSrc.matchAll(/['"](x-[a-z0-9-]+)['"]\s*:/gi)].map((m) => m[1].toLowerCase()),
+  )];
+  for (const h of t.headers) {
+    if (!ALLOWED.has(h)) {
+      errors.push(`${t.module}: transport \`${t.name}\` attaches request header \`${h}\`, which is NOT in CORS_ALLOWED_REQUEST_HEADERS (${AUTH_TS}). Every preflight it triggers will fail.`);
+    }
+  }
+}
+const transportByName = new Map(TRANSPORTS.map((t) => [t.name, t]));
+
+// Functions each transport reaches. Literal names, plus the `const FN = '…'`
+// indirection the hooks in this repo consistently use.
+const reachedBy = new Map(); // function name -> Set(transport names)
 for (const file of walkFiles(SRC_DIR)) {
+  if (/\.test\.tsx?$/.test(file)) continue;
   const src = readFileSync(file, 'utf8');
-  for (const m of src.matchAll(/invoke(?:SecureFunction|AmlFunction)(?:<[^>]*>)?\(\s*["'`]([a-zA-Z0-9_-]+)["'`]/g)) {
-    credentialed.add(m[1]);
+  const consts = [...src.matchAll(/const\s+([A-Z_][A-Z0-9_]*)\s*=\s*['"]([a-z0-9-]+)['"]/g)];
+  for (const t of TRANSPORTS) {
+    const record = (fn) => {
+      if (!reachedBy.has(fn)) reachedBy.set(fn, new Set());
+      reachedBy.get(fn).add(t.name);
+    };
+    for (const m of src.matchAll(new RegExp(`${t.name}(?:<[^>]*>)?\\(\\s*["'\`]([a-zA-Z0-9_-]+)["'\`]`, 'g'))) record(m[1]);
+    for (const [, ident, value] of consts) {
+      if (new RegExp(`${t.name}(?:<[^>]*>)?\\(\\s*${ident}\\b`).test(src)) record(value);
+    }
   }
 }
 
-for (const fn of [...credentialed].sort()) {
-  if (TOKEN_AUTH.has(fn)) continue; // sent with credentials:'omit' — wildcard is valid
+for (const [fn, vias] of [...reachedBy].sort((a, b) => a[0].localeCompare(b[0]))) {
   const path = `${FUNC_DIR}/${fn}/index.ts`;
   let src;
   try { src = readFileSync(path, 'utf8'); } catch { continue; } // deployed-only, not in repo
-  const hasWildcard = /["']Access-Control-Allow-Origin["']\s*:\s*["']\*["']/.test(src);
-  if (!hasWildcard) continue;
-  if (/withRequestOrigin/.test(src)) continue; // wrapper rewrites it per request
+
   // Several functions keep a now-dead wildcard literal but actually build their
-  // real headers with createCorsHeaders(origin) — those answer an exact origin,
-  // so they are not broken. Verified against the live deployment.
-  if (/createCorsHeaders\s*\(/.test(src)) continue;
-  errors.push(`${path}: answers \`Access-Control-Allow-Origin: *\` but is called through the credentialed transport. Browsers reject a credentialed response with a wildcard origin, so every call fails as "Failed to fetch". Use createCorsHeaders(origin), or wrap the handler with withRequestOrigin (_shared/corsOrigin.ts).`);
+  // real headers with createCorsHeaders(origin), or have the origin rewritten
+  // per request by withRequestOrigin — those answer an exact origin.
+  const usesSharedOrigin = /createCorsHeaders\s*\(/.test(src) || /withRequestOrigin/.test(src);
+
+  // (a) A credentialed request whose response carries a wildcard origin is
+  //     rejected by the browser itself, opaquely, as "Failed to fetch".
+  const credentialedVias = [...vias].filter(
+    (v) => transportByName.get(v)?.credentialed && !(v === 'invokeSecureFunction' && TOKEN_AUTH.has(fn)),
+  );
+  if (
+    credentialedVias.length
+    && !usesSharedOrigin
+    && /["']Access-Control-Allow-Origin["']\s*:\s*["']\*["']/.test(src)
+  ) {
+    errors.push(`${path}: answers \`Access-Control-Allow-Origin: *\` but is called with credentials through ${credentialedVias.join(', ')}. Browsers reject a credentialed response with a wildcard origin, so every call fails as "Failed to fetch". Use createCorsHeaders(origin), or wrap the handler with withRequestOrigin (_shared/corsOrigin.ts).`);
+  }
+
+  // (b) Every custom header its callers attach must survive its preflight.
+  const required = [...new Set([...vias].flatMap((v) => transportByName.get(v)?.headers ?? []))];
+  if (required.length === 0) continue;
+  for (const m of src.matchAll(/(['"])Access-Control-Allow-Headers\1\s*:\s*(?:\r?\n\s*)?(['"])([^'"]*)\2/g)) {
+    const value = m[3].trim();
+    if (value === '*') continue;
+    const have = new Set(value.split(',').map((s) => s.trim().toLowerCase()));
+    const missing = required.filter((h) => !have.has(h));
+    if (missing.length) {
+      errors.push(`${path}: reached by ${[...vias].join(', ')}, which ${vias.size > 1 ? 'attach' : 'attaches'} ${missing.map((h) => `\`${h}\``).join(', ')}, but its Access-Control-Allow-Headers omits ${missing.length > 1 ? 'them' : 'it'}. The preflight fails and every call surfaces as "Failed to fetch".`);
+    }
+  }
 }
 
 // ── Hand-rolled CORS objects must be supersets of what the client needs ─────
@@ -156,6 +227,30 @@ function walkFunctions(dir, out = []) {
     else if (name.endsWith('.ts')) out.push(p);
   }
   return out;
+}
+
+// ── createCorsHeaders() must not be overridden ─────────────────────────────
+// Spreading the shared helper and then restating Allow-/Expose-Headers pins the
+// function to a snapshot of the canonical lists taken on the day it was
+// written. Because the literal comes *after* the spread it wins, so the copy
+// can only ever narrow the allowlist — never extend it. Every instance of this
+// in the repo had already gone stale: six functions were silently dropping
+// headers the canonical list had since gained (`x-step-up-token`,
+// `x-portal-request`, the portal session carriers), which fails the browser
+// preflight and surfaces as an opaque "Failed to fetch".
+//
+// Paren-aware so `createCorsHeaders(req.headers.get('origin'))` is matched too.
+const SPREAD_OVERRIDE = /\.\.\.\s*createCorsHeaders\s*\((?:[^()]|\([^()]*\))*\)\s*,([\s\S]{0,600}?)\}/g;
+for (const file of walkFunctions(FUNC_DIR)) {
+  if (file === AUTH_TS) continue;
+  const src = readFileSync(file, 'utf8');
+  for (const m of src.matchAll(SPREAD_OVERRIDE)) {
+    for (const key of ['Access-Control-Allow-Headers', 'Access-Control-Expose-Headers']) {
+      if (new RegExp(`(['"])${key}\\1\\s*:`).test(m[1])) {
+        errors.push(`${file}: overrides \`${key}\` after spreading createCorsHeaders(). The override wins over the spread, so it can only narrow the canonical list and will go stale the next time a header is added. Delete the override; if the function genuinely needs an extra header, add it to the canonical list in ${AUTH_TS}.`);
+      }
+    }
+  }
 }
 
 for (const file of walkFunctions(FUNC_DIR)) {
@@ -184,7 +279,8 @@ for (const file of walkFunctions(FUNC_DIR)) {
 
 if (errors.length) {
   console.error('CORS contract check FAILED:\n');
-  for (const e of errors.sort()) console.error(`  - ${e}`);
+  // A file can trip the same rule at more than one CORS object; report it once.
+  for (const e of [...new Set(errors)].sort()) console.error(`  - ${e}`);
   console.error(`\nFix by adding the header to the canonical lists in ${AUTH_TS} and to any`);
   console.error('hand-rolled CORS object in supabase/functions/. A client header that is not');
   console.error('allow-listed fails the browser preflight and breaks every page that calls the function.');

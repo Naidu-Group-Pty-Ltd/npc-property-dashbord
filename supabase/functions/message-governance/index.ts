@@ -23,11 +23,10 @@ function jsonResponse(data: unknown, status = 200, corsHeaders: Record<string, s
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
-  const corsHeaders = {
-    ...createCorsHeaders(origin),
-    'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token, x-session-token, x-session-id',
-    'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
-  };
+  // CORS-CONTRACT: both lists come from `createCorsHeaders`; the literals this
+  // replaced were stale subsets of the canonical values and, by overriding the
+  // spread, narrowed the allowlist instead of extending it.
+  const corsHeaders = createCorsHeaders(origin);
 
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
 
