@@ -21,10 +21,12 @@ export interface BuilderPortalUser {
   name: string;
   phone: string | null;
   job_title: string | null;
-  must_change_password: boolean;
-  has_accepted_current_terms: boolean;
+  has_accepted_terms: boolean;
   has_completed_onboarding: boolean;
-  current_terms_version?: string | null;
+  must_change_password: boolean;
+  current_terms_version: string | null;
+  has_accepted_current_terms: boolean;
+  has_completed_mandatory_onboarding: boolean;
 }
 
 export interface BuilderOrganisation {

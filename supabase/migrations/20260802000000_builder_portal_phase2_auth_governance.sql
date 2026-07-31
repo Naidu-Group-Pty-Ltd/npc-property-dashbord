@@ -177,6 +177,17 @@ RETURNS TABLE (terms_version_id uuid, version text)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_terms record;
 BEGIN
+  -- Session ownership, the same check builder_select_session_organisation
+  -- performs below. Without it the function trusts whatever pair of ids it is
+  -- handed, so a caller holding one valid session could record an acceptance
+  -- against another user, or a revoked session could still write one.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.builder_portal_sessions
+    WHERE id = _session_id AND builder_user_id = _builder_user_id AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_SESSION_NOT_FOUND';
+  END IF;
+
   -- Aliased deliberately: this function's OUT column is also called `version`,
   -- so selecting the column under its own name makes the reference ambiguous
   -- and the function fails at runtime for every caller.
@@ -229,6 +240,17 @@ RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 DECLARE v_mandatory_total integer; v_mandatory_done integer; v_complete boolean;
 BEGIN
+  -- Session ownership, as in builder_accept_current_terms and
+  -- builder_select_session_organisation. `completed_session_id` is stamped from
+  -- `_session_id`, so an unverified pair would attribute a completion to a
+  -- session that does not belong to the user.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.builder_portal_sessions
+    WHERE id = _session_id AND builder_user_id = _builder_user_id AND revoked_at IS NULL
+  ) THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_SESSION_NOT_FOUND';
+  END IF;
+
   PERFORM public.builder_ensure_onboarding_steps(_builder_user_id);
 
   UPDATE public.builder_onboarding_steps

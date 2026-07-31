@@ -63,7 +63,7 @@ export function BuilderPortalProtectedRoute() {
       : <Navigate to="/builder/terms" replace />;
   }
 
-  if (!user.has_completed_onboarding) {
+  if (!user.has_completed_mandatory_onboarding) {
     return location.pathname === '/builder/onboarding'
       ? <Outlet />
       : <Navigate to="/builder/onboarding" replace />;

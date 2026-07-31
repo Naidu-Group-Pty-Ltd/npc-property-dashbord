@@ -74,9 +74,14 @@ Deno.serve(async (req) => {
 
     const passwordHash = await hashPassword(new_password);
 
-    // Single-use: clearing the hash means a replay of the same code resolves to
-    // 'not_found' on the next attempt.
-    await supabase.from('builder_portal_users').update({
+    // Single-use, atomically. The WHERE clause still requires the code's hash to
+    // be present, so of two concurrent requests carrying the same valid code
+    // exactly one matches a row — the other sees the hash already cleared and
+    // gets the generic error. This is the same conditional-update idiom
+    // `builder-portal-accept-invite` uses to make an invite single-use; without
+    // it, consuming the attempt and completing the reset are two separate
+    // statements and both requests complete.
+    const { data: updated } = await supabase.from('builder_portal_users').update({
       password_hash: passwordHash,
       must_change_password: false,
       password_changed_at: new Date().toISOString(),
@@ -92,7 +97,15 @@ Deno.serve(async (req) => {
         invite_token_hash: null,
         invite_token_expires_at: null,
       }),
-    }).eq('id', result.user_id);
+    })
+      .eq('id', result.user_id)
+      .eq('reset_token_hash', otpHash)
+      .select('id')
+      .maybeSingle();
+
+    // No row means another request consumed this code first. Reported with the
+    // same generic string as every other rejection.
+    if (!updated) return json({ error: GENERIC_CODE_ERROR }, 400);
 
     // Every live session dies with the old password. The Phase 1 trigger on
     // password_changed_at does this too; the explicit call keeps the count for

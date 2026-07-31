@@ -41,10 +41,15 @@ export interface BuilderSessionUser {
   job_title: string | null;
   status: string;
   must_change_password: boolean;
-  has_accepted_current_terms: boolean;
+  /** The stored flag on the row. Mirrors `SolicitorSessionUser.has_accepted_terms`. */
+  has_accepted_terms: boolean;
   has_completed_onboarding: boolean;
   last_seen_at: string | null;
   current_terms_version: string | null;
+  /** Derived: an acceptance row exists for the CURRENT terms version. */
+  has_accepted_current_terms: boolean;
+  /** Derived: every mandatory onboarding step is completed. */
+  has_completed_mandatory_onboarding: boolean;
 }
 
 export interface BuilderSessionResult {
@@ -172,11 +177,29 @@ export async function resolveBuilderSession(
     active = enabled.find((organisation) => organisation.is_primary) ?? (enabled.length === 1 ? enabled[0] : null);
   }
 
+  // Governance is DERIVED here, exactly as `resolveSolicitorSession` derives it:
+  // the current terms version is looked up, then an acceptance row for THAT
+  // version, and the mandatory onboarding steps are counted. Reading the stored
+  // `has_accepted_current_terms` flag instead would leave every existing user
+  // showing as accepted the moment a new terms version is published, because
+  // nothing clears the flag — acceptance would no longer be version-exact.
   const { data: terms } = await supabase
-    .from('portal_terms_versions').select('version')
+    .from('portal_terms_versions').select('id, version')
     .eq('portal', 'builder').is('retired_at', null)
     .lte('effective_at', new Date().toISOString())
     .order('effective_at', { ascending: false }).limit(1).maybeSingle();
+
+  const [{ data: acceptance }, { data: onboarding }] = await Promise.all([
+    terms
+      ? supabase.from('portal_terms_acceptances').select('id')
+        .eq('terms_version_id', terms.id).eq('builder_user_id', user.id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase.from('builder_onboarding_steps').select('mandatory, completed_at')
+      .eq('builder_user_id', user.id),
+  ]);
+  const mandatorySteps = (onboarding || []).filter((step: any) => step.mandatory);
+  const mandatoryComplete = mandatorySteps.length > 0
+    && mandatorySteps.every((step: any) => !!step.completed_at);
 
   return {
     ok: true,
@@ -192,10 +215,12 @@ export async function resolveBuilderSession(
       job_title: user.job_title ?? null,
       status: user.status,
       must_change_password: !!user.must_change_password,
-      has_accepted_current_terms: !!user.has_accepted_current_terms,
+      has_accepted_terms: !!user.has_accepted_current_terms,
       has_completed_onboarding: !!user.has_completed_onboarding,
       last_seen_at: user.last_seen_at ?? null,
       current_terms_version: terms?.version ?? null,
+      has_accepted_current_terms: !!terms && !!acceptance,
+      has_completed_mandatory_onboarding: mandatoryComplete,
     },
   };
 }
@@ -276,7 +301,7 @@ export function builderGovernanceError(result: BuilderSessionResult): string | n
   if (result.user.must_change_password) return 'password_rotation_required';
   if (!result.active_organisation) return 'organisation_selection_required';
   if (!result.user.has_accepted_current_terms) return 'terms_acceptance_required';
-  if (!result.user.has_completed_onboarding) return 'onboarding_required';
+  if (!result.user.has_completed_mandatory_onboarding) return 'onboarding_required';
   return null;
 }
 

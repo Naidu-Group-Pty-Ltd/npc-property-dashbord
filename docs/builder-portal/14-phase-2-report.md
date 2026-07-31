@@ -118,6 +118,38 @@ A sixth was found by the same widening: `validatePasswordStrength` returns
 `{ isValid, error }`, and three Builder functions read `{ valid, errors }`,
 which would have rejected every password. Fixed at all three call sites.
 
+### Governance corrections (follow-up)
+
+Three further defects were corrected after the initial Phase 2 commit, each of
+them a place where the Builder implementation had diverged from the Solicitor
+template rather than mirrored it. The full before/after mapping is section 7 of
+`13-phase-2-mirroring-inventory.md`.
+
+1. **Terms acceptance was not version-exact.** `resolveBuilderSession` read the
+   stored `has_accepted_current_terms` column instead of deriving it, as
+   `resolveSolicitorSession` does, from an acceptance row for the *current*
+   version. Nothing clears that column, so publishing a new terms version left
+   every existing user reading "accepted" and they were never re-prompted. Fixed
+   by mirroring the Solicitor derivation, including
+   `has_completed_mandatory_onboarding`, and pointing both the server governance
+   error and the route gate at the derived values.
+2. **Terms and onboarding did not validate session ownership.**
+   `builder_accept_current_terms` and `builder_complete_onboarding` accepted a
+   `(user, session)` pair and stamped `completed_session_id` without verifying
+   the session belonged to the user or was still live —
+   `builder_select_session_organisation`, in the same migration, already
+   performed exactly that check. Added it to both, with the matching 401 mapping
+   in `builder-portal-verify`.
+3. **The password reset was not atomically single-use.** Consuming the attempt
+   and completing the reset were separate statements, so two concurrent requests
+   carrying the same valid code both completed. Fixed with the conditional-update
+   idiom `builder-portal-accept-invite` already uses: the completing `UPDATE`
+   re-asserts `reset_token_hash` and reads back whether it matched a row.
+
+None of the three introduced a new table, function, module, pattern or
+abstraction. Two of them reuse an idiom already present in the mirrored
+structure; the first is the Solicitor code with the terminology swapped.
+
 ---
 
 ## 4. Validation
@@ -133,8 +165,8 @@ Every result below was produced by actually running the command.
 | Deno type-check (9 functions) | `npm run typecheck:builder-edge` | **Passed** |
 | Migration replay (756 migrations) | `npm run builder:db:reset` | **Passed** — 0 Builder defects |
 | Phase 1 database verification | `npm run builder:db:verify` | **135/135 passed** |
-| Phase 2 database verification | `npm run builder:db:verify:phase2` | **61/61 passed** |
-| Builder contract tests | `npm run test:builder-portal` | **216/216 passed** |
+| Phase 2 database verification | `npm run builder:db:verify:phase2` | **73/73 passed** |
+| Builder contract tests | `npm run test:builder-portal` | **223/223 passed** |
 | Builder security check | `npm run security:builder-portal` | **Passed** |
 | Builder end-to-end (real Chromium) | `npm run test:e2e:builder-portal` | **10/10 passed** |
 | Solicitor security check (regression) | `npm run security:solicitor-portal` | **Passed** |

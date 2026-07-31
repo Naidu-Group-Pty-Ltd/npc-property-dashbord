@@ -8,7 +8,7 @@
  * The behavioural half of Phase 2 — organisation-context enforcement, terms and
  * onboarding commands, reset-attempt consumption, fail-closed branches — is
  * executed against a live PostgreSQL database by
- * scripts/builder-portal/local-db/verify-phase-2.mjs, which asserts 61
+ * scripts/builder-portal/local-db/verify-phase-2.mjs, which asserts 73
  * conditions. These tests assert the shape that verification depends on, so a
  * change that would invalidate it fails here first.
  *
@@ -192,6 +192,87 @@ test('a wrong reset code is reported identically to an unknown account', () => {
   const mismatchBranch = definition.slice(definition.indexOf('IS DISTINCT FROM p_token_hash'));
   assert.match(mismatchBranch.slice(0, 200), /status := 'not_found'/,
     'a hash mismatch must not be distinguishable from an unknown account');
+});
+
+// ---------------------------------------------------------------------------
+// Governance correctness — the three Phase 2 corrections
+// ---------------------------------------------------------------------------
+
+test('terms acceptance is version-exact, derived exactly as the Solicitor derives it', () => {
+  // Mirrors resolveSolicitorSession: look up the CURRENT terms version, then an
+  // acceptance row for THAT version. Reading the stored flag would leave every
+  // existing user showing as accepted when a new version is published.
+  assert.match(sharedCode.portalAuth, /from\('portal_terms_acceptances'\)/,
+    'the resolver does not look up an acceptance row at all');
+  assert.match(sharedCode.portalAuth, /\.eq\('terms_version_id', terms\.id\)/,
+    'the acceptance lookup is not keyed on the current terms version');
+  assert.match(sharedCode.portalAuth, /\.eq\('builder_user_id', user\.id\)/,
+    'the acceptance lookup is not keyed on the authenticated user');
+  assert.match(sharedCode.portalAuth, /has_accepted_current_terms: !!terms && !!acceptance/,
+    'has_accepted_current_terms is not derived from a live acceptance row');
+  assert.doesNotMatch(sharedCode.portalAuth,
+    /has_accepted_current_terms: !!user\.has_accepted_current_terms/,
+    'the resolver still returns the stored flag as the version-exact answer');
+});
+
+test('mandatory onboarding is derived from the steps, as the Solicitor derives it', () => {
+  assert.match(sharedCode.portalAuth, /from\('builder_onboarding_steps'\)/);
+  assert.match(sharedCode.portalAuth, /has_completed_mandatory_onboarding: mandatoryComplete/);
+});
+
+test('the governance gate and the route gate both use the derived values', () => {
+  const governance = sharedCode.portalAuth.slice(
+    sharedCode.portalAuth.indexOf('export function builderGovernanceError'));
+  assert.match(governance.slice(0, 500), /has_completed_mandatory_onboarding\) return 'onboarding_required'/,
+    'the server governance error still gates on the stored onboarding flag');
+  assert.match(gate, /if \(!user\.has_completed_mandatory_onboarding\)/,
+    'the route gate still gates on the stored onboarding flag');
+});
+
+test('terms and onboarding commands validate session ownership in the database', () => {
+  // The same check builder_select_session_organisation performs. Without it the
+  // function trusts whatever (user, session) pair it is handed.
+  for (const name of ['builder_accept_current_terms', 'builder_complete_onboarding']) {
+    const definition = migrationCode.slice(migrationCode.indexOf(`FUNCTION public.${name}`));
+    const body = definition.slice(0, definition.indexOf('END $$'));
+    assert.match(body, /FROM public\.builder_portal_sessions/,
+      `${name} does not check the session at all`);
+    assert.match(body, /WHERE id = _session_id AND builder_user_id = _builder_user_id AND revoked_at IS NULL/,
+      `${name} does not validate that the session belongs to the user and is live`);
+    assert.match(body, /BUILDER_SESSION_NOT_FOUND/,
+      `${name} does not fail closed on an unowned session`);
+  }
+});
+
+test('an unowned session on terms or onboarding is reported as an auth failure', () => {
+  const verify = fnCode['builder-portal-verify'];
+  const occurrences = verify.match(/BUILDER_SESSION_NOT_FOUND/g) || [];
+  assert.ok(occurrences.length >= 2,
+    'the verify function does not map BUILDER_SESSION_NOT_FOUND on both governance actions');
+  assert.match(verify, /code: 'auth_required' \}, 401/);
+});
+
+test('the password reset is atomically single-use', () => {
+  const reset = fnCode['builder-portal-reset-password'];
+  // The completing UPDATE must still require the code's hash, so exactly one of
+  // two concurrent requests carrying the same valid code matches a row.
+  assert.match(reset, /\.eq\('reset_token_hash', otpHash\)/,
+    'the completing update does not re-assert the code, so it is not single-use');
+  assert.match(reset, /\.select\('id'\)\s*\n?\s*\.maybeSingle\(\)/,
+    'the completing update does not read back whether it matched a row');
+  assert.match(reset, /if \(!updated\) return json\(\{ error: GENERIC_CODE_ERROR \}, 400\)/,
+    'a losing concurrent reset is not rejected with the generic error');
+  // Ordering: the guard must precede session revocation and the audit write.
+  // Anchored on the CALL, not the identifier — the import line appears first.
+  assert.ok(reset.indexOf('if (!updated)') < reset.indexOf('await revokeAllBuilderSessions('),
+    'the single-use guard runs after the reset has already taken effect');
+});
+
+test('the single-use idiom matches the one the invite flow already uses', () => {
+  // Same pattern, same file family — not a new mechanism invented for reset.
+  const invite = fnCode['builder-portal-accept-invite'];
+  assert.match(invite, /\.eq\('invite_token_hash', tokenHash\)/);
+  assert.match(invite, /\.maybeSingle\(\)/);
 });
 
 // ---------------------------------------------------------------------------
@@ -478,7 +559,7 @@ test('each gate stage lets its own destination render instead of redirecting aga
     ['must_change_password', '/builder/change-password'],
     ['requiresOrganisationSelection', '/builder/select-organisation'],
     ['has_accepted_current_terms', '/builder/terms'],
-    ['has_completed_onboarding', '/builder/onboarding'],
+    ['has_completed_mandatory_onboarding', '/builder/onboarding'],
   ]) {
     const slice = gateBody.slice(gateBody.indexOf(stage));
     assert.match(slice.slice(0, 400), new RegExp(`location\\.pathname === '${path}'`),
@@ -488,7 +569,7 @@ test('each gate stage lets its own destination render instead of redirecting aga
 
 test('the gate order matches the documented governance order', () => {
   const order = ['must_change_password', 'requiresOrganisationSelection',
-    'has_accepted_current_terms', 'has_completed_onboarding'];
+    'has_accepted_current_terms', 'has_completed_mandatory_onboarding'];
   let previous = 0;
   for (const stage of order) {
     const index = gateBody.indexOf(stage);

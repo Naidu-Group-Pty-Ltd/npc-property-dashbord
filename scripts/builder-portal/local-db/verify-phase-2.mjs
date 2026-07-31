@@ -301,6 +301,50 @@ expectEqual('acceptance wrote a trusted audit row',
   `SELECT count(*) > 0 FROM builder_portal_activity_log
    WHERE action='builder_terms_accepted' AND builder_user_id='${USER_MULTI}'`, 't');
 
+// --- version-exactness ------------------------------------------------------
+// The acceptance is recorded against a specific version id, so publishing a
+// newer version must leave the user un-accepted against THAT version. This is
+// what the resolver derives from; a stored boolean would still read "accepted".
+expectEqual('the acceptance is bound to the exact version that was current',
+  `SELECT count(*) FROM portal_terms_acceptances a
+   JOIN portal_terms_versions v ON v.id = a.terms_version_id
+   WHERE a.builder_user_id='${USER_MULTI}' AND v.version='${seededVersion}'`, 1);
+
+run(['-c', `
+  UPDATE portal_terms_versions SET retired_at=now() WHERE portal='builder';
+  INSERT INTO portal_terms_versions(portal, version, title, content_markdown, effective_at)
+  VALUES ('builder','9999.1','Builder Portal Terms (superseding)','Newer body.', now()-interval '1 hour');
+`]);
+
+expectEqual('publishing a newer version leaves the user un-accepted against it',
+  `SELECT count(*) FROM portal_terms_acceptances a
+   JOIN portal_terms_versions v ON v.id = a.terms_version_id
+   WHERE a.builder_user_id='${USER_MULTI}' AND v.portal='builder' AND v.retired_at IS NULL`, 0);
+
+expectEqual('accepting again records the NEW version, not the old one',
+  `SELECT version FROM builder_accept_current_terms('${USER_MULTI}','${SESSION_MULTI}')`, '9999.1');
+expectEqual('and the user now holds two acceptances, one per version',
+  `SELECT count(*) FROM portal_terms_acceptances WHERE builder_user_id='${USER_MULTI}'`, 2);
+
+// Restore the original current version for the remaining assertions.
+run(['-c', `
+  UPDATE portal_terms_versions SET retired_at=now() WHERE portal='builder' AND version='9999.1';
+  UPDATE portal_terms_versions SET retired_at=NULL WHERE portal='builder' AND version='${seededVersion}';
+`]);
+
+// --- session ownership ------------------------------------------------------
+expectRejection("accepting terms with another user's session is refused",
+  `SELECT builder_accept_current_terms('${USER_SINGLE}','${SESSION_MULTI}')`,
+  'BUILDER_SESSION_NOT_FOUND');
+expectRejection('accepting terms with a revoked session is refused',
+  `SELECT builder_accept_current_terms('${USER_SINGLE}','${SESSION_SINGLE}')`,
+  'BUILDER_SESSION_NOT_FOUND');
+expectRejection('accepting terms with a fabricated session id is refused',
+  `SELECT builder_accept_current_terms('${USER_MULTI}','00000000-0000-0000-0000-0000000000ff')`,
+  'BUILDER_SESSION_NOT_FOUND');
+expectEqual('and none of those refusals recorded an acceptance for the other user',
+  `SELECT count(*) FROM portal_terms_acceptances WHERE builder_user_id='${USER_SINGLE}'`, 0);
+
 expectEqual('existing Solicitor acceptances are untouched',
   "SELECT count(*) FROM portal_terms_acceptances WHERE portal='solicitor'",
   solicitorAcceptancesBefore);
@@ -309,8 +353,24 @@ expectEqual('existing Solicitor acceptances are untouched',
 // 5. Onboarding completion
 // ===========================================================================
 console.log('\nOnboarding completion');
+
+// USER_SINGLE's first session was revoked above, and session ownership is now
+// enforced, so a live session of their own is required.
+const SESSION_SINGLE_2 = query(`SELECT builder_issue_session('${USER_SINGLE}','${'3'.repeat(64)}',
+  now()+interval '12 hours', now()+interval '30 minutes')`);
+
+expectRejection("completing onboarding with another user's session is refused",
+  `SELECT builder_complete_onboarding('${USER_SINGLE}','${SESSION_MULTI}')`,
+  'BUILDER_SESSION_NOT_FOUND');
+expectRejection('completing onboarding with a revoked session is refused',
+  `SELECT builder_complete_onboarding('${USER_SINGLE}','${SESSION_SINGLE}')`,
+  'BUILDER_SESSION_NOT_FOUND');
+expectEqual('and neither refusal completed a step',
+  `SELECT count(*) FROM builder_onboarding_steps
+   WHERE builder_user_id='${USER_SINGLE}' AND completed_at IS NOT NULL`, 0);
+
 expectEqual('completing one step alone does not complete onboarding',
-  `SELECT builder_complete_onboarding('${USER_SINGLE}','${SESSION_MULTI}','profile_confirmed')`, 'f');
+  `SELECT builder_complete_onboarding('${USER_SINGLE}','${SESSION_SINGLE_2}','profile_confirmed')`, 'f');
 expectEqual('and the user is not yet marked as onboarded',
   `SELECT has_completed_onboarding FROM builder_portal_users WHERE id='${USER_SINGLE}'`, 'f');
 expectEqual('exactly one step was completed',
@@ -318,9 +378,12 @@ expectEqual('exactly one step was completed',
    WHERE builder_user_id='${USER_SINGLE}' AND completed_at IS NOT NULL`, 1);
 
 expectEqual('completing the remaining steps completes onboarding',
-  `SELECT builder_complete_onboarding('${USER_SINGLE}','${SESSION_MULTI}')`, 't');
+  `SELECT builder_complete_onboarding('${USER_SINGLE}','${SESSION_SINGLE_2}')`, 't');
 expectEqual('and the user is now marked as onboarded',
   `SELECT has_completed_onboarding FROM builder_portal_users WHERE id='${USER_SINGLE}'`, 't');
+expectEqual('the completed steps are stamped with the session that completed them',
+  `SELECT count(*) FROM builder_onboarding_steps
+   WHERE builder_user_id='${USER_SINGLE}' AND completed_session_id='${SESSION_SINGLE_2}'`, 4);
 expectEqual('onboarding completion wrote a trusted audit row',
   `SELECT count(*) > 0 FROM builder_portal_activity_log
    WHERE action='builder_onboarding_updated' AND builder_user_id='${USER_SINGLE}'`, 't');

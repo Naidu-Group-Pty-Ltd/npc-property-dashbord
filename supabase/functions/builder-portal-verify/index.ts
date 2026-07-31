@@ -83,6 +83,11 @@ Deno.serve(async (req) => {
         if (String(error.message).includes('BUILDER_TERMS_UNAVAILABLE')) {
           return json({ error: 'Current terms unavailable' }, 503);
         }
+        if (String(error.message).includes('BUILDER_SESSION_NOT_FOUND')) {
+          return json({ error: 'Invalid or expired session', code: 'auth_required' }, 401, {
+            'Set-Cookie': createClearBuilderSessionCookie(),
+          });
+        }
         throw error;
       }
       const accepted = Array.isArray(data) ? data[0] : data;
@@ -116,7 +121,14 @@ Deno.serve(async (req) => {
         _session_id: session.session_id,
         _step_key: stepKey,
       });
-      if (error) throw error;
+      if (error) {
+        if (String(error.message).includes('BUILDER_SESSION_NOT_FOUND')) {
+          return json({ error: 'Invalid or expired session', code: 'auth_required' }, 401, {
+            'Set-Cookie': createClearBuilderSessionCookie(),
+          });
+        }
+        throw error;
+      }
       return json({ success: true, onboarding_complete: data === true });
     }
 
@@ -205,9 +217,11 @@ Deno.serve(async (req) => {
         phone: user.phone,
         job_title: user.job_title,
         must_change_password: user.must_change_password,
-        has_accepted_current_terms: user.has_accepted_current_terms,
+        has_accepted_terms: user.has_accepted_terms,
         has_completed_onboarding: user.has_completed_onboarding,
         current_terms_version: user.current_terms_version,
+        has_accepted_current_terms: user.has_accepted_current_terms,
+        has_completed_mandatory_onboarding: user.has_completed_mandatory_onboarding,
       },
       organisations: session.organisations ?? [],
       active_organisation: session.active_organisation ?? null,
