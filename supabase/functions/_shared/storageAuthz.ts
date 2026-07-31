@@ -28,6 +28,7 @@ export const BUCKET_SENSITIVITY: Record<string, StorageSensitivity> = {
   'client-files':         'sensitive',
   'client-documents':     'sensitive',
   'formara-forms':         'sensitive',
+  'vownet-forms':         'sensitive', // legacy pre-rename bucket
   'investment-reports':   'sensitive',
   'quantitative-reports': 'sensitive',
   'qa_exports':           'sensitive',

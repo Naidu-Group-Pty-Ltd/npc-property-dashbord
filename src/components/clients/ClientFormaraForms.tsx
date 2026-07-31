@@ -62,7 +62,9 @@ interface ImportSummary {
  * The actual files live in the "client-files" bucket under the "formara-forms/" prefix
  * (legacy upload behaviour), even though new uploads target the "formara-forms" bucket.
  */
-type FormaraStorageBucket = 'formara-forms' | 'client-files' | 'client-documents';
+// 'vownet-forms' is the legacy bucket/prefix retained for reading pre-rename records.
+type FormaraStorageBucket = 'formara-forms' | 'vownet-forms' | 'client-files' | 'client-documents';
+const LEGACY_PREFIX = 'vownet-forms/';
 
 function resolveStorageLocations(raw: string, storageBucket?: string | null): Array<{ bucket: FormaraStorageBucket; key: string }> {
   if (!raw) return [];
@@ -83,6 +85,10 @@ function resolveStorageLocations(raw: string, storageBucket?: string | null): Ar
       if (fullPath.startsWith('client-files/')) {
         add('client-files', fullPath.replace(/^client-files\//, ''));
       }
+      if (fullPath.startsWith(LEGACY_PREFIX)) {
+        add('vownet-forms', fullPath.replace(/^vownet-forms\//, ''));
+        add('client-files', fullPath);
+      }
       if (fullPath.startsWith('formara-forms/')) {
         // fullPath prefixed with bucket "formara-forms" but files actually live in client-files
         add('formara-forms', fullPath.replace(/^formara-forms\//, ''));
@@ -93,6 +99,10 @@ function resolveStorageLocations(raw: string, storageBucket?: string | null): Ar
         // the object physically lives in the client-files bucket with that full key.
         add('formara-forms', path.replace(/^formara-forms\//, ''));
         add('client-files', path.startsWith('formara-forms/') ? path : `formara-forms/${path}`);
+        if (path.startsWith(LEGACY_PREFIX)) {
+          add('vownet-forms', path.replace(/^vownet-forms\//, ''));
+          add('client-files', path);
+        }
       }
     } catch {
       /* fall through */
@@ -110,10 +120,13 @@ function resolveStorageLocations(raw: string, storageBucket?: string | null): Ar
     // Plain storage key; continue below.
   }
   trimmed = trimmed.replace(/^\/+/, '');
-  const configuredBucket = storageBucket === 'formara-forms' || storageBucket === 'client-files' || storageBucket === 'client-documents'
+  const configuredBucket = storageBucket === 'formara-forms' || storageBucket === 'vownet-forms' || storageBucket === 'client-files' || storageBucket === 'client-documents'
     ? storageBucket : null;
   if (configuredBucket) add(configuredBucket, trimmed.replace(new RegExp(`^${configuredBucket}/`), ''));
-  if (trimmed.startsWith('formara-forms/')) {
+  if (trimmed.startsWith(LEGACY_PREFIX)) {
+    add('vownet-forms', trimmed.replace(/^vownet-forms\//, ''));
+    add('client-files', trimmed);
+  } else if (trimmed.startsWith('formara-forms/')) {
     add('formara-forms', trimmed.replace(/^formara-forms\//, ''));
     add('client-files', trimmed);
   } else {
