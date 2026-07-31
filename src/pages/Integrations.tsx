@@ -36,6 +36,20 @@ import {
   Bell,
   CreditCard,
   SlidersHorizontal,
+  BarChart3,
+  Users,
+  Lock,
+  Image as ImageIcon,
+  Calendar,
+  Package,
+  Code2,
+  Video,
+  Coins,
+  Building2,
+  Mic,
+  Globe,
+  MessageSquare,
+  ShoppingCart,
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { PlannedIntegrations } from '@/components/integrations/PlannedIntegrations';
