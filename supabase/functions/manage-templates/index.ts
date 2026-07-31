@@ -3,6 +3,7 @@ import { verifyAuth, createUnauthorizedResponse, createCorsHeaders, createForbid
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { TemplateSchemaVersionError, validateAndMigrateTemplateSchemaVersion } from '../_shared/templateSchemaVersion.ts';
 import { permForAction, requireModulePermission } from '../_shared/authz.ts';
+import { insertGoesLive, validateReportTemplateInsert } from '../_shared/reportTemplateInsertGuard.pure.ts';
 
 type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'comparison_analysis_templates';
 
@@ -616,6 +617,37 @@ Deno.serve(async (req) => {
 
     // Handle insert operation
     if (operation === 'insert' && data) {
+      // Authorisation gate for report_templates. The update path has enforced
+      // "superadmin AND approved AND has a production adapter" since Phase 4;
+      // insert had no equivalent, so a caller with templates:edit could create
+      // a row that was already is_active=true and have resolve_report_template()
+      // pick it for live customer PDFs. Rules live in the pure module so they
+      // are executed by the test suite, which also replays the exact payloads
+      // the Builder's create and branch flows send to prove they are unaffected.
+      if (table === 'report_templates') {
+        const rows = Array.isArray(data) ? data : [data];
+        for (const row of rows) {
+          const problem = validateReportTemplateInsert(
+            row ?? {},
+            { isSuperadmin: !!reportTemplatePermissions?.isSuperadmin, userId },
+            hasProductionReportTemplateAdapter,
+          );
+          if (problem) {
+            return jsonResponse({
+              success: false,
+              error: { code: problem.code, message: problem.message, ...(problem.detail ?? {}) },
+            }, problem.status, corsHeaders);
+          }
+        }
+        // An insert that legitimately goes live must still render, exactly as
+        // the update path requires before activation.
+        for (const row of rows) {
+          if (!insertGoesLive(row ?? {})) continue;
+          const rendererValidation = validateProductionRendererSchema(row?.schema, corsHeaders);
+          if (rendererValidation) return rendererValidation;
+        }
+      }
+
       const { data: record, error } = await supabase
         .from(table)
         .insert(data)

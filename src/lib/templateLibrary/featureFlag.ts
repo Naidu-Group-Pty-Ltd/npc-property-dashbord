@@ -2,10 +2,10 @@
  * Feature flag for the Template Library (see
  * `docs/template-library/README.md`).
  *
- * Default **OFF**. The library surface does not exist for anyone until this is
- * deliberately enabled, so every roadmap PR before the release-hardening one is
- * dark in production and the existing Template Management page renders exactly
- * as it does today.
+ * Default **ON**: the library is released, so every authenticated user of this
+ * deployment with `templates` access sees the Library tab. The flag remains as
+ * a one-flip kill-switch — turning it off restores the Template Management page
+ * to its previous eight tabs with no deploy.
  *
  * Precedence mirrors `src/lib/reportTemplate/editorV2Flag.ts` so operators only
  * have one mental model for template feature flags:
@@ -15,8 +15,9 @@
  * `resolveTemplateLibraryFlag` is pure so the precedence is unit-testable;
  * `isTemplateLibraryEnabled` wires it to the live browser environment.
  *
- * Nothing imports this yet — it lands ahead of the UI so the kill-switch is in
- * place before there is anything to kill.
+ * Consumed by `src/pages/Templates.tsx` to gate the Library tab, and nothing
+ * else — the flag controls visibility, never data access. The edge function
+ * enforces permissions independently of it.
  */
 const STORAGE_KEY = 'template-library';
 
@@ -44,7 +45,7 @@ export function resolveTemplateLibraryFlag(input: {
   if (envValue === true || envValue === '1' || envValue === 'true') return true;
   if (envValue === false || envValue === '0' || envValue === 'false') return false;
 
-  return false; // default OFF — the library is not released yet
+  return true; // default ON — the library is released (kill-switch above)
 }
 
 export function isTemplateLibraryEnabled(): boolean {
@@ -55,7 +56,9 @@ export function isTemplateLibraryEnabled(): boolean {
       envValue: (import.meta as any)?.env?.VITE_TEMPLATE_LIBRARY,
     });
   } catch {
-    // An environment we cannot read is an environment we do not enable in.
+    // A browser environment we cannot read is one we do not enable in: the tab
+    // is additive, so failing closed costs nothing and failing open could
+    // render a surface whose data layer is equally unreachable.
     return false;
   }
 }
