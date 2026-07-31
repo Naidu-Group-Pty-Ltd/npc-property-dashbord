@@ -115,6 +115,8 @@ import RemindersHub from "./pages/RemindersHub";
 import Checklists from "./pages/Checklists";
 import Agreements from "./pages/Agreements";
 import PartnerAgreements from "./pages/PartnerAgreements";
+import PartnerCompliance from "./pages/PartnerCompliance";
+
 import PartnerReferrals from "./pages/PartnerReferrals";
 import LoanWriterUndertakings from "./pages/LoanWriterUndertakings";
 import PublicPartnerConsent from "./pages/PublicPartnerConsent";
