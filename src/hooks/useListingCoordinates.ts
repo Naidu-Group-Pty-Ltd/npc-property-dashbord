@@ -159,6 +159,21 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     });
   }, [payload]);
 
+  // Listings whose coordinates we already geocoded in a previous session /
+  // view: reuse the persisted result instead of calling the edge function.
+  useEffect(() => {
+    const cached: Record<string, ResolvedPoint> = {};
+    for (const row of payload) {
+      if (pointsRef.current[row.id]) continue;
+      if (isValid(numeric(row.latitude), numeric(row.longitude))) continue;
+      const hit = readCachedPoint(row.id, fingerprintOf(row));
+      if (hit) cached[row.id] = hit;
+    }
+    if (Object.keys(cached).length === 0) return;
+    pointsRef.current = { ...pointsRef.current, ...cached };
+    setPoints((prev) => ({ ...cached, ...prev }));
+  }, [payload]);
+
   useEffect(() => {
     const pending = (): ListingPayload[] =>
       payloadRef.current.filter(
@@ -173,12 +188,15 @@ export function useListingCoordinates(listings: PropertyListing[]) {
       resolved: Array<{ id: string; lat: number; lng: number; source: ResolvedPoint['source'] }>,
     ) => {
       const next: Record<string, ResolvedPoint> = {};
+      const fingerprints = new Map(payloadRef.current.map((row) => [row.id, fingerprintOf(row)]));
       for (const r of resolved) {
         if (!isValid(r.lat, r.lng)) continue;
         const point: ResolvedPoint = { lat: r.lat, lng: r.lng, source: r.source ?? 'geocoded' };
         next[r.id] = point;
-        rememberPoint(r.id, point);
+        const fp = fingerprints.get(r.id);
+        if (fp) writeCachedPoint(r.id, fp, point);
       }
+
       if (Object.keys(next).length === 0) return;
       // Keep the ref in step immediately: the next batch is queued from it
       // before React has had a chance to re-render.
