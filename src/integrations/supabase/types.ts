@@ -10125,6 +10125,13 @@ export type Database = {
             foreignKeyName: "finance_partner_bank_details_agreement_id_fkey"
             columns: ["agreement_id"]
             isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_partner_bank_details_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
             referencedRelation: "partner_agreements"
             referencedColumns: ["id"]
           },
@@ -10382,6 +10389,13 @@ export type Database = {
             foreignKeyName: "finance_partner_clawbacks_agreement_id_fkey"
             columns: ["agreement_id"]
             isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_partner_clawbacks_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
             referencedRelation: "partner_agreements"
             referencedColumns: ["id"]
           },
@@ -10532,6 +10546,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "finance_partner_commissions_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "finance_partner_commissions_agreement_id_fkey"
             columns: ["agreement_id"]
@@ -11147,6 +11168,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "finance_partner_statements_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "finance_partner_statements_agreement_id_fkey"
             columns: ["agreement_id"]
@@ -19261,6 +19289,13 @@ export type Database = {
             foreignKeyName: "partner_agreement_events_agreement_id_fkey"
             columns: ["agreement_id"]
             isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreement_events_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
             referencedRelation: "partner_agreements"
             referencedColumns: ["id"]
           },
@@ -19268,6 +19303,8 @@ export type Database = {
       }
       partner_agreements: {
         Row: {
+          accrued_entitlements_resolved_at: string | null
+          accrued_entitlements_snapshot: Json | null
           activated_at: string | null
           clawback_repayment_days: number | null
           clawback_treatment: string | null
@@ -19277,6 +19314,8 @@ export type Database = {
             | null
           created_at: string
           created_by: string | null
+          destroyed_at: string | null
+          destruction_note: string | null
           direction: Database["public"]["Enums"]["partner_agreement_direction"]
           dispute_window_days: number
           document_version: string
@@ -19319,6 +19358,7 @@ export type Database = {
           payment_business_days: number | null
           payment_cycle: string | null
           pdf_storage_path: string | null
+          post_termination_cutoff_date: string | null
           post_termination_entitlement: string | null
           principal_abn: string | null
           principal_acn: string | null
@@ -19331,6 +19371,10 @@ export type Database = {
           principal_trading_name: string | null
           qualifying_event: string | null
           records_retention_years: number
+          retention_hold: boolean
+          retention_hold_reason: string | null
+          retention_hold_set_at: string | null
+          retention_until: string | null
           schedule_extras: Json
           sent_via: string
           signed_pdf_storage_path: string | null
@@ -19338,8 +19382,11 @@ export type Database = {
           supersedes_agreement_id: string | null
           template_id: string | null
           terminated_at: string | null
+          terminated_by: string | null
           termination_date: string | null
+          termination_effective_date: string | null
           termination_notice_days: number
+          termination_notice_given_at: string | null
           termination_reason: string | null
           trail_share_pct: number | null
           updated_at: string
@@ -19348,6 +19395,8 @@ export type Database = {
           version: number
         }
         Insert: {
+          accrued_entitlements_resolved_at?: string | null
+          accrued_entitlements_snapshot?: Json | null
           activated_at?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
@@ -19357,6 +19406,8 @@ export type Database = {
             | null
           created_at?: string
           created_by?: string | null
+          destroyed_at?: string | null
+          destruction_note?: string | null
           direction: Database["public"]["Enums"]["partner_agreement_direction"]
           dispute_window_days?: number
           document_version?: string
@@ -19399,6 +19450,7 @@ export type Database = {
           payment_business_days?: number | null
           payment_cycle?: string | null
           pdf_storage_path?: string | null
+          post_termination_cutoff_date?: string | null
           post_termination_entitlement?: string | null
           principal_abn?: string | null
           principal_acn?: string | null
@@ -19411,6 +19463,10 @@ export type Database = {
           principal_trading_name?: string | null
           qualifying_event?: string | null
           records_retention_years?: number
+          retention_hold?: boolean
+          retention_hold_reason?: string | null
+          retention_hold_set_at?: string | null
+          retention_until?: string | null
           schedule_extras?: Json
           sent_via?: string
           signed_pdf_storage_path?: string | null
@@ -19418,8 +19474,11 @@ export type Database = {
           supersedes_agreement_id?: string | null
           template_id?: string | null
           terminated_at?: string | null
+          terminated_by?: string | null
           termination_date?: string | null
+          termination_effective_date?: string | null
           termination_notice_days?: number
+          termination_notice_given_at?: string | null
           termination_reason?: string | null
           trail_share_pct?: number | null
           updated_at?: string
@@ -19428,6 +19487,8 @@ export type Database = {
           version?: number
         }
         Update: {
+          accrued_entitlements_resolved_at?: string | null
+          accrued_entitlements_snapshot?: Json | null
           activated_at?: string | null
           clawback_repayment_days?: number | null
           clawback_treatment?: string | null
@@ -19437,6 +19498,8 @@ export type Database = {
             | null
           created_at?: string
           created_by?: string | null
+          destroyed_at?: string | null
+          destruction_note?: string | null
           direction?: Database["public"]["Enums"]["partner_agreement_direction"]
           dispute_window_days?: number
           document_version?: string
@@ -19479,6 +19542,7 @@ export type Database = {
           payment_business_days?: number | null
           payment_cycle?: string | null
           pdf_storage_path?: string | null
+          post_termination_cutoff_date?: string | null
           post_termination_entitlement?: string | null
           principal_abn?: string | null
           principal_acn?: string | null
@@ -19491,6 +19555,10 @@ export type Database = {
           principal_trading_name?: string | null
           qualifying_event?: string | null
           records_retention_years?: number
+          retention_hold?: boolean
+          retention_hold_reason?: string | null
+          retention_hold_set_at?: string | null
+          retention_until?: string | null
           schedule_extras?: Json
           sent_via?: string
           signed_pdf_storage_path?: string | null
@@ -19498,8 +19566,11 @@ export type Database = {
           supersedes_agreement_id?: string | null
           template_id?: string | null
           terminated_at?: string | null
+          terminated_by?: string | null
           termination_date?: string | null
+          termination_effective_date?: string | null
           termination_notice_days?: number
+          termination_notice_given_at?: string | null
           termination_reason?: string | null
           trail_share_pct?: number | null
           updated_at?: string
@@ -19511,6 +19582,106 @@ export type Database = {
           {
             foreignKeyName: "partner_agreements_supersedes_agreement_id_fkey"
             columns: ["supersedes_agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_agreements_supersedes_agreement_id_fkey"
+            columns: ["supersedes_agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_compliance_audit_events: {
+        Row: {
+          action: string
+          actor_id: string | null
+          actor_label: string | null
+          actor_type: string
+          agreement_id: string | null
+          category: string
+          chain_key: string
+          created_at: string
+          description: string | null
+          fields_touched: string[] | null
+          id: string
+          ip_address: string | null
+          metadata: Json
+          prev_hash: string | null
+          referral_id: string | null
+          retention_class: string
+          row_hash: string | null
+          scope_id: string | null
+          scope_type: string
+          severity: string
+          target_id: string | null
+          target_type: string | null
+          user_agent: string | null
+        }
+        Insert: {
+          action: string
+          actor_id?: string | null
+          actor_label?: string | null
+          actor_type?: string
+          agreement_id?: string | null
+          category?: string
+          chain_key?: string
+          created_at?: string
+          description?: string | null
+          fields_touched?: string[] | null
+          id?: string
+          ip_address?: string | null
+          metadata?: Json
+          prev_hash?: string | null
+          referral_id?: string | null
+          retention_class?: string
+          row_hash?: string | null
+          scope_id?: string | null
+          scope_type?: string
+          severity?: string
+          target_id?: string | null
+          target_type?: string | null
+          user_agent?: string | null
+        }
+        Update: {
+          action?: string
+          actor_id?: string | null
+          actor_label?: string | null
+          actor_type?: string
+          agreement_id?: string | null
+          category?: string
+          chain_key?: string
+          created_at?: string
+          description?: string | null
+          fields_touched?: string[] | null
+          id?: string
+          ip_address?: string | null
+          metadata?: Json
+          prev_hash?: string | null
+          referral_id?: string | null
+          retention_class?: string
+          row_hash?: string | null
+          scope_id?: string | null
+          scope_type?: string
+          severity?: string
+          target_id?: string | null
+          target_type?: string | null
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_compliance_audit_events_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_compliance_audit_events_agreement_id_fkey"
+            columns: ["agreement_id"]
             isOneToOne: false
             referencedRelation: "partner_agreements"
             referencedColumns: ["id"]
@@ -19709,6 +19880,136 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "partner_loan_writer_undertakings_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_loan_writer_undertakings_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreements"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      partner_privacy_incidents: {
+        Row: {
+          affected_data_categories: string[]
+          affected_individual_count: number
+          agreement_id: string | null
+          assessment_due_at: string | null
+          closed_at: string | null
+          closed_by: string | null
+          closure_note: string | null
+          containment_actions: string | null
+          created_at: string
+          created_by: string | null
+          description: string | null
+          direction: string | null
+          discovered_at: string
+          finance_agent_contact_id: string | null
+          id: string
+          incident_type: string
+          is_notifiable: boolean | null
+          notifiable_assessment_note: string | null
+          notification_deadline_at: string | null
+          notified_individuals_at: string | null
+          notified_partner_at: string | null
+          notified_regulator_at: string | null
+          occurred_at: string | null
+          reference: string
+          referral_id: string | null
+          regulator_reference: string | null
+          remediation_actions: string | null
+          reported_by_party: string
+          root_cause: string | null
+          severity: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          affected_data_categories?: string[]
+          affected_individual_count?: number
+          agreement_id?: string | null
+          assessment_due_at?: string | null
+          closed_at?: string | null
+          closed_by?: string | null
+          closure_note?: string | null
+          containment_actions?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          direction?: string | null
+          discovered_at?: string
+          finance_agent_contact_id?: string | null
+          id?: string
+          incident_type?: string
+          is_notifiable?: boolean | null
+          notifiable_assessment_note?: string | null
+          notification_deadline_at?: string | null
+          notified_individuals_at?: string | null
+          notified_partner_at?: string | null
+          notified_regulator_at?: string | null
+          occurred_at?: string | null
+          reference?: string
+          referral_id?: string | null
+          regulator_reference?: string | null
+          remediation_actions?: string | null
+          reported_by_party?: string
+          root_cause?: string | null
+          severity?: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          affected_data_categories?: string[]
+          affected_individual_count?: number
+          agreement_id?: string | null
+          assessment_due_at?: string | null
+          closed_at?: string | null
+          closed_by?: string | null
+          closure_note?: string | null
+          containment_actions?: string | null
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          direction?: string | null
+          discovered_at?: string
+          finance_agent_contact_id?: string | null
+          id?: string
+          incident_type?: string
+          is_notifiable?: boolean | null
+          notifiable_assessment_note?: string | null
+          notification_deadline_at?: string | null
+          notified_individuals_at?: string | null
+          notified_partner_at?: string | null
+          notified_regulator_at?: string | null
+          occurred_at?: string | null
+          reference?: string
+          referral_id?: string | null
+          regulator_reference?: string | null
+          remediation_actions?: string | null
+          reported_by_party?: string
+          root_cause?: string | null
+          severity?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "partner_privacy_incidents_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_privacy_incidents_agreement_id_fkey"
             columns: ["agreement_id"]
             isOneToOne: false
             referencedRelation: "partner_agreements"
@@ -19922,6 +20223,13 @@ export type Database = {
             foreignKeyName: "partner_referrals_agreement_id_fkey"
             columns: ["agreement_id"]
             isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "partner_referrals_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
             referencedRelation: "partner_agreements"
             referencedColumns: ["id"]
           },
@@ -20027,6 +20335,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "partner_tax_invoices_agreement_id_fkey"
+            columns: ["agreement_id"]
+            isOneToOne: false
+            referencedRelation: "partner_agreement_retention_register"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "partner_tax_invoices_agreement_id_fkey"
             columns: ["agreement_id"]
@@ -27235,6 +27550,76 @@ export type Database = {
         }
         Relationships: []
       }
+      partner_agreement_retention_register: {
+        Row: {
+          days_until_retention_end: number | null
+          destroyed_at: string | null
+          direction:
+            | Database["public"]["Enums"]["partner_agreement_direction"]
+            | null
+          effective_date: string | null
+          finance_agent_contact_id: string | null
+          id: string | null
+          partner_legal_name: string | null
+          partner_trading_name: string | null
+          records_retention_years: number | null
+          retention_hold: boolean | null
+          retention_hold_reason: string | null
+          retention_state: string | null
+          retention_until: string | null
+          status: Database["public"]["Enums"]["partner_agreement_status"] | null
+          terminated_at: string | null
+          termination_effective_date: string | null
+          version: number | null
+        }
+        Insert: {
+          days_until_retention_end?: never
+          destroyed_at?: string | null
+          direction?:
+            | Database["public"]["Enums"]["partner_agreement_direction"]
+            | null
+          effective_date?: string | null
+          finance_agent_contact_id?: string | null
+          id?: string | null
+          partner_legal_name?: string | null
+          partner_trading_name?: string | null
+          records_retention_years?: number | null
+          retention_hold?: boolean | null
+          retention_hold_reason?: string | null
+          retention_state?: never
+          retention_until?: string | null
+          status?:
+            | Database["public"]["Enums"]["partner_agreement_status"]
+            | null
+          terminated_at?: string | null
+          termination_effective_date?: string | null
+          version?: number | null
+        }
+        Update: {
+          days_until_retention_end?: never
+          destroyed_at?: string | null
+          direction?:
+            | Database["public"]["Enums"]["partner_agreement_direction"]
+            | null
+          effective_date?: string | null
+          finance_agent_contact_id?: string | null
+          id?: string | null
+          partner_legal_name?: string | null
+          partner_trading_name?: string | null
+          records_retention_years?: number | null
+          retention_hold?: boolean | null
+          retention_hold_reason?: string | null
+          retention_state?: never
+          retention_until?: string | null
+          status?:
+            | Database["public"]["Enums"]["partner_agreement_status"]
+            | null
+          terminated_at?: string | null
+          termination_effective_date?: string | null
+          version?: number | null
+        }
+        Relationships: []
+      }
       pdf_import_cost_daily: {
         Row: {
           avg_duration_ms: number | null
@@ -28311,6 +28696,18 @@ export type Database = {
       next_notification_delivery_time: {
         Args: { _end: string; _start: string; _timezone: string }
         Returns: string
+      }
+      partner_accrued_entitlements: {
+        Args: { _agreement_id: string }
+        Returns: {
+          open_clawback_count: number
+          open_clawback_total: number
+          open_dispute_count: number
+          pending_commission_count: number
+          pending_commission_total: number
+          unpaid_statement_count: number
+          unpaid_statement_total: number
+        }[]
       }
       pause_migration_job: { Args: { p_job_id: string }; Returns: undefined }
       pdf_import_watchdog_sweep: { Args: never; Returns: number }

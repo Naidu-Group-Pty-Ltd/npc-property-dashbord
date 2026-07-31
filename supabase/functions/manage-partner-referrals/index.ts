@@ -16,6 +16,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
+
 import { extractFinanceToken, resolveFinancePartner } from '../_shared/finance-portal-session.ts';
 import {
   UNDERTAKING_TABLE,
@@ -147,7 +149,24 @@ async function logEvent(
     payload,
   });
   if (error) console.error('[partner-referrals] event log failed:', error.message);
+
+  // Phase 6 — mirror into the tamper-evident compliance chain.
+  await recordPartnerAudit(supabase, {
+    referral_id: referralId,
+    scope_type: 'referral',
+    scope_id: referralId,
+    actor_type: actor.surface === 'finance_portal' ? 'finance_partner' : 'team_user',
+    actor_id: actor.id,
+    actor_label: actor.label,
+    category: eventType.startsWith('consent') ? 'consent' : 'lifecycle',
+    action: `referral_${eventType}`,
+    target_type: 'partner_referral',
+    target_id: referralId,
+    description: summary,
+    metadata: payload,
+  });
 }
+
 
 /** Human reference: RIP-20260730-0007 / ROF-… */
 async function nextReference(supabase: any, direction: string): Promise<string> {

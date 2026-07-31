@@ -1,6 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
+import { recordPartnerAudit } from '../_shared/partnerAudit.ts';
+
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -104,7 +106,24 @@ async function logEvent(
     payload,
   });
   if (error) console.error('[partner-agreements] event log failed:', error.message);
+
+  // Phase 6 — mirror into the tamper-evident compliance chain.
+  await recordPartnerAudit(supabase, {
+    agreement_id: agreementId,
+    scope_type: 'agreement',
+    scope_id: agreementId,
+    actor_id: actorId,
+    actor_label: actorLabel,
+    severity: eventType === 'terminated' || eventType === 'void' ? 'critical' : 'info',
+    category: 'lifecycle',
+    action: `agreement_${eventType}`,
+    target_type: 'partner_agreement',
+    target_id: agreementId,
+    description: summary,
+    metadata: payload,
+  });
 }
+
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');

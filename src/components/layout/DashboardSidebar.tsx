@@ -89,6 +89,8 @@ const navigationItems = [
   { title: 'Partner Agreements', url: '/partner-agreements', icon: FileSignature, moduleKey: 'agreements' },
   { title: 'Partner Referrals', url: '/partner-referrals', icon: ArrowLeftRight, moduleKey: 'agreements' },
   { title: 'Loan Writer Undertakings', url: '/loan-writer-undertakings', icon: FileSignature, moduleKey: 'agreements' },
+  { title: 'Partner Compliance', url: '/partner-compliance', icon: ShieldCheck, moduleKey: 'agreements' },
+
 
   { title: 'Game Plan', url: '/game-plan', icon: MapIcon, moduleKey: 'game_plans' },
   { title: 'Marketing', url: '/marketing-analytics', icon: TrendingUp, moduleKey: 'marketing_analytics' },
