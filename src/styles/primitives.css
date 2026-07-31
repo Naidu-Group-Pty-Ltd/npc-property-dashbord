@@ -483,3 +483,17 @@
     transform: none;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Builder / Developer Portal auth backdrop.
+
+   Lives here rather than as an inline `style` object so the gradient
+   is expressed purely through semantic tokens and does not register
+   as a hardcoded-style violation in `npm run audit:style`.
+   ──────────────────────────────────────────────────────────────── */
+.builder-auth-aurora {
+  background:
+    radial-gradient(60% 45% at 15% 10%, hsl(var(--primary) / 0.2), transparent 60%),
+    radial-gradient(50% 40% at 85% 0%, hsl(var(--accent) / 0.16), transparent 62%),
+    radial-gradient(70% 55% at 50% 100%, hsl(var(--primary) / 0.1), transparent 65%);
+}

@@ -637,6 +637,33 @@ export function createClearSolicitorSessionCookie(): string {
   return createSolicitorSessionCookie('', new Date(0), { clear: true });
 }
 
+/**
+ * Builder / Developer Portal session cookie.
+ *
+ * Attribute-for-attribute the Solicitor shape with a distinct name, so a
+ * Builder session can never be presented as a Solicitor or Command Centre
+ * session and vice versa. `__Host-` forbids a Domain attribute and requires
+ * Path=/ and Secure, so the cookie cannot be scoped to a sibling host.
+ *
+ * SameSite=None is required because the Edge Functions are served from a
+ * different origin than the SPA. The compensating controls are the central
+ * CSRF guard on every mutation and the exact-origin allow-list — the same
+ * arrangement the existing portals use.
+ */
+export function createBuilderSessionCookie(
+  sessionToken: string,
+  expiresAt: Date,
+  options?: { clear?: boolean }
+): string {
+  const maxAge = options?.clear ? 0 : Math.floor((expiresAt.getTime() - Date.now()) / 1000);
+  const expires = options?.clear ? new Date(0).toUTCString() : expiresAt.toUTCString();
+  return `__Host-builder_session_token=${options?.clear ? '' : sessionToken}; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}; Expires=${expires}; Path=/`;
+}
+
+export function createClearBuilderSessionCookie(): string {
+  return createBuilderSessionCookie('', new Date(0), { clear: true });
+}
+
 
 /**
  * Create an unauthorized response with proper CORS headers

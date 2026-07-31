@@ -178,6 +178,19 @@ import SolicitorTerms from "@/pages/solicitor/SolicitorTerms";
 import SolicitorOnboarding from "@/pages/solicitor/SolicitorOnboarding";
 import SolicitorSecurity from "@/pages/solicitor/SolicitorSecurity";
 import SolicitorWorkspacePage from "@/pages/solicitor/SolicitorWorkspacePage";
+import { BuilderPortalAuthProvider } from "@/hooks/useBuilderPortalAuth";
+import { BuilderPortalProtectedRoute } from "@/components/builder-portal/BuilderPortalProtectedRoute";
+import { BuilderPortalLayout } from "@/components/builder-portal/BuilderPortalLayout";
+import BuilderLogin from "@/pages/builder/BuilderLogin";
+import BuilderAcceptInvite from "@/pages/builder/BuilderAcceptInvite";
+import BuilderForgotPassword from "@/pages/builder/BuilderForgotPassword";
+import BuilderResetPassword from "@/pages/builder/BuilderResetPassword";
+import BuilderChangePassword from "@/pages/builder/BuilderChangePassword";
+import BuilderSelectOrganisation from "@/pages/builder/BuilderSelectOrganisation";
+import BuilderTerms from "@/pages/builder/BuilderTerms";
+import BuilderOnboarding from "@/pages/builder/BuilderOnboarding";
+import BuilderDashboard from "@/pages/builder/BuilderDashboard";
+import BuilderSettings from "@/pages/builder/BuilderSettings";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
@@ -383,7 +396,37 @@ const App = () => (
                           </SolicitorPortalAuthProvider>
                         } />
 
-
+                        {/*
+                          Builder / Developer Portal Routes - single provider wrapping all
+                          /builder/*. Placed as a SIBLING of the internal Command Centre tree,
+                          matching the Solicitor Portal: it is never wrapped in ProtectedRoute or
+                          DashboardLayout, so the Builder Portal is an external portal and not an
+                          internal dashboard page.
+                        */}
+                        <Route path="/builder/*" element={
+                          <BuilderPortalAuthProvider>
+                            <Routes>
+                              <Route path="login" element={<BuilderLogin />} />
+                              <Route path="accept-invite" element={<BuilderAcceptInvite />} />
+                              <Route path="forgot-password" element={<BuilderForgotPassword />} />
+                              <Route path="reset-password" element={<BuilderResetPassword />} />
+                              <Route element={<BuilderPortalProtectedRoute />}>
+                                {/* Gate destinations render outside the portal chrome. */}
+                                <Route path="change-password" element={<BuilderChangePassword />} />
+                                <Route path="select-organisation" element={<BuilderSelectOrganisation />} />
+                                <Route path="terms" element={<BuilderTerms />} />
+                                <Route path="onboarding" element={<BuilderOnboarding />} />
+                                <Route element={<BuilderPortalLayout />}>
+                                  <Route index element={<BuilderDashboard />} />
+                                  <Route path="dashboard" element={<BuilderDashboard />} />
+                                  <Route path="settings" element={<BuilderSettings />} />
+                                </Route>
+                              </Route>
+                              {/* Anything else under /builder returns to the portal entry. */}
+                              <Route path="*" element={<Navigate to="/builder" replace />} />
+                            </Routes>
+                          </BuilderPortalAuthProvider>
+                        } />
 
                         {/* Internal Dashboard Routes */}
                         <Route path="/auth" element={<Auth />} />

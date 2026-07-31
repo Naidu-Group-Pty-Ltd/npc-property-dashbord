@@ -1,14 +1,18 @@
 #!/usr/bin/env node
 /**
- * Generate the Supabase TypeScript type blocks for the Phase 1 Builder tables
+ * Generate the Supabase TypeScript type blocks for the Builder Portal tables
  * and splice them into src/integrations/supabase/types.ts.
+ *
+ * Covers Phase 1 and Phase 2. The BEGIN/END marker text still says "phase-1"
+ * so the existing generated block is replaced in place rather than duplicated;
+ * the block's contents are whatever this script introspects today.
  *
  * The Supabase MCP `generate_typescript_types` tool reads the PRODUCTION
  * database, which does not have these tables — Phase 1 is not deployed. So the
  * blocks are introspected from the verified local database instead, which keeps
  * nullability and defaults faithful rather than hand-written.
  *
- * Run after scripts/builder-portal/local-db/verify-phase-1.mjs, which builds the
+ * Run after scripts/builder-portal/local-db/verify-phase-2.mjs, which builds the
  * database this reads.
  *
  * Usage: node scripts/builder-portal/local-db/generate-builder-types.mjs [--check]
@@ -21,7 +25,10 @@ const root = new URL('../../../', import.meta.url).pathname;
 const HOST = process.env.LOCAL_PG_HOST || '/tmp';
 const PORT = process.env.LOCAL_PG_PORT || '55432';
 const USER = process.env.LOCAL_PG_USER || 'postgres';
-const DB = process.env.LOCAL_PG_VERIFY_DB || 'aurixa_phase1_verify';
+// Phase 2's verification database is a superset of Phase 1's, so it is the
+// source of truth for introspection. Build it with:
+//   node scripts/builder-portal/local-db/verify-phase-2.mjs
+const DB = process.env.LOCAL_PG_TYPES_DB || process.env.LOCAL_PG_VERIFY_DB_2 || 'aurixa_phase2_verify';
 const checkOnly = process.argv.includes('--check');
 
 const TYPES_PATH = join(root, 'src/integrations/supabase/types.ts');
@@ -31,6 +38,7 @@ const END = '      // END builder-portal-phase-1 (generated)';
 
 const TABLES = [
   'builder_membership_permissions',
+  'builder_onboarding_steps',
   'builder_organisation_memberships',
   'builder_organisations',
   'builder_permission_keys',

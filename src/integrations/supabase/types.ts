@@ -2861,6 +2861,51 @@ export type Database = {
           },
         ]
       }
+      builder_onboarding_steps: {
+        Row: {
+          builder_user_id: string
+          completed_at: string | null
+          completed_session_id: string | null
+          created_at: string
+          id: string
+          mandatory: boolean
+          step_key: string
+        }
+        Insert: {
+          builder_user_id: string
+          completed_at?: string | null
+          completed_session_id?: string | null
+          created_at?: string
+          id?: string
+          mandatory?: boolean
+          step_key: string
+        }
+        Update: {
+          builder_user_id?: string
+          completed_at?: string | null
+          completed_session_id?: string | null
+          created_at?: string
+          id?: string
+          mandatory?: boolean
+          step_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_onboarding_steps_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_onboarding_steps_completed_session_id_fkey"
+            columns: ["completed_session_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_organisation_memberships: {
         Row: {
           builder_user_id: string
@@ -3107,6 +3152,7 @@ export type Database = {
       builder_portal_sessions: {
         Row: {
           absolute_expires_at: string
+          active_organisation_id: string | null
           builder_user_id: string
           created_at: string
           device_label: string | null
@@ -3121,6 +3167,7 @@ export type Database = {
         }
         Insert: {
           absolute_expires_at: string
+          active_organisation_id?: string | null
           builder_user_id: string
           created_at?: string
           device_label?: string | null
@@ -3135,6 +3182,7 @@ export type Database = {
         }
         Update: {
           absolute_expires_at?: string
+          active_organisation_id?: string | null
           builder_user_id?: string
           created_at?: string
           device_label?: string | null
@@ -3149,6 +3197,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "builder_portal_sessions_active_organisation_id_fkey"
+            columns: ["active_organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "builder_portal_sessions_builder_user_id_fkey"
             columns: ["builder_user_id"]
             isOneToOne: false
@@ -3162,6 +3217,7 @@ export type Database = {
           created_at: string
           created_by: string | null
           email: string
+          failed_login_attempts: number
           has_accepted_current_terms: boolean
           has_completed_onboarding: boolean
           id: string
@@ -3172,7 +3228,9 @@ export type Database = {
           invited_by: string | null
           is_active: boolean
           job_title: string | null
+          last_login_at: string | null
           last_seen_at: string | null
+          locked_until: string | null
           must_change_password: boolean
           name: string
           password_changed_at: string | null
@@ -3185,6 +3243,7 @@ export type Database = {
           revoked_reason: string | null
           row_version: number
           status: string
+          terms_accepted_at: string | null
           updated_at: string
           updated_by: string | null
         }
@@ -3192,6 +3251,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           email: string
+          failed_login_attempts?: number
           has_accepted_current_terms?: boolean
           has_completed_onboarding?: boolean
           id?: string
@@ -3202,7 +3262,9 @@ export type Database = {
           invited_by?: string | null
           is_active?: boolean
           job_title?: string | null
+          last_login_at?: string | null
           last_seen_at?: string | null
+          locked_until?: string | null
           must_change_password?: boolean
           name: string
           password_changed_at?: string | null
@@ -3215,6 +3277,7 @@ export type Database = {
           revoked_reason?: string | null
           row_version?: number
           status?: string
+          terms_accepted_at?: string | null
           updated_at?: string
           updated_by?: string | null
         }
@@ -3222,6 +3285,7 @@ export type Database = {
           created_at?: string
           created_by?: string | null
           email?: string
+          failed_login_attempts?: number
           has_accepted_current_terms?: boolean
           has_completed_onboarding?: boolean
           id?: string
@@ -3232,7 +3296,9 @@ export type Database = {
           invited_by?: string | null
           is_active?: boolean
           job_title?: string | null
+          last_login_at?: string | null
           last_seen_at?: string | null
+          locked_until?: string | null
           must_change_password?: boolean
           name?: string
           password_changed_at?: string | null
@@ -3245,6 +3311,7 @@ export type Database = {
           revoked_reason?: string | null
           row_version?: number
           status?: string
+          terms_accepted_at?: string | null
           updated_at?: string
           updated_by?: string | null
         }

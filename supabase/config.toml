@@ -1041,3 +1041,27 @@ verify_jwt = false
 
 [functions.builder-portal-admin]
 verify_jwt = true
+
+[functions.builder-portal-login]
+verify_jwt = false
+
+[functions.builder-portal-logout]
+verify_jwt = false
+
+[functions.builder-portal-verify]
+verify_jwt = false
+
+[functions.builder-portal-accept-invite]
+verify_jwt = false
+
+[functions.builder-portal-forgot-password]
+verify_jwt = false
+
+[functions.builder-portal-reset-password]
+verify_jwt = false
+
+[functions.builder-portal-change-password]
+verify_jwt = false
+
+[functions.builder-portal-invite]
+verify_jwt = true
