@@ -12,8 +12,8 @@
  * blocks are introspected from the verified local database instead, which keeps
  * nullability and defaults faithful rather than hand-written.
  *
- * Run after scripts/builder-portal/local-db/verify-phase-3.mjs, which builds the
- * database this reads.
+ * Run after scripts/builder-portal/local-db/verify-inventory.mjs, which builds
+ * the database this reads — it is a superset of every earlier phase's.
  *
  * Usage: node scripts/builder-portal/local-db/generate-builder-types.mjs [--check]
  */
@@ -28,7 +28,8 @@ const USER = process.env.LOCAL_PG_USER || 'postgres';
 // Phase 2's verification database is a superset of Phase 1's, so it is the
 // source of truth for introspection. Build it with:
 //   node scripts/builder-portal/local-db/verify-phase-2.mjs
-const DB = process.env.LOCAL_PG_TYPES_DB || process.env.LOCAL_PG_VERIFY_DB_3 || 'aurixa_phase3_verify';
+const DB = process.env.LOCAL_PG_TYPES_DB
+  || process.env.LOCAL_PG_VERIFY_DB_INV || 'aurixa_inventory_verify';
 const checkOnly = process.argv.includes('--check');
 
 const TYPES_PATH = join(root, 'src/integrations/supabase/types.ts');
@@ -37,6 +38,8 @@ const BEGIN = '      // BEGIN builder-portal-phase-1 (generated)';
 const END = '      // END builder-portal-phase-1 (generated)';
 
 const TABLES = [
+  'builder_allocations',
+  'builder_buildings',
   'builder_developments',
   'builder_membership_permissions',
   'builder_onboarding_steps',
@@ -50,7 +53,14 @@ const TABLES = [
   'builder_project_parties',
   'builder_project_status_history',
   'builder_projects',
+  'builder_reservation_status_history',
+  'builder_reservations',
   'builder_role_default_permissions',
+  'builder_stages',
+  'builder_unit_holds',
+  'builder_unit_pricing',
+  'builder_unit_status_history',
+  'builder_units',
 ];
 
 const query = (sql) =>

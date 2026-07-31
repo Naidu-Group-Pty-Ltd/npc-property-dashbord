@@ -550,16 +550,18 @@ test('the Phase 3 database verification script is wired into package.json', () =
   assert.ok(existsSync(join(root, 'scripts/builder-portal/local-db/verify-phase-3.mjs')));
 });
 
-test('the Builder function family stops at projects', () => {
-  // No later-phase function may appear without this test failing.
+test('the Builder function family stops at inventory', () => {
+  // No function for an unbuilt module may appear without this test failing.
   const dirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && /^builder-/.test(entry.name))
     .map((entry) => entry.name).sort();
   assert.deepEqual(dirs, [
+    'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
     'builder-portal-forgot-password',
+    'builder-portal-inventory',
     'builder-portal-invite',
     'builder-portal-login',
     'builder-portal-logout',

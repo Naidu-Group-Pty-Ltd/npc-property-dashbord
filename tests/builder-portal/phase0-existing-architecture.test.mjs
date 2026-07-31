@@ -73,19 +73,22 @@ test('builder_portal_admin is registered and guarded (updated by Phase 1)', () =
   assert.match(app, /moduleKey="builder_portal_admin"/);
 });
 
-test('the Builder function family is exactly identity plus projects (updated by Phase 3)', () => {
+test('the Builder function family is exactly identity, projects and inventory', () => {
   // Phase 0 asserted no builder-portal function existed; Phase 1 allowed one;
-  // Phase 2 added the external authentication family; Phase 3 adds the project
-  // module. The list stays exhaustive so a later-phase function cannot appear
-  // without this test failing — that is the boundary Phase 0 was protecting.
+  // Phase 2 added the external authentication family; Phase 3 added the project
+  // module; the inventory module adds two more. The list stays exhaustive so a
+  // function for an unbuilt module cannot appear without this test failing —
+  // that is the boundary Phase 0 was protecting.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
   assert.deepEqual(functionDirs.filter((name) => /^builder-/.test(name)).sort(), [
+    'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
     'builder-portal-forgot-password',
+    'builder-portal-inventory',
     'builder-portal-invite',
     'builder-portal-login',
     'builder-portal-logout',
@@ -96,10 +99,11 @@ test('the Builder function family is exactly identity plus projects (updated by 
   ]);
 });
 
-test('the Builder schema stops at identity, governance and projects (updated by Phase 3)', () => {
+test('the Builder schema stops at identity, governance, projects and inventory', () => {
   // Phase 0 asserted the whole Builder domain was absent; Phase 1 added identity;
-  // Phase 3 adds the project module. What is still enforced is the ceiling: no
-  // inventory, reservation, transaction or construction table may exist yet.
+  // Phase 3 added the project module; the inventory module adds stages, lots,
+  // units, pricing and reservations. What is still enforced is the ceiling: no
+  // transaction or construction table may exist yet.
   const created = new Set(
     [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
       .map((match) => match[1].toLowerCase()),
@@ -110,12 +114,14 @@ test('the Builder schema stops at identity, governance and projects (updated by 
     'builder_role_default_permissions', 'builder_membership_permissions',
     'builder_developments', 'builder_projects', 'builder_project_parties',
     'builder_project_access',
+    'builder_stages', 'builder_buildings', 'builder_lots', 'builder_units',
+    'builder_unit_pricing', 'builder_unit_holds', 'builder_reservations',
+    'builder_allocations',
   ]) {
     assert.ok(created.has(table), `expected Builder table missing: ${table}`);
   }
   for (const table of [
-    'builder_stages', 'builder_lots', 'builder_units', 'builder_inventory',
-    'builder_reservations', 'builder_transactions', 'builder_variations',
+    'builder_transactions', 'builder_construction_cases', 'builder_variations',
     'builder_progress_claims', 'builder_inspections', 'builder_defects', 'builder_handovers',
   ]) {
     assert.ok(!created.has(table), `later-phase Builder table created too early: ${table}`);

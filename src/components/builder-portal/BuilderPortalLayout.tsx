@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
-  Building2, HardHat, KanbanSquare, LayoutDashboard, ListChecks, LogOut,
+  Boxes, Building2, HardHat, KanbanSquare, LayoutDashboard, ListChecks, LogOut,
   MessageSquare, Receipt, Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -18,8 +18,8 @@ import { BuilderOrganisationSwitcher } from './BuilderOrganisationSwitcher';
  * One authenticated layout owns the Builder Portal chrome. Mirrors
  * `SolicitorPortalLayout`.
  *
- * Navigation shows the eventual portal shape, but only Dashboard and Settings
- * operate in Phase 2. Every other item is rendered disabled with an explicit
+ * Navigation shows the eventual portal shape. Items whose module is not yet
+ * built are rendered disabled with an explicit
  * "available in a later phase" tooltip rather than linking to a placeholder —
  * there are no fake business records or stub APIs behind them.
  */
@@ -35,6 +35,7 @@ interface BuilderNavItem {
 const NAV: BuilderNavItem[] = [
   { to: '/builder', label: 'Dashboard', icon: LayoutDashboard, exact: true, available: true },
   { to: '/builder/projects', label: 'Projects', icon: Building2, available: true },
+  { to: '/builder/inventory', label: 'Inventory', icon: Boxes, available: true },
   { to: '/builder/transactions', label: 'Transactions', icon: Receipt, available: false },
   { to: '/builder/pipeline', label: 'Pipeline', icon: KanbanSquare, available: false },
   { to: '/builder/messages', label: 'Messages', icon: MessageSquare, available: false },

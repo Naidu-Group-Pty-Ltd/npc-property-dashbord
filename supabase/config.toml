@@ -1081,5 +1081,11 @@ verify_jwt = false
 [functions.builder-projects-admin]
 verify_jwt = true
 
+[functions.builder-portal-inventory]
+verify_jwt = false
+
+[functions.builder-inventory-admin]
+verify_jwt = true
+
 [functions.create-advanced-client]
 verify_jwt = true

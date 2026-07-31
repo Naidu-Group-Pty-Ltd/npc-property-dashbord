@@ -2801,6 +2801,120 @@ export type Database = {
         ]
       }
       // BEGIN builder-portal-phase-1 (generated)
+      builder_allocations: {
+        Row: {
+          allocated_to_organisation_id: string
+          allocation_type: string
+          created_at: string
+          expires_at: string | null
+          id: string
+          reference: string | null
+          released_at: string | null
+          released_reason: string | null
+          row_version: number
+          status: string
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          allocated_to_organisation_id: string
+          allocation_type?: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          reference?: string | null
+          released_at?: string | null
+          released_reason?: string | null
+          row_version?: number
+          status?: string
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          allocated_to_organisation_id?: string
+          allocation_type?: string
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          reference?: string | null
+          released_at?: string | null
+          released_reason?: string | null
+          row_version?: number
+          status?: string
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_allocations_allocated_to_organisation_id_fkey"
+            columns: ["allocated_to_organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_allocations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_buildings: {
+        Row: {
+          building_code: string | null
+          created_at: string
+          id: string
+          level_count: number | null
+          name: string
+          project_id: string
+          row_version: number
+          stage_id: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          building_code?: string | null
+          created_at?: string
+          id?: string
+          level_count?: number | null
+          name: string
+          project_id: string
+          row_version?: number
+          stage_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          building_code?: string | null
+          created_at?: string
+          id?: string
+          level_count?: number | null
+          name?: string
+          project_id?: string
+          row_version?: number
+          stage_id?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_buildings_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_buildings_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_developments: {
         Row: {
           address_line: string | null
@@ -3683,6 +3797,139 @@ export type Database = {
           },
         ]
       }
+      builder_reservation_status_history: {
+        Row: {
+          changed_by_builder_user_id: string | null
+          changed_by_type: string
+          changed_by_user_id: string | null
+          created_at: string
+          from_status: string | null
+          id: string
+          metadata: Json
+          reason: string | null
+          reservation_id: string
+          to_status: string
+        }
+        Insert: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          reservation_id: string
+          to_status: string
+        }
+        Update: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          reservation_id?: string
+          to_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_reservation_status_hist_changed_by_builder_user_id_fkey"
+            columns: ["changed_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_reservation_status_history_reservation_id_fkey"
+            columns: ["reservation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_reservations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_reservations: {
+        Row: {
+          cancelled_reason: string | null
+          created_at: string
+          expires_at: string | null
+          id: string
+          organisation_id: string
+          purchaser_email: string | null
+          purchaser_name: string
+          purchaser_phone: string | null
+          reservation_fee: number | null
+          reservation_reference: string | null
+          reserved_at: string
+          reserved_by_builder_user_id: string | null
+          row_version: number
+          status: string
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          cancelled_reason?: string | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          organisation_id: string
+          purchaser_email?: string | null
+          purchaser_name: string
+          purchaser_phone?: string | null
+          reservation_fee?: number | null
+          reservation_reference?: string | null
+          reserved_at?: string
+          reserved_by_builder_user_id?: string | null
+          row_version?: number
+          status?: string
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          cancelled_reason?: string | null
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          organisation_id?: string
+          purchaser_email?: string | null
+          purchaser_name?: string
+          purchaser_phone?: string | null
+          reservation_fee?: number | null
+          reservation_reference?: string | null
+          reserved_at?: string
+          reserved_by_builder_user_id?: string | null
+          row_version?: number
+          status?: string
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_reservations_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_reservations_reserved_by_builder_user_id_fkey"
+            columns: ["reserved_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_reservations_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_role_default_permissions: {
         Row: {
           can_delete: boolean
@@ -3712,6 +3959,337 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "builder_permission_keys"
             referencedColumns: ["permission_key"]
+          },
+        ]
+      }
+      builder_stages: {
+        Row: {
+          actual_completion_date: string | null
+          created_at: string
+          description: string | null
+          estimated_completion_date: string | null
+          id: string
+          name: string
+          project_id: string
+          row_version: number
+          stage_number: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          actual_completion_date?: string | null
+          created_at?: string
+          description?: string | null
+          estimated_completion_date?: string | null
+          id?: string
+          name: string
+          project_id: string
+          row_version?: number
+          stage_number?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          actual_completion_date?: string | null
+          created_at?: string
+          description?: string | null
+          estimated_completion_date?: string | null
+          id?: string
+          name?: string
+          project_id?: string
+          row_version?: number
+          stage_number?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_stages_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_holds: {
+        Row: {
+          created_at: string
+          expires_at: string
+          held_by_builder_user_id: string | null
+          hold_reference: string | null
+          id: string
+          organisation_id: string
+          reason: string | null
+          released_at: string | null
+          released_reason: string | null
+          row_version: number
+          status: string
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          held_by_builder_user_id?: string | null
+          hold_reference?: string | null
+          id?: string
+          organisation_id: string
+          reason?: string | null
+          released_at?: string | null
+          released_reason?: string | null
+          row_version?: number
+          status?: string
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          held_by_builder_user_id?: string | null
+          hold_reference?: string | null
+          id?: string
+          organisation_id?: string
+          reason?: string | null
+          released_at?: string | null
+          released_reason?: string | null
+          row_version?: number
+          status?: string
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_unit_holds_held_by_builder_user_id_fkey"
+            columns: ["held_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_unit_holds_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_unit_holds_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_pricing: {
+        Row: {
+          created_at: string
+          effective_from: string
+          effective_to: string | null
+          id: string
+          is_current: boolean
+          list_price: number
+          price_basis: string
+          reason: string | null
+          row_version: number
+          unit_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          is_current?: boolean
+          list_price: number
+          price_basis?: string
+          reason?: string | null
+          row_version?: number
+          unit_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          effective_from?: string
+          effective_to?: string | null
+          id?: string
+          is_current?: boolean
+          list_price?: number
+          price_basis?: string
+          reason?: string | null
+          row_version?: number
+          unit_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_unit_pricing_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_unit_status_history: {
+        Row: {
+          changed_by_builder_user_id: string | null
+          changed_by_type: string
+          changed_by_user_id: string | null
+          created_at: string
+          from_status: string | null
+          id: string
+          metadata: Json
+          reason: string | null
+          status_kind: string
+          to_status: string
+          unit_id: string
+        }
+        Insert: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          status_kind: string
+          to_status: string
+          unit_id: string
+        }
+        Update: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          status_kind?: string
+          to_status?: string
+          unit_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_unit_status_history_changed_by_builder_user_id_fkey"
+            columns: ["changed_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_unit_status_history_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_units: {
+        Row: {
+          aspect: string | null
+          availability_status: string
+          bathrooms: number | null
+          bedrooms: number | null
+          building_id: string | null
+          car_spaces: number | null
+          created_at: string
+          description: string | null
+          estimated_completion_date: string | null
+          external_area_sqm: number | null
+          id: string
+          internal_area_sqm: number | null
+          level_number: number | null
+          lot_id: string | null
+          project_id: string
+          release_status: string
+          released_at: string | null
+          row_version: number
+          stage_id: string | null
+          unit_number: string
+          unit_type: string
+          updated_at: string
+        }
+        Insert: {
+          aspect?: string | null
+          availability_status?: string
+          bathrooms?: number | null
+          bedrooms?: number | null
+          building_id?: string | null
+          car_spaces?: number | null
+          created_at?: string
+          description?: string | null
+          estimated_completion_date?: string | null
+          external_area_sqm?: number | null
+          id?: string
+          internal_area_sqm?: number | null
+          level_number?: number | null
+          lot_id?: string | null
+          project_id: string
+          release_status?: string
+          released_at?: string | null
+          row_version?: number
+          stage_id?: string | null
+          unit_number: string
+          unit_type?: string
+          updated_at?: string
+        }
+        Update: {
+          aspect?: string | null
+          availability_status?: string
+          bathrooms?: number | null
+          bedrooms?: number | null
+          building_id?: string | null
+          car_spaces?: number | null
+          created_at?: string
+          description?: string | null
+          estimated_completion_date?: string | null
+          external_area_sqm?: number | null
+          id?: string
+          internal_area_sqm?: number | null
+          level_number?: number | null
+          lot_id?: string | null
+          project_id?: string
+          release_status?: string
+          released_at?: string | null
+          row_version?: number
+          stage_id?: string | null
+          unit_number?: string
+          unit_type?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_units_building_id_fkey"
+            columns: ["building_id"]
+            isOneToOne: false
+            referencedRelation: "builder_buildings"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_lot_id_fkey"
+            columns: ["lot_id"]
+            isOneToOne: false
+            referencedRelation: "builder_lots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_units_stage_id_fkey"
+            columns: ["stage_id"]
+            isOneToOne: false
+            referencedRelation: "builder_stages"
+            referencedColumns: ["id"]
           },
         ]
       }
