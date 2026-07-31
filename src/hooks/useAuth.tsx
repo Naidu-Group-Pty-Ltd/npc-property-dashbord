@@ -223,9 +223,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.log('[Auth] Session verify failed (status:', error.status, '), clearing stale tokens');
           clearAuthState();
         } else {
-          // Network/server error — don't clear tokens, might be transient
+          // Network/server/CORS errors are not proof that the server-side
+          // session is invalid. Preserve the tab JWT and cookie so a temporary
+          // outage cannot sign the user out or destroy recovery state.
           console.warn('[Auth] Session verification error (transient):', error.message);
-          clearAuthState();
         }
       } else if (!data?.valid) {
         clearAuthState();
@@ -247,8 +248,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }));
       }
     } catch (error: any) {
+      // Only explicit 400/401 responses above invalidate auth. An exception is
+      // a transport failure and must not erase an otherwise valid session.
       console.warn('Session check failed:', error?.message || 'Unknown error');
-      clearAuthState();
     } finally {
       setLoading(false);
     }
