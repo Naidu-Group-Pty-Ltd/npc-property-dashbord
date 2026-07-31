@@ -241,8 +241,8 @@ const LOCAL_BRAND_ASSETS: Record<string, string> = Object.fromEntries(
 /** Integration ids that reuse another brand's vendored mark. */
 const LOCAL_BRAND_ALIASES: Record<string, string> = {
   gohighlevel_new: 'gohighlevel',
-  moonshotai: 'liquid',
 };
+
 
 export function getLocalBrandAsset(id: string): string | undefined {
   const key = Object.prototype.hasOwnProperty.call(LOCAL_BRAND_ALIASES, id)
