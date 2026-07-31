@@ -113,12 +113,13 @@ export default function AgreementTerminationDialog({ open, onOpenChange, agreeme
                       <p className="font-semibold">{entitlements.open_dispute_count}</p>
                     </div>
                   </div>
-                  {retentionUntil && (
+                  {openReferrals > 0 && (
                     <p className="text-xs text-muted-foreground">
-                      Records retention will run until{' '}
-                      <span className="font-medium text-foreground">{retentionUntil}</span>.
+                      <span className="font-medium text-foreground">{openReferrals}</span> open referral(s) remain on
+                      this agreement and will continue under the post-termination entitlement terms.
                     </p>
                   )}
+
                 </div>
               )}
 
