@@ -31,7 +31,28 @@ import { SEED_TEMPLATES, type SeedTemplate } from './templates';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO = resolve(__dirname, '../..');
-const MIGRATION = resolve(REPO, 'supabase/migrations/20260801093000_seed_template_library.sql');
+
+/**
+ * Where the generated catalogue lands.
+ *
+ * **Bump this filename whenever the catalogue changes after the current one has
+ * been applied to production.** Supabase records a migration as applied by its
+ * version prefix and never runs it again, so editing an already-applied file
+ * changes the repository and nothing else — the new rows would never reach the
+ * database, and the only symptom would be templates missing from the UI.
+ *
+ * Because the generated SQL upserts the *whole* catalogue on `(slug, version)`,
+ * a new file is a complete replacement, not a delta: applying it brings a fresh
+ * database and a long-running one to exactly the same state. Superseded files
+ * stay on disk so an environment that has never been seeded still replays the
+ * full history in order.
+ *
+ * | Applied to production | File |
+ * | --- | --- |
+ * | yes — 12 templates | `20260801093000_seed_template_library.sql` |
+ * | not yet — 40 templates | the one below |
+ */
+const MIGRATION = resolve(REPO, 'supabase/migrations/20260802093000_seed_template_library_v2.sql');
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
 function sqlJson(value: unknown): string {

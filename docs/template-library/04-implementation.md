@@ -327,8 +327,110 @@ To run against a deployed environment before enabling for users.
 | Item | Status |
 | --- | --- |
 | **Public preview bucket** | Columns exist; the bucket and the publish-time render job do not. SVG schematics cover the browse and preview paths today. |
-| **More catalogue content** | Twelve templates ship, covering every category. Reaching 30–40 is content work: author in the Builder, then promote and publish through the admin panel. No platform change is needed. |
+| ~~**More catalogue content**~~ | **Closed.** Forty templates now ship, at least two per category. See §7. |
 | **Live-database E2E** | The browse → preview → copy → Builder journey is covered by unit tests over the real logic and a manual checklist (§5). An E2E run needs a seeded database, which this environment does not have. |
 | **Premium tier enforcement** | `access_tier` is stored and displayed but not enforced. Enforcing it means mapping tiers onto `planEnablesSubModule`, which needs the commercial model settled first. |
 | **Update notifications** | Lineage records the exact version copied, so "a newer version exists" is computable. Surfacing it in the Builder would mean modifying the Builder. |
 | **`manage-templates` insert validation** | Pre-existing gap documented in §2. Needs its own approval and regression run. |
+
+---
+
+## 7. Follow-up: forty templates, and why the grid looked empty
+
+Reported after the first release: *"there are no templates populating — over 40
+selectable templates were created but they are not showcasing on the front end."*
+
+Two separate things were behind that, and only one of them was a bug.
+
+### 7.1 The forty were a different product
+
+`public/templates/command-center/` holds 80 `.docx` files — 40 masters and 40
+samples — and `CATALOGUE` lists 40 entries. Those are the **Command Center**
+document pack. They are not Template Library entries, share no table with them,
+and were never wired to this grid. The Library shipped with twelve, which is
+what the page was correctly reporting.
+
+So the count was not a bug. The gap between expectation and delivery was real,
+and §6 already listed it as open content work. It is now closed: the catalogue
+ships **forty** templates.
+
+### 7.2 The thumbnails were a bug
+
+The grid *was* rendering — but every card looked like the same near-blank
+rectangle, which is indistinguishable from "nothing loaded".
+
+Root cause, from a probe over the seeded schemas:
+
+```
+PROBE investor-compass | page="Cover" bg={"color":"token:bg"} blocks=1
+   cover x=undefined y=undefined w=undefined h=undefined
+```
+
+Nine of the twelve open on a cover page holding a **single `cover` block that
+declares no geometry** — the renderer composes a cover from its props rather
+than from a box. The preview drew one stray bar for it and filled the page with
+the dashboard's `--card` token, discarding each template's palette. Twelve
+distinct documents therefore rendered as twelve identical pale rectangles.
+
+`TemplatePreviewSvg.tsx` now:
+
+- composes a representative cover (eyebrow, wrapped title, accent rule,
+  subtitle, footnote) for blocks that imply their own layout;
+- resolves `token:*` against **the template's own** `tokens.colors`, so a card
+  is drawn in the palette the PDF will use;
+- picks ink by Rec. 601 luma, so text bands stay legible on a dark cover;
+- gives tables a header rule and alternating rows, charts varying bar heights,
+  and media a tinted block — so a card reads as the *kind* of document it is.
+
+No literal colour is authored in the component. Every value comes from the
+template data, with the dashboard's own semantic tokens as the fallback. A
+template's palette is *content* — the same class of thing as a user's uploaded
+logo — which is why it is exempt from the chrome-only token rule.
+
+### 7.3 The seed migration had to be a new file
+
+Regenerating the catalogue rewrote `20260801093000_seed_template_library.sql`,
+which is **already applied in production**. Supabase records a migration by its
+version prefix and never re-runs it, so that edit would have changed the
+repository and nothing else: the 28 added templates would never have reached the
+database, and the only symptom would have been a catalogue stuck at twelve —
+i.e. exactly the complaint this work started from.
+
+The applied file is restored untouched and the full catalogue goes out as
+`20260802093000_seed_template_library_v2.sql`. Because the generated SQL upserts
+the whole catalogue on `(slug, version)`, the new file is a complete replacement
+rather than a delta, so a fresh database and a long-running one converge on the
+same state. `buildSeedCatalogue.ts` now documents this at its `MIGRATION`
+constant.
+
+### 7.4 One real defect the render tests caught
+
+`equity-position-report` put `{{equity.lvrLimit | percent}}` in a **table column
+header**. `renderDataTableHtml` resolves `rows[].cells` but escapes `headers`
+verbatim (`blocks/dataTable.html.ts:22`), so that would have printed literal
+braces into a customer's PDF.
+
+This is renderer behaviour that predates this work and is out of scope to
+change, so the template was fixed: headers are static labels, and the LVR limit
+the column is computed at now appears in the section heading, which *is*
+resolved. A new per-template guard test asserts no seeded template puts a
+binding in a table header — the same shape as the existing chip-vocabulary
+guard, which was earned the same way.
+
+### 7.5 Verification
+
+| Check | Result |
+| --- | --- |
+| Seed generator over all 40 | ✅ every schema parses against the live `ReportTemplateSchema`, uses only `PRODUCTION_SAFE_BLOCK_TYPES`, passes the publish gate, has no empty page |
+| `vitest src/lib/templateLibrary` | ✅ 642 passed — 13 checks per template, including a real HTML render through the production renderer |
+| Visual contact sheet, all 40 | ✅ rendered through the real component in Chromium; every card distinct, in its own palette, none blank |
+| `vitest src/lib/reportTemplate` | ✅ 18 failures on this branch, 18 on `origin/main`, **compared by test name: 0 new** |
+| `npm run lint` | ✅ 43 errors / 2,077 warnings — identical to `origin/main` |
+| `npm run audit:style` | ✅ 846/341/97/25 — byte-identical to `origin/main`; the ratchet regression predates this branch |
+| `tsc --noEmit` | ✅ clean |
+| `npm run build` | ✅ succeeds |
+
+The existing Reporting Engine Builder is untouched. This branch modifies no file
+under `src/components/templateBuilder/**`, `src/lib/reportTemplate/**` (except a
+test-only spec), `src/pages/Templates.tsx`, `supabase/functions/**`, or any
+applied migration.
