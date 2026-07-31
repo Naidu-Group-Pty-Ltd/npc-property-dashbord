@@ -508,7 +508,7 @@ export default function Integrations() {
 
   const renderIntegrationCard = (integration: IntegrationConfig) => {
     const status = getIntegrationStatus(integration);
-    const tone = getIntegrationTone(integration.id);
+    const tone = getIntegrationTone(brandIdFor(integration.id));
     const trustSummary = getCredentialTrustSummary(integration);
 
     return (
