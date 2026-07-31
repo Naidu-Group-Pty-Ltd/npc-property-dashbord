@@ -434,3 +434,14 @@ The existing Reporting Engine Builder is untouched. This branch modifies no file
 under `src/components/templateBuilder/**`, `src/lib/reportTemplate/**` (except a
 test-only spec), `src/pages/Templates.tsx`, `supabase/functions/**`, or any
 applied migration.
+
+### 7.6 Applied to production
+
+The v2 seed is live: 40 entries published, 10 production-ready, 8 categories,
+`report_templates` unchanged at 80 rows and zero leakage into it. Every schema
+was verified **byte-exact** after landing by comparing `md5(schema::text)`
+against a local reproduction of Postgres's `jsonb` canonical form — a check
+first validated against the twelve rows already in production, so the
+comparison itself is known-good rather than assumed.
+
+The migration ledger was also repaired; see the runbook for why that mattered.

@@ -5,8 +5,8 @@
 > | Step | Status |
 > | --- | --- |
 > | `20260801090000_create_template_library.sql` | ✅ applied |
-> | `20260801093000_seed_template_library.sql` | ✅ applied — 12 published, 4 production-ready |
-> | `20260802093000_seed_template_library_v2.sql` | ⬜ **pending — takes the catalogue to 40** |
+> | `20260801093000_seed_template_library.sql` | ✅ applied — 12 published |
+> | `20260802093000_seed_template_library_v2.sql` | ✅ **applied — 40 published, 10 production-ready** |
 > | `manage-template-library` edge function | ✅ deployed v1, ACTIVE, verify_jwt on |
 > | `manage-templates` redeploy (insert gate) | ❌ **NOT deployed — still v9** |
 >
@@ -16,12 +16,33 @@
 > added templates would never have reached the database, and the only symptom
 > would have been a catalogue that stayed at 12.
 >
-> Verified in production after applying: 3 tables created with RLS; 12 entries
-> published across all 8 categories; `report_templates` unchanged at 80 rows;
-> zero library rows leaked into `report_templates`; RLS confirmed by role —
-> `authenticated` sees 12, `anon` sees 0, `authenticated` INSERT refused;
-> the function returns a clean 401 to an unauthenticated caller rather than
-> crashing, which proves it booted and its imports resolved.
+> ### Verified in production after applying v2
+>
+> | Check | Result |
+> | --- | --- |
+> | Entries / published | 40 / 40 |
+> | Production-ready | 10 (only report types with a Builder adapter) |
+> | Brand-safe | 40 |
+> | Categories represented | 8 — smallest is 3, so no filter chip is a dead end |
+> | **Schema integrity** | **all 40 byte-exact** — `md5(schema::text)` compared against the locally computed canonical form for every row |
+> | `report_templates` | unchanged at 80 rows, 1 active |
+> | Library rows leaked into the Builder's table | 0 |
+> | RLS by role | `anon` sees 0, `authenticated` sees 40, `authenticated` INSERT refused |
+>
+> The transfer itself was checksum-gated: the migration was fetched from the
+> published branch and executed only after its SHA-256 matched the local file
+> (`c8ee6e62…d086`, 380,407 bytes) inside the same statement. Nothing ran
+> unverified, and the per-row md5 comparison afterwards proves every schema
+> landed intact rather than merely that the file arrived.
+>
+> ### Migration ledger repaired
+>
+> All three Template Library migrations had been applied by direct SQL and were
+> **absent from `supabase_migrations.schema_migrations`**. A later
+> `supabase db push` would therefore have tried to re-run
+> `20260801090000`, whose four `CREATE POLICY` statements have no
+> `IF NOT EXISTS` and would have failed the push. All three versions are now
+> recorded, which is accurate — they are applied — and removes that trap.
 >
 > **Outstanding: `manage-templates` still runs v9, without the insert gate.**
 > The Management API refused the update — `POST …/functions/deploy?slug=` returns
