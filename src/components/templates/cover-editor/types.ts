@@ -50,7 +50,7 @@ export const REPORT_TYPE_OPTIONS = [
   { value: 'cashflow', label: 'Cash Flow' },
   { value: 'portfolio', label: 'Portfolio Analysis' },
   { value: 'borrowing_capacity', label: 'Borrowing Capacity' },
-  { value: 'vownet', label: 'Formara / Client Form' },
+  { value: 'formara', label: 'Formara / Client Form' },
   { value: 'suburb', label: 'Suburb Analysis' },
   { value: 'postcode', label: 'Postcode Analysis' },
   { value: 'statewide', label: 'Statewide Analysis' },
