@@ -5,8 +5,30 @@ import {
   resolveBrandMarkHex,
   svgOrgLogoUrl,
 } from '@/lib/integrations/brandProfiles';
-import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { getInlineGlyph } from './brandGlyphs';
+
+/**
+ * Reads dark mode straight off the `dark` class the theme provider toggles on
+ * <html>, so brand marks stay provider-independent (and safe to render in
+ * isolated tests/previews).
+ */
+function useIsDarkSurface(): boolean {
+  const read = () =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+  const [isDark, setIsDark] = useState(read);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    const target = document.documentElement;
+    const sync = () => setIsDark(target.classList.contains('dark'));
+    sync();
+    const observer = new MutationObserver(sync);
+    observer.observe(target, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  return isDark;
+}
 
 interface BrandMarkProps {
   integrationId: string;
@@ -29,7 +51,7 @@ interface BrandMarkProps {
  */
 export function BrandMark({ integrationId, fallback, size = 24, className }: BrandMarkProps) {
   const profile = getBrandProfile(integrationId);
-  const { isDark } = useDashboardTheme();
+  const isDark = useIsDarkSurface();
   const [simpleIconsFailed, setSimpleIconsFailed] = useState(false);
   const [svgOrgFailed, setSvgOrgFailed] = useState(false);
 
