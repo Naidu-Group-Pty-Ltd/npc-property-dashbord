@@ -41,12 +41,15 @@ import { CoverPageOverlayManager } from '@/components/templates/cover-editor/Cov
 import {
   FileText, Palette, Brain, BarChart3, TrendingUp, Building2, Settings, MessageSquare,
   Calculator, MapPin, Hash, Map, Layers, Edit, Trash2, CheckCircle2, Plus, Search,
+  LibraryBig,
 } from 'lucide-react';
 import {
   useReportTemplates,
   useReportTemplateMutations,
 } from '@/hooks/useReportTemplates';
 import { makeBlankTemplate } from '@/lib/reportTemplate/templateSchema';
+import { TemplateLibraryTab } from '@/components/templateLibrary/TemplateLibraryTab';
+import { isTemplateLibraryEnabled } from '@/lib/templateLibrary/featureFlag';
 
 type ReportFormat =
   | 'investment_compass' 
@@ -121,6 +124,9 @@ export default function Templates() {
   const [selectedFormat, setSelectedFormat] = useState<ReportFormat | null>(null);
   const [builderSearch, setBuilderSearch] = useState('');
   const [builderSort, setBuilderSort] = useState<'name_asc' | 'name_desc' | 'type' | 'tier' | 'version_desc' | 'updated_desc'>('updated_desc');
+  // Read once per mount: the flag is resolved from the URL, localStorage and
+  // the build env, none of which change under a mounted component.
+  const [templateLibraryEnabled] = useState(isTemplateLibraryEnabled);
 
   const { data: reportTemplates = [], isLoading: reportTemplatesLoading } = useReportTemplates();
   const { create: createReportTemplate, remove: removeReportTemplate } = useReportTemplateMutations();
@@ -183,7 +189,7 @@ export default function Templates() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <div className="overflow-x-auto -mx-4 px-4 md:mx-0 md:px-0">
-          <TabsList className="inline-flex w-auto min-w-full md:grid md:w-full md:grid-cols-8">
+          <TabsList className={`inline-flex w-auto min-w-full md:grid md:w-full ${templateLibraryEnabled ? 'md:grid-cols-9' : 'md:grid-cols-8'}`}>
             <TabsTrigger value="report-formats" className="flex items-center gap-1.5 text-xs md:text-sm whitespace-nowrap">
               <Brain className="h-3.5 w-3.5 md:h-4 md:w-4" />
               Formats
@@ -192,6 +198,12 @@ export default function Templates() {
               <Layers className="h-3.5 w-3.5 md:h-4 md:w-4" />
               Builder
             </TabsTrigger>
+            {templateLibraryEnabled && (
+              <TabsTrigger value="template-library" className="flex items-center gap-1.5 text-xs md:text-sm whitespace-nowrap">
+                <LibraryBig className="h-3.5 w-3.5 md:h-4 md:w-4" />
+                Library
+              </TabsTrigger>
+            )}
             <TabsTrigger value="cover-editor" className="flex items-center gap-1.5 text-xs md:text-sm whitespace-nowrap">
               <Layers className="h-3.5 w-3.5 md:h-4 md:w-4" />
               Cover Page
@@ -494,6 +506,12 @@ export default function Templates() {
             );
           })()}
         </TabsContent>
+
+        {templateLibraryEnabled && (
+          <TabsContent value="template-library" className="space-y-6">
+            <TemplateLibraryTab />
+          </TabsContent>
+        )}
 
         <TabsContent value="cover-editor" className="space-y-4">
           <CoverPageOverlayManager />

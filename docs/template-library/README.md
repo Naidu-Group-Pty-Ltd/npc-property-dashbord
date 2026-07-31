@@ -8,6 +8,7 @@ existing Reporting Engine Builder. **This phase adds no user-facing behaviour.**
 | [`01-current-state.md`](./01-current-state.md) | Current-state assessment, dependency map, identified risks |
 | [`02-architecture.md`](./02-architecture.md) | Recommended architecture, user journey, data model, governance |
 | [`03-roadmap.md`](./03-roadmap.md) | Staged PR roadmap, testing strategy, rollback, file lists |
+| [`04-implementation.md`](./04-implementation.md) | **What was built**, the tenancy judgement, verification, open items |
 | [`../architecture/adr/017-template-library-separation.md`](../architecture/adr/017-template-library-separation.md) | The one decision everything else follows from |
 
 ---
@@ -52,15 +53,17 @@ A separate table has neither property. The full options analysis, including the
 two rejected alternatives and their trade-offs, is in
 [`02-architecture.md §1`](./02-architecture.md#1-where-the-library-lives).
 
-### What this PR contains
+### Status
 
-- The four planning documents above and one ADR.
-- `src/lib/templateLibrary/types.ts` — type declarations only, no runtime code.
-- `src/lib/templateLibrary/featureFlag.ts` — a kill-switch flag, **default OFF**,
-  modelled on the existing `editorV2Flag.ts`, plus its unit test.
+The planning phase (PR 1) and the implementation phases (roadmap PR 2–5) are
+both delivered, **with twelve templates seeded** so the library is usable on the
+day it is switched on. It is live behind a kill-switch flag that defaults ON.
+See [`04-implementation.md`](./04-implementation.md) for what shipped, the two
+real defects the render tests caught, and how it was verified.
 
-Nothing imports the new modules. No route, tab, component, hook, table, edge
-function or migration is added or changed.
+The existing Reporting Engine Builder is unchanged. The only edit to an existing
+component is 20 additive lines in `src/pages/Templates.tsx` that mount a ninth
+tab; the Builder tab's markup and logic are untouched.
 
 ---
 
@@ -85,15 +88,15 @@ to `main`.
 
 ---
 
-## 3. Decisions required before PR 2
+## 3. Decisions — all resolved
 
-These are answered in detail in [`02-architecture.md §9`](./02-architecture.md#9-open-decisions).
-They are listed here because **PR 2 cannot start until they are settled** — each
-one changes the shape of the table.
+Rationale in [`02-architecture.md §9`](./02-architecture.md#9-open-decisions);
+the tenancy judgement is worked through in
+[`04-implementation.md §1`](./04-implementation.md#1-the-tenancy-judgement).
 
 | # | Decision | Why it blocks | Recommendation |
 | --- | --- | --- | --- |
-| **D1** | **There is no organisation or tenant table in this codebase.** `report_templates.agency_id` exists but has no membership relation — migration `20260726143000` states this explicitly and deliberately withholds agency templates from non-superadmins as a result. | "Organisation ownership", "tenant availability" and "tenant isolation" cannot be built as requested. Anything I shipped would be decorative. | Ship `visibility = 'global'` only, with the column shaped as a CHECK-constrained text so `'agency'` can be added later without a migration to the column itself. Do **not** build a tenant model inside this feature. |
+| **D1** | **There is no organisation or tenant table in this codebase.** `report_templates.agency_id` exists but has no membership relation — migration `20260726143000` states this explicitly. | Determines what "visible and usable by tenant" can mean. | **RESOLVED — deployment-as-tenant.** `whitelabel_settings` is a singleton, so one deployment is one tenant. Every authenticated user with `templates:view` sees the library; working copies are `scope='user'` owned by their creator. `visibility` is shaped to accept `'agency'` later. No tenancy model was invented inside this feature. |
 | **D2** | Only the `investment` report-type family has a production adapter (`adapters/index.ts:16` — everything else is `previewOnlyAdapter`), and only five aliases pass `hasProductionReportTemplateAdapter` (`manage-templates/index.ts:301`). | A library of 30–40 templates will be mostly **preview-only**: a suburb or cash-flow template can be copied and edited, but cannot be activated for live report generation today. | Ship the library with an honest per-entry compatibility badge. Do not hide the limitation; do not widen the adapter allow-list as a side effect of this feature. |
 | **D3** | Who authors the initial 30–40 templates, and in what format? | Determines whether PR 2 needs a seed pipeline, an import path from the existing Builder, or both. | Author them **in the existing Builder**, then "promote to library" — reuses the editor, the linter and the renderer, and guarantees every entry is valid by construction. |
 | **D4** | Should a working copy track updates to its source library template? | Changes whether the copy is a snapshot or a live reference. | **Snapshot.** Notify, never auto-update. Reasoning in [`02-architecture.md §4`](./02-architecture.md#4-what-happens-when-a-master-template-changes). |

@@ -1,0 +1,97 @@
+/**
+ * Block types the production HTML/WeasyPrint renderer supports.
+ *
+ * This is a verbatim copy of `PRODUCTION_SAFE_BLOCK_TYPES` in
+ * `supabase/functions/manage-templates/index.ts`. It is duplicated rather than
+ * imported because `manage-templates` is the live Template Builder write path
+ * and is deliberately not being modified — refactoring a working broker to
+ * export a constant is exactly the kind of incidental change that turns a
+ * template-library bug into a Builder outage.
+ *
+ * The two copies are locked together by
+ * `src/lib/templateLibrary/__tests__/productionBlockParity.spec.ts`, which
+ * reads both files and fails if the sets diverge. If you edit one, edit both.
+ */
+export const PRODUCTION_SAFE_BLOCK_TYPES = new Set([
+  'free',
+  'disclaimer',
+  'hero',
+  'kpi-grid',
+  'data-table',
+  'chart',
+  'image',
+  'text-block',
+  'text',
+  'footer',
+  'cover',
+  'divider',
+  'callout',
+  'two-column',
+  'gallery',
+  'page-number',
+  'spacer',
+  'qr',
+  'badge-list',
+  'toc',
+  'signature',
+  'slot',
+  'scorecard',
+  'risk-register',
+  'infra-timeline',
+  'amenity-matrix',
+  'planning-table',
+  'dd-checklist',
+  'decision-box',
+  'strengths-watch',
+  'timeline',
+  'swot',
+  'gantt',
+  'comparison',
+  'stat-callout',
+  'pull-quote',
+  'faq',
+  'pricing-card',
+  'feature-list',
+  'process-steps',
+  'progress-bars',
+  'map',
+  'icon-grid',
+  'testimonials',
+  'ribbon',
+  'metric-delta',
+  'definition-list',
+  'sparkline',
+  'before-after',
+  'image-text',
+  'data-grid',
+  'pivot-table',
+  'chart-bar',
+  'chart-stacked-bar',
+  'chart-line',
+  'chart-area',
+  'chart-pie',
+  'chart-donut',
+  'chart-scatter',
+  'chart-radar',
+  'heatmap',
+  'kpi-strip',
+  'legend',
+  'auto-toc',
+]);
+
+/**
+ * Report types with a production Template Builder adapter.
+ *
+ * Verbatim copy of `PRODUCTION_REPORT_TEMPLATE_TYPES` in `manage-templates`,
+ * for the same reason and under the same parity test. A library entry whose
+ * report type is outside this set can still be browsed, previewed and copied —
+ * the copy simply cannot be activated for live report generation, which is
+ * surfaced honestly on the card rather than discovered at activation time.
+ */
+export const PRODUCTION_REPORT_TEMPLATE_TYPES = new Set([
+  'investment',
+  'compass',
+  'investment_compass',
+  'investment_report',
+  'property_investment',
+]);

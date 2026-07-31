@@ -1524,6 +1524,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "manage-template-library": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "template-library",
+      "reviewed": true
+    },
     "manage-templates": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
