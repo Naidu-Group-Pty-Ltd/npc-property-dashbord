@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import type { ElementType, ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
@@ -12,6 +12,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfidenceBadge } from '@/components/dashboard/ConfidenceBadge';
 import { ListingFilters } from '@/components/listings/ListingFilters';
+import { ErrorBoundary } from '@/components/common/ErrorBoundary';
+import { lazyWithRetry } from '@/lib/lazyWithRetry';
+import { reloadForFreshBuild } from '@/lib/chunkReload';
 import { MobileFilterSheet } from '@/components/listings/MobileFilterSheet';
 import { PropertyCard } from '@/components/listings/PropertyCard';
 import { propertyDataService } from '@/services/propertyDataService';
@@ -72,11 +75,13 @@ const getListingConfidenceBadgeTone = (confidence: number) =>
       : 'border-destructive/30 bg-destructive/10 text-destructive dark:border-destructive/30 dark:bg-destructive/10 dark:text-destructive';
 
 
-// Lazy load heavy modal components
-const ListingDetailsModal = lazy(() => import('@/components/listings/ListingDetailsModal').then(m => ({ default: m.ListingDetailsModal })));
-const InvestmentReportModal = lazy(() => import('@/components/listings/InvestmentReportModal').then(m => ({ default: m.InvestmentReportModal })));
-const BulkGenerationModal = lazy(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
-const ListingsMapView = lazy(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
+// Lazy load heavy modal components. lazyWithRetry (rather than React.lazy) so a
+// cached index.html pointing at chunk hashes the host no longer serves recovers
+// instead of leaving the feature stuck on its loading fallback.
+const ListingDetailsModal = lazyWithRetry(() => import('@/components/listings/ListingDetailsModal').then(m => ({ default: m.ListingDetailsModal })));
+const InvestmentReportModal = lazyWithRetry(() => import('@/components/listings/InvestmentReportModal').then(m => ({ default: m.InvestmentReportModal })));
+const BulkGenerationModal = lazyWithRetry(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
+const ListingsMapView = lazyWithRetry(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
 
 // Default empty filter state — keyword always starts blank
 const DEFAULT_FILTERS = {
@@ -871,9 +876,26 @@ export default function Listings() {
 
       {/* Content: Cards on Mobile, Table on Desktop, Map view geocodes on demand */}
       {showMapView ? (
-        <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
-          <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
-        </Suspense>
+        <ErrorBoundary
+          fallback={
+            <ListingsStatePanel
+              icon={AlertTriangle}
+              eyebrow="Map unavailable"
+              title="The map view could not be loaded"
+              description="This usually means the browser is holding an older copy of the app. Reloading fetches the current version."
+              tone="error"
+            >
+              <Button variant="outline" onClick={() => reloadForFreshBuild()} className={`${LISTINGS_REFRESH_ACTION} gap-2`}>
+                <RefreshCw className="h-4 w-4" />
+                Reload the app
+              </Button>
+            </ListingsStatePanel>
+          }
+        >
+          <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
+            <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
+          </Suspense>
+        </ErrorBoundary>
       ) : showListView ? (
         <div className="space-y-3">
           {filteredListings.length === 0 ? (

@@ -9,6 +9,7 @@ import { SearchProvider } from "@/contexts/SearchContext";
 import { NotificationsProvider } from "@/contexts/NotificationsContext";
 import { ComparisonProvider } from "@/contexts/ComparisonContext";
 import { BrandProvider } from "@/branding/BrandProvider";
+import { useBuildVersionCheck } from "@/hooks/useBuildVersionCheck";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -230,6 +231,12 @@ const PathNormalizer = () => {
   return null;
 };
 
+/** Notifies the user when this tab is running a cached, outdated build. */
+const BuildVersionWatcher = () => {
+  useBuildVersionCheck();
+  return null;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -249,6 +256,7 @@ const App = () => (
                     <SearchProvider>
                       <Toaster />
                       <Sonner />
+                      <BuildVersionWatcher />
                       <Routes>
                         {/* Public shareable answer link (no auth) */}
                         <Route path="/qa/shared/:token" element={<SharedQAAnswer />} />
