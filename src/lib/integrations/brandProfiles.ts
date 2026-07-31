@@ -219,6 +219,41 @@ export function svgOrgLogoUrl(slug: string): string {
   return `https://thesvg.org/icons/${slug}/default.svg`;
 }
 
+/**
+ * Locally vendored brand marks for services neither icon library carries.
+ * Files were sourced from each vendor's own site/CDN and live in
+ * `src/assets/brands/`. They are rendered through the same CSS mask treatment
+ * as the thesvg.org fallbacks so every mark keeps one consistent colour rule.
+ */
+const LOCAL_BRAND_MODULES = import.meta.glob('../../assets/brands/*.{svg,png}', {
+  eager: true,
+  query: '?url',
+  import: 'default',
+}) as Record<string, string>;
+
+const LOCAL_BRAND_ASSETS: Record<string, string> = Object.fromEntries(
+  Object.entries(LOCAL_BRAND_MODULES).map(([path, url]) => [
+    path.split('/').pop()!.replace(/\.(svg|png)$/, ''),
+    url,
+  ]),
+);
+
+/** Integration ids that reuse another brand's vendored mark. */
+const LOCAL_BRAND_ALIASES: Record<string, string> = {
+  gohighlevel_new: 'gohighlevel',
+  moonshotai: 'liquid',
+};
+
+export function getLocalBrandAsset(id: string): string | undefined {
+  const key = Object.prototype.hasOwnProperty.call(LOCAL_BRAND_ALIASES, id)
+    ? LOCAL_BRAND_ALIASES[id]
+    : id;
+  return Object.prototype.hasOwnProperty.call(LOCAL_BRAND_ASSETS, key)
+    ? LOCAL_BRAND_ASSETS[key]
+    : undefined;
+}
+
+
 /** Relative luminance (0–1) of a `RRGGBB` hex string. */
 function hexLuminance(hex: string): number {
   const clean = hex.replace('#', '');
