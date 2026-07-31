@@ -206,7 +206,9 @@ export async function invokeSecureFunction<T = any>(
         };
       }
 
-      const isTransient = response.status >= 500 && response.status < 600;
+      // 429 is expected back-pressure (callers back off and retry), so it is a
+      // warning — logging it as an error surfaces it as an app runtime error.
+      const isTransient = response.status === 429 || (response.status >= 500 && response.status < 600);
       const log = isTransient ? console.warn : console.error;
       log('[invokeSecureFunction] Request failed', {
         functionName,
