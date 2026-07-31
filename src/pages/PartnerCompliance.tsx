@@ -295,9 +295,12 @@ export default function PartnerCompliance() {
               <SelectContent>
                 <SelectItem value="open">Open</SelectItem>
                 <SelectItem value="all">All</SelectItem>
-                <SelectItem value="assessing">Assessing</SelectItem>
+                <SelectItem value="under_assessment">Under assessment</SelectItem>
+                <SelectItem value="notifiable">Notifiable</SelectItem>
+                <SelectItem value="not_notifiable">Not notifiable</SelectItem>
                 <SelectItem value="notified">Notified</SelectItem>
                 <SelectItem value="closed">Closed</SelectItem>
+
               </SelectContent>
             </Select>
           </div>
