@@ -64,17 +64,37 @@ export interface IntegrationDefinition {
     | 'megaphone'
     | 'settings'
     | 'bell'
-    | 'creditCard';
+    | 'creditCard'
+    | 'barChart'
+    | 'users'
+    | 'lock'
+    | 'image'
+    | 'calendar'
+    | 'package'
+    | 'code'
+    | 'video'
+    | 'coins'
+    | 'building'
+    | 'mic'
+    | 'globe'
+    | 'message'
+    | 'cart';
 }
 
 export const INTEGRATION_CATEGORIES: IntegrationCategory[] = [
-  { id: 'ai', label: 'AI & Models', description: 'LLM providers and inference gateways powering agents, reports and analysis.' },
-  { id: 'property_data', label: 'Property & Market Data', description: 'Listing feeds, valuations, geocoding and location intelligence.' },
+  { id: 'ai', label: 'AI & Models', description: 'LLM providers, speech, vision and inference gateways powering agents, reports and analysis.' },
+  { id: 'property_data', label: 'Property & Market Data', description: 'Listing feeds, valuations, geocoding, imagery and location intelligence.' },
   { id: 'crm_marketing', label: 'CRM & Marketing', description: 'Pipelines, lead capture, ad platforms and conversational marketing.' },
-  { id: 'communications', label: 'Communications', description: 'Email, SMS, voice, calendar and push notification delivery.' },
+  { id: 'communications', label: 'Communications', description: 'Email, SMS, voice, chat and push notification delivery.' },
   { id: 'documents', label: 'Documents & Rendering', description: 'PDF pipelines, e-signature, decks and document extraction services.' },
+  { id: 'compliance', label: 'Identity & Compliance', description: 'KYC/AML verification, PEP & sanctions screening, credit and banking data.' },
+  { id: 'payments', label: 'Payments & Finance', description: 'Billing, subscriptions, accounting ledgers and revenue reconciliation.' },
+  { id: 'analytics', label: 'Analytics & Monitoring', description: 'Product analytics, SEO intelligence, error tracking and observability.' },
+  { id: 'productivity', label: 'Productivity & Collaboration', description: 'Team chat, docs, project tracking, scheduling and meetings.' },
+  { id: 'storage', label: 'Storage & Files', description: 'Object storage, cloud drives and media asset pipelines.' },
+  { id: 'media', label: 'Media & Social', description: 'Social publishing, video platforms and audience distribution.' },
   { id: 'automation', label: 'Automation & Workflows', description: 'Webhooks, scraping, orchestration and platform control planes.' },
-  { id: 'infrastructure', label: 'Infrastructure & Security', description: 'Edge network, secret management, bot protection and design tooling.' },
+  { id: 'infrastructure', label: 'Infrastructure & Security', description: 'Edge network, secret management, bot protection and developer tooling.' },
 ];
 
 export const INTEGRATIONS: IntegrationDefinition[] = [
