@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { brandLogoUrl, getBrandProfile } from '@/lib/integrations/brandProfiles';
+import { brandLogoUrl, getBrandProfile, svgOrgLogoUrl } from '@/lib/integrations/brandProfiles';
 import { getInlineGlyph } from './brandGlyphs';
 
 interface BrandMarkProps {
@@ -15,31 +15,41 @@ interface BrandMarkProps {
  * Renders the brand's mark in its official color.
  * Priority: inline SVG (for brands Simple Icons dropped for trademark reasons)
  *   → Simple Icons CDN (colored SVG)
+ *   → thesvg.org CDN (fallback brand library)
  *   → provided lucide fallback.
  */
 export function BrandMark({ integrationId, fallback, size = 24, className }: BrandMarkProps) {
   const profile = getBrandProfile(integrationId);
-  const [errored, setErrored] = useState(false);
+  const [simpleIconsFailed, setSimpleIconsFailed] = useState(false);
+  const [svgOrgFailed, setSvgOrgFailed] = useState(false);
 
   const Inline = getInlineGlyph(integrationId);
   if (Inline) {
     return <Inline size={size} color={profile ? `#${profile.color}` : undefined} className={className} />;
   }
 
-  if (!profile?.slug || errored) {
+  const useSimpleIcons = Boolean(profile?.slug) && !simpleIconsFailed;
+  const useSvgOrg = !useSimpleIcons && Boolean(profile?.svgOrgSlug) && !svgOrgFailed;
+
+  if (!useSimpleIcons && !useSvgOrg) {
     return <>{fallback}</>;
   }
 
+  const src = useSimpleIcons
+    ? brandLogoUrl(profile!.slug!, profile!.color)
+    : svgOrgLogoUrl(profile!.svgOrgSlug!);
+
   return (
     <img
-      src={brandLogoUrl(profile.slug, profile.color)}
+      key={src}
+      src={src}
       alt=""
       aria-hidden="true"
       width={size}
       height={size}
       loading="lazy"
       decoding="async"
-      onError={() => setErrored(true)}
+      onError={() => (useSimpleIcons ? setSimpleIconsFailed(true) : setSvgOrgFailed(true))}
       className={className}
       style={{ width: size, height: size }}
     />
