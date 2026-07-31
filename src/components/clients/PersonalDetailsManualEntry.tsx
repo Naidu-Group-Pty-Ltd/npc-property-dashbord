@@ -419,7 +419,7 @@ export function PersonalDetailsManualEntry({ clientId, clientData, additionalCon
                 Personal Details (All Applicants)
               </SheetTitle>
               <SheetDescription>
-                Edit personal details matching Vownet template format
+                Edit personal details matching Formara template format
               </SheetDescription>
             </SheetHeader>
 

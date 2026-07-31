@@ -1206,7 +1206,7 @@ export function transformAssessmentToSectionData(
     }
   } else if (options?.liabilities && options.liabilities.length > 0) {
     // Use shared engine so credit-card 3% / BNPL 5% / HECS / P&I fallbacks
-    // are applied consistently with VownetPDFGenerator and BorrowingCapacityModal.
+    // are applied consistently with FormaraPDFGenerator and BorrowingCapacityModal.
     const totalGrossAnnualIncome = Number(a.gross_annual_income) || 0;
     const servicing = buildLiabilityServicing(options.liabilities, { totalGrossAnnualIncome });
     for (const item of servicing.items) {

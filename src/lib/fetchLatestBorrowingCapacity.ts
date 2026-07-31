@@ -5,7 +5,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
  * Uses the secure edge function mediation pattern (HttpOnly cookies + service_role).
  * 
  * Used by:
- * - VownetPDFGenerator (Client Finance Form)
+ * - FormaraPDFGenerator (Client Finance Form)
  * - PortfolioAnalysisPDFGenerator (PPR) — when needing standalone fetch
  * - BorrowingCapacityPDFReport (Standalone BC PDF)
  * - Any future generator that needs BC assessment data

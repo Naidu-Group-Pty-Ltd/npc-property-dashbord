@@ -397,7 +397,7 @@ export function PropertyManualEntry({ clientId, onComplete }: PropertyManualEntr
             Add Property
           </SheetTitle>
           <SheetDescription>
-            Add a property matching Vownet template format
+            Add a property matching Formara template format
           </SheetDescription>
         </SheetHeader>
 

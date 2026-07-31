@@ -229,7 +229,7 @@ Two flat namespaces, distinguished by intent:
   `depreciationCalculator.ts`, `cgtCalculations.ts` (via `lib`),
   `mortgageCalculations.ts`, `capitalAllocationLedger.ts`, `dtiDenominator.ts`,
   `negativeGearingAddBack.ts`, `nameFormatting.ts`, `passwordValidation.ts`,
-  `dataValidation.ts`, `vownetParser.ts`, `pdfToImages.ts`.
+  `dataValidation.ts`, `formaraParser.ts`, `pdfToImages.ts`.
 
 **Rule of thumb:** if the file imports `@/integrations/supabase/client` it
 belongs in `lib/`; if it only takes plain values in and returns plain values

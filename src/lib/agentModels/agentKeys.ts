@@ -123,9 +123,9 @@ export const AGENT_SURFACES = {
     category: 'extraction',
     slots: [{ key: 'pdf_property_extraction', slotLabel: 'Primary' }],
   },
-  pdfVownetExtraction: {
+  pdfFormaraExtraction: {
     id: 'pdf_vownet_extraction',
-    label: 'VowNet PDF Extraction',
+    label: 'Formara PDF Extraction',
     category: 'extraction',
     slots: [{ key: 'pdf_vownet_extraction', slotLabel: 'Primary' }],
   },

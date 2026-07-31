@@ -69,7 +69,7 @@ Related client files touched in Phase 4:
 | --- | --- | --- | --- |
 | `src/pages/EmailCopilot.tsx` | 1147 | **Display** | "Call OpenAI Whisper" comment + UI copy — becomes `<LiveModelBadge agentKey="voice_transcription" />`. |
 | `src/components/templateBuilder/TemplateDesignAgentPanel.tsx` | 89 | **Comment** | "Gemini accepts it" — cosmetic, add chip via `agentKey="template_design_agent"`. |
-| PDF/vision extractors (`ai_doc_classifications`, VOI, OCR) | — | **Display** | Add chip per surface via `agentKey="pdf_parsing"` / `chart_analysis` / `vownet_extraction`. |
+| PDF/vision extractors (`ai_doc_classifications`, VOI, OCR) | — | **Display** | Add chip per surface via `agentKey="pdf_parsing"` / `chart_analysis` / `formara_extraction`. |
 
 ## Integrations page
 
@@ -118,7 +118,7 @@ voice_transcription
 template_design_agent
 pdf_parsing
 chart_analysis
-vownet_extraction
+formara_extraction
 image_generation
 ```
 

@@ -9,12 +9,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Download, FileSpreadsheet, Loader2, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
-import { downloadVownetTemplate, downloadBlankVownetTemplate, type VownetExportData } from '@/utils/vownetTemplateGenerator';
+import { downloadFormaraTemplate, downloadBlankFormaraTemplate, type FormaraExportData } from '@/utils/formaraTemplateGenerator';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 
-interface ExportVownetButtonProps {
+interface ExportFormaraButtonProps {
   clientId: string;
   clientName: string;
   variant?: 'default' | 'outline' | 'ghost';
@@ -51,12 +51,12 @@ async function fetchClientDataForExport(clientId: string) {
   };
 }
 
-export function ExportVownetButton({ 
+export function ExportFormaraButton({ 
   clientId, 
   clientName,
   variant = 'outline',
   size = 'sm'
-}: ExportVownetButtonProps) {
+}: ExportFormaraButtonProps) {
   const [isExporting, setIsExporting] = useState(false);
   const { addNotification } = useNotifications();
       
@@ -69,7 +69,7 @@ export function ExportVownetButton({
         throw new Error('Failed to fetch client data');
       }
 
-      const exportData: VownetExportData = {
+      const exportData: FormaraExportData = {
         client: data.client,
         properties: data.properties,
         employment: data.employment,
@@ -78,7 +78,7 @@ export function ExportVownetButton({
         liabilities: data.liabilities,
       };
 
-      downloadVownetTemplate(exportData);
+      downloadFormaraTemplate(exportData);
       logActivityDirect({
         actionType: 'client_exported',
         entityType: 'client',
@@ -103,7 +103,7 @@ export function ExportVownetButton({
   };
 
   const handleExportBlank = () => {
-    downloadBlankVownetTemplate();
+    downloadBlankFormaraTemplate();
     toast.success('Blank client detail template downloaded');
   };
 

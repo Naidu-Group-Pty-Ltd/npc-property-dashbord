@@ -31,12 +31,12 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import * as XLSX from 'xlsx';
-import { parseVownetForm } from '@/utils/vownetParser';
-import { parseVownetPdf } from '@/utils/vownetPdfParser';
+import { parseFormaraForm } from '@/utils/formaraParser';
+import { parseFormaraPdf } from '@/utils/formaraPdfParser';
 import type { ParsedClient } from '@/utils/excelClientParser';
 import { secureStorageUpload, secureStorageDownload, secureStorageDelete } from '@/hooks/useSecureStorage';
 
-interface ClientVownetFormsProps {
+interface ClientFormaraFormsProps {
   clientId: string;
   clientName: string;
 }
@@ -62,13 +62,13 @@ interface ImportSummary {
  * The actual files live in the "client-files" bucket under the "vownet-forms/" prefix
  * (legacy upload behaviour), even though new uploads target the "vownet-forms" bucket.
  */
-type VownetStorageBucket = 'vownet-forms' | 'client-files' | 'client-documents';
+type FormaraStorageBucket = 'vownet-forms' | 'client-files' | 'client-documents';
 
-function resolveStorageLocations(raw: string, storageBucket?: string | null): Array<{ bucket: VownetStorageBucket; key: string }> {
+function resolveStorageLocations(raw: string, storageBucket?: string | null): Array<{ bucket: FormaraStorageBucket; key: string }> {
   if (!raw) return [];
   let trimmed = raw.trim();
-  const candidates: Array<{ bucket: VownetStorageBucket; key: string }> = [];
-  const add = (bucket: VownetStorageBucket, key: string) => {
+  const candidates: Array<{ bucket: FormaraStorageBucket; key: string }> = [];
+  const add = (bucket: FormaraStorageBucket, key: string) => {
     const normalized = key.replace(/^\/+/, '').replace(/\\/g, '/');
     if (!normalized || normalized.split('/').some((part) => part === '..' || !part)) return;
     if (!candidates.some((candidate) => candidate.bucket === bucket && candidate.key === normalized)) candidates.push({ bucket, key: normalized });
@@ -123,7 +123,7 @@ function resolveStorageLocations(raw: string, storageBucket?: string | null): Ar
   return candidates;
 }
 
-export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsProps) {
+export function ClientFormaraForms({ clientId, clientName }: ClientFormaraFormsProps) {
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -132,8 +132,8 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
   const { user } = useAuth();
   const { addNotification } = useNotifications();
 
-  // Fetch VowNet forms for this client
-  const { data: vownetForms = [], isLoading } = useQuery({
+  // Fetch Formara forms for this client
+  const { data: formaraForms = [], isLoading } = useQuery({
     queryKey: ['client-vownet-forms', clientId],
     queryFn: async () => {
       const { data, error } = await invokeSecureFunction('get-client-data', {
@@ -142,13 +142,13 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
       });
       
       if (error) throw new Error(error.message);
-      if (!data?.success) throw new Error(data?.error || 'Failed to fetch vownet forms');
+      if (!data?.success) throw new Error(data?.error || 'Failed to fetch formara forms');
       
       return (data.files || []).filter((f: any) => f.is_vownet_form);
     }
   });
 
-  const processAndImportVownetForm = async (file: File) => {
+  const processAndImportFormaraForm = async (file: File) => {
     setUploadStatus('parsing');
     setProgress(10);
     setErrorMessage(null);
@@ -161,7 +161,7 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
       
       if (isPdf) {
         // Parse PDF using AI extraction
-        parsedData = await parseVownetPdf(file, (progress) => {
+        parsedData = await parseFormaraPdf(file, (progress) => {
           if (progress.stage === 'extracting') {
             setProgress(10 + (progress.current / progress.total) * 15);
           } else if (progress.stage === 'parsing') {
@@ -173,7 +173,7 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
         const arrayBuffer = await file.arrayBuffer();
         const workbook = XLSX.read(arrayBuffer, { type: 'array' });
         setProgress(30);
-        parsedData = parseVownetForm(workbook);
+        parsedData = parseFormaraForm(workbook);
       }
       
       if (!parsedData) {
@@ -461,7 +461,7 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
             file_size: file.size,
             file_type: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             category: 'vownet',
-            document_type: 'vownet_form',
+            document_type: 'formara_form',
             is_vownet_form: true,
             uploaded_by: user?.id
           }
@@ -562,7 +562,7 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
-      processAndImportVownetForm(acceptedFiles[0]);
+      processAndImportFormaraForm(acceptedFiles[0]);
     }
   }, [clientId]);
 
@@ -753,14 +753,14 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
       <div>
         <h4 className="text-sm font-medium mb-3 flex items-center gap-2">
           <FileSpreadsheet className="h-4 w-4" />
-          Imported Client Detail Forms ({vownetForms.length})
+          Imported Client Detail Forms ({formaraForms.length})
         </h4>
 
         {isLoading ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
           </div>
-        ) : vownetForms.length === 0 ? (
+        ) : formaraForms.length === 0 ? (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
               <FileSpreadsheet className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -771,7 +771,7 @@ export function ClientVownetForms({ clientId, clientName }: ClientVownetFormsPro
         ) : (
           <ScrollArea className="h-[300px]">
             <div className="space-y-2 pr-4">
-              {vownetForms.map((file) => (
+              {formaraForms.map((file) => (
                 <Card key={file.id} className="group">
                   <CardContent className="py-3 flex items-center gap-3">
                     <div className="p-2 rounded-lg bg-success/15 dark:bg-success/30">

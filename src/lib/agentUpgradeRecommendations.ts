@@ -83,7 +83,7 @@ const AGENT_KEY_RECOMMENDATIONS: Record<string, UpgradeRecommendation> = {
     model_id: 'gpt-4o',
     reason: 'Native vision + structured output is currently the most reliable for PDF extraction.',
   },
-  vownet_extraction: {
+  formara_extraction: {
     route: 'native',
     model_id: 'gpt-4o',
     reason: 'Vision-grounded structured extraction — keep on native gpt-4o.',

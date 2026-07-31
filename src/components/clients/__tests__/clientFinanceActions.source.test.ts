@@ -6,7 +6,7 @@ const source = (file: string) => readFileSync(resolve(process.cwd(), 'src/compon
 
 describe('client finance action regression guards', () => {
   it('keeps PDF download as a dedicated guarded client action and removes legacy menu items', () => {
-    const generator = source('VownetPDFGenerator.tsx');
+    const generator = source('FormaraPDFGenerator.tsx');
     const workspace = source('ClientDetailsModal.tsx');
 
     expect(generator).toContain("action?: 'finance' | 'download'");
@@ -18,7 +18,7 @@ describe('client finance action regression guards', () => {
   });
 
   it('keeps finance delivery actions in the finance menu and moves portfolio analysis from Reports', () => {
-    const generator = source('VownetPDFGenerator.tsx');
+    const generator = source('FormaraPDFGenerator.tsx');
     const reports = source('ClientReportsTab.tsx');
     const portfolio = source('PortfolioAnalysisPDFGenerator.tsx');
     const workspace = source('ClientDetailsModal.tsx');
@@ -39,7 +39,7 @@ describe('client finance action regression guards', () => {
   });
 
   it('does not count explicitly previous employment as current PDF income', () => {
-    const generator = source('VownetPDFGenerator.tsx');
+    const generator = source('FormaraPDFGenerator.tsx');
 
     expect(generator).toContain('const current = empList.filter(e => e.is_current !== false)');
     expect(generator).toContain('const totals = current.reduce');

@@ -633,7 +633,7 @@ const TOOLS: any[] = [
     type: "function",
     function: {
       name: "get_client_files",
-      description: "List all files/reports stored for a client (investment reports, portfolio reviews, BC PDFs, VowNet forms).",
+      description: "List all files/reports stored for a client (investment reports, portfolio reviews, BC PDFs, Formara forms).",
       parameters: { type: "object", properties: { client_id: { type: "string", description: "UUID of the client" } }, required: ["client_id"] },
     },
   },

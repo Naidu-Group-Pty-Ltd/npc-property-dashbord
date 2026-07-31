@@ -211,7 +211,7 @@ interface IncomeSourceData {
   is_active?: boolean | null;
 }
 
-export interface VownetPDFData {
+export interface FormaraPDFData {
   client: ClientData;
   properties: PropertyData[];
   employment?: EmploymentData[];
@@ -231,8 +231,8 @@ interface ExpenseData {
   is_essential?: boolean;
 }
 
-interface VownetPDFGeneratorProps {
-  data: VownetPDFData;
+interface FormaraPDFGeneratorProps {
+  data: FormaraPDFData;
   clientName: string;
   onEmailClick?: (pdfBlob: Blob, fileName: string) => void;
   onQuickSendComplete?: () => void;
@@ -363,7 +363,7 @@ const formatCountry = (raw: string | null | undefined, fallback: string = 'Austr
   return humanizeEnum(raw);
 };
 
-export function VownetPDFGenerator({ 
+export function FormaraPDFGenerator({ 
   data, 
   clientName,
   onEmailClick,
@@ -372,7 +372,7 @@ export function VownetPDFGenerator({
   size = 'sm',
   buttonLabel = 'Send to Finance',
   action = 'finance'
-}: VownetPDFGeneratorProps) {
+}: FormaraPDFGeneratorProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const actionLock = useRef(false);
   const [isSending, setIsSending] = useState(false);
@@ -381,8 +381,8 @@ export function VownetPDFGenerator({
   const { settings: brand } = useBrand();
   const { contacts, defaultContact, hasContacts } = useFinanceContacts();
 
-  // Persist Vownet PDF to storage + client_files in background
-  const persistVownetPdf = async (blob: Blob, fileName: string, clientIdVal: string) => {
+  // Persist Formara PDF to storage + client_files in background
+  const persistFormaraPdf = async (blob: Blob, fileName: string, clientIdVal: string) => {
     try {
       const storagePath = `vownet-forms/${clientIdVal}/${fileName}`;
       const file = new File([blob], fileName, { type: 'application/pdf' });
@@ -407,12 +407,12 @@ export function VownetPDFGenerator({
             description: `Client Details Form - ${new Date().toLocaleDateString('en-AU')}`,
           },
         });
-        console.log('✓ Vownet PDF persisted to storage + client_files');
+        console.log('✓ Formara PDF persisted to storage + client_files');
       } else {
-        console.error('Vownet PDF upload failed:', uploadResult?.error);
+        console.error('Formara PDF upload failed:', uploadResult?.error);
       }
     } catch (err) {
-      console.error('Failed to persist Vownet PDF:', err);
+      console.error('Failed to persist Formara PDF:', err);
       // Non-blocking — the user already has their download
     }
   };
@@ -530,7 +530,7 @@ export function VownetPDFGenerator({
         throw new Error('No PDF pages were generated from template');
       }
 
-      console.log(`[VownetPDF] Starting render: ${totalHtmlElements} elements (${fixedPages.length} fixed, ${autoPages.length} auto-height) in isolated iframe`);
+      console.log(`[FormaraPDF] Starting render: ${totalHtmlElements} elements (${fixedPages.length} fixed, ${autoPages.length} auto-height) in isolated iframe`);
 
       // Create PDF
       const pdf = new jsPDF({
@@ -606,7 +606,7 @@ export function VownetPDFGenerator({
           const contentHeightMm = (naturalHeight / 794) * CONTENT_WIDTH_MM;
           const pageHeightMm = TOP_MARGIN_MM + contentHeightMm + FOOTER_BAND_MM;
 
-          console.log(`[VownetPDF] Auto page ${i + 1} rendered in ${Date.now() - pageStart}ms (${naturalHeight}px → fluid ${pageHeightMm.toFixed(1)}mm)`);
+          console.log(`[FormaraPDF] Auto page ${i + 1} rendered in ${Date.now() - pageStart}ms (${naturalHeight}px → fluid ${pageHeightMm.toFixed(1)}mm)`);
 
           if (pdfPageIndex > 0) {
             pdf.addPage([PAGE_WIDTH_MM, pageHeightMm], 'portrait');
@@ -683,7 +683,7 @@ export function VownetPDFGenerator({
         } else {
           // Fixed-height page (cover): standard A4 single-page render
           const canvas = await html2canvasWithTimeout(page, renderOptions, 15000);
-          console.log(`[VownetPDF] Page ${i + 1}/${renderList.length} rendered in ${Date.now() - pageStart}ms`);
+          console.log(`[FormaraPDF] Page ${i + 1}/${renderList.length} rendered in ${Date.now() - pageStart}ms`);
 
           if (pdfPageIndex > 0) {
             pdf.addPage('a4', 'portrait');
@@ -700,7 +700,7 @@ export function VownetPDFGenerator({
       if (includeBorrowingCapacity && data.client.id) {
         try {
           ensureWithinBudget();
-          console.log('📊 Fetching borrowing capacity data for Vownet PDF...');
+          console.log('📊 Fetching borrowing capacity data for Formara PDF...');
           const { latestAssessment } = await fetchLatestBorrowingCapacity(data.client.id);
 
           if (latestAssessment) {
@@ -710,7 +710,7 @@ export function VownetPDFGenerator({
             pdf.addPage();
             drawBorrowingCapacitySections(pdf, bcPdfData, 20, pageNum, false);
 
-            console.log('✓ Borrowing capacity pages appended to Vownet PDF');
+            console.log('✓ Borrowing capacity pages appended to Formara PDF');
           } else {
             console.log('ℹ No borrowing capacity data found — skipping BC pages');
           }
@@ -736,13 +736,13 @@ export function VownetPDFGenerator({
       }
 
       const generatedStamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const fileName = `Vownet_Form_${clientName.replace(/\s+/g, '_')}_${generatedStamp}.pdf`;
+      const fileName = `Formara_Form_${clientName.replace(/\s+/g, '_')}_${generatedStamp}.pdf`;
 
-      console.log(`[VownetPDF] Generation complete: ${pdf.getNumberOfPages()} total PDF pages`);
+      console.log(`[FormaraPDF] Generation complete: ${pdf.getNumberOfPages()} total PDF pages`);
 
       if (forEmail) {
         const pdfBlob = pdf.output('blob');
-        persistVownetPdf(pdfBlob, fileName, data.client.id);
+        persistFormaraPdf(pdfBlob, fileName, data.client.id);
         return pdfBlob;
       } else {
         const pdfBlob = pdf.output('blob');
@@ -752,8 +752,8 @@ export function VownetPDFGenerator({
         a.download = fileName;
         a.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 0);
-        persistVownetPdf(pdfBlob, fileName, data.client.id);
-        toast.success('Vownet PDF downloaded & saved to Reports');
+        persistFormaraPdf(pdfBlob, fileName, data.client.id);
+        toast.success('Formara PDF downloaded & saved to Reports');
         return null;
       }
     } catch (error) {
@@ -780,7 +780,7 @@ export function VownetPDFGenerator({
     if (isDisabled) return;
     const pdfBlob = await generatePDF(true);
     if (pdfBlob && onEmailClick) {
-      const fileName = `Vownet_Form_${clientName.replace(/\s+/g, '_')}_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
+      const fileName = `Formara_Form_${clientName.replace(/\s+/g, '_')}_${new Date().toISOString().replace(/[:.]/g, '-')}.pdf`;
       onEmailClick(pdfBlob, fileName);
     }
   };
@@ -809,7 +809,7 @@ export function VownetPDFGenerator({
         throw new Error('Failed to generate PDF');
       }
 
-      const fileName = `Vownet_Form_${clientName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+      const fileName = `Formara_Form_${clientName.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
       
       // Convert blob to base64
       const reader = new FileReader();
@@ -891,13 +891,13 @@ export function VownetPDFGenerator({
         <div className="flex items-center justify-between px-2 py-2 border-b">
           <div className="flex items-center gap-2">
             <Calculator className="h-4 w-4 text-muted-foreground" />
-            <Label htmlFor="include-bc-vownet" className="text-sm cursor-pointer leading-tight">
+            <Label htmlFor="include-bc-formara" className="text-sm cursor-pointer leading-tight">
               <span className="block">Borrowing Capacity</span>
               <span className="text-xs text-muted-foreground">Append detailed BC assessment</span>
             </Label>
           </div>
           <Switch
-            id="include-bc-vownet"
+            id="include-bc-formara"
             checked={includeBorrowingCapacity}
             onCheckedChange={setIncludeBorrowingCapacity}
           />
@@ -994,7 +994,7 @@ function applyBrandGold(brandColorHsl?: string | null) {
 
 // Generate the full HTML content for the PDF
 function generateHTMLContent(
-  data: VownetPDFData,
+  data: FormaraPDFData,
   includeOwnerOccupied: boolean = true,
   brandContact?: ContactDetails,
   brandDisclaimer?: ProfessionalDisclaimer,

@@ -274,7 +274,7 @@ export function FinanceAgentContacts() {
                 <DialogDescription>
                   {editingContact
                     ? "Update the finance agent contact details"
-                    : "Add a new finance agent to receive Vownet forms"}
+                    : "Add a new finance agent to receive Formara forms"}
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="min-w-0 space-y-4">

@@ -242,7 +242,7 @@ function findValueByRowLabel(sheet: XLSX.WorkSheet, label: string, valueCol: str
   return null;
 }
 
-// Parse personal details from VowNet form
+// Parse personal details from Formara form
 function parsePersonalDetails(sheet: XLSX.WorkSheet): { primary: ParsedContact; secondary?: ParsedContact; address?: ParsedAddress; family?: ParsedFamilyRelations; residentialStatus?: string } {
   const primary: ParsedContact = {
     firstName: null,
@@ -383,7 +383,7 @@ function parsePersonalDetails(sheet: XLSX.WorkSheet): { primary: ParsedContact; 
 function parseAdditionalContacts(sheet: XLSX.WorkSheet): ParsedAdditionalContact[] {
   const additionalContacts: ParsedAdditionalContact[] = [];
   
-  // Common patterns for additional contacts in Vownet forms:
+  // Common patterns for additional contacts in Formara forms:
   // - "Third Contact", "3rd Contact", "Contact 3"
   // - "Fourth Contact", "4th Contact", "Contact 4"
   // - "Applicant 3", "Borrower 3"
@@ -1321,9 +1321,9 @@ function parsePortfolioSummary(sheet: XLSX.WorkSheet): ParsedPortfolioSummary | 
   return summary;
 }
 
-// Main parsing function for VowNet forms
-export function parseVownetForm(workbook: XLSX.WorkBook): ParsedClient | null {
-  // VowNet forms typically have data in the first sheet
+// Main parsing function for Formara forms
+export function parseFormaraForm(workbook: XLSX.WorkBook): ParsedClient | null {
+  // Formara forms typically have data in the first sheet
   const sheetName = workbook.SheetNames[0];
   if (!sheetName) return null;
 
@@ -1360,7 +1360,7 @@ export function parseVownetForm(workbook: XLSX.WorkBook): ParsedClient | null {
       portfolioSummary
     };
   } catch (error) {
-    console.error('Error parsing VowNet form:', error);
+    console.error('Error parsing Formara form:', error);
     return null;
   }
 }
