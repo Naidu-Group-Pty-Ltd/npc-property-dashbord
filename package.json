@@ -36,6 +36,8 @@
     "test:e2e": "playwright test",
     "typecheck:portals": "tsc -p tsconfig.portals-strict.json --pretty false",
     "test:solicitor-portal": "node --test tests/solicitor-portal/*.test.mjs",
+    "test:builder-portal": "node --test tests/builder-portal/*.test.mjs",
+    "builder:phase-0-inspect": "node scripts/builder-portal/phase-0-inspection.mjs",
     "test:cross-portal-contracts": "node --test tests/cross-portal-contracts/*.test.mjs",
     "test:e2e:solicitor-portal": "playwright test tests-e2e/solicitor-portal",
     "security:solicitor-portal": "node scripts/solicitor-portal/security-check.mjs",

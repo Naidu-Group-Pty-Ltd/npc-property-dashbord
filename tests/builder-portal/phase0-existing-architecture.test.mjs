@@ -1,0 +1,318 @@
+/**
+ * Builder / Developer Portal — Phase 0 characterisation of the existing repository.
+ *
+ * Baseline: a2ec188faa806ff97cb272f7f5a8bcf56b984cb1
+ *
+ * These tests assert what IS true at the baseline, not what should become true.
+ * Two purposes:
+ *   1. Prove Phase 0 changed no production behaviour.
+ *   2. Pin the Solicitor Portal structure that the Builder Portal reproduces, so
+ *      a change to that reference is a visible, deliberate event.
+ *
+ * Several assertions here are expected to FAIL when a later phase implements the
+ * Builder Portal. That is the point: the failure marks the moment the greenfield
+ * assumption stops holding, and the test must be updated in that phase's PR.
+ */
+import assert from 'node:assert/strict';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import test from 'node:test';
+
+const root = new URL('../../', import.meta.url).pathname;
+const read = (relative) => readFileSync(join(root, relative), 'utf8');
+
+const app = read('src/App.tsx');
+const solicitorAuth = read('supabase/functions/_shared/solicitorPortalAuth.ts');
+const solicitorSessions = read('supabase/functions/_shared/solicitorSessions.ts');
+const solicitorSessionToken = read('supabase/functions/_shared/solicitorSessionToken.ts');
+const solicitorClient = read('src/lib/solicitorPortal.ts');
+const solicitorProtectedRoute = read('src/components/solicitor-portal/SolicitorPortalProtectedRoute.tsx');
+const solicitorAdminFn = read('supabase/functions/solicitor-portal-admin/index.ts');
+const fieldOwnership = read('supabase/functions/_shared/crossPortalFieldOwnership.ts');
+
+const migrationsDir = join(root, 'supabase/migrations');
+const migrationNames = readdirSync(migrationsDir).filter((name) => name.endsWith('.sql'));
+const migrations = migrationNames.map((name) => readFileSync(join(migrationsDir, name), 'utf8')).join('\n');
+
+const srcFiles = (function walk(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(dir, entry.name);
+    return entry.isDirectory() ? walk(path) : [path];
+  });
+})(join(root, 'src')).filter((path) => /\.(ts|tsx)$/.test(path));
+
+// ---------------------------------------------------------------------------
+// A. The Builder domain is greenfield at this baseline
+// ---------------------------------------------------------------------------
+
+test('no /builder route exists in the application route tree', () => {
+  assert.ok(!/path=["'`]\/builder/.test(app), 'a /builder route already exists');
+  assert.ok(!/BuilderPortalAuthProvider/.test(app), 'a Builder auth provider is already mounted');
+});
+
+test('no builder_portal_admin module key is referenced anywhere', () => {
+  for (const path of srcFiles) {
+    assert.ok(
+      !readFileSync(path, 'utf8').includes('builder_portal_admin'),
+      `builder_portal_admin already referenced in ${path.slice(root.length)}`,
+    );
+  }
+  assert.ok(!migrations.includes('builder_portal_admin'), 'builder_portal_admin already in migrations');
+});
+
+test('no builder-portal Edge Function family exists', () => {
+  const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  assert.deepEqual(functionDirs.filter((name) => name.startsWith('builder-portal-')), []);
+});
+
+test('no Builder domain table exists in the migration corpus', () => {
+  const created = new Set(
+    [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
+      .map((match) => match[1].toLowerCase()),
+  );
+  for (const table of [
+    'builder_organisations', 'builder_organizations', 'builder_portal_users',
+    'builder_portal_sessions', 'builder_developments', 'builder_projects',
+    'builder_project_stages', 'builder_project_parties', 'builder_user_access',
+    'property_units', 'property_reservations', 'construction_cases',
+    'builder_transactions', 'builder_variations', 'builder_progress_claims',
+    'builder_inspections', 'builder_defects', 'builder_case_read_model',
+  ]) {
+    assert.ok(!created.has(table), `Builder domain table ${table} already exists`);
+  }
+});
+
+test('the only builder-named tables are the Finance-owned deal records', () => {
+  const created = new Set(
+    [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
+      .map((match) => match[1].toLowerCase()),
+  );
+  const builderNamed = [...created].filter((name) => name.includes('build')).sort();
+  assert.deepEqual(builderNamed, ['build_progress_payments', 'builder_invoices']);
+});
+
+test('the two builder-named tables are keyed on client_deals, not on any builder identity', () => {
+  assert.match(migrations, /CREATE TABLE public\.build_progress_payments[\s\S]{0,200}deal_id uuid NOT NULL REFERENCES public\.client_deals\(id\)/);
+  assert.match(migrations, /CREATE TABLE public\.builder_invoices[\s\S]{0,200}deal_id uuid NOT NULL REFERENCES public\.client_deals\(id\)/);
+});
+
+test('the two builder-named tables carry commission fields and permissive RLS', () => {
+  // Recorded as security risk SEC-06: safe for internal-only tables, unsafe if a
+  // Builder portal path ever reads them.
+  assert.match(migrations, /is_commission_trigger boolean DEFAULT false/);
+  assert.match(migrations, /commission_amount numeric/);
+  assert.match(migrations, /Allow all access to builder_invoices for authenticated users/);
+});
+
+// ---------------------------------------------------------------------------
+// B. Solicitor Portal separation — the structure Builder reproduces
+// ---------------------------------------------------------------------------
+
+test('the Solicitor Portal is a route sibling of the internal dashboard', () => {
+  const solicitorAt = app.indexOf('path="/solicitor/*"');
+  const internalAt = app.indexOf('<DashboardLayout />');
+  assert.ok(solicitorAt > -1, 'the /solicitor/* route root is missing');
+  assert.ok(internalAt > -1, 'the internal DashboardLayout route is missing');
+  assert.ok(solicitorAt < internalAt, 'the Solicitor route is no longer declared outside the dashboard tree');
+  // The Solicitor provider wraps the portal; it must not wrap the internal tree.
+  assert.match(app, /path="\/solicitor\/\*"\s*element=\{\s*<SolicitorPortalAuthProvider>/);
+});
+
+test('the Solicitor Portal uses the three-tier provider/protected/layout nesting', () => {
+  assert.match(app, /<SolicitorPortalAuthProvider>/);
+  assert.match(app, /<Route element=\{<SolicitorPortalProtectedRoute \/>\}>/);
+  assert.match(app, /<Route element=\{<SolicitorPortalLayout \/>\}>/);
+});
+
+test('Solicitor public auth routes sit outside the protected route', () => {
+  const protectedAt = app.indexOf('<SolicitorPortalProtectedRoute />');
+  for (const publicPath of ['path="login"', 'path="accept-invite"', 'path="forgot-password"']) {
+    const at = app.indexOf(publicPath, app.indexOf('path="/solicitor/*"'));
+    assert.ok(at > -1 && at < protectedAt, `${publicPath} is no longer a public Solicitor route`);
+  }
+});
+
+test('the Solicitor browser client is cookie-only and holds no readable token', () => {
+  assert.match(solicitorClient, /credentials: 'include'/);
+  assert.ok(!solicitorClient.includes('localStorage'), 'the Solicitor client reads localStorage');
+  assert.ok(!solicitorClient.includes('sessionStorage'), 'the Solicitor client reads sessionStorage');
+  assert.ok(!solicitorClient.includes('x-solicitor-session-token'), 'the Solicitor client sends a raw token header');
+  assert.ok(!solicitorClient.includes('solicitor_session_token'), 'the Solicitor client sends a raw token body field');
+  assert.match(solicitorClient, /'X-Portal-Request': 'solicitor-portal'/);
+});
+
+test('the Solicitor session store persists only a hash, with absolute and idle expiry', () => {
+  assert.match(solicitorSessions, /hashSessionToken\(token\)/);
+  assert.match(solicitorSessions, /token_hash: tokenHash/);
+  assert.match(solicitorSessions, /SOLICITOR_SESSION_ABSOLUTE_HOURS = 12/);
+  assert.match(solicitorSessions, /SOLICITOR_SESSION_IDLE_MINUTES = 30/);
+  assert.match(solicitorSessions, /revoked_at/);
+  // The raw token is returned to the caller but never written to the session row.
+  assert.ok(!/insert\(\{[\s\S]{0,400}\btoken:/.test(solicitorSessions), 'a raw token is persisted on the session row');
+});
+
+test('the Solicitor cookie is __Host-prefixed and origin is validated', () => {
+  assert.match(solicitorSessionToken, /__Host-solicitor_session_token/);
+  assert.match(solicitorSessionToken, /x-portal-request/);
+  assert.match(solicitorSessionToken, /ALLOWED_ORIGINS/);
+  assert.match(solicitorSessionToken, /return !!origin &&/, 'a missing Origin is no longer rejected');
+});
+
+test('one shared function resolves every Solicitor session and one gate enforces governance', () => {
+  assert.match(solicitorAuth, /export async function resolveSolicitorSession/);
+  assert.match(solicitorAuth, /export function solicitorGovernanceError/);
+  for (const reason of ['password_rotation_required', 'terms_acceptance_required', 'onboarding_required']) {
+    assert.ok(solicitorAuth.includes(reason), `governance reason ${reason} is missing`);
+  }
+});
+
+test('the Solicitor browser route guard mirrors the server governance order', () => {
+  const order = ['must_change_password', 'has_accepted_current_terms', 'has_completed_mandatory_onboarding']
+    .map((flag) => solicitorProtectedRoute.indexOf(flag));
+  assert.ok(order.every((index) => index > -1), 'a governance flag is missing from the route guard');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'the route guard governance order changed');
+});
+
+// ---------------------------------------------------------------------------
+// C. Command Centre administration pattern
+// ---------------------------------------------------------------------------
+
+test('the Solicitor admin page is an internal module behind ModuleGuard', () => {
+  assert.match(app, /path="admin\/solicitor-portal" element=\{<ModuleGuard moduleKey="solicitor_portal_admin">/);
+});
+
+test('the Solicitor admin Edge Function enforces auth, module permission and CSRF', () => {
+  assert.match(solicitorAdminFn, /const MODULE_KEY = 'solicitor_portal_admin'/);
+  assert.match(solicitorAdminFn, /verifyAuth\(/);
+  assert.match(solicitorAdminFn, /requireModulePermission/);
+  assert.match(solicitorAdminFn, /enforceCsrf\(/);
+});
+
+test('no navigation surface links the external Solicitor Portal as an internal module', () => {
+  for (const surface of [
+    'src/components/layout/DashboardSidebar.tsx',
+    'src/components/layout/MobileSidebar.tsx',
+    'src/components/layout/GlobalCommandPalette.tsx',
+  ]) {
+    const source = read(surface);
+    assert.ok(source.includes("'/admin/solicitor-portal'"), `${surface} lost the admin entry`);
+    assert.ok(!/url: ['"]\/solicitor['"]/.test(source), `${surface} links the external portal as an internal module`);
+  }
+});
+
+test('KNOWN GAP: solicitor_portal_admin is not registered in dashboard_modules', () => {
+  // Finding NOCOPY-03 / MIG-10. This test documents the gap rather than hiding it.
+  // If it starts failing, the gap has been repaired and this test should be
+  // inverted in the same PR that repairs it.
+  assert.ok(
+    !/dashboard_modules[\s\S]{0,4000}?'solicitor_portal_admin'/.test(migrations),
+    'solicitor_portal_admin is now registered in dashboard_modules — invert this test',
+  );
+  assert.match(migrations, /'finance_portal_admin'/, 'finance_portal_admin registration disappeared');
+});
+
+// ---------------------------------------------------------------------------
+// D. Shared backbone the Builder Portal will reuse
+// ---------------------------------------------------------------------------
+
+test('the transaction case backbone exists with three domain link slots', () => {
+  assert.match(migrations, /CREATE TABLE IF NOT EXISTS public\.transaction_case_links/);
+  assert.match(migrations, /legal_matter_id uuid UNIQUE REFERENCES public\.legal_matters\(id\)/);
+  assert.match(migrations, /purchase_file_id uuid UNIQUE REFERENCES public\.purchase_files\(id\)/);
+  assert.match(migrations, /client_deal_id uuid UNIQUE REFERENCES public\.client_deals\(id\)/);
+  assert.ok(!migrations.includes('builder_transaction_id'), 'a Builder link slot already exists');
+});
+
+test('the cross-client link guard is enforced by a database trigger', () => {
+  assert.match(migrations, /guard_transaction_case_links/);
+  assert.match(migrations, /CROSS_CLIENT_CASE_LINK/);
+  assert.match(migrations, /BEFORE INSERT OR UPDATE OF case_id,legal_matter_id,purchase_file_id,client_deal_id/);
+});
+
+test("transaction_cases already permits a 'construction' case type", () => {
+  assert.match(migrations, /case_type text NOT NULL DEFAULT 'property_purchase' CHECK\(case_type IN \([^)]*'construction'/);
+});
+
+test('the shared services the Builder Portal reuses are present', () => {
+  for (const table of [
+    'transaction_cases', 'transaction_case_links', 'transaction_case_link_history',
+    'transaction_case_reconciliation_issues', 'integration_outbox', 'integration_dead_letters',
+    'integration_delivery_attempts', 'projection_checkpoints', 'case_milestones', 'case_tasks',
+    'case_task_assignments', 'case_task_status_history', 'case_milestone_conflicts',
+    'conversations', 'conversation_participants', 'messages', 'message_attachments',
+    'message_receipts', 'notification_preferences', 'notification_deliveries',
+    'document_records', 'document_versions', 'document_access_grants',
+    'document_processing_jobs', 'document_download_audit', 'portal_terms_versions',
+    'portal_terms_acceptances', 'portal_operational_events', 'portal_operational_alerts',
+    'cross_portal_feature_definitions', 'cross_portal_firm_rollouts',
+  ]) {
+    assert.ok(
+      new RegExp(`CREATE TABLE IF NOT EXISTS public\\.${table}\\b`).test(migrations),
+      `shared table ${table} is missing`,
+    );
+  }
+});
+
+test('shared concurrency and immutability controls are present', () => {
+  assert.match(migrations, /update_case_task_status\(_task_id uuid,_expected_version bigint/);
+  assert.match(migrations, /guard_immutable_document_version/);
+  assert.match(migrations, /authorize_document_download/);
+  assert.match(migrations, /enqueue_integration_event/);
+  assert.match(migrations, /record_portal_operational_event/);
+  assert.match(migrations, /resolve_cross_portal_feature_mode/);
+});
+
+test('the field-ownership module has four portal domains and no Builder rules', () => {
+  assert.match(fieldOwnership, /export type PortalDomain = 'command_centre' \| 'client' \| 'finance' \| 'solicitor'/);
+  assert.ok(!fieldOwnership.includes("'builder'"), 'a builder domain already exists in the ownership module');
+  const ruleCount = (fieldOwnership.match(/\{ field:'/g) || []).length;
+  assert.equal(ruleCount, 15, `expected 15 field-ownership rules at baseline, found ${ruleCount}`);
+});
+
+test('the four existing case read models exist and no Builder read model does', () => {
+  for (const model of [
+    'client_case_read_model', 'finance_case_read_model',
+    'solicitor_case_read_model', 'command_case_health_read_model',
+  ]) {
+    assert.ok(migrations.includes(model), `read model ${model} is missing`);
+  }
+  assert.ok(!migrations.includes('builder_case_read_model'), 'a Builder read model already exists');
+});
+
+// ---------------------------------------------------------------------------
+// E. Permanent invariants
+// ---------------------------------------------------------------------------
+
+test('no browser source reads a service-role credential', () => {
+  for (const path of srcFiles) {
+    assert.ok(
+      !/(VITE_[A-Z0-9_]*SERVICE_ROLE|import\.meta\.env\.[A-Z0-9_]*SERVICE_ROLE|process\.env\.[A-Z0-9_]*SERVICE_ROLE)/i
+        .test(readFileSync(path, 'utf8')),
+      `browser source reads a service-role credential: ${path.slice(root.length)}`,
+    );
+  }
+});
+
+test('the deny-by-default forbidden-key mechanism the Builder Portal copies is intact', () => {
+  assert.match(solicitorAuth, /SOLICITOR_FORBIDDEN_KEYS\.has\(key\)/);
+  for (const key of ['borrowing_capacity', 'commissions', 'smr', 'aml_restricted']) {
+    assert.ok(solicitorAuth.includes(`'${key}'`), `forbidden key ${key} is no longer centrally denied`);
+  }
+});
+
+test('KNOWN DEFECT: Solicitor permissions default to allow and OR-merge', () => {
+  // Finding NOCOPY-01. Characterised so the Builder Portal is demonstrably not
+  // copying it. If this starts failing, the Solicitor defect has been fixed and
+  // docs/builder-portal/01-solicitor-portal-assessment.md must be updated.
+  assert.match(solicitorAuth, /const DEFAULT_ALLOW_KEYS = new Set<string>\(SOLICITOR_PERMISSION_KEYS\)/);
+  assert.match(solicitorAuth, /view: !!\(b\?\.view \|\| c\?\.view\)/);
+});
+
+test('KNOWN DEFECT: a legacy raw-token carrier still resolves Solicitor sessions', () => {
+  // Finding NOCOPY-02. The Builder Portal must never create this path.
+  assert.match(solicitorSessionToken, /x-solicitor-session-token/);
+  assert.match(solicitorSessionToken, /source: 'legacy_header'/);
+  assert.match(solicitorAuth, /credential\.source !== 'cookie'/);
+});
