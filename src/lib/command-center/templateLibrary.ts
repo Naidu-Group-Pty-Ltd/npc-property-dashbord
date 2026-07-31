@@ -730,7 +730,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "market-area-research-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "market-area-research-report",
@@ -792,7 +792,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "property-investment-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "off-market-opportunity-report",
@@ -917,7 +917,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "development-feasibility-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "commercial-property-assessment",
@@ -979,7 +979,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "development-feasibility-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "development-feasibility-report",
@@ -1043,7 +1043,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "house-and-land-assessment"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "portfolio-review-report",
@@ -1105,7 +1105,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "finance-strategy-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "borrowing-capacity-report",
@@ -1355,7 +1355,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "finance-approval-summary"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "refinance-assessment",
@@ -1414,7 +1414,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "finance-strategy-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "equity-release-strategy",
@@ -1474,7 +1474,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "finance-strategy-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "cash-flow-net-position-report",
@@ -1589,7 +1589,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "lending-recommendation-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "construction-finance-report",
@@ -1648,7 +1648,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "development-feasibility-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "smsf-finance-assessment",
@@ -1709,7 +1709,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "commercial-property-assessment"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "finance-approval-summary",
@@ -1767,7 +1767,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "finance-strategy-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "client-fact-find-form",

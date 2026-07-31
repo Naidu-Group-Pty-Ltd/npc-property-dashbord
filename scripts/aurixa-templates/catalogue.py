@@ -282,7 +282,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="suburb-analysis-report", name="Suburb Analysis Report",
-        category="property", family="property-visual",
+        category="property", family="property-visual", built=True,
         summary="Location-level research: demographics, supply, demand, price and rent "
                 "history, infrastructure and outlook for one suburb.",
         audience="Investor clients, internal research teams",
@@ -335,7 +335,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="market-area-research-report", name="Market & Area Research Report",
-        category="property", family="modern-technology",
+        category="property", family="modern-technology", built=True,
         summary="Wider market commentary across several regions or asset classes, built for "
                 "periodic publication rather than a single client decision.",
         audience="Client base, subscribers, internal strategy",
@@ -446,7 +446,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="house-and-land-assessment", name="House & Land Package Assessment",
-        category="property", family="property-visual",
+        category="property", family="property-visual", built=True,
         summary="Assessment of a house-and-land or turnkey package: the land, the build "
                 "contract, inclusions, staged payments and the completed-value position.",
         audience="Investor clients, first-home buyers",
@@ -494,7 +494,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="commercial-property-assessment", name="Commercial Property Assessment",
-        category="property", family="executive-corporate",
+        category="property", family="executive-corporate", built=True,
         summary="Assessment of a commercial or industrial asset: tenancy, lease covenants, "
                 "WALE, outgoings, capitalisation and the investment position.",
         audience="Commercial investors, SMSF trustees, corporate buyers",
@@ -549,7 +549,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="development-feasibility-report", name="Development Feasibility Report",
-        category="property", family="financial-analytical",
+        category="property", family="financial-analytical", built=True,
         summary="Residual land value and profitability modelling for a development: costs, "
                 "revenue, funding, programme and sensitivity.",
         audience="Developers, investors, funders",
@@ -612,7 +612,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="portfolio-review-report", name="Portfolio Review Report",
-        category="property", family="premium-advisory",
+        category="property", family="premium-advisory", built=True,
         summary="Periodic review of a client's whole property portfolio: performance, "
                 "equity, debt, cash flow and recommended actions per asset.",
         audience="Portfolio clients and their advisers",
@@ -827,7 +827,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="lending-recommendation-report", name="Lending Recommendation Report",
-        category="finance", family="premium-advisory",
+        category="finance", family="premium-advisory", built=True,
         summary="A formal recommendation of a lender, product and structure, with the "
                 "reasoning, alternatives considered and the disclosures that must accompany it.",
         audience="Clients, credit assessors, compliance reviewers",
@@ -877,7 +877,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="refinance-assessment", name="Refinance Assessment",
-        category="finance", family="financial-analytical",
+        category="finance", family="financial-analytical", built=True,
         summary="Whether refinancing is worthwhile: current position, proposed position, "
                 "switching costs, break-even point and net benefit over the hold period.",
         audience="Clients, brokers",
@@ -914,7 +914,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="equity-release-strategy", name="Equity Release Strategy",
-        category="finance", family="modern-technology",
+        category="finance", family="modern-technology", built=True,
         summary="How much usable equity exists, how it can be accessed, what it costs and "
                 "what it can fund.",
         audience="Investor clients",
@@ -1007,7 +1007,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="serviceability-assessment", name="Serviceability Assessment",
-        category="finance", family="financial-analytical",
+        category="finance", family="financial-analytical", built=True,
         summary="Internal working document showing the serviceability calculation for one "
                 "lender, line by line, so a credit decision can be checked.",
         audience="Brokers, credit support, compliance",
@@ -1052,7 +1052,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="construction-finance-report", name="Construction Finance Report",
-        category="finance", family="financial-analytical",
+        category="finance", family="financial-analytical", built=True,
         summary="Funding structure for a construction or renovation project: facility "
                 "structure, drawdown schedule, interest during construction and completion "
                 "position.",
@@ -1097,7 +1097,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="smsf-finance-assessment", name="SMSF Finance Assessment",
-        category="finance", family="compliance-structured",
+        category="finance", family="compliance-structured", built=True,
         summary="Assessment of a limited-recourse borrowing arrangement for a self-managed "
                 "super fund, against fund, trustee, asset and lender requirements.",
         audience="SMSF trustees, accountants, advisers",
@@ -1148,7 +1148,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="finance-approval-summary", name="Finance Approval Summary",
-        category="finance", family="minimal-professional",
+        category="finance", family="minimal-professional", built=True,
         summary="A one-to-two page confirmation of an approval: what was approved, on what "
                 "conditions, by when, and what happens next.",
         audience="Clients, buyer's agents, solicitors",

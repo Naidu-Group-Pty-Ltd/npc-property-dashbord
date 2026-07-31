@@ -14,16 +14,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from finance_templates import (
     borrowing_capacity_report, cash_flow_net_position_report,
-    finance_strategy_report, loan_comparison_report,
+    construction_finance_report, equity_release_strategy,
+    finance_approval_summary, finance_strategy_report,
+    lending_recommendation_report, loan_comparison_report,
+    refinance_assessment, serviceability_assessment,
+    smsf_finance_assessment
 )
 from governance_templates import (
     aml_kyc_assessment, client_fact_find_form, client_onboarding_form,
     client_proposal, client_verification_summary, executive_business_report,
 )
 from property_templates import (
-    off_market_opportunity_report, property_acquisition_recommendation,
-    property_comparison_report, property_due_diligence_report,
-    property_investment_report,
+    commercial_property_assessment, development_feasibility_report,
+    house_and_land_assessment, market_area_research_report,
+    off_market_opportunity_report, portfolio_review_report,
+    property_acquisition_recommendation, property_comparison_report,
+    property_due_diligence_report, property_investment_report,
+    suburb_analysis_report
 )
 
 #: template id -> (build function, output filename stem)
@@ -58,6 +65,32 @@ BUILDERS = {
         (executive_business_report, "Aurixa_Executive_Business_Report"),
     "client-proposal":
         (client_proposal, "Aurixa_Client_Proposal"),
+    "suburb-analysis-report":
+        (suburb_analysis_report, "Aurixa_Suburb_Analysis_Report"),
+    "market-area-research-report":
+        (market_area_research_report, "Aurixa_Market_Area_Research_Report"),
+    "house-and-land-assessment":
+        (house_and_land_assessment, "Aurixa_House_And_Land_Assessment"),
+    "commercial-property-assessment":
+        (commercial_property_assessment, "Aurixa_Commercial_Property_Assessment"),
+    "development-feasibility-report":
+        (development_feasibility_report, "Aurixa_Development_Feasibility_Report"),
+    "portfolio-review-report":
+        (portfolio_review_report, "Aurixa_Portfolio_Review_Report"),
+    "lending-recommendation-report":
+        (lending_recommendation_report, "Aurixa_Lending_Recommendation_Report"),
+    "refinance-assessment":
+        (refinance_assessment, "Aurixa_Refinance_Assessment"),
+    "equity-release-strategy":
+        (equity_release_strategy, "Aurixa_Equity_Release_Strategy"),
+    "serviceability-assessment":
+        (serviceability_assessment, "Aurixa_Serviceability_Assessment"),
+    "construction-finance-report":
+        (construction_finance_report, "Aurixa_Construction_Finance_Report"),
+    "smsf-finance-assessment":
+        (smsf_finance_assessment, "Aurixa_SMSF_Finance_Assessment"),
+    "finance-approval-summary":
+        (finance_approval_summary, "Aurixa_Finance_Approval_Summary"),
 }
 
 __all__ = ["BUILDERS"]

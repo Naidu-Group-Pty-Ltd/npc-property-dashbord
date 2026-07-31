@@ -543,7 +543,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The subject is one property → `property-investment-report`
 - You need broad multi-region market commentary → `market-area-research-report`
 
-**Library metadata** — tier `growth` · priority `P2` · data `high` · images `medium` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P2` · data `high` · images `medium` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -645,7 +645,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The subject is one suburb → `suburb-analysis-report`
 - The audience is one client making one decision → `property-investment-report`
 
-**Library metadata** — tier `growth` · priority `P2` · data `high` · images `medium` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P2` · data `high` · images `medium` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -851,7 +851,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The property is established stock → `property-investment-report`
 - The project is a multi-dwelling development → `development-feasibility-report`
 
-**Library metadata** — tier `scale` · priority `P3` · data `high` · images `medium` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `high` · images `medium` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -955,7 +955,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The asset is residential → `property-investment-report`
 - The project is a development → `development-feasibility-report`
 
-**Library metadata** — tier `scale` · priority `P3` · data `high` · images `medium` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `high` · images `medium` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1061,7 +1061,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The purchase is a completed asset → `commercial-property-assessment`
 - The scheme is a single house-and-land package → `house-and-land-assessment`
 
-**Library metadata** — tier `scale` · priority `P3` · data `high` · images `low` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `high` · images `low` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1164,7 +1164,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - There is one asset → `property-investment-report`
 - The focus is debt structure rather than assets → `finance-strategy-report`
 
-**Library metadata** — tier `scale` · priority `P2` · data `high` · images `low` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P2` · data `high` · images `low` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1580,7 +1580,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You are only comparing products → `loan-comparison-report`
 - You are documenting an approval → `finance-approval-summary`
 
-**Library metadata** — tier `scale` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1677,7 +1677,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The client wants to release equity → `equity-release-strategy`
 - The whole structure is under review → `finance-strategy-report`
 
-**Library metadata** — tier `scale` · priority `P2` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P2` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1778,7 +1778,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The question is total capacity → `borrowing-capacity-report`
 - The whole structure is being redesigned → `finance-strategy-report`
 
-**Library metadata** — tier `scale` · priority `P3` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `high` · images `none` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -1977,7 +1977,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The client is the reader → `borrowing-capacity-report`
 - You are recommending a product → `lending-recommendation-report`
 
-**Library metadata** — tier `scale` · priority `P2` · data `high` · images `none` · formality `operational` · audience `internal` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P2` · data `high` · images `none` · formality `operational` · audience `internal` · generator implemented
 
 ---
 
@@ -2075,7 +2075,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The purchase is a completed turnkey package → `house-and-land-assessment`
 - The project is a multi-unit development → `development-feasibility-report`
 
-**Library metadata** — tier `scale` · priority `P3` · data `high` · images `low` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `high` · images `low` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -2179,7 +2179,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The borrower is an individual or trust → `borrowing-capacity-report`
 - The subject is the asset rather than the structure → `commercial-property-assessment`
 
-**Library metadata** — tier `scale` · priority `P3` · data `medium` · images `none` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `medium` · images `none` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -2277,7 +2277,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You are recommending a product → `lending-recommendation-report`
 - The client needs the full position → `finance-strategy-report`
 
-**Library metadata** — tier `growth` · priority `P2` · data `low` · images `none` · formality `operational` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P2` · data `low` · images `none` · formality `operational` · audience `client-facing` · generator implemented
 
 ---
 
