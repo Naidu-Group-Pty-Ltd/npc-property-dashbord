@@ -13,7 +13,6 @@ import { useBuildVersionCheck } from "@/hooks/useBuildVersionCheck";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
-import MapHarnessPage from "@/pages/__MapHarness";
 
 import { ModuleGuard } from "@/components/auth/ModuleGuard";
 import { DashboardLayout } from "./components/layout/DashboardLayout";
@@ -387,7 +386,6 @@ const App = () => (
 
                         {/* Internal Dashboard Routes */}
                         <Route path="/auth" element={<Auth />} />
-                        <Route path="/__map-harness" element={<MapHarnessPage />} />
 
                         <Route path="/accept-invite" element={<AcceptInvite />} />
                         <Route path="/" element={
