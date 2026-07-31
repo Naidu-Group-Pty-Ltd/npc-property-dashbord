@@ -9,6 +9,7 @@ existing Reporting Engine Builder. **This phase adds no user-facing behaviour.**
 | [`02-architecture.md`](./02-architecture.md) | Recommended architecture, user journey, data model, governance |
 | [`03-roadmap.md`](./03-roadmap.md) | Staged PR roadmap, testing strategy, rollback, file lists |
 | [`04-implementation.md`](./04-implementation.md) | **What was built**, the tenancy judgement, verification, open items |
+| [`05-deployment.md`](./05-deployment.md) | **Runbook** — migrations, function deploy, smoke test, adding templates |
 | [`../architecture/adr/017-template-library-separation.md`](../architecture/adr/017-template-library-separation.md) | The one decision everything else follows from |
 
 ---
