@@ -27,13 +27,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  ChevronLeft, ChevronRight, Info, Minus, Plus, ShieldCheck, TriangleAlert,
+  ChevronDown, ChevronLeft, ChevronRight, Info, Minus, Plus, ShieldCheck, TriangleAlert,
 } from 'lucide-react';
 import { TemplateDocumentPreview } from './TemplateDocumentPreview';
+import { TemplateDataSource } from './TemplateDataSource';
 import { PAGE_GUTTER_PT, PT_TO_PX, pageGeometry } from '@/lib/templateLibrary/pageGeometry';
 import { TemplatePreviewSvg } from './TemplatePreviewSvg';
 import { useTemplateLibraryEntry } from '@/hooks/useTemplateLibrary';
-import { SAMPLE_DATA_NOTICE } from '@/lib/templateLibrary/sampleReportData';
+import { SAMPLE_DATA_NOTICE, SAMPLE_REPORT_DATA } from '@/lib/templateLibrary/sampleReportData';
 import { categoryLabel, reportTypeLabel, styleLabel } from '@/lib/templateLibrary/taxonomy';
 import type { TemplateLibraryListEntry } from '@/lib/templateLibrary/types';
 
@@ -73,6 +74,14 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
   const [zoom, setZoom] = useState(1);
   const [current, setCurrent] = useState(0);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  const [scrolled, setScrolled] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [data, setData] = useState<Record<string, unknown>>(SAMPLE_REPORT_DATA);
+  const [dataLabel, setDataLabel] = useState('sample data');
+  const onData = useCallback((next: Record<string, unknown>, label: string) => {
+    setData(next);
+    setDataLabel(label);
+  }, []);
 
   const schema = detail?.schema;
   const pages: any[] = Array.isArray((schema as any)?.pages) ? (schema as any).pages : [];
@@ -84,6 +93,10 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
     if (!open) return;
     setZoom(1);
     setCurrent(0);
+    setScrolled(false);
+    setProgress(0);
+    setData(SAMPLE_REPORT_DATA);
+    setDataLabel('sample data');
     scroller.current?.scrollTo({ top: 0 });
   }, [open, entry?.id]);
 
@@ -126,9 +139,13 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
 
   const onScroll = useCallback(() => {
     const el = scroller.current;
-    if (!el || stepPx <= 0) return;
-    // +40% of a page so the indicator flips near the middle of a turn, which is
-    // where a reader considers themselves to be on the next page.
+    if (!el) return;
+    const room = el.scrollHeight - el.clientHeight;
+    setProgress(room > 0 ? Math.min(1, el.scrollTop / room) : 0);
+    if (el.scrollTop > 4) setScrolled(true);
+    if (stepPx <= 0) return;
+    // Rounded rather than floored so the indicator flips near the middle of a
+    // turn, which is where a reader considers themselves to be.
     setCurrent(Math.max(0, Math.min(pages.length - 1, Math.round(el.scrollTop / stepPx))));
   }, [stepPx, pages.length]);
 
@@ -212,7 +229,7 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
             <p className="px-4 pb-2 pt-4 text-[10px] font-medium uppercase tracking-[0.07em] text-muted-foreground">
               Contents
             </p>
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4">
+            <div className="template-reader-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4">
               {pages.map((p, i) => (
                 <button
                   key={p?.id ?? i}
@@ -240,12 +257,34 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
           </nav>
 
           {/* ── The document ────────────────────────────────────────────── */}
-          <div className="flex min-w-0 flex-1 flex-col bg-muted/40">
+          <div className="relative flex min-w-0 flex-1 flex-col bg-muted/40">
+            {/* Says out loud that there is more document below.
+                A full-bleed cover page gives the reader no internal cue that it
+                is page one of ten, and the platform's overlay scrollbar is
+                close to invisible on this surface — so the affordance has to be
+                explicit. It retires itself the moment the reader scrolls. */}
+            {!isLoading && !isError && pages.length > 1 && !scrolled && (
+              <div
+                className={[
+                  // Sits above the footer bar, not across it — the data-source
+                  // control and the sample-data notice must stay readable.
+                  'pointer-events-none absolute inset-x-0 bottom-12 z-10 flex justify-center pb-3 pt-12',
+                  'bg-gradient-to-t from-muted/95 to-transparent',
+                  'animate-in fade-in duration-500 motion-reduce:animate-none',
+                ].join(' ')}
+              >
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background/95 px-3 py-1.5 text-xs font-medium shadow-lg backdrop-blur">
+                  <ChevronDown className="h-3.5 w-3.5 animate-bounce motion-reduce:animate-none" aria-hidden="true" />
+                  Scroll to read all {pages.length} pages
+                </span>
+              </div>
+            )}
+
             <div
               ref={attachScroller}
               onScroll={onScroll}
               className={[
-                'min-h-0 flex-1 overflow-auto overscroll-contain p-7',
+                'template-reader-scroll min-h-0 flex-1 overflow-y-scroll overscroll-contain p-7',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
               ].join(' ')}
               tabIndex={0}
@@ -277,22 +316,41 @@ export function TemplateReaderDialog({ entry, open, onOpenChange, canUse, onUse 
                   <TemplateDocumentPreview
                     schema={schema}
                     variant="document"
-                    label={`${entry.name} rendered in full with sample data`}
+                    data={data}
+                    label={`${entry.name} rendered in full with ${dataLabel}`}
                     className="w-full"
                   />
                 )}
               </div>
             </div>
 
-            {/* Page position, and the honesty line about the data. */}
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border bg-background px-4 py-2">
+            {/* Page position, reading progress, and the honesty line. */}
+            <div className="relative flex shrink-0 items-center justify-between gap-3 border-t border-border bg-background px-4 py-2">
+              {/* How far through the document you are — a second, always-on
+                  signal that the reader has length to it. */}
+              <span
+                aria-hidden="true"
+                className="absolute inset-x-0 top-0 h-0.5 origin-left bg-primary/70 transition-transform duration-150 motion-reduce:transition-none"
+                style={{ transform: `scaleX(${progress})` }}
+              />
               {/* Always visible. This is the label that stops a rendered
                   preview being mistaken for a real client file, so it must not
                   be the thing that drops at a narrow breakpoint. */}
-              <p className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
-                <Info className="h-3 w-3 shrink-0" aria-hidden="true" />
-                <span className="truncate sm:whitespace-normal">{SAMPLE_DATA_NOTICE}</span>
-              </p>
+              <div className="flex min-w-0 items-center gap-3">
+                <TemplateDataSource
+                  reportType={entry.reportType}
+                  requiredBindings={compat.requiredBindings}
+                  onData={onData}
+                />
+                <p className="flex min-w-0 items-center gap-1.5 text-[11px] leading-tight text-muted-foreground">
+                  <Info className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span className="truncate sm:whitespace-normal">
+                    {data === SAMPLE_REPORT_DATA
+                      ? SAMPLE_DATA_NOTICE
+                      : `Rendered with your own report data — ${dataLabel}.`}
+                  </span>
+                </p>
+              </div>
               <div className="ml-auto flex shrink-0 items-center gap-1">
                 <Button
                   variant="ghost" size="icon" className="h-7 w-7"

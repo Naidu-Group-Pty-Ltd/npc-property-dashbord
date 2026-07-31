@@ -44,10 +44,16 @@ interface Props {
   lazy?: boolean;
   /** Called once the document has been generated, with its page count. */
   onReady?: (pageCount: number) => void;
+  /**
+   * Bindings to render with. Defaults to the sample engagement; the reader
+   * passes a real report's data when the user picks one.
+   */
+  data?: Record<string, unknown>;
 }
 
 export function TemplateDocumentPreview({
   schema, label, variant = 'page', className, lazy = false, onReady,
+  data = SAMPLE_REPORT_DATA,
 }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -87,7 +93,7 @@ export function TemplateDocumentPreview({
     try {
       const gutter = variant === 'document' ? PAGE_GUTTER_PT : 0;
       const { html } = renderTemplateToHtml(schema, {
-        data: SAMPLE_REPORT_DATA,
+        data,
         // The sheet treatment lives inside the frame because the pages are laid
         // out here, not by the host document.
         customCss: `
@@ -106,7 +112,7 @@ export function TemplateDocumentPreview({
       // A template that cannot render must not take the browse grid with it.
       return null;
     }
-  }, [schema, visible, variant]);
+  }, [schema, visible, variant, data]);
 
   const pageCount = useMemo(
     () => (Array.isArray((schema as any)?.pages) ? (schema as any).pages.length : 0),

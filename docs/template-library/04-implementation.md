@@ -542,3 +542,91 @@ blocking the decision to copy.
 
 The Reporting Engine Builder is untouched. `htmlRenderer` is imported and read;
 nothing under `src/lib/reportTemplate/**` is modified.
+
+---
+
+## 9. Making the document obviously readable
+
+Reported next: *"there is no scrollable aspect for users to view the information
+in the report."*
+
+### 9.1 It scrolled; nothing said so
+
+Measured before changing anything: with the reader open on a ten-page template,
+a wheel gesture over the document moved `scrollTop` from 0 to 900 of a
+`scrollHeight` of 8,020, and the page indicator advanced to "Page 2 of 10". The
+mechanism was working.
+
+What was missing was any signal that it would. Three things combined:
+
+1. **The scrollbar was invisible.** The viewport used the platform's overlay
+   scrollbar, which reserves no layout space and is close to indistinguishable
+   on this surface (`offsetWidth - clientWidth` measured **0**).
+2. **The first page gives no internal cue.** Nine templates open on a
+   full-bleed cover — no text runs to a bottom edge, so nothing implies
+   continuation.
+3. **Nothing counted the pages in the document area.** The page total sat in
+   the footer and the contents rail, both easy to read past.
+
+A working control that nobody can see is a broken control. Fixed as a defect,
+not a preference.
+
+### 9.2 What was added
+
+| Signal | Behaviour |
+| --- | --- |
+| **A real scrollbar** | `.template-reader-scroll` in `components.css`, 14px, permanent track and primary-coloured thumb, `scrollbar-gutter: stable` so the document does not shift when it appears |
+| **A scroll prompt** | "Scroll to read all N pages" over the foot of the document, shown only for multi-page templates, retiring itself on the first scroll |
+| **A progress bar** | A hairline across the top of the footer tracking position through the whole document |
+| **Page peek** | The gutter and the top edge of page two are visible below page one at the default fit |
+
+> **`scrollbar-width` had to be removed to get a visible scrollbar.** Current
+> Chrome ignores *every* `::-webkit-scrollbar` rule the moment either
+> `scrollbar-width` or `scrollbar-color` is set, and silently falls back to the
+> overlay bar. The first attempt set both, which is why it still measured a
+> zero-width gutter. Dropping the standard properties took the measured gutter
+> from 0 to 14.
+>
+> **Not visually confirmed:** headless Chromium does not paint custom
+> scrollbars into screenshots — verified with an isolated page that reserved a
+> 14px gutter and still screenshotted as bare background. The reserved gutter
+> and computed pseudo-element styles (`rgb(217, 165, 32)` thumb on an
+> `rgb(31, 31, 31)` track) are the evidence; the painted result should be
+> checked in a real browser. Every other signal above *was* confirmed visually.
+
+### 9.3 Previewing with real report data
+
+The same request asked to see templates rendered "with example **or real
+previously accumulated data**". That is now a control in the reader footer.
+
+It reuses what already exists rather than adding a data path:
+`investmentReportAdapter.buildBindingContext()` — the same adapter the
+production PDF route uses — via the `get-investment-reports` edge function, so
+the existing `reports` module permission applies unchanged. **No new table, no
+new endpoint, no widened access.** A user without `reports:view` sees no
+reports to pick.
+
+**Sample data stays the default, deliberately.** A real report only fills the
+namespaces its adapter emits — `property.*`, `financials.*`, `scores.*`,
+`demographics.*`, `economic.*`, `location.*`, `sections.*`. The catalogue also
+binds `market.*`, `client.*`, `risks.*` and others that no adapter produces
+today, so a real-data render is legitimately patchy. Opening on it would make
+every template look broken.
+
+So the gap is reported rather than hidden: when a real report is selected the
+control states what percentage of that template's fields came back empty, and
+offers one click back to sample. The control is hidden entirely for templates
+whose report type has no production adapter — which is 30 of the 40 — rather
+than offered and then failing.
+
+### 9.4 Verification
+
+| Check | Result |
+| --- | --- |
+| Wheel-over-document scrolling | ✅ measured: `scrollTop` 0 → 900, `scrollHeight` 8,020, indicator "Page 2 of 10" |
+| Scrollbar lane reserved | ✅ `offsetWidth - clientWidth` 0 → **14** |
+| Scroll prompt / progress bar / page peek | ✅ confirmed visually in Chromium |
+| `vitest src/lib/templateLibrary` | ✅ 682 passed |
+| `npm run lint` | ✅ 43 errors / 2,077 warnings — unchanged |
+| `npm run audit:style` | ✅ 846/341/97/25 — unchanged |
+| `tsc --noEmit` / `npm run build` | ✅ clean / succeeds |
