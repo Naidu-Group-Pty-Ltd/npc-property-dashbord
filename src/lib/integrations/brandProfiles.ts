@@ -42,7 +42,7 @@ export const BRAND_PROFILES: Record<string, BrandProfile> = {
   resend:      { slug: 'resend',           svgOrgSlug: 'resend',     color: '000000', luminance: 'dark' },
   twilio:      { slug: 'twilio',           svgOrgSlug: 'twilio',     color: 'F22F46', luminance: 'dark' },
   microsoft:   { slug: 'microsoft',                                  color: '0078D4', luminance: 'dark' },
-  vapi:        {                           svgOrgSlug: 'vapi',       color: '14B8A6', luminance: 'dark' },
+  vapi:        {                                                     color: '14B8A6', luminance: 'dark' },
   webpush:     {                                                     color: '8B5CF6', luminance: 'dark' },
 
   // Documents & rendering
@@ -137,7 +137,7 @@ export const BRAND_PROFILES: Record<string, BrandProfile> = {
   dropbox_sign: { slug: 'dropbox', svgOrgSlug: 'dropbox', color: '0061FF', luminance: 'dark' },
   google_document_ai: { slug: 'googlecloud', color: '4285F4', luminance: 'dark' },
   cloudconvert: { color: '1B57A6', luminance: 'dark' },
-  canva: { slug: 'canva', svgOrgSlug: 'canva', color: '00C4CC', luminance: 'dark' },
+  canva: { color: '00C4CC', luminance: 'dark' },
   frankieone: { color: '1D4ED8', luminance: 'dark' },
   illion: { color: '00A0AF', luminance: 'dark' },
   equifax: { color: '9E1B32', luminance: 'dark' },
@@ -252,6 +252,38 @@ export function getLocalBrandAsset(id: string): string | undefined {
     ? LOCAL_BRAND_ASSETS[key]
     : undefined;
 }
+
+/**
+ * Vendored marks that are full-colour badges (the glyph sits inside a filled
+ * tile or is multi-tone). CSS-masking these collapses them into a solid
+ * brand-coloured square, so they render as plain images instead.
+ */
+const FULL_COLOR_LOCAL_ASSETS = new Set([
+  'canva',
+  'onfido',
+  'pricefinder',
+  'vapi',
+]);
+
+export function isFullColorLocalAsset(id: string): boolean {
+  return FULL_COLOR_LOCAL_ASSETS.has(id);
+}
+
+/**
+ * Brands with no usable public mark (wordmark-only, or the only asset in
+ * circulation belongs to a parent company). These render a brand-coloured
+ * monogram tile rather than a misattributed or blank glyph.
+ */
+const BRAND_MONOGRAMS: Record<string, string> = {
+  illion: 'il',
+};
+
+export function getBrandMonogram(id: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(BRAND_MONOGRAMS, id)
+    ? BRAND_MONOGRAMS[id]
+    : undefined;
+}
+
 
 
 /** Relative luminance (0–1) of a `RRGGBB` hex string. */

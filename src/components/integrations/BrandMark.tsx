@@ -1,12 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   brandLogoUrl,
+  getBrandMonogram,
   getBrandProfile,
   getLocalBrandAsset,
+  isFullColorLocalAsset,
   resolveBrandMarkHex,
   svgOrgLogoUrl,
 } from '@/lib/integrations/brandProfiles';
 import { getInlineGlyph } from './brandGlyphs';
+
 
 
 /**
@@ -133,6 +136,23 @@ export function BrandMark({ integrationId, fallback, size = 24, className }: Bra
   }
 
   if (localSrc) {
+    // Full-colour badges (filled tiles / multi-tone marks) must not be masked —
+    // masking would flatten them into a solid brand-coloured square.
+    if (isFullColorLocalAsset(integrationId)) {
+      return (
+        <img
+          src={localSrc}
+          alt=""
+          aria-hidden="true"
+          width={size}
+          height={size}
+          loading="lazy"
+          decoding="async"
+          className={className}
+          style={{ width: size, height: size, objectFit: 'contain' }}
+        />
+      );
+    }
     return maskedMark(localSrc);
   }
 
@@ -140,6 +160,33 @@ export function BrandMark({ integrationId, fallback, size = 24, className }: Bra
     return maskedMark(svgOrgSrc);
   }
 
+  const monogram = getBrandMonogram(integrationId);
+  if (monogram && markHex) {
+    return (
+      <span
+        aria-hidden="true"
+        className={className}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: size,
+          height: size,
+          borderRadius: Math.max(4, size * 0.22),
+          backgroundColor: `#${markHex}1F`,
+          color: `#${markHex}`,
+          fontSize: size * 0.46,
+          fontWeight: 700,
+          letterSpacing: '-0.02em',
+          lineHeight: 1,
+        }}
+      >
+        {monogram}
+      </span>
+    );
+  }
+
   return <>{fallback}</>;
 
 }
+
