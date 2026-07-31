@@ -134,7 +134,7 @@ export function BuilderPortalAuthProvider({ children }: { children: ReactNode })
 
   const completeOnboarding = useCallback(async (stepKey?: string) => {
     const { data, error } = await builderCompleteOnboarding(stepKey);
-    if (error || !data?.success) {
+    if (error || !data) {
       return { error: (data as any)?.error || error?.message || 'Could not complete onboarding' };
     }
     await checkSession();
