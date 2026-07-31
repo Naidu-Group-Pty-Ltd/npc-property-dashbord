@@ -17,7 +17,11 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import {
   Loader2, Plus, RefreshCw, FileText, DollarSign, Download, Search, ArrowLeft, AlertTriangle, ShieldCheck,
+  ShieldAlert, Receipt, Landmark,
 } from 'lucide-react';
+import { ClawbackRegisterPanel } from '@/components/admin/finance-portal/ClawbackRegisterPanel';
+import { TaxInvoiceRegisterPanel } from '@/components/admin/finance-portal/TaxInvoiceRegisterPanel';
+import { PartnerBankingPanel } from '@/components/admin/finance-portal/PartnerBankingPanel';
 import { format } from 'date-fns';
 import { Link } from 'react-router-dom';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
@@ -104,7 +108,7 @@ const fmt = (n: number) =>
   `$${(Number(n) || 0).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function FinancePortalCommissions() {
-  const [tab, setTab] = useState<'commissions' | 'statements' | 'disputes'>('commissions');
+  const [tab, setTab] = useState<'commissions' | 'statements' | 'disputes' | 'clawbacks' | 'invoices' | 'banking'>('commissions');
   const [loading, setLoading] = useState(true);
   const [commissions, setCommissions] = useState<Commission[]>([]);
   const [statements, setStatements] = useState<Statement[]>([]);
@@ -282,7 +286,43 @@ export default function FinancePortalCommissions() {
           aria-pressed={tab === 'disputes'}
           className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'disputes' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
         ><AlertTriangle className="inline h-4 w-4 mr-1" />Disputes ({disputes.filter(d => ['open', 'under_review'].includes(d.status)).length})</button>
+        <button
+          type="button"
+          onClick={() => setTab('clawbacks')}
+          aria-pressed={tab === 'clawbacks'}
+          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'clawbacks' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
+        ><ShieldAlert className="inline h-4 w-4 mr-1" />Clawbacks</button>
+        <button
+          type="button"
+          onClick={() => setTab('invoices')}
+          aria-pressed={tab === 'invoices'}
+          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'invoices' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
+        ><Receipt className="inline h-4 w-4 mr-1" />Invoices</button>
+        <button
+          type="button"
+          onClick={() => setTab('banking')}
+          aria-pressed={tab === 'banking'}
+          className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all ${tab === 'banking' ? 'bg-primary text-primary-foreground shadow-md shadow-primary/20' : 'text-muted-foreground hover:bg-primary/10 hover:text-primary'}`}
+        ><Landmark className="inline h-4 w-4 mr-1" />Banking</button>
       </DashboardThemeFrame>
+
+      {tab === 'clawbacks' && (
+        <DashboardThemeFrame variant="section" className="p-0">
+          <ClawbackRegisterPanel partners={partners} commissions={commissions} onChanged={refresh} />
+        </DashboardThemeFrame>
+      )}
+
+      {tab === 'invoices' && (
+        <DashboardThemeFrame variant="section" className="p-0">
+          <TaxInvoiceRegisterPanel partners={partners} statements={statements} onChanged={refresh} />
+        </DashboardThemeFrame>
+      )}
+
+      {tab === 'banking' && (
+        <DashboardThemeFrame variant="section" className="p-0">
+          <PartnerBankingPanel partners={partners} onChanged={refresh} />
+        </DashboardThemeFrame>
+      )}
 
 
       {tab === 'commissions' && (
