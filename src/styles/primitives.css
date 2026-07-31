@@ -169,44 +169,317 @@
 }
 
 
-/* Listings map — price chip markers + cluster styling (semantic tokens only). */
-@layer components {
-  .listing-price-marker {
-    background: transparent;
-    border: 0;
+/* Listings map — markers, clusters, heat legend and Leaflet chrome.
+ Semantic tokens only: the whole surface re-themes with the white-label brand.
+
+ Deliberately NOT inside `@layer components`: Tailwind tree-shakes layered
+ rules against the content globs, and these selectors either belong to
+ Leaflet's own DOM or are composed at runtime (`listing-pin--${tier}`), so
+ they never appear literally in a .tsx file and would be stripped. */
+
+/* --- Leaflet chrome ------------------------------------------------------
+   Scoped under `.listings-map` so these beat Leaflet's own rules: leaflet.css
+   is pulled in by the lazily-imported map chunk and therefore lands *after*
+   the app stylesheet, so an equal-specificity override would lose. */
+.listings-map .leaflet-container {
+  background: hsl(var(--muted));
+  font-family: inherit;
+}
+
+.listings-map .leaflet-popup-content-wrapper,
+.listings-map .leaflet-popup-tip {
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+.listings-map .leaflet-popup-content-wrapper {
+  border-radius: 0.9rem;
+  box-shadow: 0 18px 42px hsl(var(--foreground) / 0.22);
+}
+
+.listings-map .leaflet-popup-content {
+  margin: 0.85rem;
+  line-height: 1.35;
+}
+
+.listings-map .leaflet-container a.leaflet-popup-close-button {
+  color: hsl(var(--muted-foreground));
+  padding: 0.35rem 0.4rem 0 0;
+}
+
+.listings-map .leaflet-container a.leaflet-popup-close-button:hover,
+.listings-map .leaflet-container a.leaflet-popup-close-button:focus {
+  color: hsl(var(--foreground));
+  background: transparent;
+}
+
+.listings-map .leaflet-container .leaflet-control-attribution {
+  background: hsl(var(--background) / 0.82);
+  color: hsl(var(--muted-foreground));
+  border-radius: 0.5rem 0 0 0;
+  backdrop-filter: blur(4px);
+}
+
+.listings-map .leaflet-container .leaflet-control-attribution a {
+  color: hsl(var(--primary));
+}
+
+.listings-map .leaflet-container .leaflet-control-scale-line {
+  background: hsl(var(--background) / 0.82);
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+  backdrop-filter: blur(4px);
+}
+
+@media (max-width: 639px) {
+  .listings-map .leaflet-control-scale {
+    display: none;
+  }
+}
+
+/* --- Listing pins ------------------------------------------------------ */
+.listing-pin {
+  background: transparent;
+  border: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: visible;
+  --pin-bg: hsl(var(--primary));
+  --pin-fg: hsl(var(--primary-foreground));
+}
+
+.listing-pin--unknown {
+  --pin-bg: hsl(var(--muted-foreground));
+  --pin-fg: hsl(var(--background));
+}
+.listing-pin--low {
+  --pin-bg: hsl(var(--success));
+  --pin-fg: hsl(var(--success-foreground));
+}
+.listing-pin--mid {
+  --pin-bg: hsl(var(--primary));
+  --pin-fg: hsl(var(--primary-foreground));
+}
+.listing-pin--high {
+  --pin-bg: hsl(var(--warning));
+  --pin-fg: hsl(var(--warning-foreground));
+}
+.listing-pin--top {
+  --pin-bg: hsl(var(--destructive));
+  --pin-fg: hsl(var(--destructive-foreground));
+}
+
+.listing-pin--dot,
+.listing-pin--ghost {
+  align-items: center;
+}
+
+.listing-pin__chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5rem;
+  padding: 0 0.5rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--pin-fg);
+  background: var(--pin-bg);
+  border: 1px solid hsl(var(--background) / 0.75);
+  box-shadow: 0 3px 10px hsl(var(--foreground) / 0.3);
+  transition:
+    transform 130ms ease,
+    box-shadow 130ms ease;
+}
+
+.listing-pin__stem {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--pin-bg);
+  filter: drop-shadow(0 2px 2px hsl(var(--foreground) / 0.25));
+}
+
+.listing-pin--chip:hover .listing-pin__chip,
+.listing-pin--chip:focus-visible .listing-pin__chip {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px hsl(var(--foreground) / 0.38);
+}
+
+.listing-pin--dot .listing-pin__dot {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 9999px;
+  background: var(--pin-bg);
+  border: 2px solid hsl(var(--background));
+  box-shadow: 0 1px 5px hsl(var(--foreground) / 0.35);
+  transition: transform 130ms ease;
+}
+
+.listing-pin--dot:hover .listing-pin__dot {
+  transform: scale(1.25);
+}
+
+/* Heat-only mode keeps hit targets so the surface stays interrogable. */
+.listing-pin--ghost .listing-pin__dot {
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 9999px;
+  background: hsl(var(--background) / 0.2);
+  border: 1px solid hsl(var(--foreground) / 0.45);
+  opacity: 0.3;
+  transition:
+    opacity 130ms ease,
+    transform 130ms ease;
+}
+
+.listing-pin--ghost:hover .listing-pin__dot,
+.listing-pin--ghost:focus-visible .listing-pin__dot {
+  opacity: 1;
+  transform: scale(1.2);
+  background: hsl(var(--background) / 0.8);
+  border-color: hsl(var(--primary));
+}
+
+.leaflet-container .listing-pin:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 3px;
+  border-radius: 9999px;
+}
+
+/* --- Clusters ---------------------------------------------------------- */
+.listings-cluster {
+  background: transparent;
+  border: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.listings-cluster__ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: hsl(var(--primary) / 0.2);
+  border: 1px solid hsl(var(--primary) / 0.4);
+  box-shadow:
+    0 0 0 5px hsl(var(--primary) / 0.1),
+    0 6px 18px hsl(var(--foreground) / 0.22);
+  transition: transform 140ms ease;
+}
+
+.listings-cluster:hover .listings-cluster__ring {
+  transform: scale(1.08);
+}
+
+.listings-cluster__count {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 60%;
+  height: 62%;
+  padding: 0 0.4rem;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.listings-cluster--lg .listings-cluster__count,
+.listings-cluster--xl .listings-cluster__count {
+  font-size: 0.8125rem;
+}
+
+.listings-cluster--ghost .listings-cluster__ring {
+  background: transparent;
+  border-style: dashed;
+  border-color: hsl(var(--foreground) / 0.3);
+  box-shadow: none;
+}
+
+.listings-cluster--ghost .listings-cluster__count {
+  opacity: 0;
+  transition: opacity 130ms ease;
+}
+
+.listings-cluster--ghost:hover .listings-cluster__count,
+.listings-cluster--ghost:focus-visible .listings-cluster__count {
+  opacity: 1;
+}
+
+/* --- Heat legend ------------------------------------------------------- */
+/* Stops mirror the gradient handed to leaflet.heat in ListingsHeatLayer. */
+.listings-heat-ramp {
+  height: 0.5rem;
+  width: 100%;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--border) / 0.7);
+  background: linear-gradient(
+    to right,
+    hsl(var(--info)) 0%,
+    hsl(var(--info)) 25%,
+    hsl(var(--success)) 50%,
+    hsl(var(--warning)) 72%,
+    hsl(var(--destructive)) 100%
+  );
+}
+
+.listings-tier-swatch {
+  display: inline-block;
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--background) / 0.7);
+}
+
+.listings-tier-swatch--low {
+  background: hsl(var(--success));
+}
+.listings-tier-swatch--mid {
+  background: hsl(var(--primary));
+}
+.listings-tier-swatch--high {
+  background: hsl(var(--warning));
+}
+.listings-tier-swatch--top {
+  background: hsl(var(--destructive));
+}
+
+/* Dark basemaps need a touch more separation from the tiles. */
+.listings-map--dark-tiles .listing-pin--ghost .listing-pin__dot {
+  border-color: hsl(var(--primary) / 0.65);
+}
+
+.listings-map--dark-tiles .listings-cluster--ghost .listings-cluster__ring {
+  border-color: hsl(var(--primary) / 0.5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listing-pin__chip,
+  .listing-pin__dot,
+  .listings-cluster__ring,
+  .listings-cluster__count {
+    transition: none;
   }
 
-  .listing-price-marker__chip {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    transform: translate(-50%, -100%);
-    white-space: nowrap;
-    padding: 0.2rem 0.55rem;
-    border-radius: 9999px;
-    font-size: 0.6875rem;
-    font-weight: 600;
-    line-height: 1.1;
-    color: hsl(var(--primary-foreground));
-    background: hsl(var(--primary));
-    border: 1px solid hsl(var(--primary) / 0.6);
-    box-shadow: 0 4px 12px hsl(var(--foreground) / 0.25);
-  }
-
-  .leaflet-popup-content-wrapper,
-  .leaflet-popup-tip {
-    background: hsl(var(--background));
-    color: hsl(var(--foreground));
-    border: 1px solid hsl(var(--border));
-  }
-
-  .marker-cluster div {
-    background: hsl(var(--primary) / 0.85) !important;
-    color: hsl(var(--primary-foreground)) !important;
-    font-weight: 600;
-  }
-
-  .marker-cluster {
-    background: hsl(var(--primary) / 0.3) !important;
+  .listing-pin--chip:hover .listing-pin__chip,
+  .listing-pin--dot:hover .listing-pin__dot,
+  .listings-cluster:hover .listings-cluster__ring {
+    transform: none;
   }
 }
