@@ -455,3 +455,12 @@ export function useNotifications() {
   }
   return context;
 }
+
+/**
+ * Non-throwing variant. Returns null when no provider is mounted (e.g. during
+ * an HMR partial refresh) so background listeners never blank the screen.
+ */
+export function useNotificationsOptional() {
+  return useContext(NotificationsContext) ?? null;
+}
+
