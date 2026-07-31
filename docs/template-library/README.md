@@ -56,9 +56,10 @@ two rejected alternatives and their trade-offs, is in
 ### Status
 
 The planning phase (PR 1) and the implementation phases (roadmap PR 2–5) are
-both delivered. The library is live behind a kill-switch flag that defaults ON.
-See [`04-implementation.md`](./04-implementation.md) for what shipped and how it
-was verified.
+both delivered, **with twelve templates seeded** so the library is usable on the
+day it is switched on. It is live behind a kill-switch flag that defaults ON.
+See [`04-implementation.md`](./04-implementation.md) for what shipped, the two
+real defects the render tests caught, and how it was verified.
 
 The existing Reporting Engine Builder is unchanged. The only edit to an existing
 component is 20 additive lines in `src/pages/Templates.tsx` that mount a ninth

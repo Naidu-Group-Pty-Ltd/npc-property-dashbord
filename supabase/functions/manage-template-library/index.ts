@@ -6,11 +6,16 @@
  *  - `manage-templates` is the live Template Builder broker. Adding operations
  *    to it would put library code in the blast radius of every Builder save.
  *  - Its generic `insert` passes the caller's payload straight through to
- *    Postgres. That is fine for the Builder, whose client sets safe values, but
- *    it means a client could name its own `owner_user_id`, `scope` or
- *    `is_active` on a library-created template. Instantiation therefore happens
- *    HERE, server-side, where the payload is constructed from the verified
- *    session and the caller cannot influence a single safety-critical field.
+ *    Postgres — `validateReportTemplateUpdate` is wired only into `update`. A
+ *    client-built payload could therefore name its own `owner_user_id`,
+ *    `scope` or `is_active`. Instantiation happens HERE, server-side, where the
+ *    row is assembled from the verified session and the caller cannot influence
+ *    a single safety-critical field.
+ *
+ * This module is the I/O shell only. Every decision — authorisation
+ * requirements, derived facts, the publish gate, the working-copy payload —
+ * lives in `_shared/templateLibraryCore.pure.ts` so it can be executed by the
+ * test suite rather than merely scanned.
  *
  * Library entries are catalogue data and are never rows in `report_templates`.
  * See docs/architecture/adr/017-template-library-separation.md.
@@ -27,58 +32,34 @@ import { requireModulePermission, requireSuperadmin } from '../_shared/authz.ts'
 import {
   TemplateSchemaVersionError,
   validateAndMigrateTemplateSchemaVersion,
-  SUPPORTED_TEMPLATE_SCHEMA_VERSION,
 } from '../_shared/templateSchemaVersion.ts';
 import {
-  PRODUCTION_SAFE_BLOCK_TYPES,
-  PRODUCTION_REPORT_TEMPLATE_TYPES,
-} from '../_shared/productionBlockTypes.ts';
-
-type Operation =
-  | 'list'
-  | 'get'
-  | 'instantiate'
-  | 'promote'
-  | 'save_draft'
-  | 'publish'
-  | 'deprecate'
-  | 'archive'
-  | 'restore'
-  | 'events';
-
-/** Operations a non-superadmin may call, and the module permission each needs. */
-const READ_OPERATIONS = new Set<Operation>(['list', 'get']);
-const EDIT_OPERATIONS = new Set<Operation>(['instantiate']);
-
-/** Columns safe to return in a list: never the heavy `schema` payload.
- *  The Builder list learned this the hard way — templates imported from PDFs
- *  carry multi-hundred-MB schemas, and selecting them for every row blows past
- *  the statement timeout (see the comment on ReportTemplateListRow). */
-const LIST_SELECT = [
-  'id', 'family_id', 'slug', 'version', 'name', 'description',
-  'category', 'report_type', 'tier', 'variant', 'industry', 'tags', 'style',
-  'orientation', 'page_size', 'page_count',
-  'preview_schema', 'thumbnail_path', 'preview_image_paths',
-  'supported_modules', 'required_bindings', 'brand_safe', 'production_ready',
-  'compatibility_version', 'status', 'access_tier', 'visibility',
-  'created_at', 'updated_at', 'published_at', 'usage_count', 'last_used_at',
-].join(',');
+  LIST_SELECT,
+  buildNextVersionDraft,
+  buildWorkingCopyPayload,
+  deriveEntryFacts,
+  editRequiresNewVersion,
+  pickEditable,
+  requiredAuthzFor,
+  slugify,
+  statusForLifecycleOperation,
+  validateForPublish,
+  validateWorkingCopyName,
+  type LibraryOperation,
+} from '../_shared/templateLibraryCore.pure.ts';
 
 interface RequestBody {
-  operation: Operation;
+  operation: LibraryOperation;
   entryId?: string;
   templateId?: string;
-  /** list filters */
   filters?: {
     status?: string;
     category?: string;
     reportType?: string;
     includeUnpublished?: boolean;
   };
-  /** instantiate */
   name?: string;
   description?: string;
-  /** promote / save_draft */
   entry?: Record<string, unknown>;
   session_token?: string;
 }
@@ -90,167 +71,14 @@ function json(body: unknown, status: number, cors: Record<string, string>): Resp
   });
 }
 
-function fail(code: string, message: string, status: number, cors: Record<string, string>, extra?: Record<string, unknown>): Response {
+function fail(
+  code: string,
+  message: string,
+  status: number,
+  cors: Record<string, string>,
+  extra?: Record<string, unknown>,
+): Response {
   return json({ success: false, error: { code, message, ...(extra ?? {}) } }, status, cors);
-}
-
-// ── Schema inspection ────────────────────────────────────────────────────────
-
-function pagesOf(schema: any): any[] {
-  return Array.isArray(schema?.pages) ? schema.pages : [];
-}
-
-function blockTypesOf(schema: any): string[] {
-  const types = new Set<string>();
-  for (const page of pagesOf(schema)) {
-    for (const block of Array.isArray(page?.blocks) ? page.blocks : []) {
-      const t = String(block?.type ?? '').trim();
-      if (t) types.add(t);
-    }
-  }
-  return [...types].sort();
-}
-
-function unsupportedBlocks(schema: any): string[] {
-  return blockTypesOf(schema).filter((t) => !PRODUCTION_SAFE_BLOCK_TYPES.has(t));
-}
-
-/** Every `{{path}}` referenced anywhere in the schema, filters stripped. */
-function requiredBindingsOf(schema: any): string[] {
-  const found = new Set<string>();
-  const walk = (node: unknown): void => {
-    if (typeof node === 'string') {
-      for (const m of node.matchAll(/\{\{\s*([^}|]+?)\s*(?:\|[^}]*)?\}\}/g)) {
-        const path = m[1].trim();
-        // `{{=name}}` is a computed field, not a data binding.
-        if (path && !path.startsWith('=')) found.add(path);
-      }
-      return;
-    }
-    if (Array.isArray(node)) { node.forEach(walk); return; }
-    if (node && typeof node === 'object') { Object.values(node).forEach(walk); }
-  };
-  walk(schema);
-  return [...found].sort();
-}
-
-/**
- * True when the design carries no hard-coded colour, so a partner brand fully
- * applies. Values of the form `token:*` and `{{binding}}` are brand-safe;
- * literal hex/rgb/hsl in a colour-ish field is not. Declared token definitions
- * (`schema.tokens`) are excluded — that is where literals belong.
- */
-function isBrandSafe(schema: any): boolean {
-  const COLOUR_KEY = /(colou?r|fill|stroke|bg|background|accent|shadow|border)/i;
-  const LITERAL = /^(#[0-9a-f]{3,8}|rgba?\(|hsla?\()/i;
-  let safe = true;
-  const walk = (node: unknown, key?: string): void => {
-    if (!safe) return;
-    if (typeof node === 'string') {
-      if (key && COLOUR_KEY.test(key) && LITERAL.test(node.trim())) safe = false;
-      return;
-    }
-    if (Array.isArray(node)) { node.forEach((v) => walk(v, key)); return; }
-    if (node && typeof node === 'object') {
-      for (const [k, v] of Object.entries(node)) walk(v, k);
-    }
-  };
-  // Skip `tokens` — literal colours are the point of a token definition.
-  const { tokens: _tokens, ...rest } = (schema && typeof schema === 'object') ? schema : {} as any;
-  walk(rest);
-  return safe;
-}
-
-function isProductionReady(reportType: unknown, schema: any): boolean {
-  const key = String(reportType ?? '').trim().toLowerCase();
-  if (!key || !PRODUCTION_REPORT_TEMPLATE_TYPES.has(key)) return false;
-  return unsupportedBlocks(schema).length === 0;
-}
-
-/** Page-1-only schema, image payloads stripped, for the SVG card thumbnail. */
-function buildPreviewSchema(schema: any): any {
-  const first = pagesOf(schema)[0];
-  if (!first) return null;
-  const strip = (node: unknown): unknown => {
-    if (typeof node === 'string') return node.startsWith('data:') ? '' : node;
-    if (Array.isArray(node)) return node.map(strip);
-    if (node && typeof node === 'object') {
-      return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, strip(v)]));
-    }
-    return node;
-  };
-  return {
-    version: SUPPORTED_TEMPLATE_SCHEMA_VERSION,
-    tokens: schema?.tokens ?? {},
-    pages: [strip(first)],
-  };
-}
-
-/** Validation gate that runs before an entry may be published. */
-function validateForPublish(entry: any): { code: string; message: string; detail?: unknown } | null {
-  const schema = entry?.schema;
-  if (!schema || typeof schema !== 'object') {
-    return { code: 'library_schema_invalid', message: 'Entry has no template schema.' };
-  }
-  if (pagesOf(schema).length === 0) {
-    return { code: 'library_schema_empty', message: 'A published template must have at least one page.' };
-  }
-  const unsupported = unsupportedBlocks(schema);
-  if (unsupported.length > 0) {
-    return {
-      code: 'library_renderer_blocked',
-      message: 'Template contains block types without production renderer support.',
-      detail: unsupported.slice(0, 20),
-    };
-  }
-  if (!String(entry?.name ?? '').trim()) {
-    return { code: 'library_name_required', message: 'A published template must have a name.' };
-  }
-  if (!String(entry?.slug ?? '').trim()) {
-    return { code: 'library_slug_required', message: 'A published template must have a slug.' };
-  }
-  return null;
-}
-
-/** Recompute every derived field from the schema. Never trusts the caller. */
-function deriveEntryFacts(entry: any): Record<string, unknown> {
-  const schema = entry?.schema ?? {};
-  const first = pagesOf(schema)[0];
-  const width = Number(first?.size?.width ?? 595);
-  const height = Number(first?.size?.height ?? 842);
-  return {
-    page_count: pagesOf(schema).length,
-    supported_modules: blockTypesOf(schema),
-    required_bindings: requiredBindingsOf(schema),
-    brand_safe: isBrandSafe(schema),
-    production_ready: isProductionReady(entry?.report_type, schema),
-    compatibility_version: SUPPORTED_TEMPLATE_SCHEMA_VERSION,
-    orientation: width > height ? 'landscape' : 'portrait',
-    preview_schema: buildPreviewSchema(schema),
-  };
-}
-
-function slugify(value: string): string {
-  return String(value ?? '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 80) || 'template';
-}
-
-/** Fields a superadmin may set on a draft. Everything else is derived or fixed. */
-const EDITABLE_ENTRY_KEYS = new Set([
-  'name', 'description', 'long_description', 'category', 'report_type', 'tier',
-  'variant', 'industry', 'tags', 'style', 'page_size', 'access_tier',
-  'schema', 'config', 'custom_css', 'thumbnail_path', 'preview_image_paths',
-]);
-
-function pickEditable(input: Record<string, unknown> | undefined): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(input ?? {})) {
-    if (EDITABLE_ENTRY_KEYS.has(k)) out[k] = v;
-  }
-  return out;
 }
 
 async function recordEvent(
@@ -270,11 +98,10 @@ async function recordEvent(
       metadata,
     });
   } catch (e) {
+    // Governance telemetry must never fail the operation it is recording.
     console.warn('[manage-template-library] event insert failed:', (e as Error).message);
   }
 }
-
-// ── Handler ──────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin') || '';
@@ -298,21 +125,17 @@ Deno.serve(async (req) => {
     const operation = body.operation;
     const actor = { userId: userId ?? null, authMethod };
 
-    // ── Authorisation, deny by default ──────────────────────────────────────
-    let authz;
-    if (READ_OPERATIONS.has(operation)) {
-      authz = await requireModulePermission(supabase, actor, 'templates', 'can_view');
-    } else if (EDIT_OPERATIONS.has(operation)) {
-      // Creating a working copy is exactly as privileged as creating a Builder
-      // template, so it needs exactly the same permission.
-      authz = await requireModulePermission(supabase, actor, 'templates', 'can_edit');
-    } else {
-      // Authoring, publishing and lifecycle changes are control-plane actions.
-      authz = await requireSuperadmin(supabase, actor);
-    }
+    // Deny-by-default. Anything not explicitly a read or an edit requires
+    // superadmin, so a new operation is control-plane until lowered on purpose.
+    const required = requiredAuthzFor(operation);
+    const authz = required.kind === 'superadmin'
+      ? await requireSuperadmin(supabase, actor)
+      : await requireModulePermission(supabase, actor, 'templates', required.permission);
     if (!authz.ok) return createForbiddenResponse(authz.error ?? 'Not authorised', corsHeaders);
 
-    const isSuperadmin = (await requireSuperadmin(supabase, actor)).ok;
+    const isSuperadmin = required.kind === 'superadmin'
+      ? true
+      : (await requireSuperadmin(supabase, actor)).ok;
 
     // ── list ────────────────────────────────────────────────────────────────
     if (operation === 'list') {
@@ -345,14 +168,10 @@ Deno.serve(async (req) => {
     }
 
     // ── instantiate ─────────────────────────────────────────────────────────
-    // Copy a published entry into an independent working copy in
-    // report_templates. Every safety-critical field is set here, from the
-    // verified session — never from the request body.
     if (operation === 'instantiate') {
       if (!body.entryId) return fail('missing_entry_id', 'entryId is required.', 400, corsHeaders);
-      const name = String(body.name ?? '').trim();
-      if (!name) return fail('name_required', 'A name for the working copy is required.', 400, corsHeaders);
-      if (name.length > 200) return fail('name_too_long', 'Name must be 200 characters or fewer.', 400, corsHeaders);
+      const nameProblem = validateWorkingCopyName(body.name);
+      if (nameProblem) return fail(nameProblem.code, nameProblem.message, 400, corsHeaders);
 
       const { data: entry, error: entryErr } = await supabase
         .from('template_library_entries')
@@ -363,9 +182,9 @@ Deno.serve(async (req) => {
       if (entryErr) return json({ error: entryErr.message }, 500, corsHeaders);
       if (!entry) return fail('not_found', 'Template not found or not published.', 404, corsHeaders);
 
-      // Validate and migrate on the way out of the library, so a stale entry
+      // Validate and migrate on the way OUT of the library, so a stale entry
       // can never inject an unsupported schema into the Builder's table.
-      let schema: any;
+      let schema: unknown;
       try {
         schema = validateAndMigrateTemplateSchemaVersion(
           JSON.parse(JSON.stringify(entry.schema ?? {})),
@@ -377,48 +196,13 @@ Deno.serve(async (req) => {
         throw e;
       }
 
-      const insertPayload = {
-        name,
-        description: body.description ? String(body.description).slice(0, 2000) : (entry.description ?? null),
+      const insertPayload = buildWorkingCopyPayload({
+        userId: userId!,
+        name: String(body.name).trim(),
+        description: body.description ? String(body.description).slice(0, 2000) : null,
+        entry,
         schema,
-        // report_templates.config is NOT NULL.
-        config: entry.config ?? {},
-        custom_css: entry.custom_css ?? null,
-        report_type: entry.report_type ?? null,
-        tier: entry.tier ?? null,
-        variant: entry.variant ?? null,
-        engine: entry.engine ?? 'weasyprint',
-
-        // Nothing about a fresh copy is live. These are the fields that make a
-        // template reach a customer, and all of them start off.
-        version: 1,
-        is_active: false,
-        is_default: false,
-        is_draft: true,
-        approval_status: 'draft',
-        locked_for_review: false,
-        locked_at: null,
-        locked_by: null,
-        priority: 0,
-
-        // parent_template_id is an FK to report_templates; a library entry is
-        // not in that table, so lineage goes in template_library_instantiations.
-        parent_template_id: null,
-
-        // created_by is an FK to auth.users and this platform's custom-auth ids
-        // are not in auth.users — stamping one violates the constraint. See
-        // TemplateBranchingDialog.tsx:91-94 for the same decision.
-        created_by: null,
-
-        // The working copy belongs to the person who made it. owner_user_id has
-        // no FK, so a custom_users id is valid here, and applyReportTemplateReadScope
-        // in manage-templates already enforces `scope='user' AND owner_user_id=me`
-        // for reads. This is stricter than the Builder's own "New template",
-        // which leaves copies globally readable.
-        scope: 'user',
-        owner_user_id: userId,
-        agency_id: null,
-      };
+      });
 
       const { data: created, error: insertErr } = await supabase
         .from('report_templates')
@@ -441,14 +225,18 @@ Deno.serve(async (req) => {
         console.warn('[manage-template-library] lineage insert failed:', lineageErr.message);
       }
 
-      // Usage counters are best-effort telemetry; never fail a copy over them.
+      // Usage counters are telemetry; never fail a copy over them.
       await supabase
         .from('template_library_entries')
-        .update({ usage_count: (entry.usage_count ?? 0) + 1, last_used_at: new Date().toISOString() })
+        .update({
+          usage_count: (entry.usage_count ?? 0) + 1,
+          last_used_at: new Date().toISOString(),
+        })
         .eq('id', entry.id)
         .then(() => {}, () => {});
 
-      // The working copy exists, so template_audit_log's NOT NULL FK is satisfied.
+      // The working copy now exists, so template_audit_log's NOT NULL FK to
+      // report_templates is satisfied.
       await supabase.from('template_audit_log').insert({
         template_id: created.id,
         actor_id: null,
@@ -457,7 +245,7 @@ Deno.serve(async (req) => {
         metadata: { entry_id: entry.id, entry_version: entry.version, entry_slug: entry.slug },
       }).then(() => {}, () => {});
 
-      await recordEvent(supabase, entry.id, 'instantiated', userId, `Copied as "${name}"`, {
+      await recordEvent(supabase, entry.id, 'instantiated', userId, `Copied as "${body.name}"`, {
         template_id: created.id,
       });
 
@@ -470,7 +258,9 @@ Deno.serve(async (req) => {
 
     // ── promote (Builder template → library draft) ──────────────────────────
     if (operation === 'promote') {
-      if (!body.templateId) return fail('missing_template_id', 'templateId is required.', 400, corsHeaders);
+      if (!body.templateId) {
+        return fail('missing_template_id', 'templateId is required.', 400, corsHeaders);
+      }
 
       const { data: source, error: srcErr } = await supabase
         .from('report_templates')
@@ -484,7 +274,7 @@ Deno.serve(async (req) => {
       const name = String(overrides.name ?? source.name ?? 'Untitled template').slice(0, 200);
       const draft: Record<string, unknown> = {
         name,
-        slug: slugify(String(overrides.slug ?? name)),
+        slug: slugify(name),
         version: 1,
         description: overrides.description ?? source.description ?? null,
         long_description: overrides.long_description ?? null,
@@ -515,8 +305,11 @@ Deno.serve(async (req) => {
         .single();
       if (error) return json({ error: error.message }, 500, corsHeaders);
 
-      await recordEvent(supabase, record.id, 'promoted', userId,
-        `Promoted from Builder template "${source.name}"`, { source_template_id: source.id });
+      await recordEvent(
+        supabase, record.id, 'promoted', userId,
+        `Promoted from Builder template "${source.name}"`,
+        { source_template_id: source.id },
+      );
 
       return json({ success: true, record }, 200, corsHeaders);
     }
@@ -533,36 +326,23 @@ Deno.serve(async (req) => {
       if (curErr) return json({ error: curErr.message }, 500, corsHeaders);
       if (!current) return fail('not_found', 'Entry not found.', 404, corsHeaders);
 
-      // Published entries are immutable: editing one creates the next version
-      // as a fresh draft in the same family, so a copy already taken always
-      // points at an unchanging snapshot.
       const patch = pickEditable(body.entry);
       if (Object.keys(patch).length === 0) {
         return fail('nothing_to_update', 'No editable fields supplied.', 400, corsHeaders);
       }
 
-      if (current.status === 'published') {
-        const next = {
-          ...current,
-          ...patch,
-          id: undefined,
-          version: (current.version ?? 1) + 1,
-          status: 'draft',
-          published_at: null,
-          deprecated_at: null,
-          usage_count: 0,
-          last_used_at: null,
-          created_at: undefined,
-          updated_at: undefined,
-          created_by_user_id: userId,
-        };
-        Object.assign(next, deriveEntryFacts(next));
+      // Published entries are immutable: editing one forks the next version as
+      // a draft, so copies already taken keep pointing at a fixed snapshot.
+      if (editRequiresNewVersion(current.status)) {
+        const next = buildNextVersionDraft(current, patch, userId ?? null);
         const { data: record, error } = await supabase
           .from('template_library_entries').insert(next).select('*').single();
         if (error) return json({ error: error.message }, 500, corsHeaders);
-        await recordEvent(supabase, record.id, 'version_drafted', userId,
+        await recordEvent(
+          supabase, record.id, 'version_drafted', userId,
           `Draft v${record.version} created from published v${current.version}`,
-          { previous_entry_id: current.id });
+          { previous_entry_id: current.id },
+        );
         return json({ success: true, record, createdNewVersion: true }, 200, corsHeaders);
       }
 
@@ -575,8 +355,9 @@ Deno.serve(async (req) => {
         .select('*')
         .single();
       if (error) return json({ error: error.message }, 500, corsHeaders);
-      await recordEvent(supabase, record.id, 'draft_saved', userId, 'Draft updated',
-        { fields: Object.keys(patch) });
+      await recordEvent(supabase, record.id, 'draft_saved', userId, 'Draft updated', {
+        fields: Object.keys(patch),
+      });
       return json({ success: true, record, createdNewVersion: false }, 200, corsHeaders);
     }
 
@@ -616,7 +397,7 @@ Deno.serve(async (req) => {
       if (error) return json({ error: error.message }, 500, corsHeaders);
 
       // Publishing a newer version retires the previously published one in the
-      // same family. Older versions stay on disk, so rolling back is republishing.
+      // family. Older versions stay on disk, so rollback is republishing.
       await supabase
         .from('template_library_entries')
         .update({ status: 'deprecated', deprecated_at: new Date().toISOString() })
@@ -634,13 +415,11 @@ Deno.serve(async (req) => {
     }
 
     // ── deprecate / archive / restore ───────────────────────────────────────
-    if (operation === 'deprecate' || operation === 'archive' || operation === 'restore') {
+    const lifecycleStatus = statusForLifecycleOperation(operation);
+    if (lifecycleStatus) {
       if (!body.entryId) return fail('missing_entry_id', 'entryId is required.', 400, corsHeaders);
-      const nextStatus = operation === 'restore'
-        ? 'draft'
-        : operation === 'archive' ? 'archived' : 'deprecated';
 
-      const patch: Record<string, unknown> = { status: nextStatus };
+      const patch: Record<string, unknown> = { status: lifecycleStatus };
       if (operation === 'deprecate') patch.deprecated_at = new Date().toISOString();
       if (operation === 'restore') { patch.deprecated_at = null; patch.published_at = null; }
 

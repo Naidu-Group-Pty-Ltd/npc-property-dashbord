@@ -1,0 +1,188 @@
+/**
+ * The seeded catalogue must actually render.
+ *
+ * A library entry that parses but produces nothing on the page is worse than no
+ * entry: a user spends time previewing it, copies it, opens the Builder, and
+ * finds a blank document. So these tests do not stop at "the schema is valid" —
+ * they push every seeded template through the **real** production HTML
+ * renderer with sample data and assert that content comes out the other side.
+ */
+import { describe, it, expect } from 'vitest';
+import { ReportTemplateSchema, parseTemplate } from '@/lib/reportTemplate/templateSchema';
+import { renderTemplateToHtml } from '@/lib/reportTemplate/htmlRenderer';
+import {
+  deriveEntryFacts, validateForPublish,
+} from '../../../../supabase/functions/_shared/templateLibraryCore.pure';
+import { PRODUCTION_SAFE_BLOCK_TYPES } from '../../../../supabase/functions/_shared/productionBlockTypes';
+import { SEED_TEMPLATES } from '../../../../scripts/template-library/templates';
+
+/**
+ * Sample data covering the bindings the seeded templates reference.
+ *
+ * Note the convention: the `percent` filter formats the number it is given and
+ * does NOT multiply by 100, so a 3.84% yield is supplied as `3.84`, not
+ * `0.0384`. Getting this wrong renders "0.04%" in a customer's report.
+ */
+const SAMPLE = {
+  property: {
+    address: '14 Marlborough Street, Leichhardt NSW 2040',
+    suburb: 'Leichhardt',
+    type: 'Freestanding house',
+    configuration: '3 bed · 2 bath · 1 car',
+    landArea: '412 m²',
+    yearBuilt: '1928',
+    zoning: 'R2 Low Density Residential',
+    tenancy: 'Vacant possession',
+    rationale: 'Land-rich holding inside the 8km ring with a compliant granny-flat footprint.',
+  },
+  client: { name: 'J. & S. Nguyen', email: 'j.nguyen@example.com.au' },
+  financials: {
+    purchasePrice: 1285000, weeklyRent: 950, grossYield: 3.84, cashOnCash: 2.1,
+    annualRent: 49400, weeklyRepayment: 1180, annualRepayment: 61360,
+    weeklyNet: -312, annualNet: -16224, totalCost: 1352400,
+  },
+  market: {
+    medianPrice: 1420000, growth12m: 6.1, medianRent: 890, vacancy: 1.4,
+    daysOnMarket: 21, source: 'CoreLogic, quarter close', postcode: '2040', state: 'NSW',
+  },
+  reportType: 'investment',
+  author: { name: 'A. Nguyen', title: 'Senior Adviser' },
+  org: { name: 'Example Advisory', abn: '12 600 123 456' },
+};
+
+describe('seeded catalogue', () => {
+  it('ships a catalogue rather than an empty grid', () => {
+    expect(SEED_TEMPLATES.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('has unique slugs', () => {
+    const slugs = SEED_TEMPLATES.map((t) => t.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
+  });
+
+  it('covers every category the filter chips offer a user', () => {
+    const categories = new Set(SEED_TEMPLATES.map((t) => t.category));
+    // A filter that always returns nothing is a broken filter.
+    for (const c of ['investment', 'suburb', 'postcode', 'statewide', 'comparison', 'cash_flow', 'client_form', 'compliance']) {
+      expect(categories.has(c), `no seeded template in category "${c}"`).toBe(true);
+    }
+  });
+
+  it('includes production-ready templates, not only preview-only ones', () => {
+    const ready = SEED_TEMPLATES.filter(
+      (t) => deriveEntryFacts({ report_type: t.reportType, schema: t.schema }).production_ready,
+    );
+    expect(ready.length).toBeGreaterThanOrEqual(4);
+  });
+
+  describe.each(SEED_TEMPLATES.map((t) => [t.slug, t] as const))('%s', (_slug, template) => {
+    it('parses against the live Zod schema without salvage', () => {
+      const result = ReportTemplateSchema.safeParse(template.schema);
+      expect(
+        result.success ? [] : result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`),
+      ).toEqual([]);
+    });
+
+    it('survives a parseTemplate round-trip with its pages intact', () => {
+      // parseTemplate falls back to an empty template on failure, so an
+      // unchanged page count proves it took the happy path.
+      const parsed = parseTemplate(template.schema);
+      expect(parsed.pages).toHaveLength(template.schema.pages.length);
+    });
+
+    it('uses only block types the production renderer supports', () => {
+      const unsupported = template.schema.pages
+        .flatMap((p) => p.blocks.map((b) => b.type))
+        .filter((t) => !PRODUCTION_SAFE_BLOCK_TYPES.has(t));
+      expect([...new Set(unsupported)]).toEqual([]);
+    });
+
+    it('passes the publish gate', () => {
+      expect(validateForPublish({
+        name: template.name, slug: template.slug, schema: template.schema,
+      })).toBeNull();
+    });
+
+    it('has no empty pages', () => {
+      const empty = template.schema.pages.filter((p) => p.blocks.length === 0).map((p) => p.name);
+      expect(empty).toEqual([]);
+    });
+
+    it('is white-label safe — no hard-coded colour outside the token map', () => {
+      expect(deriveEntryFacts({ report_type: template.reportType, schema: template.schema }).brand_safe)
+        .toBe(true);
+    });
+
+    it('defines every colour token its blocks reference', () => {
+      const declared = new Set(Object.keys(template.schema.tokens.colors));
+      const referenced = new Set<string>();
+      const walk = (node: unknown): void => {
+        if (typeof node === 'string') {
+          if (node.startsWith('token:')) referenced.add(node.slice(6));
+          return;
+        }
+        if (Array.isArray(node)) { node.forEach(walk); return; }
+        if (node && typeof node === 'object') Object.values(node).forEach(walk);
+      };
+      walk(template.schema.pages);
+      const missing = [...referenced].filter((t) => !declared.has(t));
+      expect(missing).toEqual([]);
+    });
+
+    it('renders real content through the production HTML renderer', () => {
+      const { html } = renderTemplateToHtml(parseTemplate(template.schema), { data: SAMPLE });
+      expect(html.length).toBeGreaterThan(2000);
+      // One rendered <section class="tpl-page …"> per authored page.
+      // (`data-page-index` is editor-mode only, so it is not the marker here.)
+      const pageCount = (html.match(/class="tpl-page /g) ?? []).length;
+      expect(pageCount).toBe(template.schema.pages.length);
+    });
+
+    it('leaves no unresolved binding markers in the rendered output', () => {
+      const { html } = renderTemplateToHtml(parseTemplate(template.schema), { data: SAMPLE });
+      // Unknown paths resolve to an empty string by design; what must never
+      // survive to a customer's PDF is a literal `{{...}}`.
+      expect(html).not.toMatch(/\{\{[^}]+\}\}/);
+    });
+
+    it('renders every page with visible content, not just a shell', () => {
+      const { html } = renderTemplateToHtml(parseTemplate(template.schema), { data: SAMPLE });
+      const pages = html.split('class="tpl-page ').slice(1);
+      pages.forEach((pageHtml, i) => {
+        // Strip tags and whitespace; a page that renders to nothing is a bug
+        // the schema check cannot see.
+        const text = pageHtml.replace(/<[^>]+>/g, '').replace(/\s+/g, '');
+        expect(text.length, `page ${i + 1} ("${template.schema.pages[i].name}") rendered empty`)
+          .toBeGreaterThan(20);
+      });
+    });
+
+    it('uses only chip vocabulary values where the renderer does not resolve bindings', () => {
+      // `scorecard.items[].rating` and `risk-register.items[].rating` /
+      // `.confidence` select a chip colour from a fixed palette
+      // (blocks/_chips.html.ts) and are deliberately NOT passed through
+      // resolveBindable. Putting a {{binding}} there prints the braces into
+      // the customer's PDF — which is exactly how this test was earned.
+      const RATINGS = ['Strong', 'Moderate', 'Watch', 'High', 'Medium', 'Low'];
+      const CONFIDENCES = ['Verified', 'Indicative', 'Planned', 'UnderConstruction', 'Unverified', 'NotAvailable'];
+      for (const p of template.schema.pages) {
+        for (const b of p.blocks) {
+          if (b.type !== 'scorecard' && b.type !== 'risk-register') continue;
+          const items = (b.props as { items?: Array<Record<string, string>> }).items ?? [];
+          for (const item of items) {
+            if (item.rating !== undefined) expect(RATINGS).toContain(item.rating);
+            if (item.confidence !== undefined) expect(CONFIDENCES).toContain(item.confidence);
+          }
+        }
+      }
+    });
+
+    it('has descriptive catalogue metadata', () => {
+      expect(template.name.trim().length).toBeGreaterThan(3);
+      expect(template.description.trim().length).toBeGreaterThan(20);
+      expect(template.longDescription.trim().length).toBeGreaterThan(80);
+      expect(template.tags.length).toBeGreaterThanOrEqual(2);
+      expect(template.industry.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+});
