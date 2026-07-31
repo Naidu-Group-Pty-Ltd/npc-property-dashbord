@@ -2,15 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { resolveTemplateLibraryFlag } from '../featureFlag';
 
 describe('resolveTemplateLibraryFlag', () => {
-  it('defaults to OFF — the library is not released yet', () => {
-    expect(resolveTemplateLibraryFlag({})).toBe(false);
+  it('defaults to ON — the library is released', () => {
+    expect(resolveTemplateLibraryFlag({})).toBe(true);
   });
 
-  it('stays OFF for absent/empty inputs rather than guessing', () => {
-    expect(resolveTemplateLibraryFlag({ searchParams: '' })).toBe(false);
-    expect(resolveTemplateLibraryFlag({ storageValue: null })).toBe(false);
-    expect(resolveTemplateLibraryFlag({ envValue: undefined })).toBe(false);
-    expect(resolveTemplateLibraryFlag({ searchParams: '?other=1' })).toBe(false);
+  it('stays ON for absent/empty inputs rather than guessing', () => {
+    expect(resolveTemplateLibraryFlag({ searchParams: '' })).toBe(true);
+    expect(resolveTemplateLibraryFlag({ storageValue: null })).toBe(true);
+    expect(resolveTemplateLibraryFlag({ envValue: undefined })).toBe(true);
+    expect(resolveTemplateLibraryFlag({ searchParams: '?other=1' })).toBe(true);
   });
 
   it('enables via any of URL param, storage or build env', () => {
@@ -38,9 +38,9 @@ describe('resolveTemplateLibraryFlag', () => {
     expect(resolveTemplateLibraryFlag({ storageValue: '0', envValue: '1' })).toBe(false);
   });
 
-  it('ignores unrecognised values instead of treating them as truthy', () => {
-    expect(resolveTemplateLibraryFlag({ searchParams: '?templateLibrary=yes' })).toBe(false);
-    expect(resolveTemplateLibraryFlag({ storageValue: 'on' })).toBe(false);
-    expect(resolveTemplateLibraryFlag({ envValue: 'enabled' })).toBe(false);
+  it('ignores unrecognised values instead of guessing at intent', () => {
+    expect(resolveTemplateLibraryFlag({ searchParams: '?templateLibrary=yes' })).toBe(true);
+    expect(resolveTemplateLibraryFlag({ storageValue: 'on' })).toBe(true);
+    expect(resolveTemplateLibraryFlag({ envValue: 'enabled' })).toBe(true);
   });
 });

@@ -455,6 +455,10 @@ verify_jwt = true
 [functions.manage-data-import]
 verify_jwt = true
 
+[functions.manage-template-library]
+verify_jwt = true
+request_timeout = 1500
+
 [functions.manage-templates]
 verify_jwt = true
 request_timeout = 1500
