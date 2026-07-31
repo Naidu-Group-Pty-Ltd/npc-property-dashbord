@@ -1949,7 +1949,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "property-brief-form"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "property-brief-form",
@@ -2006,7 +2006,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "property-comparison-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "risk-profile-questionnaire",
@@ -2065,7 +2065,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "risk-assessment"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "document-collection-checklist",
@@ -2120,7 +2120,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "property-due-diligence-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "client-authority-form",
@@ -2136,7 +2136,7 @@ export const TEMPLATE_LIBRARY = {
       "useCase": "Obtain and evidence a specific, scoped authority to act.",
       "length": "brief",
       "lengthLabel": "1–3 pages — a single decision, summary or form",
-      "pages": "1–2 pages",
+      "pages": "2–3 pages",
       "dataIntensity": "low",
       "imageIntensity": "none",
       "formality": "formal",
@@ -2177,7 +2177,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "client-fact-find-form"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "aml-kyc-assessment",
@@ -2316,7 +2316,7 @@ export const TEMPLATE_LIBRARY = {
       "useCase": "Report the outcome of a compliance review and the actions arising.",
       "length": "extended",
       "lengthLabel": "11–25 pages — multi-section analysis with appendices",
-      "pages": "10–25 pages",
+      "pages": "9–22 pages",
       "dataIntensity": "medium",
       "imageIntensity": "none",
       "formality": "formal",
@@ -2364,7 +2364,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "audit-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "risk-assessment",
@@ -2422,7 +2422,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "compliance-review-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "audit-report",
@@ -2438,7 +2438,7 @@ export const TEMPLATE_LIBRARY = {
       "useCase": "Report the result of a formal audit to the standard an audit committee expects.",
       "length": "extended",
       "lengthLabel": "11–25 pages — multi-section analysis with appendices",
-      "pages": "12–30 pages",
+      "pages": "9–25 pages",
       "dataIntensity": "medium",
       "imageIntensity": "none",
       "formality": "formal",
@@ -2481,7 +2481,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "file-review-summary"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "file-review-summary",
@@ -2537,7 +2537,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "audit-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "executive-business-report",
@@ -2731,7 +2731,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "quarterly-business-review"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "quarterly-business-review",
@@ -2792,7 +2792,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": "board-report"
         }
       ],
-      "implemented": false
+      "implemented": true
     },
     {
       "id": "partnership-proposal",
@@ -2854,7 +2854,7 @@ export const TEMPLATE_LIBRARY = {
           "alternativeId": null
         }
       ],
-      "implemented": false
+      "implemented": true
     }
   ]
 } as const satisfies TemplateLibrary;

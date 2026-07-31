@@ -21,8 +21,13 @@ from finance_templates import (
     smsf_finance_assessment
 )
 from governance_templates import (
-    aml_kyc_assessment, client_fact_find_form, client_onboarding_form,
-    client_proposal, client_verification_summary, executive_business_report,
+    aml_kyc_assessment, audit_report, board_report, client_authority_form,
+    client_fact_find_form, client_onboarding_form, client_proposal,
+    client_verification_summary, compliance_review_report,
+    document_collection_checklist, executive_business_report,
+    file_review_summary, investor_goals_questionnaire, partnership_proposal,
+    property_brief_form, quarterly_business_review, risk_assessment,
+    risk_profile_questionnaire
 )
 from property_templates import (
     commercial_property_assessment, development_feasibility_report,
@@ -91,6 +96,30 @@ BUILDERS = {
         (smsf_finance_assessment, "Aurixa_SMSF_Finance_Assessment"),
     "finance-approval-summary":
         (finance_approval_summary, "Aurixa_Finance_Approval_Summary"),
+    "investor-goals-questionnaire":
+        (investor_goals_questionnaire, "Aurixa_Investor_Goals_Questionnaire"),
+    "property-brief-form":
+        (property_brief_form, "Aurixa_Property_Brief_Form"),
+    "risk-profile-questionnaire":
+        (risk_profile_questionnaire, "Aurixa_Risk_Profile_Questionnaire"),
+    "document-collection-checklist":
+        (document_collection_checklist, "Aurixa_Document_Collection_Checklist"),
+    "client-authority-form":
+        (client_authority_form, "Aurixa_Client_Authority_Form"),
+    "compliance-review-report":
+        (compliance_review_report, "Aurixa_Compliance_Review_Report"),
+    "risk-assessment":
+        (risk_assessment, "Aurixa_Risk_Assessment"),
+    "audit-report":
+        (audit_report, "Aurixa_Audit_Report"),
+    "file-review-summary":
+        (file_review_summary, "Aurixa_File_Review_Summary"),
+    "board-report":
+        (board_report, "Aurixa_Board_Report"),
+    "quarterly-business-review":
+        (quarterly_business_review, "Aurixa_Quarterly_Business_Review"),
+    "partnership-proposal":
+        (partnership_proposal, "Aurixa_Partnership_Proposal"),
 }
 
 __all__ = ["BUILDERS"]

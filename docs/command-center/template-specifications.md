@@ -2587,7 +2587,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You need the financial position → `client-fact-find-form`
 - You need property specifics → `property-brief-form`
 
-**Library metadata** — tier `launch` · priority `P2` · data `low` · images `none` · formality `professional` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `launch` · priority `P2` · data `low` · images `none` · formality `professional` · audience `client-facing` · generator implemented
 
 ---
 
@@ -2685,7 +2685,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You need the client's objectives and risk appetite → `investor-goals-questionnaire`
 - You are presenting search results → `property-comparison-report`
 
-**Library metadata** — tier `launch` · priority `P2` · data `low` · images `none` · formality `operational` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `launch` · priority `P2` · data `low` · images `none` · formality `operational` · audience `client-facing` · generator implemented
 
 ---
 
@@ -2786,7 +2786,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You want informal discovery → `investor-goals-questionnaire`
 - You are assessing transaction risk, not client risk → `risk-assessment`
 
-**Library metadata** — tier `growth` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -2881,7 +2881,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The items are compliance controls → `aml-kyc-assessment`
 - The list is a due-diligence investigation → `property-due-diligence-report`
 
-**Library metadata** — tier `launch` · priority `P2` · data `low` · images `none` · formality `operational` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `launch` · priority `P2` · data `low` · images `none` · formality `operational` · audience `client-facing` · generator implemented
 
 ---
 
@@ -2897,7 +2897,7 @@ Written authority for the organisation to act, request information, or deal with
 | **2. Category** | Client Forms & Onboarding |
 | **3. Intended audience** | Clients, third parties receiving the authority |
 | **4. Primary use case** | Obtain and evidence a specific, scoped authority to act. |
-| **5. Recommended page range** | 1–2 pages (1–3 pages — a single decision, summary or form) |
+| **5. Recommended page range** | 2–3 pages (1–3 pages — a single decision, summary or form) |
 | **6. Design family** | Minimal Professional |
 | **7. Visual style** | Minimal Professional — Understated and fast. Hairlines, no fills, maximum print and grayscale fidelity. Display Arial, body Arial. Hairline tables, plain cards, rule section openers, density 0.92×. |
 | **8. Colour configuration** | Primary navy, accent blue, support cyan. Semantic colours (success / warning / alert / info) are fixed and excluded from white-label override. |
@@ -2978,7 +2978,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You are onboarding the client → `client-onboarding-form`
 - You need consent to collect personal information → `client-fact-find-form`
 
-**Library metadata** — tier `launch` · priority `P3` · data `low` · images `none` · formality `formal` · audience `client-facing` · generator not yet implemented
+**Library metadata** — tier `launch` · priority `P3` · data `low` · images `none` · formality `formal` · audience `client-facing` · generator implemented
 
 ---
 
@@ -3208,7 +3208,7 @@ Periodic review of the organisation's compliance with its own obligations: scope
 | **2. Category** | Compliance & Governance |
 | **3. Intended audience** | Boards, licensees, compliance committees, external reviewers |
 | **4. Primary use case** | Report the outcome of a compliance review and the actions arising. |
-| **5. Recommended page range** | 10–25 pages (11–25 pages — multi-section analysis with appendices) |
+| **5. Recommended page range** | 9–22 pages (11–25 pages — multi-section analysis with appendices) |
 | **6. Design family** | Compliance Structured |
 | **7. Visual style** | Compliance Structured — Auditable by construction. Numbered controls, status columns, evidence trails. Display Calibri, body Calibri, numerals Consolas. Boxed tables, outlined cards, numbered section openers, density 0.9×. |
 | **8. Colour configuration** | Primary navy, accent blue, support cyan. Semantic colours (success / warning / alert / info) are fixed and excluded from white-label override. |
@@ -3295,7 +3295,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The subject is one incident → `risk-assessment`
 - The review is a formal audit → `audit-report`
 
-**Library metadata** — tier `scale` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `internal` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `internal` · generator implemented
 
 ---
 
@@ -3396,7 +3396,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The subject is a client's risk tolerance → `risk-profile-questionnaire`
 - The subject is a periodic programme review → `compliance-review-report`
 
-**Library metadata** — tier `growth` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `internal` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `internal` · generator implemented
 
 ---
 
@@ -3412,7 +3412,7 @@ Formal audit output: objective, scope, criteria, methodology, findings with evid
 | **2. Category** | Compliance & Governance |
 | **3. Intended audience** | Boards, audit committees, external auditors |
 | **4. Primary use case** | Report the result of a formal audit to the standard an audit committee expects. |
-| **5. Recommended page range** | 12–30 pages (11–25 pages — multi-section analysis with appendices) |
+| **5. Recommended page range** | 9–25 pages (11–25 pages — multi-section analysis with appendices) |
 | **6. Design family** | Compliance Structured |
 | **7. Visual style** | Compliance Structured — Auditable by construction. Numbered controls, status columns, evidence trails. Display Calibri, body Calibri, numerals Consolas. Boxed tables, outlined cards, numbered section openers, density 0.9×. |
 | **8. Colour configuration** | Primary navy, accent blue, support cyan. Semantic colours (success / warning / alert / info) are fixed and excluded from white-label override. |
@@ -3500,7 +3500,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The review is internal monitoring → `compliance-review-report`
 - The subject is one customer file → `file-review-summary`
 
-**Library metadata** — tier `scale` · priority `P3` · data `medium` · images `none` · formality `formal` · audience `regulator` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `medium` · images `none` · formality `formal` · audience `regulator` · generator implemented
 
 ---
 
@@ -3597,7 +3597,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You are reviewing the programme, not a file → `compliance-review-report`
 - The review is a formal audit → `audit-report`
 
-**Library metadata** — tier `growth` · priority `P2` · data `low` · images `none` · formality `operational` · audience `internal` · generator not yet implemented
+**Library metadata** — tier `growth` · priority `P2` · data `low` · images `none` · formality `operational` · audience `internal` · generator implemented
 
 ---
 
@@ -3918,7 +3918,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - The audience is management, not the board → `executive-business-report`
 - The paper is a periodic performance update → `quarterly-business-review`
 
-**Library metadata** — tier `scale` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `internal` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P2` · data `medium` · images `none` · formality `formal` · audience `internal` · generator implemented
 
 ---
 
@@ -4019,7 +4019,7 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - A single decision is needed → `executive-business-report`
 - The audience is a board → `board-report`
 
-**Library metadata** — tier `scale` · priority `P2` · data `high` · images `low` · formality `professional` · audience `internal` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P2` · data `high` · images `low` · formality `professional` · audience `internal` · generator implemented
 
 ---
 
@@ -4125,6 +4125,6 @@ Cover page rendered at 3:4, cropped to the top 70% so the title and brand panel 
 - You are proposing services to a client → `client-proposal`
 - You are documenting an agreed partnership in legal terms → _outside this library_
 
-**Library metadata** — tier `scale` · priority `P3` · data `low` · images `medium` · formality `presentation` · audience `partner` · generator not yet implemented
+**Library metadata** — tier `scale` · priority `P3` · data `low` · images `medium` · formality `presentation` · audience `partner` · generator implemented
 
 ---

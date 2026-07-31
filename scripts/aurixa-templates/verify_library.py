@@ -128,7 +128,14 @@ def verify_documents() -> None:
         for section in spec.required_sections:
             if section.title in skip or not section.headed:
                 continue
-            check(section.title.lower() in text.lower(),
+            # Appendix sections are titled "Appendix — evidence" in the brief so
+            # the inventory reads well, but render as an "APPENDIX A" eyebrow
+            # above a plain "Evidence" heading. Compare against the part that is
+            # actually set as the heading.
+            needle = section.title
+            if needle.startswith("Appendix") and "—" in needle:
+                needle = needle.split("—", 1)[1].strip()
+            check(needle.lower() in text.lower(),
                   f"{spec.id}: section '{section.title}' from the brief is not in the document")
 
         check(document.sections[0].different_first_page_header_footer,

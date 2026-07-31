@@ -76,11 +76,11 @@ Column meanings are defined in [`template-library-strategy.md`](./template-libra
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Client Fact-Find Form**<br>`client-fact-find-form` | Collect a complete financial position from a new client. | Clients, with adviser support | Minimal Professional | 4–10 pages | medium | none | L1–L4 | Launch | P1 | ✅ |
 | **Client Onboarding Form**<br>`client-onboarding-form` | Formalise the start of an engagement and capture the consents it depends on. | New clients | Minimal Professional | 1–3 pages | low | none | L1–L4 | Launch | P1 | ✅ |
-| **Investor Goals Questionnaire**<br>`investor-goals-questionnaire` | Capture investment objectives in a structured, comparable way. | Investor clients | Modern Technology | 1–3 pages | low | none | L1–L4 | Launch | P2 | — |
-| **Property Brief Form**<br>`property-brief-form` | Agree and record the search mandate before a search begins. | Buyer's agency clients | Minimal Professional | 1–3 pages | low | none | L1–L4 | Launch | P2 | — |
-| **Risk Profile Questionnaire**<br>`risk-profile-questionnaire` | Establish and evidence a client's risk profile to a reviewable standard. | Clients, compliance reviewers | Compliance Structured | 1–3 pages | medium | none | L1–L4 | Growth | P2 | — |
-| **Document Collection Checklist**<br>`document-collection-checklist` | Chase and track the documents an application or engagement depends on. | Clients and internal support staff | Minimal Professional | 1–3 pages | low | none | L1–L4 | Launch | P2 | — |
-| **Client Authority Form**<br>`client-authority-form` | Obtain and evidence a specific, scoped authority to act. | Clients, third parties receiving the authority | Minimal Professional | 1–3 pages | low | none | L1–L4 | Launch | P3 | — |
+| **Investor Goals Questionnaire**<br>`investor-goals-questionnaire` | Capture investment objectives in a structured, comparable way. | Investor clients | Modern Technology | 1–3 pages | low | none | L1–L4 | Launch | P2 | ✅ |
+| **Property Brief Form**<br>`property-brief-form` | Agree and record the search mandate before a search begins. | Buyer's agency clients | Minimal Professional | 1–3 pages | low | none | L1–L4 | Launch | P2 | ✅ |
+| **Risk Profile Questionnaire**<br>`risk-profile-questionnaire` | Establish and evidence a client's risk profile to a reviewable standard. | Clients, compliance reviewers | Compliance Structured | 1–3 pages | medium | none | L1–L4 | Growth | P2 | ✅ |
+| **Document Collection Checklist**<br>`document-collection-checklist` | Chase and track the documents an application or engagement depends on. | Clients and internal support staff | Minimal Professional | 1–3 pages | low | none | L1–L4 | Launch | P2 | ✅ |
+| **Client Authority Form**<br>`client-authority-form` | Obtain and evidence a specific, scoped authority to act. | Clients, third parties receiving the authority | Minimal Professional | 1–3 pages | low | none | L1–L4 | Launch | P3 | ✅ |
 
 ### Compliance & Governance (6)
 
@@ -88,10 +88,10 @@ Column meanings are defined in [`template-library-strategy.md`](./template-libra
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **AML & KYC Assessment**<br>`aml-kyc-assessment` | Evidence that customer due diligence was performed and a risk-based decision was made and approved. | Compliance officers, auditors, regulators | Compliance Structured | 4–10 pages | medium | none | L1–L4 | Launch | P1 | ✅ |
 | **Client Verification Summary**<br>`client-verification-summary` | Provide a short, shareable record that verification occurred. | Internal staff, third parties requiring evidence of verification | Compliance Structured | 1–3 pages | low | none | L1–L4 | Launch | P1 | ✅ |
-| **Compliance Review Report**<br>`compliance-review-report` | Report the outcome of a compliance review and the actions arising. | Boards, licensees, compliance committees, external reviewers | Compliance Structured | 11–25 pages | medium | none | L1–L4 | Scale | P2 | — |
-| **Risk Assessment**<br>`risk-assessment` | Assess and document a specific risk before a decision is taken. | Compliance, management, risk committees | Compliance Structured | 1–3 pages | medium | none | L1–L4 | Growth | P2 | — |
-| **Audit Report**<br>`audit-report` | Report the result of a formal audit to the standard an audit committee expects. | Boards, audit committees, external auditors | Compliance Structured | 11–25 pages | medium | none | L1–L4 | Scale | P3 | — |
-| **File Review Summary**<br>`file-review-summary` | Record a file quality review and any remediation required. | Compliance staff, team leaders | Minimal Professional | 1–3 pages | low | none | L1–L4 | Growth | P2 | — |
+| **Compliance Review Report**<br>`compliance-review-report` | Report the outcome of a compliance review and the actions arising. | Boards, licensees, compliance committees, external reviewers | Compliance Structured | 11–25 pages | medium | none | L1–L4 | Scale | P2 | ✅ |
+| **Risk Assessment**<br>`risk-assessment` | Assess and document a specific risk before a decision is taken. | Compliance, management, risk committees | Compliance Structured | 1–3 pages | medium | none | L1–L4 | Growth | P2 | ✅ |
+| **Audit Report**<br>`audit-report` | Report the result of a formal audit to the standard an audit committee expects. | Boards, audit committees, external auditors | Compliance Structured | 11–25 pages | medium | none | L1–L4 | Scale | P3 | ✅ |
+| **File Review Summary**<br>`file-review-summary` | Record a file quality review and any remediation required. | Compliance staff, team leaders | Minimal Professional | 1–3 pages | low | none | L1–L4 | Growth | P2 | ✅ |
 
 ### Business & Advisory (5)
 
@@ -99,9 +99,9 @@ Column meanings are defined in [`template-library-strategy.md`](./template-libra
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **Executive Business Report**<br>`executive-business-report` | Present a business position and a recommended course of action to leadership. | Directors, executives, business owners | Executive Corporate | 4–10 pages | high | low | L1–L4 | Scale | P1 | ✅ |
 | **Client Proposal**<br>`client-proposal` | Win an engagement. | Prospective clients | Luxury Presentation | 4–10 pages | low | medium | L1–L4 | Growth | P1 | ✅ |
-| **Board Report**<br>`board-report` | Table a matter for board consideration and record the resolution sought. | Directors and company secretaries | Executive Corporate | 1–3 pages | medium | none | L1–L3 | Scale | P2 | — |
-| **Quarterly Business Review**<br>`quarterly-business-review` | Review a period's performance and agree priorities for the next one. | Leadership, partners, key clients | Modern Technology | 4–10 pages | high | low | L1–L4 | Scale | P2 | — |
-| **Partnership Proposal**<br>`partnership-proposal` | Propose and win a commercial partnership. | Prospective referral, finance and channel partners | Luxury Presentation | 4–10 pages | low | medium | L1–L4 | Scale | P3 | — |
+| **Board Report**<br>`board-report` | Table a matter for board consideration and record the resolution sought. | Directors and company secretaries | Executive Corporate | 1–3 pages | medium | none | L1–L3 | Scale | P2 | ✅ |
+| **Quarterly Business Review**<br>`quarterly-business-review` | Review a period's performance and agree priorities for the next one. | Leadership, partners, key clients | Modern Technology | 4–10 pages | high | low | L1–L4 | Scale | P2 | ✅ |
+| **Partnership Proposal**<br>`partnership-proposal` | Propose and win a commercial partnership. | Prospective referral, finance and channel partners | Luxury Presentation | 4–10 pages | low | medium | L1–L4 | Scale | P3 | ✅ |
 
 ## Curated shelves
 

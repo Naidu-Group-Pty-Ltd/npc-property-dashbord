@@ -373,6 +373,37 @@ def _logo_slot(container, theme: Theme, text: str, width_mm: float, *,
          align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=0)
 
 
+def logo_lockup(container, theme: Theme, *, left_label: str = "",
+                right_label: str = "", connector: str = "+") -> None:
+    """Two logo slots of identical size, side by side with a connector between.
+
+    Used on documents that belong to two organisations at once — partnership
+    proposals, co-branded agreements. The two slots are deliberately the same
+    width: an unequal lockup reads as an unequal partnership, and partners
+    notice. The connector column is narrow and fixed so the slots stay equal
+    whatever the two organisation names turn out to be.
+    """
+    p, ts = theme.palette, theme.type_scale
+    slot = (theme.width - 16.0) / 2.0
+    table = new_table(container, 1, 3, [slot, 16.0, slot])
+    for index, label in ((0, left_label or theme.brand.logo_placeholder),
+                         (2, right_label or theme.brand.partner_logo_placeholder)):
+        cell = clear(table.cell(0, index))
+        cell_margins(cell, 240, 140)
+        cell_borders(cell, top=(8, p.line_strong, "dashed"),
+                     left=(8, p.line_strong, "dashed"),
+                     bottom=(8, p.line_strong, "dashed"),
+                     right=(8, p.line_strong, "dashed"))
+        valign(cell, "center")
+        para(cell, label, font=theme.body, size=ts.micro, bold=True, caps=True,
+             tracking=theme.family.label_tracking + 0.4, colour=p.ink_soft,
+             align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=0)
+    middle = clear(table.cell(0, 1))
+    valign(middle, "center")
+    para(middle, connector, font=theme.body, size=ts.body + 2, bold=True,
+         colour=theme.accent, align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=0)
+
+
 def cover(container, theme: Theme, *, title: str, subtitle: str = "",
           eyebrow_text: str = "", chips: list[str] | None = None,
           prepared_for: bool = True, image_caption: str = "") -> None:
@@ -1595,10 +1626,15 @@ def appendix_opener(container, theme: Theme, letter: str, title: str,
 
 
 def disclaimer_page(container, theme: Theme, *, extra_sections:
-                    list[tuple[str, str]] | None = None) -> None:
+                    list[tuple[str, str]] | None = None,
+                    title: str = "Important information",
+                    kicker: str = "Disclaimer, privacy and terms") -> None:
+    """The standing legal page. ``title`` exists because a few documents call
+    this page something else in their brief — a proposal calls it "Terms" — and
+    giving it a heading of its own is better than putting a lone section opener
+    on the page before."""
     page_break(container)
-    section_opener(container, theme, "", "Important information",
-                   "Disclaimer, privacy and terms")
+    section_opener(container, theme, "", title, kicker)
     gap(container, theme)
     sections = [
         ("Disclaimer", theme.brand.disclaimer),

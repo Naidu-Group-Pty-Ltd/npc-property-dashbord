@@ -1288,7 +1288,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="investor-goals-questionnaire", name="Investor Goals Questionnaire",
-        category="forms", family="modern-technology",
+        category="forms", family="modern-technology", built=True,
         summary="Structured discovery of a client's objectives, time horizon, target returns "
                 "and constraints, in a form that produces comparable answers across clients.",
         audience="Investor clients",
@@ -1330,7 +1330,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="property-brief-form", name="Property Brief Form",
-        category="forms", family="minimal-professional",
+        category="forms", family="minimal-professional", built=True,
         summary="The search mandate: what the client is looking for, where, at what price, "
                 "with what must-haves and deal-breakers.",
         audience="Buyer's agency clients",
@@ -1370,7 +1370,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="risk-profile-questionnaire", name="Risk Profile Questionnaire",
-        category="forms", family="compliance-structured",
+        category="forms", family="compliance-structured", built=True,
         summary="Scored risk-tolerance assessment with a recorded outcome, the client's "
                 "acknowledgement, and any override with its reason.",
         audience="Clients, compliance reviewers",
@@ -1415,7 +1415,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="document-collection-checklist", name="Document Collection Checklist",
-        category="forms", family="minimal-professional",
+        category="forms", family="minimal-professional", built=True,
         summary="What the client must provide, who owns each item, when it is due, and its "
                 "current status.",
         audience="Clients and internal support staff",
@@ -1452,13 +1452,13 @@ CATALOGUE: list[T] = [
 
     T(
         id="client-authority-form", name="Client Authority Form",
-        category="forms", family="minimal-professional",
+        category="forms", family="minimal-professional", built=True,
         summary="Written authority for the organisation to act, request information, or deal "
                 "with a named third party on the client's behalf.",
         audience="Clients, third parties receiving the authority",
         audience_mode="client-facing",
         use_case="Obtain and evidence a specific, scoped authority to act.",
-        length="brief", pages="1–2 pages",
+        length="brief", pages="2–3 pages",
         data_intensity="low", image_intensity="none", formality="formal",
         tier="launch", priority="P3",
         report_types=("Authority", "Consent to act", "Third-party authority"),
@@ -1612,13 +1612,13 @@ CATALOGUE: list[T] = [
 
     T(
         id="compliance-review-report", name="Compliance Review Report",
-        category="compliance", family="compliance-structured",
+        category="compliance", family="compliance-structured", built=True,
         summary="Periodic review of the organisation's compliance with its own obligations: "
                 "scope, testing, findings, ratings and a remediation plan.",
         audience="Boards, licensees, compliance committees, external reviewers",
         audience_mode="internal",
         use_case="Report the outcome of a compliance review and the actions arising.",
-        length="extended", pages="10–25 pages",
+        length="extended", pages="9–22 pages",
         data_intensity="medium", image_intensity="none", formality="formal",
         tier="scale", priority="P2",
         report_types=("Compliance review", "Monitoring report", "Assurance review"),
@@ -1661,7 +1661,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="risk-assessment", name="Risk Assessment",
-        category="compliance", family="compliance-structured",
+        category="compliance", family="compliance-structured", built=True,
         summary="Structured assessment of a specific risk, transaction or arrangement: "
                 "inherent risk, controls, residual risk and the decision.",
         audience="Compliance, management, risk committees",
@@ -1708,14 +1708,14 @@ CATALOGUE: list[T] = [
 
     T(
         id="audit-report", name="Audit Report",
-        category="compliance", family="compliance-structured",
+        category="compliance", family="compliance-structured", built=True,
         summary="Formal audit output: objective, scope, criteria, methodology, findings with "
                 "evidence, opinion and management response.",
         audience="Boards, audit committees, external auditors",
         audience_mode="regulator",
         use_case="Report the result of a formal audit to the standard an audit committee "
                  "expects.",
-        length="extended", pages="12–30 pages",
+        length="extended", pages="9–25 pages",
         data_intensity="medium", image_intensity="none", formality="formal",
         tier="scale", priority="P3",
         report_types=("Audit", "Internal audit", "Assurance"),
@@ -1757,7 +1757,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="file-review-summary", name="File Review Summary",
-        category="compliance", family="minimal-professional",
+        category="compliance", family="minimal-professional", built=True,
         summary="Quality-assurance review of a single client file against a standard "
                 "checklist, with a pass/remediate outcome.",
         audience="Compliance staff, team leaders",
@@ -1911,7 +1911,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="board-report", name="Board Report",
-        category="business", family="executive-corporate",
+        category="business", family="executive-corporate", built=True,
         summary="A paper prepared for a board meeting: purpose, background, discussion, "
                 "recommendation and the resolution sought.",
         audience="Directors and company secretaries",
@@ -1957,7 +1957,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="quarterly-business-review", name="Quarterly Business Review",
-        category="business", family="modern-technology",
+        category="business", family="modern-technology", built=True,
         summary="Periodic performance review: results against targets, pipeline, client "
                 "outcomes, issues and the plan for the coming period.",
         audience="Leadership, partners, key clients",
@@ -2000,7 +2000,7 @@ CATALOGUE: list[T] = [
 
     T(
         id="partnership-proposal", name="Partnership Proposal",
-        category="business", family="luxury-presentation",
+        category="business", family="luxury-presentation", built=True,
         summary="A proposal to another business: the opportunity, the proposed structure, "
                 "the commercial terms, and the activation plan.",
         audience="Prospective referral, finance and channel partners",
