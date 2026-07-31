@@ -8,4 +8,14 @@ const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiO
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  // Command Centre identity is managed by the custom HttpOnly-cookie auth
+  // flow. Prevent GoTrue from creating a competing persisted session client
+  // and repeatedly calling /auth/v1/user with non-GoTrue custom tokens.
+  auth: {
+    persistSession: false,
+    autoRefreshToken: false,
+    detectSessionInUrl: false,
+    storageKey: 'npc-native-auth-client',
+  },
+});
