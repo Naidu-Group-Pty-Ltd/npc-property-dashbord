@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { useNotifications } from '@/contexts/NotificationsContext';
+import { useNotificationsOptional } from '@/contexts/NotificationsContext';
 
 /**
  * Realtime listener for appointment-related activity logs.
@@ -11,10 +11,12 @@ import { useNotifications } from '@/contexts/NotificationsContext';
  * This hook catches ones that come through webhooks or external systems by watching activity_logs.
  */
 export function useAppointmentNotifications() {
-  const { addNotification } = useNotifications();
+  const notifications = useNotificationsOptional();
+  const addNotification = notifications?.addNotification;
   const processedIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!addNotification) return;
     console.log('[AppointmentNotifications] Setting up realtime subscription');
 
     // Listen to the ghl_appointment_events table if it exists, 
@@ -39,7 +41,7 @@ export function useAppointmentNotifications() {
 
           switch (log.action_type) {
             case 'appointment_created':
-              await addNotification({
+              await addNotification?.({
                 type: 'appointment_created',
                 title: 'New Appointment',
                 message: `"${entityName}" has been scheduled`,
@@ -47,7 +49,7 @@ export function useAppointmentNotifications() {
               });
               break;
             case 'appointment_rescheduled':
-              await addNotification({
+              await addNotification?.({
                 type: 'appointment_rescheduled',
                 title: 'Appointment Rescheduled',
                 message: `"${entityName}" has been rescheduled`,
@@ -55,7 +57,7 @@ export function useAppointmentNotifications() {
               });
               break;
             case 'appointment_deleted':
-              await addNotification({
+              await addNotification?.({
                 type: 'appointment_cancelled',
                 title: 'Appointment Cancelled',
                 message: `"${entityName}" has been cancelled`,
