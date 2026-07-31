@@ -88,15 +88,52 @@ itself; the request body contributes only a name and an optional description.
 There is no code path by which a library caller can produce an active, default,
 global or foreign-owned template.
 
-> **Pre-existing finding, deliberately not fixed here.** The insert gap above
-> exists on `main` and is reachable by anyone with `templates:edit` today,
-> independently of this feature — the Builder's own client happens to send safe
-> values. Closing it means adding validation to `manage-templates`' insert
-> branch, which modifies the live Builder write path. That is a separate change
-> needing its own approval and its own regression run. It is recorded here
-> rather than silently worked around: this feature does not widen the gap, and
-> routing instantiation server-side means it does not depend on it either.
+> **Closed, with approval.** The gap above was reported rather than silently
+> worked around, and the fix was held until it was explicitly approved —
+> `manage-templates` is the live Builder write path and the brief protected it
+> absolutely. It is now closed; see §2a.
 
+---
+
+### 2a. The insert gate
+
+`supabase/functions/_shared/reportTemplateInsertGuard.pure.ts` applies four
+rules to `report_templates` inserts. They mirror the update path, so insert and
+update can no longer diverge.
+
+| # | Rule | Status |
+| --- | --- | --- |
+| 1 | Creating a row already `is_active` or `is_default` requires superadmin **and** `approval_status='approved'` **and** a report type **and** a production adapter **and** a renderer-safe schema | 403 / 422 |
+| 2 | A non-superadmin cannot create a row that is already `approved` | 403 |
+| 3 | A non-superadmin cannot name another user as `owner_user_id` | 403 |
+| 4 | A non-superadmin cannot create an `agency`-scoped row | 403 |
+
+Rule 1 is the one with the production blast radius, and it is reported first
+when several rules are broken, so the caller is told about the important one.
+
+**The diff to the broker is 32 insertions and zero deletions.** The update,
+delete and read-scoping paths are byte-identical; that is asserted, not assumed.
+
+**Why it cannot break the Builder.** Only two call sites insert into
+`report_templates` through this broker, and both are unaffected by construction:
+
+- `useReportTemplates.ts` "New template" sends `is_active: false`,
+  `is_default: false`, and no `scope`, `owner_user_id` or `approval_status`.
+- `TemplateBranchingDialog.tsx` sends `is_active: false`, `is_default: false`,
+  `approval_status: 'draft'`, and inherits `scope`/`owner_user_id` from a row
+  the caller could already read — global (owner null) or their own.
+
+`reportTemplateInsertGuard.spec.ts` **replays both payload objects verbatim**
+and asserts the gate returns null, including the superadmin, service-role and
+own-user-scope variants. If a future change to either flow trips the gate, that
+suite fails before a user does.
+
+Rejection is preferred over silent coercion throughout. Quietly rewriting a
+caller's payload would hide the intent from whoever has to debug it later.
+
+---
+
+## 3. What shipped
 ---
 
 ## 3. What shipped
@@ -216,14 +253,16 @@ are measured results, not simulations.
 
 | Check | Result |
 | --- | --- |
-| `npx vitest run src/lib/templateLibrary` | **230 passed**, 5 files |
+| `npx vitest run src/lib/templateLibrary` | **265 passed**, 7 files |
 | `npx vitest run src/lib/reportTemplate` (2,744 tests) | **18 failures — byte-identical to `origin/main`.** Compared by test name against a clean worktree: 0 new, 0 fixed. |
 | `npm run lint` | **43 errors / 2,077 warnings — identical to `origin/main`** with these changes stashed and applied. Zero new. |
 | `npm run build` | Succeeds. Seed templates confirmed absent from `dist/`. |
 | `npm run audit:style` | Byte-identical to `main` (846 / 341 / 97 / 25). |
 | `tsc --noEmit -p tsconfig.app.json` | Clean |
 | Seed catalogue generator | 12 templates validated against the live Zod schema and the production allow-list |
+| Edge-function contract tests | 10 failures / 121 passed — identical to `origin/main` |
 | Visual render | Three templates rendered through the production HTML renderer and screenshotted in Chromium |
+| Edge-function syntax | All four functions parse clean (Deno is unavailable here, so this is a TypeScript parse check, not a typecheck) |
 
 The decision logic lives in `_shared/templateLibraryCore.pure.ts` — a Deno-free
 module the frontend suite imports directly, following the existing
@@ -289,6 +328,7 @@ To run against a deployed environment before enabling for users.
 | --- | --- |
 | **Public preview bucket** | Columns exist; the bucket and the publish-time render job do not. SVG schematics cover the browse and preview paths today. |
 | **More catalogue content** | Twelve templates ship, covering every category. Reaching 30–40 is content work: author in the Builder, then promote and publish through the admin panel. No platform change is needed. |
+| **Live-database E2E** | The browse → preview → copy → Builder journey is covered by unit tests over the real logic and a manual checklist (§5). An E2E run needs a seeded database, which this environment does not have. |
 | **Premium tier enforcement** | `access_tier` is stored and displayed but not enforced. Enforcing it means mapping tiers onto `planEnablesSubModule`, which needs the commercial model settled first. |
 | **Update notifications** | Lineage records the exact version copied, so "a newer version exists" is computable. Surfacing it in the Builder would mean modifying the Builder. |
 | **`manage-templates` insert validation** | Pre-existing gap documented in §2. Needs its own approval and regression run. |
