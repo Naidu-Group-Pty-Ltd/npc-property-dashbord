@@ -138,39 +138,64 @@ Deno.serve(async (req) => {
     if (operation === 'upsert_development') {
       const developmentId = cleanText(body.development_id, 64);
       const payload = buildDevelopmentPayload(body);
+      const status = 'status' in body
+        ? cleanEnum(body.status, ['planning', 'active', 'on_hold', 'completed', 'cancelled'] as const)
+        : null;
+      if ('status' in body && !status) return json({ error: 'Invalid development status' }, 400, cors);
 
       if (developmentId) {
         const expectedVersion = Number(body.expected_version);
         if (!Number.isInteger(expectedVersion) || expectedVersion < 1) {
           return json({ error: 'expected_version is required' }, 400, cors);
         }
-        if ('status' in body) {
-          const status = cleanEnum(body.status, ['planning', 'active', 'on_hold', 'completed', 'cancelled'] as const);
-          if (!status) return json({ error: 'Invalid development status' }, 400, cors);
-          (payload as any).status = status;
+        // Guarded command: the write and its trusted audit row share one
+        // transaction, so a failed audit rolls the change back.
+        const { data, error } = await supabase.rpc('builder_admin_upsert_development', {
+          _actor_user_id: adminUserId,
+          _actor_type: actorType,
+          _development_id: developmentId,
+          _developer_organisation_id: null,
+          _payload: payload,
+          _status: status,
+          _expected_version: expectedVersion,
+          _reason: cleanText(body.reason, 500),
+        });
+        if (error) {
+          const message = String(error.message || '');
+          if (message.includes('BUILDER_STALE_WRITE')) {
+            return json({ error: 'This development was changed by another user', code: 'STALE_VERSION' }, 409, cors);
+          }
+          if (message.includes('BUILDER_DEVELOPMENT_NOT_FOUND')) {
+            return json({ error: 'Development not found' }, 404, cors);
+          }
+          if (message.includes('BUILDER_INVALID_DEVELOPMENT_STATUS')) {
+            return json({ error: 'Invalid development status' }, 400, cors);
+          }
+          throw error;
         }
-        const { data, error } = await supabase.from('builder_developments')
-          .update({ ...payload, row_version: expectedVersion + 1, updated_at: new Date().toISOString() })
-          .eq('id', developmentId).eq('row_version', expectedVersion)
-          .select(BUILDER_DEVELOPMENT_SELECT).maybeSingle();
-        if (error) throw error;
-        if (!data) return json({ error: 'This development was changed by another user', code: 'STALE_VERSION' }, 409, cors);
         return json({ success: true, record: data }, 200, cors);
       }
 
       const organisationId = cleanText(body.developer_organisation_id, 64);
       if (!organisationId) return json({ error: 'developer_organisation_id is required' }, 400, cors);
       if (!payload.name) return json({ error: 'name is required' }, 400, cors);
-      // Re-read the parent rather than trusting the id.
-      const { data: organisation } = await supabase.from('builder_organisations')
-        .select('id, status').eq('id', organisationId).maybeSingle();
-      if (!organisation) return json({ error: 'Organisation not found' }, 404, cors);
-      if (organisation.status === 'closed') return json({ error: 'Organisation is closed' }, 409, cors);
 
-      const { data, error } = await supabase.from('builder_developments')
-        .insert({ ...payload, developer_organisation_id: organisationId })
-        .select(BUILDER_DEVELOPMENT_SELECT).maybeSingle();
-      if (error) throw error;
+      const { data, error } = await supabase.rpc('builder_admin_upsert_development', {
+        _actor_user_id: adminUserId,
+        _actor_type: actorType,
+        _development_id: null,
+        _developer_organisation_id: organisationId,
+        _payload: payload,
+        _status: status,
+        _expected_version: null,
+        _reason: cleanText(body.reason, 500),
+      });
+      if (error) {
+        const message = String(error.message || '');
+        if (message.includes('BUILDER_ORG_NOT_FOUND')) return json({ error: 'Organisation not found' }, 404, cors);
+        if (message.includes('BUILDER_ORG_CLOSED')) return json({ error: 'Organisation is closed' }, 409, cors);
+        throw error;
+      }
       return json({ success: true, record: data }, 200, cors);
     }
 
@@ -247,7 +272,8 @@ Deno.serve(async (req) => {
         return json({ error: 'The developer and builder organisations must differ' }, 400, cors);
       }
 
-      // Re-read both parents. Neither id is trusted from the browser.
+      // Re-read both parents. Neither id is trusted from the browser; the
+      // guarded command re-checks organisation status again as a backstop.
       for (const [label, id] of [['developer', developerOrganisationId], ['builder', builderOrganisationId]] as const) {
         if (!id) continue;
         const { data: organisation } = await supabase.from('builder_organisations')
@@ -259,20 +285,30 @@ Deno.serve(async (req) => {
       }
 
       const payload = buildProjectPayload(body, { isCreate: true, audience: 'command_centre' });
-      const projectType = cleanEnum(body.project_type, BUILDER_PROJECT_TYPES, 'house_and_land');
-      const developmentId = cleanText(body.development_id, 64);
+      payload.project_type = cleanEnum(body.project_type, BUILDER_PROJECT_TYPES, 'house_and_land');
 
-      const { data, error } = await supabase.from('builder_projects').insert({
-        ...payload,
-        project_type: projectType,
-        development_id: developmentId,
-        developer_organisation_id: developerOrganisationId,
-        builder_organisation_id: builderOrganisationId,
-      }).select(BUILDER_PROJECT_COMMAND_CENTRE_SELECT).maybeSingle();
+      // Guarded command: creation and its trusted audit row share one
+      // transaction, so a failed audit rolls the creation back.
+      const { data, error } = await supabase.rpc('builder_upsert_project', {
+        _actor_user_id: adminUserId,
+        _actor_type: actorType,
+        _actor_builder_user_id: null,
+        _project_id: null,
+        _payload: payload,
+        _developer_organisation_id: developerOrganisationId,
+        _builder_organisation_id: builderOrganisationId,
+        _development_id: cleanText(body.development_id, 64),
+        _expected_version: null,
+        _reason: cleanText(body.reason, 500),
+      });
       if (error) {
         const message = String(error.message || '');
         if (message.includes('BUILDER_PROJECT_DEVELOPMENT_ORG_MISMATCH')) {
           return json({ error: 'The development belongs to a different developer organisation' }, 409, cors);
+        }
+        if (message.includes('BUILDER_ORG_CLOSED')) return json({ error: 'An organisation is closed' }, 409, cors);
+        if (message.includes('BUILDER_ORGANISATION_REQUIRED')) {
+          return json({ error: 'A developer or builder organisation is required' }, 400, cors);
         }
         throw error;
       }
@@ -289,12 +325,28 @@ Deno.serve(async (req) => {
       const payload = buildProjectPayload(body, { isCreate: false, audience: 'command_centre' });
       if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400, cors);
 
-      const { data, error } = await supabase.from('builder_projects')
-        .update({ ...payload, row_version: expectedVersion + 1, updated_at: new Date().toISOString() })
-        .eq('id', projectId).eq('row_version', expectedVersion)
-        .select(BUILDER_PROJECT_COMMAND_CENTRE_SELECT).maybeSingle();
-      if (error) throw error;
-      if (!data) return json({ error: 'This project was changed by another user', code: 'STALE_VERSION' }, 409, cors);
+      // Guarded command: the update and its trusted audit row share one
+      // transaction, so a failed audit rolls the update back.
+      const { data, error } = await supabase.rpc('builder_upsert_project', {
+        _actor_user_id: adminUserId,
+        _actor_type: actorType,
+        _actor_builder_user_id: null,
+        _project_id: projectId,
+        _payload: payload,
+        _developer_organisation_id: null,
+        _builder_organisation_id: null,
+        _development_id: null,
+        _expected_version: expectedVersion,
+        _reason: cleanText(body.reason, 500),
+      });
+      if (error) {
+        const message = String(error.message || '');
+        if (message.includes('BUILDER_STALE_WRITE')) {
+          return json({ error: 'This project was changed by another user', code: 'STALE_VERSION' }, 409, cors);
+        }
+        if (message.includes('BUILDER_PROJECT_NOT_FOUND')) return json({ error: 'Project not found' }, 404, cors);
+        throw error;
+      }
       return json({ success: true, project: data }, 200, cors);
     }
 
@@ -405,8 +457,25 @@ Deno.serve(async (req) => {
       }
 
       const { data: existing } = await supabase.from('builder_project_access')
-        .select('id, row_version').eq('builder_user_id', builderUserId)
+        .select('id').eq('builder_user_id', builderUserId)
         .eq('project_id', projectId).maybeSingle();
+
+      // Updating an existing grant REQUIRES the caller's expected_version.
+      // Defaulting to the current row_version would make optimistic concurrency
+      // opt-in: a caller who simply omits the field would always win, silently
+      // overwriting a concurrent change to an access-control record. A missing
+      // version is a 400; a stale one is a 409 from the guarded command below.
+      let expectedVersion: number | null = null;
+      if (existing) {
+        const supplied = Number(body.expected_version);
+        if (!Number.isInteger(supplied) || supplied < 1) {
+          return json({
+            error: 'expected_version is required when updating an existing project access grant',
+            code: 'EXPECTED_VERSION_REQUIRED',
+          }, 400, cors);
+        }
+        expectedVersion = supplied;
+      }
 
       // The guarded command re-verifies the organisation side, the membership
       // and the window, and writes its audit row in the same transaction.
@@ -419,7 +488,7 @@ Deno.serve(async (req) => {
         _access_role: accessRole,
         _permissions: normalizeTriStateMatrix(body.permissions),
         _valid_until: validUntil ? validUntil.toISOString() : null,
-        _expected_version: existing ? Number(body.expected_version ?? existing.row_version) : null,
+        _expected_version: expectedVersion,
         _reason: cleanText(body.reason, 500),
       });
       if (error) {

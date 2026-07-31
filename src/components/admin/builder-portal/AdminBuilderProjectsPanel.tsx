@@ -151,12 +151,17 @@ export function AdminBuilderProjectsPanel({ canEdit }: { canEdit: boolean }) {
     if (!accessProject || !grantUserId.trim()) return;
     setBusy(true);
     try {
+      // An existing grant for this user and project must carry its version:
+      // the server rejects an update that omits it.
+      const existing = accessGrants.find(
+        (grant) => grant.builder_user_id === grantUserId.trim() && !grant.revoked_at);
       await call('upsert_project_access', {
         builder_user_id: grantUserId.trim(),
         project_id: accessProject.id,
         organisation_side: grantSide,
         access_role: grantRole,
         valid_until: grantValidUntil || null,
+        ...(existing ? { expected_version: existing.row_version } : {}),
         reason: 'Granted from Command Centre',
       });
       toast.success('Project access granted');

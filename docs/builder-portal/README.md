@@ -67,10 +67,10 @@ Against a local PostgreSQL cluster (see `scripts/builder-portal/local-db/`):
 npm run builder:db:reset           # clean full-corpus migration replay
 npm run builder:db:verify          # 135 behavioural assertions for Phase 1
 npm run builder:db:verify:phase2   # 73 behavioural assertions for Phase 2
-npm run builder:db:verify:phase3   # 76 behavioural assertions for Phase 3
+npm run builder:db:verify:phase3   # 117 behavioural assertions for Phase 3
 npm run builder:types:check        # Supabase types are current
 npm run typecheck:builder-edge     # Deno type check for all 11 Builder functions
-npm run test:builder-portal        # 270 static contract assertions
+npm run test:builder-portal        # 281 static contract assertions
 npm run security:builder-portal    # Builder Portal security check
 npm run test:e2e:builder-portal    # portal shell in real Chromium (needs a build)
 ```

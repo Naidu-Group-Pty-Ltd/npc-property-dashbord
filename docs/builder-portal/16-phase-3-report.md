@@ -43,6 +43,11 @@ The Solicitor Matters module is the template; the file-for-file map is
 | `builder_transition_project()` | function | `transition_legal_matter()` |
 | `builder_admin_upsert_project_access()` | guarded command | `upsert_matter_access` operation |
 | `builder_admin_revoke_project_access()` | guarded command | `revoke_matter_access` operation |
+| `builder_admin_upsert_development()` | guarded command | *(correction — was a direct write)* |
+| `builder_upsert_project()` | guarded command | `create_matter` / `update_matter` operations |
+| `builder_upsert_project_party()` | guarded command | `upsert_party` operation |
+| `builder_delete_project_party()` | guarded command | `delete_party` operation |
+| `builder_guard_permission_scope()` | trigger fn | *(widened from Phase 1 to enable the `project` scope)* |
 
 Also: role defaults seeded for the `projects` permission key, and the Phase 1
 activity-log `entity_type` CHECK widened to accept project entities. Both are
@@ -80,15 +85,17 @@ A request resolves in this order:
 1. **A live grant must exist.** `builder_project_access`, unrevoked,
    `valid_from <= now()`, `valid_until` null or in the future. No grant → denied
    before anything else is consulted.
-2. **The organisation baseline** from Phase 1's `builder_resolve_permission`,
-   which already denies forbidden keys, requires an active membership and clamps
-   `read_only`. Losing the membership therefore closes the project immediately.
-3. **The project-scoped membership override** from the Phase 1
+2. **An active membership of the granting organisation must exist** — a HARD
+   gate, resolved before any override can run. A missing, inactive or revoked
+   membership returns false here, so no override can restore access.
+3. **The organisation baseline** from Phase 1's `builder_resolve_permission`,
+   which denies forbidden keys, re-checks the membership and clamps `read_only`.
+4. **The project-scoped membership override** from the Phase 1
    `scope_type = 'project'` seam.
-4. **The grant's own tri-state override** — explicit deny wins, explicit allow
+5. **The grant's own tri-state override** — explicit deny wins, explicit allow
    can raise a false baseline, `inherit` falls through.
-5. **Forbidden keys re-asserted**, because steps 3 and 4 can raise the baseline.
-6. **`read_only` on the grant clamps writes**, last.
+6. **Forbidden keys re-asserted**, because steps 4 and 5 can raise the baseline.
+7. **`read_only` on the grant clamps writes**, last.
 
 Structural rules enforced by trigger, not convention:
 
@@ -130,6 +137,65 @@ Recorded because a report listing only successes is not evidence.
 
 ---
 
+## 3b. Post-review corrections
+
+Three confirmed issues were fixed after the initial Phase 3 commit. Fixing them
+surfaced two further defects in the committed code.
+
+### 1. Active membership is now a hard project-access requirement
+
+`builder_resolve_project_permission` relied on `builder_resolve_permission`
+returning false for an inactive membership. That is only a **baseline**: the
+project-scoped override and the grant-level override could each set it back to
+true with an explicit `allow`, so a revoked member could still reach a project
+through a stored override.
+
+The membership is now resolved with `builder_active_membership` **before any
+override runs**, and a missing membership returns false immediately. No override
+of any kind can restore access. Restoring the membership restores access.
+
+Fixing this exposed a second defect: Phase 1's `builder_guard_permission_scope`
+rejected every non-organisation scope with *"Project-level scopes are enabled
+when their tables are created"*. Phase 3 creates them but never widened the
+guard, so the project-scoped override the resolver reads **could never have been
+stored**. The guard now permits `project` — and only `project`, since stage and
+unit tables still do not exist — and requires the scope to reference a real
+project.
+
+### 2. Every Phase 3 mutation audits inside its own transaction
+
+Development, project and party mutations previously wrote directly from the Edge
+Function and called `logBuilderProjectActivity` afterwards, leaving the state
+change committed when the audit failed — the Solicitor defect recorded as
+NOCOPY-04.
+
+Four new guarded commands now own those writes:
+`builder_admin_upsert_development`, `builder_upsert_project`,
+`builder_upsert_project_party`, `builder_delete_project_party`. Each performs the
+write and the trusted audit row in one transaction, so a failed audit rolls the
+mutation back. Both Edge Functions call them; no Phase 3 mutation writes state
+directly any more. `logBuilderProjectActivity` remains only for the
+observational `builder_project_viewed` event on a read.
+
+Fixing this exposed a third defect: `builder_project_parties` had no
+`row_version`, but the shared Phase 1 `builder_touch_row` trigger sets it on
+every UPDATE. **Every party edit failed** with *"record new has no field
+row_version"*. No test had covered a party edit. The column was added.
+
+### 3. `expected_version` is required for existing access-grant updates
+
+`upsert_project_access` substituted the stored `row_version` when the caller
+omitted `expected_version`, which made optimistic concurrency opt-in: a caller
+who simply left the field out always won, silently overwriting a concurrent
+change to an access-control record.
+
+An update to an existing grant now requires the caller's value — missing is
+**400** with `EXPECTED_VERSION_REQUIRED`, stale is **409**, and only the matching
+current version updates the grant. Creating a new grant still needs no version.
+The admin panel sends the version when it is updating an existing grant.
+
+---
+
 ## 4. Validation
 
 Every result below was produced by actually running the command.
@@ -138,8 +204,8 @@ Every result below was produced by actually running the command.
 |---|---|---|
 | Phase 1 database verification | `npm run builder:db:verify` | **135/135 passed** |
 | Phase 2 database verification | `npm run builder:db:verify:phase2` | **73/73 passed** |
-| Phase 3 database verification | `npm run builder:db:verify:phase3` | **76/76 passed** |
-| Builder Portal tests | `npm run test:builder-portal` | **270/270 passed** (47 new) |
+| Phase 3 database verification | `npm run builder:db:verify:phase3` | **117/117 passed** |
+| Builder Portal tests | `npm run test:builder-portal` | **281/281 passed** (58 Phase 3) |
 | Builder security check | `npm run security:builder-portal` | **Passed** — 11 Edge Functions, 19 browser sources |
 | Solicitor security regression | `npm run security:solicitor-portal` | **Passed** |
 | Builder Edge Function type-check | `npm run typecheck:builder-edge` | **Passed** — 11 functions |
@@ -186,6 +252,16 @@ Re-measured with every Phase 3 change stashed, producing the same result:
 | Internal project administration requires `builder_portal_admin` | Contract tests "the admin function requires internal auth, the module permission and CSRF", "mutating admin operations require can_edit" |
 | Audit failure rolls back project access changes | "a grant fails when the trusted audit write fails" + "the grant was NOT created"; same for revocation and transition |
 | Existing Solicitor Portal behaviour remains unchanged | `verify-phase-3.mjs` §9; contract test "the Solicitor Portal was not modified by Phase 3"; `security:solicitor-portal` passes; no Solicitor file in the diff |
+| Membership revocation cannot be overridden by a grant-level allow | `verify-phase-3.mjs` §7b — "a grant-level allow CANNOT restore access after membership revocation" |
+| …nor by a project-scoped allow | "a project-scoped allow CANNOT restore access after membership revocation" |
+| …nor by both together | "BOTH overrides together CANNOT restore access after membership revocation" |
+| Audit failure rolls back development creation and editing | §7c — "development CREATION/EDITING fails when the trusted audit write fails" + the unchanged-state assertions |
+| Audit failure rolls back project creation and editing | §7c — "project CREATION/EDITING fails when the trusted audit write fails" |
+| Audit failure rolls back party creation, editing and deletion | §7c — "party CREATION/EDITING/DELETION fails when the trusted audit write fails" |
+| A missing expected_version on an existing grant is refused | §7d — "a NULL expected_version on an existing grant is refused"; contract test "an existing access grant cannot be updated without expected_version" |
+| A stale expected_version is refused | §7d — "a stale expected_version on an existing grant is refused" |
+| Only the matching version updates the grant | §7d — "the matching current version updates the grant" |
+| Creating a grant needs no expected_version | §7d — "creating a NEW grant needs no expected_version" |
 | No later-phase Builder features were introduced | Migration post-assertion; "no later-phase Builder table was created"; "the Builder function family stops at projects"; "Phase 3 adds no transaction-case link" |
 
 ---

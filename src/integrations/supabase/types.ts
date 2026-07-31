@@ -3469,6 +3469,7 @@ export type Database = {
           project_id: string
           reference: string | null
           role: string
+          row_version: number
           updated_at: string
         }
         Insert: {
@@ -3484,6 +3485,7 @@ export type Database = {
           project_id: string
           reference?: string | null
           role?: string
+          row_version?: number
           updated_at?: string
         }
         Update: {
@@ -3499,6 +3501,7 @@ export type Database = {
           project_id?: string
           reference?: string | null
           role?: string
+          row_version?: number
           updated_at?: string
         }
         Relationships: [

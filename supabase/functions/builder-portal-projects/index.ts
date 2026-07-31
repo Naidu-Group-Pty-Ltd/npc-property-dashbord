@@ -253,30 +253,40 @@ Deno.serve(async (req) => {
       delete (payload as any).project_reference;
       if (!Object.keys(payload).length) return json({ error: 'Nothing to update' }, 400);
 
-      const { data: updated, error } = await supabase
-        .from('builder_projects')
-        .update({ ...payload, row_version: expectedVersion + 1, updated_at: new Date().toISOString() })
-        .eq('id', project.id)
-        .eq('row_version', expectedVersion)
-        .select(BUILDER_PROJECT_PORTAL_DETAIL_SELECT)
-        .maybeSingle();
-      if (error) throw error;
-      if (!updated) {
-        await supabase.rpc('record_portal_operational_event', {
-          _event_name: 'stale_write_conflict', _severity: 'warning',
-          _correlation_id: crypto.randomUUID(), _request_id: req.headers.get('x-request-id'),
-          _actor_type: 'builder_user', _actor_id: me.id, _portal: 'builder',
-          _case_id: null, _matter_id: null, _firm_id: null, _duration_ms: null, _success: false,
-          _metadata: { command: 'update_project', expected_version: expectedVersion },
-        });
-        return json({ error: 'This project was changed by another user', code: 'STALE_VERSION' }, 409);
+      // The guarded command writes the row and its trusted audit record in ONE
+      // transaction, so a failed audit rolls the update back (Phase 0 NOCOPY-04).
+      const { error } = await supabase.rpc('builder_upsert_project', {
+        _actor_user_id: null,
+        _actor_type: 'builder_user',
+        _actor_builder_user_id: me.id,
+        _project_id: project.id,
+        _payload: payload,
+        _developer_organisation_id: null,
+        _builder_organisation_id: null,
+        _development_id: null,
+        _expected_version: expectedVersion,
+        _reason: cleanText(body.reason, 500),
+      });
+      if (error) {
+        const message = String(error.message || '');
+        if (message.includes('BUILDER_STALE_WRITE')) {
+          await supabase.rpc('record_portal_operational_event', {
+            _event_name: 'stale_write_conflict', _severity: 'warning',
+            _correlation_id: crypto.randomUUID(), _request_id: req.headers.get('x-request-id'),
+            _actor_type: 'builder_user', _actor_id: me.id, _portal: 'builder',
+            _case_id: null, _matter_id: null, _firm_id: null, _duration_ms: null, _success: false,
+            _metadata: { command: 'update_project', expected_version: expectedVersion },
+          });
+          return json({ error: 'This project was changed by another user', code: 'STALE_VERSION' }, 409);
+        }
+        if (message.includes('BUILDER_PROJECT_NOT_FOUND')) return json({ error: 'Project not found' }, 404);
+        throw error;
       }
 
-      await logBuilderProjectActivity(supabase, req, {
-        builderUserId: me.id, organisationId: activeOrganisationId,
-        action: 'builder_project_updated', entityType: 'project', entityId: project.id,
-        metadata: { fields: Object.keys(payload) },
-      });
+      // Re-read through the portal contract so the response never carries a
+      // column the portal audience may not see.
+      const { data: updated } = await supabase.from('builder_projects')
+        .select(BUILDER_PROJECT_PORTAL_DETAIL_SELECT).eq('id', project.id).maybeSingle();
 
       return json({ success: true, project: updated });
     }
@@ -339,29 +349,27 @@ Deno.serve(async (req) => {
       const payload = buildPartyPayload(body);
       if (!payload.name) return json({ error: 'Party name is required' }, 400);
 
-      let record: any;
-      if (body.party_id) {
-        const { data, error } = await supabase.from('builder_project_parties')
-          .update({ ...payload, updated_at: new Date().toISOString() })
-          .eq('id', body.party_id).eq('project_id', res.project.id)
-          .select(BUILDER_PARTY_SELECT).maybeSingle();
-        if (error) throw error;
-        if (!data) return json({ error: 'Party not found' }, 404);
-        record = data;
-      } else {
-        const { data, error } = await supabase.from('builder_project_parties')
-          .insert({ ...payload, project_id: res.project.id })
-          .select(BUILDER_PARTY_SELECT).maybeSingle();
-        if (error) throw error;
-        record = data;
-      }
-
-      await logBuilderProjectActivity(supabase, req, {
-        builderUserId: me.id, organisationId: activeOrganisationId,
-        action: body.party_id ? 'builder_project_party_updated' : 'builder_project_party_added',
-        entityType: 'project_party', entityId: record?.id ?? null,
-        metadata: { project_id: res.project.id },
+      // Guarded command: the party write and its trusted audit row share one
+      // transaction. The party id is scoped to this project inside the command,
+      // so an id belonging to another project matches no row.
+      const { data: record, error } = await supabase.rpc('builder_upsert_project_party', {
+        _actor_user_id: null,
+        _actor_type: 'builder_user',
+        _actor_builder_user_id: me.id,
+        _project_id: res.project.id,
+        _party_id: typeof body.party_id === 'string' ? body.party_id : null,
+        _payload: payload,
+        _reason: cleanText(body.reason, 500),
       });
+      if (error) {
+        const message = String(error.message || '');
+        if (message.includes('BUILDER_PARTY_NOT_FOUND')) return json({ error: 'Party not found' }, 404);
+        if (message.includes('BUILDER_PROJECT_NOT_FOUND')) return json({ error: 'Project not found' }, 404);
+        if (message.includes('BUILDER_PARTY_NAME_REQUIRED')) {
+          return json({ error: 'Party name is required' }, 400);
+        }
+        throw error;
+      }
       return json({ success: true, record });
     }
 
@@ -374,16 +382,22 @@ Deno.serve(async (req) => {
       const partyId = String(body.party_id || '');
       if (!partyId) return json({ error: 'party_id is required' }, 400);
 
-      const { error } = await supabase.from('builder_project_parties')
-        .delete().eq('id', partyId).eq('project_id', res.project.id);
-      if (error) throw error;
-
-      await logBuilderProjectActivity(supabase, req, {
-        builderUserId: me.id, organisationId: activeOrganisationId,
-        action: 'builder_project_party_removed',
-        entityType: 'project_party', entityId: partyId,
-        metadata: { project_id: res.project.id },
+      // Guarded command: the delete and its trusted audit row share one
+      // transaction, and the audit carries the removed record.
+      const { error } = await supabase.rpc('builder_delete_project_party', {
+        _actor_user_id: null,
+        _actor_type: 'builder_user',
+        _actor_builder_user_id: me.id,
+        _project_id: res.project.id,
+        _party_id: partyId,
+        _reason: cleanText(body.reason, 500),
       });
+      if (error) {
+        const message = String(error.message || '');
+        if (message.includes('BUILDER_PARTY_NOT_FOUND')) return json({ error: 'Party not found' }, 404);
+        if (message.includes('BUILDER_PROJECT_NOT_FOUND')) return json({ error: 'Project not found' }, 404);
+        throw error;
+      }
       return json({ success: true });
     }
 

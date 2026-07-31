@@ -216,9 +216,17 @@ CREATE TABLE IF NOT EXISTS public.builder_project_parties (
   reference text,
   is_primary_contact boolean NOT NULL DEFAULT false,
   notes text,
+  -- Present because the shared Phase 1 touch trigger sets it on every UPDATE.
+  -- Without it, `builder_touch_row` raises "record new has no field row_version"
+  -- and every party edit fails.
+  row_version bigint NOT NULL DEFAULT 1,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Idempotent for a database that already has the table from an earlier apply.
+ALTER TABLE public.builder_project_parties
+  ADD COLUMN IF NOT EXISTS row_version bigint NOT NULL DEFAULT 1;
 
 CREATE INDEX IF NOT EXISTS builder_project_parties_project_idx
   ON public.builder_project_parties(project_id);
@@ -427,33 +435,44 @@ BEGIN
     RETURN false;
   END IF;
 
-  -- 2. The organisation baseline, resolved by the Phase 1 function. It already
-  --    denies forbidden keys, requires an active membership, and clamps
-  --    read_only. Losing the membership therefore closes the project too.
+  -- 2. HARD GATE: an active membership of the granting organisation is
+  --    required, and it is resolved BEFORE any override can run.
+  --
+  --    builder_resolve_permission already returns false without one, but that is
+  --    only a baseline: steps 3 and 4 below can raise a false baseline back to
+  --    true with an explicit 'allow'. A revoked membership would then still
+  --    reach the project through a stored override. Returning here means no
+  --    override of any kind can restore access to a user whose membership is
+  --    inactive, revoked or absent.
+  SELECT membership_id INTO v_membership_id
+  FROM public.builder_active_membership(_user_id, v_access.organisation_id);
+  IF v_membership_id IS NULL THEN
+    RETURN false;
+  END IF;
+
+  -- 3. The organisation baseline, resolved by the Phase 1 function. It denies
+  --    forbidden keys, re-checks the membership and clamps read_only.
   v_baseline := public.builder_resolve_permission(
     _user_id, v_access.organisation_id, _permission_key, _level);
 
-  -- 3. Project-scoped membership override from the Phase 1 seam.
-  SELECT membership_id INTO v_membership_id
-  FROM public.builder_active_membership(_user_id, v_access.organisation_id);
-  IF v_membership_id IS NOT NULL THEN
-    SELECT CASE _level WHEN 'view' THEN view_decision
-                      WHEN 'edit' THEN edit_decision
-                      ELSE delete_decision END
-    INTO v_scoped
-    FROM public.builder_membership_permissions
-    WHERE membership_id = v_membership_id
-      AND permission_key = _permission_key
-      AND scope_type = 'project'
-      AND scope_id = _project_id;
-    IF v_scoped = 'deny' THEN
-      RETURN false;
-    ELSIF v_scoped = 'allow' THEN
-      v_baseline := true;
-    END IF;
+  -- 4. Project-scoped membership override from the Phase 1 seam. Reachable only
+  --    because step 2 has already proven the membership is active.
+  SELECT CASE _level WHEN 'view' THEN view_decision
+                    WHEN 'edit' THEN edit_decision
+                    ELSE delete_decision END
+  INTO v_scoped
+  FROM public.builder_membership_permissions
+  WHERE membership_id = v_membership_id
+    AND permission_key = _permission_key
+    AND scope_type = 'project'
+    AND scope_id = _project_id;
+  IF v_scoped = 'deny' THEN
+    RETURN false;
+  ELSIF v_scoped = 'allow' THEN
+    v_baseline := true;
   END IF;
 
-  -- 4. The grant's own tri-state override. Explicit deny wins; explicit allow
+  -- 5. The grant's own tri-state override. Explicit deny wins; explicit allow
   --    can raise a false baseline; inherit falls through.
   v_override := v_access.permissions #>> ARRAY[_permission_key, _level];
   IF v_override = 'deny' THEN
@@ -462,8 +481,8 @@ BEGIN
     v_baseline := true;
   END IF;
 
-  -- 5. A forbidden key can never be raised by a project grant. Re-asserted here
-  --    because steps 3 and 4 can set the baseline true.
+  -- 6. A forbidden key can never be raised by a project grant. Re-asserted here
+  --    because steps 4 and 5 can set the baseline true.
   IF EXISTS (
     SELECT 1 FROM public.builder_permission_keys
     WHERE permission_key = _permission_key AND is_forbidden
@@ -473,7 +492,7 @@ BEGIN
     RETURN false;
   END IF;
 
-  -- 6. read_only on the grant clamps writes last, mirroring
+  -- 7. read_only on the grant clamps writes last, mirroring
   --    resolveMatterPermissions()'s read_only clamp.
   IF v_access.access_role = 'read_only' AND _level <> 'view' THEN
     RETURN false;
@@ -733,6 +752,366 @@ BEGIN
 END $$;
 
 -- ===========================================================================
+-- 8c. Guarded write commands for the remaining Phase 3 mutations
+--
+-- Phase 3 originally wrote developments, projects and parties directly from the
+-- Edge Functions and called logBuilderProjectActivity afterwards. That leaves
+-- the state change committed when the audit write fails, which is exactly the
+-- Solicitor defect Phase 0 recorded as NOCOPY-04.
+--
+-- Every mutation now runs here instead: the write and the trusted audit row
+-- share one transaction, so a failed audit rolls the mutation back. Same shape
+-- as builder_admin_upsert_project_access and builder_transition_project.
+--
+-- The Edge Functions keep their sanitisation and pass an already-cleaned jsonb
+-- payload; these commands apply only whitelisted columns, and a key that is
+-- absent from the payload leaves its column untouched.
+-- ===========================================================================
+
+CREATE OR REPLACE FUNCTION public.builder_admin_upsert_development(
+  _actor_user_id uuid,
+  _actor_type text,
+  _development_id uuid,
+  _developer_organisation_id uuid,
+  _payload jsonb DEFAULT '{}'::jsonb,
+  _status text DEFAULT NULL,
+  _expected_version bigint DEFAULT NULL,
+  _reason text DEFAULT NULL)
+RETURNS public.builder_developments
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_existing public.builder_developments; v_row public.builder_developments; v_org_status text;
+BEGIN
+  IF _status IS NOT NULL AND _status NOT IN ('planning','active','on_hold','completed','cancelled') THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_INVALID_DEVELOPMENT_STATUS';
+  END IF;
+
+  IF _development_id IS NOT NULL THEN
+    SELECT * INTO v_existing FROM public.builder_developments
+    WHERE id = _development_id FOR UPDATE;
+    IF v_existing.id IS NULL THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_DEVELOPMENT_NOT_FOUND';
+    END IF;
+    IF _expected_version IS NULL OR v_existing.row_version <> _expected_version THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_STALE_WRITE',
+        DETAIL = format('current_version=%s', v_existing.row_version);
+    END IF;
+
+    UPDATE public.builder_developments SET
+      name                  = CASE WHEN _payload ? 'name' THEN _payload->>'name' ELSE name END,
+      development_reference = CASE WHEN _payload ? 'development_reference' THEN _payload->>'development_reference' ELSE development_reference END,
+      description           = CASE WHEN _payload ? 'description' THEN _payload->>'description' ELSE description END,
+      address_line          = CASE WHEN _payload ? 'address_line' THEN _payload->>'address_line' ELSE address_line END,
+      suburb                = CASE WHEN _payload ? 'suburb' THEN _payload->>'suburb' ELSE suburb END,
+      state                 = CASE WHEN _payload ? 'state' THEN _payload->>'state' ELSE state END,
+      postcode              = CASE WHEN _payload ? 'postcode' THEN _payload->>'postcode' ELSE postcode END,
+      status                = COALESCE(_status, status),
+      row_version           = row_version + 1,
+      updated_at            = now()
+    WHERE id = v_existing.id
+    RETURNING * INTO v_row;
+
+    PERFORM public.builder_log_activity(
+      _actor_user_id, _actor_type, 'builder_development_updated',
+      'development', v_row.id, v_row.developer_organisation_id, NULL,
+      jsonb_build_object('name', v_existing.name, 'status', v_existing.status),
+      jsonb_build_object('name', v_row.name, 'status', v_row.status,
+                         'row_version', v_row.row_version),
+      _reason, '{}'::jsonb);
+    RETURN v_row;
+  END IF;
+
+  IF _developer_organisation_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_ORGANISATION_REQUIRED';
+  END IF;
+  SELECT status INTO v_org_status FROM public.builder_organisations
+  WHERE id = _developer_organisation_id;
+  IF v_org_status IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_ORG_NOT_FOUND';
+  END IF;
+  IF v_org_status = 'closed' THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_ORG_CLOSED';
+  END IF;
+
+  INSERT INTO public.builder_developments(
+    developer_organisation_id, name, development_reference, description,
+    address_line, suburb, state, postcode, status)
+  VALUES (_developer_organisation_id, _payload->>'name', _payload->>'development_reference',
+          _payload->>'description', _payload->>'address_line', _payload->>'suburb',
+          _payload->>'state', _payload->>'postcode', COALESCE(_status, 'planning'))
+  RETURNING * INTO v_row;
+
+  PERFORM public.builder_log_activity(
+    _actor_user_id, _actor_type, 'builder_development_created',
+    'development', v_row.id, v_row.developer_organisation_id, NULL,
+    NULL, jsonb_build_object('name', v_row.name, 'status', v_row.status),
+    _reason, '{}'::jsonb);
+  RETURN v_row;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.builder_upsert_project(
+  _actor_user_id uuid,
+  _actor_type text,
+  _actor_builder_user_id uuid,
+  _project_id uuid,
+  _payload jsonb DEFAULT '{}'::jsonb,
+  _developer_organisation_id uuid DEFAULT NULL,
+  _builder_organisation_id uuid DEFAULT NULL,
+  _development_id uuid DEFAULT NULL,
+  _expected_version bigint DEFAULT NULL,
+  _reason text DEFAULT NULL)
+RETURNS public.builder_projects
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_existing public.builder_projects; v_row public.builder_projects; v_org_status text;
+BEGIN
+  IF _project_id IS NOT NULL THEN
+    SELECT * INTO v_existing FROM public.builder_projects WHERE id = _project_id FOR UPDATE;
+    IF v_existing.id IS NULL THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_PROJECT_NOT_FOUND';
+    END IF;
+    IF _expected_version IS NULL OR v_existing.row_version <> _expected_version THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_STALE_WRITE',
+        DETAIL = format('current_version=%s', v_existing.row_version);
+    END IF;
+
+    -- Organisation columns are deliberately absent: they are set at creation and
+    -- are protected afterwards by the org-drift trigger.
+    UPDATE public.builder_projects SET
+      project_reference           = CASE WHEN _payload ? 'project_reference' THEN _payload->>'project_reference' ELSE project_reference END,
+      name                        = CASE WHEN _payload ? 'name' THEN _payload->>'name' ELSE name END,
+      project_type                = CASE WHEN _payload ? 'project_type' THEN _payload->>'project_type' ELSE project_type END,
+      address_line                = CASE WHEN _payload ? 'address_line' THEN _payload->>'address_line' ELSE address_line END,
+      suburb                      = CASE WHEN _payload ? 'suburb' THEN _payload->>'suburb' ELSE suburb END,
+      state                       = CASE WHEN _payload ? 'state' THEN _payload->>'state' ELSE state END,
+      postcode                    = CASE WHEN _payload ? 'postcode' THEN _payload->>'postcode' ELSE postcode END,
+      lot_number                  = CASE WHEN _payload ? 'lot_number' THEN _payload->>'lot_number' ELSE lot_number END,
+      plan_number                 = CASE WHEN _payload ? 'plan_number' THEN _payload->>'plan_number' ELSE plan_number END,
+      estimated_start_date        = CASE WHEN _payload ? 'estimated_start_date' THEN (_payload->>'estimated_start_date')::date ELSE estimated_start_date END,
+      estimated_completion_date   = CASE WHEN _payload ? 'estimated_completion_date' THEN (_payload->>'estimated_completion_date')::date ELSE estimated_completion_date END,
+      actual_start_date           = CASE WHEN _payload ? 'actual_start_date' THEN (_payload->>'actual_start_date')::date ELSE actual_start_date END,
+      actual_completion_date      = CASE WHEN _payload ? 'actual_completion_date' THEN (_payload->>'actual_completion_date')::date ELSE actual_completion_date END,
+      shared_summary              = CASE WHEN _payload ? 'shared_summary' THEN _payload->>'shared_summary' ELSE shared_summary END,
+      risk_notes                  = CASE WHEN _payload ? 'risk_notes' THEN _payload->>'risk_notes' ELSE risk_notes END,
+      risk_flag                   = CASE WHEN _payload ? 'risk_flag' THEN (_payload->>'risk_flag')::boolean ELSE risk_flag END,
+      builder_notes               = CASE WHEN _payload ? 'builder_notes' THEN _payload->>'builder_notes' ELSE builder_notes END,
+      npc_internal_notes          = CASE WHEN _payload ? 'npc_internal_notes' THEN _payload->>'npc_internal_notes' ELSE npc_internal_notes END,
+      row_version                 = row_version + 1,
+      updated_at                  = now()
+    WHERE id = v_existing.id
+    RETURNING * INTO v_row;
+
+    PERFORM public.builder_log_activity(
+      _actor_user_id, _actor_type, 'builder_project_updated',
+      'project', v_row.id,
+      COALESCE(v_row.developer_organisation_id, v_row.builder_organisation_id),
+      _actor_builder_user_id,
+      jsonb_build_object('name', v_existing.name, 'row_version', v_existing.row_version),
+      jsonb_build_object('name', v_row.name, 'row_version', v_row.row_version,
+                         'fields', (SELECT jsonb_agg(k) FROM jsonb_object_keys(_payload) k)),
+      _reason, '{}'::jsonb);
+    RETURN v_row;
+  END IF;
+
+  IF _developer_organisation_id IS NULL AND _builder_organisation_id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_ORGANISATION_REQUIRED';
+  END IF;
+  FOR v_org_status IN
+    SELECT o.status FROM public.builder_organisations o
+    WHERE o.id IN (_developer_organisation_id, _builder_organisation_id)
+  LOOP
+    IF v_org_status = 'closed' THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_ORG_CLOSED';
+    END IF;
+  END LOOP;
+
+  INSERT INTO public.builder_projects(
+    development_id, developer_organisation_id, builder_organisation_id,
+    project_reference, name, project_type, address_line, suburb, state, postcode,
+    lot_number, plan_number, estimated_start_date, estimated_completion_date,
+    shared_summary, risk_notes, risk_flag, npc_internal_notes)
+  VALUES (
+    _development_id, _developer_organisation_id, _builder_organisation_id,
+    _payload->>'project_reference', _payload->>'name',
+    COALESCE(_payload->>'project_type', 'house_and_land'),
+    _payload->>'address_line', _payload->>'suburb', _payload->>'state', _payload->>'postcode',
+    _payload->>'lot_number', _payload->>'plan_number',
+    (_payload->>'estimated_start_date')::date, (_payload->>'estimated_completion_date')::date,
+    _payload->>'shared_summary', _payload->>'risk_notes',
+    COALESCE((_payload->>'risk_flag')::boolean, false), _payload->>'npc_internal_notes')
+  RETURNING * INTO v_row;
+
+  PERFORM public.builder_log_activity(
+    _actor_user_id, _actor_type, 'builder_project_created',
+    'project', v_row.id,
+    COALESCE(v_row.developer_organisation_id, v_row.builder_organisation_id),
+    _actor_builder_user_id,
+    NULL,
+    jsonb_build_object('name', v_row.name, 'status', v_row.status,
+                       'developer_organisation_id', v_row.developer_organisation_id,
+                       'builder_organisation_id', v_row.builder_organisation_id),
+    _reason, '{}'::jsonb);
+  RETURN v_row;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.builder_upsert_project_party(
+  _actor_user_id uuid,
+  _actor_type text,
+  _actor_builder_user_id uuid,
+  _project_id uuid,
+  _party_id uuid,
+  _payload jsonb,
+  _reason text DEFAULT NULL)
+RETURNS public.builder_project_parties
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_existing public.builder_project_parties;
+  v_row public.builder_project_parties;
+  v_project public.builder_projects;
+BEGIN
+  SELECT * INTO v_project FROM public.builder_projects WHERE id = _project_id;
+  IF v_project.id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_PROJECT_NOT_FOUND';
+  END IF;
+  IF NULLIF(btrim(COALESCE(_payload->>'name','')), '') IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_PARTY_NAME_REQUIRED';
+  END IF;
+
+  IF _party_id IS NOT NULL THEN
+    -- Scoped to the project: a party id belonging to another project matches
+    -- no row and cannot be edited through this project's grant.
+    SELECT * INTO v_existing FROM public.builder_project_parties
+    WHERE id = _party_id AND project_id = _project_id FOR UPDATE;
+    IF v_existing.id IS NULL THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_PARTY_NOT_FOUND';
+    END IF;
+
+    UPDATE public.builder_project_parties SET
+      role               = COALESCE(_payload->>'role', role),
+      name               = _payload->>'name',
+      organisation       = _payload->>'organisation',
+      email              = _payload->>'email',
+      phone              = _payload->>'phone',
+      address            = _payload->>'address',
+      reference          = _payload->>'reference',
+      is_primary_contact = COALESCE((_payload->>'is_primary_contact')::boolean, false),
+      notes              = _payload->>'notes',
+      updated_at         = now()
+    WHERE id = v_existing.id
+    RETURNING * INTO v_row;
+
+    PERFORM public.builder_log_activity(
+      _actor_user_id, _actor_type, 'builder_project_party_updated',
+      'project_party', v_row.id,
+      COALESCE(v_project.developer_organisation_id, v_project.builder_organisation_id),
+      _actor_builder_user_id,
+      jsonb_build_object('name', v_existing.name, 'role', v_existing.role),
+      jsonb_build_object('name', v_row.name, 'role', v_row.role),
+      _reason, jsonb_build_object('project_id', _project_id));
+    RETURN v_row;
+  END IF;
+
+  INSERT INTO public.builder_project_parties(
+    project_id, role, name, organisation, email, phone, address, reference,
+    is_primary_contact, notes)
+  VALUES (_project_id, COALESCE(_payload->>'role', 'other'), _payload->>'name',
+          _payload->>'organisation', _payload->>'email', _payload->>'phone',
+          _payload->>'address', _payload->>'reference',
+          COALESCE((_payload->>'is_primary_contact')::boolean, false), _payload->>'notes')
+  RETURNING * INTO v_row;
+
+  PERFORM public.builder_log_activity(
+    _actor_user_id, _actor_type, 'builder_project_party_added',
+    'project_party', v_row.id,
+    COALESCE(v_project.developer_organisation_id, v_project.builder_organisation_id),
+    _actor_builder_user_id,
+    NULL, jsonb_build_object('name', v_row.name, 'role', v_row.role),
+    _reason, jsonb_build_object('project_id', _project_id));
+  RETURN v_row;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.builder_delete_project_party(
+  _actor_user_id uuid,
+  _actor_type text,
+  _actor_builder_user_id uuid,
+  _project_id uuid,
+  _party_id uuid,
+  _reason text DEFAULT NULL)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE v_existing public.builder_project_parties; v_project public.builder_projects;
+BEGIN
+  SELECT * INTO v_project FROM public.builder_projects WHERE id = _project_id;
+  IF v_project.id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_PROJECT_NOT_FOUND';
+  END IF;
+
+  SELECT * INTO v_existing FROM public.builder_project_parties
+  WHERE id = _party_id AND project_id = _project_id FOR UPDATE;
+  IF v_existing.id IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='BUILDER_PARTY_NOT_FOUND';
+  END IF;
+
+  DELETE FROM public.builder_project_parties WHERE id = v_existing.id;
+
+  -- Removing a party is destructive, so the audit row carries the whole record.
+  PERFORM public.builder_log_activity(
+    _actor_user_id, _actor_type, 'builder_project_party_removed',
+    'project_party', v_existing.id,
+    COALESCE(v_project.developer_organisation_id, v_project.builder_organisation_id),
+    _actor_builder_user_id,
+    jsonb_build_object('name', v_existing.name, 'role', v_existing.role,
+                       'organisation', v_existing.organisation),
+    NULL,
+    _reason, jsonb_build_object('project_id', _project_id));
+  RETURN true;
+END $$;
+
+-- ===========================================================================
+-- 8a. Enable the `project` permission scope
+--
+-- Phase 1's builder_guard_permission_scope() rejects every non-organisation
+-- scope with "Project-level scopes are enabled when their tables are created".
+-- Phase 3 creates them, so the guard is widened here — and only to `project`.
+-- development / stage / unit stay blocked because their tables still do not
+-- exist, and a scope pointing at nothing would be unresolvable.
+--
+-- Without this, builder_resolve_project_permission reads a project-scoped
+-- override that could never have been stored.
+-- ===========================================================================
+CREATE OR REPLACE FUNCTION public.builder_guard_permission_scope()
+RETURNS trigger LANGUAGE plpgsql SET search_path = public AS $$
+BEGIN
+  IF NEW.scope_type NOT IN ('organisation', 'project') THEN
+    RAISE EXCEPTION USING ERRCODE='P0001',
+      MESSAGE='BUILDER_SCOPE_NOT_AVAILABLE',
+      DETAIL='Only organisation and project scopes exist. Stage and unit scopes are enabled when their tables are created.';
+  END IF;
+
+  -- A project scope must point at a project that actually exists, or the
+  -- override is unresolvable and would sit in the table for ever.
+  IF NEW.scope_type = 'project' THEN
+    IF NEW.scope_id IS NULL OR NOT EXISTS (
+      SELECT 1 FROM public.builder_projects WHERE id = NEW.scope_id
+    ) THEN
+      RAISE EXCEPTION USING ERRCODE='P0001',
+        MESSAGE='BUILDER_SCOPE_TARGET_NOT_FOUND',
+        DETAIL='a project-scoped permission must reference an existing project';
+    END IF;
+  END IF;
+
+  -- View is the floor: denying view denies everything; allowing edit or delete
+  -- implies view. Normalised on write so the resolver never has to repair it.
+  -- Unchanged from Phase 1.
+  IF NEW.view_decision = 'deny' THEN
+    NEW.edit_decision := 'deny';
+    NEW.delete_decision := 'deny';
+  ELSIF NEW.edit_decision = 'allow' OR NEW.delete_decision = 'allow' THEN
+    NEW.view_decision := 'allow';
+  END IF;
+  NEW.updated_at := now();
+  RETURN NEW;
+END $$;
+
+-- ===========================================================================
 -- 8b. Role defaults for the `projects` permission key
 --
 -- Phase 1 seeded role defaults only for the keys that existed then; `projects`
@@ -786,6 +1165,10 @@ REVOKE ALL ON FUNCTION public.builder_is_project_transition_allowed(text, text) 
 REVOKE ALL ON FUNCTION public.builder_transition_project(uuid, bigint, text, text, text, text, uuid, uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_admin_upsert_project_access(uuid, text, uuid, uuid, text, text, jsonb, timestamptz, bigint, text) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.builder_admin_revoke_project_access(uuid, text, uuid, bigint, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_admin_upsert_development(uuid, text, uuid, uuid, jsonb, text, bigint, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_upsert_project(uuid, text, uuid, uuid, jsonb, uuid, uuid, uuid, bigint, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_upsert_project_party(uuid, text, uuid, uuid, uuid, jsonb, text) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.builder_delete_project_party(uuid, text, uuid, uuid, uuid, text) FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.builder_resolve_project_permission(uuid, uuid, text, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_accessible_projects(uuid, uuid, text) TO service_role;
@@ -793,6 +1176,10 @@ GRANT EXECUTE ON FUNCTION public.builder_is_project_transition_allowed(text, tex
 GRANT EXECUTE ON FUNCTION public.builder_transition_project(uuid, bigint, text, text, text, text, uuid, uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_admin_upsert_project_access(uuid, text, uuid, uuid, text, text, jsonb, timestamptz, bigint, text) TO service_role;
 GRANT EXECUTE ON FUNCTION public.builder_admin_revoke_project_access(uuid, text, uuid, bigint, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_admin_upsert_development(uuid, text, uuid, uuid, jsonb, text, bigint, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_upsert_project(uuid, text, uuid, uuid, jsonb, uuid, uuid, uuid, bigint, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_upsert_project_party(uuid, text, uuid, uuid, uuid, jsonb, text) TO service_role;
+GRANT EXECUTE ON FUNCTION public.builder_delete_project_party(uuid, text, uuid, uuid, uuid, text) TO service_role;
 
 -- ===========================================================================
 -- 10. Post-migration assertions
@@ -805,6 +1192,8 @@ BEGIN
     'builder_resolve_project_permission','builder_accessible_projects',
     'builder_is_project_transition_allowed','builder_transition_project',
     'builder_admin_upsert_project_access','builder_admin_revoke_project_access',
+    'builder_admin_upsert_development','builder_upsert_project',
+    'builder_upsert_project_party','builder_delete_project_party',
     'builder_enforce_project_access_org','builder_prevent_project_access_org_drift']) AS f
   WHERE NOT EXISTS (
     SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace

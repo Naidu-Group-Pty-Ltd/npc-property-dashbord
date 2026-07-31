@@ -8,7 +8,7 @@
  * The behavioural half of Phase 3 — access isolation, revocation, expiry,
  * fail-closed auditing, status transitions — is executed against a live
  * PostgreSQL database by `scripts/builder-portal/local-db/verify-phase-3.mjs`,
- * which asserts 76 conditions. These tests assert the shape that verification
+ * which asserts 117 conditions. These tests assert the shape that verification
  * depends on, so a change that would invalidate it fails here first.
  */
 import assert from 'node:assert/strict';
@@ -167,6 +167,148 @@ test('Phase 3 adds no transaction-case link', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Correction 1 — membership is a hard project-access requirement
+// ---------------------------------------------------------------------------
+
+test('an active membership is required BEFORE any override can run', () => {
+  const resolver = migrationCode.slice(
+    migrationCode.indexOf('FUNCTION public.builder_resolve_project_permission'));
+  const body = resolver.slice(0, resolver.indexOf('END $$'));
+
+  const gate = body.indexOf('builder_active_membership');
+  const scopedOverride = body.indexOf('scope_type = \'project\'');
+  const grantOverride = body.indexOf('v_access.permissions #>>');
+  assert.ok(gate > 0, 'the resolver does not check the membership at all');
+  assert.ok(gate < scopedOverride,
+    'the project-scoped override runs before the membership gate');
+  assert.ok(gate < grantOverride,
+    'the grant-level override runs before the membership gate');
+
+  // The gate must RETURN, not merely set a baseline that a later allow can lift.
+  const gateBlock = body.slice(gate, gate + 200);
+  assert.match(gateBlock, /IF v_membership_id IS NULL THEN\s*\n\s*RETURN false;/,
+    'a missing membership does not return false immediately');
+});
+
+test('the organisation baseline is no longer the only membership check', () => {
+  const resolver = migrationCode.slice(
+    migrationCode.indexOf('FUNCTION public.builder_resolve_project_permission'));
+  const body = resolver.slice(0, resolver.indexOf('END $$'));
+  // The baseline call must come AFTER the hard gate, not stand in for it.
+  assert.ok(body.indexOf('builder_active_membership') < body.indexOf('builder_resolve_permission'),
+    'the membership gate must precede the baseline it used to rely on');
+});
+
+test('the project permission scope is enabled for project scopes only', () => {
+  // Phase 1 blocked every non-organisation scope. Phase 3 opens `project` and
+  // nothing else — a stage or unit scope has no table to point at.
+  assert.match(migrationCode, /NEW\.scope_type NOT IN \('organisation', 'project'\)/);
+  assert.match(migrationCode, /BUILDER_SCOPE_TARGET_NOT_FOUND/);
+});
+
+// ---------------------------------------------------------------------------
+// Correction 2 — every mutation audits inside its own transaction
+// ---------------------------------------------------------------------------
+
+test('every Phase 3 guarded command audits in its own transaction', () => {
+  for (const fn of [
+    'builder_admin_upsert_project_access', 'builder_admin_revoke_project_access',
+    'builder_transition_project', 'builder_admin_upsert_development',
+    'builder_upsert_project', 'builder_upsert_project_party',
+    'builder_delete_project_party',
+  ]) {
+    const definition = migrationCode.slice(migrationCode.indexOf(`FUNCTION public.${fn}`));
+    const body = definition.slice(0, definition.indexOf('END $$'));
+    assert.match(body, /PERFORM public\.builder_log_activity\(/,
+      `${fn} does not write a trusted audit row in its own transaction`);
+  }
+});
+
+test('no Phase 3 mutation writes state directly from an Edge Function', () => {
+  // A direct write followed by a log leaves the state change committed when the
+  // audit fails. Every mutation must go through a guarded command instead.
+  for (const [name, source] of [['portal', portalCode], ['admin', adminCode]]) {
+    for (const table of ['builder_projects', 'builder_project_parties',
+      'builder_developments', 'builder_project_access']) {
+      const pattern = new RegExp(
+        `from\\(['"]${table}['"]\\)[\\s\\S]{0,200}?\\.(insert|update|delete)\\(`);
+      assert.doesNotMatch(source, pattern,
+        `${name} writes ${table} directly instead of through a guarded command`);
+    }
+  }
+});
+
+test('every mutating operation calls a guarded command', () => {
+  for (const [source, operation, command] of [
+    [adminCode, 'upsert_development', 'builder_admin_upsert_development'],
+    [adminCode, 'create_project', 'builder_upsert_project'],
+    [adminCode, 'update_project', 'builder_upsert_project'],
+    [adminCode, 'set_status', 'builder_transition_project'],
+    [adminCode, 'upsert_project_access', 'builder_admin_upsert_project_access'],
+    [adminCode, 'revoke_project_access', 'builder_admin_revoke_project_access'],
+    [portalCode, 'update_project', 'builder_upsert_project'],
+    [portalCode, 'set_status', 'builder_transition_project'],
+    [portalCode, 'upsert_party', 'builder_upsert_project_party'],
+    [portalCode, 'delete_party', 'builder_delete_project_party'],
+  ]) {
+    const slice = source.slice(source.indexOf(`operation === '${operation}'`));
+    assert.match(slice.slice(0, 2500), new RegExp(`rpc\\('${command}'`),
+      `${operation} does not route through ${command}`);
+  }
+});
+
+test('the after-the-fact logger is used only for reads', () => {
+  // logBuilderProjectActivity does not share the mutation's transaction, so it
+  // may only record observational events.
+  const calls = portalCode.match(/logBuilderProjectActivity\(supabase, req, \{[\s\S]*?\}\)/g) || [];
+  for (const call of calls) {
+    assert.match(call, /action: 'builder_project_viewed'/,
+      'the non-transactional logger is used for something other than a view event');
+  }
+});
+
+test('project parties carry a row_version for the shared touch trigger', () => {
+  // builder_touch_row sets NEW.row_version on every UPDATE; without the column
+  // every party edit raises "record new has no field row_version".
+  const table = migrationCode.slice(
+    migrationCode.indexOf('CREATE TABLE IF NOT EXISTS public.builder_project_parties'));
+  assert.match(table.slice(0, table.indexOf(');')), /row_version bigint NOT NULL DEFAULT 1/);
+});
+
+// ---------------------------------------------------------------------------
+// Correction 3 — expected_version is required for existing access updates
+// ---------------------------------------------------------------------------
+
+test('an existing access grant cannot be updated without expected_version', () => {
+  const slice = adminCode.slice(adminCode.indexOf("operation === 'upsert_project_access'"));
+  const body = slice.slice(0, slice.indexOf("operation === 'revoke_project_access'"));
+
+  // The defect was defaulting to the stored row_version.
+  assert.doesNotMatch(body, /body\.expected_version \?\? existing\.row_version/,
+    'a missing expected_version still falls back to the current row_version');
+  assert.doesNotMatch(body, /existing\.row_version/,
+    'the current row_version is still read as a substitute for the caller value');
+
+  assert.match(body, /code: 'EXPECTED_VERSION_REQUIRED'/,
+    'a missing expected_version does not return a 400 with a specific code');
+  assert.match(body, /\}, 400, cors\)/);
+  // A stale value must still be a 409 from the guarded command.
+  assert.match(body, /BUILDER_STALE_WRITE[\s\S]{0,200}409/);
+});
+
+test('creating a new access grant needs no expected_version', () => {
+  const slice = adminCode.slice(adminCode.indexOf("operation === 'upsert_project_access'"));
+  const body = slice.slice(0, slice.indexOf("operation === 'revoke_project_access'"));
+  // The version is only demanded when an existing grant was found.
+  assert.match(body, /let expectedVersion: number \| null = null;/);
+  assert.match(body, /if \(existing\) \{/);
+});
+
+test('the admin panel sends expected_version when updating an existing grant', () => {
+  assert.match(adminPanel, /expected_version: existing\.row_version/);
+});
+
+// ---------------------------------------------------------------------------
 // Portal Edge Function
 // ---------------------------------------------------------------------------
 
@@ -214,8 +356,12 @@ test('every portal mutation re-checks the permission matrix', () => {
 });
 
 test('portal writes carry optimistic concurrency', () => {
+  // The version check moved into the guarded command, which raises
+  // BUILDER_STALE_WRITE; the function maps that to 409. The old
+  // `.eq('row_version', …)` idiom is gone because the direct update is gone.
   assert.match(portalCode, /expected_version/);
-  assert.match(portalCode, /\.eq\('row_version', expectedVersion\)/);
+  assert.match(portalCode, /_expected_version: expectedVersion/);
+  assert.match(portalCode, /BUILDER_STALE_WRITE/);
   assert.match(portalCode, /code: 'STALE_VERSION'/);
 });
 

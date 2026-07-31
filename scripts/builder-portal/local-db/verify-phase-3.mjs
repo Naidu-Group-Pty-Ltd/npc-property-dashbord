@@ -423,6 +423,224 @@ expectEqual('a duplicate grant for the same user and project is refused',
    WHERE builder_user_id='${USER_B}' AND project_id='${PROJECT_1}'`, 1);
 
 // ===========================================================================
+// 7b. Membership is a HARD requirement — no override can restore access
+//
+// builder_resolve_permission alone returns false for an inactive membership,
+// but that is only a baseline: a project-scoped or grant-level 'allow' used to
+// raise it back to true. The resolver now returns before any override runs.
+// ===========================================================================
+console.log('\nMembership hard gate');
+
+const MEMBERSHIP_B = query(`SELECT id FROM builder_organisation_memberships
+  WHERE builder_user_id='${USER_B}' AND organisation_id='${BLD_ORG}'`);
+
+// Baseline: access works with an active membership and no overrides.
+run(['-c', `UPDATE builder_project_access SET permissions='{}'::jsonb, access_role='team_member'
+            WHERE id='${GRANT_B1}'`]);
+expectEqual('baseline: an active membership with no overrides resolves true',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 't');
+
+const revokeMembership = () => run(['-c', `UPDATE builder_organisation_memberships
+  SET status='revoked', revoked_at=now(), revoked_reason='hard gate test'
+  WHERE id='${MEMBERSHIP_B}'`]);
+const restoreMembership = () => run(['-c', `UPDATE builder_organisation_memberships
+  SET status='active', revoked_at=NULL, revoked_reason=NULL WHERE id='${MEMBERSHIP_B}'`]);
+
+// --- case 1: the grant itself carries projects.view = allow ---
+run(['-c', `UPDATE builder_project_access
+            SET permissions='{"projects":{"view":"allow","edit":"allow"}}'::jsonb
+            WHERE id='${GRANT_B1}'`]);
+expectEqual('with an active membership, a grant-level allow resolves true',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 't');
+revokeMembership();
+expectEqual('a grant-level allow CANNOT restore access after membership revocation',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 'f');
+expectEqual('and it cannot restore edit either',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','edit')`, 'f');
+expectEqual('and the project is absent from the accessible list',
+  `SELECT count(*) FROM builder_accessible_projects('${USER_B}')`, 0);
+restoreMembership();
+expectEqual('restoring the membership restores access',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 't');
+
+// --- case 2: a project-scoped membership permission carries view_decision = allow ---
+run(['-c', `UPDATE builder_project_access SET permissions='{}'::jsonb WHERE id='${GRANT_B1}'`]);
+run(['-c', `INSERT INTO builder_membership_permissions(
+              membership_id, permission_key, scope_type, scope_id,
+              view_decision, edit_decision, delete_decision)
+            VALUES ('${MEMBERSHIP_B}','projects','project','${PROJECT_1}','allow','allow','inherit')
+            ON CONFLICT DO NOTHING`]);
+expectEqual('with an active membership, a project-scoped allow resolves true',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 't');
+revokeMembership();
+expectEqual('a project-scoped allow CANNOT restore access after membership revocation',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 'f');
+expectEqual('and it cannot restore edit either',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','edit')`, 'f');
+restoreMembership();
+expectEqual('restoring the membership restores access',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 't');
+
+// --- case 3: BOTH overrides present ---
+run(['-c', `UPDATE builder_project_access
+            SET permissions='{"projects":{"view":"allow","edit":"allow"}}'::jsonb
+            WHERE id='${GRANT_B1}'`]);
+expectEqual('with an active membership, both overlapping allows resolve true',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 't');
+revokeMembership();
+expectEqual('BOTH overrides together CANNOT restore access after membership revocation',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 'f');
+expectEqual('and neither can restore edit',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','edit')`, 'f');
+expectEqual('and the project is absent from the accessible list',
+  `SELECT count(*) FROM builder_accessible_projects('${USER_B}')`, 0);
+restoreMembership();
+expectEqual('restoring the membership restores access with both overrides present',
+  `SELECT builder_resolve_project_permission('${USER_B}','${PROJECT_1}','projects','view')`, 't');
+
+// A membership that never existed behaves the same as a revoked one.
+expectEqual('a user with no membership of the granting organisation resolves false',
+  `SELECT builder_resolve_project_permission('${USER_O}','${PROJECT_1}','projects','view')`, 'f');
+
+// Clean up so later assertions start from a plain grant.
+run(['-c', `DELETE FROM builder_membership_permissions
+            WHERE membership_id='${MEMBERSHIP_B}' AND scope_type='project'`]);
+run(['-c', `UPDATE builder_project_access SET permissions='{}'::jsonb WHERE id='${GRANT_B1}'`]);
+
+// ===========================================================================
+// 7c. Every Phase 3 mutation rolls back when its trusted audit write fails
+// ===========================================================================
+console.log('\nFail-closed auditing across every mutation');
+
+const DEV_2 = 'dddddddd-0000-0000-0000-000000000002';
+run(['-c', `INSERT INTO builder_developments(id, developer_organisation_id, name)
+            VALUES ('${DEV_2}','${DEV_ORG}','Rollback Fixture')`]);
+const PARTY_1 = query(`SELECT (builder_upsert_project_party(
+  '${ACTOR}','command_user',NULL,'${PROJECT_1}',NULL,
+  '{"name":"Existing Party","role":"builder"}'::jsonb,'fixture')).id`);
+expectEqual('a party is created through the guarded command',
+  `SELECT count(*) FROM builder_project_parties WHERE id='${PARTY_1}'`, 1);
+expectEqual('and its creation wrote a trusted audit row',
+  `SELECT count(*) > 0 FROM builder_portal_activity_log
+   WHERE action='builder_project_party_added' AND entity_id='${PARTY_1}'`, 't');
+
+const beforeCounts = {
+  developments: query('SELECT count(*) FROM builder_developments'),
+  projects: query('SELECT count(*) FROM builder_projects'),
+  parties: query('SELECT count(*) FROM builder_project_parties'),
+  devName: query(`SELECT name FROM builder_developments WHERE id='${DEV_2}'`),
+  projectName: query(`SELECT name FROM builder_projects WHERE id='${PROJECT_1}'`),
+  partyName: query(`SELECT name FROM builder_project_parties WHERE id='${PARTY_1}'`),
+};
+
+run(['-c', `
+  CREATE OR REPLACE FUNCTION public.force_audit_failure() RETURNS trigger
+  LANGUAGE plpgsql AS $$ BEGIN
+    RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='SIMULATED_AUDIT_OUTAGE';
+  END $$;
+  CREATE TRIGGER trg_force_audit_failure BEFORE INSERT ON public.builder_portal_activity_log
+    FOR EACH ROW EXECUTE FUNCTION public.force_audit_failure();
+`]);
+
+expectRejection('development CREATION fails when the trusted audit write fails',
+  `SELECT builder_admin_upsert_development('${ACTOR}','command_user',NULL,'${DEV_ORG}',
+     '{"name":"Should Not Exist"}'::jsonb,NULL,NULL,'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and no development was created',
+  'SELECT count(*) FROM builder_developments', beforeCounts.developments);
+
+expectRejection('development EDITING fails when the trusted audit write fails',
+  `SELECT builder_admin_upsert_development('${ACTOR}','command_user','${DEV_2}',NULL,
+     '{"name":"Renamed"}'::jsonb,NULL,
+     (SELECT row_version FROM builder_developments WHERE id='${DEV_2}'),'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and the development name is unchanged',
+  `SELECT name FROM builder_developments WHERE id='${DEV_2}'`, beforeCounts.devName);
+
+expectRejection('project CREATION fails when the trusted audit write fails',
+  `SELECT builder_upsert_project('${ACTOR}','command_user',NULL,NULL,
+     '{"name":"Should Not Exist"}'::jsonb,'${DEV_ORG}','${BLD_ORG}',NULL,NULL,'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and no project was created',
+  'SELECT count(*) FROM builder_projects', beforeCounts.projects);
+
+expectRejection('project EDITING fails when the trusted audit write fails',
+  `SELECT builder_upsert_project('${ACTOR}','command_user',NULL,'${PROJECT_1}',
+     '{"name":"Renamed Project"}'::jsonb,NULL,NULL,NULL,
+     (SELECT row_version FROM builder_projects WHERE id='${PROJECT_1}'),'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and the project name is unchanged',
+  `SELECT name FROM builder_projects WHERE id='${PROJECT_1}'`, beforeCounts.projectName);
+
+expectRejection('party CREATION fails when the trusted audit write fails',
+  `SELECT builder_upsert_project_party('${ACTOR}','command_user',NULL,'${PROJECT_1}',NULL,
+     '{"name":"Should Not Exist","role":"other"}'::jsonb,'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and no party was created',
+  'SELECT count(*) FROM builder_project_parties', beforeCounts.parties);
+
+expectRejection('party EDITING fails when the trusted audit write fails',
+  `SELECT builder_upsert_project_party('${ACTOR}','command_user',NULL,'${PROJECT_1}','${PARTY_1}',
+     '{"name":"Renamed Party","role":"other"}'::jsonb,'x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and the party name is unchanged',
+  `SELECT name FROM builder_project_parties WHERE id='${PARTY_1}'`, beforeCounts.partyName);
+
+expectRejection('party DELETION fails when the trusted audit write fails',
+  `SELECT builder_delete_project_party('${ACTOR}','command_user',NULL,'${PROJECT_1}','${PARTY_1}','x')`,
+  'SIMULATED_AUDIT_OUTAGE');
+expectEqual('and the party still exists',
+  `SELECT count(*) FROM builder_project_parties WHERE id='${PARTY_1}'`, 1);
+
+run(['-c', 'DROP TRIGGER trg_force_audit_failure ON public.builder_portal_activity_log;']);
+
+expectEqual('with audit restored, the development edit succeeds',
+  `SELECT (builder_admin_upsert_development('${ACTOR}','command_user','${DEV_2}',NULL,
+     '{"name":"Renamed"}'::jsonb,NULL,
+     (SELECT row_version FROM builder_developments WHERE id='${DEV_2}'),'ok')).name`, 'Renamed');
+expectEqual('with audit restored, the party delete succeeds',
+  `SELECT builder_delete_project_party('${ACTOR}','command_user',NULL,'${PROJECT_1}','${PARTY_1}','ok')`, 't');
+expectEqual('and the deletion wrote a trusted audit row carrying the removed record',
+  `SELECT count(*) > 0 FROM builder_portal_activity_log
+   WHERE action='builder_project_party_removed' AND entity_id='${PARTY_1}'
+     AND previous_state->>'name' = 'Existing Party'`, 't');
+
+// ===========================================================================
+// 7d. expected_version is required when updating an existing access grant
+// ===========================================================================
+console.log('\nAccess-grant concurrency');
+
+expectRejection('a NULL expected_version on an existing grant is refused',
+  `SELECT builder_admin_upsert_project_access(
+     '${ACTOR}','command_user','${USER_B}','${PROJECT_1}','builder','supervisor',
+     '{}'::jsonb,NULL,NULL,'no version')`,
+  'BUILDER_STALE_WRITE');
+expectEqual('and the grant role is unchanged',
+  `SELECT access_role FROM builder_project_access WHERE id='${GRANT_B1}'`, 'team_member');
+
+expectRejection('a stale expected_version on an existing grant is refused',
+  `SELECT builder_admin_upsert_project_access(
+     '${ACTOR}','command_user','${USER_B}','${PROJECT_1}','builder','supervisor',
+     '{}'::jsonb,NULL,1,'stale version')`,
+  'BUILDER_STALE_WRITE');
+expectEqual('and the grant role is still unchanged',
+  `SELECT access_role FROM builder_project_access WHERE id='${GRANT_B1}'`, 'team_member');
+
+expectEqual('the matching current version updates the grant',
+  `SELECT (builder_admin_upsert_project_access(
+     '${ACTOR}','command_user','${USER_B}','${PROJECT_1}','builder','supervisor',
+     '{}'::jsonb,NULL,
+     (SELECT row_version FROM builder_project_access WHERE id='${GRANT_B1}'),
+     'correct version')).access_role`, 'supervisor');
+
+expectEqual('creating a NEW grant needs no expected_version',
+  `SELECT (builder_admin_upsert_project_access(
+     '${ACTOR}','command_user','${USER_D}','${PROJECT_2}','developer','team_member',
+     '{}'::jsonb,NULL,NULL,'new grant')).access_role`, 'team_member');
+
+run(['-c', `UPDATE builder_project_access SET access_role='team_member' WHERE id='${GRANT_B1}'`]);
+
+// ===========================================================================
 // 8. Boundaries — Finance data and later phases
 // ===========================================================================
 console.log('\nBoundaries');
