@@ -102,7 +102,7 @@ export function BrandMark({ integrationId, fallback, size = 24, className }: Bra
           WebkitMaskPosition: 'center',
           maskSize: 'contain',
           WebkitMaskSize: 'contain',
-઀        }}
+        }}
       />
     );
   }
