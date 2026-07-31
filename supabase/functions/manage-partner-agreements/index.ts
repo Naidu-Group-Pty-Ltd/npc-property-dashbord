@@ -106,7 +106,24 @@ async function logEvent(
     payload,
   });
   if (error) console.error('[partner-agreements] event log failed:', error.message);
+
+  // Phase 6 — mirror into the tamper-evident compliance chain.
+  await recordPartnerAudit(supabase, {
+    agreement_id: agreementId,
+    scope_type: 'agreement',
+    scope_id: agreementId,
+    actor_id: actorId,
+    actor_label: actorLabel,
+    severity: eventType === 'terminated' || eventType === 'void' ? 'critical' : 'info',
+    category: 'lifecycle',
+    action: `agreement_${eventType}`,
+    target_type: 'partner_agreement',
+    target_id: agreementId,
+    description: summary,
+    metadata: payload,
+  });
 }
+
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');
