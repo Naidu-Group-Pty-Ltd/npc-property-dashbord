@@ -30,7 +30,7 @@ export const BRAND_PROFILES: Record<string, BrandProfile> = {
   airtable:    { slug: 'airtable',         svgOrgSlug: 'airtable',   color: '18BFFF', luminance: 'dark' },
   cotality:    {                                                     color: '0B7285', luminance: 'dark' },
   domain:      {                                                     color: '2B7A3D', luminance: 'dark' },
-  google:      { slug: 'googlemaps',                                 color: '4285F4', luminance: 'dark' },
+  google_maps: { slug: 'googlemaps',                                 color: '4285F4', luminance: 'dark' },
 
   // CRM & marketing
   gohighlevel: {                                                     color: 'FFB800', luminance: 'dark' },
