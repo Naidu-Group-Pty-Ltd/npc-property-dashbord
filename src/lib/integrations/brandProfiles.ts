@@ -259,7 +259,6 @@ export function getLocalBrandAsset(id: string): string | undefined {
  * brand-coloured square, so they render as plain images instead.
  */
 const FULL_COLOR_LOCAL_ASSETS = new Set([
-  'api2pdf',
   'canva',
   'onfido',
   'pricefinder',
