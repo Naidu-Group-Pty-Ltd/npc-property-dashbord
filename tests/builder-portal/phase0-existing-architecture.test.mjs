@@ -45,9 +45,22 @@ const srcFiles = (function walk(dir) {
 // A. The Builder domain is greenfield at this baseline
 // ---------------------------------------------------------------------------
 
-test('no /builder route exists in the application route tree', () => {
-  assert.ok(!/path=["'`]\/builder/.test(app), 'a /builder route already exists');
-  assert.ok(!/BuilderPortalAuthProvider/.test(app), 'a Builder auth provider is already mounted');
+test('the /builder route tree is external, not an internal page (updated by Phase 2)', () => {
+  // Phase 0 asserted no /builder route existed. Phase 2 adds the external
+  // portal, so the assertion is inverted rather than deleted: the tree must now
+  // exist AND must remain outside the internal Command Centre shell. The
+  // original point of this test — the Builder Portal is not a dashboard page —
+  // is what is still being enforced.
+  assert.match(app, /path="\/builder\/\*"/, 'the external Builder route tree is missing');
+  assert.match(app, /<BuilderPortalAuthProvider>/, 'the Builder auth provider is not mounted');
+
+  const tree = app.slice(app.indexOf('<Route path="/builder/*"'));
+  const body = tree.slice(0, tree.indexOf('{/* Internal Dashboard Routes */}'));
+  assert.ok(body.length > 0, 'the Builder tree is no longer a sibling of the internal routes');
+  assert.ok(!/<ProtectedRoute>/.test(body),
+    'the Builder Portal must not be wrapped in the internal ProtectedRoute');
+  assert.ok(!/<DashboardLayout/.test(body),
+    'the Builder Portal must not be wrapped in the internal DashboardLayout');
 });
 
 test('builder_portal_admin is registered and guarded (updated by Phase 1)', () => {
@@ -60,15 +73,25 @@ test('builder_portal_admin is registered and guarded (updated by Phase 1)', () =
   assert.match(app, /moduleKey="builder_portal_admin"/);
 });
 
-test('only the internal Builder administration function exists (updated by Phase 1)', () => {
-  // Phase 0 asserted no builder-portal function existed. Phase 1 adds exactly
-  // one, and it serves the INTERNAL surface. The external portal family
-  // (login, verify, logout, invite) belongs to a later phase.
+test('the Builder function family is exactly the identity surface (updated by Phase 2)', () => {
+  // Phase 0 asserted no builder-portal function existed; Phase 1 allowed one.
+  // Phase 2 adds the external authentication family. The list stays exhaustive
+  // so a business-domain function cannot appear without this test failing —
+  // that is the boundary Phase 0 was protecting.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
-  assert.deepEqual(functionDirs.filter((name) => name.startsWith('builder-portal-')).sort(),
-    ['builder-portal-admin']);
+  assert.deepEqual(functionDirs.filter((name) => name.startsWith('builder-portal-')).sort(), [
+    'builder-portal-accept-invite',
+    'builder-portal-admin',
+    'builder-portal-change-password',
+    'builder-portal-forgot-password',
+    'builder-portal-invite',
+    'builder-portal-login',
+    'builder-portal-logout',
+    'builder-portal-reset-password',
+    'builder-portal-verify',
+  ]);
 });
 
 test('only Phase 1 identity tables exist; the Phase 2 domain is still greenfield', () => {

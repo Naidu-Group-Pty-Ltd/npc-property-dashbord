@@ -1,3 +1,7 @@
+// @ts-ignore esm.sh serves bcryptjs with a CommonJS default export, which the
+// bundled @types/bcryptjs declaration does not describe. The import works at
+// runtime; only the type declaration is wrong. Suppressed rather than rewritten
+// so the runtime behaviour of every function importing this module is unchanged.
 import bcrypt from "https://esm.sh/bcryptjs@2.4.3";
 
 /**

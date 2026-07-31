@@ -1,0 +1,190 @@
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from 'react';
+import {
+  builderAcceptInvite,
+  builderAcceptTerms,
+  builderChangePassword,
+  builderCompleteOnboarding,
+  builderCurrentSession,
+  builderLogin,
+  builderLogout,
+  builderSelectOrganisation,
+  type BuilderGovernanceReason,
+  type BuilderOrganisation,
+  type BuilderPermissionMatrix,
+  type BuilderPortalUser,
+} from '@/lib/builderPortal';
+
+/**
+ * Builder / Developer Portal authentication provider.
+ *
+ * Mirrors `useSolicitorPortalAuth`: state is never assumed from a login
+ * response, it is always re-read through the cookie-backed verifier so
+ * governance comes from the server. The provider is mounted only under
+ * `/builder/*` and shares nothing with the Solicitor provider.
+ */
+
+interface BuilderPortalAuthContextType {
+  user: BuilderPortalUser | null;
+  organisations: BuilderOrganisation[];
+  activeOrganisation: BuilderOrganisation | null;
+  permissions: BuilderPermissionMatrix;
+  governance: BuilderGovernanceReason;
+  requiresOrganisationSelection: boolean;
+  loading: boolean;
+  previousSeenAt: string | null;
+  signIn: (email: string, password: string, turnstileToken?: string) => Promise<{ error?: string }>;
+  signOut: () => Promise<void>;
+  acceptInvite: (token: string, password: string) => Promise<{ error?: string }>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ error?: string }>;
+  acceptTerms: () => Promise<{ error?: string }>;
+  completeOnboarding: (stepKey?: string) => Promise<{ error?: string }>;
+  selectOrganisation: (organisationId: string) => Promise<{ error?: string }>;
+  refresh: () => Promise<void>;
+  can: (permissionKey: string, level?: 'view' | 'edit' | 'delete') => boolean;
+}
+
+const BuilderPortalAuthContext = createContext<BuilderPortalAuthContextType | undefined>(undefined);
+
+export function BuilderPortalAuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<BuilderPortalUser | null>(null);
+  const [organisations, setOrganisations] = useState<BuilderOrganisation[]>([]);
+  const [activeOrganisation, setActiveOrganisation] = useState<BuilderOrganisation | null>(null);
+  const [permissions, setPermissions] = useState<BuilderPermissionMatrix>({});
+  const [governance, setGovernance] = useState<BuilderGovernanceReason>(null);
+  const [requiresOrganisationSelection, setRequiresOrganisationSelection] = useState(false);
+  const [previousSeenAt, setPreviousSeenAt] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const clearAuthState = useCallback(() => {
+    setUser(null);
+    setOrganisations([]);
+    setActiveOrganisation(null);
+    setPermissions({});
+    setGovernance(null);
+    setRequiresOrganisationSelection(false);
+    setPreviousSeenAt(null);
+  }, []);
+
+  const checkSession = useCallback(async () => {
+    const { data, error } = await builderCurrentSession();
+    if (error || !data?.valid || !data.user) {
+      clearAuthState();
+    } else {
+      setUser(data.user);
+      setOrganisations(data.organisations ?? []);
+      setActiveOrganisation(data.active_organisation ?? null);
+      setPermissions(data.permissions ?? {});
+      setGovernance(data.governance ?? null);
+      setRequiresOrganisationSelection(!!data.requires_organisation_selection);
+      setPreviousSeenAt(data.previous_seen_at ?? null);
+    }
+    setLoading(false);
+  }, [clearAuthState]);
+
+  useEffect(() => { void checkSession(); }, [checkSession]);
+
+  const signIn = useCallback(async (email: string, password: string, turnstileToken?: string) => {
+    const { data, error } = await builderLogin(email, password, turnstileToken);
+    if (error || !data?.success) {
+      return { error: (data as any)?.error || error?.message || 'Login failed' };
+    }
+    // Re-read through the cookie-backed verifier so governance state always
+    // comes from the server, never from login response defaults.
+    await checkSession();
+    return {};
+  }, [checkSession]);
+
+  const signOut = useCallback(async () => {
+    try {
+      await builderLogout();
+    } catch {
+      /* best effort — always clear locally */
+    }
+    clearAuthState();
+  }, [clearAuthState]);
+
+  const acceptInvite = useCallback(async (token: string, password: string) => {
+    const { data, error } = await builderAcceptInvite(token, password);
+    if (error || !data?.success) {
+      return { error: (data as any)?.error || error?.message || 'Could not accept this invite' };
+    }
+    await checkSession();
+    return {};
+  }, [checkSession]);
+
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
+    const { data, error } = await builderChangePassword(currentPassword, newPassword);
+    if (error || !data?.success) {
+      return { error: (data as any)?.error || error?.message || 'Could not change your password' };
+    }
+    // The server rotated the cookie and revoked every other session. Re-read so
+    // `must_change_password` comes back cleared from the server, not guessed here.
+    await checkSession();
+    return {};
+  }, [checkSession]);
+
+  const acceptTerms = useCallback(async () => {
+    const { data, error } = await builderAcceptTerms();
+    if (error || !data?.success) {
+      return { error: (data as any)?.error || error?.message || 'Could not record your acceptance' };
+    }
+    await checkSession();
+    return {};
+  }, [checkSession]);
+
+  const completeOnboarding = useCallback(async (stepKey?: string) => {
+    const { data, error } = await builderCompleteOnboarding(stepKey);
+    if (error || !data?.success) {
+      return { error: (data as any)?.error || error?.message || 'Could not complete onboarding' };
+    }
+    await checkSession();
+    return {};
+  }, [checkSession]);
+
+  const selectOrganisation = useCallback(async (organisationId: string) => {
+    const { data, error } = await builderSelectOrganisation(organisationId);
+    if (error || !data?.success) {
+      return { error: (data as any)?.error || error?.message || 'Could not switch organisation' };
+    }
+    await checkSession();
+    return {};
+  }, [checkSession]);
+
+  const refresh = useCallback(async () => { await checkSession(); }, [checkSession]);
+
+  /**
+   * Convenience read of the server-resolved matrix. This is a rendering aid,
+   * never an authorization control — every request is re-authorised server-side.
+   */
+  const can = useCallback(
+    (permissionKey: string, level: 'view' | 'edit' | 'delete' = 'view') =>
+      permissions?.[permissionKey]?.[level] === true,
+    [permissions],
+  );
+
+  const value = useMemo<BuilderPortalAuthContextType>(() => ({
+    user, organisations, activeOrganisation, permissions, governance,
+    requiresOrganisationSelection, loading, previousSeenAt,
+    signIn, signOut, acceptInvite, changePassword, acceptTerms, completeOnboarding,
+    selectOrganisation, refresh, can,
+  }), [
+    user, organisations, activeOrganisation, permissions, governance,
+    requiresOrganisationSelection, loading, previousSeenAt,
+    signIn, signOut, acceptInvite, changePassword, acceptTerms, completeOnboarding,
+    selectOrganisation, refresh, can,
+  ]);
+
+  return (
+    <BuilderPortalAuthContext.Provider value={value}>
+      {children}
+    </BuilderPortalAuthContext.Provider>
+  );
+}
+
+export function useBuilderPortalAuth() {
+  const context = useContext(BuilderPortalAuthContext);
+  if (context === undefined) {
+    throw new Error('useBuilderPortalAuth must be used within a BuilderPortalAuthProvider');
+  }
+  return context;
+}

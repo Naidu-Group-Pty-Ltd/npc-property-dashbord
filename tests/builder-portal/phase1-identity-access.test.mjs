@@ -435,8 +435,9 @@ test('the internal route is guarded by ModuleGuard', () => {
 });
 
 test('the external portal is never wired as an internal dashboard module', () => {
-  assert.ok(!/path=["'`]\/builder\b/.test(app),
-    'a /builder external route was added in Phase 1');
+  // Phase 2 adds the external /builder tree. What this test protects is the
+  // separation, not the absence: the external portal must never appear in the
+  // internal navigation surfaces as if it were a dashboard module.
   for (const surface of [
     'src/components/layout/DashboardSidebar.tsx',
     'src/components/layout/MobileSidebar.tsx',
@@ -544,12 +545,24 @@ test('transaction_case_links gains no builder slot in Phase 1', () => {
     'the Phase 2 transaction-case link slot was added in Phase 1');
 });
 
-test('no builder-portal external route family exists yet', () => {
+test('the external portal family stops at authentication and governance', () => {
+  // Phase 1 allowed only the internal admin function. Phase 2 adds the external
+  // authentication family and nothing else — no projects, transactions,
+  // documents or messaging function may appear before its phase.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.startsWith('builder-portal-'))
-    .map((entry) => entry.name);
-  assert.deepEqual(functionDirs, ['builder-portal-admin'],
-    'Phase 1 delivers only the internal administration function');
+    .map((entry) => entry.name).sort();
+  assert.deepEqual(functionDirs, [
+    'builder-portal-accept-invite',
+    'builder-portal-admin',
+    'builder-portal-change-password',
+    'builder-portal-forgot-password',
+    'builder-portal-invite',
+    'builder-portal-login',
+    'builder-portal-logout',
+    'builder-portal-reset-password',
+    'builder-portal-verify',
+  ], 'a Builder function outside identity and governance appeared');
 });
 
 // ---------------------------------------------------------------------------
