@@ -95,4 +95,4 @@ Deno.serve(async (req) => {
   }
 })
 
-// redeploy 1785437383
+// Auth bundle epoch 2026-07-31T17:15Z — forces shared CORS/JWT helpers into deployment.
