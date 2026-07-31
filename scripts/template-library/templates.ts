@@ -23,6 +23,7 @@ import {
   table, timeline, twoColumn, withFurniture, resetIds,
   type PageDef,
 } from './blocks';
+import { EXTENDED_TEMPLATES } from './templatesExtended';
 
 export interface SeedTemplate {
   slug: string;
@@ -1121,7 +1122,16 @@ function complianceFileReview(): SeedTemplate {
   };
 }
 
-export const SEED_TEMPLATES: SeedTemplate[] = [
+/**
+ * The catalogue.
+ *
+ * Twelve core templates below, twenty-eight more in `templatesExtended.ts` —
+ * forty in total. The split is for file size, not for meaning: every entry goes
+ * through the same validation in `buildSeedCatalogue.ts` and lands in the same
+ * migration. `templatesExtended` imports only the `SeedTemplate` *type* from
+ * here, which erases at build time, so there is no runtime import cycle.
+ */
+export const CORE_TEMPLATES: SeedTemplate[] = [
   investorCompass(),
   executiveBrief(),
   propertySnapshot(),
@@ -1135,3 +1145,5 @@ export const SEED_TEMPLATES: SeedTemplate[] = [
   clientFactFind(),
   complianceFileReview(),
 ];
+
+export const SEED_TEMPLATES: SeedTemplate[] = [...CORE_TEMPLATES, ...EXTENDED_TEMPLATES];

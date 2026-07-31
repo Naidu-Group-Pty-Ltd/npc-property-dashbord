@@ -5,16 +5,44 @@
 > | Step | Status |
 > | --- | --- |
 > | `20260801090000_create_template_library.sql` | ✅ applied |
-> | `20260801093000_seed_template_library.sql` | ✅ applied — 12 published, 4 production-ready |
+> | `20260801093000_seed_template_library.sql` | ✅ applied — 12 published |
+> | `20260802093000_seed_template_library_v2.sql` | ✅ **applied — 40 published, 10 production-ready** |
 > | `manage-template-library` edge function | ✅ deployed v1, ACTIVE, verify_jwt on |
 > | `manage-templates` redeploy (insert gate) | ❌ **NOT deployed — still v9** |
 >
-> Verified in production after applying: 3 tables created with RLS; 12 entries
-> published across all 8 categories; `report_templates` unchanged at 80 rows;
-> zero library rows leaked into `report_templates`; RLS confirmed by role —
-> `authenticated` sees 12, `anon` sees 0, `authenticated` INSERT refused;
-> the function returns a clean 401 to an unauthenticated caller rather than
-> crashing, which proves it booted and its imports resolved.
+> The v2 seed is a **new file, not an edit of the applied one**. Supabase records
+> a migration by its version prefix and never re-runs it, so re-generating into
+> `20260801093000` would have changed the repository and nothing else — the 28
+> added templates would never have reached the database, and the only symptom
+> would have been a catalogue that stayed at 12.
+>
+> ### Verified in production after applying v2
+>
+> | Check | Result |
+> | --- | --- |
+> | Entries / published | 40 / 40 |
+> | Production-ready | 10 (only report types with a Builder adapter) |
+> | Brand-safe | 40 |
+> | Categories represented | 8 — smallest is 3, so no filter chip is a dead end |
+> | **Schema integrity** | **all 40 byte-exact** — `md5(schema::text)` compared against the locally computed canonical form for every row |
+> | `report_templates` | unchanged at 80 rows, 1 active |
+> | Library rows leaked into the Builder's table | 0 |
+> | RLS by role | `anon` sees 0, `authenticated` sees 40, `authenticated` INSERT refused |
+>
+> The transfer itself was checksum-gated: the migration was fetched from the
+> published branch and executed only after its SHA-256 matched the local file
+> (`c8ee6e62…d086`, 380,407 bytes) inside the same statement. Nothing ran
+> unverified, and the per-row md5 comparison afterwards proves every schema
+> landed intact rather than merely that the file arrived.
+>
+> ### Migration ledger repaired
+>
+> All three Template Library migrations had been applied by direct SQL and were
+> **absent from `supabase_migrations.schema_migrations`**. A later
+> `supabase db push` would therefore have tried to re-run
+> `20260801090000`, whose four `CREATE POLICY` statements have no
+> `IF NOT EXISTS` and would have failed the push. All three versions are now
+> recorded, which is accurate — they are applied — and removes that trap.
 >
 > **Outstanding: `manage-templates` still runs v9, without the insert gate.**
 > The Management API refused the update — `POST …/functions/deploy?slug=` returns
@@ -36,7 +64,7 @@
 Merging the code is not the same as the feature working. Three things have to be
 in place, in this order, or the Library tab renders its error state:
 
-1. the two migrations applied,
+1. the migrations applied,
 2. the `manage-template-library` edge function deployed,
 3. the feature flag on (it defaults on — this is a check, not a step).
 
@@ -55,9 +83,10 @@ supabase db push
 | Migration | Effect |
 | --- | --- |
 | `20260801090000_create_template_library.sql` | Creates `template_library_entries`, `template_library_instantiations`, `template_library_events` with RLS, indexes and grants. **No `ALTER TABLE` on any existing table.** |
-| `20260801093000_seed_template_library.sql` | Inserts the 12 seeded templates and publishes them. Upserts on `(slug, version)`. |
+| `20260801093000_seed_template_library.sql` | Inserts the first 12 seeded templates and publishes them. Upserts on `(slug, version)`. |
+| `20260802093000_seed_template_library_v2.sql` | Upserts the **whole 40-template catalogue** — the original 12 plus 28 more — and publishes them. A complete replacement, not a delta, so a fresh database and a long-running one end in the same state. |
 
-The seed migration is **idempotent**. Re-running it updates the seeded rows,
+The seed migrations are **idempotent**. Re-running one updates the seeded rows,
 never duplicates them, and never touches an entry an operator promoted
 themselves — those match neither the seeded slugs nor `version = 1` after their
 first edit.
@@ -65,13 +94,18 @@ first edit.
 ### Verify
 
 ```sql
--- Expect 12, all 'published'.
+-- Expect 40, all 'published'.
 SELECT status, count(*) FROM public.template_library_entries GROUP BY status;
 
--- Expect 4 true / 8 false. `production_ready` is derived, not asserted:
+-- Expect 10 true / 30 false. `production_ready` is derived, not asserted:
 -- only report types with a Template Builder adapter can be activated.
 SELECT production_ready, count(*) FROM public.template_library_entries
 WHERE status = 'published' GROUP BY production_ready;
+
+-- Expect every category to have at least two entries, so no filter chip is
+-- a dead end. 8 rows.
+SELECT category, count(*) FROM public.template_library_entries
+WHERE status = 'published' GROUP BY category ORDER BY category;
 
 -- Expect zero rows. Library entries must never be in the Builder's table.
 SELECT count(*) FROM public.report_templates
@@ -120,7 +154,7 @@ supabase functions deploy manage-templates
 ### Verify
 
 ```bash
-# Expect 200 with 12 records for a user holding templates:view.
+# Expect 200 with 40 records for a user holding templates:view.
 curl -sS -X POST "$SUPABASE_URL/functions/v1/manage-template-library" \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"operation":"list"}' | head -c 400
@@ -158,7 +192,8 @@ Ten minutes, in this order. Stop and roll back if any Builder row fails.
 
 **Library**
 
-- [ ] Library tab appears; 12 templates render with schematic thumbnails
+- [ ] Library tab appears; 40 templates render with schematic thumbnails
+- [ ] Thumbnails are distinguishable — each in its own palette, none blank
 - [ ] Search narrows; each filter axis works; "Clear filters" restores
 - [ ] Every category chip returns at least one template
 - [ ] Preview opens, pages navigate, focus returns to the trigger on close
@@ -213,6 +248,12 @@ already taken keep pointing at the version they were made from. Publishing the
 new version retires the old one; rolling back is republishing the previous
 version, which is still on disk.
 
-To change the **seeded** twelve, edit `scripts/template-library/templates.ts`
-and run `npm run templates:library:seed` — it re-validates everything and
-rewrites the migration. Never hand-edit the generated SQL.
+To change the **seeded** forty, edit `scripts/template-library/templates.ts`
+(the core twelve) or `templatesExtended.ts` (the other twenty-eight) and run
+`npm run templates:library:seed` — it re-validates everything and rewrites the
+migration. Never hand-edit the generated SQL.
+
+If the current generated migration has **already been applied to production**,
+bump `MIGRATION` in `buildSeedCatalogue.ts` to a new timestamped filename first.
+The script writes one file and Supabase runs each version once; regenerating
+into an applied file changes nothing in the database.

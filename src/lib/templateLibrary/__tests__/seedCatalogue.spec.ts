@@ -52,7 +52,17 @@ const SAMPLE = {
 
 describe('seeded catalogue', () => {
   it('ships a catalogue rather than an empty grid', () => {
-    expect(SEED_TEMPLATES.length).toBeGreaterThanOrEqual(12);
+    expect(SEED_TEMPLATES.length).toBeGreaterThanOrEqual(40);
+  });
+
+  it('gives every category enough choice to be worth filtering', () => {
+    // One template behind a chip is a chip that reads as broken. Two is the
+    // floor at which a filter earns its place in the UI.
+    const counts = new Map<string, number>();
+    for (const t of SEED_TEMPLATES) counts.set(t.category, (counts.get(t.category) ?? 0) + 1);
+    for (const [category, n] of counts) {
+      expect(n, `category "${category}" has only ${n} template(s)`).toBeGreaterThanOrEqual(2);
+    }
   });
 
   it('has unique slugs', () => {
@@ -172,6 +182,22 @@ describe('seeded catalogue', () => {
           for (const item of items) {
             if (item.rating !== undefined) expect(RATINGS).toContain(item.rating);
             if (item.confidence !== undefined) expect(CONFIDENCES).toContain(item.confidence);
+          }
+        }
+      }
+    });
+
+    it('keeps bindings out of table column headers', () => {
+      // Same class of trap as the chip vocabularies above, in a different
+      // block: `renderDataTableHtml` resolves `rows[].cells` but escapes
+      // `headers` verbatim (blocks/dataTable.html.ts:22), so a binding in a
+      // header reaches the PDF as literal braces. Column headers are labels.
+      for (const p of template.schema.pages) {
+        for (const b of p.blocks) {
+          if (b.type !== 'data-table') continue;
+          const headers = (b.props as { headers?: string[] }).headers ?? [];
+          for (const h of headers) {
+            expect(h, `header "${h}" on page "${p.name}"`).not.toMatch(/\{\{/);
           }
         }
       }
