@@ -522,7 +522,7 @@ export default function Integrations() {
           <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
               <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border backdrop-blur-sm transition-all duration-300 ${tone.icon}`}>
-                <BrandMark integrationId={integration.id} fallback={integration.icon} size={26} />
+                <BrandMark integrationId={brandIdFor(integration.id)} fallback={FALLBACK_ICONS[integration.fallbackIcon]} size={26} />
               </div>
               <div className="min-w-0 space-y-1">
                 <CardTitle className="break-words text-lg font-semibold leading-tight tracking-tight text-foreground">
