@@ -220,15 +220,8 @@ export default function Integrations() {
     }
   };
 
-  // Map frontend field keys to Supabase secret names
-  const getSupabaseSecretName = (fieldKey: string): string => {
-    const keyMap: Record<string, string> = {
-      'AIRTABLE_API_KEY': 'AIRTABLE_TOKEN',
-      'GHL_API_KEY': 'GOHIGHLEVEL_API_KEY',
-      'GHL_LOCATION_ID': 'GOHIGHLEVEL_LOCATION_ID',
-    };
-    return keyMap[fieldKey] || fieldKey;
-  };
+  // Frontend field key → Supabase secret name mapping lives in the registry.
+
 
   const syncToSupabase = async (integrationId: string) => {
     const integration = integrations.find(i => i.id === integrationId);
