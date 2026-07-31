@@ -194,6 +194,7 @@ Deno.serve(async (req) => {
     const PARTNER_OPS = new Set([
       'partner_summary', 'partner_commissions', 'partner_statements', 'partner_statement_pdf_url',
       'partner_statement_detail', 'partner_raise_dispute', 'partner_disputes',
+      'partner_clawbacks', 'partner_invoices', 'partner_banking',
     ]);
 
 
