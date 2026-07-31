@@ -759,48 +759,89 @@ export default function Integrations() {
         </Alert>
       )}
 
-      <Tabs defaultValue="all" className="w-full min-w-0">
+      <Tabs value={statusTab} onValueChange={setStatusTab} className="w-full min-w-0">
         <DashboardThemeFrame
           variant="toolbar"
-          className="overflow-x-auto overscroll-x-contain rounded-3xl border-primary/15 bg-[linear-gradient(135deg,hsl(var(--card)/0.92),hsl(var(--background)/0.72))] p-1.5 shadow-xl shadow-sm dark:shadow-black/25 [scrollbar-color:hsl(var(--primary)/0.35)_transparent]"
+          className="flex min-w-0 flex-col gap-3 rounded-3xl border-primary/15 bg-[linear-gradient(135deg,hsl(var(--card)/0.92),hsl(var(--background)/0.72))] p-3 shadow-xl shadow-sm dark:shadow-black/25"
         >
-          <TabsList aria-label="Filter integrations by status" className="inline-flex h-auto w-auto min-w-max gap-1 bg-transparent p-0">
-            <TabsTrigger value="all" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">All</TabsTrigger>
-            <TabsTrigger value="configured" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Configured</TabsTrigger>
-            <TabsTrigger value="pending" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Pending</TabsTrigger>
-            <TabsTrigger value="planned" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Roadmap</TabsTrigger>
-          </TabsList>
+          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0 overflow-x-auto overscroll-x-contain [scrollbar-color:hsl(var(--primary)/0.35)_transparent]">
+              <TabsList aria-label="Filter integrations by status" className="inline-flex h-auto w-auto min-w-max gap-1 bg-transparent p-0">
+                <TabsTrigger value="all" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">All</TabsTrigger>
+                <TabsTrigger value="configured" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Configured</TabsTrigger>
+                <TabsTrigger value="pending" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Pending</TabsTrigger>
+                <TabsTrigger value="planned" className="rounded-2xl px-4 py-2 text-xs font-semibold transition-all hover:bg-primary/10 hover:text-primary focus-visible:ring-2 focus-visible:ring-primary/45 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-[0_10px_24px_hsl(var(--primary)/0.22)] sm:text-sm">Roadmap</TabsTrigger>
+              </TabsList>
+            </div>
+
+            <div className="relative min-w-0 lg:w-80">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden="true" />
+              <Input
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search integrations, services or keys…"
+                aria-label="Search integrations"
+                className="min-h-11 rounded-2xl border-border/70 bg-card/80 pl-9 pr-3 shadow-inner transition-all placeholder:text-muted-foreground/70 focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-primary/35"
+              />
+            </div>
+          </div>
+
+          {statusTab !== 'planned' && (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 border-t border-border/40 pt-3">
+              <span className="mr-1 inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+                Category
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant={activeCategory === 'all' ? 'default' : 'outline'}
+                onClick={() => setActiveCategory('all')}
+                aria-pressed={activeCategory === 'all'}
+                className="h-8 rounded-full px-3 text-xs font-semibold"
+              >
+                All ({INTEGRATIONS.length})
+              </Button>
+              {INTEGRATION_CATEGORIES.map((category) => {
+                const count = INTEGRATIONS.filter((i) => i.category === category.id).length;
+                const isActive = activeCategory === category.id;
+                return (
+                  <Button
+                    key={category.id}
+                    type="button"
+                    size="sm"
+                    variant={isActive ? 'default' : 'outline'}
+                    onClick={() => setActiveCategory(category.id)}
+                    aria-pressed={isActive}
+                    className="h-8 rounded-full px-3 text-xs font-semibold"
+                  >
+                    {category.label} ({count})
+                  </Button>
+                );
+              })}
+            </div>
+          )}
         </DashboardThemeFrame>
 
         <TabsContent value="all" className="mt-5 sm:mt-6">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
-            {integrations.map(renderIntegrationCard)}
-          </div>
+          {renderGroupedIntegrations(visibleIntegrations, 'No integrations match your search or category filter.')}
         </TabsContent>
 
         <TabsContent value="configured" className="mt-5 sm:mt-6">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
-            {integrations
-              .filter(i => getIntegrationStatus(i) === 'configured')
-              .map(renderIntegrationCard)}
-            {integrations.filter(i => getIntegrationStatus(i) === 'configured').length === 0 && (
-              <div className="flex min-h-48 flex-col items-center justify-center gap-3 rounded-3xl border border-dashed border-border/70 bg-[linear-gradient(135deg,hsl(var(--card)/0.78),hsl(var(--muted)/0.24))] px-6 py-12 text-center text-muted-foreground shadow-inner shadow-sm xl:col-span-2">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-success/20 bg-success/10 text-success-foreground0 dark:text-success">
-                  <CheckCircle2 className="h-5 w-5" />
-                </div>
-                <p className="max-w-md text-sm font-medium">No integrations have been fully configured yet.</p>
-              </div>
-            )}
-          </div>
+          {renderGroupedIntegrations(
+            visibleIntegrations.filter((i) => getIntegrationStatus(i) === 'configured'),
+            'No integrations have been fully configured yet.',
+          )}
         </TabsContent>
 
         <TabsContent value="pending" className="mt-5 sm:mt-6">
-          <div className="grid min-w-0 grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
-            {integrations
-              .filter(i => getIntegrationStatus(i) !== 'configured')
-              .map(renderIntegrationCard)}
-          </div>
+          {renderGroupedIntegrations(
+            visibleIntegrations.filter((i) => getIntegrationStatus(i) !== 'configured'),
+            'Every matching integration is fully configured.',
+          )}
         </TabsContent>
+
 
         {/* Planned Integrations Roadmap */}
         <TabsContent value="planned" className="mt-5 sm:mt-6">
