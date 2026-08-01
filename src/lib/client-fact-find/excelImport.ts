@@ -12,6 +12,7 @@ export interface ExcelImportSummary { applicantsFound:number; addressesFound:num
 export interface ParsedExcelImport { payload:AdvancedClientCreationPayload; summary:ExcelImportSummary; warnings:string[]; fatalErrors:string[] }
 
 export function validateExcelFile(file:Pick<File,'name'|'size'>):string|null {if(!/\.(xlsx|xls)$/i.test(file.name))return 'Unsupported file type. Select an .xlsx or .xls workbook.';if(file.size>MAX_EXCEL_FILE_BYTES)return 'The workbook is larger than the 10 MB maximum.';return null}
+export async function parseAdvancedClientWorkbookFile(file:File):Promise<ParsedExcelImport>{const validationError=validateExcelFile(file);if(validationError)throw new Error(validationError);return parseAdvancedClientWorkbook(await file.arrayBuffer())}
 const emptySummary=():ExcelImportSummary=>({applicantsFound:0,addressesFound:0,employmentRecordsFound:0,assetsPopulated:0,liabilitiesPopulated:0,livingExpensesPopulated:0,warnings:0});
 const cell=(sheet:XLSXTypes.WorkSheet,address:string)=>sheet[address];
 const text=(sheet:XLSXTypes.WorkSheet,address:string)=>{const current=cell(sheet,address);if(!current||current.v==null)return '';if(current.w&&current.t==='n'&&/phone|mobile/i.test(String(current.z??'')))return current.w.trim();return String(current.v).trim()};
