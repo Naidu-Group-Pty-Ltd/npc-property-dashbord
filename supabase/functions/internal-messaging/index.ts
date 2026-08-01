@@ -22,6 +22,39 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
 
 const MAX_BODY = 4000;
+const ATTACHMENT_BUCKET = 'internal-message-attachments';
+const MAX_ATTACHMENTS = 25;
+
+/** Sanitised, collision-free storage object name. */
+function safeFileName(name: string) {
+  const flat = String(name || 'file').replace(/[^\w.\- ]+/g, '_').trim().slice(-120);
+  return flat || 'file';
+}
+
+interface Attachment {
+  name: string;
+  path: string;
+  mime: string;
+  size: number;
+}
+
+/** All MIME types are accepted; only the shape is validated. */
+function normaliseAttachments(raw: unknown, threadId: string): Attachment[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(0, MAX_ATTACHMENTS)
+    .map((a) => {
+      const path = String((a as any)?.path ?? '');
+      if (!path.startsWith(`${threadId}/`)) return null;
+      return {
+        name: safeFileName(String((a as any)?.name ?? 'file')),
+        path,
+        mime: String((a as any)?.mime ?? 'application/octet-stream').slice(0, 200),
+        size: Number((a as any)?.size ?? 0) || 0,
+      } as Attachment;
+    })
+    .filter((a): a is Attachment => !!a);
+}
 
 function admin() {
   return createClient(
@@ -199,7 +232,7 @@ Deno.serve(async (req) => {
 
       const { data: msgs, error } = await sb
         .from('internal_messages')
-        .select('id, thread_id, sender_id, body, is_system, created_at, priority')
+        .select('id, thread_id, sender_id, body, is_system, created_at, priority, attachments')
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true })
         .limit(500);
@@ -229,6 +262,49 @@ Deno.serve(async (req) => {
         200,
         corsHeaders,
       );
+    }
+
+    // ── Attachments: signed upload / download URLs ───────────────────
+    if (action === 'attachment_upload_url' || action === 'attachment_download_url') {
+      const threadId = String(body.thread_id ?? '');
+      if (!threadId) return json({ success: false, error: 'thread_id required' }, 400, corsHeaders);
+
+      const { data: part } = await sb
+        .from('internal_thread_participants')
+        .select('id')
+        .eq('thread_id', threadId)
+        .eq('user_id', me)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (!part) return json({ success: false, error: 'not_a_participant' }, 403, corsHeaders);
+
+      if (action === 'attachment_upload_url') {
+        const fileName = safeFileName(String(body.file_name ?? 'file'));
+        const path = `${threadId}/${crypto.randomUUID()}-${fileName}`;
+        const { data, error } = await sb.storage
+          .from(ATTACHMENT_BUCKET)
+          .createSignedUploadUrl(path);
+        if (error || !data) {
+          return json({ success: false, error: error?.message ?? 'upload_url_failed' }, 500, corsHeaders);
+        }
+        return json(
+          { success: true, path, token: data.token, signed_url: data.signedUrl, file_name: fileName },
+          200,
+          corsHeaders,
+        );
+      }
+
+      const path = String(body.path ?? '');
+      if (!path.startsWith(`${threadId}/`)) {
+        return json({ success: false, error: 'invalid_path' }, 400, corsHeaders);
+      }
+      const { data, error } = await sb.storage
+        .from(ATTACHMENT_BUCKET)
+        .createSignedUrl(path, 300, body.download ? { download: true } : undefined);
+      if (error || !data) {
+        return json({ success: false, error: error?.message ?? 'signed_url_failed' }, 500, corsHeaders);
+      }
+      return json({ success: true, signed_url: data.signedUrl }, 200, corsHeaders);
     }
 
     // ── Mark read ────────────────────────────────────────────────────
@@ -292,7 +368,6 @@ Deno.serve(async (req) => {
     // ── Send ─────────────────────────────────────────────────────────
     if (action === 'send_message') {
       const text = String(body.body ?? '').trim();
-      if (!text) return json({ success: false, error: 'body required' }, 400, corsHeaders);
       if (text.length > MAX_BODY) {
         return json({ success: false, error: 'body_too_long' }, 400, corsHeaders);
       }
@@ -303,6 +378,10 @@ Deno.serve(async (req) => {
 
       let threadId = String(body.thread_id ?? '');
       let kind = 'direct';
+      const rawAttachments = Array.isArray(body.attachments) ? body.attachments : [];
+      if (!text && rawAttachments.length === 0) {
+        return json({ success: false, error: 'body required' }, 400, corsHeaders);
+      }
 
       if (body.broadcast === true) {
         const { data: staff, error: sErr } = await sb
@@ -345,17 +424,25 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (!part) return json({ success: false, error: 'not_a_participant' }, 403, corsHeaders);
 
+      const attachments = normaliseAttachments(rawAttachments, threadId);
+
       const { data: msg, error: mErr } = await sb
         .from('internal_messages')
-        .insert({ thread_id: threadId, sender_id: me, body: text, priority })
-        .select('id, thread_id, sender_id, body, created_at, priority')
+        .insert({ thread_id: threadId, sender_id: me, body: text, priority, attachments })
+        .select('id, thread_id, sender_id, body, created_at, priority, attachments')
         .single();
       if (mErr) throw mErr;
 
       const now = new Date().toISOString();
       await sb
         .from('internal_message_threads')
-        .update({ last_message_at: now, last_message_preview: preview(text), updated_at: now })
+        .update({
+          last_message_at: now,
+          last_message_preview: preview(
+            text || `${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`,
+          ),
+          updated_at: now,
+        })
         .eq('id', threadId);
       await sb
         .from('internal_thread_participants')
@@ -383,7 +470,9 @@ Deno.serve(async (req) => {
           title: `${priority === 'urgent' ? 'URGENT: ' : priority === 'high' ? 'Priority: ' : ''}${
             kind === 'broadcast' ? `Announcement from ${senderName}` : `New message from ${senderName}`
           }`,
-          message: preview(text),
+          message: preview(
+            text || `Sent ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}`,
+          ),
           target_user_id: r.user_id,
           entity_id: threadId,
         }));
