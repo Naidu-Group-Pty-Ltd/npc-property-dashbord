@@ -9,6 +9,7 @@ import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 
 const UPDATE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,visibility,shadow_would_publish,created_at,updated_at';
+const ARCHIVE_COLUMNS = 'id,title,source_name,source_url,category,geography,ai_summary,public_excerpt,source_published_at,archived_at,archived_by,pre_archive_status';
 const SOURCE_COLUMNS = 'id,source_key,name,description,source_type,adapter_type,url,primary_url,feed_urls,listing_urls,source_authority,perspective,copyright_mode,legal_storage_policy,category,geography,reliability_tier,enabled,ingest_mode,shadow_since,shadow_promotion_notes,refresh_frequency_hours,refresh_frequency_minutes,consecutive_failures,health_status,registry_status,disabled_reason,last_http_status,last_latency_ms,last_items_discovered,last_items_published,last_fetched_at,last_success_at,created_at,updated_at';
 const SHADOW_METRIC_COLUMNS = 'source_id,source_key,name,ingest_mode,shadow_since,shadow_promotion_notes,health_status,source_authority,shadow_items,would_publish,below_relevance,rejected,avg_relevance,avg_confidence,last_shadow_item_at';
 const DIGEST_COLUMNS = 'id,period,generated_at,period_start,period_end,executive_summary,top_update_ids,finance_lending_highlights,property_market_highlights,construction_supply_highlights,policy_regulation_highlights,political_economic_watchpoints,social_watchpoints,segment_breakdown,buyer_implications,investor_implications,broker_adviser_implications,client_advisory_implications,recommended_watchlist_for_tomorrow,source_urls,confidence_score,status,created_at,updated_at';
@@ -16,6 +17,13 @@ const AGENT_KEYS = ['market_updates_classifier', 'market_updates_digest', 'marke
 const PERIODS = new Set(['24h', 'weekly', 'biweekly', 'monthly', 'quarterly', 'annual']);
 const UPDATE_STATUSES = new Set(['published', 'candidate', 'ignored', 'rejected', 'failed']);
 const MAX_REQUEST_BYTES = 16_384;
+
+function archiveSearch(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  // PostgREST `or` expressions treat comma/parentheses as syntax and ilike uses
+  // percent/underscore as wildcards. Archive search is literal and bounded.
+  return value.trim().slice(0, 120).replace(/[,%_()\\]/g, ' ').replace(/\s+/g, ' ');
+}
 
 function json(body: unknown, status: number, cors: Record<string,string>, correlationId: string) {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, 'content-type':'application/json', 'cache-control':'private, no-store', 'x-correlation-id':correlationId } });
@@ -52,6 +60,28 @@ Deno.serve(async (req) => {
 
   const action = String(body.action ?? 'status');
   try {
+    if (action === 'archive') {
+      const editPermission = await requireModulePermission(sb, { userId:auth.userId, authMethod:auth.authMethod }, 'market_updates', 'can_edit');
+      if (!editPermission.ok) return json({ error:'Market Updates edit permission required to review the archive', code:'market_updates_edit_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
+      const page = Math.max(1, Math.floor(Number(body.page) || 1));
+      const pageSize = Math.max(10, Math.min(50, Math.floor(Number(body.pageSize) || 20)));
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      const search = archiveSearch(body.search);
+      const sort = body.sort === 'deletion_asc' ? 'deletion_asc' : 'archived_desc';
+      let query = sb.from('market_updates').select(ARCHIVE_COLUMNS, { count:'exact' }).not('archived_at', 'is', null);
+      if (search) query = query.or(`title.ilike.%${search}%,source_name.ilike.%${search}%,ai_summary.ilike.%${search}%`);
+      query = query.order('archived_at', { ascending:sort === 'deletion_asc' }).order('id', { ascending:false }).range(from, to);
+      const { data, count, error } = await query;
+      if (error) throw Object.assign(new Error('archive query failed'), { stage:'archive' });
+      const now = Date.now();
+      const items = (data ?? []).map((row:any) => {
+        const deletesAt = new Date(new Date(row.archived_at).getTime() + 30 * 86_400_000).toISOString();
+        return { ...row, deletes_at:deletesAt, days_remaining:Math.max(0, Math.ceil((new Date(deletesAt).getTime() - now) / 86_400_000)) };
+      });
+      return json({ archive:{ items, count:count ?? 0, page, pageSize, hasMore:to + 1 < (count ?? 0) }, correlation_id:correlationId }, 200, cors, correlationId);
+    }
+
     if (action === 'updates') {
       const status = typeof body.status === 'string' && UPDATE_STATUSES.has(body.status) ? body.status : 'published';
       if (status !== 'published') {
@@ -66,7 +96,7 @@ Deno.serve(async (req) => {
         const shadowPermission = await requireAdmin(sb, { userId:auth.userId, authMethod:auth.authMethod });
         if (!shadowPermission.ok) return json({ error:'Admin privilege required to review shadow-mode items', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
       }
-      let query = sb.from('market_updates').select(UPDATE_COLUMNS).eq('status', status).eq('visibility', visibility)
+      let query = sb.from('market_updates').select(UPDATE_COLUMNS).eq('status', status).eq('visibility', visibility).is('archived_at', null)
         .order('source_published_at', { ascending:false, nullsFirst:false })
         .order('ingested_at', { ascending:false }).limit(limit);
       if (typeof body.category === 'string' && body.category !== 'all') query = query.eq('category', body.category);
@@ -119,7 +149,7 @@ Deno.serve(async (req) => {
       // Counts describe the client-facing feed, so shadow rows are excluded here and
       // reported separately below — otherwise every shadow item would read as work
       // sitting in the operator's candidate queue.
-      Promise.all(['published','candidate','ignored'].map(async status => ({ status, result:await sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status',status).eq('visibility','public') }))),
+      Promise.all(['published','candidate','ignored'].map(async status => ({ status, result:await sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status',status).eq('visibility','public').is('archived_at',null) }))),
       sb.from('agent_model_assignments').select('agent_key,route,model_id,fallback_chain,last_used_at,last_error,updated_at,is_active').in('agent_key',AGENT_KEYS).eq('is_active',true),
       sb.from('llm_integration_settings').select('provider,is_enabled,last_test_at,last_test_success').ilike('provider','openrouter').maybeSingle(),
       sb.from('market_ingestion_runs').select('*').eq('trigger_type','cron').in('status',['completed','partial']).order('completed_at',{ ascending:false }).limit(1).maybeSingle(),
@@ -148,17 +178,23 @@ Deno.serve(async (req) => {
       : new Date().toISOString()).sort()[0] ?? null;
     const assignments = assignmentsResult.error ? [] : assignmentsResult.data ?? [];
     const adminPermission = await requireAdmin(sb,{ userId:auth.userId, authMethod:auth.authMethod });
+    const editPermission = await requireModulePermission(sb,{ userId:auth.userId, authMethod:auth.authMethod },'market_updates','can_edit');
+    const archivedCount = editPermission.ok
+      ? await countArchivedRows(sb)
+      : null;
+    if (editPermission.ok && archivedCount === null) warnings.push('archive_count_unavailable');
     const automation = automationResult.error ? null : automationResult.data;
     if (adminPermission.ok && automationResult.error) warnings.push('automation_status_unavailable');
     if (adminPermission.ok && automation?.cron_stale) warnings.push('cron_stale');
     if (adminPermission.ok && automation?.required_secrets_present === false) warnings.push('automation_secrets_missing');
-    if (adminPermission.ok && Number(automation?.configured_job_count ?? 0) < Number(automation?.expected_job_count ?? 8)) warnings.push('cron_jobs_missing');
+    if (adminPermission.ok && Number(automation?.configured_job_count ?? 0) < Number(automation?.expected_job_count ?? 9)) warnings.push('cron_jobs_missing');
     return json({
       status:{
         ...health,
         nextScheduledFetch,
         archivedLegacy, unresolvedLegacy,
         publishedUpdates:counts.published, candidates:counts.candidate, ignored:counts.ignored,
+        archivedUpdates:archivedCount,
         shadowMetrics:shadowMetricsResult.error ? [] : shadowMetricsResult.data ?? [],
         latestSourceFetch:latestFetchResult.error ? null : latestFetchResult.data ?? null,
         latestDigest:latestDigestResult.error ? null : latestDigestResult.data ?? null,
@@ -205,6 +241,10 @@ function sourceHealth(sources:any[], latestRun:any) {
 }
 async function countRows(sb:any, table:string, column:string, value:string):Promise<number|null> {
   const { count, error } = await sb.from(table).select('id',{ count:'exact',head:true }).eq(column,value);
+  return error ? null : count ?? 0;
+}
+async function countArchivedRows(sb:any):Promise<number|null> {
+  const { count, error } = await sb.from('market_updates').select('id',{ count:'exact',head:true }).not('archived_at','is',null);
   return error ? null : count ?? 0;
 }
 function buildWarnings(sources:any[], latestRun:any, assignments:any[]) {
