@@ -607,69 +607,57 @@ export function InternalMessageToasts() {
     [threads, activeId],
   );
 
-  if (!user || (!active && !chips.length)) return null;
-
   const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
   const typer = active ? typing[active.thread_id] : undefined;
   const headline = active ? (active.kind === 'broadcast' ? active.title : active.sender) : '';
 
+  if (!user || (!active && !chips.length)) return null;
+
   return (
-    <div className="pointer-events-none fixed right-4 top-20 z-[60] flex w-[min(26rem,calc(100vw-2rem))] flex-col items-end gap-2">
+    <div
+      ref={dock.nodeRef}
+      style={dock.positionStyle}
+      className={cn(
+        'pointer-events-none fixed right-4 top-20 z-[60] flex w-[min(26rem,calc(100vw-2rem))] flex-col items-end gap-2',
+        dock.dragging && 'z-[70]',
+      )}
+    >
+      {/* Dock handle — drag the whole stack anywhere on the page */}
+      <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-border/50 bg-card/80 px-1.5 py-0.5 backdrop-blur-xl">
+        <span
+          {...dock.handleProps}
+          role="button"
+          tabIndex={-1}
+          aria-label="Move messages dock"
+          title="Drag to move all minimised chats"
+          className="flex cursor-grab items-center text-muted-foreground/70 hover:text-foreground active:cursor-grabbing"
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </span>
+        {dock.position && (
+          <button
+            type="button"
+            onClick={dock.reset}
+            aria-label="Snap dock back to the corner"
+            title="Snap back to the corner"
+            className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <RotateCcw className="h-3 w-3" />
+          </button>
+        )}
+      </div>
+
       {/* Collapsed conversations — name only, transcript hidden */}
       {chips.map((t) => (
-        <div
+        <MinimisedChip
           key={t.thread_id}
-          className={cn(
-            'pointer-events-auto flex max-w-full items-center gap-2 rounded-full border bg-card/95 px-3 py-1.5 backdrop-blur-xl',
-            'shadow-[var(--elevation-2,0_10px_24px_-14px_rgba(0,0,0,0.5))]',
-            t.priority === 'urgent'
-              ? 'border-destructive/60'
-              : t.priority === 'high'
-                ? 'border-warning/50'
-                : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
-          )}
-        >
-          <button
-            type="button"
-            onClick={() => setActiveId(t.thread_id)}
-            className="flex min-w-0 items-center gap-2 text-left"
-            aria-label={`Expand conversation with ${t.kind === 'broadcast' ? t.title : t.sender}`}
-          >
-            <span
-              className={cn(
-                'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold uppercase',
-                t.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-primary/15 text-primary',
-              )}
-            >
-              {t.kind === 'broadcast' ? (
-                <Megaphone className="h-3 w-3" />
-              ) : (
-                t.sender?.trim()?.[0] ?? <MessageSquare className="h-3 w-3" />
-              )}
-            </span>
-            <span className="truncate text-xs font-semibold text-foreground">
-              {t.kind === 'broadcast' ? t.title : t.sender}
-            </span>
-            {t.unread > 0 && (
-              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">
-                {t.unread > 9 ? '9+' : t.unread}
-              </span>
-            )}
-            {typing[t.thread_id] && (
-              <TypingDots className="shrink-0" />
-            )}
-
-          </button>
-          <button
-            type="button"
-            aria-label="Close conversation"
-            onClick={() => dismiss(t.thread_id)}
-            className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            <X className="h-3 w-3" />
-          </button>
-        </div>
+          thread={t}
+          typingNow={!!typing[t.thread_id]}
+          onExpand={() => setActiveId(t.thread_id)}
+          onDismiss={() => dismiss(t.thread_id)}
+        />
       ))}
+
 
       {/* Expanded conversation */}
       {active && (
