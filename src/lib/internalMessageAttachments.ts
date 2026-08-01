@@ -147,6 +147,25 @@ function ticketUrl(ticket: UploadTicket): string {
 }
 
 /**
+ * Non-retryable ticket failures (the attachment endpoint itself is unavailable
+ * or the caller isn't allowed) mapped to a message that explains the fix.
+ */
+function fatalTicketError(error: unknown): Error | null {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  const m = msg.toLowerCase();
+  if (m.includes('unknown action')) {
+    return new Error('Attachment service is out of date — redeploy internal-messaging');
+  }
+  if (m.includes('not_a_participant')) {
+    return new Error('You are no longer a participant in this conversation');
+  }
+  if (m.includes('thread_id required')) {
+    return new Error('Open or create the conversation before attaching files');
+  }
+  return null;
+}
+
+/**
  * Upload one file with retry + progress. Each attempt mints a fresh signed
  * ticket so an expired/consumed token can never wedge the upload.
  */
