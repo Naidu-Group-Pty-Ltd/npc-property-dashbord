@@ -84,7 +84,9 @@ export function DashboardLayout() {
         </div>
       </div>
       <AgentChatWidget />
+      <InternalMessageToasts />
       <GlobalCommandPalette />
     </SidebarProvider>
+
   );
 }
