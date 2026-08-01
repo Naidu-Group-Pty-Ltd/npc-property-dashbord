@@ -1,11 +1,28 @@
 /**
  * Internal messaging attachments.
  *
- * Files are uploaded straight from the browser to Supabase Storage using a
- * short-lived signed upload URL minted by the `internal-messaging` edge
- * function (which re-verifies thread participation). Uploading directly means
- * there is no edge-function body limit in the path, so large files stream fine
- * and every MIME type is accepted — the message row only stores metadata.
+ * Upload path
+ * -----------
+ * Files go straight from the browser to Supabase Storage using a short-lived
+ * signed upload URL minted by the `internal-messaging` edge function (which
+ * re-verifies thread participation). Because the edge function is never in the
+ * data path there is no payload ceiling — large files stream directly to
+ * storage and every MIME type is accepted.
+ *
+ * Uploads are performed with XHR so we get real byte-level progress, an abort
+ * signal, and — critically — a *retry* loop. Every retry mints a **fresh**
+ * signed ticket (tokens are single-use and short-lived), so a dropped
+ * connection, a token expiry mid-flight, or a transient 5xx never results in a
+ * silent failure: each attempt either completes or surfaces a hard error that
+ * the UI can retry manually.
+ *
+ * Safety
+ * ------
+ * The server re-inspects every uploaded object (magic-byte sniff, declared-vs-
+ * actual MIME agreement, executable blocklist and — when configured — an
+ * antivirus pass) inside `send_message`. Anything that fails is deleted from
+ * storage and the message is rejected, so unsafe files never become visible to
+ * recipients.
  *
  * Downloads always go back through the edge function so a signed URL is only
  * ever issued to a verified participant of that thread.
@@ -14,15 +31,27 @@ import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 export const INTERNAL_ATTACHMENT_BUCKET = 'internal-message-attachments';
-/** Every format is allowed. */
+/** Every format is allowed — the server does the safety screening. */
 export const INTERNAL_ATTACHMENT_ACCEPT = '*/*';
 export const MAX_INTERNAL_ATTACHMENTS = 25;
+/** Attempts per file (1 initial + retries), each with a brand-new ticket. */
+export const UPLOAD_ATTEMPTS = 4;
+
+export type AttachmentScanStatus = 'clean' | 'unscanned' | 'blocked' | 'legacy';
+
+export interface AttachmentScan {
+  status: AttachmentScanStatus;
+  engine?: string | null;
+  reason?: string | null;
+  at?: string | null;
+}
 
 export interface InternalAttachment {
   name: string;
   path: string;
   mime: string;
   size: number;
+  scan?: AttachmentScan | null;
 }
 
 export function formatAttachmentSize(bytes?: number | null): string {
@@ -43,30 +72,149 @@ const call = async (payload: Record<string, unknown>) => {
   return data as any;
 };
 
-/** Upload one file and return its message-attachment metadata. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+export interface UploadTicket {
+  path: string;
+  token: string;
+  signed_url?: string;
+  file_name: string;
+}
+
+/** PUT the file to a signed upload URL with byte-level progress + abort. */
+function putWithProgress(opts: {
+  url: string;
+  file: File;
+  onProgress?: (fraction: number) => void;
+  signal?: AbortSignal;
+}): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      reject(new DOMException('Upload cancelled', 'AbortError'));
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', opts.url, true);
+    xhr.setRequestHeader('content-type', opts.file.type || 'application/octet-stream');
+    xhr.setRequestHeader('cache-control', 'max-age=3600');
+    xhr.setRequestHeader('x-upsert', 'true');
+
+    const onAbort = () => xhr.abort();
+    opts.signal?.addEventListener('abort', onAbort, { once: true });
+
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable || !opts.onProgress) return;
+      opts.onProgress(Math.min(0.99, e.loaded / e.total));
+    };
+    xhr.onload = () => {
+      opts.signal?.removeEventListener('abort', onAbort);
+      if (xhr.status >= 200 && xhr.status < 300) {
+        opts.onProgress?.(1);
+        resolve();
+        return;
+      }
+      let detail = '';
+      try {
+        detail = JSON.parse(xhr.responseText)?.message ?? '';
+      } catch {
+        detail = xhr.responseText?.slice(0, 160) ?? '';
+      }
+      const err = new Error(detail || `Upload failed (${xhr.status})`);
+      (err as any).status = xhr.status;
+      reject(err);
+    };
+    xhr.onerror = () => {
+      opts.signal?.removeEventListener('abort', onAbort);
+      reject(new Error('Network interrupted during upload'));
+    };
+    xhr.ontimeout = () => reject(new Error('Upload timed out'));
+    xhr.onabort = () => {
+      opts.signal?.removeEventListener('abort', onAbort);
+      reject(new DOMException('Upload cancelled', 'AbortError'));
+    };
+    // No client timeout: very large files may legitimately take a long time.
+    xhr.timeout = 0;
+    xhr.send(opts.file);
+  });
+}
+
+function ticketUrl(ticket: UploadTicket): string {
+  if (ticket.signed_url && /^https?:\/\//i.test(ticket.signed_url)) return ticket.signed_url;
+  const base =
+    (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
+  const encoded = ticket.path.split('/').map(encodeURIComponent).join('/');
+  return `${base}/storage/v1/object/upload/sign/${INTERNAL_ATTACHMENT_BUCKET}/${encoded}?token=${ticket.token}`;
+}
+
+/**
+ * Upload one file with retry + progress. Each attempt mints a fresh signed
+ * ticket so an expired/consumed token can never wedge the upload.
+ */
 export async function uploadInternalAttachment(
   threadId: string,
   file: File,
+  options: {
+    onProgress?: (fraction: number) => void;
+    onAttempt?: (attempt: number, attempts: number) => void;
+    signal?: AbortSignal;
+    attempts?: number;
+  } = {},
 ): Promise<InternalAttachment> {
-  const ticket = await call({
-    action: 'attachment_upload_url',
-    thread_id: threadId,
-    file_name: file.name,
-  });
+  const attempts = Math.max(1, options.attempts ?? UPLOAD_ATTEMPTS);
+  let lastError: unknown = null;
 
-  const { error } = await supabase.storage
-    .from(INTERNAL_ATTACHMENT_BUCKET)
-    .uploadToSignedUrl(ticket.path, ticket.token, file, {
-      contentType: file.type || 'application/octet-stream',
-    });
-  if (error) throw new Error(error.message || `Failed to upload ${file.name}`);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (options.signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
+    options.onAttempt?.(attempt, attempts);
+    try {
+      const ticket = (await call({
+        action: 'attachment_upload_url',
+        thread_id: threadId,
+        file_name: file.name,
+        file_size: file.size,
+        content_type: file.type || 'application/octet-stream',
+      })) as UploadTicket;
 
-  return {
-    name: file.name,
-    path: ticket.path,
-    mime: file.type || 'application/octet-stream',
-    size: file.size,
-  };
+      try {
+        await putWithProgress({
+          url: ticketUrl(ticket),
+          file,
+          onProgress: options.onProgress,
+          signal: options.signal,
+        });
+      } catch (xhrError) {
+        // Fall back to the SDK path once (covers proxies that mangle raw PUTs).
+        if (attempt === attempts - 1) {
+          const { error } = await supabase.storage
+            .from(INTERNAL_ATTACHMENT_BUCKET)
+            .uploadToSignedUrl(ticket.path, ticket.token, file, {
+              contentType: file.type || 'application/octet-stream',
+            });
+          if (error) throw xhrError;
+          options.onProgress?.(1);
+        } else {
+          throw xhrError;
+        }
+      }
+
+      return {
+        name: file.name,
+        path: ticket.path,
+        mime: file.type || 'application/octet-stream',
+        size: file.size,
+      };
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      lastError = error;
+      if (attempt < attempts) await sleep(Math.min(8_000, 600 * 2 ** (attempt - 1)));
+    }
+  }
+
+  throw new Error(
+    lastError instanceof Error
+      ? `${file.name}: ${lastError.message}`
+      : `${file.name}: upload failed`,
+  );
 }
 
 /** Upload a batch sequentially so very large files don't compete for bandwidth. */
@@ -103,4 +251,32 @@ export async function openInternalAttachment(
 
 export function isImageAttachment(a: InternalAttachment) {
   return (a.mime || '').startsWith('image/');
+}
+
+export function attachmentScanStatus(a: InternalAttachment): AttachmentScanStatus {
+  const status = a.scan?.status;
+  if (status === 'clean' || status === 'unscanned' || status === 'blocked') return status;
+  return 'legacy';
+}
+
+/** Pull real files out of a drop / paste event (multi-file aware). */
+export function filesFromDataTransfer(dt: DataTransfer | null): File[] {
+  if (!dt) return [];
+  const out: File[] = [];
+  if (dt.files?.length) out.push(...Array.from(dt.files));
+  if (!out.length && dt.items?.length) {
+    for (const item of Array.from(dt.items)) {
+      if (item.kind !== 'file') continue;
+      const f = item.getAsFile();
+      if (f) out.push(f);
+    }
+  }
+  // De-dupe identical picks (some browsers report both files and items).
+  const seen = new Set<string>();
+  return out.filter((f) => {
+    const key = `${f.name}|${f.size}|${f.lastModified}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
