@@ -4,12 +4,8 @@ import { useDropzone } from 'react-dropzone';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
-import type { ParsedExcelImport } from '@/lib/client-fact-find/excelImport';
+import { EXCEL_ACCEPT, MAX_EXCEL_FILE_BYTES, validateExcelFile, type ParsedExcelImport } from '@/lib/client-fact-find/excelImport';
 import advancedClientTemplateUrl from '../../../../docs/reference/Aurixa Systems - White Label Client Fact Find Template.xlsx?url';
-
-const MAX_EXCEL_FILE_BYTES=10*1024*1024;
-const EXCEL_ACCEPT={'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx'],'application/vnd.ms-excel':['.xls']};
-const validateExcelFile=(file:Pick<File,'name'|'size'>)=>!/\.(xlsx|xls)$/i.test(file.name)?'Unsupported file type. Select an .xlsx or .xls workbook.':file.size>MAX_EXCEL_FILE_BYTES?'The workbook is larger than the 10 MB maximum.':null;
 
 export function ExcelImportTab({file,onFileChange,hasFormValues,onApply}:{file:File|null;onFileChange:(file:File|null)=>void;hasFormValues:boolean;onApply:(parsed:ParsedExcelImport)=>void}){
   const [parsed,setParsed]=useState<ParsedExcelImport|null>(null),[error,setError]=useState(''),[parsing,setParsing]=useState(false),[confirm,setConfirm]=useState(false);
