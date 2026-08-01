@@ -3686,10 +3686,20 @@ export type Database = {
           checksum: string | null
           content_type: string
           created_at: string
+          detected_mime_type: string | null
           document_id: string
           file_name: string
           id: string
+          lifecycle_status: string
+          malware_scan_status: string
+          scan_details: Json
+          scan_provider: string | null
+          scan_reference: string | null
+          scanned_at: string | null
+          sha256: string | null
+          storage_bucket: string
           storage_path: string
+          uploaded_at: string | null
           uploaded_by_builder_user_id: string | null
           uploaded_by_type: string
           uploaded_by_user_id: string | null
@@ -3701,10 +3711,20 @@ export type Database = {
           checksum?: string | null
           content_type?: string
           created_at?: string
+          detected_mime_type?: string | null
           document_id: string
           file_name: string
           id?: string
+          lifecycle_status?: string
+          malware_scan_status?: string
+          scan_details?: Json
+          scan_provider?: string | null
+          scan_reference?: string | null
+          scanned_at?: string | null
+          sha256?: string | null
+          storage_bucket?: string
           storage_path: string
+          uploaded_at?: string | null
           uploaded_by_builder_user_id?: string | null
           uploaded_by_type?: string
           uploaded_by_user_id?: string | null
@@ -3716,10 +3736,20 @@ export type Database = {
           checksum?: string | null
           content_type?: string
           created_at?: string
+          detected_mime_type?: string | null
           document_id?: string
           file_name?: string
           id?: string
+          lifecycle_status?: string
+          malware_scan_status?: string
+          scan_details?: Json
+          scan_provider?: string | null
+          scan_reference?: string | null
+          scanned_at?: string | null
+          sha256?: string | null
+          storage_bucket?: string
           storage_path?: string
+          uploaded_at?: string | null
           uploaded_by_builder_user_id?: string | null
           uploaded_by_type?: string
           uploaded_by_user_id?: string | null
@@ -4348,6 +4378,71 @@ export type Database = {
             foreignKeyName: "builder_organisation_memberships_organisation_id_fkey"
             columns: ["organisation_id"]
             isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_organisation_settings: {
+        Row: {
+          created_at: string
+          default_landing_page: string
+          display_name: string | null
+          id: string
+          notify_on_defect: boolean
+          notify_on_inspection: boolean
+          notify_on_message: boolean
+          notify_on_task: boolean
+          notify_on_variation: boolean
+          organisation_id: string
+          primary_contact_email: string | null
+          primary_contact_name: string | null
+          primary_contact_phone: string | null
+          row_version: number
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          default_landing_page?: string
+          display_name?: string | null
+          id?: string
+          notify_on_defect?: boolean
+          notify_on_inspection?: boolean
+          notify_on_message?: boolean
+          notify_on_task?: boolean
+          notify_on_variation?: boolean
+          organisation_id: string
+          primary_contact_email?: string | null
+          primary_contact_name?: string | null
+          primary_contact_phone?: string | null
+          row_version?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          default_landing_page?: string
+          display_name?: string | null
+          id?: string
+          notify_on_defect?: boolean
+          notify_on_inspection?: boolean
+          notify_on_message?: boolean
+          notify_on_task?: boolean
+          notify_on_variation?: boolean
+          organisation_id?: string
+          primary_contact_email?: string | null
+          primary_contact_name?: string | null
+          primary_contact_phone?: string | null
+          row_version?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_organisation_settings_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: true
             referencedRelation: "builder_organisations"
             referencedColumns: ["id"]
           },
@@ -6011,6 +6106,72 @@ export type Database = {
             columns: ["stage_id"]
             isOneToOne: false
             referencedRelation: "builder_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_user_preferences: {
+        Row: {
+          builder_user_id: string
+          created_at: string
+          date_format: string
+          default_organisation_id: string | null
+          email_digest: string
+          id: string
+          landing_page: string
+          notify_message_posted: boolean
+          notify_status_change: boolean
+          notify_task_assigned: boolean
+          row_version: number
+          timezone: string
+          tour_completed_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          builder_user_id: string
+          created_at?: string
+          date_format?: string
+          default_organisation_id?: string | null
+          email_digest?: string
+          id?: string
+          landing_page?: string
+          notify_message_posted?: boolean
+          notify_status_change?: boolean
+          notify_task_assigned?: boolean
+          row_version?: number
+          timezone?: string
+          tour_completed_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          builder_user_id?: string
+          created_at?: string
+          date_format?: string
+          default_organisation_id?: string | null
+          email_digest?: string
+          id?: string
+          landing_page?: string
+          notify_message_posted?: boolean
+          notify_status_change?: boolean
+          notify_task_assigned?: boolean
+          row_version?: number
+          timezone?: string
+          tour_completed_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_user_preferences_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: true
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_user_preferences_default_organisation_id_fkey"
+            columns: ["default_organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
             referencedColumns: ["id"]
           },
         ]
@@ -10922,7 +11083,9 @@ export type Database = {
           firm_id: string | null
           id: string
           portal: string
+          revoke_reason: string | null
           revoked_at: string | null
+          revoked_by: string | null
         }
         Insert: {
           approval_type: string
@@ -10934,7 +11097,9 @@ export type Database = {
           firm_id?: string | null
           id?: string
           portal?: string
+          revoke_reason?: string | null
           revoked_at?: string | null
+          revoked_by?: string | null
         }
         Update: {
           approval_type?: string
@@ -10946,7 +11111,9 @@ export type Database = {
           firm_id?: string | null
           id?: string
           portal?: string
+          revoke_reason?: string | null
           revoked_at?: string | null
+          revoked_by?: string | null
         }
         Relationships: [
           {
@@ -11034,27 +11201,36 @@ export type Database = {
           default_mode: string
           description: string
           feature_key: string
+          legacy_comparison_applicable: boolean
           legacy_removal_target: string
           minimum_stable_days: number
+          not_applicable_reason: string | null
           portal: string
+          runtime_consumed: boolean
         }
         Insert: {
           created_at?: string
           default_mode: string
           description: string
           feature_key: string
+          legacy_comparison_applicable?: boolean
           legacy_removal_target: string
           minimum_stable_days?: number
+          not_applicable_reason?: string | null
           portal?: string
+          runtime_consumed?: boolean
         }
         Update: {
           created_at?: string
           default_mode?: string
           description?: string
           feature_key?: string
+          legacy_comparison_applicable?: boolean
           legacy_removal_target?: string
           minimum_stable_days?: number
+          not_applicable_reason?: string | null
           portal?: string
+          runtime_consumed?: boolean
         }
         Relationships: []
       }
@@ -11069,6 +11245,7 @@ export type Database = {
           mode: string
           portal: string
           reason: string
+          row_version: number
           stable_since: string | null
         }
         Insert: {
@@ -11081,6 +11258,7 @@ export type Database = {
           mode: string
           portal?: string
           reason: string
+          row_version?: number
           stable_since?: string | null
         }
         Update: {
@@ -11093,6 +11271,7 @@ export type Database = {
           mode?: string
           portal?: string
           reason?: string
+          row_version?: number
           stable_since?: string | null
         }
         Relationships: [
@@ -12029,40 +12208,53 @@ export type Database = {
         Row: {
           attempts: number
           available_at: string
+          builder_document_version_id: string | null
           created_at: string
-          document_version_id: string
+          document_version_id: string | null
           id: string
           last_error: string | null
           locked_at: string | null
           locked_by: string | null
+          portal: string
           status: string
           updated_at: string
         }
         Insert: {
           attempts?: number
           available_at?: string
+          builder_document_version_id?: string | null
           created_at?: string
-          document_version_id: string
+          document_version_id?: string | null
           id?: string
           last_error?: string | null
           locked_at?: string | null
           locked_by?: string | null
+          portal?: string
           status?: string
           updated_at?: string
         }
         Update: {
           attempts?: number
           available_at?: string
+          builder_document_version_id?: string | null
           created_at?: string
-          document_version_id?: string
+          document_version_id?: string | null
           id?: string
           last_error?: string | null
           locked_at?: string | null
           locked_by?: string | null
+          portal?: string
           status?: string
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "document_processing_jobs_builder_document_version_id_fkey"
+            columns: ["builder_document_version_id"]
+            isOneToOne: false
+            referencedRelation: "builder_document_versions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "document_processing_jobs_document_version_id_fkey"
             columns: ["document_version_id"]
@@ -31444,6 +31636,18 @@ export type Database = {
           },
         ]
       }
+      builder_document_scan_health: {
+        Row: {
+          clean: number | null
+          dead_lettered: number | null
+          errored: number | null
+          infected: number | null
+          pending: number | null
+          scanning: number | null
+          stuck_over_1h: number | null
+        }
+        Relationships: []
+      }
       client_portfolio_properties: {
         Row: {
           address: string | null
@@ -31920,6 +32124,10 @@ export type Database = {
           membership_role: string
         }[]
       }
+      builder_activity_entity_is_portal_visible: {
+        Args: { _entity_type: string }
+        Returns: boolean
+      }
       builder_add_construction_photograph: {
         Args: {
           _actor_builder_user_id: string
@@ -31970,10 +32178,20 @@ export type Database = {
           checksum: string | null
           content_type: string
           created_at: string
+          detected_mime_type: string | null
           document_id: string
           file_name: string
           id: string
+          lifecycle_status: string
+          malware_scan_status: string
+          scan_details: Json
+          scan_provider: string | null
+          scan_reference: string | null
+          scanned_at: string | null
+          sha256: string | null
+          storage_bucket: string
           storage_path: string
+          uploaded_at: string | null
           uploaded_by_builder_user_id: string | null
           uploaded_by_type: string
           uploaded_by_user_id: string | null
@@ -32301,6 +32519,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      builder_can_see_activity: {
+        Args: { _entity_id: string; _entity_type: string; _user_id: string }
+        Returns: boolean
+      }
       builder_can_see_conversation: {
         Args: { _conversation_id: string; _level?: string; _user_id: string }
         Returns: boolean
@@ -32316,6 +32538,10 @@ export type Database = {
           _step_key?: string
         }
         Returns: boolean
+      }
+      builder_complete_onboarding_tour: {
+        Args: { _builder_user_id: string }
+        Returns: string
       }
       builder_create_allocation: {
         Args: {
@@ -32486,6 +32712,10 @@ export type Database = {
         Args: { _construction_case_id: string }
         Returns: string
       }
+      builder_document_version_is_downloadable: {
+        Args: { _version_id: string }
+        Returns: boolean
+      }
       builder_ensure_onboarding_steps: {
         Args: { _builder_user_id: string }
         Returns: number
@@ -32621,6 +32851,44 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      builder_register_uploaded_document_version: {
+        Args: {
+          _actor_builder_user_id?: string
+          _actor_type?: string
+          _document_version_id: string
+        }
+        Returns: {
+          byte_size: number | null
+          change_note: string | null
+          checksum: string | null
+          content_type: string
+          created_at: string
+          detected_mime_type: string | null
+          document_id: string
+          file_name: string
+          id: string
+          lifecycle_status: string
+          malware_scan_status: string
+          scan_details: Json
+          scan_provider: string | null
+          scan_reference: string | null
+          scanned_at: string | null
+          sha256: string | null
+          storage_bucket: string
+          storage_path: string
+          uploaded_at: string | null
+          uploaded_by_builder_user_id: string | null
+          uploaded_by_type: string
+          uploaded_by_user_id: string | null
+          version_number: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "builder_document_versions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       builder_release_allocation: {
         Args: {
           _actor_builder_user_id: string
@@ -32752,6 +33020,10 @@ export type Database = {
       builder_revoke_user_sessions: {
         Args: { _except_session_id?: string; _reason: string; _user_id: string }
         Returns: number
+      }
+      builder_rollout_transition_allowed: {
+        Args: { _from: string; _to: string }
+        Returns: boolean
       }
       builder_scope_exists: {
         Args: { _scope_id: string; _scope_type: string }
@@ -33374,6 +33646,41 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      builder_upsert_organisation_settings: {
+        Args: {
+          _actor_builder_user_id: string
+          _actor_type: string
+          _actor_user_id: string
+          _expected_version?: number
+          _organisation_id: string
+          _payload?: Json
+          _reason?: string
+        }
+        Returns: {
+          created_at: string
+          default_landing_page: string
+          display_name: string | null
+          id: string
+          notify_on_defect: boolean
+          notify_on_inspection: boolean
+          notify_on_message: boolean
+          notify_on_task: boolean
+          notify_on_variation: boolean
+          organisation_id: string
+          primary_contact_email: string | null
+          primary_contact_name: string | null
+          primary_contact_phone: string | null
+          row_version: number
+          timezone: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "builder_organisation_settings"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       builder_upsert_progress_claim: {
         Args: {
           _actor_builder_user_id: string
@@ -33688,6 +33995,38 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      builder_upsert_user_preferences: {
+        Args: {
+          _actor_builder_user_id: string
+          _actor_type: string
+          _actor_user_id: string
+          _expected_version?: number
+          _payload?: Json
+          _reason?: string
+        }
+        Returns: {
+          builder_user_id: string
+          created_at: string
+          date_format: string
+          default_organisation_id: string | null
+          email_digest: string
+          id: string
+          landing_page: string
+          notify_message_posted: boolean
+          notify_status_change: boolean
+          notify_task_assigned: boolean
+          row_version: number
+          timezone: string
+          tour_completed_at: string | null
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "builder_user_preferences"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       builder_upsert_variation: {
         Args: {
           _actor_builder_user_id: string
@@ -33787,6 +34126,40 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      builder_visible_activity: {
+        Args: {
+          _entity_id?: string
+          _entity_type?: string
+          _limit?: number
+          _organisation_id: string
+          _user_id: string
+        }
+        Returns: {
+          action: string
+          actor_type: string
+          created_at: string
+          entity_id: string
+          entity_type: string
+          id: string
+          reason: string
+        }[]
+      }
+      builder_workspace_summary: {
+        Args: { _organisation_id: string; _user_id: string }
+        Returns: {
+          construction_cases: number
+          documents: number
+          open_conversations: number
+          open_defects: number
+          open_tasks: number
+          overdue_tasks: number
+          projects: number
+          transactions: number
+          units: number
+          unread_messages: number
+          unread_notifications: number
+        }[]
+      }
       bump_finance_partner_activity: {
         Args: { _contact_id: string }
         Returns: undefined
@@ -33847,6 +34220,17 @@ export type Database = {
         Returns: boolean
       }
       check_pdf_import_success_rate: { Args: never; Returns: undefined }
+      claim_builder_document_processing_jobs: {
+        Args: { _limit?: number; _worker_id: string }
+        Returns: {
+          declared_byte_size: number
+          declared_mime_type: string
+          job_id: string
+          storage_bucket: string
+          storage_path: string
+          version_id: string
+        }[]
+      }
       claim_document_processing_jobs: {
         Args: { _limit?: number; _worker_id: string }
         Returns: {
@@ -33958,6 +34342,51 @@ export type Database = {
           _retention_class: string
         }
         Returns: Json
+      }
+      complete_builder_document_processing: {
+        Args: {
+          _byte_size: number
+          _detected_mime: string
+          _error?: string
+          _job_id: string
+          _scan_details: Json
+          _scan_provider: string
+          _scan_reference: string
+          _scan_status: string
+          _sha256: string
+          _worker_id: string
+        }
+        Returns: {
+          byte_size: number | null
+          change_note: string | null
+          checksum: string | null
+          content_type: string
+          created_at: string
+          detected_mime_type: string | null
+          document_id: string
+          file_name: string
+          id: string
+          lifecycle_status: string
+          malware_scan_status: string
+          scan_details: Json
+          scan_provider: string | null
+          scan_reference: string | null
+          scanned_at: string | null
+          sha256: string | null
+          storage_bucket: string
+          storage_path: string
+          uploaded_at: string | null
+          uploaded_by_builder_user_id: string | null
+          uploaded_by_type: string
+          uploaded_by_user_id: string | null
+          version_number: number
+        }
+        SetofOptions: {
+          from: "*"
+          to: "builder_document_versions"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       complete_document_processing: {
         Args: {
@@ -34260,6 +34689,14 @@ export type Database = {
           success_rate: number
           total_calls: number
         }[]
+      }
+      get_builder_cutover_readiness: {
+        Args: { _feature_key: string; _organisation_id: string }
+        Returns: Json
+      }
+      get_builder_operational_health: {
+        Args: { _organisation_id?: string }
+        Returns: Json
       }
       get_cache_statistics: {
         Args: never
@@ -34671,6 +35108,18 @@ export type Database = {
         Args: { p_job_id: string }
         Returns: Json
       }
+      record_cross_portal_approval_for: {
+        Args: {
+          _actor_id: string
+          _actor_type?: string
+          _approval_type: string
+          _evidence_reference: string
+          _feature_key: string
+          _owner_id: string
+          _portal: string
+        }
+        Returns: Json
+      }
       record_cross_portal_dual_read: {
         Args: {
           _correlation_id: string
@@ -34823,6 +35272,18 @@ export type Database = {
         }
         Returns: Json
       }
+      revoke_cross_portal_approval_for: {
+        Args: {
+          _actor_id: string
+          _actor_type?: string
+          _approval_type: string
+          _feature_key: string
+          _owner_id: string
+          _portal: string
+          _reason: string
+        }
+        Returns: Json
+      }
       seed_legal_matter_settlement_tasks: {
         Args: { _matter_id: string }
         Returns: number
@@ -34834,6 +35295,19 @@ export type Database = {
           _actor_id: string
           _feature_key: string
           _firm_id: string
+          _reason: string
+          _to_mode: string
+        }
+        Returns: Json
+      }
+      set_cross_portal_rollout_for: {
+        Args: {
+          _actor_id: string
+          _actor_type?: string
+          _expected_version?: number
+          _feature_key: string
+          _owner_id: string
+          _portal: string
           _reason: string
           _to_mode: string
         }
