@@ -511,7 +511,25 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (!part) return json({ success: false, error: 'not_a_participant' }, 403, corsHeaders);
 
-      const attachments = normaliseAttachments(rawAttachments, threadId);
+      const staged = normaliseAttachments(rawAttachments, threadId);
+      const { safe: attachments, blocked } = staged.length
+        ? await screenAttachments(sb, staged)
+        : { safe: [] as Attachment[], blocked: [] as string[] };
+      if (blocked.length) {
+        return json(
+          {
+            success: false,
+            error: `attachment_rejected: ${blocked.join(', ')}`,
+            blocked,
+          },
+          400,
+          corsHeaders,
+        );
+      }
+      if (!text && attachments.length === 0) {
+        return json({ success: false, error: 'body required' }, 400, corsHeaders);
+      }
+
 
       const { data: msg, error: mErr } = await sb
         .from('internal_messages')
