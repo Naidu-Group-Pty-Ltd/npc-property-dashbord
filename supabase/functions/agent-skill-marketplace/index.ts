@@ -5,6 +5,7 @@
 // uninstall: mark install as uninstalled and disable the user's copy.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
@@ -32,6 +33,18 @@ Deno.serve(async (req) => {
   if (auth.error || !auth.userId) return json({ error: 'unauthorized' }, 401);
   const userId = auth.userId as string;
   const action = body?.action ?? 'list-available';
+
+  // Skills change which tools the agent will reach for, so the marketplace is an
+  // agent surface and takes the same `agent` module gate ai-dashboard-agent
+  // applies. Previously it only authenticated, so a workspace without the
+  // licensed Aurixa Agent module could still browse and install skills.
+  const marketplaceGate = await requireModulePermission(
+    sb,
+    { userId, authMethod: auth.authMethod ?? 'human' },
+    'agent',
+    action === 'list-available' || action === 'list-installed' ? 'can_view' : 'can_edit',
+  );
+  if (!marketplaceGate.ok) return json({ error: 'forbidden' }, 403);
 
   try {
     if (action === 'list-available') {

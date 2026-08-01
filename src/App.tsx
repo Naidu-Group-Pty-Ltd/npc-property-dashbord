@@ -524,8 +524,8 @@ const App = () => (
                 <Route path="admin/aml-integration-health" element={<AmlIntegrationHealth />} />
                 <Route path="agent/memories" element={<ModuleGuard moduleKey="agent"><AgentMemoryManager /></ModuleGuard>} />
                 <Route path="agent-insights" element={<ModuleGuard moduleKey="agent"><AgentInsights /></ModuleGuard>} />
-                <Route path="agent/plans" element={<AgentPlans />} />
-                <Route path="agent/skills" element={<AgentSkills />} />
+                <Route path="agent/plans" element={<ModuleGuard moduleKey="agent"><AgentPlans /></ModuleGuard>} />
+                <Route path="agent/skills" element={<ModuleGuard moduleKey="agent"><AgentSkills /></ModuleGuard>} />
                 <Route path="qa/subscriptions" element={<MarketQASubscriptions />} />
                 <Route path="qa/digests" element={<MarketQADigests />} />
 

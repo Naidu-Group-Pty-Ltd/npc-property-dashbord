@@ -4,6 +4,7 @@
 // delete-plan.
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import { verifyAuth } from '../_shared/auth.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 import { verifyRequiredCronSecret } from '../_shared/requestSecurity.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
@@ -127,6 +128,29 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
   const auth = await verifyAuth(sb, req.headers, body);
   if (auth.error || !auth.userId) return json({ error: 'unauthorized' }, 401);
   const userId = auth.userId as string;
+
+  // The planner is part of the Aurixa Agent, which is a separately-licensed
+  // module (`agent` → the priced `aurixa-agent`). ai-dashboard-agent gates every
+  // action on it precisely so the agent is not "a backdoor around the workspace
+  // model", but this function only authenticated: any signed-in user could draft
+  // and auto-execute long-horizon plans whether or not their workspace has the
+  // module. That also spends paid LLM tokens (planWithLLM) outside any
+  // entitlement. Reads need can_view; anything that creates, mutates or runs a
+  // plan needs can_edit. Deletion is the one can_delete action.
+  //
+  // Placed after the cron branch on purpose: run-scheduled authenticates with
+  // the cron secret and has no user to authorize.
+  const plannerPerm: 'can_view' | 'can_edit' | 'can_delete' =
+    action === 'delete-plan' ? 'can_delete'
+    : /^(list-|get-)/.test(String(action)) ? 'can_view'
+    : 'can_edit';
+  const plannerGate = await requireModulePermission(
+    sb,
+    { userId, authMethod: auth.authMethod ?? 'human' },
+    'agent',
+    plannerPerm,
+  );
+  if (!plannerGate.ok) return json({ error: 'forbidden' }, 403);
 
   try {
     if (action === 'draft-plan') {

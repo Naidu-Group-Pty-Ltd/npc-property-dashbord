@@ -247,7 +247,7 @@ export const TOOL_SECURITY_POLICIES:Record<string,ToolSecurityPolicy>={
   'log_client_activity':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'recall_memories':{moduleKey:'ai_dashboard',permission:'can_view',allowedActorTypes:['human']},
   'remove_additional_contact':{moduleKey:'ai_dashboard',permission:'can_delete',allowedActorTypes:['human'],requiresConfirmation:true},
-  'reschedule_appointment':{moduleKey:'ai_dashboard',permission:'can_view',allowedActorTypes:['human']},
+  'reschedule_appointment':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'revoke_conversation_share':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'revoke_portal_access':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'run_playbook':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
@@ -269,7 +269,7 @@ export const TOOL_SECURITY_POLICIES:Record<string,ToolSecurityPolicy>={
   'send_portal_invite':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'set_follow_up_date':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'set_user_preference':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
-  'share_conversation':{moduleKey:'ai_dashboard',permission:'can_view',allowedActorTypes:['human']},
+  'share_conversation':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'smart_search':{moduleKey:'ai_dashboard',permission:'can_view',allowedActorTypes:['human']},
   'toggle_auto_report_switch':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
   'toggle_checklist_item':{moduleKey:'ai_dashboard',permission:'can_edit',allowedActorTypes:['human']},
@@ -368,6 +368,35 @@ const CUSTOM_OWNERSHIP_RESOLVERS: Record<string, (sb: any, userId: string, id: s
     const { data } = await sb.from('game_plan_actions').select('phase_id').eq('id', id).maybeSingle();
     return data?.phase_id ? ownsGamePlanPhase(sb, userId, data.phase_id) : false;
   },
+  // client_additional_contacts.client_id -> clients owner/assignee.
+  //
+  // `contact_id` used to sit in NON_OWNERSHIP_ID_ARGS, which exempted it from
+  // the ownership loop entirely. update_additional_contact and
+  // remove_additional_contact take contact_id as their ONLY resource argument
+  // and their executors run service-role with `.eq('id', contact_id)` and no
+  // user filter — so any user holding client_management edit/delete could
+  // rewrite or delete a co-borrower (name, email, mobile, DOB) belonging to
+  // another user's client. The table has no created_by; ownership is reached
+  // through the parent client, same as the other child-row resolvers here.
+  contact_id: async (sb, userId, id) => {
+    const { data: contact } = await sb.from('client_additional_contacts')
+      .select('client_id').eq('id', id).maybeSingle();
+    if (!contact?.client_id) return false;
+    const { data: c } = await sb.from('clients')
+      .select('created_by, assigned_team_user_id').eq('id', contact.client_id).maybeSingle();
+    return !!c && (c.created_by === userId || c.assigned_team_user_id === userId);
+  },
+  // agent_scheduled_tasks.user_id — direct ownership.
+  //
+  // Same root cause: `task_id` was exempt, and toggle_scheduled_task /
+  // delete_scheduled_task filter only on `.eq('id', task_id)`, so one user
+  // could disable or delete another user's scheduled task. The ownership-mapped
+  // key `scheduled_task_id` existed but no tool ever used it.
+  task_id: async (sb, userId, id) => {
+    const { data } = await sb.from('agent_scheduled_tasks')
+      .select('user_id').eq('id', id).maybeSingle();
+    return !!data && data.user_id === userId;
+  },
   // build_progress_payments.deal_id -> client_deals.client_id -> clients owner/assignee
   payment_id: async (sb, userId, id) => {
     const { data: pay } = await sb.from('build_progress_payments').select('deal_id').eq('id', id).maybeSingle();
@@ -406,8 +435,12 @@ const NON_OWNERSHIP_ID_ARGS = new Set<string>([
   'tool_call_id', 'message_id', 'source_message_id', 'branch_from_message_id',
   'parent_message_id', 'library_image_id', 'source_report_id', 'source_conversation_id',
   'template_id', 'target_user_id', 'user_id', 'thread_id', 'place_id', 'external_id',
-  'contact_id', 'ghl_contact_id', 'ghl_conversation_id', 'mailbox_id', 'subscription_id',
-  'envelope_id', 'session_id', 'task_id', 'run_id', 'job_id', 'request_id', 'correlation_id',
+  'ghl_contact_id', 'ghl_conversation_id', 'mailbox_id', 'subscription_id',
+  'envelope_id', 'session_id', 'run_id', 'job_id', 'request_id', 'correlation_id',
+  // `contact_id` and `task_id` were listed here and are now ownership-resolved
+  // in CUSTOM_OWNERSHIP_RESOLVERS above — they named real, user-owned rows.
+  // `ghl_contact_id` stays exempt: it is an external CRM identifier, not a row
+  // in this database.
 ]);
 
 /** True for a snake_case argument key that names a single resource identifier. */
@@ -459,6 +492,12 @@ export function resolveToolBusinessModule(name: string): string | null {
   // client + deal + financial-position sub-data all live under client management
   if (has('client', 'deal', 'employment', 'income', 'expense', 'asset', 'liabilit',
           'contact', 'portfolio', 'settlement', 'lead_source', 'document_readiness')) return 'client_management';
+  // Marketing attribution. Last so it cannot shadow the report rules above —
+  // get_marketing_reports keeps resolving to `reports`. Without this the four
+  // attribution tools fall through to `ai_dashboard`, which is not a registered
+  // module and therefore cannot be granted to anyone: they were permanently
+  // superadmin-only even though `marketing_analytics` exists for exactly them.
+  if (has('attribution', 'campaign', 'marketing_funnel')) return 'marketing_analytics';
   return null; // unrecognized → keep declared module (stays restricted)
 }
 

@@ -4839,18 +4839,24 @@ function parseCronDays(field: string): number[] {
   }
   return values;
 }
-async function executeToggleScheduledTask(sb: any, args: any) {
+// These run on a service-role client, so the `user_id` filter is the row-level
+// scope — there is no RLS underneath to catch a missing one. authorizeAgentTool
+// now also ownership-resolves `task_id`; this is the second lock, not the first.
+async function executeToggleScheduledTask(sb: any, args: any, userId: string) {
   const updates: any = { is_enabled: args.is_enabled };
   // Recalculate next_run_at when enabling
   if (args.is_enabled) {
-    const { data: task } = await sb.from('agent_scheduled_tasks').select('schedule_cron').eq('id', args.task_id).single();
+    const { data: task } = await sb.from('agent_scheduled_tasks').select('schedule_cron').eq('id', args.task_id).eq('user_id', userId).maybeSingle();
+    if (!task) return { success: false, error: 'Scheduled task not found.' };
     if (task?.schedule_cron) updates.next_run_at = calculateNextRunFromCron(task.schedule_cron);
   }
-  await sb.from('agent_scheduled_tasks').update(updates).eq('id', args.task_id);
+  const { data: updated } = await sb.from('agent_scheduled_tasks').update(updates).eq('id', args.task_id).eq('user_id', userId).select('id');
+  if (!updated?.length) return { success: false, error: 'Scheduled task not found.' };
   return { success: true, message: `Task ${args.is_enabled?'enabled':'disabled'}.` };
 }
-async function executeDeleteScheduledTask(sb: any, args: any) {
-  await sb.from('agent_scheduled_tasks').delete().eq('id', args.task_id);
+async function executeDeleteScheduledTask(sb: any, args: any, userId: string) {
+  const { data: deleted } = await sb.from('agent_scheduled_tasks').delete().eq('id', args.task_id).eq('user_id', userId).select('id');
+  if (!deleted?.length) return { success: false, error: 'Scheduled task not found.' };
   return { success: true, message: 'Scheduled task deleted.' };
 }
 async function executeBulkUpdateClients(sb: any, args: any) {
@@ -5847,8 +5853,8 @@ async function executeTool(sb: any, name: string, args: any, userId: string, aut
     case 'delete_playbook': return executeDeletePlaybook(sb, args);
     case 'get_scheduled_tasks': return executeGetScheduledTasks(sb, userId);
     case 'create_scheduled_task': return executeCreateScheduledTask(sb, args, userId);
-    case 'toggle_scheduled_task': return executeToggleScheduledTask(sb, args);
-    case 'delete_scheduled_task': return executeDeleteScheduledTask(sb, args);
+    case 'toggle_scheduled_task': return executeToggleScheduledTask(sb, args, userId);
+    case 'delete_scheduled_task': return executeDeleteScheduledTask(sb, args, userId);
     case 'bulk_update_clients': return executeBulkUpdateClients(sb, args);
     case 'bulk_create_reminders': return executeBulkCreateReminders(sb, args, userId);
     case 'bulk_set_follow_up_dates': return executeBulkSetFollowUpDates(sb, args);
