@@ -254,21 +254,28 @@ export function InternalMessagesPanel({
       s.username.toLowerCase().includes(q) || (s.email ?? '').toLowerCase().includes(q));
   }, [staff, staffSearch]);
 
+  const addFiles = (files: File[]) => {
+    if (!files.length) return;
+    attachmentQueue.addFiles(files);
+  };
+
   const sendInThread = async () => {
     const text = draft.trim();
-    if ((!text && pendingFiles.length === 0) || !activeThread || sending) return;
+    const hasFiles = attachmentQueue.items.length > 0;
+    if ((!text && !hasFiles) || !activeThread || sending) return;
     setSending(true);
     try {
       let attachments: InternalAttachment[] = [];
-      if (pendingFiles.length) {
-        setUploading(true);
-        attachments = await uploadInternalAttachments(
-          activeThread.id,
-          pendingFiles,
-          (done, total, name) => setUploadLabel(`Uploading ${done}/${total} · ${name}`),
-        );
-        setUploading(false);
-        setUploadLabel(null);
+      if (hasFiles) {
+        const { uploaded, failed } = await attachmentQueue.uploadAll(activeThread.id);
+        if (failed.length) {
+          toast.error(
+            `${failed.length} file${failed.length === 1 ? '' : 's'} failed to upload — retry or remove before sending`,
+          );
+          setSending(false);
+          return;
+        }
+        attachments = uploaded;
       }
       await call({
         action: 'send_message',
@@ -277,7 +284,7 @@ export function InternalMessagesPanel({
         attachments,
       });
       setDraft('');
-      setPendingFiles([]);
+      attachmentQueue.clear();
       publishInternalMessage({
         thread_id: activeThread.id,
         sender_id: user?.id ?? null,
@@ -289,11 +296,10 @@ export function InternalMessagesPanel({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Message failed to send');
     } finally {
-      setUploading(false);
-      setUploadLabel(null);
       setSending(false);
     }
   };
+
 
 
   const sendNew = async () => {
