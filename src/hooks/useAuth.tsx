@@ -245,6 +245,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (data.access_token) {
           persistStoredValue(ACCESS_TOKEN_KEY, data.access_token);
           setAccessToken(data.access_token);
+        } else if (data.jwt_unavailable) {
+          // The session is valid but no RLS token was issued. Direct PostgREST
+          // queries will run as `anon` and return empty results rather than
+          // errors, so this must not pass unremarked — an empty notification
+          // bell looked like "nothing happened" for a month.
+          console.error(
+            '[Auth] Signed in without an RLS access token: direct Supabase queries '
+            + 'will return no rows. Check that JWT_SECRET / SUPABASE_JWT_SECRET is set '
+            + 'for the custom-auth edge functions.',
+          );
+          clearStoredValue(ACCESS_TOKEN_KEY);
+          setAccessToken(null);
         }
         // Cookie-only: the session token is never returned or persisted in JS.
 

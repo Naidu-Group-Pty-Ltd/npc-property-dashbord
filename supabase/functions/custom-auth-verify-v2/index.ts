@@ -95,8 +95,12 @@ Deno.serve(async (req) => {
         },
       });
     } catch (jwtError) {
+      // The session IS still valid — every edge function authenticates on the
+      // cookie. But without this JWT the browser cannot query PostgREST as
+      // itself, and it does not fail loudly: it falls back to the anon key and
+      // reads come back `200 []`. Treating that as an unremarkable success is
+      // what let the notification bell sit empty for a month. Say so.
       console.error('JWT generation failed during verify:', jwtError);
-      // Continue without JWT - session is still valid
     }
 
     return new Response(
@@ -109,6 +113,10 @@ Deno.serve(async (req) => {
         },
         roles,
         access_token: accessToken,  // Supabase-compatible JWT for direct queries when signing is configured
+        // Explicit so the client can distinguish "signed in" from "signed in but
+        // unable to read RLS-scoped tables directly", instead of silently
+        // degrading to the anon key.
+        jwt_unavailable: accessToken === null,
       }),
       {
         status: 200,

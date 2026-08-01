@@ -995,7 +995,29 @@ Deno.serve(async (req) => {
     const webhookSecret = Deno.env.get('VAPI_WEBHOOK_SECRET');
     const providedSecret = req.headers.get('x-vapi-secret') || req.headers.get('x-webhook-secret');
     if (!verifyWebhookSecret(webhookSecret, providedSecret)) {
-      console.warn('[Vapi Webhook] Rejected: missing/invalid webhook secret');
+      // Failing closed is right. Failing closed in SILENCE is what cost six
+      // weeks of call logs: this warned to a console nobody reads, VAPI saw a
+      // 401 and moved on, and the Call Logs page simply stopped growing. Record
+      // the refusal so the outage is visible from inside the product.
+      //
+      // The two reasons are distinguished on purpose — "we have no secret
+      // configured" and "the caller sent the wrong one" need different fixes.
+      const reason = !webhookSecret || webhookSecret.trim().length < 16
+        ? 'secret_not_configured'
+        : (providedSecret ? 'secret_mismatch' : 'secret_not_presented');
+      console.warn('[Vapi Webhook] Rejected:', reason);
+      try {
+        const sb = createClient(
+          Deno.env.get('SUPABASE_URL')!,
+          Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+        );
+        await sb.rpc('record_webhook_rejection', {
+          p_function_name: 'vapi-call-webhook',
+          p_reason: reason,
+        });
+      } catch (_e) {
+        // Never let the diagnostic change the response.
+      }
       return new Response(JSON.stringify({ error: 'Unauthorized webhook request' }), {
         status: 401,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

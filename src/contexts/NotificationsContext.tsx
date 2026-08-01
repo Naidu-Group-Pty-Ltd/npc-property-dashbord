@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { requestOpenInternalMessages } from '@/lib/internalMessagingBus';
 import { resolveNotificationLink } from '@/lib/notificationLink';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 export type NotificationType = 
   | 'report_generated' 
@@ -127,30 +128,36 @@ const NotificationsContext = createContext<NotificationsContextType | undefined>
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const navigate = useNavigate();
-  const { user, accessToken } = useAuth();
-  const currentUserId = user?.id;
-  // Notifications RLS is scoped to authenticated users (Phase 7) — direct
-  // anon-key access is no longer permitted, so use the JWT-bearing client.
+  const { accessToken } = useAuth();
+  // Data now moves over `notifications-feed` (staff session cookie). This client
+  // is kept ONLY for the realtime subscription, which is a best-effort "something
+  // changed" hint — if its JWT is absent the socket simply never delivers, and
+  // the polling fallback below carries the bell.
   const { supabase } = useAuthenticatedSupabase();
 
   const fetchNotifications = useCallback(async () => {
     try {
-      let query = supabase
-        .from('notifications')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(50);
+      // Read over the staff session cookie, not the browser-held Supabase JWT.
+      //
+      // The direct PostgREST path silently degraded to the anon key whenever
+      // that JWT was missing: `notifications` policies are all TO authenticated
+      // but `anon` still held a SELECT grant, so Postgres matched no policy and
+      // PostgREST answered `200 []`. The bell showed "No notifications yet"
+      // while the same query as the signed-in user returned 50 unread rows.
+      const { data: feed, error: feedError } = await invokeSecureFunction<{
+        success?: boolean;
+        notifications?: Array<Record<string, unknown>>;
+      }>('notifications-feed', { action: 'list', limit: 50 });
 
-      // Filter: show broadcast notifications (no target) + ones targeted to current user
-      if (currentUserId) {
-        query = query.or(`target_user_id.is.null,target_user_id.eq.${currentUserId}`);
-      } else {
-        query = query.is('target_user_id', null);
+      if (feedError || !feed?.success) {
+        throw new Error(
+          (feed as { error?: string } | null)?.error
+          || (feedError as { message?: string } | null)?.message
+          || 'notifications_unavailable',
+        );
       }
 
-      const { data, error } = await query;
-
-      if (error) throw error;
+      const data = feed.notifications ?? [];
 
       if (data) {
         const notificationsWithDates = data.map((n: any) => ({
@@ -167,7 +174,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Failed to fetch notifications:', error);
     }
-  }, [currentUserId, supabase]);
+  }, []);
 
   // Load notifications from Supabase on mount and when user changes
   useEffect(() => {
@@ -214,25 +221,47 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
   }, [fetchNotifications, supabase, accessToken]);
 
 
-  const addNotification = async (notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .insert({
-          type: notification.type,
-          title: notification.title,
-          message: notification.message,
-          report_id: notification.reportId || null,
-          entity_id: notification.entityId || null,
-          target_user_id: notification.targetUserId || null,
-          read: false
-        });
-
-      if (error) throw error;
-      // Real-time subscription will handle updating the UI
-    } catch (error) {
-      console.error('Failed to add notification:', error);
+  /**
+   * Mutations go through the same session-authenticated function as the read.
+   *
+   * These previously wrote straight to PostgREST and then waited for realtime
+   * to echo the change back. Under the anon fallback that was doubly broken:
+   * the write matched no policy so it silently affected zero rows, and the UI
+   * never moved because nothing was echoed. "Mark all read" looked like a
+   * no-op for a month, and the table agrees — zero of ~2,000 rows written
+   * since 3 July were ever marked read.
+   */
+  const mutate = async (payload: Record<string, unknown>, failure: string) => {
+    const { data, error } = await invokeSecureFunction<{ success?: boolean }>(
+      'notifications-feed',
+      payload,
+    );
+    if (error || !data?.success) {
+      console.error(failure, error ?? data);
+      fetchNotifications(); // fall back to server truth
     }
+  };
+
+  const addNotification = async (notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => {
+    // Previously a direct insert, which under the anon fallback was rejected by
+    // RLS and swallowed into console.error — every client-raised notification
+    // was silently discarded.
+    await mutate(
+      {
+        action: 'create',
+        type: notification.type,
+        title: notification.title,
+        message: notification.message,
+        report_id: notification.reportId ?? null,
+        entity_id: notification.entityId ?? null,
+        target_user_id: notification.targetUserId ?? null,
+        // Omitting a target used to mean "broadcast to everyone". That is now
+        // opt-in; an untargeted client notification belongs to whoever raised it.
+        broadcast: false,
+      },
+      'Failed to add notification:',
+    );
+    fetchNotifications();
   };
 
   /**
@@ -246,42 +275,22 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
    */
   const markAsRead = async (id: string) => {
     setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
-    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
-    if (error) {
-      console.error('Failed to mark notification as read:', error);
-      fetchNotifications();
-    }
+    await mutate({ action: 'mark_read', id }, 'Failed to mark notification as read:');
   };
 
   const markAllAsRead = async () => {
     setNotifications(prev => prev.map(n => (n.read ? n : { ...n, read: true })));
-    const { error } = await supabase.from('notifications').update({ read: true }).eq('read', false);
-    if (error) {
-      console.error('Failed to mark all as read:', error);
-      fetchNotifications();
-    }
+    await mutate({ action: 'mark_all_read' }, 'Failed to mark all as read:');
   };
 
   const clearNotification = async (id: string) => {
     setNotifications(prev => prev.filter(n => n.id !== id));
-    const { error } = await supabase.from('notifications').delete().eq('id', id);
-    if (error) {
-      console.error('Failed to clear notification:', error);
-      fetchNotifications();
-    }
+    await mutate({ action: 'clear', id }, 'Failed to clear notification:');
   };
 
   const clearAll = async () => {
     setNotifications([]);
-    // RLS narrows this to rows the caller may delete (their own + broadcasts).
-    const { error } = await supabase
-      .from('notifications')
-      .delete()
-      .gte('created_at', '1970-01-01');
-    if (error) {
-      console.error('Failed to clear all notifications:', error);
-      fetchNotifications();
-    }
+    await mutate({ action: 'clear_all' }, 'Failed to clear all notifications:');
   };
 
   const handleNotificationClick = (notification: Notification) => {

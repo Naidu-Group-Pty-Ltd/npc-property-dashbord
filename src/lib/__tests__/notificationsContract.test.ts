@@ -242,10 +242,13 @@ function topLevelKeys(block: string): string[] {
     if (c === '{' || c === '[' || c === '(') depth += 1;
     else if (c === '}' || c === ']' || c === ')') depth -= 1;
     else if (depth === 1) {
-      const rest = block.slice(i);
-      const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*:/.exec(rest);
-      const prev = i > 0 ? block[i - 1] : '';
-      if (m && !/[A-Za-z0-9_.'"`]/.test(prev)) {
+      const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*:/.exec(block.slice(i));
+      // A key is only a key when it opens an entry — i.e. the previous
+      // non-whitespace character is `{` or `,`. Without this rule the `:` of a
+      // ternary reads as a separator and `x ? null : y` reports a `null` column.
+      const before = block.slice(0, i).replace(/\s+$/, '');
+      const prev = before.charAt(before.length - 1);
+      if (m && (prev === '{' || prev === ',')) {
         keys.push(m[1]);
         i += m[0].length - 1;
       }
