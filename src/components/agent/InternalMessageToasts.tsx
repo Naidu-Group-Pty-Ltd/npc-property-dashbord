@@ -607,7 +607,11 @@ export function InternalMessageToasts() {
     [threads, activeId],
   );
 
+  /** The whole minimised stack can be dragged anywhere on the page. */
+  const dock = useDraggablePosition('aurixa.internalMessages.dockPos');
+
   const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
+
   const typer = active ? typing[active.thread_id] : undefined;
   const headline = active ? (active.kind === 'broadcast' ? active.title : active.sender) : '';
 
