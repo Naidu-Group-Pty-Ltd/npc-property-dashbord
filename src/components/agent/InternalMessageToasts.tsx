@@ -697,15 +697,11 @@ export function InternalMessageToasts() {
             </div>
           )}
           {typer && (
-            <div className="mt-1.5 flex flex-col items-start" aria-live="polite">
-              <div className="flex max-w-[85%] items-center gap-1.5 rounded-2xl rounded-bl-md bg-muted px-3 py-2">
-                <TypingDots />
-              </div>
-              <span className="mt-0.5 px-1 text-[9px] text-muted-foreground/70">
-                {typer.name} is typing…
-              </span>
+            <div className="mt-1.5" aria-live="polite">
+              <TypingPresence people={[{ name: typer.name }]} />
             </div>
           )}
+
 
         </div>
 
