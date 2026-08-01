@@ -107,7 +107,7 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
   const displayedSources = useMemo(() => (view === 'canonical'
     ? sources
     : legacySources.filter((source) => source.registry_status === view))
-    .filter(source => !search.trim() || `${source.name} ${source.url} ${source.source_key ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()))
+    .filter(source => !search.trim() || `${source.name} ${source.url} ${source.source_key ?? ''} ${source.geography ?? ''}`.toLowerCase().includes(search.trim().toLowerCase()))
     .filter(source => statusFilter === 'all' || (statusFilter === 'enabled' ? source.enabled : statusFilter === 'disabled' ? !source.enabled : source.health_status === 'failed')),
   [legacySources, search, sources, statusFilter, view]);
 
@@ -121,7 +121,7 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-[90vh] w-[calc(100vw-2rem)] max-w-5xl flex-col overflow-hidden p-0">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] min-h-[min(44rem,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-7xl flex-col overflow-hidden p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-7xl">
         <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-4 pr-12">
           <DialogTitle className="flex items-center gap-2"><Settings2 className="h-5 w-5 text-primary" />Market Sources — Registry & Health</DialogTitle>
           <p className="text-xs text-muted-foreground">The approved canonical registry is shown by default. Legacy records remain available for traceability and review.</p>
@@ -152,7 +152,7 @@ export function MarketSourcesAdminDialog({ open, onOpenChange, onChanged }: { op
           {registry.reconciledAt && <p className="text-[11px] text-muted-foreground">Last reconciliation: {dateLabel(registry.reconciledAt)} · {registry.mergedRows} legacy matches · {registry.updateReferencesReassigned} update and {registry.fetchRunReferencesReassigned} fetch-run references reassigned.</p>}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-5 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-3 pb-8" tabIndex={0} aria-label="Market source registry">
           {loadError && <div className="mb-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><p className="font-semibold">Source registry requires attention</p><p>{loadError}</p></div>}
           {view === 'unresolved_legacy' && <div className="mb-3 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm"><p className="font-semibold">Manual review required</p><p className="text-muted-foreground">These legacy records had no single deterministic canonical match. They are retained and disabled; review their URLs and reconciliation reason before a future resolution migration.</p></div>}
           {alerts.length > 0 && view === 'canonical' && <div className="mb-3 space-y-2">{alerts.map((alert) => <div key={alert.source_id} className={cn('flex items-start justify-between gap-3 rounded-lg border p-2 text-xs', SEV_STYLE[alert.severity])}><div><p className="font-semibold">{alert.name}</p><p className="opacity-90">{alert.message}</p></div><Badge variant="outline" className="uppercase">{alert.severity}</Badge></div>)}</div>}
@@ -174,7 +174,8 @@ function SourceCard({ source, canonical, busy, frequencyDraft, mutationResult, s
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2"><span className="font-semibold break-words">{source.name}</span><Badge variant="outline" className="text-[10px] uppercase">{status.replace('_legacy', '')}</Badge><Badge variant="outline" className="text-[10px] uppercase">{source.source_type}</Badge><Badge variant="outline" className="text-[10px] uppercase">{source.reliability_tier}</Badge></div>
         <p className="mt-1 break-all text-[11px] text-muted-foreground">{source.url}</p>
-        {canonical ? <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"><span>Last success: <strong className="text-foreground">{dateLabel(source.last_success_at)}</strong></span><span>Next eligible fetch: <strong className="text-foreground">{dateLabel(nextEligibleFetch(source))}</strong></span><span>Health: <strong className="text-foreground">{source.enabled ? source.health_status ?? 'degraded' : 'disabled'}</strong></span><span>HTTP: <strong className="text-foreground">{source.last_http_status ?? '—'}</strong></span><span>Items: <strong className="text-foreground">{source.last_items_discovered ?? 0} found / {source.last_items_published ?? 0} published</strong></span></div>
+        <div className="mt-2 grid min-w-0 gap-2 text-[11px] sm:grid-cols-[minmax(12rem,1fr)_minmax(16rem,2fr)]"><div className="min-w-0"><span className="text-muted-foreground">Category</span><p className="mt-0.5 break-words font-medium text-foreground">{reasonLabel(source.category)}</p></div><div className="min-w-0"><span className="text-muted-foreground">Geography</span><p className="mt-0.5 whitespace-normal break-words font-medium text-foreground" title={source.geography}>{source.geography || 'Australia'}</p></div></div>
+        {canonical ? <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground"><span>Last success: <strong className="text-foreground">{dateLabel(source.last_success_at)}</strong></span><span>Next eligible fetch: <strong className="text-foreground">{dateLabel(nextEligibleFetch(source))}</strong></span><span>Health: <strong className="text-foreground">{source.enabled ? source.health_status ?? 'degraded' : 'disabled'}</strong></span><span>HTTP: <strong className="text-foreground">{source.last_http_status ?? '—'}</strong></span><span>Items: <strong className="text-foreground">{source.last_items_discovered ?? 0} found / {source.last_items_published ?? 0} published</strong></span></div>
         : <div className="mt-2 rounded border border-border/60 bg-muted/30 p-2 text-[11px]"><p><strong>Reconciliation:</strong> {reasonLabel(source.reconciliation_reason)}</p>{source.superseded_by_source_id && <p className="mt-1 break-all text-muted-foreground">Superseded by source ID: {source.superseded_by_source_id}</p>}<p className="mt-1 text-muted-foreground">Historical record retained · ingestion disabled</p></div>}
         {hasError && canonical && <div className="mt-2 flex items-start gap-2 rounded border border-destructive/30 bg-destructive/10 p-2 text-[11px] text-destructive"><XCircle className="mt-0.5 h-3 w-3 shrink-0" /><span className="break-words">{source.last_error}</span></div>}
       </div>
