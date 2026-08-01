@@ -116,11 +116,13 @@ export function InternalMessagesPanel({
   const [recipientId, setRecipientId] = useState<string | null>(null);
   const [broadcastTitle, setBroadcastTitle] = useState('');
 
-  // Attachments (all MIME types, no client-side size cap).
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadLabel, setUploadLabel] = useState<string | null>(null);
+  // Attachments — every MIME type, no client-side size cap. The queue tracks
+  // per-file progress, retries and errors so nothing fails silently.
+  const attachmentQueue = useInternalAttachmentQueue();
+  const [dragActive, setDragActive] = useState(false);
+  const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastTypingSentRef = useRef<number>(0);
