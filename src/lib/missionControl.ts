@@ -190,6 +190,54 @@ export function openMissionControl(url: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+/** Public documentation for the Command Center, hosted on Aurixa Systems. */
+export const AURIXA_DOCS_URL = "https://www.aurixasystems.com.au/docs";
+
+/**
+ * Open the documentation for a guide section.
+ *
+ * The docs site has no login, so it learns this workspace's plan and add-ons by
+ * resolving a handoff token server-to-server against Mission Control — the same
+ * mechanism the pricing page uses. The browser only ever carries the opaque
+ * `?h=` token, so a reader cannot widen their own entitlement by editing the
+ * URL: the plan is never read from the request.
+ *
+ * Without a token the docs site still loads, showing the public index with every
+ * priced module locked. So a failed mint degrades to "less documentation", never
+ * to a broken link — which is why this never blocks on the mint succeeding.
+ *
+ * The window is opened synchronously inside the click handler because popup
+ * blockers only permit that, then steered once the token resolves.
+ */
+export async function openDocumentation(sectionId?: string): Promise<void> {
+  const anchor = sectionId ? `#${sectionId}` : "";
+  const win = window.open("", "_blank");
+  if (win) {
+    try {
+      win.opener = null;
+    } catch {
+      /* cross-origin quirks — the redirect below still works */
+    }
+  }
+
+  let url = `${AURIXA_DOCS_URL}${anchor}`;
+  try {
+    const { invokeSecureFunction } = await import("@/lib/secureInvoke");
+    const { data } = await invokeSecureFunction<{ handoffId?: string | null }>(
+      "mission-control-handoff",
+      { intent: "docs", returnPath: window.location.pathname },
+    );
+    if (data?.handoffId) {
+      url = `${AURIXA_DOCS_URL}?h=${encodeURIComponent(data.handoffId)}${anchor}`;
+    }
+  } catch {
+    /* fall through to the unauthenticated docs URL */
+  }
+
+  if (win) win.location.href = url;
+  else window.open(url, "_blank", "noopener,noreferrer");
+}
+
 // ── Attributed handoff (user-attributed pricing workflow) ───────────────────
 
 export type HandoffIntent =

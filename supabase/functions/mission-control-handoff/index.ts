@@ -28,6 +28,12 @@ import { normalizeAustralianBusinessNumber } from "../_shared/billingIdentity.ts
 // setup-mode Checkout instead of a purchase (billing & usage page).
 const MODES = new Set(["topup", "seat_plan", "setup_package", "save_card"]);
 
+// Intents that are not purchase modes but should still be recorded on the
+// handoff. "docs" mints a token the documentation site resolves to learn this
+// workspace's plan and add-ons; recording it means a docs handoff is
+// distinguishable from a checkout one in Mission Control's audit trail.
+const RECORDED_INTENTS = new Set(["docs"]);
+
 Deno.serve(async (req) => {
   // Credentialed CORS: the app invokes this function with
   // credentials:'include' (HttpOnly session cookie), and browsers reject a
@@ -69,7 +75,9 @@ Deno.serve(async (req) => {
       ? itemId
         ? `${rawIntent}:${itemId}`
         : rawIntent
-      : undefined;
+      : RECORDED_INTENTS.has(rawIntent)
+        ? rawIntent
+        : undefined;
 
     // Return link back into this app; Mission Control validates the host
     // against this clone's registered deploy_url.
