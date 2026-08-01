@@ -309,7 +309,7 @@ export function InternalMessageToasts() {
       setTyping((prev) => {
         const now = Date.now();
         const next: typeof prev = {};
-        for (const [k, v] of Object.entries(prev)) if (now - v.at < 4000) next[k] = v;
+        for (const [k, v] of Object.entries(prev)) if (now - v.at < 5000) next[k] = v;
         return next;
       });
     }, 1500);
