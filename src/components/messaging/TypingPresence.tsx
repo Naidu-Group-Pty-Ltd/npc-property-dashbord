@@ -1,25 +1,41 @@
 /**
  * TypingPresence — shared "someone is typing" surface for every chat surface.
  *
- * Design: the person's NAME is the hero (initial avatar + highlighted name
- * chip), with a soft animated highlight sweep and three-dot cadence so it reads
- * as live presence rather than a loading spinner. Respects reduced motion.
+ * Design: the person's NAME is the hero. Each typist is assigned one of three
+ * highlight colours — blue, yellow, purple — and the colour is applied ONLY to
+ * that person's name chip (avatar + name), never to the surrounding row. A soft
+ * animated sweep and three-dot cadence read as live presence rather than a
+ * loading spinner. Respects reduced motion.
  */
 import { cn } from '@/lib/utils';
 
 export interface TypingPerson {
   name: string;
-  /** Optional stable id — used for the avatar tint only. */
+  /** Optional stable id — used to keep the assigned colour consistent. */
   id?: string | null;
 }
 
+/** Blue · Yellow · Purple — semantic tokens only. */
 const TINTS = [
-  'bg-primary/15 text-primary ring-primary/30',
-  'bg-info/15 text-info ring-info/30',
-  'bg-success/15 text-success ring-success/30',
-  'bg-warning/15 text-warning ring-warning/30',
-  'bg-accent/20 text-accent-foreground ring-accent/40',
-];
+  {
+    key: 'blue',
+    name: 'bg-info/15 text-info',
+    avatar: 'bg-info/20 text-info ring-info/40',
+    sweep: 'via-info/30',
+  },
+  {
+    key: 'yellow',
+    name: 'bg-warning/15 text-warning',
+    avatar: 'bg-warning/20 text-warning ring-warning/40',
+    sweep: 'via-warning/30',
+  },
+  {
+    key: 'purple',
+    name: 'bg-chart-5/15 text-chart-5',
+    avatar: 'bg-chart-5/20 text-chart-5 ring-chart-5/40',
+    sweep: 'via-chart-5/30',
+  },
+] as const;
 
 function tintFor(seed: string) {
   let hash = 0;
@@ -73,43 +89,63 @@ export function TypingPresence({
   return (
     <div
       className={cn(
-        'flex items-center gap-2 rounded-full border border-border/60 bg-muted/40 px-2 py-1 backdrop-blur-sm',
+        'flex flex-wrap items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2 py-1 backdrop-blur-sm',
         className,
       )}
       aria-live="polite"
       aria-label={`${shown.map((p) => p.name).join(', ')} ${verb}`}
     >
-      <span className="flex items-center -space-x-1.5">
-        {shown.map((p) => (
+      {shown.map((p) => {
+        const tint = tintFor(p.id || p.name);
+        return (
           <span
             key={p.id ?? p.name}
             className={cn(
-              'flex items-center justify-center rounded-full ring-1 font-bold uppercase',
-              tintFor(p.id || p.name),
-              sm ? 'h-4 w-4 text-[8px]' : 'h-5 w-5 text-[9px]',
+              'relative flex min-w-0 items-center gap-1 overflow-hidden rounded-full pr-1.5 font-semibold',
+              tint.name,
+              sm ? 'text-[10px]' : 'text-[11px]',
             )}
           >
-            {initial(p.name)}
+            <span
+              className={cn(
+                'z-10 flex shrink-0 items-center justify-center rounded-full ring-1 font-bold uppercase',
+                tint.avatar,
+                sm ? 'h-4 w-4 text-[8px]' : 'h-5 w-5 text-[9px]',
+              )}
+            >
+              {initial(p.name)}
+            </span>
+            <span className="z-10 min-w-0 truncate">{p.name}</span>
+            {/* Highlight sweep — scoped to this person's chip only. */}
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-full motion-reduce:hidden"
+            >
+              <span
+                className={cn(
+                  'absolute inset-y-0 -left-1/2 w-1/2 animate-[typing-sweep_1.8s_ease-in-out_infinite] bg-gradient-to-r from-transparent to-transparent',
+                  tint.sweep,
+                )}
+              />
+            </span>
           </span>
-        ))}
-      </span>
+        );
+      })}
 
-      <span className={cn('flex min-w-0 items-center gap-1.5', sm ? 'text-[10px]' : 'text-[11px]')}>
-        <span className="relative min-w-0 truncate rounded-md bg-primary/10 px-1.5 py-[1px] font-semibold text-primary">
-          <span className="relative z-10">
-            {shown.map((p) => p.name).join(', ')}
-            {extra > 0 ? ` +${extra}` : ''}
-          </span>
-          {/* Highlight sweep */}
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-md motion-reduce:hidden"
-          >
-            <span className="absolute inset-y-0 -left-1/2 w-1/2 animate-[typing-sweep_1.8s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-primary/25 to-transparent" />
-          </span>
+      {extra > 0 && (
+        <span className={cn('text-muted-foreground', sm ? 'text-[10px]' : 'text-[11px]')}>
+          +{extra}
         </span>
-        <span className="shrink-0 text-muted-foreground">{verb}</span>
-        <TypingDots className="shrink-0 text-primary" />
+      )}
+
+      <span
+        className={cn(
+          'flex shrink-0 items-center gap-1.5 text-muted-foreground',
+          sm ? 'text-[10px]' : 'text-[11px]',
+        )}
+      >
+        {verb}
+        <TypingDots className="shrink-0 text-muted-foreground" />
       </span>
     </div>
   );

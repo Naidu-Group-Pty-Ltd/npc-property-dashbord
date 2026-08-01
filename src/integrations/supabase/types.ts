@@ -18272,26 +18272,32 @@ export type Database = {
       }
       internal_thread_participants: {
         Row: {
+          archived_at: string | null
           created_at: string
           id: string
           is_active: boolean
           last_read_at: string | null
+          role: string
           thread_id: string
           user_id: string
         }
         Insert: {
+          archived_at?: string | null
           created_at?: string
           id?: string
           is_active?: boolean
           last_read_at?: string | null
+          role?: string
           thread_id: string
           user_id: string
         }
         Update: {
+          archived_at?: string | null
           created_at?: string
           id?: string
           is_active?: boolean
           last_read_at?: string | null
+          role?: string
           thread_id?: string
           user_id?: string
         }

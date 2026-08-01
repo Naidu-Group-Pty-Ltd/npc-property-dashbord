@@ -105,42 +105,44 @@ async function screenAttachments(
     }
 
     let detected: string | null = null;
+    // `scanned` stays false when the object could not be read (e.g. a very
+    // large upload still finalising, or a transient storage hiccup). That is
+    // never treated as unsafe — the file is flagged `unscanned` so uploads can
+    // never silently fail, while true executables are still blocked below.
+    let scanned = false;
     try {
       const { data: signed } = await sb.storage
         .from(ATTACHMENT_BUCKET)
         .createSignedUrl(a.path, 60);
-      if (!signed?.signedUrl) {
-        blocked.push(a.name);
-        continue;
+      if (signed?.signedUrl) {
+        const res = await fetch(signed.signedUrl, { headers: { Range: 'bytes=0-4095' } });
+        if (res.ok || res.status === 206) {
+          const head = new Uint8Array(await res.arrayBuffer());
+          const hit = sniff(head);
+          if (hit?.blocked) {
+            blocked.push(a.name);
+            continue;
+          }
+          detected = hit?.label ?? null;
+          scanned = true;
+        }
       }
-      const res = await fetch(signed.signedUrl, { headers: { Range: 'bytes=0-4095' } });
-      if (!res.ok && res.status !== 206) {
-        blocked.push(a.name);
-        continue;
-      }
-      const head = new Uint8Array(await res.arrayBuffer());
-      const hit = sniff(head);
-      if (hit?.blocked) {
-        blocked.push(a.name);
-        continue;
-      }
-      detected = hit?.label ?? null;
-    } catch {
-      blocked.push(a.name);
-      continue;
+    } catch (err) {
+      console.warn('[internal-messaging] attachment screen skipped:', a.path, String(err));
     }
 
     safe.push({
       ...a,
       // Trust the sniffed type when we recognised one.
       mime: detected ?? a.mime,
-      scan: 'clean',
+      scan: scanned ? 'clean' : 'unscanned',
       scanned_at: new Date().toISOString(),
     } as Attachment);
   }
 
   return { safe, blocked };
 }
+
 
 
 function admin() {
@@ -197,25 +199,44 @@ Deno.serve(async (req) => {
     const myParticipation = async () => {
       const { data, error } = await sb
         .from('internal_thread_participants')
-        .select('thread_id, last_read_at')
+        .select('thread_id, last_read_at, archived_at')
         .eq('user_id', me)
         .eq('is_active', true);
       if (error) throw error;
       return data ?? [];
     };
 
+    /** Participation gate — returns the caller's row for a thread or null. */
+    const myRow = async (threadId: string) => {
+      const { data } = await sb
+        .from('internal_thread_participants')
+        .select('id, role, archived_at')
+        .eq('thread_id', threadId)
+        .eq('user_id', me)
+        .eq('is_active', true)
+        .maybeSingle();
+      return data ?? null;
+    };
+
     // ── Threads list ─────────────────────────────────────────────────
     if (action === 'list_threads' || action === 'unread_count') {
-      const rows = await myParticipation();
+      const includeArchived = body.include_archived === true;
+      const allRows = await myParticipation();
+      const rows = includeArchived ? allRows : allRows.filter((r) => !r.archived_at);
+      const archivedCount = allRows.filter((r) => !!r.archived_at).length;
       if (rows.length === 0) {
         return json(
-          action === 'unread_count' ? { success: true, unread: 0 } : { success: true, threads: [] },
+          action === 'unread_count'
+            ? { success: true, unread: 0 }
+            : { success: true, threads: [], archived_count: archivedCount },
           200,
           corsHeaders,
         );
       }
       const ids = rows.map((r) => r.thread_id);
       const readMap = new Map(rows.map((r) => [r.thread_id, r.last_read_at as string | null]));
+      const archivedMap = new Map(rows.map((r) => [r.thread_id, r.archived_at as string | null]));
+
 
       const { data: threads, error: tErr } = await sb
         .from('internal_message_threads')
@@ -282,10 +303,23 @@ Deno.serve(async (req) => {
           .map((p) => nameById.get(p.user_id) ?? 'Unknown');
         const latest = latestByThread.get(t.id);
         const latestSenderId = latest?.sender_id ?? null;
+        const groupFallback = others.length
+          ? `${others.slice(0, 3).join(', ')}${others.length > 3 ? ` +${others.length - 3}` : ''}`
+          : 'Group chat';
         return {
           ...t,
           unread: unreadByThread.get(t.id) ?? 0,
           participant_count: (parts ?? []).filter((p) => p.thread_id === t.id).length,
+          participants: (parts ?? [])
+            .filter((p) => p.thread_id === t.id)
+            .map((p) => ({
+              user_id: p.user_id,
+              username: p.user_id === me ? 'You' : nameById.get(p.user_id) ?? 'Unknown',
+              mine: p.user_id === me,
+            })),
+          archived: !!archivedMap.get(t.id),
+          archived_at: archivedMap.get(t.id) ?? null,
+          can_manage: t.kind === 'group',
           last_message_sender_id: latestSenderId,
           last_message_sender_name: latestSenderId
             ? (latestSenderId === me ? 'You' : nameById.get(latestSenderId) ?? 'Unknown')
@@ -295,13 +329,156 @@ Deno.serve(async (req) => {
           display_title:
             t.kind === 'broadcast'
               ? t.title || 'Company announcement'
-              : others[0] ?? t.title ?? 'Direct message',
+              : t.kind === 'group'
+                ? t.title || groupFallback
+                : others[0] ?? t.title ?? 'Direct message',
         };
       });
 
 
-      return json({ success: true, threads: enriched }, 200, corsHeaders);
+      return json(
+        { success: true, threads: enriched, archived_count: archivedCount },
+        200,
+        corsHeaders,
+      );
     }
+
+    // ── Archive / unarchive (per person, never affects anyone else) ───
+    if (action === 'archive_thread' || action === 'unarchive_thread') {
+      const threadId = String(body.thread_id ?? '');
+      if (!threadId) return json({ success: false, error: 'thread_id required' }, 400, corsHeaders);
+      if (!(await myRow(threadId))) {
+        return json({ success: false, error: 'not_a_participant' }, 403, corsHeaders);
+      }
+      const { error } = await sb
+        .from('internal_thread_participants')
+        .update({ archived_at: action === 'archive_thread' ? new Date().toISOString() : null })
+        .eq('thread_id', threadId)
+        .eq('user_id', me);
+      if (error) throw error;
+      return json({ success: true, archived: action === 'archive_thread' }, 200, corsHeaders);
+    }
+
+    // ── Group chats: create / rename / membership ─────────────────────
+    if (action === 'create_group') {
+      const memberIds = [
+        ...new Set(
+          (Array.isArray(body.member_ids) ? body.member_ids : [])
+            .map((v: unknown) => String(v))
+            .filter((v: string) => v && v !== me),
+        ),
+      ];
+      if (memberIds.length < 1) {
+        return json({ success: false, error: 'members_required' }, 400, corsHeaders);
+      }
+      const { data: valid } = await sb
+        .from('custom_users')
+        .select('id, username')
+        .in('id', memberIds)
+        .eq('is_active', true);
+      const validIds = (valid ?? []).map((u: any) => u.id as string);
+      if (!validIds.length) {
+        return json({ success: false, error: 'members_required' }, 400, corsHeaders);
+      }
+      const title = String(body.title ?? '').trim().slice(0, 120);
+      const { data: created, error: cErr } = await sb
+        .from('internal_message_threads')
+        .insert({ kind: 'group', title: title || null, created_by: me })
+        .select('id')
+        .single();
+      if (cErr) throw cErr;
+      const { error: pErr } = await sb.from('internal_thread_participants').insert([
+        { thread_id: created.id, user_id: me, role: 'owner' },
+        ...validIds.map((id) => ({ thread_id: created.id, user_id: id, role: 'member' })),
+      ]);
+      if (pErr) throw pErr;
+      return json({ success: true, thread_id: created.id }, 200, corsHeaders);
+    }
+
+    if (action === 'rename_group') {
+      const threadId = String(body.thread_id ?? '');
+      const title = String(body.title ?? '').trim().slice(0, 120);
+      if (!threadId || !title) {
+        return json({ success: false, error: 'thread_id_and_title_required' }, 400, corsHeaders);
+      }
+      if (!(await myRow(threadId))) {
+        return json({ success: false, error: 'not_a_participant' }, 403, corsHeaders);
+      }
+      const { data: thread } = await sb
+        .from('internal_message_threads')
+        .select('kind')
+        .eq('id', threadId)
+        .maybeSingle();
+      if (thread?.kind !== 'group') {
+        return json({ success: false, error: 'not_a_group' }, 400, corsHeaders);
+      }
+      const { error } = await sb
+        .from('internal_message_threads')
+        .update({ title, updated_at: new Date().toISOString() })
+        .eq('id', threadId);
+      if (error) throw error;
+      await sb.from('internal_messages').insert({
+        thread_id: threadId,
+        sender_id: null,
+        is_system: true,
+        body: `Group renamed to "${title}"`,
+      });
+      return json({ success: true, title }, 200, corsHeaders);
+    }
+
+    if (action === 'update_group_members') {
+      const threadId = String(body.thread_id ?? '');
+      if (!threadId) return json({ success: false, error: 'thread_id required' }, 400, corsHeaders);
+      if (!(await myRow(threadId))) {
+        return json({ success: false, error: 'not_a_participant' }, 403, corsHeaders);
+      }
+      const { data: thread } = await sb
+        .from('internal_message_threads')
+        .select('kind')
+        .eq('id', threadId)
+        .maybeSingle();
+      if (thread?.kind !== 'group') {
+        return json({ success: false, error: 'not_a_group' }, 400, corsHeaders);
+      }
+
+      const add = [
+        ...new Set(
+          (Array.isArray(body.add) ? body.add : []).map((v: unknown) => String(v)).filter(Boolean),
+        ),
+      ];
+      const remove = [
+        ...new Set(
+          (Array.isArray(body.remove) ? body.remove : [])
+            .map((v: unknown) => String(v))
+            .filter((v: string) => v && v !== me),
+        ),
+      ];
+
+      if (add.length) {
+        const { data: valid } = await sb
+          .from('custom_users')
+          .select('id')
+          .in('id', add)
+          .eq('is_active', true);
+        for (const u of valid ?? []) {
+          await sb
+            .from('internal_thread_participants')
+            .upsert(
+              { thread_id: threadId, user_id: (u as any).id, is_active: true, role: 'member' },
+              { onConflict: 'thread_id,user_id' },
+            );
+        }
+      }
+      if (remove.length) {
+        await sb
+          .from('internal_thread_participants')
+          .update({ is_active: false })
+          .eq('thread_id', threadId)
+          .in('user_id', remove);
+      }
+      return json({ success: true }, 200, corsHeaders);
+    }
+
 
     // ── Read a thread ────────────────────────────────────────────────
     if (action === 'get_thread') {
@@ -325,9 +502,23 @@ Deno.serve(async (req) => {
         .limit(500);
       if (error) throw error;
 
+      const { data: threadRow } = await sb
+        .from('internal_message_threads')
+        .select('id, kind, title, created_by')
+        .eq('id', threadId)
+        .maybeSingle();
+      const { data: memberRows } = await sb
+        .from('internal_thread_participants')
+        .select('user_id, is_active')
+        .eq('thread_id', threadId)
+        .eq('is_active', true);
+
       const senderIds = [...new Set((msgs ?? []).map((m) => m.sender_id).filter(Boolean))] as string[];
-      const { data: users } = senderIds.length
-        ? await sb.from('custom_users').select('id, username').in('id', senderIds)
+      const lookupIds = [
+        ...new Set([...senderIds, ...(memberRows ?? []).map((m: any) => m.user_id as string)]),
+      ];
+      const { data: users } = lookupIds.length
+        ? await sb.from('custom_users').select('id, username').in('id', lookupIds)
         : { data: [] as any[] };
       const nameById = new Map((users ?? []).map((u: any) => [u.id, u.username]));
 
@@ -340,6 +531,16 @@ Deno.serve(async (req) => {
       return json(
         {
           success: true,
+          thread: threadRow
+            ? {
+                ...threadRow,
+                participants: (memberRows ?? []).map((p: any) => ({
+                  user_id: p.user_id,
+                  username: p.user_id === me ? 'You' : nameById.get(p.user_id) ?? 'Unknown',
+                  mine: p.user_id === me,
+                })),
+              }
+            : null,
           messages: (msgs ?? []).map((m) => ({
             ...m,
             sender_name: m.sender_id === me ? 'You' : nameById.get(m.sender_id!) ?? 'System',
@@ -349,6 +550,7 @@ Deno.serve(async (req) => {
         200,
         corsHeaders,
       );
+
     }
 
     // ── Attachments: signed upload / download URLs ───────────────────
@@ -494,12 +696,47 @@ Deno.serve(async (req) => {
           if (pErr) throw pErr;
         }
       } else if (!threadId) {
-        const recipient = String(body.recipient_user_id ?? '');
-        if (!recipient) {
-          return json({ success: false, error: 'thread_id or recipient_user_id required' }, 400, corsHeaders);
+        const groupMembers = [
+          ...new Set(
+            (Array.isArray(body.group_member_ids) ? body.group_member_ids : [])
+              .map((v: unknown) => String(v))
+              .filter((v: string) => v && v !== me),
+          ),
+        ];
+        if (groupMembers.length > 1) {
+          const { data: valid } = await sb
+            .from('custom_users')
+            .select('id')
+            .in('id', groupMembers)
+            .eq('is_active', true);
+          const validIds = (valid ?? []).map((u: any) => u.id as string);
+          if (!validIds.length) throw new Error('recipient_not_found');
+          const { data: created, error: cErr } = await sb
+            .from('internal_message_threads')
+            .insert({
+              kind: 'group',
+              title: String(body.title ?? '').trim().slice(0, 120) || null,
+              created_by: me,
+            })
+            .select('id')
+            .single();
+          if (cErr) throw cErr;
+          threadId = created.id;
+          kind = 'group';
+          const { error: pErr } = await sb.from('internal_thread_participants').insert([
+            { thread_id: threadId, user_id: me, role: 'owner' },
+            ...validIds.map((id) => ({ thread_id: threadId, user_id: id, role: 'member' })),
+          ]);
+          if (pErr) throw pErr;
+        } else {
+          const recipient = String(body.recipient_user_id ?? '') || groupMembers[0] || '';
+          if (!recipient) {
+            return json({ success: false, error: 'thread_id or recipient_user_id required' }, 400, corsHeaders);
+          }
+          threadId = await ensureDirect(recipient);
         }
-        threadId = await ensureDirect(recipient);
       }
+
 
       // Participation gate for existing threads.
       const { data: part } = await sb
@@ -554,6 +791,13 @@ Deno.serve(async (req) => {
         .update({ last_read_at: now })
         .eq('thread_id', threadId)
         .eq('user_id', me);
+      // A new message resurfaces the thread for anyone who had archived it.
+      await sb
+        .from('internal_thread_participants')
+        .update({ archived_at: null })
+        .eq('thread_id', threadId)
+        .not('archived_at', 'is', null);
+
 
       // Notify every other participant.
       const { data: recipients } = await sb

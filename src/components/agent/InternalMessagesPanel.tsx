@@ -1,15 +1,34 @@
 /**
  * Internal staff messaging panel — rendered inside the Aurixa agent widget.
  *
- * Two modes:
+ * Modes:
  *   • Direct message  — pick one active staff member
+ *   • Group chat      — pick several colleagues, optionally name the group
  *   • Broadcast       — one announcement to every active staff member
+ *
+ * Threads can be archived / unarchived per person to cut clutter.
  *
  * All transport goes through the `internal-messaging` edge function, which is the
  * sole mediator for the service_role-only messaging tables.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Megaphone, MessageSquare, Paperclip, Plus, Search, Send, Users, ChevronLeft } from 'lucide-react';
+import {
+  Archive,
+  ArchiveRestore,
+  Check,
+  ChevronLeft,
+  Loader2,
+  Megaphone,
+  MessageSquare,
+  Paperclip,
+  Pencil,
+  Plus,
+  Search,
+  Send,
+  Users,
+  UsersRound,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -46,15 +65,23 @@ export interface InternalStaffMember {
   role?: string | null;
 }
 
+export interface InternalThreadParticipant {
+  user_id: string;
+  username: string;
+  mine?: boolean;
+}
+
 export interface InternalThread {
   id: string;
-  kind: 'direct' | 'broadcast';
+  kind: 'direct' | 'group' | 'broadcast';
   title: string | null;
   display_title: string;
   last_message_at: string | null;
   last_message_preview: string | null;
   unread: number;
   participant_count: number;
+  participants?: InternalThreadParticipant[];
+  archived?: boolean;
 }
 
 export interface InternalMessage {
@@ -90,6 +117,7 @@ function timeLabel(iso: string | null) {
 }
 
 type View = 'threads' | 'compose' | 'thread';
+type ComposeMode = 'direct' | 'group' | 'broadcast';
 
 export function InternalMessagesPanel({
   onUnreadChange,
@@ -103,17 +131,23 @@ export function InternalMessagesPanel({
 
   const [view, setView] = useState<View>('threads');
   const [threads, setThreads] = useState<InternalThread[] | null>(null);
+  const [archivedCount, setArchivedCount] = useState(0);
+  const [showArchived, setShowArchived] = useState(false);
   const [staff, setStaff] = useState<InternalStaffMember[]>([]);
   const [activeThread, setActiveThread] = useState<InternalThread | null>(null);
   const [messages, setMessages] = useState<InternalMessage[] | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [typingBy, setTypingBy] = useState<Record<string, number>>({});
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
 
   // compose state
-  const [composeMode, setComposeMode] = useState<'direct' | 'broadcast'>('direct');
+  const [composeMode, setComposeMode] = useState<ComposeMode>('direct');
   const [staffSearch, setStaffSearch] = useState('');
   const [recipientId, setRecipientId] = useState<string | null>(null);
+  const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [groupTitle, setGroupTitle] = useState('');
   const [broadcastTitle, setBroadcastTitle] = useState('');
 
   // Attachments — every MIME type, no client-side size cap. The queue tracks
@@ -122,6 +156,7 @@ export function InternalMessagesPanel({
   const [dragActive, setDragActive] = useState(false);
   const dragDepth = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const composeFileInputRef = useRef<HTMLInputElement>(null);
 
 
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -129,12 +164,15 @@ export function InternalMessagesPanel({
   const openedInitialRef = useRef<string | null>(null);
 
 
-  const loadThreads = useCallback(async () => {
+  const loadThreads = useCallback(async (includeArchived?: boolean) => {
     try {
-      const data = await call({ action: 'list_threads' });
+      const data = await call({ action: 'list_threads', include_archived: !!includeArchived });
       const list: InternalThread[] = data?.threads ?? [];
       setThreads(list);
-      onUnreadChange?.(list.reduce((sum, t) => sum + (t.unread || 0), 0));
+      setArchivedCount(data?.archived_count ?? 0);
+      onUnreadChange?.(
+        list.reduce((sum, t) => sum + (t.archived ? 0 : t.unread || 0), 0),
+      );
     } catch (err) {
       setThreads([]);
       console.error('[InternalMessages] list_threads', err);
@@ -155,9 +193,15 @@ export function InternalMessagesPanel({
     setActiveThread(thread);
     setView('thread');
     setMessages(null);
+    setRenaming(false);
     try {
       const data = await call({ action: 'get_thread', thread_id: thread.id });
       setMessages(data?.messages ?? []);
+      if (data?.thread) {
+        setActiveThread(prev => (prev && prev.id === thread.id
+          ? { ...prev, title: data.thread.title ?? prev.title, participants: data.thread.participants ?? prev.participants }
+          : prev));
+      }
       setThreads(prev => prev?.map(t => (t.id === thread.id ? { ...t, unread: 0 } : t)) ?? prev);
       onUnreadChange?.(
         (threads ?? []).reduce((sum, t) => sum + (t.id === thread.id ? 0 : t.unread || 0), 0),
@@ -168,7 +212,7 @@ export function InternalMessagesPanel({
     }
   }, [threads, onUnreadChange]);
 
-  useEffect(() => { loadThreads(); }, [loadThreads]);
+  useEffect(() => { loadThreads(showArchived); }, [loadThreads, showArchived]);
 
   // Deep-link: open a specific thread (e.g. from a pop-up message alert).
   useEffect(() => {
@@ -182,13 +226,13 @@ export function InternalMessagesPanel({
   // Refresh the moment anyone posts (realtime broadcast hint), then re-verify
   // through the edge function. Falls back to a short poll if realtime drops.
   const refreshActive = useCallback(() => {
-    loadThreads();
+    loadThreads(showArchived);
     if (activeThread) {
       call({ action: 'get_thread', thread_id: activeThread.id })
         .then(d => setMessages(d?.messages ?? []))
         .catch(() => {});
     }
-  }, [loadThreads, activeThread]);
+  }, [loadThreads, showArchived, activeThread]);
 
   useEffect(() => {
     const off = onInternalMessage(() => refreshActive());
@@ -259,24 +303,27 @@ export function InternalMessagesPanel({
     attachmentQueue.addFiles(files);
   };
 
+  /** Upload staged files against a known thread. Returns null when any failed. */
+  const uploadStaged = async (threadId: string): Promise<InternalAttachment[] | null> => {
+    if (attachmentQueue.items.length === 0) return [];
+    const { uploaded, failed } = await attachmentQueue.uploadAll(threadId);
+    if (failed.length) {
+      toast.error(
+        `${failed.length} file${failed.length === 1 ? '' : 's'} failed to upload — retry or remove before sending`,
+      );
+      return null;
+    }
+    return uploaded;
+  };
+
   const sendInThread = async () => {
     const text = draft.trim();
     const hasFiles = attachmentQueue.items.length > 0;
     if ((!text && !hasFiles) || !activeThread || sending) return;
     setSending(true);
     try {
-      let attachments: InternalAttachment[] = [];
-      if (hasFiles) {
-        const { uploaded, failed } = await attachmentQueue.uploadAll(activeThread.id);
-        if (failed.length) {
-          toast.error(
-            `${failed.length} file${failed.length === 1 ? '' : 's'} failed to upload — retry or remove before sending`,
-          );
-          setSending(false);
-          return;
-        }
-        attachments = uploaded;
-      }
+      const attachments = await uploadStaged(activeThread.id);
+      if (!attachments) { setSending(false); return; }
       await call({
         action: 'send_message',
         thread_id: activeThread.id,
@@ -292,7 +339,7 @@ export function InternalMessagesPanel({
       });
       const data = await call({ action: 'get_thread', thread_id: activeThread.id });
       setMessages(data?.messages ?? []);
-      loadThreads();
+      loadThreads(showArchived);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Message failed to send');
     } finally {
@@ -304,27 +351,66 @@ export function InternalMessagesPanel({
 
   const sendNew = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    const hasFiles = attachmentQueue.items.length > 0;
+    if ((!text && !hasFiles) || sending) return;
     if (composeMode === 'direct' && !recipientId) {
       toast.error('Pick a team member first');
       return;
     }
+    if (composeMode === 'group' && groupIds.length < 2) {
+      toast.error('Pick at least two colleagues for a group chat');
+      return;
+    }
     setSending(true);
     try {
+      // Attachments need a thread to live under, so create/resolve the thread
+      // first for direct + group chats, then upload, then post the message.
+      let threadId: string | null = null;
+      if (composeMode === 'direct') {
+        const started = await call({ action: 'start_direct', user_id: recipientId });
+        threadId = started?.thread_id ?? null;
+      } else if (composeMode === 'group') {
+        const created = await call({
+          action: 'create_group',
+          member_ids: groupIds,
+          title: groupTitle.trim() || undefined,
+        });
+        threadId = created?.thread_id ?? null;
+      }
+
+      let attachments: InternalAttachment[] = [];
+      if (hasFiles) {
+        if (!threadId) {
+          toast.error('Attachments are not supported on company announcements');
+          setSending(false);
+          return;
+        }
+        const uploaded = await uploadStaged(threadId);
+        if (!uploaded) { setSending(false); return; }
+        attachments = uploaded;
+      }
+
       const payload = composeMode === 'broadcast'
         ? { action: 'send_message', broadcast: true, title: broadcastTitle.trim() || undefined, body: text }
-        : { action: 'send_message', recipient_user_id: recipientId, body: text };
+        : { action: 'send_message', thread_id: threadId, body: text, attachments };
       const data = await call(payload);
       publishInternalMessage({ thread_id: data?.thread_id, sender_id: user?.id ?? null, sender_name: myName });
 
       setDraft('');
       setBroadcastTitle('');
+      setGroupTitle('');
+      setGroupIds([]);
       setRecipientId(null);
-      toast.success(composeMode === 'broadcast' ? 'Announcement sent to all staff' : 'Message sent');
+      attachmentQueue.clear();
+      toast.success(
+        composeMode === 'broadcast'
+          ? 'Announcement sent to all staff'
+          : composeMode === 'group' ? 'Group chat started' : 'Message sent',
+      );
       const refreshed = await call({ action: 'list_threads' });
       const list: InternalThread[] = refreshed?.threads ?? [];
       setThreads(list);
-      const created = list.find(t => t.id === data?.thread_id);
+      const created = list.find(t => t.id === (data?.thread_id ?? threadId));
       if (created) await openThread(created);
       else setView('threads');
     } catch (err) {
@@ -334,8 +420,45 @@ export function InternalMessagesPanel({
     }
   };
 
+  const setArchived = async (thread: InternalThread, archived: boolean) => {
+    try {
+      await call({
+        action: archived ? 'archive_thread' : 'unarchive_thread',
+        thread_id: thread.id,
+      });
+      toast.success(archived ? 'Conversation archived' : 'Conversation restored');
+      await loadThreads(showArchived);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update conversation');
+    }
+  };
+
+  const commitRename = async () => {
+    if (!activeThread) return;
+    const title = renameDraft.trim();
+    if (!title) { setRenaming(false); return; }
+    try {
+      await call({ action: 'rename_group', thread_id: activeThread.id, title });
+      setActiveThread(prev => (prev ? { ...prev, title, display_title: title } : prev));
+      setRenaming(false);
+      await loadThreads(showArchived);
+      const data = await call({ action: 'get_thread', thread_id: activeThread.id });
+      setMessages(data?.messages ?? []);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not rename group');
+    }
+  };
+
+  const toggleGroupMember = (id: string) => {
+    setGroupIds(prev => (prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]));
+  };
+
   // ── Thread view ────────────────────────────────────────────────────
   if (view === 'thread' && activeThread) {
+    const isGroup = activeThread.kind === 'group';
+    const memberNames = (activeThread.participants ?? [])
+      .filter(p => !p.mine)
+      .map(p => p.username);
     return (
       <div
         className="relative w-full flex flex-col min-h-0"
@@ -370,13 +493,68 @@ export function InternalMessagesPanel({
           </Button>
           {activeThread.kind === 'broadcast'
             ? <Megaphone className="h-4 w-4 text-warning shrink-0" />
-            : <MessageSquare className="h-4 w-4 text-primary shrink-0" />}
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold truncate">{activeThread.display_title}</h3>
-            {activeThread.kind === 'broadcast' && (
-              <p className="text-[10px] text-muted-foreground">Announcement · {activeThread.participant_count} recipients</p>
+            : isGroup
+              ? <UsersRound className="h-4 w-4 text-primary shrink-0" />
+              : <MessageSquare className="h-4 w-4 text-primary shrink-0" />}
+          <div className="min-w-0 flex-1">
+            {renaming ? (
+              <div className="flex items-center gap-1">
+                <Input
+                  autoFocus
+                  value={renameDraft}
+                  onChange={e => setRenameDraft(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                    if (e.key === 'Escape') setRenaming(false);
+                  }}
+                  placeholder="Group name"
+                  className="h-7 text-xs"
+                />
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={commitRename} aria-label="Save group name">
+                  <Check className="h-3.5 w-3.5" />
+                </Button>
+                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setRenaming(false)} aria-label="Cancel rename">
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ) : (
+              <>
+                <h3 className="text-sm font-semibold truncate">{activeThread.title || activeThread.display_title}</h3>
+                {activeThread.kind === 'broadcast' && (
+                  <p className="text-[10px] text-muted-foreground">Announcement · {activeThread.participant_count} recipients</p>
+                )}
+                {isGroup && (
+                  <p className="text-[10px] text-muted-foreground truncate">
+                    {memberNames.length ? memberNames.join(', ') : `${activeThread.participant_count} members`}
+                  </p>
+                )}
+              </>
             )}
           </div>
+          {isGroup && !renaming && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 shrink-0"
+              aria-label="Rename group"
+              title="Rename group"
+              onClick={() => { setRenameDraft(activeThread.title || ''); setRenaming(true); }}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 shrink-0"
+            aria-label={activeThread.archived ? 'Unarchive conversation' : 'Archive conversation'}
+            title={activeThread.archived ? 'Unarchive conversation' : 'Archive conversation'}
+            onClick={() => setArchived(activeThread, !activeThread.archived)}
+          >
+            {activeThread.archived
+              ? <ArchiveRestore className="h-3.5 w-3.5" />
+              : <Archive className="h-3.5 w-3.5" />}
+          </Button>
         </div>
         <ScrollArea className="flex-1 px-4 py-3">
           {!messages ? (
@@ -386,6 +564,11 @@ export function InternalMessagesPanel({
           ) : (
             <div className="space-y-3">
               {messages.map(m => (
+                m.is_system ? (
+                  <p key={m.id} className="text-center text-[10px] text-muted-foreground">
+                    {m.body} · {timeLabel(m.created_at)}
+                  </p>
+                ) : (
                 <div key={m.id} className={cn('flex flex-col gap-1', m.mine ? 'items-end' : 'items-start')}>
                   <span className="text-[10px] text-muted-foreground px-1">
                     {m.sender_name} · {timeLabel(m.created_at)}
@@ -402,6 +585,7 @@ export function InternalMessagesPanel({
                     />
                   </div>
                 </div>
+                )
               ))}
               <div ref={bottomRef} />
             </div>
@@ -474,7 +658,36 @@ export function InternalMessagesPanel({
   // ── Compose view ───────────────────────────────────────────────────
   if (view === 'compose') {
     return (
-      <div className="w-full flex flex-col min-h-0">
+      <div
+        className="relative w-full flex flex-col min-h-0"
+        onDragEnter={(e) => {
+          if (composeMode === 'broadcast') return;
+          if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragActive(true);
+        }}
+        onDragOver={(e) => {
+          if (composeMode === 'broadcast') return;
+          if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragActive(false);
+        }}
+        onDrop={(e) => {
+          if (composeMode === 'broadcast') return;
+          const dropped = filesFromDataTransfer(e.dataTransfer);
+          if (!dropped.length) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragActive(false);
+          addFiles(dropped);
+        }}
+      >
+        {dragActive && <AttachmentDropOverlay />}
         <div className="px-4 py-3 border-b flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setView('threads')}>
             <ChevronLeft className="h-4 w-4" />
@@ -482,8 +695,8 @@ export function InternalMessagesPanel({
           <h3 className="text-sm font-semibold">New internal message</h3>
         </div>
 
-        <div className="px-4 pt-3 flex gap-1.5">
-          {(['direct', 'broadcast'] as const).map(mode => (
+        <div className="px-4 pt-3 flex flex-wrap gap-1.5">
+          {(['direct', 'group', 'broadcast'] as const).map(mode => (
             <button
               key={mode}
               type="button"
@@ -495,14 +708,50 @@ export function InternalMessagesPanel({
                   : 'border-border/60 bg-muted/40 text-muted-foreground hover:bg-muted/70',
               )}
             >
-              {mode === 'direct' ? <MessageSquare className="h-3 w-3" /> : <Megaphone className="h-3 w-3" />}
-              {mode === 'direct' ? 'Direct message' : 'Everyone'}
+              {mode === 'direct'
+                ? <MessageSquare className="h-3 w-3" />
+                : mode === 'group'
+                  ? <UsersRound className="h-3 w-3" />
+                  : <Megaphone className="h-3 w-3" />}
+              {mode === 'direct' ? 'Direct message' : mode === 'group' ? 'Group chat' : 'Everyone'}
             </button>
           ))}
         </div>
 
-        {composeMode === 'direct' ? (
+        {composeMode !== 'broadcast' ? (
           <>
+            {composeMode === 'group' && (
+              <div className="px-4 pt-3 space-y-2">
+                <Input
+                  value={groupTitle}
+                  onChange={e => setGroupTitle(e.target.value)}
+                  placeholder="Group name (optional — you can rename later)"
+                  className="h-8 text-xs"
+                />
+                {groupIds.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {groupIds.map(id => {
+                      const member = staff.find(s => s.id === id);
+                      return (
+                        <span
+                          key={id}
+                          className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                        >
+                          {member?.username ?? 'Member'}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${member?.username ?? 'member'}`}
+                            onClick={() => toggleGroupMember(id)}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="px-4 pt-3">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -519,25 +768,31 @@ export function InternalMessagesPanel({
                 <div className="flex items-center justify-center py-6"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
               ) : (
                 <div className="space-y-1">
-                  {filteredStaff.map(s => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => setRecipientId(s.id)}
-                      className={cn(
-                        'w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
-                        recipientId === s.id ? 'bg-primary/15 text-primary' : 'hover:bg-accent hover:text-accent-foreground',
-                      )}
-                    >
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
-                        {initials(s.username)}
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block text-xs font-medium truncate">{s.username}</span>
-                        {s.email && <span className="block text-[10px] text-muted-foreground truncate">{s.email}</span>}
-                      </span>
-                    </button>
-                  ))}
+                  {filteredStaff.map(s => {
+                    const selected = composeMode === 'group'
+                      ? groupIds.includes(s.id)
+                      : recipientId === s.id;
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => (composeMode === 'group' ? toggleGroupMember(s.id) : setRecipientId(s.id))}
+                        className={cn(
+                          'w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
+                          selected ? 'bg-primary/15 text-primary' : 'hover:bg-accent hover:text-accent-foreground',
+                        )}
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
+                          {initials(s.username)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-medium truncate">{s.username}</span>
+                          {s.email && <span className="block text-[10px] text-muted-foreground truncate">{s.email}</span>}
+                        </span>
+                        {selected && <Check className="h-3.5 w-3.5 shrink-0" />}
+                      </button>
+                    );
+                  })}
                   {filteredStaff.length === 0 && (
                     <p className="text-[11px] text-muted-foreground px-2 py-3">No staff match that search.</p>
                   )}
@@ -560,17 +815,70 @@ export function InternalMessagesPanel({
           </div>
         )}
 
-        <div className="border-t p-3 shrink-0 flex items-end gap-2">
-          <Textarea
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            placeholder={composeMode === 'broadcast' ? 'Announcement to all staff…' : 'Write a message…'}
-            rows={2}
-            className="min-h-[44px] max-h-28 resize-none text-xs"
-          />
-          <Button size="icon" className="h-9 w-9 shrink-0" onClick={sendNew} disabled={sending || !draft.trim()}>
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
+        <div className="border-t p-3 shrink-0">
+          {composeMode !== 'broadcast' && (
+            <InternalAttachmentQueue
+              items={attachmentQueue.items}
+              onRemove={attachmentQueue.remove}
+              onRetry={() => toast.info('Send the message to retry the upload')}
+            />
+          )}
+          <div className="flex items-end gap-2">
+            {composeMode !== 'broadcast' && (
+              <>
+                <input
+                  ref={composeFileInputRef}
+                  type="file"
+                  multiple
+                  accept={INTERNAL_ATTACHMENT_ACCEPT}
+                  className="hidden"
+                  onChange={e => {
+                    addFiles(Array.from(e.target.files ?? []));
+                    e.target.value = '';
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-9 w-9 shrink-0"
+                  aria-label="Attach files"
+                  title="Attach files — drag, paste or click. Any format, any size."
+                  onClick={() => composeFileInputRef.current?.click()}
+                >
+                  <Paperclip className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+            <Textarea
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onPaste={e => {
+                if (composeMode === 'broadcast') return;
+                const pasted = filesFromDataTransfer(e.clipboardData);
+                if (!pasted.length) return;
+                e.preventDefault();
+                addFiles(pasted);
+              }}
+              placeholder={
+                composeMode === 'broadcast'
+                  ? 'Announcement to all staff…'
+                  : composeMode === 'group'
+                    ? 'Kick off the group chat…'
+                    : 'Write a message…'
+              }
+              rows={2}
+              className="min-h-[44px] max-h-28 resize-none text-xs"
+            />
+            <Button
+              size="icon"
+              className="h-9 w-9 shrink-0"
+              onClick={sendNew}
+              disabled={sending || (!draft.trim() && attachmentQueue.items.length === 0)}
+            >
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -578,56 +886,95 @@ export function InternalMessagesPanel({
   }
 
   // ── Thread list ────────────────────────────────────────────────────
+  const visibleThreads = (threads ?? []).filter(t => (showArchived ? !!t.archived : !t.archived));
+
   return (
     <div className="w-full flex flex-col min-h-0">
       <div className="px-4 py-3 border-b flex items-center justify-between">
         <h3 className="text-sm font-semibold flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-primary" /> Team messages
         </h3>
-        <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setView('compose')}>
-          <Plus className="h-3 w-3 mr-1" /> New
-        </Button>
+        <div className="flex items-center gap-1">
+          {(archivedCount > 0 || showArchived) && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cn('h-7 text-[11px]', showArchived && 'text-primary')}
+              onClick={() => setShowArchived(v => !v)}
+            >
+              <Archive className="h-3 w-3 mr-1" />
+              {showArchived ? 'Active' : `Archived${archivedCount ? ` (${archivedCount})` : ''}`}
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" className="h-7 text-[11px]" onClick={() => setView('compose')}>
+            <Plus className="h-3 w-3 mr-1" /> New
+          </Button>
+        </div>
       </div>
       <ScrollArea className="flex-1 p-3 min-h-0">
         {!threads ? (
           <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-        ) : threads.length === 0 ? (
+        ) : visibleThreads.length === 0 ? (
           <div className="text-center py-8 px-4 space-y-2">
-            <p className="text-xs text-muted-foreground">No internal conversations yet.</p>
-            <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setView('compose')}>
-              Message a colleague
-            </Button>
+            <p className="text-xs text-muted-foreground">
+              {showArchived ? 'Nothing archived.' : 'No internal conversations yet.'}
+            </p>
+            {!showArchived && (
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setView('compose')}>
+                Message a colleague
+              </Button>
+            )}
           </div>
         ) : (
           <div className="space-y-1">
-            {threads.map(t => (
-              <button
+            {visibleThreads.map(t => (
+              <div
                 key={t.id}
-                type="button"
-                onClick={() => openThread(t)}
-                className="w-full flex items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-accent hover:text-accent-foreground transition-colors"
+                className="group flex items-start gap-1 rounded-lg pr-1 hover:bg-accent hover:text-accent-foreground transition-colors"
               >
-                <span className={cn(
-                  'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
-                  t.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-muted',
-                )}>
-                  {t.kind === 'broadcast' ? <Megaphone className="h-3.5 w-3.5" /> : initials(t.display_title)}
-                </span>
-                <span className="flex-1 min-w-0">
-                  <span className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium truncate">{t.display_title}</span>
-                    <span className="text-[10px] text-muted-foreground shrink-0">{timeLabel(t.last_message_at)}</span>
+                <button
+                  type="button"
+                  onClick={() => openThread(t)}
+                  className="flex-1 min-w-0 flex items-start gap-2 px-2 py-2 text-left"
+                >
+                  <span className={cn(
+                    'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
+                    t.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-muted',
+                  )}>
+                    {t.kind === 'broadcast'
+                      ? <Megaphone className="h-3.5 w-3.5" />
+                      : t.kind === 'group'
+                        ? <UsersRound className="h-3.5 w-3.5" />
+                        : initials(t.display_title)}
                   </span>
-                  {t.last_message_preview && (
-                    <span className="block text-[11px] text-muted-foreground truncate">{t.last_message_preview}</span>
+                  <span className="flex-1 min-w-0">
+                    <span className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium truncate">{t.display_title}</span>
+                      <span className="text-[10px] text-muted-foreground shrink-0">{timeLabel(t.last_message_at)}</span>
+                    </span>
+                    {t.last_message_preview && (
+                      <span className="block text-[11px] text-muted-foreground truncate">{t.last_message_preview}</span>
+                    )}
+                  </span>
+                  {t.unread > 0 && (
+                    <span className="mt-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
+                      {t.unread > 9 ? '9+' : t.unread}
+                    </span>
                   )}
-                </span>
-                {t.unread > 0 && (
-                  <span className="mt-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
-                    {t.unread > 9 ? '9+' : t.unread}
-                  </span>
-                )}
-              </button>
+                </button>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="mt-1.5 h-7 w-7 shrink-0 opacity-60 hover:opacity-100"
+                  aria-label={t.archived ? 'Unarchive conversation' : 'Archive conversation'}
+                  title={t.archived ? 'Unarchive conversation' : 'Archive conversation'}
+                  onClick={() => setArchived(t, !t.archived)}
+                >
+                  {t.archived
+                    ? <ArchiveRestore className="h-3.5 w-3.5" />
+                    : <Archive className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
             ))}
           </div>
         )}
