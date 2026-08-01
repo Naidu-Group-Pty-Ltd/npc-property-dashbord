@@ -62,6 +62,7 @@ Deno.serve(async (req) => {
       const { data: rows, error } = await sb
         .from('market_updates')
         .select('id, title, summary, why_it_matters')
+        .eq('visibility', 'public')
         .is('embedding', null)
         .order('created_at', { ascending: false })
         .limit(BATCH_SIZE);
