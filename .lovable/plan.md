@@ -1,20 +1,28 @@
-## What the screenshot shows
+## Scope
 
-The failed file row reads `... .docx: unknown action: attachment_u…` and the composer shows "1 file failed to upload — retry or remove before sending".
+The internal (staff) messaging tool in the Aurixa agent widget calls exactly one edge function from the frontend — `internal-messaging`. Verified call sites:
 
-That message is produced by the **edge function's own fallback branch** (`unknown action: ${action}`, 400), reached only *after* authentication succeeds. The repo's `supabase/functions/internal-messaging/index.ts` does handle `attachment_upload_url` / `attachment_download_url` (lines ~561–602), and the client (`src/lib/internalMessageAttachments.ts`) sends exactly those action names. So the code is correct; the **currently deployed** copy of `internal-messaging` is an older build that predates the attachment actions — every upload ticket request 400s, retries 4× with fresh tickets, and lands as a hard failure.
+- `src/components/agent/InternalMessagesPanel.tsx:99`
+- `src/components/agent/InternalMessageToasts.tsx:283, 303, 530`
+- `src/lib/internalMessageAttachments.ts:67`
 
-## Fix
+It imports only `../_shared/auth.ts` (CORS + `verifyAuth`), which is bundled with the deploy.
 
-1. **Redeploy `internal-messaging`** with the current repo source (this is the actual fix — no code change needed for the reported error). Then confirm the deployed build answers `attachment_upload_url` for an authenticated participant instead of `unknown action`.
-2. **Verify the storage side** so the ticket is usable end to end: `internal-message-attachments` bucket exists and is private, and the `storage.objects` policies allow the service-role-minted signed upload/download path.
-3. **Make this class of failure diagnosable instead of cryptic** (small, contained client change in `src/lib/internalMessageAttachments.ts`):
-   - When the ticket request fails with an `unknown action` / non-retryable 4xx, stop retrying immediately and surface "Attachment service out of date — redeploy required" rather than burning 4 attempts.
-   - Keep the existing per-file retry button and progress behaviour untouched.
-4. **Verify in the browser** via Playwright against the running preview: open the Aurixa internal messages panel, attach a document to an existing thread, and confirm the progress bar completes, the chip turns green, and the message sends with the attachment.
+Notification delivery for internal messages happens through DB triggers writing to `notifications`, then the existing feed/push functions — so those are the only adjacent pieces worth refreshing.
+
+## Plan
+
+1. Redeploy `internal-messaging` (primary — this is the function that served the stale `unknown action: attachment_upload_url` build).
+2. Redeploy the notification delivery functions that carry internal-message alerts so the whole path runs the current source: `notifications-feed`, `send-web-push`.
+3. Verify after deploy:
+   - Call `internal-messaging` with `action: list_threads` and confirm it returns an auth-gated response (401 without a session) rather than a routing error.
+   - Call `action: attachment_upload_url` and confirm the response is no longer `unknown action` (a 401/403 is the expected unauthenticated result).
+   - Check recent `internal-messaging` logs for boot errors.
+
+No code changes, no SQL migrations — deploy-only.
 
 ## Technical notes
 
-- No SQL migration is expected; the group/archive migrations from the previous turn are already applied.
-- Deployment scope is limited to the single `internal-messaging` function so the other tri-portal functions are untouched.
-- Server-side magic-byte screening in `send_message` stays as-is; a `.docx` will screen clean, and anything unreadable is marked `unscanned` rather than rejected.
+- Deploys go through `supabase--deploy_edge_functions`; edge deploys are immediate and do not require a Publish.
+- `push-subscribe` / `push-unsubscribe` are subscription-management only and are left untouched unless you want them included.
+- `message-governance`, `finance-portal-messages`, and `staff-client-portal-messages` belong to the client/finance portals, not internal staff messaging, so they are out of scope.
