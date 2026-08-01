@@ -36,7 +36,10 @@ interface Attachment {
   path: string;
   mime: string;
   size: number;
+  scan?: string;
+  scanned_at?: string;
 }
+
 
 /** All MIME types are accepted; only the shape is validated. */
 function normaliseAttachments(raw: unknown, threadId: string): Attachment[] {
