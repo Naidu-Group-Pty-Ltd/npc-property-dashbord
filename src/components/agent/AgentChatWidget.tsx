@@ -20,6 +20,7 @@ import { MemoryCitations, type RecalledMemory } from '@/components/agent/MemoryC
 import { AurixaMark } from '@/components/agent/AurixaMark';
 import { LiveModelBadge } from '@/components/agentModels';
 import { extractFileContent, formatFilesForAgent, ACCEPTED_EXTENSIONS, type ExtractedFile } from '@/lib/agentFileExtractor';
+import { InternalMessagesPanel } from '@/components/agent/InternalMessagesPanel';
 
 const ROTATING_PLACEHOLDERS = [
   'Ask Aurixa anything…',
@@ -77,7 +78,7 @@ interface Message {
   recalled_memories?: RecalledMemory[];
 }
 
-type PanelView = 'chat' | 'notifications' | 'settings' | 'share';
+type PanelView = 'chat' | 'notifications' | 'settings' | 'share' | 'messages';
 type SettingsTab = 'playbooks' | 'tasks' | 'audit';
 
 export function AgentChatWidget() {
@@ -97,6 +98,7 @@ export function AgentChatWidget() {
   const [editTitle, setEditTitle] = useState('');
   const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const [panelView, setPanelView] = useState<PanelView>('chat');
+  const [internalUnread, setInternalUnread] = useState(0);
   const [notifCount, setNotifCount] = useState(0);
   const [notifications, setNotifications] = useState<any>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('playbooks');
@@ -691,9 +693,9 @@ export function AgentChatWidget() {
           className="absolute inset-[3px] rounded-full aurixa-glass"
         />
         <AurixaMark size="md" state={loading ? 'thinking' : 'idle'} className="relative z-10" />
-        {notifCount > 0 && (
+        {notifCount + internalUnread > 0 && (
           <span className="absolute -top-0.5 -right-0.5 z-20 flex h-5 min-w-5 items-center justify-center rounded-full border border-background bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground shadow-[0_0_0_2px_hsl(var(--background))]">
-            {notifCount > 9 ? '9+' : notifCount}
+            {notifCount + internalUnread > 9 ? '9+' : notifCount + internalUnread}
           </span>
         )}
       </button>
@@ -724,6 +726,11 @@ export function AgentChatWidget() {
           </div>
         </div>
         <div className="flex items-center gap-0.5">
+          {/* Internal team messages */}
+          <Button variant="ghost" size="icon" className="h-7 w-7 relative" onClick={() => setPanelView(panelView === 'messages' ? 'chat' : 'messages')} title="Team messages">
+            <Users className={cn("h-4 w-4", panelView === 'messages' && "text-primary")} />
+            {internalUnread > 0 && <span className="absolute top-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-destructive text-[8px] font-bold text-destructive-foreground">{internalUnread > 9 ? '9+' : internalUnread}</span>}
+          </Button>
           {/* Notification bell */}
           <Button variant="ghost" size="icon" className="h-7 w-7 relative" onClick={() => { setPanelView(panelView === 'notifications' ? 'chat' : 'notifications'); loadNotifications(); }} title="Notifications">
             <Bell className={cn("h-4 w-4", panelView === 'notifications' && "text-primary")} />
@@ -763,6 +770,11 @@ export function AgentChatWidget() {
       </div>
 
       <div className="flex flex-1 min-h-0">
+        {/* ═══ INTERNAL TEAM MESSAGES PANEL ═══ */}
+        {panelView === 'messages' && (
+          <InternalMessagesPanel onUnreadChange={setInternalUnread} />
+        )}
+
         {/* ═══ NOTIFICATIONS PANEL ═══ */}
         {panelView === 'notifications' && (
           <div className="w-full flex flex-col">
