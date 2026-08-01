@@ -528,7 +528,11 @@ export type BuilderActivityEntityType =
   | 'reservation' | 'allocation'
   | 'transaction' | 'transaction_party' | 'transaction_case_link'
   | 'construction_case' | 'construction_stage' | 'milestone'
-  | 'progress_update' | 'photograph';
+  | 'progress_update' | 'photograph'
+  | 'variation' | 'variation_approval' | 'progress_claim'
+  | 'inspection' | 'defect' | 'practical_completion' | 'handover' | 'warranty_claim'
+  | 'document' | 'document_version' | 'document_grant'
+  | 'conversation' | 'message' | 'task' | 'task_assignment' | 'notification';
 
 /**
  * Append a project event to the trusted activity log.

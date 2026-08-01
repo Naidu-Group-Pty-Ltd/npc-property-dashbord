@@ -545,20 +545,22 @@ test('transaction_case_links gains no builder slot in Phase 1', () => {
     'the Phase 2 transaction-case link slot was added in Phase 1');
 });
 
-test('the external portal family stops at inventory', () => {
-  // Phase 1 allowed only the internal admin function; Phase 2 added the external
-  // authentication family; Phase 3 added the project module; the inventory
-  // module adds two more. Nothing beyond that may appear before it is built.
+test('the external portal function family is exactly the built modules', () => {
+  // Phase 1 allowed only the internal admin function; every module since has
+  // added its portal/admin pair. The list stays exhaustive so a function for a
+  // module nobody asked for cannot appear without this test failing.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && /^builder-/.test(entry.name))
     .map((entry) => entry.name).sort();
   assert.deepEqual(functionDirs, [
+    'builder-collaboration-admin',
     'builder-construction-admin',
     'builder-delivery-admin',
     'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
+    'builder-portal-collaboration',
     'builder-portal-construction',
     'builder-portal-delivery',
     'builder-portal-forgot-password',
@@ -570,9 +572,11 @@ test('the external portal family stops at inventory', () => {
     'builder-portal-reset-password',
     'builder-portal-transactions',
     'builder-portal-verify',
+    'builder-portal-workspace',
     'builder-projects-admin',
     'builder-transactions-admin',
-  ], 'a Builder function outside identity, governance, projects and inventory appeared');
+    'builder-workspace-admin',
+  ], 'a Builder function outside the built module set appeared');
 });
 
 

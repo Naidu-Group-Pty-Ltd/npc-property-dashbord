@@ -20,6 +20,15 @@ import type {
   BuilderInspection, BuilderPracticalCompletion, BuilderProgressClaim, BuilderVariation,
   BuilderVariationApproval, BuilderWarranty, BuilderWarrantyClaim,
 } from '@/lib/builderDelivery';
+import type {
+  BuilderConversation, BuilderConversationParticipant, BuilderDocument,
+  BuilderDocumentGrant, BuilderDocumentVersion, BuilderMessage, BuilderNotification,
+  BuilderScopeType, BuilderTask, BuilderTaskAssignment, BuilderUnreadCounts,
+} from '@/lib/builderCollaboration';
+import type {
+  BuilderActivityEntry, BuilderOrganisationSettings, BuilderUserPreferences,
+  BuilderWorkspaceSummary,
+} from '@/lib/builderWorkspace';
 
 /**
  * Builder Portal query layer. Mirrors `src/lib/solicitorQueries.ts`: query keys,
@@ -54,6 +63,22 @@ export const builderKeys = {
   deliveryRoot: (caseId: string) => ['builder', 'delivery', caseId] as const,
   delivery: (caseId: string, kind: string) => ['builder', 'delivery', caseId, kind] as const,
   deliverySummary: (projectId: string) => ['builder', 'delivery-summary', projectId] as const,
+  collaborationRoot: () => ['builder', 'collaboration'] as const,
+  scopeCollaboration: (scopeType: string, scopeId: string, surface: string) =>
+    ['builder', 'collaboration', scopeType, scopeId, surface] as const,
+  document: (documentId: string) => ['builder', 'document', documentId] as const,
+  conversation: (conversationId: string) => ['builder', 'conversation', conversationId] as const,
+  myTasks: () => ['builder', 'my-tasks'] as const,
+  notifications: () => ['builder', 'notifications'] as const,
+  unreadCounts: () => ['builder', 'unread-counts'] as const,
+  collaborationSummary: (projectId: string) =>
+    ['builder', 'collaboration-summary', projectId] as const,
+  workspaceRoot: () => ['builder', 'workspace'] as const,
+  workspaceSummary: () => ['builder', 'workspace', 'summary'] as const,
+  activity: (entityType: string, entityId: string) =>
+    ['builder', 'workspace', 'activity', entityType, entityId] as const,
+  organisationSettings: () => ['builder', 'workspace', 'organisation-settings'] as const,
+  myPreferences: () => ['builder', 'workspace', 'my-preferences'] as const,
 };
 
 export interface ProjectFilters { search: string; status: string; page: number; pageSize: number }
@@ -600,6 +625,243 @@ export function useBuilderDeliveryMutation(caseId: string) {
         client.invalidateQueries({ queryKey: ['builder', 'delivery-summary'] }),
         client.invalidateQueries({ queryKey: builderKeys.constructionCase(caseId) }),
       ]);
+    },
+  });
+}
+
+
+/* ────────────────────────── COLLABORATION ────────────────────────── */
+
+export interface BuilderScopeRef { scopeType: BuilderScopeType | ''; scopeId: string }
+
+export interface DocumentBundle {
+  document: BuilderDocument;
+  versions: BuilderDocumentVersion[];
+  grants: BuilderDocumentGrant[];
+  permissions: Record<string, { view: boolean; edit: boolean; delete: boolean }>;
+}
+
+export interface ConversationBundle {
+  conversation: BuilderConversation;
+  participants: BuilderConversationParticipant[];
+  messages: BuilderMessage[];
+  permissions: Record<string, { view: boolean; edit: boolean; delete: boolean }>;
+}
+
+export interface CollaborationSummary {
+  documents: number;
+  open_conversations: number;
+  open_tasks: number;
+  overdue_tasks: number;
+  unread_messages: number;
+  unread_notifications: number;
+}
+
+/**
+ * One list hook per collaboration surface, all keyed by the SCOPE rather than a
+ * single parent id — a document, conversation or task may hang off any Builder
+ * aggregate, and the server re-resolves that aggregate's grant on every call.
+ */
+function useScopedList<T>(scope: BuilderScopeRef, surface: string, operation: string) {
+  return useQuery({
+    queryKey: builderKeys.scopeCollaboration(scope.scopeType, scope.scopeId, surface),
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-collaboration', {
+      operation, scope_type: scope.scopeType, scope_id: scope.scopeId,
+    }, signal)) as { records: T[] }).records,
+    enabled: Boolean(scope.scopeType && scope.scopeId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderDocuments(scope: BuilderScopeRef) {
+  return useScopedList<BuilderDocument>(scope, 'documents', 'list_documents');
+}
+
+export function useBuilderConversations(scope: BuilderScopeRef) {
+  return useScopedList<BuilderConversation>(scope, 'conversations', 'list_conversations');
+}
+
+export function useBuilderScopedTasks(scope: BuilderScopeRef) {
+  return useQuery({
+    queryKey: builderKeys.scopeCollaboration(scope.scopeType, scope.scopeId, 'tasks'),
+    queryFn: ({ signal }) => invoke('builder-portal-collaboration', {
+      operation: 'list_tasks', scope_type: scope.scopeType, scope_id: scope.scopeId,
+    }, signal) as Promise<{ records: BuilderTask[]; assignments: BuilderTaskAssignment[] }>,
+    enabled: Boolean(scope.scopeType && scope.scopeId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderDocument(documentId: string) {
+  return useQuery({
+    queryKey: builderKeys.document(documentId),
+    queryFn: ({ signal }) => invoke('builder-portal-collaboration', {
+      operation: 'get_document', document_id: documentId,
+    }, signal) as Promise<DocumentBundle>,
+    enabled: Boolean(documentId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderConversation(conversationId: string) {
+  return useQuery({
+    queryKey: builderKeys.conversation(conversationId),
+    queryFn: ({ signal }) => invoke('builder-portal-collaboration', {
+      operation: 'get_conversation', conversation_id: conversationId,
+    }, signal) as Promise<ConversationBundle>,
+    enabled: Boolean(conversationId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderMyTasks() {
+  return useQuery({
+    queryKey: builderKeys.myTasks(),
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-collaboration', {
+      operation: 'my_tasks',
+    }, signal)) as { records: BuilderTask[] }).records,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderNotifications() {
+  return useQuery({
+    queryKey: builderKeys.notifications(),
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-collaboration', {
+      operation: 'list_notifications',
+    }, signal)) as { records: BuilderNotification[] }).records,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderUnreadCounts() {
+  return useQuery({
+    queryKey: builderKeys.unreadCounts(),
+    queryFn: ({ signal }) => invoke('builder-portal-collaboration', {
+      operation: 'unread_counts',
+    }, signal) as Promise<BuilderUnreadCounts>,
+    staleTime: 30_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderCollaborationSummary(projectId = '') {
+  return useQuery({
+    queryKey: builderKeys.collaborationSummary(projectId),
+    queryFn: ({ signal }) => invoke('builder-portal-collaboration', {
+      operation: 'collaboration_summary', project_id: projectId || undefined,
+    }, signal) as Promise<CollaborationSummary>,
+    staleTime: 60_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+/**
+ * One mutation hook for every collaboration write. The whole collaboration tree
+ * is invalidated on success because a single write — posting a message, closing
+ * a task — moves counts that are read on other screens.
+ */
+export function useBuilderCollaborationMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      invoke('builder-portal-collaboration', payload),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: builderKeys.collaborationRoot() }),
+        client.invalidateQueries({ queryKey: builderKeys.myTasks() }),
+        client.invalidateQueries({ queryKey: builderKeys.notifications() }),
+        client.invalidateQueries({ queryKey: builderKeys.unreadCounts() }),
+        client.invalidateQueries({ queryKey: ['builder', 'collaboration-summary'] }),
+        client.invalidateQueries({ queryKey: ['builder', 'document'] }),
+        client.invalidateQueries({ queryKey: ['builder', 'conversation'] }),
+      ]);
+    },
+  });
+}
+
+/** A short-lived signed URL. The path never reaches the browser. */
+export async function fetchBuilderDocumentUrl(documentId: string, versionId?: string) {
+  return await invoke('builder-portal-collaboration', {
+    operation: 'document_url', document_id: documentId, version_id: versionId,
+  }) as { url: string; file_name: string; expires_in: number };
+}
+
+
+/* ─────────────────────────── WORKSPACE ─────────────────────────── */
+
+export interface OrganisationSettingsBundle {
+  settings: BuilderOrganisationSettings | null;
+  /** A hint for rendering only. The server re-checks the role on every write. */
+  can_edit: boolean;
+}
+
+/**
+ * The cross-module dashboard summary. Every number is computed by the database
+ * from an accessible-set function, so a count can never reveal a record this
+ * user cannot open.
+ */
+export function useBuilderWorkspaceSummary() {
+  return useQuery({
+    queryKey: builderKeys.workspaceSummary(),
+    queryFn: ({ signal }) => invoke('builder-portal-workspace', {
+      operation: 'workspace_summary',
+    }, signal) as Promise<BuilderWorkspaceSummary>,
+    staleTime: 60_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+/**
+ * The activity feed. Optionally narrowed to one record — which narrows WITHIN
+ * what is already permitted; the server resolves every row through the resolver
+ * that governs the record itself.
+ */
+export function useBuilderActivity(entityType = '', entityId = '') {
+  return useQuery({
+    queryKey: builderKeys.activity(entityType, entityId),
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-workspace', {
+      operation: 'activity_history',
+      entity_type: entityType || undefined,
+      entity_id: entityId || undefined,
+      limit: 100,
+    }, signal)) as { records: BuilderActivityEntry[] }).records,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderOrganisationSettings() {
+  return useQuery({
+    queryKey: builderKeys.organisationSettings(),
+    queryFn: ({ signal }) => invoke('builder-portal-workspace', {
+      operation: 'get_organisation_settings',
+    }, signal) as Promise<OrganisationSettingsBundle>,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderMyPreferences() {
+  return useQuery({
+    queryKey: builderKeys.myPreferences(),
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-workspace', {
+      operation: 'get_my_preferences',
+    }, signal)) as { preferences: BuilderUserPreferences | null }).preferences,
+    retry: retryBuilderQuery,
+  });
+}
+
+/**
+ * One mutation hook for both settings surfaces. The whole workspace tree is
+ * invalidated on success because a saved preference changes what the dashboard
+ * and the shell render.
+ */
+export function useBuilderWorkspaceMutation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      invoke('builder-portal-workspace', payload),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: builderKeys.workspaceRoot() });
     },
   });
 }

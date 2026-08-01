@@ -73,7 +73,7 @@ test('builder_portal_admin is registered and guarded (updated by Phase 1)', () =
   assert.match(app, /moduleKey="builder_portal_admin"/);
 });
 
-test('the Builder function family is exactly identity, projects, inventory, transactions, construction and delivery', () => {
+test('the Builder function family is exactly the built modules', () => {
   // Phase 0 asserted no builder-portal function existed; Phase 1 allowed one;
   // Phase 2 added the external authentication family; Phase 3 added the project
   // module; the inventory module adds two more. The list stays exhaustive so a
@@ -83,12 +83,14 @@ test('the Builder function family is exactly identity, projects, inventory, tran
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
   assert.deepEqual(functionDirs.filter((name) => /^builder-/.test(name)).sort(), [
+    'builder-collaboration-admin',
     'builder-construction-admin',
     'builder-delivery-admin',
     'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
+    'builder-portal-collaboration',
     'builder-portal-construction',
     'builder-portal-delivery',
     'builder-portal-forgot-password',
@@ -100,16 +102,18 @@ test('the Builder function family is exactly identity, projects, inventory, tran
     'builder-portal-reset-password',
     'builder-portal-transactions',
     'builder-portal-verify',
+    'builder-portal-workspace',
     'builder-projects-admin',
     'builder-transactions-admin',
+    'builder-workspace-admin',
   ]);
 });
 
-test('the Builder schema stops at identity, governance, projects and inventory', () => {
-  // Phase 0 asserted the whole Builder domain was absent; Phase 1 added identity;
-  // Phase 3 added the project module; the inventory module adds stages, lots,
-  // units, pricing and reservations. What is still enforced is the ceiling: no
-  // transaction or construction table may exist yet.
+test('the Builder schema covers every built module and nothing beyond', () => {
+  // Phase 0 asserted the whole Builder domain was absent; each module has since
+  // added its own tables. Collaboration is the last of them, so the ceiling is
+  // now the whole portal: what this still enforces is that no table for an
+  // INVENTED module appears, and that every built one is present.
   const created = new Set(
     [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
       .map((match) => match[1].toLowerCase()),
@@ -129,13 +133,20 @@ test('the Builder schema stops at identity, governance, projects and inventory',
   ]) {
     assert.ok(created.has(table), `expected Builder table missing: ${table}`);
   }
-  // The ceiling now: documents, messages, tasks and notifications are the only
-  // Builder modules still unbuilt.
+  // Collaboration completes the portal.
   for (const table of [
-    'builder_documents', 'builder_conversations', 'builder_messages',
-    'builder_tasks', 'builder_notifications',
+    'builder_documents', 'builder_document_versions', 'builder_document_grants',
+    'builder_conversations', 'builder_conversation_participants', 'builder_messages',
+    'builder_tasks', 'builder_task_assignments', 'builder_notifications',
   ]) {
-    assert.ok(!created.has(table), `later-phase Builder table created too early: ${table}`);
+    assert.ok(created.has(table), `expected Builder table missing: ${table}`);
+  }
+  // The ceiling: no table for a module nobody asked for.
+  for (const table of [
+    'builder_leads', 'builder_marketing_campaigns', 'builder_tenders',
+    'builder_subcontractors', 'builder_purchase_orders',
+  ]) {
+    assert.ok(!created.has(table), `a Builder table for an unbuilt module appeared: ${table}`);
   }
 });
 

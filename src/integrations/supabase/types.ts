@@ -3410,6 +3410,107 @@ export type Database = {
           },
         ]
       }
+      builder_conversation_participants: {
+        Row: {
+          builder_user_id: string
+          conversation_id: string
+          created_at: string
+          id: string
+          joined_at: string
+          last_read_at: string | null
+          left_at: string | null
+          row_version: number
+          updated_at: string
+        }
+        Insert: {
+          builder_user_id: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+          joined_at?: string
+          last_read_at?: string | null
+          left_at?: string | null
+          row_version?: number
+          updated_at?: string
+        }
+        Update: {
+          builder_user_id?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+          joined_at?: string
+          last_read_at?: string | null
+          left_at?: string | null
+          row_version?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_conversation_participants_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_conversation_participants_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_conversations: {
+        Row: {
+          created_at: string
+          id: string
+          last_message_at: string | null
+          message_count: number
+          organisation_id: string
+          row_version: number
+          scope_id: string
+          scope_type: string
+          status: string
+          subject: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          message_count?: number
+          organisation_id: string
+          row_version?: number
+          scope_id: string
+          scope_type: string
+          status?: string
+          subject: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_message_at?: string | null
+          message_count?: number
+          organisation_id?: string
+          row_version?: number
+          scope_id?: string
+          scope_type?: string
+          status?: string
+          subject?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_conversations_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_defects: {
         Row: {
           construction_case_id: string
@@ -3604,6 +3705,313 @@ export type Database = {
           },
         ]
       }
+      builder_document_grants: {
+        Row: {
+          builder_user_id: string
+          can_download: boolean
+          created_at: string
+          document_id: string
+          granted_at: string
+          granted_by_user_id: string | null
+          id: string
+          revocation_reason: string | null
+          revoked_at: string | null
+          row_version: number
+          updated_at: string
+        }
+        Insert: {
+          builder_user_id: string
+          can_download?: boolean
+          created_at?: string
+          document_id: string
+          granted_at?: string
+          granted_by_user_id?: string | null
+          id?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          row_version?: number
+          updated_at?: string
+        }
+        Update: {
+          builder_user_id?: string
+          can_download?: boolean
+          created_at?: string
+          document_id?: string
+          granted_at?: string
+          granted_by_user_id?: string | null
+          id?: string
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          row_version?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_document_grants_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_document_grants_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "builder_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_document_versions: {
+        Row: {
+          byte_size: number | null
+          change_note: string | null
+          checksum: string | null
+          content_type: string
+          created_at: string
+          document_id: string
+          file_name: string
+          id: string
+          storage_path: string
+          uploaded_by_builder_user_id: string | null
+          uploaded_by_type: string
+          uploaded_by_user_id: string | null
+          version_number: number
+        }
+        Insert: {
+          byte_size?: number | null
+          change_note?: string | null
+          checksum?: string | null
+          content_type?: string
+          created_at?: string
+          document_id: string
+          file_name: string
+          id?: string
+          storage_path: string
+          uploaded_by_builder_user_id?: string | null
+          uploaded_by_type?: string
+          uploaded_by_user_id?: string | null
+          version_number: number
+        }
+        Update: {
+          byte_size?: number | null
+          change_note?: string | null
+          checksum?: string | null
+          content_type?: string
+          created_at?: string
+          document_id?: string
+          file_name?: string
+          id?: string
+          storage_path?: string
+          uploaded_by_builder_user_id?: string | null
+          uploaded_by_type?: string
+          uploaded_by_user_id?: string | null
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_document_versions_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "builder_documents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_document_versions_uploaded_by_builder_user_id_fkey"
+            columns: ["uploaded_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_documents: {
+        Row: {
+          created_at: string
+          current_version_id: string | null
+          description: string | null
+          document_type: string
+          id: string
+          is_customer_visible: boolean
+          organisation_id: string
+          row_version: number
+          scope_id: string
+          scope_type: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_version_id?: string | null
+          description?: string | null
+          document_type?: string
+          id?: string
+          is_customer_visible?: boolean
+          organisation_id: string
+          row_version?: number
+          scope_id: string
+          scope_type: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_version_id?: string | null
+          description?: string | null
+          document_type?: string
+          id?: string
+          is_customer_visible?: boolean
+          organisation_id?: string
+          row_version?: number
+          scope_id?: string
+          scope_type?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_documents_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_handovers: {
+        Row: {
+          attendee_names: string | null
+          completed_at: string | null
+          construction_case_id: string
+          created_at: string
+          id: string
+          key_set_count: number | null
+          keys_released_at: string | null
+          manual_provided: boolean
+          notes: string | null
+          row_version: number
+          scheduled_for: string | null
+          status: string
+          updated_at: string
+          walkthrough_at: string | null
+        }
+        Insert: {
+          attendee_names?: string | null
+          completed_at?: string | null
+          construction_case_id: string
+          created_at?: string
+          id?: string
+          key_set_count?: number | null
+          keys_released_at?: string | null
+          manual_provided?: boolean
+          notes?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          updated_at?: string
+          walkthrough_at?: string | null
+        }
+        Update: {
+          attendee_names?: string | null
+          completed_at?: string | null
+          construction_case_id?: string
+          created_at?: string
+          id?: string
+          key_set_count?: number | null
+          keys_released_at?: string | null
+          manual_provided?: boolean
+          notes?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          updated_at?: string
+          walkthrough_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_handovers_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_inspections: {
+        Row: {
+          construction_case_id: string
+          construction_stage_id: string | null
+          created_at: string
+          defect_count: number
+          id: string
+          inspection_type: string
+          inspector_name: string | null
+          inspector_organisation: string | null
+          is_customer_visible: boolean
+          outcome_notes: string | null
+          performed_at: string | null
+          row_version: number
+          scheduled_for: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          construction_case_id: string
+          construction_stage_id?: string | null
+          created_at?: string
+          defect_count?: number
+          id?: string
+          inspection_type?: string
+          inspector_name?: string | null
+          inspector_organisation?: string | null
+          is_customer_visible?: boolean
+          outcome_notes?: string | null
+          performed_at?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          construction_case_id?: string
+          construction_stage_id?: string | null
+          created_at?: string
+          defect_count?: number
+          id?: string
+          inspection_type?: string
+          inspector_name?: string | null
+          inspector_organisation?: string | null
+          is_customer_visible?: boolean
+          outcome_notes?: string | null
+          performed_at?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_inspections_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_inspections_construction_stage_id_fkey"
+            columns: ["construction_stage_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_membership_permissions: {
         Row: {
           created_at: string
@@ -3661,6 +4069,114 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "builder_permission_keys"
             referencedColumns: ["permission_key"]
+          },
+        ]
+      }
+      builder_messages: {
+        Row: {
+          author_builder_user_id: string | null
+          author_display_name: string | null
+          author_type: string
+          author_user_id: string | null
+          body: string
+          conversation_id: string
+          created_at: string
+          id: string
+        }
+        Insert: {
+          author_builder_user_id?: string | null
+          author_display_name?: string | null
+          author_type?: string
+          author_user_id?: string | null
+          body: string
+          conversation_id: string
+          created_at?: string
+          id?: string
+        }
+        Update: {
+          author_builder_user_id?: string | null
+          author_display_name?: string | null
+          author_type?: string
+          author_user_id?: string | null
+          body?: string
+          conversation_id?: string
+          created_at?: string
+          id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_messages_author_builder_user_id_fkey"
+            columns: ["author_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_notifications: {
+        Row: {
+          body: string | null
+          builder_user_id: string
+          created_at: string
+          entity_id: string | null
+          entity_kind: string | null
+          id: string
+          notification_type: string
+          organisation_id: string
+          read_at: string | null
+          scope_id: string | null
+          scope_type: string | null
+          title: string
+        }
+        Insert: {
+          body?: string | null
+          builder_user_id: string
+          created_at?: string
+          entity_id?: string | null
+          entity_kind?: string | null
+          id?: string
+          notification_type?: string
+          organisation_id: string
+          read_at?: string | null
+          scope_id?: string | null
+          scope_type?: string | null
+          title: string
+        }
+        Update: {
+          body?: string | null
+          builder_user_id?: string
+          created_at?: string
+          entity_id?: string | null
+          entity_kind?: string | null
+          id?: string
+          notification_type?: string
+          organisation_id?: string
+          read_at?: string | null
+          scope_id?: string | null
+          scope_type?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_notifications_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_notifications_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
           },
         ]
       }
@@ -3768,6 +4284,71 @@ export type Database = {
           },
           {
             foreignKeyName: "builder_organisation_memberships_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_organisation_settings: {
+        Row: {
+          created_at: string
+          default_landing_page: string
+          display_name: string | null
+          id: string
+          notify_on_defect: boolean
+          notify_on_inspection: boolean
+          notify_on_message: boolean
+          notify_on_task: boolean
+          notify_on_variation: boolean
+          organisation_id: string
+          primary_contact_email: string | null
+          primary_contact_name: string | null
+          primary_contact_phone: string | null
+          row_version: number
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          default_landing_page?: string
+          display_name?: string | null
+          id?: string
+          notify_on_defect?: boolean
+          notify_on_inspection?: boolean
+          notify_on_message?: boolean
+          notify_on_task?: boolean
+          notify_on_variation?: boolean
+          organisation_id: string
+          primary_contact_email?: string | null
+          primary_contact_name?: string | null
+          primary_contact_phone?: string | null
+          row_version?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          default_landing_page?: string
+          display_name?: string | null
+          id?: string
+          notify_on_defect?: boolean
+          notify_on_inspection?: boolean
+          notify_on_message?: boolean
+          notify_on_task?: boolean
+          notify_on_variation?: boolean
+          organisation_id?: string
+          primary_contact_email?: string | null
+          primary_contact_name?: string | null
+          primary_contact_phone?: string | null
+          row_version?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_organisation_settings_organisation_id_fkey"
             columns: ["organisation_id"]
             isOneToOne: false
             referencedRelation: "builder_organisations"
@@ -4119,6 +4700,131 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: []
+      }
+      builder_practical_completions: {
+        Row: {
+          achieved_at: string | null
+          certificate_reference: string | null
+          construction_case_id: string
+          created_at: string
+          dispute_reason: string | null
+          id: string
+          inspected_at: string | null
+          notes: string | null
+          notified_at: string | null
+          outstanding_defect_count: number
+          row_version: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          achieved_at?: string | null
+          certificate_reference?: string | null
+          construction_case_id: string
+          created_at?: string
+          dispute_reason?: string | null
+          id?: string
+          inspected_at?: string | null
+          notes?: string | null
+          notified_at?: string | null
+          outstanding_defect_count?: number
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          achieved_at?: string | null
+          certificate_reference?: string | null
+          construction_case_id?: string
+          created_at?: string
+          dispute_reason?: string | null
+          id?: string
+          inspected_at?: string | null
+          notes?: string | null
+          notified_at?: string | null
+          outstanding_defect_count?: number
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_practical_completions_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_progress_claims: {
+        Row: {
+          certified_amount: number | null
+          certified_at: string | null
+          claim_number: string | null
+          claimed_amount: number
+          claimed_at: string | null
+          construction_case_id: string
+          created_at: string
+          dispute_reason: string | null
+          finance_payment_id: string | null
+          id: string
+          milestone_id: string | null
+          notes: string | null
+          row_version: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          certified_amount?: number | null
+          certified_at?: string | null
+          claim_number?: string | null
+          claimed_amount: number
+          claimed_at?: string | null
+          construction_case_id: string
+          created_at?: string
+          dispute_reason?: string | null
+          finance_payment_id?: string | null
+          id?: string
+          milestone_id?: string | null
+          notes?: string | null
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          certified_amount?: number | null
+          certified_at?: string | null
+          claim_number?: string | null
+          claimed_amount?: number
+          claimed_at?: string | null
+          construction_case_id?: string
+          created_at?: string
+          dispute_reason?: string | null
+          finance_payment_id?: string | null
+          id?: string
+          milestone_id?: string | null
+          notes?: string | null
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_progress_claims_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_progress_claims_milestone_id_fkey"
+            columns: ["milestone_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_milestones"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       builder_project_access: {
         Row: {
@@ -4563,262 +5269,6 @@ export type Database = {
           },
         ]
       }
-      builder_handovers: {
-        Row: {
-          attendee_names: string | null
-          completed_at: string | null
-          construction_case_id: string
-          created_at: string
-          id: string
-          key_set_count: number | null
-          keys_released_at: string | null
-          manual_provided: boolean
-          notes: string | null
-          row_version: number
-          scheduled_for: string | null
-          status: string
-          updated_at: string
-          walkthrough_at: string | null
-        }
-        Insert: {
-          attendee_names?: string | null
-          completed_at?: string | null
-          construction_case_id: string
-          created_at?: string
-          id?: string
-          key_set_count?: number | null
-          keys_released_at?: string | null
-          manual_provided?: boolean
-          notes?: string | null
-          row_version?: number
-          scheduled_for?: string | null
-          status?: string
-          updated_at?: string
-          walkthrough_at?: string | null
-        }
-        Update: {
-          attendee_names?: string | null
-          completed_at?: string | null
-          construction_case_id?: string
-          created_at?: string
-          id?: string
-          key_set_count?: number | null
-          keys_released_at?: string | null
-          manual_provided?: boolean
-          notes?: string | null
-          row_version?: number
-          scheduled_for?: string | null
-          status?: string
-          updated_at?: string
-          walkthrough_at?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "builder_handovers_construction_case_id_fkey"
-            columns: ["construction_case_id"]
-            isOneToOne: false
-            referencedRelation: "builder_construction_cases"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      builder_inspections: {
-        Row: {
-          construction_case_id: string
-          construction_stage_id: string | null
-          created_at: string
-          defect_count: number
-          id: string
-          inspection_type: string
-          inspector_name: string | null
-          inspector_organisation: string | null
-          is_customer_visible: boolean
-          outcome_notes: string | null
-          performed_at: string | null
-          row_version: number
-          scheduled_for: string | null
-          status: string
-          title: string
-          updated_at: string
-        }
-        Insert: {
-          construction_case_id: string
-          construction_stage_id?: string | null
-          created_at?: string
-          defect_count?: number
-          id?: string
-          inspection_type?: string
-          inspector_name?: string | null
-          inspector_organisation?: string | null
-          is_customer_visible?: boolean
-          outcome_notes?: string | null
-          performed_at?: string | null
-          row_version?: number
-          scheduled_for?: string | null
-          status?: string
-          title: string
-          updated_at?: string
-        }
-        Update: {
-          construction_case_id?: string
-          construction_stage_id?: string | null
-          created_at?: string
-          defect_count?: number
-          id?: string
-          inspection_type?: string
-          inspector_name?: string | null
-          inspector_organisation?: string | null
-          is_customer_visible?: boolean
-          outcome_notes?: string | null
-          performed_at?: string | null
-          row_version?: number
-          scheduled_for?: string | null
-          status?: string
-          title?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "builder_inspections_construction_case_id_fkey"
-            columns: ["construction_case_id"]
-            isOneToOne: false
-            referencedRelation: "builder_construction_cases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "builder_inspections_construction_stage_id_fkey"
-            columns: ["construction_stage_id"]
-            isOneToOne: false
-            referencedRelation: "builder_construction_stages"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      builder_practical_completions: {
-        Row: {
-          achieved_at: string | null
-          certificate_reference: string | null
-          construction_case_id: string
-          created_at: string
-          dispute_reason: string | null
-          id: string
-          inspected_at: string | null
-          notes: string | null
-          notified_at: string | null
-          outstanding_defect_count: number
-          row_version: number
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          achieved_at?: string | null
-          certificate_reference?: string | null
-          construction_case_id: string
-          created_at?: string
-          dispute_reason?: string | null
-          id?: string
-          inspected_at?: string | null
-          notes?: string | null
-          notified_at?: string | null
-          outstanding_defect_count?: number
-          row_version?: number
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          achieved_at?: string | null
-          certificate_reference?: string | null
-          construction_case_id?: string
-          created_at?: string
-          dispute_reason?: string | null
-          id?: string
-          inspected_at?: string | null
-          notes?: string | null
-          notified_at?: string | null
-          outstanding_defect_count?: number
-          row_version?: number
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "builder_practical_completions_construction_case_id_fkey"
-            columns: ["construction_case_id"]
-            isOneToOne: false
-            referencedRelation: "builder_construction_cases"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      builder_progress_claims: {
-        Row: {
-          certified_amount: number | null
-          certified_at: string | null
-          claim_number: string | null
-          claimed_amount: number
-          claimed_at: string | null
-          construction_case_id: string
-          created_at: string
-          dispute_reason: string | null
-          finance_payment_id: string | null
-          id: string
-          milestone_id: string | null
-          notes: string | null
-          row_version: number
-          status: string
-          updated_at: string
-        }
-        Insert: {
-          certified_amount?: number | null
-          certified_at?: string | null
-          claim_number?: string | null
-          claimed_amount: number
-          claimed_at?: string | null
-          construction_case_id: string
-          created_at?: string
-          dispute_reason?: string | null
-          finance_payment_id?: string | null
-          id?: string
-          milestone_id?: string | null
-          notes?: string | null
-          row_version?: number
-          status?: string
-          updated_at?: string
-        }
-        Update: {
-          certified_amount?: number | null
-          certified_at?: string | null
-          claim_number?: string | null
-          claimed_amount?: number
-          claimed_at?: string | null
-          construction_case_id?: string
-          created_at?: string
-          dispute_reason?: string | null
-          finance_payment_id?: string | null
-          id?: string
-          milestone_id?: string | null
-          notes?: string | null
-          row_version?: number
-          status?: string
-          updated_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "builder_progress_claims_construction_case_id_fkey"
-            columns: ["construction_case_id"]
-            isOneToOne: false
-            referencedRelation: "builder_construction_cases"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "builder_progress_claims_milestone_id_fkey"
-            columns: ["milestone_id"]
-            isOneToOne: false
-            referencedRelation: "builder_construction_milestones"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       builder_role_default_permissions: {
         Row: {
           can_delete: boolean
@@ -4897,6 +5347,130 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_task_assignments: {
+        Row: {
+          assigned_at: string
+          assigned_by_builder_user_id: string | null
+          builder_user_id: string
+          created_at: string
+          id: string
+          row_version: number
+          task_id: string
+          unassigned_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by_builder_user_id?: string | null
+          builder_user_id: string
+          created_at?: string
+          id?: string
+          row_version?: number
+          task_id: string
+          unassigned_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by_builder_user_id?: string | null
+          builder_user_id?: string
+          created_at?: string
+          id?: string
+          row_version?: number
+          task_id?: string
+          unassigned_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_task_assignments_assigned_by_builder_user_id_fkey"
+            columns: ["assigned_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_task_assignments_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_task_assignments_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "builder_tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_tasks: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          created_by_builder_user_id: string | null
+          description: string | null
+          due_date: string | null
+          id: string
+          organisation_id: string
+          priority: string
+          row_version: number
+          scope_id: string
+          scope_type: string
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          created_by_builder_user_id?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          organisation_id: string
+          priority?: string
+          row_version?: number
+          scope_id: string
+          scope_type: string
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          created_by_builder_user_id?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          organisation_id?: string
+          priority?: string
+          row_version?: number
+          scope_id?: string
+          scope_type?: string
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_tasks_created_by_builder_user_id_fkey"
+            columns: ["created_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_tasks_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
             referencedColumns: ["id"]
           },
         ]
@@ -5440,6 +6014,69 @@ export type Database = {
             columns: ["stage_id"]
             isOneToOne: false
             referencedRelation: "builder_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_user_preferences: {
+        Row: {
+          builder_user_id: string
+          created_at: string
+          date_format: string
+          default_organisation_id: string | null
+          email_digest: string
+          id: string
+          landing_page: string
+          notify_message_posted: boolean
+          notify_status_change: boolean
+          notify_task_assigned: boolean
+          row_version: number
+          timezone: string
+          updated_at: string
+        }
+        Insert: {
+          builder_user_id: string
+          created_at?: string
+          date_format?: string
+          default_organisation_id?: string | null
+          email_digest?: string
+          id?: string
+          landing_page?: string
+          notify_message_posted?: boolean
+          notify_status_change?: boolean
+          notify_task_assigned?: boolean
+          row_version?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Update: {
+          builder_user_id?: string
+          created_at?: string
+          date_format?: string
+          default_organisation_id?: string | null
+          email_digest?: string
+          id?: string
+          landing_page?: string
+          notify_message_posted?: boolean
+          notify_status_change?: boolean
+          notify_task_assigned?: boolean
+          row_version?: number
+          timezone?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_user_preferences_builder_user_id_fkey"
+            columns: ["builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_user_preferences_default_organisation_id_fkey"
+            columns: ["default_organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
             referencedColumns: ["id"]
           },
         ]

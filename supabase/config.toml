@@ -1105,5 +1105,17 @@ verify_jwt = false
 [functions.builder-delivery-admin]
 verify_jwt = true
 
+[functions.builder-portal-collaboration]
+verify_jwt = false
+
+[functions.builder-collaboration-admin]
+verify_jwt = true
+
+[functions.builder-portal-workspace]
+verify_jwt = false
+
+[functions.builder-workspace-admin]
+verify_jwt = true
+
 [functions.create-advanced-client]
 verify_jwt = true

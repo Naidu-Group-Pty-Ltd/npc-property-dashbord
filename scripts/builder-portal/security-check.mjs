@@ -47,12 +47,14 @@ const functionDirs = readdirSync(new URL('supabase/functions/', root), { withFil
   .sort();
 
 const EXPECTED_FUNCTIONS = [
+    'builder-collaboration-admin',
     'builder-construction-admin',
     'builder-delivery-admin',
     'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
+    'builder-portal-collaboration',
     'builder-portal-construction',
     'builder-portal-delivery',
     'builder-portal-forgot-password',
@@ -64,8 +66,10 @@ const EXPECTED_FUNCTIONS = [
     'builder-portal-reset-password',
     'builder-portal-transactions',
     'builder-portal-verify',
+    'builder-portal-workspace',
     'builder-projects-admin',
     'builder-transactions-admin',
+    'builder-workspace-admin',
 ];
 
 const fnSource = Object.fromEntries(

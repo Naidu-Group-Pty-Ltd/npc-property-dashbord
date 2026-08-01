@@ -202,6 +202,11 @@ import BuilderPipeline from "@/pages/builder/BuilderPipeline";
 import BuilderConstruction from "@/pages/builder/BuilderConstruction";
 import BuilderConstructionDetail from "@/pages/builder/BuilderConstructionDetail";
 import BuilderDeliveryDetail from "@/pages/builder/BuilderDeliveryDetail";
+import BuilderDocuments from "@/pages/builder/BuilderDocuments";
+import BuilderMessages from "@/pages/builder/BuilderMessages";
+import BuilderTasks from "@/pages/builder/BuilderTasks";
+import BuilderNotifications from "@/pages/builder/BuilderNotifications";
+import BuilderActivity from "@/pages/builder/BuilderActivity";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
@@ -440,6 +445,11 @@ const App = () => (
                                   <Route path="construction" element={<BuilderConstruction />} />
                                   <Route path="construction/:constructionCaseId" element={<BuilderConstructionDetail />} />
                                   <Route path="construction/:constructionCaseId/delivery" element={<BuilderDeliveryDetail />} />
+                                  <Route path="documents" element={<BuilderDocuments />} />
+                                  <Route path="messages" element={<BuilderMessages />} />
+                                  <Route path="tasks" element={<BuilderTasks />} />
+                                  <Route path="notifications" element={<BuilderNotifications />} />
+                                  <Route path="activity" element={<BuilderActivity />} />
                                   <Route path="settings" element={<BuilderSettings />} />
                                 </Route>
                               </Route>

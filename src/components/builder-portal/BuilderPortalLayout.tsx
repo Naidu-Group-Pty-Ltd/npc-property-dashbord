@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
-  Boxes, Building2, Hammer, HardHat, KanbanSquare, LayoutDashboard, ListChecks, LogOut,
-  MessageSquare, Receipt, Settings,
+  Bell, Boxes, Building2, FileText, Hammer, HardHat, History, KanbanSquare,
+  LayoutDashboard, ListChecks, LogOut, MessageSquare, Receipt, Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -39,8 +39,11 @@ const NAV: BuilderNavItem[] = [
   { to: '/builder/transactions', label: 'Transactions', icon: Receipt, available: true },
   { to: '/builder/pipeline', label: 'Pipeline', icon: KanbanSquare, available: true },
   { to: '/builder/construction', label: 'Construction', icon: Hammer, available: true },
-  { to: '/builder/messages', label: 'Messages', icon: MessageSquare, available: false },
-  { to: '/builder/tasks', label: 'Tasks', icon: ListChecks, available: false },
+  { to: '/builder/documents', label: 'Documents', icon: FileText, available: true },
+  { to: '/builder/messages', label: 'Messages', icon: MessageSquare, available: true },
+  { to: '/builder/tasks', label: 'Tasks', icon: ListChecks, available: true },
+  { to: '/builder/notifications', label: 'Notifications', icon: Bell, available: true },
+  { to: '/builder/activity', label: 'Activity', icon: History, available: true },
   { to: '/builder/settings', label: 'Settings', icon: Settings, available: true },
 ];
 
