@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { MessageSquare, X, Plus, Trash2, Send, Check, XCircle, Loader2, ChevronLeft, Search, Pencil, RotateCcw, Sparkles, Diamond, BarChart3, Calendar, Zap, TrendingUp, Target, FileDown, Brain, Bell, Settings, Users, Share2, ClipboardList, Clock, Shield, ChevronRight, Info, Play, HelpCircle, ArrowRight, Paperclip, File, Image as ImageIcon, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { InternalMessagesPanel } from '@/components/agent/InternalMessagesPanel';
+import { OPEN_INTERNAL_MESSAGES_EVENT } from '@/lib/internalMessagingBus';
+
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -77,12 +80,15 @@ interface Message {
   recalled_memories?: RecalledMemory[];
 }
 
-type PanelView = 'chat' | 'notifications' | 'settings' | 'share';
+type PanelView = 'chat' | 'notifications' | 'settings' | 'share' | 'messages';
 type SettingsTab = 'playbooks' | 'tasks' | 'audit';
 
 export function AgentChatWidget() {
   const { user } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
+  const [internalUnread, setInternalUnread] = useState(0);
+  const [pendingThreadId, setPendingThreadId] = useState<string | null>(null);
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConversation, setActiveConversation] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -197,6 +203,40 @@ export function AgentChatWidget() {
     window.addEventListener('open-agent-conversation', handler);
     return () => window.removeEventListener('open-agent-conversation', handler);
   }, [loadConversations]);
+
+  // Open straight into internal team messages (from a message pop-up alert)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setIsOpen(true);
+      setPendingThreadId(detail?.threadId ?? null);
+      setPanelView('messages');
+    };
+    window.addEventListener(OPEN_INTERNAL_MESSAGES_EVENT, handler);
+    return () => window.removeEventListener(OPEN_INTERNAL_MESSAGES_EVENT, handler);
+  }, []);
+
+  // Keep the orb badge fresh for internal messages even when the panel is closed.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const { data } = await invokeSecureFunction('internal-messaging', { action: 'list_threads' });
+        if (cancelled) return;
+        const total = (data?.threads ?? []).reduce(
+          (sum: number, t: any) => sum + (t.unread || 0), 0,
+        );
+        setInternalUnread(total);
+      } catch { /* badge stays as-is */ }
+    };
+    refresh();
+    const off = onInternalMessage(() => refresh());
+    const id = setInterval(refresh, 30_000);
+    return () => { cancelled = true; off(); clearInterval(id); };
+  }, [user]);
+
+
 
   // Poll notifications every 2 min
   useEffect(() => {
@@ -691,11 +731,12 @@ export function AgentChatWidget() {
           className="absolute inset-[3px] rounded-full aurixa-glass"
         />
         <AurixaMark size="md" state={loading ? 'thinking' : 'idle'} className="relative z-10" />
-        {notifCount > 0 && (
+        {notifCount + internalUnread > 0 && (
           <span className="absolute -top-0.5 -right-0.5 z-20 flex h-5 min-w-5 items-center justify-center rounded-full border border-background bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground shadow-[0_0_0_2px_hsl(var(--background))]">
-            {notifCount > 9 ? '9+' : notifCount}
+            {notifCount + internalUnread > 9 ? '9+' : notifCount + internalUnread}
           </span>
         )}
+
       </button>
     );
   }
@@ -724,11 +765,27 @@ export function AgentChatWidget() {
           </div>
         </div>
         <div className="flex items-center gap-0.5">
+          {/* Internal team messages */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 relative"
+            onClick={() => { setPendingThreadId(null); setPanelView(panelView === 'messages' ? 'chat' : 'messages'); }}
+            title="Team messages"
+          >
+            <Users className={cn('h-4 w-4', panelView === 'messages' && 'text-primary')} />
+            {internalUnread > 0 && (
+              <span className="absolute top-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-destructive text-[8px] font-bold text-destructive-foreground">
+                {internalUnread > 9 ? '9+' : internalUnread}
+              </span>
+            )}
+          </Button>
           {/* Notification bell */}
           <Button variant="ghost" size="icon" className="h-7 w-7 relative" onClick={() => { setPanelView(panelView === 'notifications' ? 'chat' : 'notifications'); loadNotifications(); }} title="Notifications">
             <Bell className={cn("h-4 w-4", panelView === 'notifications' && "text-primary")} />
             {notifCount > 0 && <span className="absolute top-0 right-0 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-destructive text-[8px] font-bold text-destructive-foreground">{notifCount > 9 ? '9+' : notifCount}</span>}
           </Button>
+
           {/* Share */}
           {activeConversation && (
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setPanelView(panelView === 'share' ? 'chat' : 'share')} title="Share conversation">
@@ -763,7 +820,18 @@ export function AgentChatWidget() {
       </div>
 
       <div className="flex flex-1 min-h-0">
+        {/* ═══ INTERNAL TEAM MESSAGES PANEL ═══ */}
+        {panelView === 'messages' && (
+          <div className="w-full flex flex-col min-h-0">
+            <InternalMessagesPanel
+              onUnreadChange={setInternalUnread}
+              initialThreadId={pendingThreadId}
+            />
+          </div>
+        )}
+
         {/* ═══ NOTIFICATIONS PANEL ═══ */}
+
         {panelView === 'notifications' && (
           <div className="w-full flex flex-col">
             <div className="px-4 py-3 border-b">
