@@ -707,6 +707,17 @@ export function InternalMessageToasts() {
         {/* Header */}
         <div className="flex items-center gap-2.5 border-b border-border/50 px-3.5 py-2.5">
           <span
+            {...dock.handleProps}
+            role="button"
+            tabIndex={-1}
+            aria-label="Move conversation"
+            title="Drag to move"
+            className="-ml-1 shrink-0 cursor-grab text-muted-foreground/70 hover:text-foreground active:cursor-grabbing"
+          >
+            <GripVertical className="h-4 w-4" />
+          </span>
+          <span
+
             className={cn(
               'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold uppercase',
               active.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-primary/15 text-primary',
