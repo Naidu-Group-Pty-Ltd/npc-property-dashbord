@@ -120,6 +120,22 @@ function timeLabel(iso: string) {
   }
 }
 
+/** Three-dot animated typing indicator, matching the messages panel. */
+function TypingDots({ className }: { className?: string }) {
+  return (
+    <span className={cn('flex items-center gap-1', className)} aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1.5 w-1.5 rounded-full bg-primary/70 animate-bounce motion-reduce:animate-none"
+          style={{ animationDelay: `${i * 140}ms`, animationDuration: '900ms' }}
+        />
+      ))}
+    </span>
+  );
+}
+
+
 export function InternalMessageToasts() {
   const { user } = useAuth();
   const [threads, setThreads] = useState<PopupThread[]>([]);
@@ -139,6 +155,9 @@ export function InternalMessageToasts() {
   /** Session start — messages older than this never pop on first load. */
   const bootAtRef = useRef<string>(new Date().toISOString());
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** thread_id → last time we broadcast a typing hint (throttling). */
+  const lastTypingSentRef = useRef<Record<string, number>>({});
+
 
   const persist = useCallback((next: PopupThread[]) => {
     writeOpenIds(next.map((t) => t.thread_id));
@@ -290,7 +309,7 @@ export function InternalMessageToasts() {
       setTyping((prev) => {
         const now = Date.now();
         const next: typeof prev = {};
-        for (const [k, v] of Object.entries(prev)) if (now - v.at < 4000) next[k] = v;
+        for (const [k, v] of Object.entries(prev)) if (now - v.at < 5000) next[k] = v;
         return next;
       });
     }, 1500);
@@ -305,12 +324,19 @@ export function InternalMessageToasts() {
     [threads, activeId],
   );
 
-  // Pin the transcript to the newest message so nothing is cut off.
+  // Pin the transcript to the newest message (or the typing bubble) so nothing
+  // is cut off.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [active?.thread_id, active?.messages.length, active?.loading]);
+  }, [
+    active?.thread_id,
+    active?.messages.length,
+    active?.loading,
+    activeId ? !!typing[activeId] : false,
+  ]);
+
 
   const dismiss = useCallback(
     (threadId: string) => {
@@ -381,16 +407,20 @@ export function InternalMessageToasts() {
   const onDraftChange = useCallback(
     (thread: PopupThread, value: string) => {
       setDrafts((p) => ({ ...p, [thread.thread_id]: value }));
-      if (value.trim() && user) {
-        publishInternalTyping({
-          thread_id: thread.thread_id,
-          user_id: user.id,
-          user_name: (user as any).username ?? 'A team member',
-        });
-      }
+      if (!value.trim() || !user) return;
+      // Throttle so a fast typist emits at most one hint every 1.2s.
+      const now = Date.now();
+      if (now - (lastTypingSentRef.current[thread.thread_id] ?? 0) < 1200) return;
+      lastTypingSentRef.current[thread.thread_id] = now;
+      publishInternalTyping({
+        thread_id: thread.thread_id,
+        user_id: user.id,
+        user_name: (user as any).username ?? 'A team member',
+      });
     },
     [user],
   );
+
 
   /** Collapsed chips: every open conversation except the expanded one. */
   const chips = useMemo(
@@ -454,6 +484,10 @@ export function InternalMessageToasts() {
                 {t.unread > 9 ? '9+' : t.unread}
               </span>
             )}
+            {typing[t.thread_id] && (
+              <TypingDots className="shrink-0" />
+            )}
+
           </button>
           <button
             type="button"
@@ -558,10 +592,16 @@ export function InternalMessageToasts() {
             </div>
           )}
           {typer && (
-            <p className="mt-1.5 px-1 text-[10px] italic text-muted-foreground animate-pulse motion-reduce:animate-none">
-              {typer.name} is typing…
-            </p>
+            <div className="mt-1.5 flex flex-col items-start" aria-live="polite">
+              <div className="flex max-w-[85%] items-center gap-1.5 rounded-2xl rounded-bl-md bg-muted px-3 py-2">
+                <TypingDots />
+              </div>
+              <span className="mt-0.5 px-1 text-[9px] text-muted-foreground/70">
+                {typer.name} is typing…
+              </span>
+            </div>
           )}
+
         </div>
 
         {/* Reply */}
