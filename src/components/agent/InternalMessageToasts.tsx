@@ -727,16 +727,23 @@ export function InternalMessageToasts() {
           <Textarea
             value={drafts[active.thread_id] ?? ''}
             onChange={(e) => onDraftChange(active, e.target.value)}
+            onPaste={(e) => {
+              const pasted = filesFromDataTransfer(e.clipboardData);
+              if (!pasted.length) return;
+              e.preventDefault();
+              addFilesFor(active.thread_id, pasted);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 send(active);
               }
             }}
-            placeholder="Reply…"
+            placeholder="Reply… (drag or paste files to attach)"
             rows={2}
             className="min-h-[46px] resize-none rounded-2xl border-border/60 bg-background/60 text-[12px]"
           />
+
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1">
               <button
