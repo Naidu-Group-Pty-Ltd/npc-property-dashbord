@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { FileCheck2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { advancedClientCreationSchema } from '@/lib/client-fact-find/schema';
 import type { AdvancedClientCreationPayload } from '@/lib/client-fact-find/types';
@@ -43,19 +44,20 @@ export function AdvancedClientForm({ onCancel }: { active: boolean; onCancel: ()
       <form onSubmit={event => event.preventDefault()} className="flex min-h-0 flex-1 flex-col">
         <Tabs value={tab} onValueChange={value => setTab(value as AdvancedTab)} className="flex min-h-0 flex-1 flex-col">
           <AdvancedTabNavigation />
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-5 sm:px-6">
+          <ScrollArea data-testid="advanced-content-scroll" className="min-h-0 flex-1 bg-muted/10">
+          <div className="mx-auto w-full max-w-[1360px] overflow-x-hidden px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
             <TabsContent value="branding" className="m-0"><WhiteLabelSetupTab /></TabsContent>
             <TabsContent value="fact-find" className="m-0"><ClientFactFindTab /></TabsContent>
             <TabsContent value="expenses" className="m-0"><LivingExpensesTab /></TabsContent>
             <TabsContent value="output" className="m-0"><ClientFormOutputTab /></TabsContent>
-          </div>
+          </div></ScrollArea>
         </Tabs>
-        <footer className="sticky bottom-0 z-30 shrink-0 border-t border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
-          <div className="mx-auto flex max-w-[1400px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <footer data-testid="advanced-footer" className="z-30 shrink-0 border-t border-brand-300/20 bg-card/95 px-4 py-3 shadow-[0_-12px_30px_hsl(var(--foreground)/0.06)] backdrop-blur-xl sm:px-6">
+          <div className="mx-auto flex max-w-[1360px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground">Advanced client saving will be connected separately.</p>
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
-              <Button type="button" onClick={reviewOutput}><FileCheck2 className="mr-2 h-4 w-4" />Review Output</Button>
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+              <Button type="button" variant="outline" className="rounded-xl" onClick={onCancel}>Cancel</Button>
+              <Button type="button" className="rounded-xl bg-gradient-to-r from-brand-300 via-brand-400 to-brand-500 font-bold text-primary-foreground shadow-lg shadow-brand-500/20" onClick={reviewOutput}><FileCheck2 className="mr-2 h-4 w-4" />Review Output</Button>
             </div>
           </div>
         </footer>
