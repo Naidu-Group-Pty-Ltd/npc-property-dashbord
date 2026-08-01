@@ -205,9 +205,13 @@ export async function uploadInternalAttachment(
       };
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      lastError = error;
+      lastError = fatalTicketError(error) ?? error;
+      // A stale/misconfigured attachment service will never succeed on retry —
+      // surface it immediately instead of burning every attempt.
+      if (fatalTicketError(error)) break;
       if (attempt < attempts) await sleep(Math.min(8_000, 600 * 2 ** (attempt - 1)));
     }
+
   }
 
   throw new Error(
