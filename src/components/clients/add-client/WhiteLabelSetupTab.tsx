@@ -17,7 +17,7 @@ export function WhiteLabelSetupTab() {
     setValue('branding.logoReference', settings.sidebarLogo || settings.authLogo || ''); setValue('branding.sourceWhiteLabelSettingId', settings.id || null);
   }, [getValues, setValue, settings]);
   return <div className="space-y-6" data-testid="advanced-branding-tab">
-    <div className="flex gap-3 rounded-2xl border border-brand-300/20 bg-brand-300/10 p-4 text-sm text-muted-foreground"><Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-200"/><p>These values are saved as a snapshot for this client output only. They do not update organisation-wide white-label settings.</p></div>
+    <div className="flex gap-3 rounded-2xl border border-brand-300/20 bg-brand-300/10 p-4 text-sm text-muted-foreground"><Info className="mt-0.5 h-4 w-4 shrink-0 text-brand-200"/><p>These values are a local preview only. They are not saved and do not update organisation-wide white-label settings.</p></div>
     <section className="space-y-4 rounded-2xl border border-border bg-card/70 p-4 sm:p-5"><h3 className="text-base font-semibold">Brand information</h3><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <FormField name="branding.organisationName" label="Organisation Name"/><FormField name="branding.tradingName" label="Trading Name / Division"/><FormField name="branding.tagline" label="Tagline"/>
       <ColourField name="branding.primaryColour" label="Primary Colour"/><ColourField name="branding.accentColour" label="Accent Colour"/><FormField name="branding.website" label="Website"/>

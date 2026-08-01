@@ -25,6 +25,5 @@ export function createAdvancedDefaults(): AdvancedClientCreationPayload {
     assets: Array.from({ length: 10 }, (_, displayOrder) => ({ displayOrder, assetType: '', descriptionOrAddress: '', owner: '', currentValue: 0, rentalOrOtherIncome: 0, financialInstitution: '', loanBalance: 0, monthlyRepayment: 0, interestRate: 0, maturityDate: null })),
     liabilities: Array.from({ length: 8 }, (_, displayOrder) => ({ displayOrder, liabilityType: '', lender: '', accountOrDescription: '', owner: '', limitOrOriginalAmount: 0, currentBalance: 0, monthlyRepayment: 0, interestRate: 0, remainingTerm: '', notes: '' })),
     expenses: LIVING_EXPENSE_ITEMS.map(({ key, category, itemLabel, displayOrder }) => ({ expenseKey: key, category, itemLabel, displayOrder, monthlyAmount: 0, notes: '' })),
-    syncToGhl: true,
   };
 }
