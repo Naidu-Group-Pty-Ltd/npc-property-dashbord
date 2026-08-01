@@ -7,6 +7,8 @@ import { MobileHeader } from './MobileHeader';
 import { MobileNav } from './MobileNav';
 import { useBreakpoint } from '@/hooks/use-breakpoint';
 import { AgentChatWidget } from '@/components/agent/AgentChatWidget';
+import { InternalMessageToasts } from '@/components/agent/InternalMessageToasts';
+
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { useDashboardTheme } from '@/hooks/useDashboardTheme';
 import { DashboardPageShell } from './DashboardPageShell';
@@ -47,8 +49,10 @@ export function DashboardLayout() {
 
         <MobileNav />
         <AgentChatWidget />
+        <InternalMessageToasts />
         <GlobalCommandPalette />
       </div>
+
     );
   }
 
@@ -80,7 +84,9 @@ export function DashboardLayout() {
         </div>
       </div>
       <AgentChatWidget />
+      <InternalMessageToasts />
       <GlobalCommandPalette />
     </SidebarProvider>
+
   );
 }

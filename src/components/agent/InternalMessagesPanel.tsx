@@ -17,6 +17,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
+import { ShimmerText } from '@/components/aurixa/ShimmerText';
+import { useAuth } from '@/hooks/useAuth';
+import {
+  onInternalMessage,
+  onInternalTyping,
+  publishInternalMessage,
+  publishInternalTyping,
+} from '@/lib/internalMessagingBus';
 
 export interface InternalStaffMember {
   id: string;
@@ -69,7 +77,16 @@ function timeLabel(iso: string | null) {
 
 type View = 'threads' | 'compose' | 'thread';
 
-export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n: number) => void }) {
+export function InternalMessagesPanel({
+  onUnreadChange,
+  initialThreadId,
+}: {
+  onUnreadChange?: (n: number) => void;
+  initialThreadId?: string | null;
+}) {
+  const { user } = useAuth();
+  const myName = (user as any)?.username || (user as any)?.email || 'Someone';
+
   const [view, setView] = useState<View>('threads');
   const [threads, setThreads] = useState<InternalThread[] | null>(null);
   const [staff, setStaff] = useState<InternalStaffMember[]>([]);
@@ -77,6 +94,7 @@ export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n:
   const [messages, setMessages] = useState<InternalMessage[] | null>(null);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
+  const [typingBy, setTypingBy] = useState<Record<string, number>>({});
 
   // compose state
   const [composeMode, setComposeMode] = useState<'direct' | 'broadcast'>('direct');
@@ -85,6 +103,9 @@ export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n:
   const [broadcastTitle, setBroadcastTitle] = useState('');
 
   const bottomRef = useRef<HTMLDivElement>(null);
+  const lastTypingSentRef = useRef<number>(0);
+  const openedInitialRef = useRef<string | null>(null);
+
 
   const loadThreads = useCallback(async () => {
     try {
@@ -127,18 +148,77 @@ export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n:
 
   useEffect(() => { loadThreads(); }, [loadThreads]);
 
-  // Light polling keeps the list and open thread fresh without realtime access.
+  // Deep-link: open a specific thread (e.g. from a pop-up message alert).
   useEffect(() => {
+    if (!initialThreadId || !threads || openedInitialRef.current === initialThreadId) return;
+    const target = threads.find(t => t.id === initialThreadId);
+    if (!target) return;
+    openedInitialRef.current = initialThreadId;
+    openThread(target);
+  }, [initialThreadId, threads, openThread]);
+
+  // Refresh the moment anyone posts (realtime broadcast hint), then re-verify
+  // through the edge function. Falls back to a short poll if realtime drops.
+  const refreshActive = useCallback(() => {
+    loadThreads();
+    if (activeThread) {
+      call({ action: 'get_thread', thread_id: activeThread.id })
+        .then(d => setMessages(d?.messages ?? []))
+        .catch(() => {});
+    }
+  }, [loadThreads, activeThread]);
+
+  useEffect(() => {
+    const off = onInternalMessage(() => refreshActive());
+    const id = setInterval(refreshActive, 6_000);
+    return () => { off(); clearInterval(id); };
+  }, [refreshActive]);
+
+  // ── Typing indicators ──────────────────────────────────────────────
+  const signalTyping = useCallback(() => {
+    if (!activeThread) return;
+    const now = Date.now();
+    if (now - lastTypingSentRef.current < 1_800) return;
+    lastTypingSentRef.current = now;
+    publishInternalTyping({
+      thread_id: activeThread.id,
+      user_id: user?.id ?? 'unknown',
+      user_name: myName,
+    });
+  }, [activeThread, user?.id, myName]);
+
+  useEffect(() => {
+    const off = onInternalTyping(signal => {
+      if (!signal?.thread_id || signal.user_id === user?.id) return;
+      setTypingBy(prev => ({ ...prev, [`${signal.thread_id}|${signal.user_name}`]: Date.now() }));
+    });
     const id = setInterval(() => {
-      loadThreads();
-      if (view === 'thread' && activeThread) {
-        call({ action: 'get_thread', thread_id: activeThread.id })
-          .then(d => setMessages(d?.messages ?? []))
-          .catch(() => {});
-      }
-    }, 25_000);
-    return () => clearInterval(id);
-  }, [loadThreads, view, activeThread]);
+      setTypingBy(prev => {
+        const now = Date.now();
+        const next: Record<string, number> = {};
+        let changed = false;
+        for (const [k, v] of Object.entries(prev)) {
+          if (now - v < 4_000) next[k] = v; else changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 1_000);
+    return () => { off(); clearInterval(id); };
+  }, [user?.id]);
+
+  const typingLabel = useMemo(() => {
+    if (!activeThread) return null;
+    const names = Object.keys(typingBy)
+      .filter(k => k.startsWith(`${activeThread.id}|`))
+      .map(k => k.split('|')[1])
+      .filter(Boolean);
+    if (!names.length) return null;
+    const unique = [...new Set(names)];
+    return unique.length === 1
+      ? `${unique[0]} is typing…`
+      : `${unique.slice(0, 2).join(' and ')} are typing…`;
+  }, [typingBy, activeThread]);
+
 
   useEffect(() => {
     if (view === 'compose') loadStaff();
@@ -162,6 +242,11 @@ export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n:
     try {
       await call({ action: 'send_message', thread_id: activeThread.id, body: text });
       setDraft('');
+      publishInternalMessage({
+        thread_id: activeThread.id,
+        sender_id: user?.id ?? null,
+        sender_name: myName,
+      });
       const data = await call({ action: 'get_thread', thread_id: activeThread.id });
       setMessages(data?.messages ?? []);
       loadThreads();
@@ -171,6 +256,7 @@ export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n:
       setSending(false);
     }
   };
+
 
   const sendNew = async () => {
     const text = draft.trim();
@@ -185,6 +271,8 @@ export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n:
         ? { action: 'send_message', broadcast: true, title: broadcastTitle.trim() || undefined, body: text }
         : { action: 'send_message', recipient_user_id: recipientId, body: text };
       const data = await call(payload);
+      publishInternalMessage({ thread_id: data?.thread_id, sender_id: user?.id ?? null, sender_name: myName });
+
       setDraft('');
       setBroadcastTitle('');
       setRecipientId(null);
@@ -244,15 +332,21 @@ export function InternalMessagesPanel({ onUnreadChange }: { onUnreadChange?: (n:
             </div>
           )}
         </ScrollArea>
+        {typingLabel && (
+          <div className="px-4 pb-1 shrink-0">
+            <ShimmerText className="text-[11px]">{typingLabel}</ShimmerText>
+          </div>
+        )}
         <div className="border-t p-3 shrink-0 flex items-end gap-2">
           <Textarea
             value={draft}
-            onChange={e => setDraft(e.target.value)}
+            onChange={e => { setDraft(e.target.value); signalTyping(); }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendInThread(); } }}
             placeholder="Write a message…"
             rows={1}
             className="min-h-[36px] max-h-28 resize-none text-xs"
           />
+
           <Button size="icon" className="h-9 w-9 shrink-0" onClick={sendInThread} disabled={sending || !draft.trim()}>
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
