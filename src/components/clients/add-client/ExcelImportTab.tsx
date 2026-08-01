@@ -6,7 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import type { ParsedExcelImport } from '@/lib/client-fact-find/excelImport';
 
-const ADVANCED_TEMPLATE_URL='/templates/advanced-client/Aurixa-Systems-Client-Fact-Find-Template.xlsx',MAX_EXCEL_FILE_BYTES=10*1024*1024;
+const ADVANCED_TEMPLATE_URL = new URL(
+  '../../../../docs/reference/Aurixa Systems - White Label Client Fact Find Template.xlsx',
+  import.meta.url
+).href;
+const MAX_EXCEL_FILE_BYTES=10*1024*1024;
 const EXCEL_ACCEPT={'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':['.xlsx'],'application/vnd.ms-excel':['.xls']};
 const validateExcelFile=(file:Pick<File,'name'|'size'>)=>!/\.(xlsx|xls)$/i.test(file.name)?'Unsupported file type. Select an .xlsx or .xls workbook.':file.size>MAX_EXCEL_FILE_BYTES?'The workbook is larger than the 10 MB maximum.':null;
 
