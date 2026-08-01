@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { MessageSquare, X, Plus, Trash2, Send, Check, XCircle, Loader2, ChevronLeft, Search, Pencil, RotateCcw, Sparkles, Diamond, BarChart3, Calendar, Zap, TrendingUp, Target, FileDown, Brain, Bell, Settings, Users, Share2, ClipboardList, Clock, Shield, ChevronRight, Info, Play, HelpCircle, ArrowRight, Paperclip, File, Image as ImageIcon, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { InternalMessagesPanel } from '@/components/agent/InternalMessagesPanel';
-import { OPEN_INTERNAL_MESSAGES_EVENT, onInternalMessage } from '@/lib/internalMessagingBus';
+import { OPEN_INTERNAL_MESSAGES_EVENT, onInternalMessage, setInternalMessagesPanelOpen } from '@/lib/internalMessagingBus';
 
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
@@ -215,6 +215,13 @@ export function AgentChatWidget() {
     window.addEventListener(OPEN_INTERNAL_MESSAGES_EVENT, handler);
     return () => window.removeEventListener(OPEN_INTERNAL_MESSAGES_EVENT, handler);
   }, []);
+
+  // Let the pop-up alert surface know when the user is already reading messages.
+  useEffect(() => {
+    setInternalMessagesPanelOpen(isOpen && panelView === 'messages');
+    return () => setInternalMessagesPanelOpen(false);
+  }, [isOpen, panelView]);
+
 
   // Keep the orb badge fresh for internal messages even when the panel is closed.
   useEffect(() => {

@@ -109,6 +109,20 @@ export function publishInternalTyping(signal: Omit<TypingSignal, 'at'>) {
   } catch { /* best-effort */ }
 }
 
+/**
+ * Tracks whether the Aurixa widget is currently showing the internal messages
+ * panel. Pop-up alerts are suppressed while the user is already reading there.
+ */
+let messagesPanelOpen = false;
+
+export function setInternalMessagesPanelOpen(open: boolean) {
+  messagesPanelOpen = open;
+}
+
+export function isInternalMessagesPanelOpen() {
+  return messagesPanelOpen;
+}
+
 /** Window event used to pop the Aurixa widget open on the messages panel. */
 export const OPEN_INTERNAL_MESSAGES_EVENT = 'aurixa:open-internal-messages';
 
@@ -117,3 +131,4 @@ export function requestOpenInternalMessages(threadId?: string) {
     new CustomEvent(OPEN_INTERNAL_MESSAGES_EVENT, { detail: { threadId } }),
   );
 }
+

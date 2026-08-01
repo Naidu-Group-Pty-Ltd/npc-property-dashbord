@@ -127,6 +127,14 @@ Deno.serve(async (req) => {
         return json({ success: true, unread: total }, 200, corsHeaders);
       }
 
+      // Latest message per thread (recent is ordered created_at desc).
+      const latestByThread = new Map<string, { sender_id: string | null; created_at: string }>();
+      for (const m of recent ?? []) {
+        if (!latestByThread.has(m.thread_id)) {
+          latestByThread.set(m.thread_id, { sender_id: m.sender_id, created_at: m.created_at });
+        }
+      }
+
       // Counterparty labels for direct threads.
       const { data: parts } = await sb
         .from('internal_thread_participants')
@@ -134,6 +142,8 @@ Deno.serve(async (req) => {
         .in('thread_id', ids);
       const otherIds = new Set<string>();
       for (const p of parts ?? []) if (p.user_id !== me) otherIds.add(p.user_id);
+      // Also resolve senders of the latest message (may not be a listed participant).
+      for (const l of latestByThread.values()) if (l.sender_id) otherIds.add(l.sender_id);
       const { data: users } = otherIds.size
         ? await sb.from('custom_users').select('id, username').in('id', [...otherIds])
         : { data: [] as any[] };
@@ -143,16 +153,24 @@ Deno.serve(async (req) => {
         const others = (parts ?? [])
           .filter((p) => p.thread_id === t.id && p.user_id !== me)
           .map((p) => nameById.get(p.user_id) ?? 'Unknown');
+        const latest = latestByThread.get(t.id);
+        const latestSenderId = latest?.sender_id ?? null;
         return {
           ...t,
           unread: unreadByThread.get(t.id) ?? 0,
           participant_count: (parts ?? []).filter((p) => p.thread_id === t.id).length,
+          last_message_sender_id: latestSenderId,
+          last_message_sender_name: latestSenderId
+            ? (latestSenderId === me ? 'You' : nameById.get(latestSenderId) ?? 'Unknown')
+            : 'System',
+          last_message_id: latest ? `${t.id}:${latest.created_at}` : null,
           display_title:
             t.kind === 'broadcast'
               ? t.title || 'Company announcement'
               : others[0] ?? t.title ?? 'Direct message',
         };
       });
+
 
       return json({ success: true, threads: enriched }, 200, corsHeaders);
     }
