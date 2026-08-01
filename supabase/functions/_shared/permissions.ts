@@ -22,6 +22,10 @@ const TABLE_TO_MODULE_MAP: Record<string, string> = {
   client_additional_contacts: 'client_management',
   client_scores: 'client_management',
   client_income_sources: 'client_management',
+  // manage-client-data accepts writes to this table, so leaving it unmapped
+  // made every non-superadmin write fail closed with 'unmapped_table' — the
+  // safe direction, but it silently broke address history for ordinary users.
+  client_address_history: 'client_management',
 
   // Deal-related tables → deal_pipeline module
   client_deals: 'deal_pipeline',

@@ -39,11 +39,11 @@ interface BucketPolicy {
 const DEFAULT_MAX_UPLOAD = 25 * 1024 * 1024; // 25 MB binary
 
 const BUCKET_POLICIES: Record<string, BucketPolicy> = {
-  'client-files':         { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
-  'client-documents':     { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
-  'formara-forms':         { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
+  'client-files':         { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'client_management', maxUploadBytes: DEFAULT_MAX_UPLOAD },
+  'client-documents':     { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'client_management', maxUploadBytes: DEFAULT_MAX_UPLOAD },
+  'formara-forms':         { operations: ['upload', 'download', 'delete', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'client_management', maxUploadBytes: DEFAULT_MAX_UPLOAD },
   // Legacy pre-rename bucket: read-only so historical client forms remain retrievable.
-  'vownet-forms':         { operations: ['download', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'clients', maxUploadBytes: DEFAULT_MAX_UPLOAD },
+  'vownet-forms':         { operations: ['download', 'signedUrl', 'list'], permissionTable: 'client_files', readModuleKey: 'client_management', maxUploadBytes: DEFAULT_MAX_UPLOAD },
   // investment-reports is PRIVATE (STOR-005). Report PDFs and hero/visual
   // assets are served via short-lived signed URLs (report pipeline + hero
   // functions sign from storage_path); publicUrl is no longer offered.
@@ -233,7 +233,12 @@ Deno.serve(async (req) => {
     // closes the any-authenticated-staff read hole.)
     if (!isInternal && policy.readModuleKey &&
         (operation === 'download' || operation === 'list' || operation === 'signedUrl' || operation === 'publicUrl')) {
-      const readPerm = await checkModuleView(supabase, actorId, policy.readModuleKey, sessionResult.authMethod);
+      // requireRegistered=true: an unregistered module key must fail closed.
+      // It previously fell open, and every client-document bucket named a
+      // module key ('clients') that does not exist in dashboard_modules — the
+      // registered key is 'client_management'. The gate below was therefore
+      // authorizing nothing at all for exactly the buckets holding client PII.
+      const readPerm = await checkModuleView(supabase, actorId, policy.readModuleKey, sessionResult.authMethod, true);
       if (!readPerm.allowed) {
         await logSecurityEvent(supabase, {
           action: `storage.${operation}`, decision: 'deny', reason_code: 'read_permission_denied',
