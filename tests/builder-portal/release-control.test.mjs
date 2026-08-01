@@ -41,8 +41,6 @@ const adminSource = read('supabase/functions/builder-portal-admin/index.ts');
 const admin = stripJsComments(adminSource);
 const authSource = read('supabase/functions/_shared/builderPortalAuth.ts');
 const auth = stripJsComments(authSource);
-const panelSource = read('src/components/admin/builder-portal/AdminBuilderReleasePanel.tsx');
-const panel = stripJsComments(panelSource);
 const adminPage = read('src/pages/admin/BuilderPortalAdmin.tsx');
 
 // ===========================================================================
@@ -299,182 +297,48 @@ test('the release-control functions are service-role only', () => {
 });
 
 // ===========================================================================
-// Edge Function contract
+// Retired Builder application release controls
 // ===========================================================================
-test('the release operations are served by builder-portal-admin', () => {
+test('historical shared release infrastructure remains intact but Builder admin no longer exposes it', () => {
   for (const operation of ['list_builder_rollouts', 'get_builder_readiness',
-                           'get_builder_operational_health', 'set_builder_rollout',
-                           'record_builder_approval', 'revoke_builder_approval']) {
-    assert.match(admin, new RegExp(`case '${operation}'`), `${operation} is dispatched`);
+                           'set_builder_rollout', 'record_builder_approval',
+                           'revoke_builder_approval']) {
+    assert.doesNotMatch(admin, new RegExp(`case '${operation}'`));
   }
+  assert.equal(existsSync(join(root, 'src/components/admin/builder-portal/AdminBuilderReleasePanel.tsx')), false);
+  assert.doesNotMatch(adminPage, /AdminBuilderReleasePanel|TabsTrigger value="release"/);
 });
 
-test('release mutations require can_edit and pass through CSRF', () => {
-  const readSet = admin.slice(admin.indexOf('const READ_OPERATIONS'), admin.indexOf('function requiredPermFor'));
-  assert.match(readSet, /list_builder_rollouts/);
-  assert.match(readSet, /get_builder_readiness/);
-  // Mutations must NOT be in the read set, or they would skip CSRF and can_edit.
-  assert.doesNotMatch(readSet, /set_builder_rollout/);
-  assert.doesNotMatch(readSet, /record_builder_approval/);
-  assert.doesNotMatch(readSet, /revoke_builder_approval/);
+test('Builder authentication has no rollout feature, resolver, response field or rejection', () => {
+  for (const forbidden of [
+    'BUILDER_ROLLOUT_FEATURE', 'ROLLOUT_ENABLED_MODES', 'isRolloutEnabled',
+    'rollout_enabled', 'rollout_disabled', 'resolve_cross_portal_feature_mode_for',
+    'builder_portal_identity_v1',
+  ]) assert.doesNotMatch(auth, new RegExp(forbidden));
 });
 
-test('only Builder and shared feature definitions are listable', () => {
-  const start = admin.indexOf("case 'list_builder_rollouts'");
-  const body = admin.slice(start, admin.indexOf("case 'get_builder_readiness'"));
-  assert.match(body, /\.in\('portal', \['builder', 'shared'\]\)/);
-  // Every owner-scoped read is filtered to the builder portal.
-  assert.match(body, /\.eq\('portal', 'builder'\)/);
-  assert.doesNotMatch(body, /select\('\*'\)/);
-});
-
-test('the Builder surface never calls the legal admin function', () => {
-  assert.doesNotMatch(admin, /legal-matters-admin/);
-  assert.doesNotMatch(panel, /legal-matters-admin/);
-  assert.doesNotMatch(panel, /solicitor/i);
-});
-
-test('rollout state is never written to the tables directly from the function', () => {
-  // Anchored on code, not on a comment banner: `admin` has had its comments
-  // stripped, so a banner would slice from -1 and silently assert nothing.
-  const start = admin.indexOf("case 'list_builder_rollouts'");
-  assert.ok(start > -1, 'the release operations are present');
-  const body = admin.slice(start);
-  for (const table of ['cross_portal_firm_rollouts', 'cross_portal_rollout_history',
-                       'cross_portal_cutover_approvals']) {
-    assert.doesNotMatch(body, new RegExp(`from\\('${table}'\\)[\\s\\S]{0,120}\\.(insert|update|upsert|delete)\\(`),
-      `${table} must only be mutated through a guarded command`);
-  }
-  // Transitions and approvals go through RPC.
-  assert.match(body, /rpc\('set_cross_portal_rollout_for'/);
-  assert.match(body, /rpc\('record_cross_portal_approval_for'/);
-  assert.match(body, /rpc\('revoke_cross_portal_approval_for'/);
-});
-
-test('the organisation is re-read server-side before a transition', () => {
-  const start = admin.indexOf("case 'set_builder_rollout'");
-  const body = admin.slice(start, admin.indexOf("case 'record_builder_approval'"));
-  assert.match(body, /await loadOrganisation\(organisationId\)/);
-  assert.match(body, /Organisation not found/);
-});
-
-test('the HTTP contract distinguishes a missing version from a stale one', () => {
-  assert.match(admin, /\[\/BUILDER_EXPECTED_VERSION_REQUIRED\/, 400/);
-  assert.match(admin, /\[\/BUILDER_STALE_WRITE\/, 409/);
-  assert.match(admin, /\[\/INVALID_CUTOVER_TRANSITION\/, 409/);
-  assert.match(admin, /\[\/CUTOVER_READINESS_FAILED\/, 409/);
-  assert.match(admin, /\[\/CUTOVER_REASON_REQUIRED\/, 400/);
-  assert.match(admin, /\[\/CUTOVER_EVIDENCE_REQUIRED\/, 400/);
-});
-
-test('a transition without a reason is rejected before it reaches the database', () => {
-  const start = admin.indexOf("case 'set_builder_rollout'");
-  const body = admin.slice(start, admin.indexOf("case 'record_builder_approval'"));
-  assert.match(body, /A rollout reason is required/);
-});
-
-// ===========================================================================
-// Runtime gate
-// ===========================================================================
-test('the runtime gate enables shadow and cutover while blocking off and rollback', () => {
-  assert.match(auth, /const ROLLOUT_ENABLED_MODES = new Set\(\['shadow', 'cutover'\]\)/);
-  const gate = auth.slice(auth.indexOf('ROLLOUT_ENABLED_MODES'), auth.indexOf('export interface'));
-  const enabledModes = new Set([...gate.matchAll(/'(shadow|cutover)'/g)].map((match) => match[1]));
-  assert.equal(enabledModes.has('off'), false);
-  assert.equal(enabledModes.has('shadow'), true);
-  assert.equal(enabledModes.has('cutover'), true);
-  assert.equal(enabledModes.has('rollback'), false);
-  assert.doesNotMatch(gate, /'dual_read'/);
-  assert.doesNotMatch(gate, /'dual_write'/);
-});
-
-test('the runtime rollout decision remains organisation-scoped', () => {
-  const resolver = auth.slice(auth.indexOf('export async function isRolloutEnabled'));
-  assert.match(resolver, /_owner_id: organisationId/);
-  assert.match(resolver, /_portal: 'builder'/);
-
-  const listing = auth.slice(
-    auth.indexOf('export async function listAccessibleOrganisations'),
-    auth.indexOf('export async function isRolloutEnabled'));
-  assert.match(listing, /for \(const row of accessible\)/);
-  assert.match(listing, /isRolloutEnabled\(supabase, row\.organisation_id\)/);
-  assert.doesNotMatch(listing, /rollout_enabled:\s*true/);
-});
-
-test('the rollout gate is enforced server-side on every entry point', () => {
+test('every Builder authentication entry point is detached from rollout state', () => {
   for (const fn of ['builder-portal-login', 'builder-portal-verify', 'builder-portal-accept-invite']) {
     const source = read(`supabase/functions/${fn}/index.ts`);
-    assert.match(source, /rollout_enabled/, `${fn} enforces the rollout gate`);
+    assert.doesNotMatch(source, /rollout_enabled|rollout_disabled|resolve_cross_portal_feature_mode_for/,
+      `${fn} must not consult rollout state`);
   }
 });
 
-test('the feature key the gate reads is the one the plane governs', () => {
-  assert.match(auth, /BUILDER_ROLLOUT_FEATURE = 'builder_portal_identity_v1'/);
-  assert.match(auth, /resolve_cross_portal_feature_mode_for/);
+test('accessible organisations are returned directly and selection remains membership-scoped', () => {
+  const listing = auth.slice(auth.indexOf('export async function listAccessibleOrganisations'));
+  assert.match(listing, /rpc\('builder_accessible_organisations'/);
+  assert.match(listing, /is\('revoked_at', null\)/);
+  assert.match(auth, /organisations\.find\(\(organisation\) => organisation\.is_primary\)/);
+  assert.match(auth, /organisations\.length === 1 \? organisations\[0\] : null/);
+  assert.match(auth, /organisations\.find\(\(organisation\) => organisation\.organisation_id === stored\)/);
 });
 
-// ===========================================================================
-// Command Centre surface
-// ===========================================================================
-test('the release panel is mounted on the Builder admin page', () => {
-  assert.match(adminPage, /AdminBuilderReleasePanel/);
-  assert.match(adminPage, /<TabsTrigger value="release">/);
-  assert.match(adminPage, /<TabsContent value="release"/);
-});
-
-test('the panel calls only the Builder admin function', () => {
-  const calls = [...panel.matchAll(/invokeSecureFunction\('([^']+)'/g)].map((m) => m[1]);
-  assert.ok(calls.length > 0, 'the panel invokes at least one function');
-  for (const target of calls) {
-    assert.equal(target, 'builder-portal-admin');
-  }
-});
-
-test('the panel requires a reason for every transition and evidence for approvals', () => {
-  assert.match(panel, /A reason is required for every rollout transition/);
-  assert.match(panel, /An evidence reference is required/);
-  assert.match(panel, /A revocation reason is required/);
-  // Buttons stay disabled until the operator has typed one.
-  assert.match(panel, /disabled=\{!reason\.trim\(\)\}/);
-  assert.match(panel, /disabled=\{!evidence\.trim\(\)\}/);
-  assert.match(panel, /disabled=\{!revokeReason\.trim\(\)\}/);
-});
-
-test('the panel offers only valid Builder transitions', () => {
-  const next = panel.slice(panel.indexOf('const NEXT_MODE'), panel.indexOf('const MODE_META'));
-  assert.match(next, /off: 'shadow'/);
-  assert.match(next, /shadow: 'cutover'/);
-  assert.match(next, /rollback: 'shadow'/);
-  assert.doesNotMatch(next, /dual_read/);
-  assert.doesNotMatch(next, /dual_write/);
-});
-
-test('the panel explains that rollback preserves data', () => {
-  assert.match(panelSource, /preserved/i);
-  assert.match(panelSource, /rollback changes who may sign in, never the data/i);
-});
-
-test('mutating controls are hidden without can_edit', () => {
-  assert.match(panel, /canEdit && next/);
-  assert.match(panel, /canEdit &&/);
-  assert.match(adminPage, /<AdminBuilderReleasePanel organisations=\{organisations\} canEdit=\{canEdit\} \/>/);
-});
-
-test('the panel surfaces required, not-applicable and unknown evidence distinctly', () => {
-  assert.match(panel, /not_applicable/);
-  assert.match(panel, /unknown/);
-  assert.match(panel, /Not applicable/);
-  assert.match(panel, /Advisory/);
-  assert.match(panel, /Required/);
-});
-
-test('a flag no runtime path reads is not presented as a control', () => {
-  assert.match(panel, /runtime_consumed/);
-  assert.match(panelSource, /Descriptive only/);
-});
-
-test('the panel shows rollout history and operational health', () => {
-  assert.match(panelSource, /Rollout history/);
-  assert.match(panelSource, /Builder operational health/);
-  assert.match(panel, /get_builder_operational_health/);
+test('governance and deny-by-default permission checks remain present', () => {
+  for (const code of ['auth_required', 'password_rotation_required',
+                      'organisation_selection_required', 'terms_acceptance_required',
+                      'onboarding_required']) assert.match(auth, new RegExp(code));
+  assert.match(auth, /BUILDER_FORBIDDEN_KEYS\.has\(permissionKey\)/);
+  assert.match(auth, /rpc\('builder_resolve_permission'/);
+  assert.match(auth, /session\.organisations\?\.some/);
 });

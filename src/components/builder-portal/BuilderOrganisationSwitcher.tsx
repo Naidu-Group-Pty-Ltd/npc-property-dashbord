@@ -24,7 +24,7 @@ export function BuilderOrganisationSwitcher() {
   const { organisations, activeOrganisation, selectOrganisation } = useBuilderPortalAuth();
   const [switching, setSwitching] = useState(false);
 
-  const selectable = organisations.filter((organisation) => organisation.rollout_enabled);
+  const selectable = organisations;
   if (selectable.length <= 1) return null;
 
   const handleSelect = async (organisationId: string) => {

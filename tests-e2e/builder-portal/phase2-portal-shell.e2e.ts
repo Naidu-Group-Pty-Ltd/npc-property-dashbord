@@ -41,8 +41,7 @@ const sessionFixture = (stage: 'password' | 'organisation' | 'terms' | 'onboardi
     org_type: 'builder',
     membership_role: 'manager',
     is_primary: true,
-    rollout_enabled: true,
-  };
+    };
   return {
     valid: true,
     user: {

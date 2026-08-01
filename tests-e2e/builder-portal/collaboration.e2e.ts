@@ -34,7 +34,6 @@ const ORGANISATION = {
   org_type: 'builder',
   membership_role: 'manager',
   is_primary: true,
-  rollout_enabled: true,
 };
 
 const PERMISSIONS = {

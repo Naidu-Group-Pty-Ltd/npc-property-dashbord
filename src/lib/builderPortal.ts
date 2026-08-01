@@ -36,7 +36,6 @@ export interface BuilderOrganisation {
   org_type: string;
   membership_role: string;
   is_primary: boolean;
-  rollout_enabled: boolean;
 }
 
 export type BuilderPermissionMatrix = Record<

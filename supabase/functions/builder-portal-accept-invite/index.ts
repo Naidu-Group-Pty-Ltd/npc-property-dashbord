@@ -138,10 +138,9 @@ Deno.serve(async (req) => {
 
     await supabase.rpc('builder_ensure_onboarding_steps', { _builder_user_id: portalUser.id });
 
-    const active = await listAccessibleOrganisations(supabase, portalUser.id);
-    const enabled = active.filter((organisation) => organisation.rollout_enabled);
-    const autoSelected = enabled.find((organisation) => organisation.is_primary)
-      ?? (enabled.length === 1 ? enabled[0] : null);
+    const organisations = await listAccessibleOrganisations(supabase, portalUser.id);
+    const autoSelected = organisations.find((organisation) => organisation.is_primary)
+      ?? (organisations.length === 1 ? organisations[0] : null);
 
     const issued = await issueBuilderSession(supabase, portalUser.id, req, {
       deviceLabel: req.headers.get('user-agent') || undefined,
@@ -172,7 +171,7 @@ Deno.serve(async (req) => {
         has_accepted_current_terms: false,
         has_completed_onboarding: false,
       },
-      organisations: enabled,
+      organisations,
       active_organisation: autoSelected,
       requires_organisation_selection: !autoSelected,
       session: {

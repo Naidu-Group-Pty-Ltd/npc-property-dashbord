@@ -27,7 +27,7 @@ export default function BuilderSelectOrganisation() {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const selectable = organisations.filter((organisation) => organisation.rollout_enabled);
+  const selectable = organisations;
 
   const handleSelect = async (organisationId: string) => {
     setError(null);
