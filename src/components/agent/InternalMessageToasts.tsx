@@ -397,16 +397,20 @@ export function InternalMessageToasts() {
   const onDraftChange = useCallback(
     (thread: PopupThread, value: string) => {
       setDrafts((p) => ({ ...p, [thread.thread_id]: value }));
-      if (value.trim() && user) {
-        publishInternalTyping({
-          thread_id: thread.thread_id,
-          user_id: user.id,
-          user_name: (user as any).username ?? 'A team member',
-        });
-      }
+      if (!value.trim() || !user) return;
+      // Throttle so a fast typist emits at most one hint every 1.2s.
+      const now = Date.now();
+      if (now - (lastTypingSentRef.current[thread.thread_id] ?? 0) < 1200) return;
+      lastTypingSentRef.current[thread.thread_id] = now;
+      publishInternalTyping({
+        thread_id: thread.thread_id,
+        user_id: user.id,
+        user_name: (user as any).username ?? 'A team member',
+      });
     },
     [user],
   );
+
 
   /** Collapsed chips: every open conversation except the expanded one. */
   const chips = useMemo(
