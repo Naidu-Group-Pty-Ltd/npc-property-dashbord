@@ -58,7 +58,7 @@ interface MobileSidebarProps {
 const navigationItems = [
   { title: 'Overview', url: '/', icon: Home, moduleKey: 'overview' },
   { title: 'Market Updates', url: '/market-updates', icon: Newspaper, moduleKey: '__always__' },
-  { title: 'Opportunity Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings' },
+  { title: 'Property Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings' },
   { title: 'Commercial / Industrial', url: '/commercial', icon: Building2, moduleKey: '__always__' },
   { title: 'Calendar', url: '/calendar', icon: Calendar, moduleKey: 'calendar' },
   { title: 'Reports', url: '/reports', icon: BarChart3, moduleKey: 'reports' },
@@ -92,7 +92,7 @@ const navigationItems = [
 const navigationGroups = [
   {
     title: 'Main Dashboard',
-    itemTitles: ['Overview', 'Market Updates', 'Opportunity Marketplace', 'Commercial / Industrial', 'Calendar'],
+    itemTitles: ['Overview', 'Market Updates', 'Property Marketplace', 'Commercial / Industrial', 'Calendar'],
   },
   {
     title: 'Reports & Analysis',

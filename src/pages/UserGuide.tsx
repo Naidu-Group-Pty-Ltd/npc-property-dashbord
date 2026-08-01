@@ -356,7 +356,7 @@ export default function UserGuide() {
       description: 'View and manage property listings',
       items: [
         {
-          title: 'Opportunity Marketplace',
+          title: 'Property Marketplace',
           description: 'View and manage all property listings with advanced filtering and search capabilities.',
           features: [
             'Search by address, suburb, or postcode',
@@ -563,7 +563,7 @@ export default function UserGuide() {
             'Investment scoring (0-100)',
           ],
           steps: [
-            'Go to "Opportunity Marketplace" and find your target property',
+            'Go to "Property Marketplace" and find your target property',
             'Click "Generate Report" on the property card',
             'Choose analysis mode (Address/Postcode/State)',
             'Configure financial assumptions',

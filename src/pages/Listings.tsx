@@ -670,7 +670,7 @@ export default function Listings() {
               <span className="h-1.5 w-1.5 rounded-full bg-primary shadow-[0_0_14px_rgba(245,158,11,0.55)]" />
               Property Intelligence
             </div>
-            <h1 className="text-3xl font-semibold tracking-[-0.045em] text-foreground md:text-4xl">Opportunity Marketplace</h1>
+            <h1 className="text-3xl font-semibold tracking-[-0.045em] text-foreground md:text-4xl">Property Marketplace</h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground/90 md:text-base">Off-Market · On Market · Builder Opportunities</p>
           </div>
           <Button onClick={loadListings} variant="outline" className={`${LISTINGS_REFRESH_ACTION} gap-2`}>
@@ -702,7 +702,7 @@ export default function Listings() {
               Property Intelligence
             </div>
             <div className="flex flex-wrap items-end gap-x-4 gap-y-2">
-              <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Opportunity Marketplace</h1>
+              <h1 className="text-4xl font-bold tracking-[-0.06em] text-foreground md:text-5xl">Property Marketplace</h1>
               <div className="mb-1 inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-sm font-semibold text-foreground shadow-sm backdrop-blur dark:border-white/10 dark:bg-background/45">
                 <Building2 className="h-4 w-4 text-primary" />
                 <span className="tabular-nums">{filteredListings.length} of {listings.length}</span>
