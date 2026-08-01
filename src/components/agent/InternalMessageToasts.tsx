@@ -324,12 +324,19 @@ export function InternalMessageToasts() {
     [threads, activeId],
   );
 
-  // Pin the transcript to the newest message so nothing is cut off.
+  // Pin the transcript to the newest message (or the typing bubble) so nothing
+  // is cut off.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [active?.thread_id, active?.messages.length, active?.loading]);
+  }, [
+    active?.thread_id,
+    active?.messages.length,
+    active?.loading,
+    activeId ? !!typing[activeId] : false,
+  ]);
+
 
   const dismiss = useCallback(
     (threadId: string) => {
