@@ -120,6 +120,18 @@ class Palette:
                 self.chart_6, self.chart_7, self.chart_8, self.chart_9, self.chart_10]
 
 
+def _resolve_tokens() -> tuple["Palette", "TypeScale"]:
+    """Palette and type scale, with `design-tokens.json` applied when present.
+
+    This is the seam an external design system plugs into: the library keeps its
+    values in code, and a token file overrides colour and type size for all 40
+    templates at once. A malformed or unknown token raises rather than silently
+    building the wrong thing — see `design_tokens.py`.
+    """
+    from design_tokens import apply_tokens, load_tokens
+    return apply_tokens(Palette, TypeScale, load_tokens())
+
+
 PALETTE = Palette()
 
 
@@ -161,6 +173,9 @@ class TypeScale:
 
 
 TYPE = TypeScale()
+
+# Applied after both dataclasses exist so the token file can override either.
+PALETTE, TYPE = _resolve_tokens()
 
 
 # ==========================================================================

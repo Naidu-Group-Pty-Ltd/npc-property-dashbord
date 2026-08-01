@@ -70,6 +70,9 @@ def build_one(template_id: str, brand: BrandConfig, out_dir: Path,
     theme = build_theme(spec.family, effective)
     doc = C.base_document(theme, spec.name)
     build_fn(doc, theme, SAMPLE if sample else TOKENS)
+    # Pagination is corrected once over the finished body rather than in every
+    # builder: see `components.normalise_layout`.
+    C.normalise_layout(doc)
     C.set_properties(
         doc, theme, title=spec.name, subject=spec.summary,
         keywords=", ".join((*spec.report_types, spec.category_label, "Aurixa")),

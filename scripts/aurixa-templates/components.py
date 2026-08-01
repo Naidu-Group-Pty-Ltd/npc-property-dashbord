@@ -149,6 +149,82 @@ def gap(container, theme: Theme, multiplier: float = 1.0) -> None:
     spacer(container, theme.gap * multiplier)
 
 
+_HARD_BREAK_BOOKMARK = "_aurixa_page"
+_hard_break_counter = [9000]
+
+
+def hard_page_break(container) -> None:
+    """A page break the *design* owns, as opposed to one a builder guessed at.
+
+    Only a handful of components own a page boundary: the cover, the contents,
+    an appendix opener, the disclaimer and the back cover. Those call this.
+    Every other ``page_break()`` in the builders is a manual pagination hint
+    tuned to content that has since changed — ``normalise_layout`` drops those
+    so sections flow and fill the page instead of each starting a fresh one.
+
+    The break is tagged with an invisible bookmark so the two kinds stay
+    distinguishable after the body is assembled. Word ignores the bookmark.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    page_break(container)
+    paragraph = container.paragraphs[-1]
+    _hard_break_counter[0] += 1
+    marker_id = str(_hard_break_counter[0])
+    start = OxmlElement("w:bookmarkStart")
+    start.set(qn("w:id"), marker_id)
+    start.set(qn("w:name"), f"{_HARD_BREAK_BOOKMARK}{marker_id}")
+    end = OxmlElement("w:bookmarkEnd")
+    end.set(qn("w:id"), marker_id)
+    paragraph._p.insert(0, start)
+    paragraph._p.append(end)
+
+
+_HEADING_BOOKMARK = "_aurixa_heading"
+
+
+def _mark_heading(table) -> None:
+    """Tag a section-opener table so pagination knows it is a heading.
+
+    Needed because "has keepNext somewhere" is not the same as "is a heading":
+    cards and grids set keepNext internally to bind a label to its value, and
+    treating that as heading intent chained every block in the document into one
+    unbreakable run.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    _hard_break_counter[0] += 1
+    marker_id = str(_hard_break_counter[0])
+    paragraph = table.rows[0].cells[0].paragraphs[0]
+    start = OxmlElement("w:bookmarkStart")
+    start.set(qn("w:id"), marker_id)
+    start.set(qn("w:name"), f"{_HEADING_BOOKMARK}{marker_id}")
+    end = OxmlElement("w:bookmarkEnd")
+    end.set(qn("w:id"), marker_id)
+    paragraph._p.insert(0, start)
+    paragraph._p.append(end)
+
+
+def keep_table_together(table) -> None:
+    """Make a multi-row table atomic, so it moves whole rather than splitting.
+
+    The distinction this enforces: a **figure** is one object and must never be
+    cut by a page boundary — a bar chart with three bars on one page and two on
+    the next reads as two broken charts, and the page it half-fills is the
+    "blank" the library was criticised for. A **data table** is a list and is
+    free to flow, which is why ``data_table`` deliberately does not call this.
+    """
+    rows = list(table.rows)
+    for row in rows:
+        keep_row_together(row)
+    for row in rows[:-1]:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.keep_with_next = True
+
+
 # ==========================================================================
 # Page furniture
 # ==========================================================================
@@ -416,23 +492,58 @@ def cover(container, theme: Theme, *, title: str, subtitle: str = "",
     ts = theme.type_scale
 
     if style in ("band", "panel", "fullbleed"):
-        _cover_panel(container, theme, title, subtitle, eyebrow_text, chips,
-                     image_caption)
+        used_mm = _cover_panel(container, theme, title, subtitle, eyebrow_text,
+                               chips, image_caption)
     elif style == "split":
-        _cover_split(container, theme, title, subtitle, eyebrow_text, chips)
+        used_mm = _cover_split(container, theme, title, subtitle, eyebrow_text, chips)
     elif style == "editorial":
-        _cover_editorial(container, theme, title, subtitle, eyebrow_text,
-                         image_caption)
+        used_mm = _cover_editorial(container, theme, title, subtitle, eyebrow_text,
+                                   image_caption)
     else:
-        _cover_minimal(container, theme, title, subtitle, eyebrow_text)
+        used_mm = _cover_minimal(container, theme, title, subtitle, eyebrow_text)
+
+    # Anchor the foot of the cover. Left sitting directly under the title panel
+    # the issue block stranded a third of page one empty — the first thing a
+    # reader saw of every document in the library. The reserve deliberately
+    # over-states the block's height so an under-estimated cover composition can
+    # never push content onto a second page.
+    control_mm = 46.0 if prepared_for else 16.0
+    free_mm = theme.geometry.page_height_mm - theme.geometry.margin_top_mm \
+        - theme.geometry.margin_bottom_mm - used_mm - control_mm
+    spacer(container, max(8.0, min(free_mm, 170.0)) * 72.0 / 25.4)
 
     if prepared_for:
-        spacer(container, 8)
         document_control(container, theme, compact=True)
+    else:
+        # Internal documents have no client to be "prepared for", but they do
+        # have an issue identity — and a cover that simply stops two thirds of
+        # the way down reads as unfinished. One rule and an issue line closes
+        # the page without inventing a recipient.
+        _cover_issue_strip(container, theme)
+    # The cover owns page one; nothing else may share it.
+    hard_page_break(container)
+
+
+
+def _cover_issue_strip(container, theme: Theme) -> None:
+    """Slim reference / version / date line for covers with no client block."""
+    b, p, ts = theme.brand, theme.palette, theme.type_scale
+    rule(container, theme, colour=theme.accent, weight=8, after=5)
+    parts = [x for x in (b.document_reference,
+                         f"Version {b.version}" if b.version else "",
+                         b.issue_date) if x]
+    line = para(container, "", before=0, after=0)
+    for index, part in enumerate(parts):
+        if index:
+            write(line, "   \u00b7   ", font=theme.body, size=ts.micro,
+                  colour=p.ink_faint)
+        write(line, part, font=theme.body, size=ts.micro, bold=index == 0,
+              caps=index == 0, tracking=1.1 if index == 0 else 0,
+              colour=p.ink_soft if index else theme.primary)
 
 
 def _cover_panel(container, theme, title, subtitle, eyebrow_text, chips,
-                 image_caption) -> None:
+                 image_caption) -> float:
     p, ts = theme.palette, theme.type_scale
     fullbleed = theme.family.cover_style == "fullbleed"
 
@@ -487,9 +598,10 @@ def _cover_panel(container, theme, title, subtitle, eyebrow_text, chips,
     if chips:
         spacer(panel, 9)
         _chip_row(panel, theme, chips, on_dark=True)
+    return (163.0 if fullbleed else 138.0)
 
 
-def _cover_split(container, theme, title, subtitle, eyebrow_text, chips) -> None:
+def _cover_split(container, theme, title, subtitle, eyebrow_text, chips) -> float:
     p, ts = theme.palette, theme.type_scale
     left_w = theme.width * 0.40
     table = new_table(container, 1, 2, [left_w, theme.width - left_w])
@@ -532,6 +644,7 @@ def _cover_split(container, theme, title, subtitle, eyebrow_text, chips) -> None
     if chips:
         spacer(right, 10)
         _chip_row(right, theme, chips, on_dark=False, width=theme.width - left_w - 18)
+    return 150.0
 
 
 def _cover_editorial(container, theme, title, subtitle, eyebrow_text,
@@ -562,9 +675,12 @@ def _cover_editorial(container, theme, title, subtitle, eyebrow_text,
         para(container, subtitle, font=theme.body, size=ts.cover_subtitle,
              colour=p.ink_soft, align=WD_ALIGN_PARAGRAPH.CENTER, before=0, after=0,
              line=1.5)
+    # Measured at ~129mm rendered; stated a little high so a longer title or a
+    # wrapped subtitle still cannot spill the cover onto a second page.
+    return 140.0
 
 
-def _cover_minimal(container, theme, title, subtitle, eyebrow_text) -> None:
+def _cover_minimal(container, theme, title, subtitle, eyebrow_text) -> float:
     p, ts = theme.palette, theme.type_scale
     spacer(container, 6)
     header = new_table(container, 1, 2, [theme.width * 0.5, theme.width * 0.5])
@@ -588,6 +704,9 @@ def _cover_minimal(container, theme, title, subtitle, eyebrow_text) -> None:
     if subtitle:
         para(container, subtitle, font=theme.body, size=ts.cover_subtitle,
              colour=p.ink_soft, before=0, after=0, line=1.36)
+    # The minimal cover is genuinely short — ~40mm rendered. Stated at 45 so the
+    # foot anchor has the room it needs without risking an overflow.
+    return 45.0
 
 
 def _chip_row(container, theme, chips: list[str], *, on_dark: bool,
@@ -642,6 +761,7 @@ def section_opener(container, theme: Theme, number: str, title: str,
             para(bar, kicker, font=theme.body, size=ts.section_kicker if hasattr(
                 ts, "section_kicker") else ts.micro, caps=True, tracking=1.1,
                 colour=theme.accent, before=0, after=0, keep_with_next=True)
+        _mark_heading(table)
 
     elif style == "tab":
         table = new_table(container, 2, 1, [theme.width])
@@ -657,6 +777,7 @@ def section_opener(container, theme: Theme, number: str, title: str,
         cell_borders(base, bottom=(4, p.line), left=None, right=None, top=None)
         para(base, kicker or title, font=theme.display, size=ts.h2, bold=True,
              colour=theme.primary, before=0, after=0, keep_with_next=True)
+        _mark_heading(table)
 
     elif style == "numbered":
         p_head = para(container, "", before=0, after=3, keep_with_next=True)
@@ -858,6 +979,8 @@ def metric_panel(container, theme: Theme, metrics: list[tuple[str, str, str]],
             if note:
                 para(cell, note, font=theme.body, size=theme.type_scale.micro,
                      colour=theme.palette.ink_soft, before=2, after=0, line=1.2)
+        # A KPI row split between its labels and its values is unreadable.
+        keep_table_together(table)
         if chunk is not chunks[-1]:
             spacer(container, 4)
 
@@ -930,6 +1053,7 @@ def definition_grid(container, theme: Theme, fields: list[tuple[str, str]],
             shade(blank, theme.palette.paper)
             cell_margins(blank, *theme.cell_pad)
             para(blank, "", before=0, after=0)
+    return table
 
 
 def responsibility_columns(container, theme: Theme, left: tuple[str, list[str]],
@@ -1108,6 +1232,12 @@ def data_table(container, theme: Theme, headers: list[str],
                  align=WD_ALIGN_PARAGRAPH.RIGHT if numeric else None)
 
     if note:
+        # Bind the note to the table's last row. Left free it becomes a widow —
+        # a lone line of small italic text at the top of the next page, with the
+        # table it explains on the page before.
+        for cell in table.rows[-1].cells:
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.keep_with_next = True
         para(container, note, font=theme.body, size=ts.micro, italic=True,
              colour=p.ink_faint, before=4, after=0, line=1.24)
 
@@ -1293,7 +1423,12 @@ def bar_chart(container, theme: Theme, *, rows: list[tuple[str, float, str]],
              bold=True, colour=theme.primary, before=0, after=0,
              align=WD_ALIGN_PARAGRAPH.RIGHT)
 
+    # A chart is one figure: it moves whole or not at all.
+    keep_table_together(table)
     if note:
+        for cell in table.rows[-1].cells:
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.keep_with_next = True
         para(container, note, font=theme.body, size=theme.type_scale.micro,
              italic=True, colour=theme.palette.ink_faint, before=4, after=0)
 
@@ -1563,7 +1698,11 @@ def document_control(container, theme: Theme, *, compact: bool = False,
         ]
     fields += extra or []
     if compact:
-        definition_grid(container, theme, fields, columns=2)
+        grid = definition_grid(container, theme, fields, columns=2)
+        # The issue-control block is one unit: split across a page boundary it
+        # stranded a lone "Version 1.0" row on page two of the cover.
+        if grid is not None:
+            keep_table_together(grid)
     else:
         info_card(container, theme, title="Document control", fields=fields, columns=2)
 
@@ -1613,7 +1752,7 @@ def approval_block(container, theme: Theme,
 
 def appendix_opener(container, theme: Theme, letter: str, title: str,
                     description: str = "") -> None:
-    page_break(container)
+    hard_page_break(container)
     para(container, f"APPENDIX {letter}", font=theme.body,
          size=theme.type_scale.label, bold=True, caps=True,
          tracking=theme.family.label_tracking + 1.2, colour=theme.accent,
@@ -1633,7 +1772,7 @@ def disclaimer_page(container, theme: Theme, *, extra_sections:
     this page something else in their brief — a proposal calls it "Terms" — and
     giving it a heading of its own is better than putting a lone section opener
     on the page before."""
-    page_break(container)
+    hard_page_break(container)
     section_opener(container, theme, "", title, kicker)
     gap(container, theme)
     sections = [
@@ -1687,7 +1826,7 @@ def contact_page(container, theme: Theme, *, offices:
 
 
 def back_cover(container, theme: Theme) -> None:
-    page_break(container)
+    hard_page_break(container)
     contact_page(container, theme)
     spacer(container, 8)
     para(container,
@@ -1715,6 +1854,8 @@ def table_of_contents(container, theme: Theme,
         write(p, title, font=theme.body, size=theme.type_scale.body,
               colour=theme.palette.ink)
         horizontal_rule(p, theme.palette.line, size=4, space=3)
+    # The contents owns its own page; body sections start overleaf.
+    hard_page_break(container)
 
 
 def white_label_panel(container, theme: Theme, *, slots:
@@ -1777,3 +1918,281 @@ def set_properties(doc, theme: Theme, *, title: str, subject: str,
     # White-label level 4 must leave no Aurixa fingerprint, including in metadata.
     if theme.brand.level < 4:
         props.last_modified_by = "Aurixa Systems"
+
+
+# ==========================================================================
+# Layout normalisation
+# ==========================================================================
+#
+# Two defects were structural rather than per-template, so they are corrected
+# once over the finished body instead of in 137 builder call sites:
+#
+#   1. **Blank pages.** ``page_break()`` writes an empty paragraph carrying a
+#      page-break run. When the preceding content happened to end at a page
+#      boundary that paragraph landed at the top of a fresh page and broke
+#      again, emitting a page containing nothing but the running header and
+#      footer. Client-facing documents were shipping with blank pages in them.
+#
+#   2. **Orphaned section headings.** ``section_opener`` sets ``keepNext`` on
+#      its own paragraphs, but every builder follows it with ``gap()`` — a
+#      spacer paragraph with no ``keepNext``. Word keeps the heading with the
+#      spacer, then breaks, stranding the heading alone at the foot of a page
+#      with its content overleaf.
+#
+# Both are fixed by rewriting the block sequence: breaks become
+# ``pageBreakBefore`` on the following block (which Word suppresses when it is
+# already at the top of a page), and a ``keepNext`` chain is extended through
+# intervening spacers so it reaches real content.
+
+def _para_props(paragraph_el):
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    p_pr = paragraph_el.find(qn("w:pPr"))
+    if p_pr is None:
+        p_pr = OxmlElement("w:pPr")
+        paragraph_el.insert(0, p_pr)
+    return p_pr
+
+
+def _has_flag(paragraph_el, tag: str) -> bool:
+    from docx.oxml.ns import qn
+    p_pr = paragraph_el.find(qn("w:pPr"))
+    if p_pr is None:
+        return False
+    node = p_pr.find(qn(tag))
+    return node is not None and node.get(qn("w:val")) not in ("0", "false")
+
+
+def _set_flag(paragraph_el, tag: str) -> None:
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    p_pr = _para_props(paragraph_el)
+    node = p_pr.find(qn(tag))
+    if node is None:
+        node = OxmlElement(tag)
+        # w:pageBreakBefore and w:keepNext both belong near the head of pPr,
+        # after w:pStyle. Word tolerates order, but keeping it canonical avoids
+        # validation warnings in stricter consumers.
+        style = p_pr.find(qn("w:pStyle"))
+        p_pr.insert(1 if style is not None else 0, node)
+    node.set(qn("w:val"), "1")
+
+
+def _paragraphs_in(block):
+    """Every ``w:p`` inside a block, in document order (tables included)."""
+    from docx.oxml.ns import qn
+    if block.tag == qn("w:p"):
+        return [block]
+    return list(block.iter(qn("w:p")))
+
+
+def _first_paragraph(block):
+    paragraphs = _paragraphs_in(block)
+    return paragraphs[0] if paragraphs else None
+
+
+def _last_row_paragraphs(block):
+    """Paragraphs of a table's last row — where a table's ``keepNext`` lives."""
+    from docx.oxml.ns import qn
+    if block.tag != qn("w:tbl"):
+        return []
+    rows = block.findall(qn("w:tr"))
+    return list(rows[-1].iter(qn("w:p"))) if rows else []
+
+
+def _is_hard_break(paragraph_el) -> bool:
+    """True when this break was placed by a page-owning component."""
+    from docx.oxml.ns import qn
+    for start in paragraph_el.iter(qn("w:bookmarkStart")):
+        if (start.get(qn("w:name")) or "").startswith(_HARD_BREAK_BOOKMARK):
+            return True
+    return False
+
+
+def _strip_hard_break_marker(paragraph_el) -> None:
+    """Remove the marker bookmark once its job is done."""
+    from docx.oxml.ns import qn
+    ids = set()
+    for start in list(paragraph_el.iter(qn("w:bookmarkStart"))):
+        if (start.get(qn("w:name")) or "").startswith(_HARD_BREAK_BOOKMARK):
+            ids.add(start.get(qn("w:id")))
+            start.getparent().remove(start)
+    for end in list(paragraph_el.iter(qn("w:bookmarkEnd"))):
+        if end.get(qn("w:id")) in ids:
+            end.getparent().remove(end)
+
+
+def _is_heading_block(block) -> bool:
+    """True for a section-opener table tagged by `_mark_heading`."""
+    from docx.oxml.ns import qn
+    for start in block.iter(qn("w:bookmarkStart")):
+        if (start.get(qn("w:name")) or "").startswith(_HEADING_BOOKMARK):
+            return True
+    return False
+
+
+def _strip_heading_marker(block) -> None:
+    from docx.oxml.ns import qn
+    ids = set()
+    for start in list(block.iter(qn("w:bookmarkStart"))):
+        if (start.get(qn("w:name")) or "").startswith(_HEADING_BOOKMARK):
+            ids.add(start.get(qn("w:id")))
+            start.getparent().remove(start)
+    for end in list(block.iter(qn("w:bookmarkEnd"))):
+        if end.get(qn("w:id")) in ids:
+            end.getparent().remove(end)
+
+
+def _strip_runs(paragraph_el) -> None:
+    """Empty a paragraph of content, keeping its properties."""
+    from docx.oxml.ns import qn
+    for child in list(paragraph_el):
+        if child.tag != qn("w:pPr"):
+            paragraph_el.remove(child)
+
+
+def _make_hairline(paragraph_el) -> None:
+    """Collapse a paragraph to ~1pt so it reads as no gap at all."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    p_pr = _para_props(paragraph_el)
+    for tag in ("w:spacing", "w:rPr"):
+        existing = p_pr.find(qn(tag))
+        if existing is not None:
+            p_pr.remove(existing)
+    spacing = OxmlElement("w:spacing")
+    spacing.set(qn("w:before"), "0")
+    spacing.set(qn("w:after"), "0")
+    spacing.set(qn("w:line"), "20")  # 1pt in twentieths of a point
+    spacing.set(qn("w:lineRule"), "exact")
+    p_pr.append(spacing)
+    r_pr = OxmlElement("w:rPr")
+    size = OxmlElement("w:sz")
+    size.set(qn("w:val"), "2")  # 1pt, in half-points
+    r_pr.append(size)
+    p_pr.append(r_pr)
+
+
+def _is_page_break_paragraph(block) -> bool:
+    """True for a paragraph whose only content is a page break."""
+    from docx.oxml.ns import qn
+    if block.tag != qn("w:p"):
+        return False
+    breaks = [b for b in block.iter(qn("w:br"))
+              if b.get(qn("w:type")) == "page"]
+    if not breaks:
+        return False
+    text = "".join(t.text or "" for t in block.iter(qn("w:t")))
+    has_graphic = any(block.iter(qn("w:drawing"))) or any(block.iter(qn("w:pict")))
+    return not text.strip() and not has_graphic
+
+
+def _is_spacer_paragraph(block) -> bool:
+    """True for an empty layout paragraph — a ``gap()``, ``spacer()`` or rule."""
+    from docx.oxml.ns import qn
+    if block.tag != qn("w:p"):
+        return False
+    if _is_page_break_paragraph(block):
+        return False
+    text = "".join(t.text or "" for t in block.iter(qn("w:t")))
+    if text.strip():
+        return False
+    return not any(block.iter(qn("w:drawing"))) and not any(block.iter(qn("w:pict")))
+
+
+def _block_keeps_next(block) -> bool:
+    from docx.oxml.ns import qn
+    if block.tag == qn("w:p"):
+        return _has_flag(block, "w:keepNext")
+    return any(_has_flag(p, "w:keepNext") for p in _last_row_paragraphs(block))
+
+
+def normalise_layout(doc) -> dict[str, int]:
+    """Rewrite the finished body so it paginates the way the design intends.
+
+    Returns a count of each correction, so a regression shows up as a number
+    rather than as a reviewer noticing a blank page three templates later.
+    """
+    from docx.oxml.ns import qn
+
+    body = doc.element.body
+    stats = {"breaks_converted": 0, "trailing_breaks_removed": 0,
+             "soft_breaks_dropped": 0, "chains_extended": 0}
+
+    # --- 0. drop builder-placed pagination hints -----------------------------
+    # Only the components that own a page keep their break (see
+    # `hard_page_break`). Everything else was a manual guess tuned to content
+    # that has since changed, and each one ended a page early — which is what
+    # made the library read as mostly-empty.
+    for block in [b for b in body if b.tag == qn("w:p")]:
+        if not _is_page_break_paragraph(block):
+            continue
+        if _is_hard_break(block):
+            _strip_hard_break_marker(block)
+            continue
+        body.remove(block)
+        stats["soft_breaks_dropped"] += 1
+
+    # --- 1. page-break paragraphs → pageBreakBefore on the following block ---
+    blocks = [b for b in body if b.tag in (qn("w:p"), qn("w:tbl"))]
+    for block in blocks:
+        if not _is_page_break_paragraph(block):
+            continue
+        following = block.getnext()
+        while following is not None and following.tag not in (qn("w:p"), qn("w:tbl")):
+            following = following.getnext()
+
+        if following is None:
+            # A break with nothing after it can only produce a blank final page.
+            body.remove(block)
+            stats["trailing_breaks_removed"] += 1
+            continue
+
+        if following.tag == qn("w:tbl"):
+            # `pageBreakBefore` on a paragraph *inside* a cell does not break
+            # before the table — Word ignores it and the table runs on. So the
+            # break paragraph is kept, but rewritten as a zero-height carrier
+            # for the flag: it still suppresses itself at the top of a page
+            # (no blank page) while reliably breaking before the table.
+            _strip_runs(block)
+            _make_hairline(block)
+            _set_flag(block, "w:pageBreakBefore")
+            stats["breaks_converted"] += 1
+            continue
+
+        target = _first_paragraph(following)
+        if target is None:
+            continue  # nothing to carry the flag; leave the explicit break alone
+        _set_flag(target, "w:pageBreakBefore")
+        body.remove(block)
+        stats["breaks_converted"] += 1
+
+    # --- 2. bind each section heading to the content it introduces ------------
+    # Only *headings* bind forward. Extending the chain from any block that
+    # happens to carry keepNext internally welded the whole document into one
+    # unbreakable run, which paginated far worse than doing nothing.
+    blocks = [b for b in body if b.tag in (qn("w:p"), qn("w:tbl"))]
+    for index, block in enumerate(blocks[:-1]):
+        if not _is_heading_block(block):
+            continue
+        _strip_heading_marker(block)
+        # Walk forward over the spacers between the heading and its content,
+        # marking each so the group cannot be split at the spacer.
+        cursor = index + 1
+        while cursor < len(blocks) and _is_spacer_paragraph(blocks[cursor]):
+            spacer_block = blocks[cursor]
+            # A spacer that starts a page must not drag the heading forward.
+            if _has_flag(spacer_block, "w:pageBreakBefore"):
+                break
+            if not _has_flag(spacer_block, "w:keepNext"):
+                _set_flag(spacer_block, "w:keepNext")
+                stats["chains_extended"] += 1
+            cursor += 1
+
+    # Any heading marker left over (a heading with nothing after it) is removed
+    # so no bookmark survives into the shipped file.
+    for block in blocks:
+        if _is_heading_block(block):
+            _strip_heading_marker(block)
+
+    return stats
