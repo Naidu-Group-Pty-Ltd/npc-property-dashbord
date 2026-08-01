@@ -55,6 +55,16 @@ export interface ReserveResult {
 }
 
 export interface BalanceResult {
+  /**
+   * Priced add-on slugs this workspace currently holds, from Mission Control.
+   *
+   * Plan-tier gating alone can never decide an add-on — a separately-sold
+   * module has an empty tier list, so the gate deliberately falls through
+   * rather than lock out a workspace that paid for it. This is what lets it
+   * decide. Absent on an older Mission Control, which degrades to today's
+   * fall-through behaviour rather than to a lockout.
+   */
+  addonSlugs?: string[];
   available: number;
   allowance: number;
   used: number;
@@ -383,6 +393,11 @@ export async function getBalance(): Promise<BalanceResult> {
     expiringSoon: Number(expiry?.expiring_soon ?? 0),
     nextExpiryAt: expiry?.next_expiry_at ?? null,
     expiryWarningDays: Number(expiry?.warning_days ?? 7),
+    addonSlugs: Array.isArray(body?.entitlements?.addons)
+      ? (body.entitlements.addons as unknown[]).filter(
+          (a): a is string => typeof a === "string",
+        )
+      : undefined,
   };
 }
 

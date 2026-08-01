@@ -27,7 +27,7 @@ async function readCachedBalance(supabase: any): Promise<BalancePayload | null> 
     const { data, error } = await supabase
       .from("token_balance_cache")
       .select(
-        "available,reserved,lifetime_granted,lifetime_spent,plan_name,plan_slug,monthly_allowance,current_period_end,updated_at",
+        "available,reserved,lifetime_granted,lifetime_spent,plan_name,plan_slug,addon_slugs,monthly_allowance,current_period_end,updated_at",
       )
       .eq("tenant_ref", AGENCY_TENANT_REF)
       .maybeSingle();
@@ -49,6 +49,11 @@ async function readCachedBalance(supabase: any): Promise<BalancePayload | null> 
       lifetimeSpent: Number(data.lifetime_spent ?? 0),
       planName: data.plan_name ?? null,
       planSlug: data.plan_slug ?? null,
+      // Cached alongside the plan so entitlement gating survives a Mission
+      // Control outage. Without it a cache hit would report the plan but no
+      // add-ons, and a workspace would briefly lose modules it pays for —
+      // which is the one failure mode gating must never cause.
+      addonSlugs: Array.isArray(data.addon_slugs) ? data.addon_slugs : undefined,
       overagePolicy: null,
       currentPeriodEnd: data.current_period_end ?? null,
       // A stale cache entry must never grant a billing exemption. Only a live,
@@ -74,6 +79,7 @@ async function refreshCache(supabase: any, balance: BalanceResult): Promise<void
       lifetime_spent: balance.lifetimeSpent,
       plan_name: balance.planName,
       plan_slug: balance.planSlug,
+      addon_slugs: balance.addonSlugs ?? [],
       monthly_allowance: balance.allowance,
       current_period_end: balance.currentPeriodEnd,
       updated_at: new Date().toISOString(),

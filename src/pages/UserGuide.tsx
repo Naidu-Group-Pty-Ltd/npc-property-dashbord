@@ -52,8 +52,49 @@ import {
   Sparkles,
   Webhook,
   X,
+  ShieldCheck,
+  Landmark,
+  Scale,
+  Hammer,
+  Building2,
+  Newspaper,
+  Cpu,
+  Handshake,
+  BarChart4,
+  FileInput,
+  CreditCard,
+  Banknote,
+  BookOpen,
+  Lock,
 } from 'lucide-react';
 import { UserGuideAssistant } from '@/components/user-guide/UserGuideAssistant';
+import { ADDITIONAL_GUIDE_SECTIONS } from '@/lib/userGuideSections';
+import { filterEntitledSections, lockedSections } from '@/lib/userGuideEntitlements';
+import { usePlanEntitlements } from '@/hooks/usePlanEntitlements';
+
+/**
+ * Icons for the data-defined sections. `userGuideSections.ts` names its icon as
+ * a string so it can be imported by the AI knowledge base, which has no React
+ * dependency — the mapping back to a component belongs here, in the UI.
+ */
+const GUIDE_SECTION_ICONS: Record<string, React.ElementType> = {
+  ShieldCheck,
+  Landmark,
+  Scale,
+  Hammer,
+  Building2,
+  Newspaper,
+  Cpu,
+  Target,
+  Handshake,
+  BarChart4,
+  FileInput,
+  CreditCard,
+  Banknote,
+  BookOpen,
+  Keyboard,
+  AlertCircle,
+};
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 
 interface GuideSection {
@@ -74,6 +115,7 @@ interface GuideItem {
 }
 
 export default function UserGuide() {
+  const { planSlug, addonSlugs, loading: planLoading } = usePlanEntitlements();
   const accordionRef = useRef<string[]>([]);
   
   const handleNavigateToSection = useCallback((sectionId: string) => {
@@ -90,7 +132,7 @@ export default function UserGuide() {
       }
     }
   }, []);
-  const sections: GuideSection[] = [
+  const allSections: GuideSection[] = [
     {
       id: 'getting-started',
       title: 'Getting Started',
@@ -1397,99 +1439,37 @@ export default function UserGuide() {
         },
       ],
     },
-    {
-      id: 'keyboard-shortcuts',
-      title: 'Keyboard Shortcuts',
-      icon: Keyboard,
-      description: 'Quick actions for power users',
-      items: [
-        {
-          title: 'Global Shortcuts',
-          description: 'Shortcuts available throughout the application.',
-          shortcuts: [
-            { keys: ['⌘/Ctrl', 'K'], description: 'Open search / history search' },
-            { keys: ['⌘/Ctrl', 'N'], description: 'New chat (in Aurixa Intelligence Hub)' },
-            { keys: ['⌘/Ctrl', '/'], description: 'Focus message input' },
-            { keys: ['Esc'], description: 'Close dialogs / Exit full screen' },
-          ],
-        },
-        {
-          title: 'Aurixa Intelligence Hub Shortcuts',
-          description: 'Shortcuts specific to the AI chat interface.',
-          shortcuts: [
-            { keys: ['⌘/Ctrl', '⇧', 'C'], description: 'Copy last response' },
-            { keys: ['⌘/Ctrl', 'J'], description: 'Scroll to bottom' },
-            { keys: ['⌘/Ctrl', 'B'], description: 'Toggle reports panel' },
-            { keys: ['⌘/Ctrl', 'Enter'], description: 'Toggle full screen' },
-            { keys: ['Enter'], description: 'Send message' },
-            { keys: ['Shift', 'Enter'], description: 'New line in message' },
-          ],
-        },
-        {
-          title: 'Calendar Shortcuts',
-          description: 'Shortcuts for calendar navigation.',
-          shortcuts: [
-            { keys: ['T'], description: 'Go to today' },
-            { keys: ['←', '→'], description: 'Navigate periods' },
-            { keys: ['D'], description: 'Day view' },
-            { keys: ['W'], description: 'Week view' },
-            { keys: ['M'], description: 'Month view' },
-            { keys: ['?'], description: 'Show shortcuts help' },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'troubleshooting',
-      title: 'Troubleshooting',
-      icon: AlertCircle,
-      description: 'Common issues and solutions',
-      items: [
-        {
-          title: 'Report Generation Issues',
-          description: 'Solutions for common report generation problems.',
-          tips: [
-            'If "Data Unavailable" appears, try a broader analysis mode (Address → Postcode → State)',
-            'Complex analysis can take 3-7 minutes depending on data availability',
-            'Avoid generating multiple reports simultaneously',
-            'Check your internet connection for timeouts',
-            'Verify property addresses are correctly formatted',
-          ],
-        },
-        {
-          title: 'Data Sync Issues',
-          description: 'Troubleshooting data synchronization problems.',
-          tips: [
-            'Check the Monitoring page for API health status',
-            'Manual sync can be triggered from Sources page',
-            'Allow up to 24 hours for market data updates',
-            'Contact support if sync failures persist',
-          ],
-        },
-        {
-          title: 'Email Copilot Issues',
-          description: 'Solutions for email-related problems.',
-          tips: [
-            'Verify email credentials in Settings',
-            'Check mailbox permissions for OAuth connections',
-            'AI summaries require email body content',
-            'Refresh the page if emails aren\'t loading',
-          ],
-        },
-        {
-          title: 'Best Practices',
-          description: 'Tips for optimal system usage.',
-          tips: [
-            'Use complete addresses with suburb, state, and postcode',
-            'Generate reports after major market events for current data',
-            'Use consistent financial assumptions when comparing properties',
-            'Regularly review and update client information',
-            'Export important reports for offline access',
-          ],
-        },
-      ],
-    },
+    // Sections defined as data in `lib/userGuideSections.ts`. They live there
+    // rather than inline because the AI knowledge base needs the same content,
+    // and two hand-maintained copies is exactly how this guide fell behind the
+    // app in the first place.
+    ...ADDITIONAL_GUIDE_SECTIONS.map((section) => ({
+      id: section.id,
+      title: section.title,
+      description: section.description,
+      icon: GUIDE_SECTION_ICONS[section.icon] ?? BookOpen,
+      items: section.items,
+    })),
   ];
+
+  // Only the sections this workspace is entitled to. A Launch clone must not
+  // be reading the Finance Portal guide: following a walkthrough for a screen
+  // that is not in the sidebar reads as a broken product, not a locked one.
+  //
+  // An unknown or still-loading plan shows everything — the same asymmetry
+  // planEntitlements.ts takes. Showing a section someone cannot use is an
+  // annoyance; hiding one they pay for is a fault.
+  const entitlementCtx = { planSlug: planLoading ? null : planSlug, addonSlugs };
+  const sections = useMemo(
+    () => filterEntitledSections(allSections, entitlementCtx),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planSlug, addonSlugs, planLoading],
+  );
+  const locked = useMemo(
+    () => lockedSections(allSections, entitlementCtx),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planSlug, addonSlugs, planLoading],
+  );
 
   const quickTips = [
     { icon: Search, text: 'Use ⌘/Ctrl + K to quickly search across the application' },
@@ -1973,6 +1953,39 @@ export default function UserGuide() {
               </AccordionItem>
             ))}
           </Accordion>
+          )}
+          {/* Guides this plan does not include.
+              Named rather than silently omitted: a customer who notices a
+              feature exists is a sales conversation, whereas a customer who
+              notices documentation vanished raises a support ticket. */}
+          {locked.length > 0 && (
+            <div className="mt-6 rounded-2xl border border-border/65 bg-muted/25 p-4 sm:p-5">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground">
+                  <Lock className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 space-y-2">
+                  <h4 className="text-sm font-semibold leading-6 text-foreground">
+                    {locked.length} more {locked.length === 1 ? 'guide' : 'guides'} available on
+                    other plans
+                  </h4>
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    These cover modules your current plan does not include. Contact your
+                    administrator to add them.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {locked.map((l) => (
+                      <span
+                        key={l.id}
+                        className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
+                      >
+                        {l.title}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
