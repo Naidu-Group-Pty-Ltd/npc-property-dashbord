@@ -337,7 +337,33 @@ export function InternalMessagesPanel({
   // ── Thread view ────────────────────────────────────────────────────
   if (view === 'thread' && activeThread) {
     return (
-      <div className="w-full flex flex-col min-h-0">
+      <div
+        className="relative w-full flex flex-col min-h-0"
+        onDragEnter={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragActive(true);
+        }}
+        onDragOver={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragActive(false);
+        }}
+        onDrop={(e) => {
+          const dropped = filesFromDataTransfer(e.dataTransfer);
+          if (!dropped.length) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragActive(false);
+          addFiles(dropped);
+        }}
+      >
+        {dragActive && <AttachmentDropOverlay />}
         <div className="px-4 py-3 border-b flex items-center gap-2">
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { setView('threads'); setActiveThread(null); }}>
             <ChevronLeft className="h-4 w-4" />
@@ -381,17 +407,16 @@ export function InternalMessagesPanel({
             </div>
           )}
         </ScrollArea>
-        {typingLabel && (
+        {typingPeople.length > 0 && (
           <div className="px-4 pb-1 shrink-0">
-            <ShimmerText className="text-[11px]">{typingLabel}</ShimmerText>
+            <TypingPresence people={typingPeople} />
           </div>
         )}
         <div className="border-t p-3 shrink-0">
-          <InternalAttachmentDrafts
-            files={pendingFiles}
-            uploading={uploading}
-            progressLabel={uploadLabel}
-            onRemove={(i) => setPendingFiles(prev => prev.filter((_, idx) => idx !== i))}
+          <InternalAttachmentQueue
+            items={attachmentQueue.items}
+            onRemove={attachmentQueue.remove}
+            onRetry={(id) => attachmentQueue.retry(activeThread.id, id)}
           />
           <div className="flex items-end gap-2">
           <input
@@ -401,10 +426,7 @@ export function InternalMessagesPanel({
             accept={INTERNAL_ATTACHMENT_ACCEPT}
             className="hidden"
             onChange={e => {
-              const picked = Array.from(e.target.files ?? []);
-              if (picked.length) {
-                setPendingFiles(prev => [...prev, ...picked].slice(0, MAX_INTERNAL_ATTACHMENTS));
-              }
+              addFiles(Array.from(e.target.files ?? []));
               e.target.value = '';
             }}
           />
@@ -414,7 +436,7 @@ export function InternalMessagesPanel({
             size="icon"
             className="h-9 w-9 shrink-0"
             aria-label="Attach files"
-            title="Attach files — any format, any size"
+            title="Attach files — drag, paste or click. Any format, any size."
             onClick={() => fileInputRef.current?.click()}
           >
             <Paperclip className="h-4 w-4" />
@@ -422,8 +444,14 @@ export function InternalMessagesPanel({
           <Textarea
             value={draft}
             onChange={e => { setDraft(e.target.value); signalTyping(); }}
+            onPaste={e => {
+              const pasted = filesFromDataTransfer(e.clipboardData);
+              if (!pasted.length) return;
+              e.preventDefault();
+              addFiles(pasted);
+            }}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendInThread(); } }}
-            placeholder="Write a message…"
+            placeholder="Write a message… (drag or paste files to attach)"
             rows={1}
             className="min-h-[36px] max-h-28 resize-none text-xs"
           />
@@ -432,7 +460,7 @@ export function InternalMessagesPanel({
             size="icon"
             className="h-9 w-9 shrink-0"
             onClick={sendInThread}
-            disabled={sending || (!draft.trim() && pendingFiles.length === 0)}
+            disabled={sending || (!draft.trim() && attachmentQueue.items.length === 0)}
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
@@ -440,6 +468,7 @@ export function InternalMessagesPanel({
         </div>
       </div>
     );
+
   }
 
   // ── Compose view ───────────────────────────────────────────────────
