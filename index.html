@@ -20,7 +20,12 @@
     
     <!-- PWA Manifest -->
     <link rel="manifest" href="/manifest.json" />
-    <link rel="apple-touch-icon" href="/favicon.ico" />
+    <!-- iOS only delivers Web Push to an INSTALLED PWA, and it uses this icon
+         for the home-screen tile. A .ico is not honoured here. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Command Centre" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     
     <title>Dashboard</title>
     <meta name="description" content="Property investment management dashboard" />
