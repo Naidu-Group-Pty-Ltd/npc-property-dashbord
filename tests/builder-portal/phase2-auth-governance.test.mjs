@@ -581,7 +581,8 @@ test('the gate order matches the documented governance order', () => {
 test('unbuilt navigation is disabled rather than linked to a placeholder', () => {
   // Phase 2 delivers no business domain. Linking these would imply data that
   // does not exist.
-  for (const label of ['Projects', 'Transactions', 'Pipeline', 'Messages', 'Tasks']) {
+  // Projects moved to `available: true` in Phase 3 and is asserted there.
+  for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
     const entry = layout.slice(layout.indexOf(`label: '${label}'`));
     assert.match(entry.slice(0, 120), /available: false/,
       `${label} is presented as available but Phase 2 builds no such surface`);

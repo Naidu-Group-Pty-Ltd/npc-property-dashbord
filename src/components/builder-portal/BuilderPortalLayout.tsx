@@ -34,7 +34,7 @@ interface BuilderNavItem {
 
 const NAV: BuilderNavItem[] = [
   { to: '/builder', label: 'Dashboard', icon: LayoutDashboard, exact: true, available: true },
-  { to: '/builder/projects', label: 'Projects', icon: Building2, available: false },
+  { to: '/builder/projects', label: 'Projects', icon: Building2, available: true },
   { to: '/builder/transactions', label: 'Transactions', icon: Receipt, available: false },
   { to: '/builder/pipeline', label: 'Pipeline', icon: KanbanSquare, available: false },
   { to: '/builder/messages', label: 'Messages', icon: MessageSquare, available: false },

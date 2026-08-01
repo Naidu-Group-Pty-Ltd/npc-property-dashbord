@@ -1,7 +1,7 @@
 # Builder / Developer Portal programme
 
 **Baseline:** `a2ec188faa806ff97cb272f7f5a8bcf56b984cb1`
-**Current phase:** 1 — complete. Phase 2 has not started.
+**Current phase:** 3 — complete. Phase 4 has not started.
 
 The Builder / Developer Portal is the fourth external portal alongside Client,
 Finance and Solicitor. The Solicitor Portal is the architectural reference and is
@@ -34,6 +34,8 @@ only production-adjacent change is two additive `package.json` script entries.
 | 12 | [Phase 1 report](./12-phase-1-report.md) | Identity and access foundation: schema, permissions, sessions, generalisations, test results, Phase 2 recommendation |
 | 13 | [Phase 2 mirroring inventory](./13-phase-2-mirroring-inventory.md) | The exact Solicitor files and functions Phase 2 mirrors, and the defects it does not copy |
 | 14 | [Phase 2 report](./14-phase-2-report.md) | External authentication, governance and portal shell: migration, eight Edge Functions, route tree, defects found by verification, test results |
+| 15 | [Phase 3 mirroring inventory](./15-phase-3-mirroring-inventory.md) | The exact Solicitor Matters files mirrored by the Builder Projects module, and the defects not copied |
+| 16 | [Phase 3 report](./16-phase-3-report.md) | Projects: developments, projects, parties, project access, internal administration, external pages, test results |
 
 ## Architecture documents
 
@@ -64,10 +66,11 @@ Against a local PostgreSQL cluster (see `scripts/builder-portal/local-db/`):
 ```bash
 npm run builder:db:reset           # clean full-corpus migration replay
 npm run builder:db:verify          # 135 behavioural assertions for Phase 1
-npm run builder:db:verify:phase2   # 61 behavioural assertions for Phase 2
+npm run builder:db:verify:phase2   # 73 behavioural assertions for Phase 2
+npm run builder:db:verify:phase3   # 117 behavioural assertions for Phase 3
 npm run builder:types:check        # Supabase types are current
-npm run typecheck:builder-edge     # Deno type check for all 9 Builder functions
-npm run test:builder-portal        # 216 static contract assertions
+npm run typecheck:builder-edge     # Deno type check for all 11 Builder functions
+npm run test:builder-portal        # 281 static contract assertions
 npm run security:builder-portal    # Builder Portal security check
 npm run test:e2e:builder-portal    # portal shell in real Chromium (needs a build)
 ```

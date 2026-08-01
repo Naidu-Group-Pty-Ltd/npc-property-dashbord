@@ -545,12 +545,12 @@ test('transaction_case_links gains no builder slot in Phase 1', () => {
     'the Phase 2 transaction-case link slot was added in Phase 1');
 });
 
-test('the external portal family stops at authentication and governance', () => {
-  // Phase 1 allowed only the internal admin function. Phase 2 adds the external
-  // authentication family and nothing else — no projects, transactions,
-  // documents or messaging function may appear before its phase.
+test('the external portal family stops at projects', () => {
+  // Phase 1 allowed only the internal admin function; Phase 2 added the external
+  // authentication family; Phase 3 adds the project module. Nothing beyond that
+  // may appear before its phase.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith('builder-portal-'))
+    .filter((entry) => entry.isDirectory() && /^builder-/.test(entry.name))
     .map((entry) => entry.name).sort();
   assert.deepEqual(functionDirs, [
     'builder-portal-accept-invite',
@@ -560,10 +560,13 @@ test('the external portal family stops at authentication and governance', () => 
     'builder-portal-invite',
     'builder-portal-login',
     'builder-portal-logout',
+    'builder-portal-projects',
     'builder-portal-reset-password',
     'builder-portal-verify',
-  ], 'a Builder function outside identity and governance appeared');
+    'builder-projects-admin',
+  ], 'a Builder function outside identity, governance and projects appeared');
 });
+
 
 // ---------------------------------------------------------------------------
 // Supabase types

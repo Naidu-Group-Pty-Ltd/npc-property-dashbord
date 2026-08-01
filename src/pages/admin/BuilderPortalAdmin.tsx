@@ -13,16 +13,16 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
+import { AdminBuilderProjectsPanel } from '@/components/admin/builder-portal/AdminBuilderProjectsPanel';
 import { toast } from 'sonner';
 import { HardHat, Loader2, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 
 /**
  * Builder / Developer Portal administration — Phase 1 shell.
  *
- * Deliberately minimal: organisations, portal users and memberships only. The
- * full administration system (development access, project access, transaction
- * assignments, integration health, AI policies, cutover status) belongs to
- * later phases.
+ * Organisations, portal users and memberships (Phase 1), plus projects and
+ * project access (Phase 3). Transaction assignments, integration health, AI
+ * policies and cutover status belong to later phases.
  *
  * This is the INTERNAL surface. The external portal at /builder/* is a separate
  * route tree with its own provider and its own session and is never linked from
@@ -250,6 +250,7 @@ export default function BuilderPortalAdmin() {
           <TabsTrigger value="organisations">Organisations ({organisations.length})</TabsTrigger>
           <TabsTrigger value="users">Portal users ({users.length})</TabsTrigger>
           <TabsTrigger value="memberships">Memberships ({liveMemberships.length})</TabsTrigger>
+          <TabsTrigger value="projects">Projects</TabsTrigger>
         </TabsList>
 
         {/* ---------------------------------------------------- organisations */}
@@ -482,6 +483,10 @@ export default function BuilderPortalAdmin() {
             </CardContent>
           </Card>
         </TabsContent>
+              <TabsContent value="projects" className="mt-4">
+          <AdminBuilderProjectsPanel canEdit={canEdit} />
+        </TabsContent>
+
       </Tabs>
 
       {/* ------------------------------------------------------------ dialogs */}
