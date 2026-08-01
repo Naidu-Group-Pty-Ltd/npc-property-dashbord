@@ -7,7 +7,12 @@
  * - Subscription is persisted via the `push-subscribe` edge function.
  * - Unsubscribe via `push-unsubscribe`.
  */
-import { supabase } from '@/integrations/supabase/client';
+// `supabase.functions.invoke` sends the anon key and NO cookies, so every
+// call to these session-authenticated functions was rejected 401 and the
+// failure surfaced only as "Failed to subscribe". `push_subscriptions` has
+// been empty since the feature shipped. invokeSecureFunction carries the
+// HttpOnly `__Host-session_token` cookie, which is what verifyAuth reads.
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 
 const SW_URL = '/sw-push.js';
 
@@ -65,10 +70,11 @@ async function registerServiceWorker(): Promise<ServiceWorkerRegistration> {
 }
 
 async function fetchVapidPublicKey(): Promise<string> {
-  const { data, error } = await supabase.functions.invoke('get-vapid-public-key', {
-    method: 'GET',
-  });
-  if (error) throw new Error(error.message);
+  const { data, error } = await invokeSecureFunction<{ publicKey?: string }>(
+    'get-vapid-public-key',
+    {},
+  );
+  if (error) throw new Error(error.message ?? 'Could not read the push server key.');
   if (!data?.publicKey) throw new Error('VAPID public key not configured on server');
   return data.publicKey;
 }
@@ -123,15 +129,22 @@ export async function subscribeToPush(): Promise<{ success: boolean; reason?: st
     }
 
     const json = subscription.toJSON();
-    const { error } = await supabase.functions.invoke('push-subscribe', {
-      body: {
+    const { data: saved, error } = await invokeSecureFunction<{ success?: boolean; error?: string }>(
+      'push-subscribe',
+      {
+        subscriber_type: 'staff',
         endpoint: json.endpoint,
         keys: json.keys,
         user_agent: navigator.userAgent,
         device_label: detectDeviceLabel(),
       },
-    });
-    if (error) throw new Error(error.message);
+    );
+    // A browser-side subscription that the server never stored is worse than no
+    // subscription: the toggle reads as "on" and nothing is ever delivered.
+    if (error || !saved?.success) {
+      await subscription.unsubscribe().catch(() => { /* best effort */ });
+      throw new Error(saved?.error ?? error?.message ?? 'Server did not store the subscription.');
+    }
 
     return { success: true };
   } catch (err: any) {
@@ -147,7 +160,7 @@ export async function unsubscribeFromPush(): Promise<{ success: boolean; reason?
     if (sub) {
       const endpoint = sub.endpoint;
       await sub.unsubscribe();
-      await supabase.functions.invoke('push-unsubscribe', { body: { endpoint } });
+      await invokeSecureFunction('push-unsubscribe', { endpoint });
     }
     return { success: true };
   } catch (err: any) {

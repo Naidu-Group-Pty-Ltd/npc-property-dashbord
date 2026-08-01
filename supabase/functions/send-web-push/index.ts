@@ -5,7 +5,7 @@
 // push_delivery_log so retries never fan out duplicate pushes.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import webpush from 'https://esm.sh/web-push@3.6.7';
-import { verifyRequiredCronSecret, securityJsonError } from '../_shared/requestSecurity.ts';
+import { verifyRequiredCronSecret, verifySignedInternal, securityJsonError } from '../_shared/requestSecurity.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -54,11 +54,33 @@ Deno.serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Read the body ONCE: the HMAC path signs the exact bytes, so it cannot be
+  // re-read after `req.json()`.
+  const rawBody = await req.text();
+
   try {
-    // Auth: signed internal caller only. DB trigger path forwards
-    // x-internal-edge-secret via _shared/internalCall.ts.
-    if (!verifyRequiredCronSecret(Deno.env.get('INTERNAL_EDGE_SECRET'), req.headers.get('x-internal-edge-secret'))) {
-      return securityJsonError(401, 'unauthorized');
+    // Auth: signed internal caller only, by either of the two fail-closed
+    // schemes this project uses.
+    //
+    // The static `x-internal-edge-secret` compare came first. The database
+    // trigger, however, builds its headers with `cron_signed_internal_headers`,
+    // which is the HMAC scheme every pg_cron dispatch here uses — so accept
+    // that too rather than requiring the two secret formats to agree. Both are
+    // deny-by-default; neither widens who may call this.
+    const staticSecretOk = verifyRequiredCronSecret(
+      Deno.env.get('INTERNAL_EDGE_SECRET'),
+      req.headers.get('x-internal-edge-secret'),
+    );
+    if (!staticSecretOk) {
+      const authClient = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      );
+      const signed = await verifySignedInternal(authClient, req, rawBody, [
+        'notifications_trigger',
+        'pg_cron',
+      ]);
+      if (!signed.ok) return securityJsonError(401, 'unauthorized');
     }
 
     const VAPID_PUBLIC = Deno.env.get('VAPID_PUBLIC_KEY');
@@ -76,7 +98,7 @@ Deno.serve(async (req) => {
 
     let payload: DispatchPayload;
     try {
-      payload = await req.json();
+      payload = JSON.parse(rawBody);
     } catch {
       return securityJsonError(400, 'invalid_request');
     }
