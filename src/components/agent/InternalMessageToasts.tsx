@@ -397,22 +397,24 @@ export function InternalMessageToasts() {
   const send = useCallback(
     async (thread: PopupThread) => {
       const text = (drafts[thread.thread_id] ?? '').trim();
-      const files = pendingFiles[thread.thread_id] ?? [];
-      if ((!text && files.length === 0) || sending[thread.thread_id]) return;
+      const hasFiles =
+        queuedForRef.current === thread.thread_id && attachmentQueue.items.length > 0;
+      if ((!text && !hasFiles) || sending[thread.thread_id]) return;
       const priority = priorities[thread.thread_id] ?? 'normal';
       setSending((p) => ({ ...p, [thread.thread_id]: true }));
       try {
         let attachments: InternalAttachment[] = [];
-        if (files.length) {
-          attachments = await uploadInternalAttachments(
-            thread.thread_id,
-            files,
-            (done, total, name) =>
-              setUploadLabel((p) => ({ ...p, [thread.thread_id]: `Uploading ${done}/${total} · ${name}` })),
-          );
-          setUploadLabel((p) => ({ ...p, [thread.thread_id]: null }));
-          setPendingFiles((p) => ({ ...p, [thread.thread_id]: [] }));
+        if (hasFiles) {
+          const { uploaded, failed } = await attachmentQueue.uploadAll(thread.thread_id);
+          if (failed.length) {
+            setSending((p) => ({ ...p, [thread.thread_id]: false }));
+            return;
+          }
+          attachments = uploaded;
+          attachmentQueue.clear();
+          queuedForRef.current = null;
         }
+
         const { data } = await invokeSecureFunction('internal-messaging', {
           action: 'send_message',
           thread_id: thread.thread_id,
