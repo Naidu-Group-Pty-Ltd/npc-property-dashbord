@@ -178,7 +178,7 @@ test.describe('Builder Portal shell', () => {
     await page.goto(`${BASE}/builder`);
     const navigation = page.getByRole('navigation', { name: 'Builder portal' });
     // Projects became available in Phase 3 and is asserted by that suite.
-    for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
+    for (const label of ['Messages', 'Tasks']) {
       const control = navigation.getByRole('button', { name: label });
       await expect(control).toBeDisabled();
     }

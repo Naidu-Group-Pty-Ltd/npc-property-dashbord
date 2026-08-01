@@ -470,11 +470,11 @@ test('the Projects navigation item is enabled', () => {
   assert.match(entry.slice(0, 120), /available: true/);
 });
 
-test('later-phase navigation items remain disabled', () => {
-  for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
+test('navigation items with no module remain disabled', () => {
+  for (const label of ['Messages', 'Tasks']) {
     const entry = layout.slice(layout.indexOf(`label: '${label}'`));
     assert.match(entry.slice(0, 120), /available: false/,
-      `${label} belongs to a later phase and must stay disabled`);
+      `${label} has no module yet and must stay disabled`);
   }
 });
 
@@ -567,8 +567,10 @@ test('the Builder function family stops at inventory', () => {
     'builder-portal-logout',
     'builder-portal-projects',
     'builder-portal-reset-password',
+    'builder-portal-transactions',
     'builder-portal-verify',
     'builder-projects-admin',
+    'builder-transactions-admin',
   ]);
 });
 

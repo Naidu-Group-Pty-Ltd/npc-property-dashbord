@@ -4012,6 +4012,268 @@ export type Database = {
           },
         ]
       }
+      builder_transaction_parties: {
+        Row: {
+          created_at: string
+          email: string | null
+          id: string
+          is_primary_contact: boolean
+          name: string
+          notes: string | null
+          organisation: string | null
+          phone: string | null
+          reference: string | null
+          role: string
+          row_version: number
+          transaction_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_primary_contact?: boolean
+          name: string
+          notes?: string | null
+          organisation?: string | null
+          phone?: string | null
+          reference?: string | null
+          role?: string
+          row_version?: number
+          transaction_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          is_primary_contact?: boolean
+          name?: string
+          notes?: string | null
+          organisation?: string | null
+          phone?: string | null
+          reference?: string | null
+          role?: string
+          row_version?: number
+          transaction_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_transaction_parties_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "builder_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_transaction_pipeline_stages: {
+        Row: {
+          created_at: string
+          is_terminal: boolean
+          stage_key: string
+          stage_label: string
+          stage_order: number
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          is_terminal?: boolean
+          stage_key: string
+          stage_label: string
+          stage_order: number
+          status: string
+        }
+        Update: {
+          created_at?: string
+          is_terminal?: boolean
+          stage_key?: string
+          stage_label?: string
+          stage_order?: number
+          status?: string
+        }
+        Relationships: []
+      }
+      builder_transaction_status_history: {
+        Row: {
+          changed_by_builder_user_id: string | null
+          changed_by_type: string
+          changed_by_user_id: string | null
+          created_at: string
+          from_status: string | null
+          id: string
+          metadata: Json
+          reason: string | null
+          to_status: string
+          transaction_id: string
+        }
+        Insert: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          to_status: string
+          transaction_id: string
+        }
+        Update: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          created_at?: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          to_status?: string
+          transaction_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_transaction_status_hist_changed_by_builder_user_id_fkey"
+            columns: ["changed_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_transaction_status_history_transaction_id_fkey"
+            columns: ["transaction_id"]
+            isOneToOne: false
+            referencedRelation: "builder_transactions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_transactions: {
+        Row: {
+          actual_settlement_date: string | null
+          builder_notes: string | null
+          client_id: string | null
+          closed_at: string | null
+          contract_issued_date: string | null
+          contract_price: number | null
+          contract_signed_date: string | null
+          created_at: string
+          deposit_amount: number | null
+          deposit_received: boolean
+          estimated_settlement_date: string | null
+          id: string
+          opened_at: string
+          organisation_id: string
+          project_id: string
+          purchaser_email: string | null
+          purchaser_name: string | null
+          purchaser_phone: string | null
+          risk_flag: boolean
+          risk_notes: string | null
+          row_version: number
+          shared_summary: string | null
+          status: string
+          sunset_date: string | null
+          transaction_reference: string | null
+          transaction_type: string
+          unconditional_date: string | null
+          unit_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          actual_settlement_date?: string | null
+          builder_notes?: string | null
+          client_id?: string | null
+          closed_at?: string | null
+          contract_issued_date?: string | null
+          contract_price?: number | null
+          contract_signed_date?: string | null
+          created_at?: string
+          deposit_amount?: number | null
+          deposit_received?: boolean
+          estimated_settlement_date?: string | null
+          id?: string
+          opened_at?: string
+          organisation_id: string
+          project_id: string
+          purchaser_email?: string | null
+          purchaser_name?: string | null
+          purchaser_phone?: string | null
+          risk_flag?: boolean
+          risk_notes?: string | null
+          row_version?: number
+          shared_summary?: string | null
+          status?: string
+          sunset_date?: string | null
+          transaction_reference?: string | null
+          transaction_type?: string
+          unconditional_date?: string | null
+          unit_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          actual_settlement_date?: string | null
+          builder_notes?: string | null
+          client_id?: string | null
+          closed_at?: string | null
+          contract_issued_date?: string | null
+          contract_price?: number | null
+          contract_signed_date?: string | null
+          created_at?: string
+          deposit_amount?: number | null
+          deposit_received?: boolean
+          estimated_settlement_date?: string | null
+          id?: string
+          opened_at?: string
+          organisation_id?: string
+          project_id?: string
+          purchaser_email?: string | null
+          purchaser_name?: string | null
+          purchaser_phone?: string | null
+          risk_flag?: boolean
+          risk_notes?: string | null
+          row_version?: number
+          shared_summary?: string | null
+          status?: string
+          sunset_date?: string | null
+          transaction_reference?: string | null
+          transaction_type?: string
+          unconditional_date?: string | null
+          unit_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_transactions_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_transactions_organisation_id_fkey"
+            columns: ["organisation_id"]
+            isOneToOne: false
+            referencedRelation: "builder_organisations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_transactions_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "builder_projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_transactions_unit_id_fkey"
+            columns: ["unit_id"]
+            isOneToOne: false
+            referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_unit_holds: {
         Row: {
           created_at: string

@@ -15,6 +15,7 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { AdminBuilderProjectsPanel } from '@/components/admin/builder-portal/AdminBuilderProjectsPanel';
 import { AdminBuilderInventoryPanel } from '@/components/admin/builder-portal/AdminBuilderInventoryPanel';
+import { AdminBuilderTransactionsPanel } from '@/components/admin/builder-portal/AdminBuilderTransactionsPanel';
 import { toast } from 'sonner';
 import { HardHat, Loader2, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 
@@ -253,6 +254,7 @@ export default function BuilderPortalAdmin() {
           <TabsTrigger value="memberships">Memberships ({liveMemberships.length})</TabsTrigger>
           <TabsTrigger value="projects">Projects</TabsTrigger>
           <TabsTrigger value="inventory">Inventory</TabsTrigger>
+          <TabsTrigger value="transactions">Transactions</TabsTrigger>
         </TabsList>
 
         {/* ---------------------------------------------------- organisations */}
@@ -491,6 +493,10 @@ export default function BuilderPortalAdmin() {
 
         <TabsContent value="inventory" className="mt-4">
           <AdminBuilderInventoryPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="transactions" className="mt-4">
+          <AdminBuilderTransactionsPanel canEdit={canEdit} />
         </TabsContent>
 
       </Tabs>

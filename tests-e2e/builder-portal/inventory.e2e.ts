@@ -252,7 +252,7 @@ test.describe('Builder Portal inventory', () => {
     const navigation = page.getByRole('navigation', { name: 'Builder portal' });
     await expect(navigation.getByRole('link', { name: 'Inventory' })).toBeVisible();
     // Modules that are not built yet must still be disabled.
-    for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
+    for (const label of ['Messages', 'Tasks']) {
       await expect(navigation.getByRole('button', { name: label })).toBeDisabled();
     }
   });

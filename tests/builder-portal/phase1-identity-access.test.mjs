@@ -564,8 +564,10 @@ test('the external portal family stops at inventory', () => {
     'builder-portal-logout',
     'builder-portal-projects',
     'builder-portal-reset-password',
+    'builder-portal-transactions',
     'builder-portal-verify',
     'builder-projects-admin',
+    'builder-transactions-admin',
   ], 'a Builder function outside identity, governance, projects and inventory appeared');
 });
 

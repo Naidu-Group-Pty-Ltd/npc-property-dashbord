@@ -7,6 +7,10 @@ import type {
   BuilderAllocation, BuilderBuilding, BuilderLot, BuilderReservation, BuilderStage,
   BuilderUnit, BuilderUnitHistoryEntry, BuilderUnitHold, BuilderUnitPrice,
 } from '@/lib/builderInventory';
+import type {
+  BuilderCaseLink, BuilderPipelineColumn, BuilderPipelineStage, BuilderTransaction,
+  BuilderTransactionHistoryEntry, BuilderTransactionParty,
+} from '@/lib/builderTransactions';
 
 /**
  * Builder Portal query layer. Mirrors `src/lib/solicitorQueries.ts`: query keys,
@@ -27,6 +31,12 @@ export const builderKeys = {
   stages: (projectId: string) => ['builder', 'stages', projectId] as const,
   buildings: (projectId: string) => ['builder', 'buildings', projectId] as const,
   lots: (projectId: string) => ['builder', 'lots', projectId] as const,
+  transactionsRoot: () => ['builder', 'transactions'] as const,
+  transactions: (filters: TransactionFilters) =>
+    [...builderKeys.transactionsRoot(), filters] as const,
+  transaction: (transactionId: string) => ['builder', 'transaction', transactionId] as const,
+  transactionStats: (projectId: string) => ['builder', 'transaction-stats', projectId] as const,
+  pipeline: (projectId: string) => ['builder', 'pipeline', projectId] as const,
 };
 
 export interface ProjectFilters { search: string; status: string; page: number; pageSize: number }
@@ -241,6 +251,115 @@ export function useBuilderUnitMutation(unitId: string) {
         client.invalidateQueries({ queryKey: builderKeys.unit(unitId) }),
         client.invalidateQueries({ queryKey: builderKeys.unitsRoot() }),
         client.invalidateQueries({ queryKey: ['builder', 'inventory-stats'] }),
+      ]);
+    },
+  });
+}
+
+
+/* ───────────────────────────── TRANSACTIONS ───────────────────────────── */
+
+export interface TransactionFilters {
+  projectId: string;
+  search: string;
+  status: string;
+  page: number;
+  pageSize: number;
+}
+
+export interface TransactionsPage {
+  records: BuilderTransaction[];
+  pagination: { page: number; page_size: number; total: number; total_pages: number };
+}
+
+export interface TransactionDetail {
+  transaction: BuilderTransaction;
+  project: { id: string; name: string; project_reference: string | null };
+  unit: { id: string; unit_number: string; unit_type: string; availability_status: string } | null;
+  parties: BuilderTransactionParty[];
+  status_history: BuilderTransactionHistoryEntry[];
+  case_link: BuilderCaseLink | null;
+  permissions: Record<string, { view: boolean; edit: boolean; delete: boolean }>;
+}
+
+export interface TransactionStats {
+  total: number;
+  by_status: Record<string, number>;
+  at_risk: number;
+  unlinked: number;
+}
+
+export interface PipelineBoard {
+  stages: BuilderPipelineStage[];
+  columns: BuilderPipelineColumn[];
+}
+
+export function useBuilderTransactions(filters: TransactionFilters) {
+  return useQuery({
+    queryKey: builderKeys.transactions(filters),
+    queryFn: async ({ signal }) => await invoke('builder-portal-transactions', {
+      operation: 'list_transactions',
+      project_id: filters.projectId || undefined,
+      search: filters.search,
+      status: filters.status,
+      page: filters.page,
+      page_size: filters.pageSize,
+    }, signal) as TransactionsPage,
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderTransaction(transactionId: string) {
+  return useQuery({
+    queryKey: builderKeys.transaction(transactionId),
+    queryFn: ({ signal }) => invoke('builder-portal-transactions', {
+      operation: 'get_transaction', transaction_id: transactionId,
+    }, signal) as Promise<TransactionDetail>,
+    enabled: Boolean(transactionId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderTransactionStats(projectId = '') {
+  return useQuery({
+    queryKey: builderKeys.transactionStats(projectId),
+    queryFn: ({ signal }) => invoke('builder-portal-transactions', {
+      operation: 'transaction_stats', project_id: projectId || undefined,
+    }, signal) as Promise<TransactionStats>,
+    staleTime: 60_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderPipeline(projectId = '') {
+  return useQuery({
+    queryKey: builderKeys.pipeline(projectId),
+    queryFn: ({ signal }) => invoke('builder-portal-transactions', {
+      operation: 'pipeline', project_id: projectId || undefined,
+    }, signal) as Promise<PipelineBoard>,
+    staleTime: 30_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+/**
+ * One mutation hook per transaction, mirroring `useBuilderUnitMutation`. The
+ * transaction id is bound here rather than passed per call so a caller cannot
+ * accidentally mutate a different transaction than the one on screen.
+ */
+export function useBuilderTransactionMutation(transactionId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      invoke('builder-portal-transactions', { ...payload, transaction_id: transactionId }),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: builderKeys.transaction(transactionId) }),
+        client.invalidateQueries({ queryKey: builderKeys.transactionsRoot() }),
+        client.invalidateQueries({ queryKey: ['builder', 'transaction-stats'] }),
+        client.invalidateQueries({ queryKey: ['builder', 'pipeline'] }),
       ]);
     },
   });

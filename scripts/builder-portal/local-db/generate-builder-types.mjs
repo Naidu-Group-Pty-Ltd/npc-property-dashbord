@@ -12,8 +12,8 @@
  * blocks are introspected from the verified local database instead, which keeps
  * nullability and defaults faithful rather than hand-written.
  *
- * Run after scripts/builder-portal/local-db/verify-inventory.mjs, which builds
- * the database this reads — it is a superset of every earlier phase's.
+ * Run after the LAST module's verification script, which builds the database
+ * this reads — each one is a superset of every earlier module's.
  *
  * Usage: node scripts/builder-portal/local-db/generate-builder-types.mjs [--check]
  */
@@ -29,7 +29,7 @@ const USER = process.env.LOCAL_PG_USER || 'postgres';
 // source of truth for introspection. Build it with:
 //   node scripts/builder-portal/local-db/verify-phase-2.mjs
 const DB = process.env.LOCAL_PG_TYPES_DB
-  || process.env.LOCAL_PG_VERIFY_DB_INV || 'aurixa_inventory_verify';
+  || process.env.LOCAL_PG_VERIFY_DB_TXN || 'aurixa_transactions_verify';
 const checkOnly = process.argv.includes('--check');
 
 const TYPES_PATH = join(root, 'src/integrations/supabase/types.ts');
@@ -57,6 +57,10 @@ const TABLES = [
   'builder_reservations',
   'builder_role_default_permissions',
   'builder_stages',
+  'builder_transaction_parties',
+  'builder_transaction_pipeline_stages',
+  'builder_transaction_status_history',
+  'builder_transactions',
   'builder_unit_holds',
   'builder_unit_pricing',
   'builder_unit_status_history',

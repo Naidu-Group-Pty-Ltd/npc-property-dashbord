@@ -179,7 +179,7 @@ test.describe('Builder Portal projects', () => {
     const navigation = page.getByRole('navigation', { name: 'Builder portal' });
     await expect(navigation.getByRole('link', { name: 'Projects' })).toBeVisible();
     // Later-phase items must still be disabled.
-    for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
+    for (const label of ['Messages', 'Tasks']) {
       await expect(navigation.getByRole('button', { name: label })).toBeDisabled();
     }
   });

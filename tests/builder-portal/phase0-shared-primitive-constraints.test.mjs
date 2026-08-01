@@ -147,24 +147,41 @@ test('GEN-08 the document authorization functions that must move with the audien
 
 // --- GEN-09: transaction case links ----------------------------------------
 
-test('GEN-09 transaction_case_links has three domain slots and no builder slot', () => {
+test('GEN-09 has landed: transaction_case_links carries the fourth builder slot', () => {
   assert.match(migrations, /legal_matter_id uuid UNIQUE REFERENCES public\.legal_matters\(id\)/);
   assert.match(migrations, /purchase_file_id uuid UNIQUE REFERENCES public\.purchase_files\(id\)/);
   assert.match(migrations, /client_deal_id uuid UNIQUE REFERENCES public\.client_deals\(id\)/);
-  assert.ok(!migrations.includes('builder_transaction_id'), 'GEN-09 has landed, update this test');
+  assert.match(migrations, /ADD COLUMN IF NOT EXISTS builder_transaction_id uuid/);
+  // The slot is unique and indexed, so a transaction joins at most one case.
+  assert.match(migrations, /transaction_case_links_builder_transaction_id_key/);
+  assert.match(migrations, /idx_transaction_case_links_builder/);
 });
 
-test('GEN-09 link history domain_type and link_source exclude builder values', () => {
+test('GEN-09 link history domain_type and link_source now carry the builder values', () => {
+  // The baseline lists are still declared by the Phase 5 migration, because
+  // migrations are append-only and are never rewritten.
   assert.deepEqual(checkListsFor('domain_type'), ['client_deal|legal_matter|purchase_file']);
-  assert.deepEqual(checkListsFor('link_source'), ['command_centre|legacy_explicit|legacy_reverse|system']);
+  assert.deepEqual(checkListsFor('link_source'),
+    ['command_centre|legacy_explicit|legacy_reverse|system']);
+  // The widened lists arrive as named constraints in the transactions module.
+  assert.match(migrations,
+    /ADD CONSTRAINT transaction_case_link_history_domain_type_check[\s\S]{0,200}?'builder_transaction'/,
+    'domain_type was not widened for builder_transaction');
+  assert.match(migrations,
+    /ADD CONSTRAINT transaction_case_links_link_source_check[\s\S]{0,200}?'builder_portal'/,
+    'link_source was not widened for builder_portal');
 });
 
-test('GEN-09 the cross-client guard trigger lists exactly the three current slots', () => {
-  // The trigger must be redefined when a fourth slot is added, or an UPDATE that
-  // touches only the new column would not fire it at all (migration risk MIG-02).
+test('GEN-09 the cross-client guard trigger was redefined for the fourth slot', () => {
+  // MIG-02: an UPDATE touching only the new column would not fire the baseline
+  // trigger at all, so the trigger is replaced in the same migration.
   assert.match(
     migrations,
     /BEFORE INSERT OR UPDATE OF case_id,legal_matter_id,purchase_file_id,client_deal_id ON public\.transaction_case_links/,
+  );
+  assert.match(
+    migrations,
+    /BEFORE INSERT OR UPDATE OF case_id, legal_matter_id, purchase_file_id,\s*\n\s*client_deal_id, builder_transaction_id/,
   );
   assert.match(migrations, /MESSAGE='CROSS_CLIENT_CASE_LINK'/);
 });

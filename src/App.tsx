@@ -196,6 +196,9 @@ import BuilderProjects from "@/pages/builder/BuilderProjects";
 import BuilderProjectDetail from "@/pages/builder/BuilderProjectDetail";
 import BuilderInventory from "@/pages/builder/BuilderInventory";
 import BuilderUnitDetail from "@/pages/builder/BuilderUnitDetail";
+import BuilderTransactions from "@/pages/builder/BuilderTransactions";
+import BuilderTransactionDetail from "@/pages/builder/BuilderTransactionDetail";
+import BuilderPipeline from "@/pages/builder/BuilderPipeline";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
@@ -428,6 +431,9 @@ const App = () => (
                                   <Route path="projects/:projectId" element={<BuilderProjectDetail />} />
                                   <Route path="inventory" element={<BuilderInventory />} />
                                   <Route path="inventory/:unitId" element={<BuilderUnitDetail />} />
+                                  <Route path="transactions" element={<BuilderTransactions />} />
+                                  <Route path="transactions/:transactionId" element={<BuilderTransactionDetail />} />
+                                  <Route path="pipeline" element={<BuilderPipeline />} />
                                   <Route path="settings" element={<BuilderSettings />} />
                                 </Route>
                               </Route>

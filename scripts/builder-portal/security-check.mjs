@@ -58,8 +58,10 @@ const EXPECTED_FUNCTIONS = [
     'builder-portal-logout',
     'builder-portal-projects',
     'builder-portal-reset-password',
+    'builder-portal-transactions',
     'builder-portal-verify',
     'builder-projects-admin',
+    'builder-transactions-admin',
 ];
 
 const fnSource = Object.fromEntries(
