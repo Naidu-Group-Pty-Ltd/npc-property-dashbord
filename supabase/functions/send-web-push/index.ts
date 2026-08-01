@@ -14,11 +14,49 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-type SubscriberType = 'staff' | 'client_portal' | 'finance_portal';
-const VALID_SUBSCRIBERS: readonly SubscriberType[] = ['staff', 'client_portal', 'finance_portal'];
+type SubscriberType = 'staff' | 'client_portal' | 'finance_portal' | 'solicitor_portal';
+const VALID_SUBSCRIBERS: readonly SubscriberType[] = ['staff', 'client_portal', 'finance_portal', 'solicitor_portal'];
+
+/**
+ * Each portal keeps its own notification table with its own column names, and
+ * this function used to read `public.notifications` unconditionally. The portal
+ * triggers passed it a `client_portal_notifications.id`, the lookup found
+ * nothing, and every portal push answered "No target" — silently, for as long
+ * as the feature has existed.
+ *
+ * `recipientColumn` is null for client_portal because that table addresses a
+ * CLIENT, not a portal user; recipients are fanned out from client_portal_users.
+ */
+const SOURCES: Record<SubscriberType, {
+  table: string;
+  titleColumn: string;
+  bodyColumn: string;
+  linkColumn: string | null;
+  typeColumn: string;
+  recipientColumn: string | null;
+}> = {
+  staff: {
+    table: 'notifications', titleColumn: 'title', bodyColumn: 'message',
+    linkColumn: 'link', typeColumn: 'type', recipientColumn: 'target_user_id',
+  },
+  client_portal: {
+    table: 'client_portal_notifications', titleColumn: 'title', bodyColumn: 'message',
+    linkColumn: 'action_url', typeColumn: 'type', recipientColumn: null,
+  },
+  finance_portal: {
+    table: 'finance_portal_notifications', titleColumn: 'title', bodyColumn: 'body',
+    linkColumn: 'link_path', typeColumn: 'notification_type', recipientColumn: 'portal_user_id',
+  },
+  solicitor_portal: {
+    table: 'solicitor_portal_notifications', titleColumn: 'title', bodyColumn: 'body',
+    linkColumn: 'link_path', typeColumn: 'notification_type', recipientColumn: 'solicitor_user_id',
+  },
+};
 
 interface DispatchPayload {
   notification_id: string;
+  /** Which portal's table to read. Defaults to staff for backwards compatibility. */
+  source?: SubscriberType;
   attempt_id?: string;
 }
 
@@ -112,36 +150,69 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    // Derive every field server-side from the persisted notification row.
+    // Derive every field server-side from the persisted row, in whichever
+    // portal's table the caller named. `source` selects the table only — the
+    // CONTENT is never taken from the request.
+    const requested = payload?.source;
+    const subscriberType: SubscriberType =
+      VALID_SUBSCRIBERS.includes(requested as SubscriberType) ? (requested as SubscriberType) : 'staff';
+    const src = SOURCES[subscriberType];
+
+    const columns = [
+      'id', src.titleColumn, src.bodyColumn, src.typeColumn,
+      ...(src.linkColumn ? [src.linkColumn] : []),
+      ...(src.recipientColumn ? [src.recipientColumn] : []),
+      ...(subscriberType === 'client_portal' ? ['client_id'] : []),
+    ];
     const { data: notif, error: notifErr } = await supabase
-      .from('notifications')
-      .select('id, type, title, message, target_user_id, metadata')
+      .from(src.table)
+      .select([...new Set(columns)].join(', '))
       .eq('id', notificationId)
       .maybeSingle();
 
     if (notifErr) {
-      console.error('[send-web-push] notification lookup failed', notifErr.message);
+      console.error('[send-web-push] notification lookup failed', src.table, notifErr.message);
       return securityJsonError(503, 'service_unavailable');
     }
-    if (!notif || !notif.target_user_id) {
+    if (!notif) {
+      return new Response(JSON.stringify({ success: true, sent: 0, message: 'No such notification' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const row = notif as Record<string, unknown>;
+
+    // Recipients. Most tables address one user. `client_portal_notifications`
+    // addresses a CLIENT, so it fans out to that client's active portal users —
+    // which is why it has no recipient column of its own.
+    let recipientIds: string[] = [];
+    if (subscriberType === 'client_portal') {
+      const { data: portalUsers } = await supabase
+        .from('client_portal_users')
+        .select('id')
+        .eq('client_id', row.client_id as string)
+        .eq('status', 'active');
+      recipientIds = (portalUsers ?? []).map((u: { id: string }) => u.id);
+    } else if (src.recipientColumn && row[src.recipientColumn]) {
+      recipientIds = [row[src.recipientColumn] as string];
+    }
+
+    if (recipientIds.length === 0) {
       return new Response(JSON.stringify({ success: true, sent: 0, message: 'No target' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // subscriber_type is derived from notification metadata (never trusted from caller).
-    const metaSub = (notif.metadata && typeof notif.metadata === 'object' ? (notif.metadata as any).subscriber_type : null);
-    const subscriberType: SubscriberType = VALID_SUBSCRIBERS.includes(metaSub) ? metaSub : 'staff';
-    const title = clamp(notif.title, 120) || 'Notification';
-    const body = clamp(notif.message, 400);
-    const url = sanitizeUrl((notif.metadata as any)?.link_path);
-    const category = clamp(notif.type, 64) || null;
-    const targetUserId = notif.target_user_id as string;
+    const title = clamp(row[src.titleColumn], 120) || 'Notification';
+    const body = clamp(row[src.bodyColumn], 400);
+    const url = sanitizeUrl(src.linkColumn ? row[src.linkColumn] : null);
+    const category = clamp(row[src.typeColumn], 64) || null;
 
     const { data: subs, error } = await supabase
+
       .from('push_subscriptions')
-      .select('id, endpoint, p256dh, auth')
-      .eq('user_id', targetUserId)
+      .select('id, user_id, endpoint, p256dh, auth')
+      .in('user_id', recipientIds)
       .eq('subscriber_type', subscriberType)
       .eq('is_active', true);
 
@@ -185,7 +256,7 @@ Deno.serve(async (req) => {
           );
           await supabase.from('push_delivery_log').insert({
             subscription_id: sub.id,
-            user_id: targetUserId,
+            user_id: sub.user_id,
             notification_id: notificationId,
             status: 'sent',
             status_code: 201,
@@ -199,7 +270,7 @@ Deno.serve(async (req) => {
           }
           await supabase.from('push_delivery_log').insert({
             subscription_id: sub.id,
-            user_id: targetUserId,
+            user_id: sub.user_id,
             notification_id: notificationId,
             status: 'failed',
             status_code: code,

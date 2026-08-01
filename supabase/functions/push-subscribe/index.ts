@@ -4,10 +4,13 @@
  * Auth resolution (in priority order):
  *  - subscriber_type=client_portal  → x-portal-session-token / portal_session_token
  *  - subscriber_type=finance_portal → x-finance-session-token / finance_session_token
+ *  - subscriber_type=solicitor_portal → solicitor portal session credential
+ *    (hashed lookup; solicitor_portal_sessions never stores a plaintext token)
  *  - subscriber_type=staff (default) → standard Bearer JWT via verifyAuth
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { verifyAuth } from '../_shared/auth.ts';
+import { resolveSolicitorSession } from '../_shared/solicitorPortalAuth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
@@ -18,7 +21,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-type SubscriberType = 'staff' | 'client_portal' | 'finance_portal';
+type SubscriberType = 'staff' | 'client_portal' | 'finance_portal' | 'solicitor_portal';
 
 function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -102,7 +105,15 @@ Deno.serve(async (req) => {
     }
 
     let userId: string | null = null;
-    if (subscriber_type === 'client_portal') {
+    if (subscriber_type === 'solicitor_portal') {
+      // Solicitor sessions are stored hashed, so reuse the portal's own
+      // resolver rather than re-implementing the lookup here.
+      const session = await resolveSolicitorSession(supabase, req.headers, body);
+      if (!session.ok || !session.user?.id) {
+        return jsonResponse({ success: false, error: session.error ?? 'Invalid solicitor session' }, session.status || 401);
+      }
+      userId = session.user.id;
+    } else if (subscriber_type === 'client_portal') {
       const r = await resolveClientPortalUser(supabase, req.headers, body);
       if (!r.userId) return jsonResponse({ error: r.error || 'Unauthorized' }, 401);
       userId = r.userId;
