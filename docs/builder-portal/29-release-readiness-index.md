@@ -44,10 +44,10 @@ describes local runs would misrepresent what was proven.
 
 | # | Blocker | Effect |
 |---|---|---|
-| **B1** | Builder documents are neither quarantined nor malware-scanned | Blocks cutover mechanically, via required readiness evidence |
+| ~~B1~~ | ~~Builder documents are neither quarantined nor malware-scanned~~ | **RESOLVED** — `20260810000200`. Now gated on the scanner provider secrets instead |
 | **B2** | Builder notifications have no outbox, retry or dead-letter path | Accepted while no Builder notification leaves the database (R3) |
 | **B3** | 19 duplicate migration versions repository-wide | Pre-existing; forces an explicit deployment list instead of `db push` |
-| **B4** | Builder migrations inseparable from 19 unrelated pending migrations | Requires a separately-approved prerequisite wave |
+| ~~B4~~ | ~~Builder migrations inseparable from 19 unrelated pending migrations~~ | **NOT TRUE** — read-only inspection confirms every Builder dependency already exists in production. Builder deploys standalone |
 | **R2** | No staging environment | Steps 16–21 blocked; the cookie/origin model is unproven |
 
 ## Where execution resumes

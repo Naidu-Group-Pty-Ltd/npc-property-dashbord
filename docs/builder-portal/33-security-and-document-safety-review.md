@@ -148,21 +148,42 @@ Recorded as **R2**.
 | Immutable document records | ✅ | ✅ |
 | Immutable document versions | ✅ `trg_builder_document_versions_immutable`, `UNIQUE (document_id, version_number)` | ✅ |
 | Private storage | ✅ bucket `builder-documents`, path prefix `documents/`, `storage_path` stripped from every response | ✅ |
-| Upload quarantine | ⛔ **absent** | ✅ |
-| Malware scanning | ⛔ **absent** | ✅ `malware_scan_status` |
-| Processing states | ⛔ **absent** | ✅ `lifecycle_status` |
-| Safe download states | ⛔ **absent** | ✅ |
+| Upload quarantine | ✅ **fixed** — default `quarantined` | ✅ |
+| Malware scanning | ✅ **fixed** — shared `scanDocument()` | ✅ `malware_scan_status` |
+| Processing states | ✅ **fixed** — `lifecycle_status` | ✅ `lifecycle_status` |
+| Safe download states | ✅ **fixed** — only `available` + `clean` | ✅ |
 | Signed URL expiry | ✅ 300 s | ✅ |
 | Permission re-check at download | ✅ re-resolved per request, not at upload | ✅ |
 | Document acknowledgement | ➖ no privilege obligation in the Builder domain | ✅ |
 | Audit evidence | ✅ `builder_document_downloaded` | ✅ |
-| Retention metadata | ⛔ absent | ✅ |
+| Retention metadata | ⛔ absent — not required for release | ✅ |
 | Legal hold | ➖ not applicable | ✅ |
 
-### ⛔ B1 — release blocker
+### ✅ B1 — RESOLVED (`20260810000200_builder_document_quarantine_scanning.sql`)
 
-`builder_document_versions` has **no `malware_scan_status` and no `lifecycle_status`**. An upload
-is immediately downloadable by anyone holding a grant, with nothing having scanned it.
+**Was:** `builder_document_versions` had no `malware_scan_status` and no `lifecycle_status`. An
+upload was immediately downloadable by anyone holding a grant, with nothing having scanned it —
+and `builder_add_document_version` set `current_version_id` on insert, so an unscanned upload
+instantly became the version every user of that document saw.
+
+**Now:** the shared Phase 9 pipeline is generalised to Builder.
+`document_processing_jobs` carries a `portal` discriminator; `builder-document-processor` reuses
+the same `_shared/immutableDocuments.ts` scanner, MIME sniffing and hashing as
+`legal-document-processor`; `builder_add_document_version` creates `upload_pending` and does not
+publish; only `complete_builder_document_processing` promotes a version, and only on a clean
+verdict.
+
+Fail-closed by construction — a CHECK constraint makes `lifecycle_status='available'`
+unrepresentable without `malware_scan_status='clean'`, and `scanDocument()` returns `error` when
+the provider is unconfigured, so an unconfigured environment quarantines everything.
+
+The readiness checks were **not** weakened. `builder_document_malware_scanning` now passes because
+the capability exists, and `no_unsafe_builder_documents` now measures real state — an infected or
+unscanned document still makes `ready: false`, proven live.
+
+**Remaining dependency:** the scanner provider secrets. Without
+`LEGAL_DOCUMENT_MALWARE_SCANNER_URL` / `_SECRET` every document stays quarantined and readiness
+stays false. That is the design working, not a defect.
 
 Per the task, absent required malware scanning is a release blocker. It is enforced as evidence
 rather than prose: `get_builder_cutover_readiness` emits
