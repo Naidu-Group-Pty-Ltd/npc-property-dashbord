@@ -97,7 +97,7 @@ async function synthesizeWithAI(period: Period, windowLabel: string, updates: an
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
-  const correlationId = marketCorrelationId(req.headers);
+  let correlationId = marketCorrelationId(req.headers);
   cors['x-correlation-id'] = correlationId;
   const requestStartedAt = Date.now();
   const json = jsonWithCors(cors);
@@ -122,6 +122,8 @@ Deno.serve(async (req) => {
   const rawBody = await req.text();
   let payload: any = {};
   try { payload = JSON.parse(rawBody); } catch {}
+  correlationId = marketCorrelationId(req.headers, payload);
+  cors['x-correlation-id'] = correlationId;
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -172,6 +174,7 @@ Deno.serve(async (req) => {
       "id, title, category, segments, impact_level, geography, source_name, source_url, source_published_at, ai_summary, why_it_matters, citation_urls, ingested_at",
     )
     .eq("status", "published")
+    .is("archived_at", null)
     .gte("ingested_at", start.toISOString())
     .lt("ingested_at", end.toISOString())
     .order("ingested_at", { ascending: false })
@@ -184,8 +187,8 @@ Deno.serve(async (req) => {
   const [{ count:candidateCount, error:candidateError }, { data:lastPublished, error:lastPublishedError }] = await Promise.all([
     // Shadow-mode rows are also candidates, but they are validation evidence rather
     // than work awaiting an operator decision, so they are excluded from this count.
-    sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status','candidate').eq('visibility','public').gte('ingested_at',start.toISOString()).lt('ingested_at',end.toISOString()),
-    sb.from('market_updates').select('source_published_at,ingested_at').eq('status','published').order('ingested_at',{ascending:false}).limit(1).maybeSingle(),
+    sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status','candidate').eq('visibility','public').is('archived_at',null).gte('ingested_at',start.toISOString()).lt('ingested_at',end.toISOString()),
+    sb.from('market_updates').select('source_published_at,ingested_at').eq('status','published').is('archived_at',null).order('ingested_at',{ascending:false}).limit(1).maybeSingle(),
   ]);
   if (candidateError || lastPublishedError) {
     await sb.from('market_digests').update({status:'failed',completed_at:new Date().toISOString(),error_code:'digest_context_failed',safe_error_message:'Digest context could not be loaded.'}).eq('period',period).eq('period_key',periodKey);

@@ -245,6 +245,7 @@ Deno.serve(async (req) => {
   let q = sb.from('market_updates')
     .select('id,title,source_name,source_url,source_published_at,category,segments,geography,impact_level,ai_summary,why_it_matters,key_points,citation_urls')
     .eq('status', 'published')
+    .is('archived_at', null)
     .order('source_published_at', { ascending: false, nullsFirst: false })
     .limit(updateIds.length ? updateIds.length : 200);
   if (updateIds.length) q = q.in('id', updateIds);
@@ -264,7 +265,8 @@ Deno.serve(async (req) => {
       const tsQuery = terms.slice(0, 8).join(' | ');
       let lexicalQuery = sb.from('market_updates')
         .select('id,title,source_name,source_url,source_published_at,category,segments,geography,impact_level,ai_summary,why_it_matters,key_points,citation_urls')
-        .eq('status', 'published');
+        .eq('status', 'published')
+        .is('archived_at', null);
       if (segment) lexicalQuery = lexicalQuery.contains('segments', [segment]);
       const { data: lex } = await lexicalQuery
         .textSearch('search_tsv', tsQuery, { type: 'websearch', config: 'english' })
@@ -284,7 +286,8 @@ Deno.serve(async (req) => {
   if (!error && (!data || data.length === 0) && !updateIds.length) {
     let fallbackQuery = sb.from('market_updates')
       .select('id,title,source_name,source_url,source_published_at,category,segments,geography,impact_level,ai_summary,why_it_matters,key_points,citation_urls')
-      .eq('status', 'published');
+      .eq('status', 'published')
+      .is('archived_at', null);
     if (segment) fallbackQuery = fallbackQuery.contains('segments',[segment]);
     const fallback = await fallbackQuery.order('source_published_at', { ascending: false, nullsFirst: false }).limit(80);
     if (fallback.error) error = fallback.error;
@@ -301,6 +304,7 @@ Deno.serve(async (req) => {
       const anchorRows = await sb.from('market_updates')
         .select('id,title,source_name,source_url,source_published_at,category,segments,geography,impact_level,ai_summary,why_it_matters,key_points,citation_urls')
         .eq('status','published')
+        .is('archived_at',null)
         .in('id', missing);
       if (anchorRows.error) return json({ error:'Conversation sources could not be loaded.', code:'retrieval_failed', retryable:true, correlation_id:auth.correlationId },503);
       const permittedAnchors = segment ? (anchorRows.data ?? []).filter((row:any) => Array.isArray(row.segments) && row.segments.includes(segment)) : (anchorRows.data ?? []);

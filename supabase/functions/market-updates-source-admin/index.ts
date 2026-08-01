@@ -32,7 +32,7 @@ async function isAdminOrSuperadmin(sb: any, userId: string): Promise<boolean> {
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
-  const correlationId=marketCorrelationId(req.headers);
+  let correlationId=marketCorrelationId(req.headers);
   cors['x-correlation-id']=correlationId;
   const json = jsonWithCors(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -61,6 +61,8 @@ Deno.serve(async (req) => {
 
   let body: any = {};
   try { body = req.method === "GET" ? {} : await req.json(); } catch { /* noop */ }
+  correlationId=marketCorrelationId(req.headers, body);
+  cors['x-correlation-id']=correlationId;
   const action = (body.action ?? new URL(req.url).searchParams.get("action") ?? "list") as string;
   logMarketEvent('info',{function:'market-updates-source-admin',stage:'request',correlation_id:correlationId,status:'started',action});
 

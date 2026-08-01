@@ -181,7 +181,7 @@ async function classifyWithAI(item: any, source: any, runDeadlineAt: number) {
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
-  const correlationId = marketCorrelationId(req.headers);
+  let correlationId = marketCorrelationId(req.headers);
   cors['x-correlation-id'] = correlationId;
   const requestStartedAt = Date.now();
   cors["Access-Control-Allow-Headers"] += ", x-cron-secret";
@@ -201,6 +201,8 @@ Deno.serve(async (req) => {
   const rawBody = boundedBody.raw;
   let payload: any = {};
   try { payload = JSON.parse(rawBody); } catch {}
+  correlationId = marketCorrelationId(req.headers, payload);
+  cors['x-correlation-id'] = correlationId;
 
   const secret = Deno.env.get("MARKET_INGESTION_CRON_SECRET");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
