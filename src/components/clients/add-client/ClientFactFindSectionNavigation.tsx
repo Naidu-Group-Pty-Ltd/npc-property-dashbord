@@ -41,17 +41,17 @@ export function ClientFactFindSectionNavigation({ value, onChange }: { value: Cl
         type="button"
         role="tab"
         aria-label={section.label}
+        title={`${section.label} — ${section.description}`}
         aria-selected={selected}
         tabIndex={selected ? 0 : -1}
         onClick={() => onChange(section.value)}
-        className="group flex min-h-14 min-w-0 items-center gap-2.5 rounded-xl border border-transparent bg-muted/40 px-3 text-left text-foreground transition-[background-color,border-color,color,box-shadow] hover:border-brand-300/35 hover:bg-brand-300/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card aria-selected:border-brand-300 aria-selected:bg-brand-300 aria-selected:text-primary-foreground aria-selected:shadow-md"
+        className="group flex min-h-12 min-w-0 items-center gap-2 rounded-xl border border-transparent bg-muted/40 px-2.5 py-1.5 text-left text-foreground transition-[background-color,border-color,color,box-shadow] hover:border-brand-300/35 hover:bg-brand-300/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card aria-selected:border-brand-300 aria-selected:bg-brand-300 aria-selected:text-primary-foreground aria-selected:shadow-md"
       >
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-background text-muted-foreground shadow-sm group-hover:text-foreground group-aria-selected:border-primary-foreground/30 group-aria-selected:bg-primary-foreground/15 group-aria-selected:text-primary-foreground">
-          <Icon className="h-4 w-4" aria-hidden="true" />
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-muted-foreground shadow-sm group-hover:text-foreground group-aria-selected:border-primary-foreground/30 group-aria-selected:bg-primary-foreground/15 group-aria-selected:text-primary-foreground">
+          <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
         <span className="min-w-0">
-          <span className="block break-words text-xs font-bold leading-4 sm:text-sm">{section.label}</span>
-          <span className="hidden text-[11px] leading-4 opacity-80 xl:block">{section.description}</span>
+          <span className="block break-words text-xs font-bold leading-4 sm:text-[13px]">{section.label}</span>
         </span>
       </button>;
     })}
