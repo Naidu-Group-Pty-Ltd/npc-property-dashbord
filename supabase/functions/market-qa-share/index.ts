@@ -81,7 +81,7 @@ Deno.serve(async (req) => {
 
       const ids: string[] = (question.used_ids ?? question.retrieved_ids ?? []) as string[];
       const { data: sources } = ids.length
-        ? await sb.from('market_updates').select('id, title, summary, source_url, source_name, published_at, impact_level').in('id', ids)
+        ? await sb.from('market_updates').select('id, title, summary, source_url, source_name, published_at, impact_level').in('id', ids).is('archived_at', null)
         : { data: [] as unknown[] };
 
       // Fire-and-forget view-count bump.

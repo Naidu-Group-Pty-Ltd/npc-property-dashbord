@@ -63,6 +63,7 @@ Deno.serve(async (req) => {
         .from('market_updates')
         .select('id, title, summary, why_it_matters')
         .eq('visibility', 'public')
+        .is('archived_at', null)
         .is('embedding', null)
         .order('created_at', { ascending: false })
         .limit(BATCH_SIZE);
@@ -88,7 +89,8 @@ Deno.serve(async (req) => {
             embedding: `[${vec.join(',')}]`,
             embedding_generated_at: new Date().toISOString(),
           })
-          .eq('id', rows[j].id);
+          .eq('id', rows[j].id)
+          .is('archived_at', null);
         if (upErr) {
           stats.failed += 1;
           stats.errors.push(`row ${rows[j].id}: ${upErr.message}`);

@@ -69,6 +69,9 @@ function SourceRow({ source, metric }: { source: MarketSource; metric: MarketSha
             {source.source_authority ? titleCase(source.source_authority) : titleCase(source.reliability_tier)}
             {source.adapter_type ? ` · ${source.adapter_type.replace(/_/g, ' ')}` : ''}
           </p>
+          <p className="mt-1 min-w-0 whitespace-normal break-words text-[11px] text-muted-foreground" title={source.geography}>
+            <span className="font-medium text-foreground/80">Geography:</span> {source.geography || 'Australia'}
+          </p>
         </div>
         {mode === 'live' && (
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
@@ -188,7 +191,8 @@ export function MarketSourceCoveragePanel({ shadowMetrics }: { shadowMetrics?: M
         )}
 
         {expanded && (
-          <div className="grid gap-4 lg:grid-cols-3">
+          <div className="min-h-[28rem] max-h-[70dvh] overflow-y-auto overflow-x-hidden overscroll-contain rounded-xl border border-border/60 bg-background/20 p-3 pb-6" tabIndex={0} aria-label="Expanded source coverage">
+          <div className="grid gap-4 xl:grid-cols-3">
             {INGEST_MODES.map((mode) => (
               <section key={mode} className="min-w-0 space-y-2">
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -207,6 +211,7 @@ export function MarketSourceCoveragePanel({ shadowMetrics }: { shadowMetrics?: M
                 )}
               </section>
             ))}
+          </div>
           </div>
         )}
 
