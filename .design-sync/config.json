@@ -1,0 +1,13 @@
+{
+  "projectId": "1a22a8b2-f3be-43e1-8011-67ce30ab472b",
+  "shape": "package",
+  "pkg": "npc-property-dashboard-ui",
+  "globalName": "NPCUI",
+  "buildCmd": "node .design-sync/build-ds-pkg.mjs",
+  "entry": ".design-sync/.cache/ds-pkg/entry.mjs",
+  "srcDir": "src/components/ui",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": "styles.css",
+  "docsDir": "docs",
+  "guidelinesGlob": "guidelines/*.md"
+}
