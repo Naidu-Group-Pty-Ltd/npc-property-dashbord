@@ -34,7 +34,8 @@
 -- Two service quirks shape the configuration: `$orderby` cannot be combined with
 -- `$filter`, and a `$filter` on makingDate returns zero rows, so the request asks
 -- only for the most recent titles and the subject-matter screen runs in the
--- adapter. www.legislation.gov.au is added to listing_urls because the public
+-- adapter, and `$top` is capped at 100 by the service. www.legislation.gov.au is
+-- added to listing_urls because the public
 -- document URL must pass the same host allow-list as every other fetched URL.
 update public.market_sources
 set ingest_mode = 'shadow',
@@ -45,7 +46,7 @@ set ingest_mode = 'shadow',
     adapter_config = jsonb_build_object(
       'resource', 'Titles',
       'order_by', 'makingDate',
-      'fetch_limit', 200,
+      'fetch_limit', 100,
       'collections', jsonb_build_array('act', 'legislativeinstrument', 'notifiableinstrument'),
       'include_keywords', jsonb_build_array(
         'credit', 'consumer credit', 'banking', 'housing', 'home loan', 'mortgage',

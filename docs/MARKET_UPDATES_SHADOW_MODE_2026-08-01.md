@@ -68,9 +68,19 @@ unauthenticated. Two service quirks, verified live on 2026-08-01, shape it:
 - `$orderby` cannot be combined with `$filter` (HTTP error), and a `$filter` on
   `makingDate` silently returns zero rows. So the request carries ordering only
   and the subject-matter screen runs in the adapter.
+- `$top` is capped at 100. Asking for more fails the whole request rather than
+  being truncated — `{"message":"The limit of '100' for Top query has been
+  exceeded"}` — so both the adapter ceiling and the registry's `fetch_limit` are
+  pinned to the service's own limit.
 - The API returns registry metadata, not article text, so the excerpt is composed
   from the returned fields rather than extracted from a document — which matches
   the metadata-only extraction policy already recorded for this source.
+
+Screened against live data on 2026-08-01, the 100 most recently made titles
+yielded 8 in-scope instruments — Housing Australia Investment Mandate directions,
+a banking exemption, Financial Sector (Shareholdings) approvals and a
+superannuation amendment. That ratio is exactly what the shadow window exists to
+confirm before this source is promoted.
 
 Without a subject-matter screen the Register would return mostly pharmaceutical
 listings and defence determinations, so an empty `include_keywords` list is

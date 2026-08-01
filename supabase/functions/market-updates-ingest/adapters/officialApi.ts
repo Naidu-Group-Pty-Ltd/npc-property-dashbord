@@ -35,9 +35,12 @@ const ua = () => {
 
 const itemCap = () => Number(Deno.env.get('MARKET_UPDATES_MAX_ITEMS_PER_SOURCE') || 40);
 
-/** How many rows to ask for before subject-matter filtering. */
-const DEFAULT_FETCH_LIMIT = 200;
-const MAX_FETCH_LIMIT = 500;
+// How many rows to ask for before subject-matter filtering. The service rejects
+// `$top` above 100 outright ("The limit of '100' for Top query has been
+// exceeded"), so the ceiling is the service's, not a guess — asking for more
+// fails the whole fetch rather than being silently truncated.
+const DEFAULT_FETCH_LIMIT = 100;
+const MAX_FETCH_LIMIT = 100;
 
 /** Public document URL for a register title, e.g. F2026L01007. */
 const PUBLIC_BASE = 'https://www.legislation.gov.au';
