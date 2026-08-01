@@ -18206,7 +18206,8 @@ export type Database = {
       }
       internal_messages: {
         Row: {
-          body: string
+          attachments: Json
+          body: string | null
           created_at: string
           id: string
           is_system: boolean
@@ -18215,7 +18216,8 @@ export type Database = {
           thread_id: string
         }
         Insert: {
-          body: string
+          attachments?: Json
+          body?: string | null
           created_at?: string
           id?: string
           is_system?: boolean
@@ -18224,7 +18226,8 @@ export type Database = {
           thread_id: string
         }
         Update: {
-          body?: string
+          attachments?: Json
+          body?: string | null
           created_at?: string
           id?: string
           is_system?: boolean
