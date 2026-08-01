@@ -144,13 +144,28 @@ ALTER TABLE public.cross_portal_cutover_approvals
 -- builder_portal_activity_log is the trusted Builder audit trail and its
 -- entity_type CHECK predates the release-control plane.
 -- ===========================================================================
+-- The full list as of 20260809000000, PLUS the two release-control types. Each
+-- domain migration restates the whole enumeration, so this one must carry every
+-- earlier value forward — dropping the constraint and re-adding a short list
+-- would silently break audit writes for every domain that came before.
 ALTER TABLE public.builder_portal_activity_log
   DROP CONSTRAINT IF EXISTS builder_portal_activity_log_entity_type_check;
 ALTER TABLE public.builder_portal_activity_log
   ADD CONSTRAINT builder_portal_activity_log_entity_type_check
   CHECK (entity_type IS NULL OR entity_type IN
-    ('organisation','portal_user','membership','membership_permissions','session',
-     'rollout','rollout_approval'));
+    ('organisation', 'portal_user', 'membership', 'membership_permissions', 'session',
+     'development', 'project', 'project_party', 'project_access',
+     'stage', 'building', 'lot', 'unit', 'unit_price', 'unit_hold',
+     'reservation', 'allocation',
+     'transaction', 'transaction_party', 'transaction_case_link',
+     'construction_case', 'construction_stage', 'milestone',
+     'progress_update', 'photograph',
+     'variation', 'variation_approval', 'progress_claim',
+     'inspection', 'defect', 'practical_completion', 'handover', 'warranty_claim',
+     'document', 'document_version', 'document_grant',
+     'conversation', 'message', 'task', 'task_assignment', 'notification',
+     'organisation_settings', 'user_preferences',
+     'rollout', 'rollout_approval'));
 
 -- ===========================================================================
 -- 5. Builder transition graph

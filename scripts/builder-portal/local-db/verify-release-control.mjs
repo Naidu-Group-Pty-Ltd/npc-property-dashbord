@@ -46,6 +46,7 @@ const MIGRATIONS = [
   '20260809000000_builder_portal_workspace.sql',
   '20260810000000_builder_portal_release_control_plane.sql',
   '20260810000100_builder_portal_onboarding_tour.sql',
+  '20260810000200_builder_document_quarantine_scanning.sql',
 ];
 
 const FEATURE = 'builder_portal_identity_v1';
@@ -297,15 +298,15 @@ expectEqual('legacy backfill is explicitly not applicable',
 expectEqual('not-applicable checks are never marked required',
   `SELECT count(*) FROM jsonb_array_elements((get_builder_cutover_readiness('${ORG_A}','${FEATURE}'))->'checks') c
    WHERE c->>'status'='not_applicable' AND (c->>'required')::boolean`, 0);
-expectEqual('absent builder document malware scanning is a required failing check',
+expectEqual('builder document malware scanning is now installed and passes',
   `SELECT c->>'status' FROM jsonb_array_elements((get_builder_cutover_readiness('${ORG_A}','${FEATURE}'))->'checks') c
-   WHERE c->>'key'='builder_document_malware_scanning'`, 'fail');
+   WHERE c->>'key'='builder_document_malware_scanning'`, 'pass');
 expectEqual('the document blocker is marked required',
   `SELECT (c->>'required') FROM jsonb_array_elements((get_builder_cutover_readiness('${ORG_A}','${FEATURE}'))->'checks') c
    WHERE c->>'key'='builder_document_malware_scanning'`, 'true');
-expectEqual('unknown document scan evidence fails closed rather than passing',
+expectEqual('unsafe-document evidence is now real state, not unknown',
   `SELECT c->>'status' FROM jsonb_array_elements((get_builder_cutover_readiness('${ORG_A}','${FEATURE}'))->'checks') c
-   WHERE c->>'key'='no_unsafe_builder_documents'`, 'unknown');
+   WHERE c->>'key'='no_unsafe_builder_documents'`, 'pass');
 expectEqual('the observation window has not completed',
   `SELECT c->>'status' FROM jsonb_array_elements((get_builder_cutover_readiness('${ORG_A}','${FEATURE}'))->'checks') c
    WHERE c->>'key'='minimum_stable_window_complete'`, 'fail');
@@ -532,6 +533,135 @@ expectEqual('operational health reports the builder portal',
   `SELECT (get_builder_operational_health('${ORG_A}'))->>'portal'`, 'builder');
 expectEqual('operational health returns an alert list',
   `SELECT jsonb_typeof((get_builder_operational_health('${ORG_A}'))->'open_alerts')`, 'array');
+
+// ===========================================================================
+// 16. Document quarantine and malware scanning (B1)
+// ===========================================================================
+console.log('\nDocument quarantine and scanning');
+const DOC_PROJ = '88888888-8888-8888-8888-888888888888';
+const DOC = '99999999-9999-9999-9999-999999999999';
+run(['-c', `
+  INSERT INTO builder_projects(id, development_id, developer_organisation_id, name, status)
+  VALUES ('${DOC_PROJ}', NULL, '${ORG_A}', 'Doc Test Project', 'under_construction');
+`]);
+
+// A document is scoped to a project.
+run(['-c', `
+  INSERT INTO builder_documents(id, organisation_id, scope_type, scope_id, title, document_type)
+  VALUES ('${DOC}', '${ORG_A}', 'project', '${DOC_PROJ}', 'Site plan', 'plan');
+`]);
+
+const addVersion = (path, mime) => query(`
+  SELECT (builder_add_document_version(
+    NULL, 'builder_user', NULL, '${DOC}',
+    jsonb_build_object('storage_path','${path}','file_name','plan.pdf','content_type','${mime}'),
+    'upload')).id`);
+
+const V1 = addVersion('documents/plan-v1.pdf', 'application/pdf');
+
+expectEqual('a new upload starts upload_pending, never available',
+  `SELECT lifecycle_status FROM builder_document_versions WHERE id='${V1}'`, 'upload_pending');
+expectEqual('a new upload is unscanned',
+  `SELECT malware_scan_status FROM builder_document_versions WHERE id='${V1}'`, 'pending');
+expectEqual('an unscanned upload does NOT become the current version',
+  `SELECT COALESCE(current_version_id::text,'null') FROM builder_documents WHERE id='${DOC}'`, 'null');
+expectEqual('an unscanned upload is not downloadable',
+  `SELECT builder_document_version_is_downloadable('${V1}')::text`, 'false');
+
+run(['-c', `SELECT builder_register_uploaded_document_version('${V1}', NULL, 'builder_user')`]);
+expectEqual('registering the upload quarantines it',
+  `SELECT lifecycle_status FROM builder_document_versions WHERE id='${V1}'`, 'quarantined');
+expectEqual('registering enqueues exactly one builder scan job',
+  `SELECT count(*) FROM document_processing_jobs WHERE portal='builder' AND builder_document_version_id='${V1}'`, 1);
+expectEqual('quarantining is audited',
+  `SELECT count(*) FROM builder_portal_activity_log
+   WHERE action='builder_document_version_quarantined' AND entity_id='${V1}'`, 1);
+run(['-c', `SELECT builder_register_uploaded_document_version('${V1}', NULL, 'builder_user')`]);
+expectEqual('re-registering is idempotent and does not double-queue',
+  `SELECT count(*) FROM document_processing_jobs WHERE portal='builder' AND builder_document_version_id='${V1}'`, 1);
+expectEqual('a quarantined version is still not downloadable',
+  `SELECT builder_document_version_is_downloadable('${V1}')::text`, 'false');
+
+// The worker claims through the portal-aware command.
+const claimed = query(`SELECT job_id FROM claim_builder_document_processing_jobs('worker-1', 10) LIMIT 1`);
+expectEqual('the builder worker claims its own job', `SELECT '${claimed}' <> ''`, 't');
+expectEqual('claiming a builder job never returns a solicitor job',
+  `SELECT count(*) FROM document_processing_jobs WHERE portal='solicitor' AND status='processing'`, 0);
+
+// Infected verdict.
+const V2 = addVersion('documents/plan-v2.pdf', 'application/pdf');
+run(['-c', `SELECT builder_register_uploaded_document_version('${V2}', NULL, 'builder_user')`]);
+const job2 = query(`SELECT id FROM document_processing_jobs WHERE builder_document_version_id='${V2}'`);
+run(['-c', `SELECT complete_builder_document_processing('${job2}','worker-1',
+  repeat('a',64), 'application/pdf', 1024, 'infected', 'test-scanner', 'scan-2',
+  '{"threats":["EICAR"]}'::jsonb, 'malware_detected')`]);
+expectEqual('an infected version is rejected',
+  `SELECT lifecycle_status FROM builder_document_versions WHERE id='${V2}'`, 'rejected');
+expectEqual('an infected version is never downloadable',
+  `SELECT builder_document_version_is_downloadable('${V2}')::text`, 'false');
+expectEqual('an infected version never becomes current',
+  `SELECT COALESCE(current_version_id::text,'null') FROM builder_documents WHERE id='${DOC}'`, 'null');
+expectEqual('malware detection is audited',
+  `SELECT count(*) FROM builder_portal_activity_log
+   WHERE action='builder_document_malware_detected' AND entity_id='${V2}'`, 1);
+
+// Scanner error keeps it quarantined and retryable.
+const V3 = addVersion('documents/plan-v3.pdf', 'application/pdf');
+run(['-c', `SELECT builder_register_uploaded_document_version('${V3}', NULL, 'builder_user')`]);
+const job3 = query(`SELECT id FROM document_processing_jobs WHERE builder_document_version_id='${V3}'`);
+run(['-c', `SELECT complete_builder_document_processing('${job3}','worker-1',
+  '', NULL, 0, 'error', 'unconfigured', NULL, '{}'::jsonb, 'malware_scanner_not_configured')`]);
+expectEqual('a scanner error leaves the version quarantined, not available',
+  `SELECT lifecycle_status FROM builder_document_versions WHERE id='${V3}'`, 'quarantined');
+expectEqual('a scanner error is not downloadable',
+  `SELECT builder_document_version_is_downloadable('${V3}')::text`, 'false');
+expectEqual('a scanner error leaves the job retryable',
+  `SELECT status FROM document_processing_jobs WHERE id='${job3}'`, 'failed');
+
+// Clean verdict is the ONLY path to available.
+const job1 = query(`SELECT id FROM document_processing_jobs WHERE builder_document_version_id='${V1}'`);
+run(['-c', `SELECT complete_builder_document_processing('${job1}','worker-1',
+  repeat('b',64), 'application/pdf', 2048, 'clean', 'test-scanner', 'scan-1', '{}'::jsonb, NULL)`]);
+expectEqual('a clean version becomes available',
+  `SELECT lifecycle_status FROM builder_document_versions WHERE id='${V1}'`, 'available');
+expectEqual('a clean version is downloadable',
+  `SELECT builder_document_version_is_downloadable('${V1}')::text`, 'true');
+expectEqual('only a clean version becomes current',
+  `SELECT current_version_id FROM builder_documents WHERE id='${DOC}'`, V1);
+expectEqual('a passed scan is audited',
+  `SELECT count(*) FROM builder_portal_activity_log
+   WHERE action='builder_document_scan_passed' AND entity_id='${V1}'`, 1);
+expectEqual('the job is marked succeeded',
+  `SELECT status FROM document_processing_jobs WHERE id='${job1}'`, 'succeeded');
+
+// The invariant nothing may bypass.
+expectRejection('a version cannot be marked available without a clean scan',
+  `UPDATE builder_document_versions SET lifecycle_status='available' WHERE id='${V3}'`,
+  'builder_document_versions_available_requires_clean');
+expectRejection('a scanned version cannot have its bytes swapped',
+  `UPDATE builder_document_versions SET storage_path='documents/other.pdf' WHERE id='${V1}'`,
+  'BUILDER_DOCUMENT_VERSION_IMMUTABLE');
+expectRejection('a document version cannot be deleted',
+  `DELETE FROM builder_document_versions WHERE id='${V1}'`,
+  'BUILDER_DOCUMENT_VERSION_IMMUTABLE');
+
+expectEqual('readiness now reports unsafe documents present',
+  `SELECT c->>'status' FROM jsonb_array_elements((get_builder_cutover_readiness('${ORG_A}','${FEATURE}'))->'checks') c
+   WHERE c->>'key'='no_unsafe_builder_documents'`, 'fail');
+expectEqual('an infected document blocks readiness',
+  `SELECT (get_builder_cutover_readiness('${ORG_A}','${FEATURE}'))->>'ready'`, 'false');
+
+expectEqual('scan health surfaces the verdict mix',
+  `SELECT clean::text || '/' || infected::text || '/' || errored::text FROM builder_document_scan_health`,
+  '1/1/1');
+
+expectEqual('the scanning functions are not executable by anon',
+  `SELECT has_function_privilege('anon', p.oid, 'EXECUTE')::text FROM pg_proc p
+   JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='complete_builder_document_processing'`, 'false');
+expectRejection('the browser cannot read the scan queue directly',
+  `SET LOCAL ROLE authenticated; SELECT count(*) FROM public.document_processing_jobs;`,
+  'permission denied');
 
 // ===========================================================================
 // Summary

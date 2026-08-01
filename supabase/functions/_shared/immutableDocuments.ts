@@ -23,11 +23,11 @@ export function detectDocumentMime(bytes: Uint8Array): { mime: string | null; ex
   return { mime:null, executable:false, reason:'unknown_content_signature' };
 }
 
-export async function sha256Hex(bytes: Uint8Array): Promise<string> {
+export async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
   const digest=await crypto.subtle.digest('SHA-256',bytes); return hex(new Uint8Array(digest));
 }
 
-export async function scanDocument(bytes: Uint8Array, sha256: string): Promise<{ status:'clean'|'infected'|'error'; provider:string; reference:string|null; details:Record<string,unknown>; error?:string }> {
+export async function scanDocument(bytes: Uint8Array<ArrayBuffer>, sha256: string): Promise<{ status:'clean'|'infected'|'error'; provider:string; reference:string|null; details:Record<string,unknown>; error?:string }> {
   const endpoint=Deno.env.get('LEGAL_DOCUMENT_MALWARE_SCANNER_URL'); const secret=Deno.env.get('LEGAL_DOCUMENT_MALWARE_SCANNER_SECRET');
   if(!endpoint||!secret)return {status:'error',provider:'unconfigured',reference:null,details:{reason:'scanner_not_configured'},error:'malware_scanner_not_configured'};
   const controller=new AbortController(); const timeout=setTimeout(()=>controller.abort(),30_000);

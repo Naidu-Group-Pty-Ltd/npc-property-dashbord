@@ -218,6 +218,71 @@ CREATE TABLE IF NOT EXISTS public.cross_portal_reconciliation_runs (
   initiated_by uuid
 );
 
+-- ---------------------------------------------------------------------------
+-- Shared immutable-document processing (Solicitor Phase 9).
+--
+-- Reproduced here because the Builder document-safety migration GENERALISES
+-- this queue rather than forking it, exactly as the rollout migration
+-- generalises cross_portal_firm_rollouts. Column shape verified against the
+-- live production table so the fixture cannot drift from what deploys.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.document_records (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid,
+  legal_matter_id uuid,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.document_versions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  document_record_id uuid NOT NULL REFERENCES public.document_records(id) ON DELETE CASCADE,
+  version_number integer NOT NULL,
+  storage_bucket text NOT NULL DEFAULT 'legal-matter-documents',
+  storage_path text NOT NULL,
+  declared_mime_type text,
+  declared_byte_size bigint,
+  malware_scan_status text NOT NULL DEFAULT 'pending'
+    CHECK (malware_scan_status IN ('pending','scanning','clean','infected','error','legacy_unverified')),
+  lifecycle_status text NOT NULL DEFAULT 'upload_pending'
+    CHECK (lifecycle_status IN ('upload_pending','quarantined','scanning','available','reviewed','superseded','retained','legal_hold','rejected')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (document_record_id, version_number)
+);
+
+CREATE TABLE IF NOT EXISTS public.document_processing_jobs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  document_version_id uuid NOT NULL UNIQUE REFERENCES public.document_versions(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued','processing','succeeded','failed','dead_lettered')),
+  attempts integer NOT NULL DEFAULT 0,
+  available_at timestamptz NOT NULL DEFAULT now(),
+  locked_at timestamptz,
+  locked_by text,
+  last_error text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- The Solicitor claim function, preserved verbatim so the Builder migration's
+-- "signature unchanged" assertion is exercised rather than skipped.
+CREATE OR REPLACE FUNCTION public.claim_document_processing_jobs(_worker_id text, _limit integer DEFAULT 10)
+RETURNS TABLE (job_id uuid, version_id uuid, storage_bucket text, storage_path text,
+               declared_mime_type text, declared_byte_size bigint)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fixture$
+BEGIN
+  RETURN QUERY
+  WITH claimed AS (
+    UPDATE public.document_processing_jobs j
+    SET status='processing', attempts=j.attempts+1, locked_by=_worker_id, locked_at=now(), updated_at=now()
+    WHERE j.id IN (SELECT j2.id FROM public.document_processing_jobs j2
+                   WHERE j2.status IN ('queued','failed') AND j2.attempts < 5
+                   ORDER BY j2.available_at FOR UPDATE SKIP LOCKED LIMIT COALESCE(_limit,10))
+    RETURNING j.id, j.document_version_id)
+  SELECT c.id, v.id, v.storage_bucket, v.storage_path, v.declared_mime_type, v.declared_byte_size
+  FROM claimed c JOIN public.document_versions v ON v.id = c.document_version_id;
+END $fixture$;
+
 INSERT INTO public.cross_portal_feature_definitions(feature_key,description,default_mode,legacy_removal_target) VALUES
  ('solicitor_matter_access_v2','Explicit matter-scoped authorization','cutover','Client-level Solicitor authorization and OR-merged permissions'),
  ('solicitor_cookie_sessions_v2','Hashed cookie-only Solicitor sessions','cutover','Plaintext Solicitor session columns'),

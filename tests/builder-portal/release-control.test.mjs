@@ -149,7 +149,20 @@ test('every rollout mutation writes trusted audit in its own transaction', () =>
 });
 
 test('the audit trail accepts the rollout entity types', () => {
-  assert.match(migration, /'rollout','rollout_approval'/);
+  assert.match(migration, /'rollout', 'rollout_approval'/);
+});
+
+test('extending the audit entity types carries every earlier domain forward', () => {
+  // Each domain migration restates the whole enumeration, so a migration that
+  // drops the constraint and re-adds a short list silently breaks audit writes
+  // for every domain that came before it. Regression guard: the release-control
+  // migration must still name the domain types it inherited.
+  for (const inherited of ['document_version', 'conversation', 'message', 'task',
+                           'notification', 'unit', 'transaction', 'construction_case',
+                           'organisation_settings', 'user_preferences']) {
+    assert.match(migration, new RegExp(`'${inherited}'`),
+      `the entity_type constraint dropped the inherited '${inherited}' value`);
+  }
 });
 
 test('audit is never best-effort inside the commands', () => {
