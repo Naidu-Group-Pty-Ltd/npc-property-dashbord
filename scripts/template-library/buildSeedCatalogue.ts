@@ -27,6 +27,8 @@ import {
   deriveEntryFacts,
   validateForPublish,
 } from '../../supabase/functions/_shared/templateLibraryCore.pure';
+import { takeOverflows } from './blocks';
+import { runningHeadFor, VOICES, type VoiceId } from './designSystem';
 import { SEED_TEMPLATES, type SeedTemplate } from './templates';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -50,9 +52,15 @@ const REPO = resolve(__dirname, '../..');
  * | Applied to production | File |
  * | --- | --- |
  * | yes — 12 templates | `20260801093000_seed_template_library.sql` |
- * | not yet — 40 templates | the one below |
+ * | maybe — 40 templates, pre-design-system | `20260802093000_seed_template_library_v2.sql` |
+ * | not yet — 40 templates in the NPC voices | the one below |
+ *
+ * v3 is a new file rather than an edit of v2 because the design-system rebuild
+ * changes every row, and v2's applied state is recorded in this comment rather
+ * than anywhere authoritative. A new file costs one replayed upsert on a fresh
+ * database and guarantees the redesign reaches one that already ran v2.
  */
-const MIGRATION = resolve(REPO, 'supabase/migrations/20260802093000_seed_template_library_v2.sql');
+const MIGRATION = resolve(REPO, 'supabase/migrations/20260803090000_seed_template_library_v3.sql');
 
 /** Postgres string literal, dollar-quoted so JSON never has to be escaped. */
 function sqlJson(value: unknown): string {
@@ -118,12 +126,64 @@ function validate(template: SeedTemplate): Problem[] {
     }
   });
 
+  // 5. The declared `style` must be the voice the template was actually built
+  //    in. The two are set in different places — `beginTemplate()` at the top
+  //    of the builder, `style` in the returned metadata — and if they drift the
+  //    library filters a user to "editorial" and hands back a technical layout.
+  //    Comparing the compiled display face catches it at build time.
+  const voice = VOICES[template.style as VoiceId];
+  if (!voice) {
+    problems.push({ template: label, message: `unknown style "${template.style}"` });
+  } else if (!template.schema.tokens.fonts.heading.startsWith(`${voice.display},`)) {
+    // Compares the leading family: the compiled value carries a generic
+    // fallback ("Playfair Display, serif").
+    problems.push({
+      template: label,
+      message: `style "${template.style}" expects the ${voice.display} voice, but the `
+        + `template was built in ${template.schema.tokens.fonts.heading}`,
+    });
+  }
+
+  // 6. Every running head must name this template's own category. The eyebrow
+  //    is set from `beginTemplate()`'s third argument, several hundred lines
+  //    from the `category` it has to agree with — during the design-system
+  //    rebuild the shared market factories were briefly hard-coded to
+  //    'suburb', which would have printed "Suburb market study" across a
+  //    Statewide Snapshot.
+  //    Scoped to `text-block`: a `cover` also carries an `eyebrow`, but that one
+  //    names the specific report ("Feasibility", "Customer Due Diligence") and
+  //    is deliberately not the running head.
+  const expectedHead = runningHeadFor(template.category);
+  for (const page of parsed.data.pages) {
+    for (const block of page.blocks) {
+      if (block.type !== 'text-block') continue;
+      const eyebrow = (block.props as Record<string, unknown>).eyebrow;
+      if (typeof eyebrow === 'string' && eyebrow !== expectedHead) {
+        problems.push({
+          template: label,
+          message: `running head "${eyebrow}" on page "${page.name}" does not match `
+            + `category "${template.category}" (expected "${expectedHead}")`,
+        });
+      }
+    }
+  }
+
   return problems;
 }
 
 function main(): void {
   const problems: Problem[] = [];
   const slugs = new Set<string>();
+
+  // Drained before validation so the log holds only what building
+  // SEED_TEMPLATES produced. Importing the module is what runs the builders.
+  for (const o of takeOverflows()) {
+    problems.push({
+      template: `page "${o.page}"`,
+      message: `content runs ${o.overBy}pt past the footer (ends at ${Math.round(o.bottom)}pt, `
+        + 'limit 774pt) — shorten a block or move it to the next page',
+    });
+  }
 
   for (const template of SEED_TEMPLATES) {
     if (slugs.has(template.slug)) {

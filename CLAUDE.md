@@ -10,11 +10,25 @@ Guidance for Claude Code (and Claude-based tools) working in this repo.
   [`AGENTS_NPC_Property_Dashboard.md`](./AGENTS_NPC_Property_Dashboard.md).
 
 ## Installed tooling (already wired for Claude Code)
+- **Claude Design** — the **NPC Services Design System** project at
+  [claude.ai/design](https://claude.ai/design), reached with the built-in
+  **DesignSync** tool. It is the source of the brand: read `tokens/colors.css` and
+  `tokens/typography.css` from it before choosing any colour or typeface, and push
+  cards back one at a time (never wholesale-replace). Details in
+  [`FRONTEND_TOOLING.md`](./FRONTEND_TOOLING.md).
 - **MCP servers** — [`.mcp.json`](./.mcp.json): `shadcn`, `chrome-devtools`,
   `@21st-dev/magic`, `21st` (hosted HTTP). Setup and the `MAGIC_API_KEY` /
   `TWENTY_FIRST_API_KEY` steps are in [`MCP_SETUP.md`](./MCP_SETUP.md).
 - **Skills** — [`.claude/skills/`](./.claude/skills/): `frontend-design` (aesthetic
   direction) and `web-design-guidelines` (accessibility / UX review).
+
+## Report templates
+The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look
+comes from `scripts/template-library/designSystem.ts` — five voices keyed to the
+catalogue's `style` axis, six accents keyed to subject, all derived from the NPC
+tokens. Edit the voice, then run `npm run templates:library:seed`. Never hand-edit
+the generated migration. See
+[`docs/template-library/06-design-system.md`](./docs/template-library/06-design-system.md).
 
 ## Frontend loop (summary — full detail in `FRONTEND_TOOLING.md`)
 1. Design new surfaces with the **frontend-design** skill.

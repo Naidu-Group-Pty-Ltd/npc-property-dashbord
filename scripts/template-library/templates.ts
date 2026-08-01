@@ -9,20 +9,15 @@
  * the production renderer allow-list before writing a migration, so a template
  * that would not render cannot reach the catalogue.
  */
-/* eslint-disable no-restricted-syntax --
- * The hex values below are TOKEN DEFINITIONS — the values `token:primary` and
- * friends resolve to when an organisation has not overridden them. They are
- * the one place in the system a literal colour is correct; every block in
- * every template references them symbolically. The style guardrail exists to
- * stop literals leaking into components, which is a different thing.
- */
 import {
-  barChart, callout, checklist, contents, cover, decision, definitions,
-  disclaimerPage, donutChart, featureList, flow, heading, kpis, lineChart, page,
-  processSteps, prose, riskRegister, rule, scorecard, signature, strengthsWatch,
-  table, timeline, twoColumn, withFurniture, resetIds,
+  barChart, beginTemplate, callout, checklist, contents, cover, currentAccent,
+  currentVoice, decision, definitions, disclaimerPage, donutChart, featureList,
+  flow, heading, kpis, lineChart, page, processSteps, prose, riskRegister, rule,
+  scorecard, signature, strengthsWatch, table, timeline, twoColumn,
+  withFurniture,
   type PageDef,
 } from './blocks';
+import { STANDARD_DISCLAIMER, voiceTokens } from './designSystem';
 import { EXTENDED_TEMPLATES } from './templatesExtended';
 
 export interface SeedTemplate {
@@ -40,53 +35,29 @@ export interface SeedTemplate {
   schema: {
     version: 1;
     name: string;
-    tokens: { colors: Record<string, string>; fonts: Record<string, string>; spacing: Record<string, number> };
+    /**
+     * Compiled by `voiceTokens()`. Wider than the original three categories:
+     * it also carries `radii`, `typeScale` and the `fontFaces` that make the
+     * voice's display face actually load in WeasyPrint.
+     */
+    tokens: ReturnType<typeof voiceTokens>;
     pages: PageDef[];
   };
 }
 
 /**
- * Token palettes.
+ * Compile the active voice into a template schema.
  *
- * These are the DEFAULTS a template ships with. The white-label pipeline
- * overrides them per organisation at render time — which is exactly why every
- * block references `token:*` rather than a colour.
+ * The palette used to be passed in here, one of six ad-hoc colourways with no
+ * relationship to the product's own brand. It now comes from the voice the
+ * template declared through `beginTemplate()`, which also fixes the type,
+ * paper and rhythm — see `designSystem.ts` for why the two are bound together.
  */
-const PALETTES = {
-  navyGold: {
-    primary: '#B8912F', bg: '#0E1A2B', surface: '#FFFFFF', panel: '#F5F2EA',
-    text: '#FFFFFF', ink: '#16202E', muted: '#8A94A3', onPrimary: '#FFFFFF',
-  },
-  slateBlue: {
-    primary: '#1D6FE0', bg: '#0C2340', surface: '#FFFFFF', panel: '#EEF4FC',
-    text: '#FFFFFF', ink: '#12233A', muted: '#7C8AA0', onPrimary: '#FFFFFF',
-  },
-  monochrome: {
-    primary: '#1F2933', bg: '#111417', surface: '#FFFFFF', panel: '#F4F5F7',
-    text: '#FFFFFF', ink: '#1F2933', muted: '#8B95A1', onPrimary: '#FFFFFF',
-  },
-  teal: {
-    primary: '#0E8C8C', bg: '#062B2B', surface: '#FFFFFF', panel: '#ECF7F7',
-    text: '#FFFFFF', ink: '#122C2C', muted: '#79918F', onPrimary: '#FFFFFF',
-  },
-  ember: {
-    primary: '#C2571F', bg: '#231409', surface: '#FFFFFF', panel: '#FBF2EC',
-    text: '#FFFFFF', ink: '#2A1B10', muted: '#9C8878', onPrimary: '#FFFFFF',
-  },
-  forest: {
-    primary: '#2F7A45', bg: '#0D2216', surface: '#FFFFFF', panel: '#EDF6F0',
-    text: '#FFFFFF', ink: '#16281C', muted: '#7C9186', onPrimary: '#FFFFFF',
-  },
-} as const;
-
-const FONTS = { heading: 'Helvetica', body: 'Helvetica' };
-const SPACING = { gutter: 16 };
-
-function schema(name: string, palette: Record<string, string>, pages: PageDef[]) {
+function schema(name: string, pages: PageDef[]) {
   return {
     version: 1 as const,
     name,
-    tokens: { colors: { ...palette }, fonts: { ...FONTS }, spacing: { ...SPACING } },
+    tokens: voiceTokens(currentVoice(), currentAccent()),
     pages,
   };
 }
@@ -94,19 +65,12 @@ function schema(name: string, palette: Record<string, string>, pages: PageDef[])
 const FOOTER = '{{property.address}} · {{client.name}}';
 const SUBURB_FOOTER = '{{property.suburb}} market analysis · {{client.name}}';
 
-const STANDARD_DISCLAIMER =
-  'This report has been prepared for the named recipient only and is general in nature. '
-  + 'It does not take into account any person\'s objectives, financial situation or needs, '
-  + 'and it is not financial product, credit, tax or legal advice. Figures are estimates '
-  + 'based on information available at the date of preparation and are not a guarantee of '
-  + 'future performance. Obtain your own professional advice before acting on it.';
-
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. Investor Compass — the flagship investment report
 // ═════════════════════════════════════════════════════════════════════════════
 
 function investorCompass(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'gold', 'investment');
   const pages = [
     cover({
       eyebrow: 'Investment Analysis',
@@ -286,7 +250,7 @@ function investorCompass(): SeedTemplate {
     tags: ['comprehensive', 'flagship', 'client-facing', 'scorecard', 'projection'],
     style: 'corporate',
     accessTier: 'standard',
-    schema: schema('Investor Compass', PALETTES.navyGold, pages),
+    schema: schema('Investor Compass', pages),
   };
 }
 
@@ -295,7 +259,7 @@ function investorCompass(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function executiveBrief(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'gold', 'investment');
   const pages = [
     cover({
       eyebrow: 'Executive Brief',
@@ -352,7 +316,7 @@ function executiveBrief(): SeedTemplate {
     tags: ['concise', 'decision', 'client-facing'],
     style: 'minimal',
     accessTier: 'standard',
-    schema: schema('Executive Brief', PALETTES.monochrome, pages),
+    schema: schema('Executive Brief', pages),
   };
 }
 
@@ -361,7 +325,7 @@ function executiveBrief(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function propertySnapshot(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'gold', 'investment');
   const pages = [
     withFurniture(page('Snapshot', flow([
       heading('{{property.address}}', '{{property.suburb}} · prepared for {{client.name}}', 62),
@@ -400,7 +364,7 @@ function propertySnapshot(): SeedTemplate {
     tags: ['quick', 'one-page', 'shortlist'],
     style: 'minimal',
     accessTier: 'standard',
-    schema: schema('Property Snapshot', PALETTES.slateBlue, pages),
+    schema: schema('Property Snapshot', pages),
   };
 }
 
@@ -409,7 +373,7 @@ function propertySnapshot(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function dueDiligenceDossier(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'gold', 'investment');
   const pages = [
     cover({
       eyebrow: 'Due Diligence',
@@ -488,7 +452,7 @@ function dueDiligenceDossier(): SeedTemplate {
     tags: ['due-diligence', 'risk', 'checklist', 'pre-exchange'],
     style: 'technical',
     accessTier: 'premium',
-    schema: schema('Due Diligence Dossier', PALETTES.slateBlue, pages),
+    schema: schema('Due Diligence Dossier', pages),
   };
 }
 
@@ -497,7 +461,7 @@ function dueDiligenceDossier(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function suburbCompass(): SeedTemplate {
-  resetIds();
+  beginTemplate('editorial', 'amethyst', 'suburb');
   const pages = [
     cover({
       eyebrow: 'Suburb Analysis',
@@ -581,7 +545,7 @@ function suburbCompass(): SeedTemplate {
     tags: ['market', 'comparison', 'outlook', 'research'],
     style: 'editorial',
     accessTier: 'standard',
-    schema: schema('Suburb Market Compass', PALETTES.teal, pages),
+    schema: schema('Suburb Market Compass', pages),
   };
 }
 
@@ -590,7 +554,7 @@ function suburbCompass(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function suburbSnapshot(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'amethyst', 'suburb');
   const pages = [
     withFurniture(page('Snapshot', flow([
       heading('{{property.suburb}}', 'Market snapshot prepared for {{client.name}}', 60),
@@ -630,7 +594,7 @@ function suburbSnapshot(): SeedTemplate {
     tags: ['quick', 'one-page', 'market'],
     style: 'minimal',
     accessTier: 'standard',
-    schema: schema('Suburb Snapshot', PALETTES.teal, pages),
+    schema: schema('Suburb Snapshot', pages),
   };
 }
 
@@ -639,7 +603,7 @@ function suburbSnapshot(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function postcodeAnalysis(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'amethyst', 'postcode');
   const pages = [
     cover({
       eyebrow: 'Postcode Analysis',
@@ -713,7 +677,7 @@ function postcodeAnalysis(): SeedTemplate {
     tags: ['zone', 'comparison', 'research'],
     style: 'technical',
     accessTier: 'standard',
-    schema: schema('Postcode Market Analysis', PALETTES.slateBlue, pages),
+    schema: schema('Postcode Market Analysis', pages),
   };
 }
 
@@ -722,7 +686,7 @@ function postcodeAnalysis(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function statewideReview(): SeedTemplate {
-  resetIds();
+  beginTemplate('editorial', 'amethyst', 'statewide');
   const pages = [
     cover({
       eyebrow: 'Statewide Review',
@@ -802,7 +766,7 @@ function statewideReview(): SeedTemplate {
     tags: ['macro', 'regional', 'outlook'],
     style: 'editorial',
     accessTier: 'premium',
-    schema: schema('Statewide Market Review', PALETTES.navyGold, pages),
+    schema: schema('Statewide Market Review', pages),
   };
 }
 
@@ -811,7 +775,7 @@ function statewideReview(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function comparisonMatrix(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'info', 'comparison');
   const pages = [
     cover({
       eyebrow: 'Comparison',
@@ -872,7 +836,7 @@ function comparisonMatrix(): SeedTemplate {
     tags: ['comparison', 'shortlist', 'decision'],
     style: 'technical',
     accessTier: 'standard',
-    schema: schema('Property Comparison Matrix', PALETTES.monochrome, pages),
+    schema: schema('Property Comparison Matrix', pages),
   };
 }
 
@@ -881,7 +845,7 @@ function comparisonMatrix(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function cashFlowProjection(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'evergreen', 'cash_flow');
   const pages = [
     cover({
       eyebrow: 'Cash Flow',
@@ -964,7 +928,7 @@ function cashFlowProjection(): SeedTemplate {
     tags: ['projection', 'cash-flow', 'assumptions', 'tax'],
     style: 'technical',
     accessTier: 'standard',
-    schema: schema('Ten-Year Cash Flow Projection', PALETTES.forest, pages),
+    schema: schema('Ten-Year Cash Flow Projection', pages),
   };
 }
 
@@ -973,7 +937,7 @@ function cashFlowProjection(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function clientFactFind(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'orchid', 'client_form');
   const pages = [
     cover({
       eyebrow: 'Client Intake',
@@ -1035,7 +999,7 @@ function clientFactFind(): SeedTemplate {
     tags: ['intake', 'onboarding', 'client-facing', 'signature'],
     style: 'minimal',
     accessTier: 'standard',
-    schema: schema('Client Fact Find', PALETTES.slateBlue, pages),
+    schema: schema('Client Fact Find', pages),
   };
 }
 
@@ -1044,7 +1008,7 @@ function clientFactFind(): SeedTemplate {
 // ═════════════════════════════════════════════════════════════════════════════
 
 function complianceFileReview(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'bronze', 'compliance');
   const pages = [
     cover({
       eyebrow: 'Quality Assurance',
@@ -1118,7 +1082,7 @@ function complianceFileReview(): SeedTemplate {
     tags: ['compliance', 'quality-assurance', 'internal', 'audit'],
     style: 'corporate',
     accessTier: 'premium',
-    schema: schema('Compliance File Review', PALETTES.ember, pages),
+    schema: schema('Compliance File Review', pages),
   };
 }
 

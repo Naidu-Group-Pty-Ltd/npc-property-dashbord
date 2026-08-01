@@ -91,19 +91,31 @@ describe('seeded catalogue', () => {
         .toBe(true);
     });
 
-    it('defines every colour token its blocks reference', () => {
-      const declared = new Set(Object.keys(template.schema.tokens.colors));
-      const referenced = new Set<string>();
-      const walk = (node: unknown): void => {
+    it('defines every token its blocks reference', () => {
+      // `token:*` addresses two maps. A prop that names a typeface — the
+      // technical voice sets figure columns with `numericFont: 'token:mono'` —
+      // resolves against `tokens.fonts`; everything else is a colour. The
+      // renderers make the same distinction, so checking both here is what
+      // proves a reference actually resolves rather than falling back.
+      const declared = {
+        colors: new Set(Object.keys(template.schema.tokens.colors)),
+        fonts: new Set(Object.keys(template.schema.tokens.fonts)),
+      };
+      const missing: string[] = [];
+      const walk = (node: unknown, key?: string): void => {
         if (typeof node === 'string') {
-          if (node.startsWith('token:')) referenced.add(node.slice(6));
+          if (!node.startsWith('token:')) return;
+          const name = node.slice(6);
+          const map = key && /font$/i.test(key) ? 'fonts' : 'colors';
+          if (!declared[map].has(name)) missing.push(`${map}.${name} (via "${key}")`);
           return;
         }
-        if (Array.isArray(node)) { node.forEach(walk); return; }
-        if (node && typeof node === 'object') Object.values(node).forEach(walk);
+        if (Array.isArray(node)) { node.forEach((v) => walk(v, key)); return; }
+        if (node && typeof node === 'object') {
+          for (const [k, v] of Object.entries(node)) walk(v, k);
+        }
       };
       walk(template.schema.pages);
-      const missing = [...referenced].filter((t) => !declared.has(t));
       expect(missing).toEqual([]);
     });
 

@@ -13,61 +13,20 @@
  * than a library of twelve good ones, so page structures differ by purpose —
  * a one-page snapshot is not a nine-page dossier with pages removed.
  */
-/* eslint-disable no-restricted-syntax --
- * Token DEFINITIONS only; see the same note in templates.ts.
- */
 import {
-  barChart, callout, checklist, contents, cover, decision, definitions,
-  disclaimerPage, donutChart, featureList, flow, heading, kpis, lineChart, page,
-  processSteps, prose, riskRegister, rule, scorecard, signature, strengthsWatch,
-  table, timeline, twoColumn, withFurniture, resetIds,
+  barChart, beginTemplate, callout, checklist, contents, cover, currentAccent,
+  currentVoice, decision, definitions, disclaimerPage, donutChart, featureList,
+  flow, heading, kpis, lineChart, page, processSteps, prose, riskRegister, rule,
+  scorecard, signature, strengthsWatch, table, timeline, twoColumn,
+  withFurniture,
   type PageDef,
 } from './blocks';
+import {
+  STANDARD_DISCLAIMER as DISCLAIMER,
+  voiceTokens,
+  type AccentName,
+} from './designSystem';
 import type { SeedTemplate } from './templates';
-
-const PALETTES = {
-  navyGold: {
-    primary: '#B8912F', bg: '#0E1A2B', surface: '#FFFFFF', panel: '#F5F2EA',
-    text: '#FFFFFF', ink: '#16202E', muted: '#8A94A3', onPrimary: '#FFFFFF',
-  },
-  slateBlue: {
-    primary: '#1D6FE0', bg: '#0C2340', surface: '#FFFFFF', panel: '#EEF4FC',
-    text: '#FFFFFF', ink: '#12233A', muted: '#7C8AA0', onPrimary: '#FFFFFF',
-  },
-  monochrome: {
-    primary: '#1F2933', bg: '#111417', surface: '#FFFFFF', panel: '#F4F5F7',
-    text: '#FFFFFF', ink: '#1F2933', muted: '#8B95A1', onPrimary: '#FFFFFF',
-  },
-  teal: {
-    primary: '#0E8C8C', bg: '#062B2B', surface: '#FFFFFF', panel: '#ECF7F7',
-    text: '#FFFFFF', ink: '#122C2C', muted: '#79918F', onPrimary: '#FFFFFF',
-  },
-  ember: {
-    primary: '#C2571F', bg: '#231409', surface: '#FFFFFF', panel: '#FBF2EC',
-    text: '#FFFFFF', ink: '#2A1B10', muted: '#9C8878', onPrimary: '#FFFFFF',
-  },
-  forest: {
-    primary: '#2F7A45', bg: '#0D2216', surface: '#FFFFFF', panel: '#EDF6F0',
-    text: '#FFFFFF', ink: '#16281C', muted: '#7C9186', onPrimary: '#FFFFFF',
-  },
-  plum: {
-    primary: '#7A3E8C', bg: '#1E0F24', surface: '#FFFFFF', panel: '#F6EEF8',
-    text: '#FFFFFF', ink: '#241429', muted: '#93849A', onPrimary: '#FFFFFF',
-  },
-  steel: {
-    primary: '#41627E', bg: '#12222E', surface: '#FFFFFF', panel: '#EEF3F7',
-    text: '#FFFFFF', ink: '#16242F', muted: '#7E8E9B', onPrimary: '#FFFFFF',
-  },
-} as const;
-
-const FONTS = { heading: 'Helvetica', body: 'Helvetica' };
-const SPACING = { gutter: 16 };
-const DISCLAIMER =
-  'This report has been prepared for the named recipient only and is general in nature. '
-  + 'It does not take into account any person\'s objectives, financial situation or needs, '
-  + 'and it is not financial product, credit, tax or legal advice. Figures are estimates '
-  + 'based on information available at the date of preparation and are not a guarantee of '
-  + 'future performance. Obtain your own professional advice before acting on it.';
 
 interface Spec {
   slug: string;
@@ -79,9 +38,7 @@ interface Spec {
   tier?: string | null;
   industry: string[];
   tags: string[];
-  style: string;
   accessTier?: string;
-  palette: Record<string, string>;
   pages: PageDef[];
 }
 
@@ -90,11 +47,11 @@ function make(s: Spec): SeedTemplate {
     slug: s.slug, name: s.name, description: s.description,
     longDescription: s.longDescription, category: s.category,
     reportType: s.reportType, tier: s.tier ?? null,
-    industry: s.industry, tags: s.tags, style: s.style,
+    industry: s.industry, tags: s.tags, style: currentVoice().id,
     accessTier: s.accessTier ?? 'standard',
     schema: {
       version: 1 as const, name: s.name,
-      tokens: { colors: { ...s.palette }, fonts: { ...FONTS }, spacing: { ...SPACING } },
+      tokens: voiceTokens(currentVoice(), currentAccent()),
       pages: s.pages,
     },
   };
@@ -108,7 +65,7 @@ const MKT_FOOT = '{{property.suburb}} · {{client.name}}';
 // ═══════════════════════════════════════════════════════════════════════════
 
 function offMarketBrief(): SeedTemplate {
-  resetIds();
+  beginTemplate('luxury', 'gold', 'investment');
   return make({
     slug: 'off-market-opportunity-brief',
     name: 'Off-Market Opportunity Brief',
@@ -119,7 +76,6 @@ function offMarketBrief(): SeedTemplate {
       + 'Written to be read in five minutes on a phone.',
     category: 'investment', reportType: 'investment', tier: 'snapshot',
     industry: ['property'], tags: ['off-market', 'urgent', 'decision'],
-    style: 'minimal', palette: PALETTES.monochrome,
     pages: [
       withFurniture(page('Opportunity', flow([
         heading('{{property.address}}', 'Off-market opportunity · prepared for {{client.name}}', 62),
@@ -154,7 +110,7 @@ function offMarketBrief(): SeedTemplate {
 }
 
 function renovationUplift(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'gold', 'investment');
   return make({
     slug: 'renovation-uplift-analysis',
     name: 'Renovation Uplift Analysis',
@@ -165,7 +121,6 @@ function renovationUplift(): SeedTemplate {
       + 'rather than the headline uplift.',
     category: 'investment', reportType: 'investment',
     industry: ['property'], tags: ['renovation', 'value-add', 'margin'],
-    style: 'technical', palette: PALETTES.ember,
     pages: [
       cover({
         eyebrow: 'Renovation Analysis', title: '{{property.address}}',
@@ -228,7 +183,7 @@ function renovationUplift(): SeedTemplate {
 }
 
 function firstHomeBuyer(): SeedTemplate {
-  resetIds();
+  beginTemplate('editorial', 'gold', 'investment');
   return make({
     slug: 'first-home-buyer-report',
     name: 'First-Home Buyer Report',
@@ -239,7 +194,6 @@ function firstHomeBuyer(): SeedTemplate {
       + 'insurance are counted, and what happens if rates move.',
     category: 'investment', reportType: 'investment', tier: 'executive',
     industry: ['property', 'finance'], tags: ['first-home', 'grants', 'affordability'],
-    style: 'editorial', palette: PALETTES.teal,
     pages: [
       cover({
         eyebrow: 'First Home', title: 'Your First Property',
@@ -304,7 +258,7 @@ function firstHomeBuyer(): SeedTemplate {
 }
 
 function smsfAssessment(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'gold', 'investment');
   return make({
     slug: 'smsf-property-assessment',
     name: 'SMSF Property Assessment',
@@ -314,8 +268,7 @@ function smsfAssessment(): SeedTemplate {
       + 'fund position, the limited recourse borrowing structure, the compliance boundaries '
       + 'that constrain the purchase, and a cash-flow position on fund terms.',
     category: 'investment', reportType: 'investment',
-    industry: ['property', 'finance', 'legal'], tags: ['smsf', 'lrba', 'compliance'],
-    style: 'corporate', accessTier: 'premium', palette: PALETTES.steel,
+    industry: ['property', 'finance', 'legal'], tags: ['smsf', 'lrba', 'compliance'], accessTier: 'premium',
     pages: [
       cover({
         eyebrow: 'SMSF Acquisition', title: '{{property.address}}',
@@ -376,7 +329,7 @@ function smsfAssessment(): SeedTemplate {
 }
 
 function commercialAssessment(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'gold', 'investment');
   return make({
     slug: 'commercial-property-assessment',
     name: 'Commercial Property Assessment',
@@ -386,8 +339,7 @@ function commercialAssessment(): SeedTemplate {
       + 'is being bought: tenancy schedule, weighted average lease expiry, outgoings '
       + 'recovery and the capitalisation that produces the value.',
     category: 'investment', reportType: 'investment',
-    industry: ['property', 'finance'], tags: ['commercial', 'wale', 'capitalisation', 'tenancy'],
-    style: 'technical', accessTier: 'premium', palette: PALETTES.slateBlue,
+    industry: ['property', 'finance'], tags: ['commercial', 'wale', 'capitalisation', 'tenancy'], accessTier: 'premium',
     pages: [
       cover({
         eyebrow: 'Commercial', title: '{{property.address}}',
@@ -459,7 +411,7 @@ function commercialAssessment(): SeedTemplate {
 }
 
 function developmentFeasibility(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'gold', 'investment');
   return make({
     slug: 'development-feasibility-study',
     name: 'Development Feasibility Study',
@@ -469,8 +421,7 @@ function developmentFeasibility(): SeedTemplate {
       + 'planning controls, prices the build, models the revenue, and works back to a '
       + 'residual land value — the number that says whether the site is worth its price.',
     category: 'investment', reportType: 'investment',
-    industry: ['property', 'finance'], tags: ['development', 'feasibility', 'residual', 'planning'],
-    style: 'technical', accessTier: 'premium', palette: PALETTES.ember,
+    industry: ['property', 'finance'], tags: ['development', 'feasibility', 'residual', 'planning'], accessTier: 'premium',
     pages: [
       cover({
         eyebrow: 'Feasibility', title: '{{property.address}}',
@@ -558,7 +509,7 @@ function developmentFeasibility(): SeedTemplate {
 }
 
 function portfolioReview(): SeedTemplate {
-  resetIds();
+  beginTemplate('luxury', 'gold', 'investment');
   return make({
     slug: 'portfolio-review',
     name: 'Portfolio Review',
@@ -569,7 +520,6 @@ function portfolioReview(): SeedTemplate {
       + 'recommends what to hold, improve or divest.',
     category: 'investment', reportType: 'portfolio',
     industry: ['property', 'finance'], tags: ['portfolio', 'equity', 'review', 'annual'],
-    style: 'corporate', palette: PALETTES.navyGold,
     pages: [
       cover({
         eyebrow: 'Portfolio Review', title: 'Annual Portfolio Review',
@@ -647,14 +597,14 @@ function portfolioReview(): SeedTemplate {
 function marketBrief(opts: {
   slug: string; name: string; description: string; longDescription: string;
   category: string; reportType: string; subject: string; tier?: string;
-  palette: Record<string, string>; tags: string[];
+  accent: AccentName; tags: string[];
 }): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', opts.accent, opts.category);
   return make({
     slug: opts.slug, name: opts.name, description: opts.description,
     longDescription: opts.longDescription, category: opts.category,
     reportType: opts.reportType, tier: opts.tier ?? 'executive',
-    industry: ['property'], tags: opts.tags, style: 'minimal', palette: opts.palette,
+    industry: ['property'], tags: opts.tags,
     pages: [
       withFurniture(page('Brief', flow([
         heading(opts.subject, 'Market brief prepared for {{client.name}}', 62),
@@ -699,14 +649,14 @@ function marketBrief(opts: {
 function marketSnapshot(opts: {
   slug: string; name: string; description: string; longDescription: string;
   category: string; reportType: string; subject: string;
-  palette: Record<string, string>; tags: string[];
+  accent: AccentName; tags: string[];
 }): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', opts.accent, opts.category);
   return make({
     slug: opts.slug, name: opts.name, description: opts.description,
     longDescription: opts.longDescription, category: opts.category,
     reportType: opts.reportType, tier: 'snapshot',
-    industry: ['property'], tags: opts.tags, style: 'minimal', palette: opts.palette,
+    industry: ['property'], tags: opts.tags,
     pages: [
       withFurniture(page('Snapshot', flow([
         heading(opts.subject, 'Snapshot for {{client.name}}', 60),
@@ -730,7 +680,7 @@ function marketSnapshot(opts: {
 }
 
 function suburbGrowthDrivers(): SeedTemplate {
-  resetIds();
+  beginTemplate('editorial', 'amethyst', 'suburb');
   return make({
     slug: 'suburb-growth-drivers',
     name: 'Suburb Growth Drivers',
@@ -741,7 +691,6 @@ function suburbGrowthDrivers(): SeedTemplate {
       + 'with a stated confidence level rather than an assertion.',
     category: 'suburb', reportType: 'suburb',
     industry: ['property'], tags: ['drivers', 'infrastructure', 'research', 'outlook'],
-    style: 'editorial', palette: PALETTES.teal,
     pages: [
       cover({
         eyebrow: 'Growth Drivers', title: '{{property.suburb}}',
@@ -795,7 +744,7 @@ function suburbGrowthDrivers(): SeedTemplate {
 }
 
 function suburbRentalMarket(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'amethyst', 'suburb');
   return make({
     slug: 'suburb-rental-market-report',
     name: 'Suburb Rental Market Report',
@@ -806,7 +755,6 @@ function suburbRentalMarket(): SeedTemplate {
       + 'with vacancy and days-to-lease so the price has a speed attached.',
     category: 'suburb', reportType: 'suburb',
     industry: ['property'], tags: ['rental', 'vacancy', 'yield', 'leasing'],
-    style: 'technical', palette: PALETTES.forest,
     pages: [
       cover({
         eyebrow: 'Rental Market', title: '{{property.suburb}}',
@@ -867,7 +815,7 @@ function suburbRentalMarket(): SeedTemplate {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function headToHead(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'info', 'comparison');
   return make({
     slug: 'two-property-head-to-head',
     name: 'Two-Property Head-to-Head',
@@ -877,7 +825,6 @@ function headToHead(): SeedTemplate {
       + 'them — identical attributes are noise at this stage — and commits to one.',
     category: 'comparison', reportType: 'comparison',
     industry: ['property'], tags: ['comparison', 'shortlist', 'decision', 'concise'],
-    style: 'minimal', palette: PALETTES.monochrome,
     pages: [
       withFurniture(page('Head to head', flow([
         heading('Head to head', 'Prepared for {{client.name}}', 60),
@@ -917,7 +864,7 @@ function headToHead(): SeedTemplate {
 }
 
 function buyVsHold(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'info', 'comparison');
   return make({
     slug: 'buy-vs-hold-comparison',
     name: 'Buy, Hold or Sell Comparison',
@@ -928,7 +875,6 @@ function buyVsHold(): SeedTemplate {
       + 'ten-year horizon on the same assumptions.',
     category: 'comparison', reportType: 'comparison',
     industry: ['property', 'finance'], tags: ['comparison', 'hold', 'divest', 'projection'],
-    style: 'technical', palette: PALETTES.plum,
     pages: [
       cover({
         eyebrow: 'Options Analysis', title: 'Buy, Hold or Sell',
@@ -978,7 +924,7 @@ function buyVsHold(): SeedTemplate {
 }
 
 function portfolioComparison(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'info', 'comparison');
   return make({
     slug: 'portfolio-comparison',
     name: 'Portfolio Comparison',
@@ -989,7 +935,6 @@ function portfolioComparison(): SeedTemplate {
       + 'is costing the portfolio the most to keep.',
     category: 'comparison', reportType: 'portfolio',
     industry: ['property', 'finance'], tags: ['portfolio', 'ranking', 'contribution'],
-    style: 'technical', palette: PALETTES.navyGold,
     pages: [
       cover({
         eyebrow: 'Portfolio', title: 'Holding Comparison',
@@ -1040,7 +985,7 @@ function portfolioComparison(): SeedTemplate {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function cashFlowSnapshot(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'evergreen', 'cash_flow');
   return make({
     slug: 'cash-flow-snapshot',
     name: 'Cash Flow Snapshot',
@@ -1050,7 +995,6 @@ function cashFlowSnapshot(): SeedTemplate {
       + 'a break-even rent so the margin for error is visible at a glance.',
     category: 'cash_flow', reportType: 'cashflow', tier: 'snapshot',
     industry: ['property', 'finance'], tags: ['quick', 'one-page', 'cash-flow'],
-    style: 'minimal', palette: PALETTES.forest,
     pages: [
       withFurniture(page('Snapshot', flow([
         heading('{{property.address}}', 'Cash flow snapshot for {{client.name}}', 60),
@@ -1082,7 +1026,7 @@ function cashFlowSnapshot(): SeedTemplate {
 }
 
 function negativeGearing(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'evergreen', 'cash_flow');
   return make({
     slug: 'negative-gearing-analysis',
     name: 'Negative Gearing Analysis',
@@ -1093,7 +1037,6 @@ function negativeGearing(): SeedTemplate {
       + 'states the real weekly cost rather than the headline shortfall.',
     category: 'cash_flow', reportType: 'cashflow',
     industry: ['property', 'finance'], tags: ['tax', 'gearing', 'depreciation', 'deductions'],
-    style: 'technical', palette: PALETTES.plum,
     pages: [
       cover({
         eyebrow: 'Tax Position', title: 'Negative Gearing Analysis',
@@ -1145,7 +1088,7 @@ function negativeGearing(): SeedTemplate {
 }
 
 function equityPosition(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'evergreen', 'cash_flow');
   return make({
     slug: 'equity-position-report',
     name: 'Equity Position Report',
@@ -1156,7 +1099,6 @@ function equityPosition(): SeedTemplate {
       + 'shows what that would fund at current serviceability.',
     category: 'cash_flow', reportType: 'cashflow',
     industry: ['property', 'finance'], tags: ['equity', 'lvr', 'release', 'capacity'],
-    style: 'corporate', palette: PALETTES.steel,
     pages: [
       cover({
         eyebrow: 'Equity', title: 'Equity Position',
@@ -1213,7 +1155,7 @@ function equityPosition(): SeedTemplate {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function buyerBrief(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'orchid', 'client_form');
   return make({
     slug: 'buyer-brief-form',
     name: 'Buyer Brief',
@@ -1224,7 +1166,6 @@ function buyerBrief(): SeedTemplate {
       + 'agreed standard to judge it against.',
     category: 'client_form', reportType: 'formara',
     industry: ['property'], tags: ['brief', 'mandate', 'intake', 'signature'],
-    style: 'minimal', palette: PALETTES.slateBlue,
     pages: [
       withFurniture(page('Your brief', flow([
         heading('Your brief', 'What we will be searching for, in your words.', 62),
@@ -1266,7 +1207,7 @@ function buyerBrief(): SeedTemplate {
 }
 
 function riskProfile(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'orchid', 'client_form');
   return make({
     slug: 'risk-profile-questionnaire',
     name: 'Risk Profile Questionnaire',
@@ -1277,7 +1218,6 @@ function riskProfile(): SeedTemplate {
       + 'profile can be relied on later.',
     category: 'client_form', reportType: 'formara',
     industry: ['property', 'finance'], tags: ['risk', 'profile', 'intake', 'compliance'],
-    style: 'corporate', palette: PALETTES.steel,
     pages: [
       withFurniture(page('Capacity', flow([
         heading('Your capacity for risk', 'What your position can absorb.', 62),
@@ -1322,7 +1262,7 @@ function riskProfile(): SeedTemplate {
 }
 
 function onboardingPack(): SeedTemplate {
-  resetIds();
+  beginTemplate('luxury', 'orchid', 'client_form');
   return make({
     slug: 'client-onboarding-pack',
     name: 'Client Onboarding Pack',
@@ -1333,7 +1273,6 @@ function onboardingPack(): SeedTemplate {
       + 'documents needed before work begins.',
     category: 'client_form', reportType: 'formara',
     industry: ['property', 'finance'], tags: ['onboarding', 'engagement', 'fees', 'signature'],
-    style: 'editorial', palette: PALETTES.navyGold,
     pages: [
       cover({
         eyebrow: 'Welcome', title: 'Client Onboarding',
@@ -1379,7 +1318,7 @@ function onboardingPack(): SeedTemplate {
 }
 
 function inspectionChecklist(): SeedTemplate {
-  resetIds();
+  beginTemplate('technical', 'gold', 'client_form');
   return make({
     slug: 'property-inspection-checklist',
     name: 'Property Inspection Checklist',
@@ -1390,7 +1329,6 @@ function inspectionChecklist(): SeedTemplate {
       + 'proceed or pass recommendation while it is still fresh.',
     category: 'client_form', reportType: 'formara',
     industry: ['property'], tags: ['inspection', 'checklist', 'on-site', 'condition'],
-    style: 'technical', palette: PALETTES.ember,
     pages: [
       withFurniture(page('Inspection', flow([
         heading('{{property.address}}', 'Inspection record · {{inspection.date}}', 62),
@@ -1439,7 +1377,7 @@ function inspectionChecklist(): SeedTemplate {
 // ═══════════════════════════════════════════════════════════════════════════
 
 function amlKycRecord(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'bronze', 'compliance');
   return make({
     slug: 'aml-kyc-verification-record',
     name: 'AML/KYC Verification Record',
@@ -1449,8 +1387,7 @@ function amlKycRecord(): SeedTemplate {
       + 'ownership where the customer is not an individual, source of funds, screening '
       + 'results and the resulting risk rating with the reason recorded.',
     category: 'compliance', reportType: null,
-    industry: ['finance', 'legal'], tags: ['aml', 'kyc', 'identity', 'internal'],
-    style: 'corporate', accessTier: 'premium', palette: PALETTES.ember,
+    industry: ['finance', 'legal'], tags: ['aml', 'kyc', 'identity', 'internal'], accessTier: 'premium',
     pages: [
       cover({
         eyebrow: 'Customer Due Diligence', title: 'AML/KYC Verification',
@@ -1508,7 +1445,7 @@ function amlKycRecord(): SeedTemplate {
 }
 
 function adviceRecord(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'bronze', 'compliance');
   return make({
     slug: 'advice-record-and-disclosure',
     name: 'Advice Record & Disclosure',
@@ -1518,8 +1455,7 @@ function adviceRecord(): SeedTemplate {
       + 'stated circumstances, the recommendation, the reasoning, the alternatives '
       + 'considered, and every conflict and fee disclosed at the time.',
     category: 'compliance', reportType: null,
-    industry: ['finance', 'legal'], tags: ['advice', 'disclosure', 'conflicts', 'internal'],
-    style: 'corporate', accessTier: 'premium', palette: PALETTES.steel,
+    industry: ['finance', 'legal'], tags: ['advice', 'disclosure', 'conflicts', 'internal'], accessTier: 'premium',
     pages: [
       cover({
         eyebrow: 'Advice Record', title: 'Advice & Disclosure',
@@ -1572,7 +1508,7 @@ function adviceRecord(): SeedTemplate {
 }
 
 function complianceAttestation(): SeedTemplate {
-  resetIds();
+  beginTemplate('corporate', 'bronze', 'compliance');
   return make({
     slug: 'annual-compliance-attestation',
     name: 'Annual Compliance Attestation',
@@ -1583,7 +1519,6 @@ function complianceAttestation(): SeedTemplate {
       + 'is signed by the responsible officer.',
     category: 'compliance', reportType: null,
     industry: ['finance', 'legal', 'general'], tags: ['attestation', 'annual', 'governance', 'internal'],
-    style: 'corporate', palette: PALETTES.navyGold,
     pages: [
       withFurniture(page('Attestation', flow([
         heading('Annual compliance attestation', 'Period {{attestation.period}}', 62),
@@ -1625,7 +1560,7 @@ function complianceAttestation(): SeedTemplate {
 }
 
 function complaintsRegister(): SeedTemplate {
-  resetIds();
+  beginTemplate('minimal', 'bronze', 'compliance');
   return make({
     slug: 'complaints-register-report',
     name: 'Complaints Register Report',
@@ -1636,7 +1571,6 @@ function complaintsRegister(): SeedTemplate {
       + 'less than what keeps producing it.',
     category: 'compliance', reportType: null,
     industry: ['finance', 'legal', 'general'], tags: ['complaints', 'root-cause', 'internal'],
-    style: 'minimal', palette: PALETTES.plum,
     pages: [
       withFurniture(page('Summary', flow([
         heading('Complaints register', 'Period {{complaints.period}}', 62),
@@ -1695,8 +1629,7 @@ export const EXTENDED_TEMPLATES: SeedTemplate[] = [
       'A condensed suburb study for a reader who wants the position without the research '
       + 'trail. Headline metrics and a written read on page one, the supporting evidence '
       + 'and a conclusion on page two.',
-    category: 'suburb', reportType: 'suburb', subject: '{{property.suburb}}',
-    palette: PALETTES.teal, tags: ['concise', 'market', 'decision'],
+    category: 'suburb', reportType: 'suburb', subject: '{{property.suburb}}', accent: 'amethyst', tags: ['concise', 'market', 'decision'],
   }),
   suburbGrowthDrivers(),
   suburbRentalMarket(),
@@ -1707,8 +1640,7 @@ export const EXTENDED_TEMPLATES: SeedTemplate[] = [
     longDescription:
       'The zone-level equivalent of the suburb brief. Aggregate metrics for the postcode '
       + 'with a written read, then the evidence and a conclusion.',
-    category: 'postcode', reportType: 'postcode', subject: 'Postcode {{market.postcode}}',
-    palette: PALETTES.slateBlue, tags: ['zone', 'concise', 'market'],
+    category: 'postcode', reportType: 'postcode', subject: 'Postcode {{market.postcode}}', accent: 'amethyst', tags: ['zone', 'concise', 'market'],
   }),
   marketSnapshot({
     slug: 'postcode-snapshot', name: 'Postcode Snapshot',
@@ -1716,8 +1648,7 @@ export const EXTENDED_TEMPLATES: SeedTemplate[] = [
     longDescription:
       'A single page to answer whether a postcode deserves a closer look. Four metrics, '
       + 'a five-year price series and one paragraph.',
-    category: 'postcode', reportType: 'postcode', subject: 'Postcode {{market.postcode}}',
-    palette: PALETTES.slateBlue, tags: ['quick', 'one-page', 'zone'],
+    category: 'postcode', reportType: 'postcode', subject: 'Postcode {{market.postcode}}', accent: 'amethyst', tags: ['quick', 'one-page', 'zone'],
   }),
   // Statewide
   marketBrief({
@@ -1726,8 +1657,7 @@ export const EXTENDED_TEMPLATES: SeedTemplate[] = [
     longDescription:
       'A condensed state-level market brief for readers deciding whether to look further '
       + 'at a state before commissioning a full review.',
-    category: 'statewide', reportType: 'statewide', subject: '{{market.state}} Market',
-    palette: PALETTES.navyGold, tags: ['macro', 'concise', 'market'],
+    category: 'statewide', reportType: 'statewide', subject: '{{market.state}} Market', accent: 'amethyst', tags: ['macro', 'concise', 'market'],
   }),
   marketSnapshot({
     slug: 'statewide-snapshot', name: 'Statewide Snapshot',
@@ -1735,8 +1665,7 @@ export const EXTENDED_TEMPLATES: SeedTemplate[] = [
     longDescription:
       'A single page of state-level market position — the fastest way to see whether a '
       + 'state is worth a closer look.',
-    category: 'statewide', reportType: 'statewide', subject: '{{market.state}}',
-    palette: PALETTES.navyGold, tags: ['quick', 'one-page', 'macro'],
+    category: 'statewide', reportType: 'statewide', subject: '{{market.state}}', accent: 'amethyst', tags: ['quick', 'one-page', 'macro'],
   }),
   // Comparison
   headToHead(),

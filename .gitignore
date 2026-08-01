@@ -56,3 +56,8 @@ ds-bundle/
 .design-sync/.cache/
 .design-sync/learnings/
 .design-sync/node_modules
+
+# Design System pane cards generated from scripts/template-library/designSystem.ts
+# by `npm run templates:library:cards`. Build output, regenerated on demand and
+# pushed to claude.ai/design with the DesignSync tool — never edited by hand.
+.design-system/
