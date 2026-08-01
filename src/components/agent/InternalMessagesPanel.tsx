@@ -17,7 +17,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
-import { ShimmerText } from '@/components/aurixa/ShimmerText';
+
 import { useAuth } from '@/hooks/useAuth';
 import {
   AttachmentDropOverlay,
