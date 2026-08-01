@@ -30,7 +30,7 @@ export function AdvancedClientForm({ onCancel }: { active: boolean; onCancel: ()
   const changeFactFindSection=(section:ClientFactFindSection)=>{setFactFindSection(section);if(contentRef.current)contentRef.current.scrollTop=0};
   const changeTab=(next:AdvancedTab)=>{if(next==='output'&&tab!=='output')setPreviousEditableTab(tab);setTab(next)};
   const reviewOutput=()=>{if(tab!=='output')setPreviousEditableTab(tab);setTab('output')};
-  const applyImport=(parsed:ParsedExcelImport)=>{methods.reset(parsed.payload);setTab('branding');toast.success('Workbook values imported. Review and edit them before creating the client.')};
+  const applyImport=(parsed:ParsedExcelImport)=>{methods.reset(parsed.payload);setFactFindSection('applicants');setTab('fact-find');toast.success('Workbook values imported. Review and edit them before creating the client.')};
   const attachWorkbook=async(clientId:string,file:File)=>{const path=`${clientId}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g,'_')}`,upload=await secureStorageUpload('client-files',path,file,{contentType:file.type||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});if(!upload.success)throw new Error();const result=await invokeSecureFunction('manage-client-data',{operation:'create',table:'client_files',clientId,data:{file_name:file.name,file_path:upload.path||path,file_type:file.type||null,file_size:file.size,category:'financial',description:'Advanced Client Fact Find workbook'}});if(result.error||!result.data?.success)throw new Error()};
   const createClient=async()=>{
     if(creating)return;
