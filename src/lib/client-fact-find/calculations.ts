@@ -22,17 +22,23 @@ export function normalizePercentage(value:number|string|null|undefined): number 
   const normalized=typeof value==='string'?Number(value.trim().replace(/%$/,'')):value;
   return Number.isFinite(normalized) ? normalized : 0;
 }
-const income = (employment: AdvancedClientCreationPayload['employment'][number] | undefined) => employment
+type IncomeValues=Pick<NonNullable<AdvancedClientCreationPayload['employment'][number]>,'baseSalary'|'bonus'|'commission'|'overtime'|'otherTaxableIncome'>;
+export const calculateIncomeCents = (employment: IncomeValues | undefined) => employment
   ? ['baseSalary','bonus','commission','overtime','otherTaxableIncome'].reduce((sum,key)=>sum+dollarsToCents(employment[key as keyof typeof employment] as MoneyInput),0) : 0;
+export const calculateAssetTotalsCents = (assets: Pick<AdvancedClientCreationPayload['assets'][number],'currentValue'|'loanBalance'>[]) => ({
+  totalAssetsCents:assets.reduce((sum,row)=>sum+dollarsToCents(row.currentValue),0),
+  totalAssetLinkedDebtCents:assets.reduce((sum,row)=>sum+dollarsToCents(row.loanBalance),0),
+});
+export const calculateOtherLiabilitiesCents = (liabilities: Pick<AdvancedClientCreationPayload['liabilities'][number],'currentBalance'>[]) =>
+  liabilities.reduce((sum,row)=>sum+dollarsToCents(row.currentBalance),0);
 export function calculateFactFindTotals(payload: Pick<AdvancedClientCreationPayload,'assets'|'liabilities'|'expenses'|'employment'>): FactFindCalculatedTotals {
-  const totalAssetsCents=payload.assets.reduce((s,row)=>s+dollarsToCents(row.currentValue),0);
-  const totalAssetLinkedDebtCents=payload.assets.reduce((s,row)=>s+dollarsToCents(row.loanBalance),0);
-  const totalOtherLiabilitiesCents=payload.liabilities.reduce((s,row)=>s+dollarsToCents(row.currentBalance),0);
+  const {totalAssetsCents,totalAssetLinkedDebtCents}=calculateAssetTotalsCents(payload.assets);
+  const totalOtherLiabilitiesCents=calculateOtherLiabilitiesCents(payload.liabilities);
   const totalDebtCents=totalAssetLinkedDebtCents+totalOtherLiabilitiesCents;
   const totalMonthlyLivingExpensesCents=payload.expenses.reduce((s,row)=>s+dollarsToCents(row.monthlyAmount),0);
   return {totalAssetsCents,totalAssetLinkedDebtCents,totalOtherLiabilitiesCents,totalDebtCents,
-    netPositionCents:totalAssetsCents-totalDebtCents,applicant1AnnualIncomeCents:income(payload.employment.find(e=>e?.applicantNumber===1)),
-    applicant2AnnualIncomeCents:income(payload.employment.find(e=>e?.applicantNumber===2)),totalMonthlyLivingExpensesCents,
+    netPositionCents:totalAssetsCents-totalDebtCents,applicant1AnnualIncomeCents:calculateIncomeCents(payload.employment.find(e=>e?.applicantNumber===1)),
+    applicant2AnnualIncomeCents:calculateIncomeCents(payload.employment.find(e=>e?.applicantNumber===2)),totalMonthlyLivingExpensesCents,
     clientFormOutputLivingExpensesCents:totalMonthlyLivingExpensesCents};
 }
 export function totalsMatch(a:FactFindCalculatedTotals,b:FactFindCalculatedTotals):boolean { return (Object.keys(a) as (keyof FactFindCalculatedTotals)[]).every(k=>a[k]===b[k]); }

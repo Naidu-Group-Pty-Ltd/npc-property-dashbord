@@ -8,3 +8,7 @@ describe('workbook calculation parity',()=>{
  it('formats negative positions and domain text helpers',()=>{expect(formatNetPosition(-12345)).toBe('-$123.45');expect(fullApplicantName({...applicant(1),middleName:'J'})).toBe('Alex J Smith');expect(brandingFooter({email:'a@b.test',phone:'1',businessAddress:'Here'})).toBe('a@b.test | 1 | Here');expect(normalizePercentage('5%')).toBe(5)});
  it('supports a negative net position',()=>{const p=zeroFactFind();p.liabilities[7].currentBalance=1;expect(calculateFactFindTotals(p).netPositionCents).toBe(-100)});
 });
+
+describe('scoped subtotal helpers',()=>{
+ it('preserves income, asset, and liability cent precision for narrow subscribers',async()=>{const {calculateIncomeCents,calculateAssetTotalsCents,calculateOtherLiabilitiesCents}=await import('./calculations');expect(calculateIncomeCents({baseSalary:'10.01',bonus:2,commission:3,overtime:4,otherTaxableIncome:5})).toBe(2401);expect(calculateAssetTotalsCents([{currentValue:'100.10',loanBalance:'40.05'},{currentValue:2,loanBalance:1}])).toEqual({totalAssetsCents:10210,totalAssetLinkedDebtCents:4105});expect(calculateOtherLiabilitiesCents([{currentBalance:'7.07'},{currentBalance:1}])).toBe(807)})
+});
