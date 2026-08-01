@@ -135,8 +135,9 @@ const UNNAMED = '(unnamed)';
  * recorded unnamed and back-filled by `page()`.
  */
 function recordOverflow(bottom: number): void {
-  if (bottom > CONTENT_BOTTOM) {
-    overflows.push({ page: UNNAMED, bottom, overBy: Math.round(bottom - CONTENT_BOTTOM) });
+  const limit = contentBottom();
+  if (bottom > limit) {
+    overflows.push({ page: UNNAMED, bottom, overBy: Math.round(bottom - limit) });
   }
 }
 
@@ -173,6 +174,36 @@ export function flow(items: FlowItem[], startY = MARGIN): BlockDef[] {
   return out;
 }
 
+/**
+ * Landscape A4.
+ *
+ * `deriveEntryFacts()` reads orientation straight off the page size
+ * (`width > height`), so a template built with these dimensions files itself
+ * under the library's Landscape filter with nothing further to declare.
+ *
+ * Set with `useLandscape()` before building pages, and clear it after. It
+ * earns its place on one shape of document: a ten-year projection is twelve
+ * columns wide, which is 42pt per column in portrait and 63pt in landscape —
+ * the difference between a figure that fits and one that wraps.
+ */
+export const LANDSCAPE = { width: 842, height: 595 } as const;
+
+let activePageSize: { width: number; height: number } = PAGE;
+
+export function useLandscape(on: boolean): void {
+  activePageSize = on ? LANDSCAPE : PAGE;
+}
+
+/** Content width for the active page size. */
+export function contentWidth(): number {
+  return activePageSize.width - MARGIN * 2;
+}
+
+/** Lowest usable point on the active page, before the footer. */
+function contentBottom(): number {
+  return activePageSize.height - MARGIN - FOOTER_HEIGHT;
+}
+
 export function page(name: string, blocks: BlockDef[], background = 'token:surface'): PageDef {
   // Back-fill the flow(s) whose blocks this page is being built from.
   for (let i = overflows.length - 1; i >= 0; i -= 1) {
@@ -182,7 +213,7 @@ export function page(name: string, blocks: BlockDef[], background = 'token:surfa
   return {
     id: id('page'),
     name,
-    size: { width: PAGE.width, height: PAGE.height },
+    size: { ...activePageSize },
     background: { color: background },
     blocks,
   };
@@ -263,7 +294,7 @@ export function heading(
       headingColor: 'token:ink',
       bodySize: activeVoice.bodySize,
       color: 'token:ink',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -275,7 +306,7 @@ export function prose(body: string, height = 52): FlowItem {
       body,
       bodySize: activeVoice.bodySize,
       color: 'token:ink',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -296,7 +327,7 @@ export function rule(height = 2): FlowItem {
       color: v.ruleColor === 'accent' ? 'token:primary' : 'token:line',
       style: v.ruleStyle,
       thickness: v.ruleWeight,
-      x: MARGIN, y, width: Math.round(CONTENT_WIDTH * v.ruleSpan),
+      x: MARGIN, y, width: Math.round(contentWidth() * v.ruleSpan),
     }),
   };
 }
@@ -315,7 +346,7 @@ export function kpis(items: Array<{ label: string; value: string }>, height = 92
       // A four-up tile is ~87pt wide; a formatted currency value overruns the
       // renderer's 20pt default and gets clipped mid-figure.
       valueSize: items.length >= 4 ? 15 : items.length === 3 ? 17 : 19,
-      x: MARGIN, y, width: CONTENT_WIDTH, height,
+      x: MARGIN, y, width: contentWidth(), height,
     }),
   };
 }
@@ -351,7 +382,122 @@ export function table(
       borderColor: 'token:line',
       numericColumns,
       ...(activeVoice.mono ? { numericFont: 'token:mono' } : {}),
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
+    }),
+  };
+}
+
+/**
+ * The projection matrix — the centre of a cash-flow report.
+ *
+ * Rows are grouped into named bands (STATISTICS, CASH DEDUCTIONS, …), which is
+ * how the legacy renderer organised twenty-three rows of figures and the only
+ * reason the block is readable at all. The band rows are emitted as ordinary
+ * rows and their indices handed to the renderer as `sectionRows`, so the table
+ * stays a single `data-table` rather than a stack of separate ones that would
+ * drift out of column alignment.
+ *
+ * `fontSize` is deliberately exposed: twelve columns on a portrait page do not
+ * fit at 9pt, and silently letting them wrap is worse than setting 7pt.
+ */
+export function matrixTable(opts: {
+  headers: string[];
+  groups: Array<{ band?: string; rows: string[][] }>;
+  columnWidths?: number[];
+  rowHeight?: number;
+  fontSize?: number;
+}): FlowItem {
+  const rows: string[][] = [];
+  const sectionRows: number[] = [];
+  for (const group of opts.groups) {
+    if (group.band) {
+      sectionRows.push(rows.length);
+      rows.push([group.band, ...opts.headers.slice(1).map(() => '')]);
+    }
+    rows.push(...group.rows);
+  }
+  const rowHeight = opts.rowHeight ?? 16;
+  const fontSize = opts.fontSize ?? 7;
+  return {
+    height: 26 + rows.length * rowHeight,
+    block: (y) => block('data-table', {
+      headers: opts.headers,
+      rows: rows.map((cells) => ({ cells })),
+      ...(opts.columnWidths ? { columnWidths: opts.columnWidths } : {}),
+      headerBg: 'token:bg',
+      headerFg: 'token:text',
+      stripeBg: 'token:panel',
+      cellFg: 'token:ink',
+      borderColor: 'token:line',
+      sectionBg: 'token:panel',
+      sectionFg: 'token:primary',
+      negativeColor: 'token:negative',
+      numericColumns: opts.headers.map((_, i) => i).slice(1),
+      ...(activeVoice.mono ? { numericFont: 'token:mono' } : {}),
+      sectionRows,
+      fontSize,
+      cellPadding: 3,
+      x: MARGIN, y, width: contentWidth(),
+    }),
+  };
+}
+
+/**
+ * A two-up grid of input parameters.
+ *
+ * The legacy report set its twenty-odd inputs in two columns to keep them on
+ * one page; a single-column definition list of the same content runs to two.
+ * Emitted as a four-column table so the values stay aligned down the page.
+ */
+export function inputGrid(pairs: Array<[string, string]>): FlowItem {
+  const rows: string[][] = [];
+  for (let i = 0; i < pairs.length; i += 2) {
+    const [lt, lv] = pairs[i];
+    const right = pairs[i + 1];
+    rows.push([lt, lv, right?.[0] ?? '', right?.[1] ?? '']);
+  }
+  return {
+    height: 26 + rows.length * 17,
+    block: (y) => block('data-table', {
+      headers: ['Input', 'Value', 'Input', 'Value'],
+      rows: rows.map((cells) => ({ cells })),
+      columnWidths: [0.3, 0.2, 0.3, 0.2],
+      headerBg: 'token:primary',
+      headerFg: 'token:onPrimary',
+      stripeBg: 'token:panel',
+      cellFg: 'token:ink',
+      borderColor: 'token:line',
+      numericColumns: [1, 3],
+      fontSize: 8,
+      cellPadding: 4,
+      x: MARGIN, y, width: contentWidth(),
+    }),
+  };
+}
+
+/**
+ * The dark summary cards that close the legacy report.
+ *
+ * Same block as `kpis()`, inverted: the field colour becomes the tile and the
+ * figures print on it. Used once per report, at the point the reader has been
+ * through the detail and wants the four numbers that matter.
+ */
+export function summaryCards(
+  items: Array<{ label: string; value: string }>,
+  height = 92,
+): FlowItem {
+  return {
+    height,
+    block: (y) => block('kpi-grid', {
+      items,
+      columns: Math.min(items.length, 4),
+      gap: 12,
+      tileBg: 'token:bg',
+      accent: 'token:text',
+      labelColor: 'token:line',
+      radius: activeVoice.radii.md,
+      valueSize: items.length >= 4 ? 15 : 18,
+      x: MARGIN, y, width: contentWidth(), height,
     }),
   };
 }
@@ -365,7 +511,7 @@ export function callout(title: string, body: string, variant = 'info', height = 
       bg: 'token:panel',
       color: 'token:ink',
       radius: activeVoice.radii.md,
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -383,7 +529,7 @@ export function twoColumn(
       ratio: 0.5, gap: 22,
       headingSize: 12, headingColor: 'token:primary',
       bodySize: activeVoice.bodySize, bodyColor: 'token:ink',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -408,7 +554,7 @@ export function barChart(opts: {
       labelKey: 'label',
       valueKey: 'value',
       accent: 'token:primary',
-      x: MARGIN, y, width: CONTENT_WIDTH, height,
+      x: MARGIN, y, width: contentWidth(), height,
     }),
   };
 }
@@ -433,7 +579,7 @@ export function lineChart(opts: {
       labelKey: 'label',
       valueKey: 'value',
       accent: 'token:primary',
-      x: MARGIN, y, width: CONTENT_WIDTH, height,
+      x: MARGIN, y, width: contentWidth(), height,
     }),
   };
 }
@@ -458,7 +604,7 @@ export function donutChart(opts: {
       labelKey: 'label',
       valueKey: 'value',
       accent: 'token:primary',
-      x: MARGIN, y, width: CONTENT_WIDTH, height,
+      x: MARGIN, y, width: contentWidth(), height,
     }),
   };
 }
@@ -470,7 +616,7 @@ export function scorecard(
   return {
     height: 34 + items.length * 26,
     block: (y) => block('scorecard', {
-      title, items, x: MARGIN, y, width: CONTENT_WIDTH,
+      title, items, x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -482,7 +628,7 @@ export function riskRegister(
   return {
     height: 40 + items.length * 46,
     block: (y) => block('risk-register', {
-      title, items, x: MARGIN, y, width: CONTENT_WIDTH,
+      title, items, x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -494,7 +640,7 @@ export function checklist(
   return {
     height: 34 + items.length * 24,
     block: (y) => block('dd-checklist', {
-      title, items, x: MARGIN, y, width: CONTENT_WIDTH,
+      title, items, x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -521,7 +667,7 @@ export function strengthsWatch(strengths: string[], watch: string[]): FlowItem {
       onFillColor: 'token:surface',
       color: 'token:ink',
       radius: activeVoice.radii.sm,
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -531,7 +677,7 @@ export function decision(heading: string, body: string, height = 88): FlowItem {
     height,
     block: (y) => block('decision-box', {
       heading, body, accent: 'token:primary',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -544,7 +690,7 @@ export function processSteps(
     height: 34 + items.length * 52,
     block: (y) => block('process-steps', {
       title, items, accent: 'token:primary',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -556,7 +702,7 @@ export function definitions(
   return {
     height: 34 + items.length * 30,
     block: (y) => block('definition-list', {
-      title, items, x: MARGIN, y, width: CONTENT_WIDTH,
+      title, items, x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -570,7 +716,7 @@ export function featureList(
     height: 34 + Math.ceil(items.length / columns) * 54,
     block: (y) => block('feature-list', {
       title, items, columns, accent: 'token:primary',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -583,7 +729,7 @@ export function timeline(
     height: 110,
     block: (y) => block('timeline', {
       title, items, accent: 'token:primary',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -594,7 +740,7 @@ export function signature(signerName: string, signerRole: string): FlowItem {
     block: (y) => block('signature', {
       signerName, signerRole, dateLabel: 'Date',
       color: 'token:ink', lineColor: 'token:line', mutedColor: 'token:muted',
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -610,7 +756,7 @@ export function contents(entries: string): FlowItem {
       indexColor: 'token:primary',
       size: 10.5,
       lineHeight: 20,
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      x: MARGIN, y, width: contentWidth(),
     }),
   };
 }
@@ -639,8 +785,8 @@ export function footer(text: string): BlockDef {
 export function pageNumber(): BlockDef {
   return block('page-number', {
     color: 'token:muted',
-    x: PAGE.width - MARGIN - 60,
-    y: PAGE.height - 46,
+    x: activePageSize.width - MARGIN - 60,
+    y: activePageSize.height - 46,
     width: 60,
   });
 }

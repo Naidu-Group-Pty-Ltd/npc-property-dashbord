@@ -84,6 +84,15 @@ const NEXT_STEPS = [
 export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
   reportType: 'investment',
 
+  /**
+   * Report-level metadata. The date is a fixed string, not `new Date()`: the
+   * catalogue tests assert the rendered output, and a preview that changes at
+   * midnight is a flaky test waiting to happen.
+   */
+  report: {
+    generatedDate: '2 August 2026',
+  },
+
   org: {
     name: 'Meridian Property Advisory',
     abn: '42 618 305 774',
@@ -816,6 +825,125 @@ export const SAMPLE_REPORT_DATA: Record<string, unknown> = {
       { issue: 'One matter exceeded the 14-day target', why: 'Owner on leave with no delegate assigned', action: 'Assign a standing delegate for the complaints register' },
     ],
   },
+
+  /**
+   * The ten-year projection matrix.
+   *
+   * Shaped to match the legacy `CashFlowAnalysisModal` export — the same input
+   * set, the same four banded groups (statistics, cash deductions, non-cash
+   * deductions, summary), the same milestone columns — so the three
+   * legacy-derived catalogue templates preview against realistic figures
+   * rather than empty cells.
+   *
+   * Derived from the sample property above, not copied from any client file.
+   */
+  tenYear: (() => {
+    const price = 1285000;
+    const deposit = Math.round(price * 0.2);
+    const loan = price - deposit;
+    const weeklyRent = 950;
+    const growth = 5.2;
+    const cpi = 3.1;
+    const rate = 6.14;
+    const taxRate = 37;
+
+    const money = (n: number) => `$${Math.round(n).toLocaleString('en-AU')}`;
+    const signed = (n: number) =>
+      (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString('en-AU');
+
+    const years = Array.from({ length: 10 }, (_, i) => {
+      const y = i + 1;
+      const value = price * (1 + growth / 100) ** y;
+      const balance = loan * (1 - 0.018 * y);
+      const rent = weeklyRent * 52 * (1 + cpi / 100) ** i;
+      const expenses = 10610 * (1 + cpi / 100) ** i;
+      const interest = balance * (rate / 100);
+      const principal = loan * 0.018;
+      const preTax = rent - expenses - interest - principal;
+      const deductions = expenses + interest;
+      const netProfit = rent - deductions;
+      const refund = netProfit < 0 ? -netProfit * (taxRate / 100) : 0;
+      const afterTax = preTax + refund;
+      return {
+        y, value, balance, equity: value - balance, lvr: (balance / value) * 100,
+        rent, grossYield: (rent / value) * 100,
+        netYield: ((rent - expenses) / value) * 100,
+        expenses, interest, principal, preTax, deductions, netProfit, refund, afterTax,
+      };
+    });
+
+    const last = years[years.length - 1];
+    const row = (pick: (r: typeof years[0]) => string) => years.map(pick);
+
+    return {
+      // Column headings, so a template does not hard-code the horizon.
+      years: years.map((r) => `Yr ${r.y}`),
+      // ── Inputs ────────────────────────────────────────────────────────────
+      inputs: {
+        purchasePrice: money(price), landPrice: '—', buildPrice: money(price),
+        deposit: money(deposit), loanAmount: money(loan),
+        interestRate: `${rate.toFixed(2)}%`, capitalGrowth: `${growth.toFixed(1)}%`,
+        cpiGrowth: `${cpi.toFixed(1)}%`, taxRate: `${taxRate}%`, depreciation: '—',
+        weeklyRent: money(weeklyRent), grossYield: `${((weeklyRent * 52 / price) * 100).toFixed(2)}%`,
+        councilRates: '$2,800', waterRates: '$1,100', propertyManagement: '8%',
+        landlordInsurance: '$1,800', lettingFees: money(weeklyRent),
+        repairs: '$2,500', bodyCorporate: '—',
+        stampDuty: '$54,190', conveyancing: '$1,800',
+      },
+      upfront: {
+        deposit: money(deposit), stampDuty: '$54,190', conveyancing: '$1,800',
+        agentFee: '$4,940', total: money(deposit + 54190 + 1800 + 4940),
+        overall: money(price + 54190 + 1800 + 4940),
+      },
+      // ── Matrix rows, pre-formatted per year ───────────────────────────────
+      matrix: {
+        capitalGrowth: row(() => growth.toFixed(1)),
+        cpiGrowth: row(() => cpi.toFixed(1)),
+        propertyValue: row((r) => money(r.value)),
+        loanAmount: row((r) => money(r.balance)),
+        equity: row((r) => money(r.equity)),
+        lvr: row((r) => r.lvr.toFixed(1)),
+        rentalIncome: row((r) => money(r.rent)),
+        grossYield: row((r) => r.grossYield.toFixed(2)),
+        netYield: row((r) => r.netYield.toFixed(2)),
+        expenses: row((r) => money(r.expenses)),
+        landTax: row(() => '—'),
+        interestRate: row(() => rate.toFixed(2)),
+        interestPayments: row((r) => money(r.interest)),
+        principalPayments: row((r) => money(r.principal)),
+        preTaxPA: row((r) => signed(r.preTax)),
+        preTaxPW: row((r) => signed(r.preTax / 52)),
+        depreciation: row(() => '—'),
+        totalDeductions: row((r) => money(r.deductions)),
+        netProfitLoss: row((r) => signed(r.netProfit)),
+        taxRefund: row((r) => money(r.refund)),
+        afterTaxPA: row((r) => signed(r.afterTax)),
+        afterTaxPW: row((r) => signed(r.afterTax / 52)),
+      },
+      today: {
+        propertyValue: money(price), loanAmount: money(loan),
+        equity: money(deposit), lvr: '80.0', rentalIncome: `${money(weeklyRent)}pw`,
+      },
+      summary: {
+        propertyValue: money(last.value), totalEquity: money(last.equity),
+        capitalGain: money(last.value - price),
+        totalAfterTax: signed(years.reduce((a, r) => a + r.afterTax, 0)),
+      },
+      insight: {
+        value: `The property is projected to appreciate by ${(((last.value - price) / price) * 100).toFixed(1)}% over the ten-year horizon, from ${money(price)} to ${money(last.value)}, on the configured capital growth assumption.`,
+        equity: `Equity increases from ${money(deposit)} to ${money(last.equity)}, driven by both capital appreciation and principal repayments reducing the outstanding loan balance.`,
+        cashFlow: `After-tax cash flow improves by ${signed(last.afterTax - years[0].afterTax)} across the period. Equity surpasses the remaining loan balance in year ${years.findIndex((r) => r.equity > r.balance) + 1}, the point at which the investor holds majority ownership of the asset.`,
+        grossYield: `Gross yield moves from ${years[0].grossYield.toFixed(2)}% in year one to ${last.grossYield.toFixed(2)}% in year ten. The compression occurs because value appreciates faster than rental income — a hallmark of capital-growth-oriented property.`,
+        netYield: `Net yield shifts from ${years[0].netYield.toFixed(2)}% to ${last.netYield.toFixed(2)}%, accounting for council rates, insurance, maintenance and management fees.`,
+        expenseDrag: `The average spread between gross and net yield is ${(years.reduce((a, r) => a + (r.grossYield - r.netYield), 0) / years.length).toFixed(2)} percentage points — the proportion of rental income consumed by holding costs.`,
+      },
+      equitySeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Math.round(r.equity) })),
+      valueSeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Math.round(r.value) })),
+      grossYieldSeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Number(r.grossYield.toFixed(2)) })),
+      netYieldSeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Number(r.netYield.toFixed(2)) })),
+      afterTaxSeries: years.map((r) => ({ label: `Yr ${r.y}`, value: Math.round(r.afterTax) })),
+    };
+  })(),
 };
 
 /**

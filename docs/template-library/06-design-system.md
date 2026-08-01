@@ -126,6 +126,67 @@ which section they are in.
   drift, the library filters a user to "editorial" and hands back a technical
   layout. The build compares the compiled display face and stops
 
+## The ten-year cash flow variations
+
+Three catalogue entries derived from
+[`src/components/reports/CashFlowAnalysisModal.tsx`](../../src/components/reports/CashFlowAnalysisModal.tsx),
+the jsPDF generator that produces the report the business actually sends. That
+generator is a fixed pipeline — one layout, no variants, nothing selectable
+from the library. These bring its structure into the catalogue as editable
+templates.
+
+| Slug | Voice | Orientation | For |
+| --- | --- | --- | --- |
+| `cash-flow-ledger` | Cadastre | Portrait | The faithful successor. Inputs and costs, the banded matrix at milestone years, outcome cards, trends and yield |
+| `cash-flow-matrix` | Cadastre | **Landscape** | The analyst's edition. All ten years across a full spread |
+| `cash-flow-position` | Chancery | Portrait | The client read. Seven rows, the charts, and what it means |
+
+Carried over from the legacy render: the section order, the four banded groups
+(statistics / cash deductions / non-cash deductions / summary), red negatives,
+the dark summary cards, the gold accent, and the written insight blocks.
+
+Not carried over: the hardcoded `#2D3748` slate and `#CA8A04` gold. Those are
+`token:bg` and `token:primary` under the NPC voices, so the white-label
+pipeline can re-skin them and `isBrandSafe()` stays true. The legacy gold sits
+inside the NPC brand-gold family, so the output reads as its predecessor.
+
+**Why the accent is gold, not evergreen.** `CATEGORY_ACCENT` maps `cash_flow`
+to evergreen; these three override it. They are the legacy report's successors
+and the legacy report is gold. The accent argument to `beginTemplate()` exists
+so a template can make that call.
+
+**Why one is landscape.** The projection is twelve columns. That is 42pt per
+column on a portrait page — which the legacy handled by dropping to 6pt type —
+and 63pt across the long edge. `cash-flow-matrix` is the only landscape entry
+in the catalogue, and it is landscape because the data shape demands it rather
+than for variety. `useLandscape()` in `blocks.ts` switches the page size;
+`deriveEntryFacts()` reads the orientation straight off it.
+
+### Applying a new catalogue migration
+
+There is no CI step that runs migrations — they are applied by hand. A
+regenerated catalogue therefore does **not** reach the UI on merge, and the
+symptom is a Template Library that still shows the previous design. To apply:
+
+```bash
+supabase db push --project-ref <ref>          # or
+psql "$DATABASE_URL" -f supabase/migrations/<file>.sql
+```
+
+or paste the file into the Supabase dashboard SQL editor. The statement is
+idempotent — it upserts on `(slug, version)` and touches only seeded slugs, so
+re-running is safe and operator-promoted entries are never disturbed.
+
+To check which catalogue a database is serving:
+
+```sql
+select style, count(*), max(updated_at)
+from public.template_library_entries group by style;
+```
+
+Pre-design-system rows carry `fonts.heading = 'Helvetica'`; current ones carry
+a voice face and a `line` colour token.
+
 ### Migration files are append-only
 
 Supabase records a migration by its version prefix and never re-runs it, so
