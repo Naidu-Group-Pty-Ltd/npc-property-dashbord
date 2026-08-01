@@ -65,9 +65,12 @@ import {
   CreditCard,
   Banknote,
   BookOpen,
+  Lock,
 } from 'lucide-react';
 import { UserGuideAssistant } from '@/components/user-guide/UserGuideAssistant';
 import { ADDITIONAL_GUIDE_SECTIONS } from '@/lib/userGuideSections';
+import { filterEntitledSections, lockedSections } from '@/lib/userGuideEntitlements';
+import { usePlanEntitlements } from '@/hooks/usePlanEntitlements';
 
 /**
  * Icons for the data-defined sections. `userGuideSections.ts` names its icon as
@@ -112,6 +115,7 @@ interface GuideItem {
 }
 
 export default function UserGuide() {
+  const { planSlug, addonSlugs, loading: planLoading } = usePlanEntitlements();
   const accordionRef = useRef<string[]>([]);
   
   const handleNavigateToSection = useCallback((sectionId: string) => {
@@ -128,7 +132,7 @@ export default function UserGuide() {
       }
     }
   }, []);
-  const sections: GuideSection[] = [
+  const allSections: GuideSection[] = [
     {
       id: 'getting-started',
       title: 'Getting Started',
@@ -1448,6 +1452,25 @@ export default function UserGuide() {
     })),
   ];
 
+  // Only the sections this workspace is entitled to. A Launch clone must not
+  // be reading the Finance Portal guide: following a walkthrough for a screen
+  // that is not in the sidebar reads as a broken product, not a locked one.
+  //
+  // An unknown or still-loading plan shows everything — the same asymmetry
+  // planEntitlements.ts takes. Showing a section someone cannot use is an
+  // annoyance; hiding one they pay for is a fault.
+  const entitlementCtx = { planSlug: planLoading ? null : planSlug, addonSlugs };
+  const sections = useMemo(
+    () => filterEntitledSections(allSections, entitlementCtx),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planSlug, addonSlugs, planLoading],
+  );
+  const locked = useMemo(
+    () => lockedSections(allSections, entitlementCtx),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [planSlug, addonSlugs, planLoading],
+  );
+
   const quickTips = [
     { icon: Search, text: 'Use ⌘/Ctrl + K to quickly search across the application' },
     { icon: Filter, text: 'Combine multiple filters for precise property and client searches' },
@@ -1930,6 +1953,39 @@ export default function UserGuide() {
               </AccordionItem>
             ))}
           </Accordion>
+          )}
+          {/* Guides this plan does not include.
+              Named rather than silently omitted: a customer who notices a
+              feature exists is a sales conversation, whereas a customer who
+              notices documentation vanished raises a support ticket. */}
+          {locked.length > 0 && (
+            <div className="mt-6 rounded-2xl border border-border/65 bg-muted/25 p-4 sm:p-5">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border border-border bg-background text-muted-foreground">
+                  <Lock className="h-4 w-4" />
+                </span>
+                <div className="min-w-0 space-y-2">
+                  <h4 className="text-sm font-semibold leading-6 text-foreground">
+                    {locked.length} more {locked.length === 1 ? 'guide' : 'guides'} available on
+                    other plans
+                  </h4>
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    These cover modules your current plan does not include. Contact your
+                    administrator to add them.
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {locked.map((l) => (
+                      <span
+                        key={l.id}
+                        className="inline-flex items-center rounded-full border border-border bg-background px-2.5 py-1 text-xs text-muted-foreground"
+                      >
+                        {l.title}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

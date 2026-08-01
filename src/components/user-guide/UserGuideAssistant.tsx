@@ -89,7 +89,7 @@ export function UserGuideAssistant({ onNavigateToSection }: UserGuideAssistantPr
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const knowledgeBaseRef = useRef<string>('');
   // The assistant needs the plan to answer "can I use X", not just "what is X".
-  const { planSlug, loading: planLoading } = usePlanEntitlements();
+  const { planSlug, addonSlugs, loading: planLoading } = usePlanEntitlements();
 
   // Rebuilt when the plan resolves. Building it once on mount would bake in
   // the pre-load "plan unknown" state and the assistant would answer
@@ -99,8 +99,11 @@ export function UserGuideAssistant({ onNavigateToSection }: UserGuideAssistantPr
     // before the plan resolves still gets the full feature documentation — it
     // just tells the assistant to ask which plan the user is on rather than
     // assume. Refined the moment the real plan lands.
-    knowledgeBaseRef.current = formatKnowledgeBaseForAI(planLoading ? null : planSlug);
-  }, [planSlug, planLoading]);
+    knowledgeBaseRef.current = formatKnowledgeBaseForAI(
+      planLoading ? null : planSlug,
+      planLoading ? undefined : addonSlugs,
+    );
+  }, [planSlug, addonSlugs, planLoading]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {

@@ -134,12 +134,26 @@ export function planEnablesSubModule(planSlug: string | null | undefined, key: s
  * those modules to the existing user-permission check rather than locking out
  * workspaces that have purchased them.
  */
-export function planIncludesModule(planSlug: string | null | undefined, moduleSlug: string): boolean {
+export function planIncludesModule(
+  planSlug: string | null | undefined,
+  moduleSlug: string,
+  purchasedAddons?: readonly string[] | null,
+): boolean {
   if (!isKnownPlan(planSlug)) return true;
   const pricingSlug = MODULE_KEY_TO_PRICING_SLUG[moduleSlug] ?? moduleSlug;
   const tiers = MODULE_TIERS[pricingSlug];
   if (!tiers) return true; // not a priced module
-  if (tiers.length === 0) return true; // separately entitled add-on
+
+  // A purchased add-on grants the module whatever the tier says. Buying
+  // Market Updates on Launch has to work, or the purchase did nothing.
+  if (purchasedAddons?.includes(pricingSlug)) return true;
+
+  // Separately-sold module (empty tier list) and we were not told what the
+  // workspace holds. Fall through to the user-permission check rather than
+  // deny — the caller not passing add-ons is not evidence of not having them,
+  // and gating must never be the reason a paying customer loses access.
+  if (tiers.length === 0) return purchasedAddons == null ? true : false;
+
   return tiers.includes(planSlug);
 }
 

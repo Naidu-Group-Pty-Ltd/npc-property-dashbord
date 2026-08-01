@@ -126,7 +126,10 @@ describe('priced module coverage', () => {
 
 describe('formatKnowledgeBaseForAI', () => {
   it('emits every section id so the assistant can link without a hardcoded list', () => {
-    const ctx = formatKnowledgeBaseForAI('growth');
+    // Unfiltered (plan unknown). With a known plan the context is deliberately
+    // narrowed to what the workspace may see — covered in
+    // userGuideEntitlements.test.ts.
+    const ctx = formatKnowledgeBaseForAI(null);
     for (const id of getAllSectionIds()) {
       expect(ctx, `section id ${id} absent from AI context`).toContain(`Section ID: \`${id}\``);
     }
@@ -138,7 +141,7 @@ describe('formatKnowledgeBaseForAI', () => {
   });
 
   it('includes the documentation body', () => {
-    const ctx = formatKnowledgeBaseForAI('scale');
+    const ctx = formatKnowledgeBaseForAI('scale', ['finance-portal']);
     expect(ctx).toContain('AML / CTF Compliance');
     expect(ctx).toContain('Finance Portal');
   });

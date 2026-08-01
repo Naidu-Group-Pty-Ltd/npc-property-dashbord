@@ -38,6 +38,12 @@ export interface TokenBalance {
   planName?: string | null;
   /** Plan slug (launch/growth/scale) — what plan-tier gating keys on. */
   planSlug?: string | null;
+  /**
+   * Priced add-on slugs this workspace holds. Undefined means Mission Control
+   * did not say — which the gate treats as "fall through to permissions",
+   * never as "denied".
+   */
+  addonSlugs?: string[];
   overagePolicy?: string | null;
   currentPeriodEnd?: string | null;
   /** Mission Control marked this tenant billing-exempt (no plan, never

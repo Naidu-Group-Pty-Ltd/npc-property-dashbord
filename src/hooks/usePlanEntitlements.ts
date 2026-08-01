@@ -20,17 +20,26 @@ import {
  */
 export function usePlanEntitlements() {
   const [planSlug, setPlanSlug] = useState<string | null>(null);
+  // Undefined until Mission Control answers. Distinct from [] — an empty array
+  // means "holds none", undefined means "we were not told", and the gate
+  // treats those differently on purpose.
+  const [addonSlugs, setAddonSlugs] = useState<string[] | undefined>(undefined);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     fetchTokenBalance()
       .then((b) => {
-        if (!cancelled) setPlanSlug(b?.planSlug ?? null);
+        if (cancelled) return;
+        setPlanSlug(b?.planSlug ?? null);
+        setAddonSlugs(b?.addonSlugs);
       })
       .catch(() => {
         // Unknown plan gates open; nothing to recover here.
-        if (!cancelled) setPlanSlug(null);
+        if (!cancelled) {
+          setPlanSlug(null);
+          setAddonSlugs(undefined);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -46,8 +55,8 @@ export function usePlanEntitlements() {
   );
 
   const isModuleIncluded = useCallback(
-    (moduleSlug: string) => planIncludesModule(planSlug, moduleSlug),
-    [planSlug],
+    (moduleSlug: string) => planIncludesModule(planSlug, moduleSlug, addonSlugs),
+    [planSlug, addonSlugs],
   );
 
   return useMemo(
@@ -55,10 +64,12 @@ export function usePlanEntitlements() {
       planSlug,
       /** True once we know the plan is one the entitlement matrix describes. */
       planKnown: isKnownPlan(planSlug),
+      /** Add-ons this workspace holds; undefined when Mission Control did not say. */
+      addonSlugs,
       isSubModuleEnabled,
       isModuleIncluded,
       loading,
     }),
-    [planSlug, isSubModuleEnabled, isModuleIncluded, loading],
+    [planSlug, addonSlugs, isSubModuleEnabled, isModuleIncluded, loading],
   );
 }

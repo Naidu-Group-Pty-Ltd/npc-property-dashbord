@@ -14,6 +14,7 @@ import {
   ADDITIONAL_GUIDE_SECTIONS,
   type GuideSectionContent,
 } from './userGuideSections';
+import { filterEntitledSections } from './userGuideEntitlements';
 import {
   MODULE_TIERS,
   SUB_MODULE_ENTITLEMENTS,
@@ -1373,7 +1374,10 @@ const PLAN_NAMES: Record<string, string> = {
  * for that plan. When it is not, the full matrix is provided and the assistant
  * is told to ask rather than assume.
  */
-export function formatModuleAwarenessForAI(planSlug?: string | null): string {
+export function formatModuleAwarenessForAI(
+  planSlug?: string | null,
+  addonSlugs?: readonly string[] | null,
+): string {
   const slugs = Object.keys(MODULE_TIERS).sort();
   const known = isKnownPlan(planSlug ?? undefined);
   const plan = known ? (planSlug as PlanSlug) : null;
@@ -1384,13 +1388,23 @@ export function formatModuleAwarenessForAI(planSlug?: string | null): string {
   if (plan) {
     out += `## This workspace is on the ${PLAN_NAMES[plan]} plan\n\n`;
 
-    const included = slugs.filter((s) => (MODULE_TIERS[s] ?? []).includes(plan));
-    const addonOnly = slugs.filter((s) => (MODULE_TIERS[s] ?? []).length === 0);
+    // A purchased add-on counts as included whatever the tier says — that is
+    // what buying it did. Reporting it as "requires an upgrade" would tell a
+    // paying customer to buy something twice.
+    const held = new Set(addonSlugs ?? []);
+    const included = slugs.filter((s) => (MODULE_TIERS[s] ?? []).includes(plan) || held.has(s));
+    const addonOnly = slugs.filter(
+      (s) => (MODULE_TIERS[s] ?? []).length === 0 && !held.has(s),
+    );
     const higherTier = slugs.filter(
-      (s) => (MODULE_TIERS[s] ?? []).length > 0 && !(MODULE_TIERS[s] ?? []).includes(plan),
+      (s) =>
+        (MODULE_TIERS[s] ?? []).length > 0 && !(MODULE_TIERS[s] ?? []).includes(plan) && !held.has(s),
     );
 
     out += `### Included in this plan\n`;
+    if (held.size > 0) {
+      out += `(includes ${held.size} separately purchased add-on(s))\n`;
+    }
     for (const s of included) out += `- ${MODULE_DISPLAY_NAMES[s] ?? s}\n`;
     out += `\n### Not included — requires an upgrade\n`;
     for (const s of higherTier) {
@@ -1431,7 +1445,10 @@ export function formatModuleAwarenessForAI(planSlug?: string | null): string {
 /**
  * Format the knowledge base as context for AI
  */
-export function formatKnowledgeBaseForAI(planSlug?: string | null): string {
+export function formatKnowledgeBaseForAI(
+  planSlug?: string | null,
+  addonSlugs?: readonly string[] | null,
+): string {
   let context = `# Property Dashboard - User Guide Knowledge Base\n\n`;
   context += `This is a comprehensive property investment analysis platform. Below is the complete documentation:\n\n`;
 
@@ -1439,11 +1456,18 @@ export function formatKnowledgeBaseForAI(planSlug?: string | null): string {
   // before it starts describing how X works. Without it, the assistant happily
   // explained Scale-only features to Launch customers as though they were
   // sitting in their sidebar.
-  context += formatModuleAwarenessForAI(planSlug);
+  context += formatModuleAwarenessForAI(planSlug, addonSlugs);
 
   context += `\n---\n\n# FEATURE DOCUMENTATION\n\n`;
 
-  for (const section of userGuideKnowledge) {
+  // Only what this workspace can actually see. Feeding the assistant the full
+  // catalogue and asking it to self-censor does not work reliably — and the
+  // failure is bad in both directions: it either walks someone through a
+  // screen that is not in their sidebar, or links them to a section the page
+  // will not render, which scrolls nowhere.
+  const visibleSections = filterEntitledSections(userGuideKnowledge, { planSlug, addonSlugs });
+
+  for (const section of visibleSections) {
     // The section id is what the assistant needs to emit a working
     // [[section:id|Title]] link. It was never included, so the edge function
     // carried a hand-maintained list of ids instead — a third copy that went
