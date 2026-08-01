@@ -257,7 +257,7 @@ const baseGuideKnowledge: GuideSection[] = [
     description: 'View and manage property listings',
     items: [
       {
-        title: 'Opportunity Marketplace',
+        title: 'Property Marketplace',
         description: 'View and manage all property listings with advanced filtering and search capabilities.',
         features: [
           'Search by address, suburb, or postcode',
@@ -458,7 +458,7 @@ const baseGuideKnowledge: GuideSection[] = [
           'Financial projections with depreciation',
         ],
         steps: [
-          'Go to "Opportunity Marketplace" and find your target property',
+          'Go to "Property Marketplace" and find your target property',
           'Click "Generate Report" on the property card',
           'Choose analysis mode (Address/Postcode/State)',
           'Configure financial assumptions',
@@ -1333,7 +1333,7 @@ export const userGuideKnowledge: GuideSection[] = [
 const MODULE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
   'market-updates': 'Market Updates',
   'commercial-industrial': 'Commercial / Industrial',
-  'opportunity-marketplace': 'Opportunity Marketplace',
+  'opportunity-marketplace': 'Property Marketplace',
   'intelligence-hub': 'Aurixa Intelligence Hub',
   'report-comparisons': 'Generated Reports — Comparisons',
   'cashflow-comparisons': 'Cash Flow Analysis — Comparisons',
