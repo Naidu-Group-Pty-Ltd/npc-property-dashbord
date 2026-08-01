@@ -378,12 +378,11 @@ export function InternalMessageToasts() {
         delete next[threadId];
         return next;
       });
-      setPendingFiles((prev) => {
-        if (!prev[threadId]) return prev;
-        const next = { ...prev };
-        delete next[threadId];
-        return next;
-      });
+      if (queuedForRef.current === threadId) {
+        queuedForRef.current = null;
+        attachmentQueue.clear();
+      }
+
       if (activeRef.current === threadId) setActiveId(null);
     },
     [persist, setBaseline],
