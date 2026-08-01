@@ -216,6 +216,13 @@ export function AgentChatWidget() {
     return () => window.removeEventListener(OPEN_INTERNAL_MESSAGES_EVENT, handler);
   }, []);
 
+  // Let the pop-up alert surface know when the user is already reading messages.
+  useEffect(() => {
+    setInternalMessagesPanelOpen(isOpen && panelView === 'messages');
+    return () => setInternalMessagesPanelOpen(false);
+  }, [isOpen, panelView]);
+
+
   // Keep the orb badge fresh for internal messages even when the panel is closed.
   useEffect(() => {
     if (!user) return;
