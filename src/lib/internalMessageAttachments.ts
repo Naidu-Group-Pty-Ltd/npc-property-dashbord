@@ -147,6 +147,25 @@ function ticketUrl(ticket: UploadTicket): string {
 }
 
 /**
+ * Non-retryable ticket failures (the attachment endpoint itself is unavailable
+ * or the caller isn't allowed) mapped to a message that explains the fix.
+ */
+function fatalTicketError(error: unknown): Error | null {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  const m = msg.toLowerCase();
+  if (m.includes('unknown action')) {
+    return new Error('Attachment service is out of date — redeploy internal-messaging');
+  }
+  if (m.includes('not_a_participant')) {
+    return new Error('You are no longer a participant in this conversation');
+  }
+  if (m.includes('thread_id required')) {
+    return new Error('Open or create the conversation before attaching files');
+  }
+  return null;
+}
+
+/**
  * Upload one file with retry + progress. Each attempt mints a fresh signed
  * ticket so an expired/consumed token can never wedge the upload.
  */
@@ -205,9 +224,13 @@ export async function uploadInternalAttachment(
       };
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      lastError = error;
+      lastError = fatalTicketError(error) ?? error;
+      // A stale/misconfigured attachment service will never succeed on retry —
+      // surface it immediately instead of burning every attempt.
+      if (fatalTicketError(error)) break;
       if (attempt < attempts) await sleep(Math.min(8_000, 600 * 2 ** (attempt - 1)));
     }
+
   }
 
   throw new Error(
