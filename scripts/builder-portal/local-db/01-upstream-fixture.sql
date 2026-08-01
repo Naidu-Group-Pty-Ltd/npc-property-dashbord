@@ -300,3 +300,88 @@ END $$;
 INSERT INTO public.dashboard_modules(module_key, module_name, description, category, icon, route, sort_order, is_active)
 VALUES ('finance_portal_admin','Finance Portal','Administer the Finance Portal','admin','Landmark','/admin/finance-portal',120,true)
 ON CONFLICT (module_key) DO NOTHING;
+
+-- --------------------------------------------------------------------------
+-- The transaction-case backbone (Phase 5 upstream).
+--
+-- Reproduced faithfully from 20260730213826_*.sql: the three existing domain
+-- slots, the same-client guard and its trigger, and the link history CHECK. The
+-- Builder transactions migration REPLACES the guard and the trigger, so this
+-- fixture must carry the pre-Builder versions for that replacement to be a real
+-- replacement rather than a first creation.
+-- --------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.legal_matters (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid REFERENCES public.clients(id) ON DELETE SET NULL,
+  matter_reference text, created_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS public.purchase_files (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid REFERENCES public.clients(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS public.transaction_cases (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid NOT NULL REFERENCES public.clients(id),
+  case_type text NOT NULL DEFAULT 'property_purchase'
+    CHECK (case_type IN ('property_purchase','property_sale','refinance','construction','commercial','other')),
+  canonical_property_id uuid, property_address_normalized text, jurisdiction text,
+  shared_lifecycle_status text NOT NULL DEFAULT 'open'
+    CHECK (shared_lifecycle_status IN ('open','on_hold','completed','cancelled')),
+  risk_level text NOT NULL DEFAULT 'standard' CHECK (risk_level IN ('standard','elevated','high')),
+  row_version bigint NOT NULL DEFAULT 1, created_by uuid,
+  opened_at timestamptz NOT NULL DEFAULT now(), closed_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS public.transaction_case_links (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL UNIQUE REFERENCES public.transaction_cases(id) ON DELETE CASCADE,
+  legal_matter_id uuid UNIQUE REFERENCES public.legal_matters(id) ON DELETE SET NULL,
+  purchase_file_id uuid UNIQUE REFERENCES public.purchase_files(id) ON DELETE SET NULL,
+  client_deal_id uuid UNIQUE REFERENCES public.client_deals(id) ON DELETE SET NULL,
+  link_source text NOT NULL
+    CHECK (link_source IN ('legacy_explicit','legacy_reverse','command_centre','system')),
+  linked_by uuid, linked_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS public.transaction_case_link_history (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  case_id uuid NOT NULL REFERENCES public.transaction_cases(id) ON DELETE CASCADE,
+  domain_type text NOT NULL
+    CHECK (domain_type IN ('legal_matter','purchase_file','client_deal')),
+  domain_record_id uuid NOT NULL, action text NOT NULL CHECK (action IN ('linked','unlinked')),
+  link_source text NOT NULL, actor_user_id uuid, reason text,
+  occurred_at timestamptz NOT NULL DEFAULT now());
+
+CREATE OR REPLACE FUNCTION public.guard_transaction_case_links() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public AS $fx$
+DECLARE case_client uuid; domain_client uuid;
+BEGIN
+  SELECT client_id INTO case_client FROM public.transaction_cases WHERE id = NEW.case_id;
+  IF case_client IS NULL THEN RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='CASE_NOT_FOUND'; END IF;
+  IF NEW.legal_matter_id IS NOT NULL THEN
+    domain_client := NULL;
+    SELECT client_id INTO domain_client FROM public.legal_matters WHERE id = NEW.legal_matter_id;
+    IF domain_client IS DISTINCT FROM case_client THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='CROSS_CLIENT_CASE_LINK'; END IF;
+  END IF;
+  IF NEW.purchase_file_id IS NOT NULL THEN
+    domain_client := NULL;
+    SELECT client_id INTO domain_client FROM public.purchase_files WHERE id = NEW.purchase_file_id;
+    IF domain_client IS DISTINCT FROM case_client THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='CROSS_CLIENT_CASE_LINK'; END IF;
+  END IF;
+  IF NEW.client_deal_id IS NOT NULL THEN
+    domain_client := NULL;
+    SELECT client_id INTO domain_client FROM public.client_deals WHERE id = NEW.client_deal_id;
+    IF domain_client IS DISTINCT FROM case_client THEN
+      RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='CROSS_CLIENT_CASE_LINK'; END IF;
+  END IF;
+  RETURN NEW;
+END $fx$;
+
+DROP TRIGGER IF EXISTS trg_guard_transaction_case_links ON public.transaction_case_links;
+CREATE TRIGGER trg_guard_transaction_case_links
+  BEFORE INSERT OR UPDATE OF case_id, legal_matter_id, purchase_file_id, client_deal_id
+  ON public.transaction_case_links
+  FOR EACH ROW EXECUTE FUNCTION public.guard_transaction_case_links();

@@ -578,15 +578,19 @@ test('the gate order matches the documented governance order', () => {
   }
 });
 
-test('unbuilt navigation is disabled rather than linked to a placeholder', () => {
-  // Phase 2 delivers no business domain. Linking these would imply data that
-  // does not exist.
-  // Projects moved to `available: true` in Phase 3 and is asserted there.
-  for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
-    const entry = layout.slice(layout.indexOf(`label: '${label}'`));
-    assert.match(entry.slice(0, 120), /available: false/,
-      `${label} is presented as available but Phase 2 builds no such surface`);
+test('no navigation item links to a placeholder', () => {
+  // Phase 2 delivered no business domain, so every item was disabled then. Each
+  // moved to `available: true` as its module landed; the portal is now complete,
+  // so what this asserts is the other half of the same rule — nothing is linked
+  // that has no module, and nothing built is left unreachable.
+  const items = [...layout.matchAll(/\{ to: '([^']+)', label: '([^']+)'[^}]*available: (true|false)/g)];
+  assert.ok(items.length >= 10, 'the navigation list could not be parsed');
+  for (const [, to, label, available] of items) {
+    assert.equal(available, 'true', `${label} is built and must not be rendered as unavailable`);
+    assert.ok(to.startsWith('/builder'), `${label} points outside the portal tree`);
   }
+  // The disabled affordance itself stays, so a future unbuilt item cannot be
+  // linked to a placeholder instead.
   assert.match(layout, /becomes available in a later phase/);
 });
 

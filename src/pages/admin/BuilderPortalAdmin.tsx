@@ -14,6 +14,12 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { AdminBuilderProjectsPanel } from '@/components/admin/builder-portal/AdminBuilderProjectsPanel';
+import { AdminBuilderInventoryPanel } from '@/components/admin/builder-portal/AdminBuilderInventoryPanel';
+import { AdminBuilderTransactionsPanel } from '@/components/admin/builder-portal/AdminBuilderTransactionsPanel';
+import { AdminBuilderConstructionPanel } from '@/components/admin/builder-portal/AdminBuilderConstructionPanel';
+import { AdminBuilderDeliveryPanel } from '@/components/admin/builder-portal/AdminBuilderDeliveryPanel';
+import { AdminBuilderCollaborationPanel } from '@/components/admin/builder-portal/AdminBuilderCollaborationPanel';
+import { AdminBuilderWorkspacePanel } from '@/components/admin/builder-portal/AdminBuilderWorkspacePanel';
 import { toast } from 'sonner';
 import { HardHat, Loader2, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 
@@ -251,6 +257,12 @@ export default function BuilderPortalAdmin() {
           <TabsTrigger value="users">Portal users ({users.length})</TabsTrigger>
           <TabsTrigger value="memberships">Memberships ({liveMemberships.length})</TabsTrigger>
           <TabsTrigger value="projects">Projects</TabsTrigger>
+          <TabsTrigger value="inventory">Inventory</TabsTrigger>
+          <TabsTrigger value="transactions">Transactions</TabsTrigger>
+          <TabsTrigger value="construction">Construction</TabsTrigger>
+          <TabsTrigger value="delivery">Delivery</TabsTrigger>
+          <TabsTrigger value="collaboration">Collaboration</TabsTrigger>
+          <TabsTrigger value="workspace">Workspace</TabsTrigger>
         </TabsList>
 
         {/* ---------------------------------------------------- organisations */}
@@ -485,6 +497,30 @@ export default function BuilderPortalAdmin() {
         </TabsContent>
               <TabsContent value="projects" className="mt-4">
           <AdminBuilderProjectsPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="inventory" className="mt-4">
+          <AdminBuilderInventoryPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="transactions" className="mt-4">
+          <AdminBuilderTransactionsPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="construction" className="mt-4">
+          <AdminBuilderConstructionPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="delivery" className="mt-4">
+          <AdminBuilderDeliveryPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="collaboration" className="mt-4">
+          <AdminBuilderCollaborationPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="workspace" className="mt-4">
+          <AdminBuilderWorkspacePanel canEdit={canEdit} />
         </TabsContent>
 
       </Tabs>

@@ -73,33 +73,47 @@ test('builder_portal_admin is registered and guarded (updated by Phase 1)', () =
   assert.match(app, /moduleKey="builder_portal_admin"/);
 });
 
-test('the Builder function family is exactly identity plus projects (updated by Phase 3)', () => {
+test('the Builder function family is exactly the built modules', () => {
   // Phase 0 asserted no builder-portal function existed; Phase 1 allowed one;
-  // Phase 2 added the external authentication family; Phase 3 adds the project
-  // module. The list stays exhaustive so a later-phase function cannot appear
-  // without this test failing — that is the boundary Phase 0 was protecting.
+  // Phase 2 added the external authentication family; Phase 3 added the project
+  // module; the inventory module adds two more. The list stays exhaustive so a
+  // function for an unbuilt module cannot appear without this test failing —
+  // that is the boundary Phase 0 was protecting.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name);
   assert.deepEqual(functionDirs.filter((name) => /^builder-/.test(name)).sort(), [
+    'builder-collaboration-admin',
+    'builder-construction-admin',
+    'builder-delivery-admin',
+    'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
+    'builder-portal-collaboration',
+    'builder-portal-construction',
+    'builder-portal-delivery',
     'builder-portal-forgot-password',
+    'builder-portal-inventory',
     'builder-portal-invite',
     'builder-portal-login',
     'builder-portal-logout',
     'builder-portal-projects',
     'builder-portal-reset-password',
+    'builder-portal-transactions',
     'builder-portal-verify',
+    'builder-portal-workspace',
     'builder-projects-admin',
+    'builder-transactions-admin',
+    'builder-workspace-admin',
   ]);
 });
 
-test('the Builder schema stops at identity, governance and projects (updated by Phase 3)', () => {
-  // Phase 0 asserted the whole Builder domain was absent; Phase 1 added identity;
-  // Phase 3 adds the project module. What is still enforced is the ceiling: no
-  // inventory, reservation, transaction or construction table may exist yet.
+test('the Builder schema covers every built module and nothing beyond', () => {
+  // Phase 0 asserted the whole Builder domain was absent; each module has since
+  // added its own tables. Collaboration is the last of them, so the ceiling is
+  // now the whole portal: what this still enforces is that no table for an
+  // INVENTED module appears, and that every built one is present.
   const created = new Set(
     [...migrations.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?([a-z_][a-z0-9_]*)/gi)]
       .map((match) => match[1].toLowerCase()),
@@ -110,15 +124,29 @@ test('the Builder schema stops at identity, governance and projects (updated by 
     'builder_role_default_permissions', 'builder_membership_permissions',
     'builder_developments', 'builder_projects', 'builder_project_parties',
     'builder_project_access',
+    'builder_stages', 'builder_buildings', 'builder_lots', 'builder_units',
+    'builder_unit_pricing', 'builder_unit_holds', 'builder_reservations',
+    'builder_allocations', 'builder_transactions', 'builder_transaction_parties',
+    'builder_construction_cases', 'builder_construction_stages',
+    'builder_construction_milestones', 'builder_variations', 'builder_progress_claims',
+    'builder_inspections', 'builder_defects', 'builder_handovers',
   ]) {
     assert.ok(created.has(table), `expected Builder table missing: ${table}`);
   }
+  // Collaboration completes the portal.
   for (const table of [
-    'builder_stages', 'builder_lots', 'builder_units', 'builder_inventory',
-    'builder_reservations', 'builder_transactions', 'builder_variations',
-    'builder_progress_claims', 'builder_inspections', 'builder_defects', 'builder_handovers',
+    'builder_documents', 'builder_document_versions', 'builder_document_grants',
+    'builder_conversations', 'builder_conversation_participants', 'builder_messages',
+    'builder_tasks', 'builder_task_assignments', 'builder_notifications',
   ]) {
-    assert.ok(!created.has(table), `later-phase Builder table created too early: ${table}`);
+    assert.ok(created.has(table), `expected Builder table missing: ${table}`);
+  }
+  // The ceiling: no table for a module nobody asked for.
+  for (const table of [
+    'builder_leads', 'builder_marketing_campaigns', 'builder_tenders',
+    'builder_subcontractors', 'builder_purchase_orders',
+  ]) {
+    assert.ok(!created.has(table), `a Builder table for an unbuilt module appeared: ${table}`);
   }
 });
 
@@ -259,18 +287,26 @@ test('REPAIRED: solicitor_portal_admin is registered in dashboard_modules', () =
 // D. Shared backbone the Builder Portal will reuse
 // ---------------------------------------------------------------------------
 
-test('the transaction case backbone exists with three domain link slots', () => {
+test('the transaction case backbone carries four domain link slots', () => {
+  // Three at the Phase 0 baseline; the Builder slot is the fourth and last,
+  // added by the transactions module (GEN-09).
   assert.match(migrations, /CREATE TABLE IF NOT EXISTS public\.transaction_case_links/);
   assert.match(migrations, /legal_matter_id uuid UNIQUE REFERENCES public\.legal_matters\(id\)/);
   assert.match(migrations, /purchase_file_id uuid UNIQUE REFERENCES public\.purchase_files\(id\)/);
   assert.match(migrations, /client_deal_id uuid UNIQUE REFERENCES public\.client_deals\(id\)/);
-  assert.ok(!migrations.includes('builder_transaction_id'), 'a Builder link slot already exists');
+  assert.match(migrations, /ADD COLUMN IF NOT EXISTS builder_transaction_id uuid/);
+  // And no fifth slot: the case is a shared identity, not a container.
+  assert.ok(!/ADD COLUMN IF NOT EXISTS builder_(unit|reservation|construction)_id/.test(migrations),
+    'a fifth domain slot was added — units and construction are reached through the transaction');
 });
 
 test('the cross-client link guard is enforced by a database trigger', () => {
   assert.match(migrations, /guard_transaction_case_links/);
   assert.match(migrations, /CROSS_CLIENT_CASE_LINK/);
+  // The baseline three-slot trigger, and the four-slot trigger that replaced it.
   assert.match(migrations, /BEFORE INSERT OR UPDATE OF case_id,legal_matter_id,purchase_file_id,client_deal_id/);
+  assert.match(migrations,
+    /BEFORE INSERT OR UPDATE OF case_id, legal_matter_id, purchase_file_id,\s*\n\s*client_deal_id, builder_transaction_id/);
 });
 
 test("transaction_cases already permits a 'construction' case type", () => {

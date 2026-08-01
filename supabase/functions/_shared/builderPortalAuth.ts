@@ -497,6 +497,44 @@ export async function listAccessibleBuilderProjectIds(
 }
 
 /**
+ * Every unit id this user may currently see, optionally narrowed to the
+ * session's active organisation. The database resolver walks the parent project
+ * first, so a unit can never be visible when its project is not.
+ */
+export async function listAccessibleBuilderUnitIds(
+  supabase: any,
+  builderUserId: string,
+  organisationId: string | null = null,
+  permissionKey = 'inventory',
+): Promise<string[]> {
+  const { data, error } = await supabase.rpc('builder_accessible_units', {
+    _user_id: builderUserId,
+    _organisation_id: organisationId,
+    _permission_key: permissionKey,
+  });
+  if (error || !Array.isArray(data)) return [];
+  return data.map((row: any) => row.unit_id);
+}
+
+/**
+ * Entity types the trusted activity log accepts. Kept in step with the
+ * `builder_portal_activity_log_entity_type_check` CHECK constraint: a value that
+ * is not in both places is rejected by the database at write time.
+ */
+export type BuilderActivityEntityType =
+  | 'organisation' | 'portal_user' | 'membership' | 'membership_permissions' | 'session'
+  | 'development' | 'project' | 'project_party' | 'project_access'
+  | 'stage' | 'building' | 'lot' | 'unit' | 'unit_price' | 'unit_hold'
+  | 'reservation' | 'allocation'
+  | 'transaction' | 'transaction_party' | 'transaction_case_link'
+  | 'construction_case' | 'construction_stage' | 'milestone'
+  | 'progress_update' | 'photograph'
+  | 'variation' | 'variation_approval' | 'progress_claim'
+  | 'inspection' | 'defect' | 'practical_completion' | 'handover' | 'warranty_claim'
+  | 'document' | 'document_version' | 'document_grant'
+  | 'conversation' | 'message' | 'task' | 'task_assignment' | 'notification';
+
+/**
  * Append a project event to the trusted activity log.
  *
  * Returns whether the write succeeded, like `auditBuilderIdentity` and unlike
@@ -512,7 +550,7 @@ export async function logBuilderProjectActivity(
     builderUserId?: string | null;
     organisationId?: string | null;
     action: string;
-    entityType?: 'development' | 'project' | 'project_party' | 'project_access';
+    entityType?: BuilderActivityEntityType;
     entityId?: string | null;
     previousState?: Record<string, unknown> | null;
     newState?: Record<string, unknown> | null;

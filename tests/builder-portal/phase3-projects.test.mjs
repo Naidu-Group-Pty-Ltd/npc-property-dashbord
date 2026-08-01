@@ -470,12 +470,15 @@ test('the Projects navigation item is enabled', () => {
   assert.match(entry.slice(0, 120), /available: true/);
 });
 
-test('later-phase navigation items remain disabled', () => {
-  for (const label of ['Transactions', 'Pipeline', 'Messages', 'Tasks']) {
+test('every navigation item is enabled now that every module is built', () => {
+  // The portal is complete: nothing may be left rendered as unavailable.
+  for (const label of ['Documents', 'Messages', 'Tasks', 'Notifications']) {
     const entry = layout.slice(layout.indexOf(`label: '${label}'`));
-    assert.match(entry.slice(0, 120), /available: false/,
-      `${label} belongs to a later phase and must stay disabled`);
+    assert.match(entry.slice(0, 120), /available: true/,
+      `${label} is built and must not be rendered as unavailable`);
   }
+  assert.ok(!layout.includes('available: false'),
+    'a completed module is still rendered as unavailable');
 });
 
 test('the project routes live inside the protected Builder tree', () => {
@@ -550,23 +553,35 @@ test('the Phase 3 database verification script is wired into package.json', () =
   assert.ok(existsSync(join(root, 'scripts/builder-portal/local-db/verify-phase-3.mjs')));
 });
 
-test('the Builder function family stops at projects', () => {
-  // No later-phase function may appear without this test failing.
+test('the Builder function family is exactly the built modules', () => {
+  // No function for a module nobody asked for may appear without this failing.
   const dirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && /^builder-/.test(entry.name))
     .map((entry) => entry.name).sort();
   assert.deepEqual(dirs, [
+    'builder-collaboration-admin',
+    'builder-construction-admin',
+    'builder-delivery-admin',
+    'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
+    'builder-portal-collaboration',
+    'builder-portal-construction',
+    'builder-portal-delivery',
     'builder-portal-forgot-password',
+    'builder-portal-inventory',
     'builder-portal-invite',
     'builder-portal-login',
     'builder-portal-logout',
     'builder-portal-projects',
     'builder-portal-reset-password',
+    'builder-portal-transactions',
     'builder-portal-verify',
+    'builder-portal-workspace',
     'builder-projects-admin',
+    'builder-transactions-admin',
+    'builder-workspace-admin',
   ]);
 });
 
