@@ -23106,7 +23106,9 @@ export type Database = {
           created_by: string | null
           entity_id: string | null
           id: string
+          link: string | null
           message: string
+          metadata: Json
           read: boolean
           report_id: string | null
           target_user_id: string | null
@@ -23119,7 +23121,9 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           id?: string
+          link?: string | null
           message: string
+          metadata?: Json
           read?: boolean
           report_id?: string | null
           target_user_id?: string | null
@@ -23132,7 +23136,9 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           id?: string
+          link?: string | null
           message?: string
+          metadata?: Json
           read?: boolean
           report_id?: string | null
           target_user_id?: string | null

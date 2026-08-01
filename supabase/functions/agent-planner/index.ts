@@ -433,7 +433,9 @@ async function runScheduled(sb: any) {
           title: 'Scheduled plan is ready',
           message: `${plan.title} is awaiting your approval.`,
           metadata: { plan_id: plan.id, run_id: run?.id },
-          is_read: false,
+          // `read`, not `is_read` — naming the wrong column made Postgres
+          // reject the whole insert, so this notification never arrived.
+          read: false,
         });
         await sb.from('agent_plan_runs').update({
           status: 'awaiting_approval', finished_at: new Date().toISOString(),
