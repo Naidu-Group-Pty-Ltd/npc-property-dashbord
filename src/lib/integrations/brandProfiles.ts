@@ -241,6 +241,7 @@ const LOCAL_BRAND_ASSETS: Record<string, string> = Object.fromEntries(
 /** Integration ids that reuse another brand's vendored mark. */
 const LOCAL_BRAND_ALIASES: Record<string, string> = {
   gohighlevel_new: 'gohighlevel',
+  landchecker: 'landchecker-mark',
 };
 
 
@@ -270,6 +271,11 @@ const FULL_COLOR_LOCAL_ASSETS = new Set([
   'pricefinder',
   'vapi',
   'postmark',
+  'gamma',
+  'landchecker',
+  'clicksend',
+  'cloudconvert',
+  'greenid',
 ]);
 
 export function isFullColorLocalAsset(id: string): boolean {
