@@ -181,9 +181,6 @@ export function InternalMessageToasts() {
             </button>
           </div>
         </div>
-
-          </div>
-        </div>
       ))}
     </div>
   );
