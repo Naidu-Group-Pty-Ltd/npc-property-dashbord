@@ -283,12 +283,8 @@ export function isFullColorLocalAsset(id: string): boolean {
  */
 const BRAND_MONOGRAMS: Record<string, string> = {
   illion: 'il',
-  clicksend: 'CS',
-  cloudconvert: 'CC',
-  gamma: 'G',
-  greenid: 'gID',
-  landchecker: 'Lc',
 };
+
 
 export function getBrandMonogram(id: string): string | undefined {
   return Object.prototype.hasOwnProperty.call(BRAND_MONOGRAMS, id)
