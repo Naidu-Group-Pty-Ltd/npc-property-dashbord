@@ -644,6 +644,20 @@ export function AgentChatWidget() {
     }
   }, [panelView]);
 
+  // Background unread poll for internal team messages (badge stays live while closed)
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    const poll = () => {
+      invokeSecureFunction('internal-messaging', { action: 'unread_count' })
+        .then(({ data }) => { if (!cancelled && typeof data?.unread === 'number') setInternalUnread(data.unread); })
+        .catch(() => {});
+    };
+    poll();
+    const id = setInterval(poll, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [user]);
+
   // Load available skills (personas) once panel opens
   useEffect(() => {
     if (!isOpen || skills.length > 0) return;
