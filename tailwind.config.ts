@@ -124,6 +124,11 @@ export default {
 				mono: ['var(--font-mono)']
 			},
 			keyframes: {
+				'typing-sweep': {
+					'0%': { transform: 'translateX(0%)' },
+					'100%': { transform: 'translateX(400%)' }
+				},
+
 				'accordion-down': {
 					from: {
 						height: '0'
