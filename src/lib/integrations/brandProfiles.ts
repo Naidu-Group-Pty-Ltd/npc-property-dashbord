@@ -270,6 +270,11 @@ const FULL_COLOR_LOCAL_ASSETS = new Set([
   'pricefinder',
   'vapi',
   'postmark',
+  'gamma',
+  'landchecker',
+  'clicksend',
+  'cloudconvert',
+  'greenid',
 ]);
 
 export function isFullColorLocalAsset(id: string): boolean {
