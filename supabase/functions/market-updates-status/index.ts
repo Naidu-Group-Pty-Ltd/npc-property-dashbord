@@ -8,8 +8,9 @@ import { requireAdmin, requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 
-const UPDATE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,created_at,updated_at';
-const SOURCE_COLUMNS = 'id,source_key,name,description,source_type,adapter_type,url,primary_url,feed_urls,listing_urls,source_authority,perspective,copyright_mode,legal_storage_policy,category,geography,reliability_tier,enabled,refresh_frequency_hours,refresh_frequency_minutes,consecutive_failures,health_status,registry_status,disabled_reason,last_http_status,last_latency_ms,last_items_discovered,last_items_published,last_fetched_at,last_success_at,created_at,updated_at';
+const UPDATE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,visibility,shadow_would_publish,created_at,updated_at';
+const SOURCE_COLUMNS = 'id,source_key,name,description,source_type,adapter_type,url,primary_url,feed_urls,listing_urls,source_authority,perspective,copyright_mode,legal_storage_policy,category,geography,reliability_tier,enabled,ingest_mode,shadow_since,shadow_promotion_notes,refresh_frequency_hours,refresh_frequency_minutes,consecutive_failures,health_status,registry_status,disabled_reason,last_http_status,last_latency_ms,last_items_discovered,last_items_published,last_fetched_at,last_success_at,created_at,updated_at';
+const SHADOW_METRIC_COLUMNS = 'source_id,source_key,name,ingest_mode,shadow_since,shadow_promotion_notes,health_status,source_authority,shadow_items,would_publish,below_relevance,rejected,avg_relevance,avg_confidence,last_shadow_item_at';
 const DIGEST_COLUMNS = 'id,period,generated_at,period_start,period_end,executive_summary,top_update_ids,finance_lending_highlights,property_market_highlights,construction_supply_highlights,policy_regulation_highlights,political_economic_watchpoints,social_watchpoints,segment_breakdown,buyer_implications,investor_implications,broker_adviser_implications,client_advisory_implications,recommended_watchlist_for_tomorrow,source_urls,confidence_score,status,created_at,updated_at';
 const AGENT_KEYS = ['market_updates_classifier', 'market_updates_digest', 'market_updates_qa_fast', 'market_updates_qa_deep'];
 const PERIODS = new Set(['24h', 'weekly', 'biweekly', 'monthly', 'quarterly', 'annual']);
@@ -58,7 +59,14 @@ Deno.serve(async (req) => {
         if (!adminPermission.ok) return json({ error:'Admin privilege required to review unpublished updates', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
       }
       const limit = Math.max(1, Math.min(200, Number(body.limit) || 200));
-      let query = sb.from('market_updates').select(UPDATE_COLUMNS).eq('status', status)
+      // Shadow rows share the 'candidate' status but are not the operator's review
+      // queue, so a caller has to ask for them explicitly.
+      const visibility = body.visibility === 'shadow' ? 'shadow' : 'public';
+      if (visibility === 'shadow') {
+        const shadowPermission = await requireAdmin(sb, { userId:auth.userId, authMethod:auth.authMethod });
+        if (!shadowPermission.ok) return json({ error:'Admin privilege required to review shadow-mode items', code:'market_updates_review_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
+      }
+      let query = sb.from('market_updates').select(UPDATE_COLUMNS).eq('status', status).eq('visibility', visibility)
         .order('source_published_at', { ascending:false, nullsFirst:false })
         .order('ingested_at', { ascending:false }).limit(limit);
       if (typeof body.category === 'string' && body.category !== 'all') query = query.eq('category', body.category);
@@ -83,12 +91,15 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'sources') {
-      const [{ data:sources, error:sourcesError }, { data:latestRun, error:runError }] = await Promise.all([
+      const [{ data:sources, error:sourcesError }, { data:latestRun, error:runError }, shadowResult] = await Promise.all([
         sb.from('market_sources').select(SOURCE_COLUMNS).eq('registry_status','canonical').order('name'),
         sb.from('market_ingestion_runs').select('*').order('started_at',{ ascending:false }).limit(1).maybeSingle(),
+        sb.from('market_shadow_source_metrics').select(SHADOW_METRIC_COLUMNS).eq('ingest_mode','shadow'),
       ]);
       if (sourcesError) throw Object.assign(new Error('source status query failed'), { stage:'sources' });
-      return json({ sources:sources ?? [], health:sourceHealth(sources ?? [], runError ? null : latestRun), warnings:runError ? ['latest_ingestion_run_unavailable'] : [], correlation_id:correlationId }, 200, cors, correlationId);
+      const warnings = runError ? ['latest_ingestion_run_unavailable'] : [];
+      if (shadowResult.error) warnings.push('shadow_metrics_unavailable');
+      return json({ sources:sources ?? [], shadowMetrics:shadowResult.error ? [] : shadowResult.data ?? [], health:sourceHealth(sources ?? [], runError ? null : latestRun), warnings, correlation_id:correlationId }, 200, cors, correlationId);
     }
 
     if (action === 'run') {
@@ -100,16 +111,20 @@ Deno.serve(async (req) => {
 
     if (action !== 'status') return json({ error:'Unknown action', correlation_id:correlationId }, 400, cors, correlationId);
 
-    const [sourcesResult, latestRunResult, latestFetchResult, latestDigestResult, updateRows, assignmentsResult, openRouterResult, latestCronResult, automationResult] = await Promise.all([
+    const [sourcesResult, latestRunResult, latestFetchResult, latestDigestResult, updateRows, assignmentsResult, openRouterResult, latestCronResult, automationResult, shadowMetricsResult] = await Promise.all([
       sb.from('market_sources').select(SOURCE_COLUMNS).eq('registry_status','canonical').order('name'),
       sb.from('market_ingestion_runs').select('*').order('started_at',{ ascending:false }).limit(1).maybeSingle(),
       sb.from('market_source_fetch_runs').select('id,correlation_id,source_id,status,started_at,completed_at,http_status,items_discovered,items_published,safe_error_message').in('status',['completed','degraded']).order('started_at',{ ascending:false }).limit(1).maybeSingle(),
       sb.from('market_digests').select('id,period,status,generated_at,period_start,period_end').order('generated_at',{ ascending:false }).limit(1).maybeSingle(),
-      Promise.all(['published','candidate','ignored'].map(async status => ({ status, result:await sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status',status) }))),
+      // Counts describe the client-facing feed, so shadow rows are excluded here and
+      // reported separately below — otherwise every shadow item would read as work
+      // sitting in the operator's candidate queue.
+      Promise.all(['published','candidate','ignored'].map(async status => ({ status, result:await sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status',status).eq('visibility','public') }))),
       sb.from('agent_model_assignments').select('agent_key,route,model_id,fallback_chain,last_used_at,last_error,updated_at,is_active').in('agent_key',AGENT_KEYS).eq('is_active',true),
       sb.from('llm_integration_settings').select('provider,is_enabled,last_test_at,last_test_success').ilike('provider','openrouter').maybeSingle(),
       sb.from('market_ingestion_runs').select('*').eq('trigger_type','cron').in('status',['completed','partial']).order('completed_at',{ ascending:false }).limit(1).maybeSingle(),
       sb.rpc('market_updates_automation_status'),
+      sb.from('market_shadow_source_metrics').select(SHADOW_METRIC_COLUMNS).eq('ingest_mode','shadow'),
     ]);
     if (sourcesResult.error) throw Object.assign(new Error('canonical source query failed'), { stage:'status' });
     const warnings = buildWarnings(sourcesResult.data ?? [], latestRunResult.error ? null : latestRunResult.data, assignmentsResult.error ? [] : assignmentsResult.data ?? []);
@@ -119,6 +134,7 @@ Deno.serve(async (req) => {
     if (latestCronResult.error) warnings.push('latest_cron_run_unavailable');
     if (assignmentsResult.error) warnings.push('agent_readiness_unavailable');
     if (openRouterResult.error) warnings.push('openrouter_readiness_unavailable');
+    if (shadowMetricsResult.error) warnings.push('shadow_metrics_unavailable');
     for (const row of updateRows) if (row.result.error) warnings.push(`${row.status}_count_unavailable`);
     const counts = Object.fromEntries(updateRows.map(row => [row.status, row.result.error ? null : row.result.count ?? 0]));
     const archivedLegacy = await countRows(sb,'market_sources','registry_status','archived_legacy');
@@ -127,7 +143,7 @@ Deno.serve(async (req) => {
     if (unresolvedLegacy === null) warnings.push('unresolved_legacy_count_unavailable');
     const latestRun = latestRunResult.error ? null : latestRunResult.data;
     const health = sourceHealth(sourcesResult.data ?? [], latestRun);
-    const nextScheduledFetch = (sourcesResult.data ?? []).filter((source:any) => source.enabled).map((source:any) => source.last_fetched_at
+    const nextScheduledFetch = (sourcesResult.data ?? []).filter((source:any) => source.ingest_mode === 'live' || source.ingest_mode === 'shadow').map((source:any) => source.last_fetched_at
       ? new Date(new Date(source.last_fetched_at).getTime() + Math.max(15, Number(source.refresh_frequency_minutes ?? 60)) * 60_000).toISOString()
       : new Date().toISOString()).sort()[0] ?? null;
     const assignments = assignmentsResult.error ? [] : assignmentsResult.data ?? [];
@@ -143,6 +159,7 @@ Deno.serve(async (req) => {
         nextScheduledFetch,
         archivedLegacy, unresolvedLegacy,
         publishedUpdates:counts.published, candidates:counts.candidate, ignored:counts.ignored,
+        shadowMetrics:shadowMetricsResult.error ? [] : shadowMetricsResult.data ?? [],
         latestSourceFetch:latestFetchResult.error ? null : latestFetchResult.data ?? null,
         latestDigest:latestDigestResult.error ? null : latestDigestResult.data ?? null,
         latestCronRun:latestCronResult.error ? null : latestCronResult.data ?? null,
@@ -165,11 +182,26 @@ Deno.serve(async (req) => {
 });
 
 function sourceHealth(sources:any[], latestRun:any) {
+  // The enabled/degraded/failed numbers stay scoped to live sources: they drive the
+  // operator warnings, and a shadow source failing is a validation result, not a
+  // production incident. Shadow and held counts are reported alongside so the
+  // workspace can account for every canonical source rather than only the live ones.
   const enabled = sources.filter(source => source.enabled);
+  const shadow = sources.filter(source => source.ingest_mode === 'shadow');
+  const held = sources.filter(source => source.ingest_mode === 'disabled');
   const failed = enabled.filter(source => source.health_status === 'failed' || Number(source.consecutive_failures) >= 3);
   const degraded = enabled.filter(source => source.health_status === 'degraded' || (Number(source.consecutive_failures) > 0 && Number(source.consecutive_failures) < 3));
   const latest = (field:string) => sources.map(source => source[field]).filter(Boolean).sort().pop() ?? null;
-  return { totalSources:sources.length, enabledSources:enabled.length, healthySources:enabled.filter(source => source.health_status === 'healthy').length, degradedSources:degraded.length, failedSources:failed.length, lastFetchedAt:latest('last_fetched_at'), lastSuccessAt:latest('last_success_at'), lastError:failed[0]?.last_error ?? null, latestRun:latestRun ?? null };
+  return {
+    totalSources:sources.length, enabledSources:enabled.length,
+    healthySources:enabled.filter(source => source.health_status === 'healthy').length,
+    degradedSources:degraded.length, failedSources:failed.length,
+    shadowSources:shadow.length,
+    shadowHealthySources:shadow.filter(source => source.health_status === 'healthy').length,
+    heldSources:held.length,
+    lastFetchedAt:latest('last_fetched_at'), lastSuccessAt:latest('last_success_at'),
+    lastError:failed[0]?.last_error ?? null, latestRun:latestRun ?? null,
+  };
 }
 async function countRows(sb:any, table:string, column:string, value:string):Promise<number|null> {
   const { count, error } = await sb.from(table).select('id',{ count:'exact',head:true }).eq(column,value);

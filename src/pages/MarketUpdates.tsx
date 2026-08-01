@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, EyeOff, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Undo2, Zap, Clock, Radio, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, BarChart3, Building2, ExternalLink, Eye, EyeOff, FileText, Globe2, Loader2, Newspaper, RefreshCw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Undo2, Zap, Clock, Radio, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import { interleaveBySource } from '@/lib/marketFeedOrder';
 import { answerMarketUpdateQuestion, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, followMarketIngestionRun, generateMarketDigest, setMarketUpdateHidden, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
+import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
 import type { MarketQARetrievedItem } from '@/types/marketUpdates';
@@ -123,9 +124,13 @@ export default function MarketUpdates() {
   const [activeSegment, setActiveSegment] = useState<MarketSegment | 'all'>('all');
   const [activeFreshness, setActiveFreshness] = useState<MarketFreshnessTier | 'all'>('all');
   const [filters, setFilters] = useState({ category: 'all', geography: 'all', impact: 'all', audience: 'all' });
+  const [sourceFilter, setSourceFilter] = useState<string>('all');
   const [sourcesAdminOpen, setSourcesAdminOpen] = useState(false);
   const [workspaceTab, setWorkspaceTab] = useState<'updates' | 'ask-ai'>('updates');
   const [runSummary, setRunSummary] = useState<MarketIngestionRun | null>(null);
+  // Shadow counters live on the ingestion response rather than the run row, so the
+  // last run's validation result is held alongside it.
+  const [runShadow, setRunShadow] = useState<{ sources:number; ingested:number; wouldPublish:number } | null>(null);
   const [candidateReview, setCandidateReview] = useState<MarketUpdate[] | null>(null);
 
   const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
@@ -181,11 +186,19 @@ export default function MarketUpdates() {
     if (filters.audience !== 'all' && !u.audience_tags.includes(filters.audience as MarketAudienceTag)) return false;
     if (activeSegment !== 'all' && !u.segments.includes(activeSegment)) return false;
     if (activeFreshness !== 'all' && u.freshness_tier !== activeFreshness) return false;
+    if (sourceFilter !== 'all' && u.source_name !== sourceFilter) return false;
     if (search && !`${u.title} ${u.ai_summary ?? ''} ${u.source_name}`.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
-  }), (u) => u.source_name), [updates, filters, activeSegment, activeFreshness, search]);
-  const hasActiveFilters = Boolean(search.trim()) || activeSegment !== 'all' || activeFreshness !== 'all' || Object.values(filters).some(value => value !== 'all');
-  const clearFilters = () => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); };
+  }), (u) => u.source_name), [updates, filters, activeSegment, activeFreshness, sourceFilter, search]);
+  const hasActiveFilters = Boolean(search.trim()) || activeSegment !== 'all' || activeFreshness !== 'all' || sourceFilter !== 'all' || Object.values(filters).some(value => value !== 'all');
+  const clearFilters = () => { setActiveSegment('all'); setActiveFreshness('all'); setSearch(''); setSourceFilter('all'); setFilters({ category:'all', geography:'all', impact:'all', audience:'all' }); };
+
+  // Only the publishers actually present in the loaded feed, so the filter can
+  // never offer a source that would return nothing.
+  const feedSources = useMemo(
+    () => [...new Set(updates.map(u => u.source_name).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    [updates],
+  );
 
   const freshnessCounts = useMemo(() => ({
     all: updates.length,
@@ -242,6 +255,9 @@ export default function MarketUpdates() {
         if (summary.active) summary = await followMarketIngestionRun(summary.runId);
       }
       setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`);
+      setRunShadow(summary.shadowSources
+        ? { sources:summary.shadowSources, ingested:summary.shadowIngested ?? 0, wouldPublish:summary.shadowWouldPublish ?? 0 }
+        : null);
       await loadUpdates();
       setRunSummary((current) => current ? { ...current, status:summary.status ?? 'completed', completed_at:new Date().toISOString(), sources_processed:summary.sourcesProcessed ?? current.sources_processed, sources_succeeded:summary.sourcesSucceeded ?? current.sources_succeeded, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_deduplicated:summary.skippedDuplicates, items_classified:summary.classified ?? 0, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored, items_rejected:summary.rejected ?? 0, items_failed:summary.persistenceFailed ?? 0 } : current);
     }
@@ -475,6 +491,7 @@ export default function MarketUpdates() {
                 <Badge variant="outline">Last ingest: {dateLabel(sourceHealth.lastSuccessAt)}</Badge>
                 <Badge variant="outline" className={sourceHealth.automation?.cronStale ? 'text-destructive' : undefined}>Automation: {sourceHealth.automation?.cronStale ? 'stale' : dateLabel(sourceHealth.automation?.lastIngestionDispatchAt)}</Badge>
                 <Badge variant="outline">{sourceHealth.enabledSources}/{sourceHealth.totalSources} sources live</Badge>
+                {Boolean(sourceHealth.shadowSources) && <Badge variant="outline" title="Fetched and classified, but held out of the feed while they are validated."><Eye className="mr-1 h-3 w-3" />{sourceHealth.shadowSources} in shadow</Badge>}
                 {sourceHealth.failedSources > 0 && <Badge variant="outline" className="text-destructive"><AlertTriangle className="mr-1 h-3 w-3" />{sourceHealth.failedSources} failing</Badge>}
               </div>
             </div>
@@ -518,7 +535,7 @@ export default function MarketUpdates() {
           </Card>
         )}
 
-        {(runSummary || sourceHealth.activeRun) && (() => { const run = runSummary ?? sourceHealth.activeRun!; return <Card aria-live="polite" className="border-primary/20"><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">Ingestion run <span className="font-mono text-xs">{run.id.slice(0,8)}</span></p><p className="text-xs text-muted-foreground">{titleCase(run.status)} · {run.sources_processed}/{run.sources_considered} sources processed</p></div>{['queued','running'].includes(run.status) && <Loader2 className="h-4 w-4 animate-spin text-primary" />}</div><div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{[['Discovered',run.items_discovered],['Deduplicated',run.items_deduplicated ?? 0],['Classified',run.items_classified ?? 0],['Published',run.items_published],['Candidates',run.items_candidate ?? 0],['Ignored',run.items_ignored ?? 0],['Failed items',run.items_failed ?? 0],['Failed sources',run.sources_failed]].map(([label,value]) => <div key={String(label)} className="rounded border border-border/60 p-2"><span className="block text-muted-foreground">{label}</span><strong>{value}</strong></div>)}</div></CardContent></Card>; })()}
+        {(runSummary || sourceHealth.activeRun) && (() => { const run = runSummary ?? sourceHealth.activeRun!; return <Card aria-live="polite" className="border-primary/20"><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">Ingestion run <span className="font-mono text-xs">{run.id.slice(0,8)}</span></p><p className="text-xs text-muted-foreground">{titleCase(run.status)} · {run.sources_processed}/{run.sources_considered} sources processed</p></div>{['queued','running'].includes(run.status) && <Loader2 className="h-4 w-4 animate-spin text-primary" />}</div><div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{[['Discovered',run.items_discovered],['Deduplicated',run.items_deduplicated ?? 0],['Classified',run.items_classified ?? 0],['Published',run.items_published],['Candidates',run.items_candidate ?? 0],['Ignored',run.items_ignored ?? 0],['Failed items',run.items_failed ?? 0],['Failed sources',run.sources_failed]].map(([label,value]) => <div key={String(label)} className="rounded border border-border/60 p-2"><span className="block text-muted-foreground">{label}</span><strong>{value}</strong></div>)}</div>{runShadow && <p className="text-xs text-muted-foreground">Shadow validation: {runShadow.sources} source(s) sampled {runShadow.ingested} item(s); {runShadow.wouldPublish} would have been published had they been live. None reached the feed.</p>}</CardContent></Card>; })()}
 
         {/* KPIs */}
         <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -530,6 +547,10 @@ export default function MarketUpdates() {
               </CardContent></Card></button>
           ))}
         </section>
+
+        {/* Where the feed comes from: all canonical sources, split by what the
+            pipeline does with each. Collapsed to three tiles until asked to expand. */}
+        <MarketSourceCoveragePanel shadowMetrics={sourceHealth.shadowMetrics} />
 
         {/* Period tabs + Digest */}
         <section>
@@ -647,13 +668,23 @@ export default function MarketUpdates() {
               );
             })}
           </div>
-          <div className="grid gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 md:grid-cols-5">
+          <div className="grid gap-3 rounded-2xl border border-border/60 bg-card/40 p-3 md:grid-cols-3 lg:grid-cols-6">
             <div className="space-y-1 md:col-span-1">
               <Label className="text-xs">Search</Label>
               <div className="relative">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Title, summary, source…" className="pl-8" />
               </div>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Source</Label>
+              <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sources</SelectItem>
+                  {feedSources.map(name => <SelectItem key={name} value={name}>{name}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
             {([['category', categories],['geography', geographies],['impact', impacts],['audience', audiences]] as const).map(([key, values]) => (
               <div key={key} className="space-y-1">
@@ -731,8 +762,25 @@ export default function MarketUpdates() {
                         <span className="sr-only"> (opens the original article in a new tab)</span>
                       </a>
                     </h3>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground/80">{update.source_name}</span> · {dateLabel(update.source_published_at ?? update.ingested_at)}
+                    {/* The publisher name is the filter: a reader who wants "more like
+                        this, from here" should not have to hunt for the source dropdown.
+                        The authority tag beside it says what kind of source it is —
+                        a regulator and an advocacy body carry very different weight. */}
+                    <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+                      <button
+                        type="button"
+                        onClick={() => setSourceFilter(update.source_name)}
+                        className="rounded font-medium text-foreground/80 underline-offset-2 transition-colors hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={`Show only updates from ${update.source_name}`}
+                      >
+                        {update.source_name}
+                      </button>
+                      {update.source_authority && (
+                        <Badge variant="outline" className="h-4 px-1.5 py-0 text-[9px] font-medium uppercase tracking-wide">
+                          {titleCase(update.source_authority)}
+                        </Badge>
+                      )}
+                      <span>· {dateLabel(update.source_published_at ?? update.ingested_at)}</span>
                     </p>
 
                     {update.ai_summary && <p className="mt-3 text-sm leading-relaxed text-foreground/90">{update.ai_summary}</p>}

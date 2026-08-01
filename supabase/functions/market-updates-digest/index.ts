@@ -182,7 +182,9 @@ Deno.serve(async (req) => {
     return json({ error: 'Published updates could not be loaded.', code:'digest_input_failed' }, 500);
   }
   const [{ count:candidateCount, error:candidateError }, { data:lastPublished, error:lastPublishedError }] = await Promise.all([
-    sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status','candidate').gte('ingested_at',start.toISOString()).lt('ingested_at',end.toISOString()),
+    // Shadow-mode rows are also candidates, but they are validation evidence rather
+    // than work awaiting an operator decision, so they are excluded from this count.
+    sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status','candidate').eq('visibility','public').gte('ingested_at',start.toISOString()).lt('ingested_at',end.toISOString()),
     sb.from('market_updates').select('source_published_at,ingested_at').eq('status','published').order('ingested_at',{ascending:false}).limit(1).maybeSingle(),
   ]);
   if (candidateError || lastPublishedError) {

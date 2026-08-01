@@ -246,7 +246,9 @@ Deno.serve(async (req) => {
   run.metadata={ ...(run.metadata ?? {}), correlation_id:correlationId };
   await checkedMutation(sb.from('market_ingestion_runs').update({correlation_id:correlationId,metadata:run.metadata}).eq('id',run.id),'run_correlation_update_failed');
 
-  let query = sb.from("market_sources").select("*").eq("registry_status", "canonical").eq("enabled", true);
+  // Shadow sources are fetched and classified exactly like live ones; what changes
+  // is that nothing they produce can reach status 'published'. See the item loop.
+  let query = sb.from("market_sources").select("*").eq("registry_status", "canonical").in("ingest_mode", ["live", "shadow"]);
   if (Array.isArray(sourceIds) && sourceIds.length) query = query.in("id", sourceIds);
   const { data: sources, error } = await query;
   if (error) {
@@ -273,6 +275,9 @@ Deno.serve(async (req) => {
     candidates: 0,
     ignored: 0,
     rejected: 0,
+    shadowSources: 0,
+    shadowIngested: 0,
+    shadowWouldPublish: 0,
     persistenceFailed: 0,
     failed: 0,
     skippedDuplicates: 0,
@@ -305,6 +310,11 @@ Deno.serve(async (req) => {
     let sourceCandidates = 0;
     let sourceIgnored = 0;
     let sourceFailed = 0;
+    // A shadow source runs the whole pipeline but is barred from publication, so
+    // every row it writes is tagged 'shadow' and carries the decision the pipeline
+    // would have reached instead of acting on it.
+    const isShadow = source.ingest_mode === 'shadow';
+    const visibility = isShadow ? 'shadow' : 'public';
     try {
       if (Date.now() >= runDeadlineAt) throw safeDatabaseError('run_deadline_exceeded');
       const last = source.last_fetched_at
@@ -312,6 +322,7 @@ Deno.serve(async (req) => {
         : Infinity;
       if (!force && last < source.refresh_frequency_minutes * 60_000) return;
       summary.sourcesProcessed++;
+      if (isShadow) summary.shadowSources++;
 
       const { data: fetchRun } = await checkedMutation(sb.from("market_source_fetch_runs").insert({
         ingestion_run_id: run.id, source_id: source.id, status: "running", correlation_id:correlationId,
@@ -351,11 +362,11 @@ Deno.serve(async (req) => {
             source_id:source.id, source_name:source.name, source_url:canonicalUrl ?? source.url, canonical_url:canonicalUrl, external_id:item.externalId,
             source_published_at:item.publishedAt, title:itemTitle || 'Rejected source item', category:'other', segments:[], geography:['Australia'], impact_level:'low', audience_tags:[],
             raw_excerpt:item.excerpt, key_points:[], risk_flags:[], citation_urls:canonicalUrl ? [canonicalUrl] : [], relevance_score:0, freshness_tier:freshnessTier(item.publishedAt),
-            status:'rejected', failure_reason:'source_item_validation_failed', ai_status:'not_attempted', ai_failure_code:null, validation_failures:[...(!canonicalUrl ? ['canonical_url_missing'] : []), ...(!itemTitle ? ['title_missing'] : [])], decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId,
+            status:'rejected', failure_reason:'source_item_validation_failed', ai_status:'not_attempted', ai_failure_code:null, validation_failures:[...(!canonicalUrl ? ['canonical_url_missing'] : []), ...(!itemTitle ? ['title_missing'] : [])], decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId, visibility,
           };
           const { error:rejectError } = await sb.from('market_updates').insert(rejectedRow);
           if (rejectError) { if (rejectError.code === '23505') { summary.skippedDuplicates++; return; } summary.persistenceFailed++; sourceFailed++; throw safeDatabaseError('database_insert_failed'); }
-          summary.ingested++; summary.rejected++; return;
+          summary.ingested++; summary.rejected++; if (isShadow) summary.shadowIngested++; return;
         }
 
         const relevance = relevanceScore(item);
@@ -363,10 +374,10 @@ Deno.serve(async (req) => {
           const { error:ignoredError } = await sb.from('market_updates').insert({
             source_id:source.id, source_name:source.name, source_url:canonicalUrl, canonical_url:canonicalUrl, original_url:item.originalUrl, external_id:item.externalId, source_published_at:item.publishedAt, title:itemTitle,
             slug:itemTitle.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,180), category:'other', segments:[], geography:['Australia'], impact_level:'low', audience_tags:[], raw_excerpt:item.excerpt, key_points:[], risk_flags:[], citation_urls:[canonicalUrl], relevance_score:relevance, freshness_tier:freshnessTier(item.publishedAt),
-            status:'ignored', publication_reason:null, candidate_reason:null, failure_reason:'relevance_below_threshold', ai_status:'not_required', ai_failure_code:null, validation_failures:[], decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId,
+            status:'ignored', publication_reason:null, candidate_reason:null, failure_reason:'relevance_below_threshold', ai_status:'not_required', ai_failure_code:null, validation_failures:[], decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId, visibility, shadow_would_publish:isShadow ? false : null,
           });
           if (ignoredError) { if (ignoredError.code === '23505') { summary.skippedDuplicates++; return; } summary.persistenceFailed++; sourceFailed++; throw safeDatabaseError('database_insert_failed'); }
-          summary.ingested++; summary.ignored++; sourceIgnored++; return;
+          summary.ingested++; summary.ignored++; sourceIgnored++; if (isShadow) summary.shadowIngested++; return;
         }
 
         let ai:any = null;
@@ -396,9 +407,17 @@ Deno.serve(async (req) => {
         const citation_urls = [canonicalUrl];
         const validationFailures = Array.isArray(ai.validation_failures) ? ai.validation_failures : [];
         const publishable = aiStatus === 'routed' && confidence >= AI_CONFIDENCE_THRESHOLD && citation_urls.length > 0 && !validationFailures.includes('summary_missing');
-        const status = publishable ? 'published' : 'candidate';
-        const publicationReason = publishable ? 'validated_ai_classification_meets_threshold' : null;
-        const candidateReason = publishable ? null : aiStatus !== 'routed' ? 'ai_fallback_requires_human_review' : validationFailures.includes('summary_missing') ? 'classification_validation_failed' : confidence < AI_CONFIDENCE_THRESHOLD ? 'confidence_below_publication_threshold' : 'publication_criteria_not_met';
+        // `publishable` is the verdict on the item's own merits. A shadow source
+        // records that verdict and then holds the item regardless — that gap is the
+        // measurement shadow mode exists to produce.
+        const status = publishable && !isShadow ? 'published' : 'candidate';
+        const publicationReason = publishable && !isShadow ? 'validated_ai_classification_meets_threshold' : null;
+        const candidateReason = status === 'published' ? null
+          : isShadow ? 'shadow_mode_validation'
+          : aiStatus !== 'routed' ? 'ai_fallback_requires_human_review'
+          : validationFailures.includes('summary_missing') ? 'classification_validation_failed'
+          : confidence < AI_CONFIDENCE_THRESHOLD ? 'confidence_below_publication_threshold'
+          : 'publication_criteria_not_met';
 
         const row = {
           source_id:source.id, source_name:source.name, source_url:canonicalUrl, canonical_url:canonicalUrl, original_url:item.originalUrl, external_id:item.externalId, source_published_at:item.publishedAt, title:itemTitle,
@@ -407,10 +426,12 @@ Deno.serve(async (req) => {
           source_authority:source.source_authority, source_perspective:source.perspective, author:item.author, public_excerpt:item.excerpt, source_payload_hash:await sha256(JSON.stringify({ title:itemTitle,url:canonicalUrl,date:item.publishedAt,excerpt:item.excerpt })), classification_version:'market-v2-router-validated', summarisation_version:'market-v2', ...aiTelemetry,
           lending_criteria_tags:ai.lending_criteria_tags ?? [], legal_topics:ai.legal_topics ?? [], economic_topics:ai.economic_topics ?? [], legal_status:ai.legal_status ?? 'not_applicable', effective_date:ai.effective_date ?? null, primary_source_urls:[], relevance_score:relevance, freshness_tier:freshnessTier(item.publishedAt),
           status, publication_reason:publicationReason, candidate_reason:candidateReason, failure_reason:null, ai_status:aiStatus, ai_failure_code:aiFailureCode, validation_failures:validationFailures, decisioned_at:new Date().toISOString(), dedupe_hash, correlation_id:correlationId,
+          visibility, shadow_would_publish:isShadow ? publishable : null,
         };
         const { error:insertError } = await sb.from('market_updates').insert(row);
         if (insertError) { if (insertError.code === '23505') { summary.skippedDuplicates++; return; } summary.persistenceFailed++; sourceFailed++; throw safeDatabaseError('database_insert_failed'); }
         summary.ingested++;
+        if (isShadow) { summary.shadowIngested++; if (publishable) summary.shadowWouldPublish++; }
         if (status === 'published') { summary.published++; sourcePublished++; } else { summary.candidates++; sourceCandidates++; }
       });;
 
