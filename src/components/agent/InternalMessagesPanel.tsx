@@ -228,18 +228,15 @@ export function InternalMessagesPanel({
     return () => { off(); clearInterval(id); };
   }, [user?.id]);
 
-  const typingLabel = useMemo(() => {
-    if (!activeThread) return null;
-    const names = Object.keys(typingBy)
+  const typingPeople = useMemo<TypingPerson[]>(() => {
+    if (!activeThread) return [];
+    return Object.keys(typingBy)
       .filter(k => k.startsWith(`${activeThread.id}|`))
       .map(k => k.split('|')[1])
-      .filter(Boolean);
-    if (!names.length) return null;
-    const unique = [...new Set(names)];
-    return unique.length === 1
-      ? `${unique[0]} is typing…`
-      : `${unique.slice(0, 2).join(' and ')} are typing…`;
+      .filter(Boolean)
+      .map(name => ({ name }));
   }, [typingBy, activeThread]);
+
 
 
   useEffect(() => {
