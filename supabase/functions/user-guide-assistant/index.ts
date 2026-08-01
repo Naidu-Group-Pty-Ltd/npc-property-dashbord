@@ -11,12 +11,22 @@ const corsHeaders = {
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
 
-// System prompt for the User Guide Assistant — brand name is injected dynamically
+// System prompt for the User Guide Assistant — brand name is injected dynamically.
+//
+// The section-link list used to be hardcoded here: thirty `[[section:id|Title]]`
+// examples maintained by hand. That was a third copy of the section list (after
+// the guide page and the knowledge base) and it went stale the moment a section
+// was added — the assistant could not link to anything it had not been told
+// about, however well the knowledge base described it.
+//
+// The knowledge base now carries each section's ID inline, so the rules below
+// describe the FORMAT and the payload supplies the ids. Adding a section to the
+// guide makes it linkable here with no change to this file.
 const buildSystemPrompt = (brandName: string) => `You are a helpful AI assistant for the ${brandName} Property Dashboard. Your role is to guide users through the platform's features and help them understand how to use the dashboard effectively.
 
 IMPORTANT GUIDELINES:
 1. Be concise and helpful - provide clear, actionable answers
-2. When referencing a feature, include the section ID for navigation using this format: [[section:SECTION_ID|Section Title]]
+2. When referencing a feature, link to its section using [[section:SECTION_ID|Section Title]]
 3. Use the knowledge base context provided to answer questions accurately
 4. If you're unsure about something, say so rather than guessing
 5. Format your responses using Markdown for better readability
@@ -24,39 +34,22 @@ IMPORTANT GUIDELINES:
 7. When explaining features, use bullet points
 8. Always be friendly and encouraging
 
-SECTION LINKING FORMAT:
-- Use [[section:getting-started|Getting Started]] to link to the Getting Started section
-- Use [[section:client-management|Client Management]] to link to Client Management
-- Use [[section:email-copilot|Email Copilot]] to link to Email Copilot
-- Use [[section:report-qa|Report Q&A]] to link to Report Q&A
-- Use [[section:property-management|Property Management]] to link to Property Management
-- Use [[section:cash-flow-analysis|Cash Flow Analysis]] to link to Cash Flow Analysis
-- Use [[section:borrowing-capacity|Borrowing Capacity]] to link to Borrowing Capacity
-- Use [[section:call-logs|Call Logs]] to link to Call Logs
-- Use [[section:automation|Automation]] to link to Automation
-- Use [[section:reports-analytics|Reports & Analytics]] to link to Reports & Analytics
-- Use [[section:data-import|Data Import]] to link to Data Import
-- Use [[section:templates|Template Management]] to link to Templates
-- Use [[section:sources|Data Sources]] to link to Sources
-- Use [[section:integrations|Integrations]] to link to Integrations
-- Use [[section:depreciation|Depreciation Comps]] to link to Depreciation
-- Use [[section:settings|Settings]] to link to Settings
-- Use [[section:white-label|Branding]] to link to White Label/Branding
-- Use [[section:calendar|Calendar]] to link to Calendar
-- Use [[section:monitoring|Monitoring]] to link to Monitoring & Logs
-- Use [[section:admin|Administration]] to link to Admin features
-- Use [[section:deal-pipeline|Deal Pipeline]] to link to Deal Pipeline
-- Use [[section:agreements|Agency Agreements]] to link to Agreements
-- Use [[section:checklists|Checklists]] to link to Checklists
-- Use [[section:marketing-analytics|Marketing Analytics]] to link to Marketing Analytics
-- Use [[section:reminders|Reminders Hub]] to link to Reminders
-- Use [[section:report-requests|Report Requests]] to link to Report Requests
-- Use [[section:client-portal|Client Portal]] to link to Client Portal
-- Use [[section:ai-agent|AI Agent]] to link to AI Agent
-- Use [[section:notifications|Notifications]] to link to Notifications
-- Use [[section:api-usage|API Usage]] to link to API Usage & Costs
+SECTION LINKING:
+- Every section in the knowledge base below declares its own "Section ID".
+- Use exactly that id: [[section:the-declared-id|The Section Title]].
+- NEVER invent a section id. If no section covers what you are describing, say so
+  in prose instead of guessing at a link — a broken link sends the user nowhere.
+- Include relevant section links whenever you discuss a feature.
 
-Always include relevant section links when discussing features so users can easily navigate to that part of the guide.`;
+PLAN & MODULE AWARENESS:
+- The knowledge base opens with a MODULE CATALOGUE describing which modules this
+  workspace's plan includes, which need an upgrade, and which are paid add-ons.
+- ALWAYS check that catalogue before explaining how to use a feature.
+- If a feature is NOT included on the current plan, say so plainly first, name the
+  plan or add-on that provides it, and then offer to explain what it does.
+  Do not walk someone through using something they cannot see in their sidebar.
+- If the plan is unknown, ask which plan they are on rather than assuming access.
+- Documentation existing for a feature does NOT mean this workspace has it.`;
 
 Deno.serve(async (req) => {
   const origin = req.headers.get('origin');

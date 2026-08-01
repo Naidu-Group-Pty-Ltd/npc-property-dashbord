@@ -1,7 +1,25 @@
 /**
- * User Guide Knowledge Base
- * Extracted content from UserGuide.tsx for AI assistant context
+ * User Guide Knowledge Base — the context the AI assistant answers from.
+ *
+ * The sections below were originally hand-copied out of UserGuide.tsx, which
+ * is why the two drifted: two copies of the same prose, updated by hand, with
+ * nothing to catch a section added to one and not the other.
+ *
+ * New content lives in `userGuideSections.ts` and is appended here rather than
+ * duplicated, so page and knowledge base cannot disagree about what exists.
+ * `userGuideCoverage.test.ts` enforces that.
  */
+
+import {
+  ADDITIONAL_GUIDE_SECTIONS,
+  type GuideSectionContent,
+} from './userGuideSections';
+import {
+  MODULE_TIERS,
+  SUB_MODULE_ENTITLEMENTS,
+  isKnownPlan,
+  type PlanSlug,
+} from './pricing/planEntitlements';
 
 export interface GuideSection {
   id: string;
@@ -19,7 +37,7 @@ export interface GuideItem {
   shortcuts?: { keys: string[]; description: string }[];
 }
 
-export const userGuideKnowledge: GuideSection[] = [
+const baseGuideKnowledge: GuideSection[] = [
   {
     id: 'getting-started',
     title: 'Getting Started',
@@ -1290,15 +1308,148 @@ export const userGuideKnowledge: GuideSection[] = [
   },
 ];
 
+/** Sections defined as data in `userGuideSections.ts`, minus their icon. */
+const additionalKnowledge: GuideSection[] = ADDITIONAL_GUIDE_SECTIONS.map(
+  ({ id, title, description, items }: GuideSectionContent) => ({
+    id,
+    title,
+    description,
+    items,
+  }),
+);
+
+/**
+ * Everything the assistant knows about. Ordered so the newer, previously
+ * undocumented areas sit after the original guide rather than interleaved,
+ * which keeps the on-page ordering and this list identical.
+ */
+export const userGuideKnowledge: GuideSection[] = [
+  ...baseGuideKnowledge,
+  ...additionalKnowledge,
+];
+
+/** Display names for the pricing-catalogue slugs, for AI-facing prose. */
+const MODULE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  'market-updates': 'Market Updates',
+  'commercial-industrial': 'Commercial / Industrial',
+  'opportunity-marketplace': 'Opportunity Marketplace',
+  'intelligence-hub': 'Aurixa Intelligence Hub',
+  'report-comparisons': 'Generated Reports — Comparisons',
+  'cashflow-comparisons': 'Cash Flow Analysis — Comparisons',
+  'email-copilot': 'Email Copilot',
+  'call-logs': 'Call Logs',
+  'portfolio-analysis': 'Portfolio Analysis',
+  'send-portfolio': 'Send Portfolio To Client',
+  'client-forms': 'Client Forms',
+  'borrowing-capacity': 'Borrowing Capacity',
+  lenders: 'Lenders',
+  'client-ai': 'Client AI',
+  agreements: 'Agreements',
+  marketing: 'Marketing',
+  'deal-pipeline': 'Deal Pipeline',
+  'aml-ctf': 'AML / CTF Compliance',
+  'model-hub': 'Model Hub',
+  'finance-portal': 'Finance Portal',
+  integrations: 'Integrations',
+  'api-usage': 'API Usage',
+  'aurixa-agent': 'Aurixa Agent',
+};
+
+const PLAN_NAMES: Record<string, string> = {
+  launch: 'Launch',
+  growth: 'Growth',
+  scale: 'Scale',
+};
+
+/**
+ * What the assistant needs in order to answer availability questions.
+ *
+ * Previously it only had feature prose, so "can I use Borrowing Capacity?" got
+ * an enthusiastic explanation of a Scale-only feature regardless of the plan
+ * the person was actually on. Telling a customer how to use something they
+ * cannot see is worse than saying it is not included.
+ *
+ * When `planSlug` is known the catalogue is split into included / not included
+ * for that plan. When it is not, the full matrix is provided and the assistant
+ * is told to ask rather than assume.
+ */
+export function formatModuleAwarenessForAI(planSlug?: string | null): string {
+  const slugs = Object.keys(MODULE_TIERS).sort();
+  const known = isKnownPlan(planSlug ?? undefined);
+  const plan = known ? (planSlug as PlanSlug) : null;
+
+  let out = `# MODULE CATALOGUE & PLAN ENTITLEMENTS\n\n`;
+  out += `The platform is sold as three tiers — Launch, Growth and Scale — plus modules that can be bought individually. A feature being documented below does NOT mean this workspace has it.\n\n`;
+
+  if (plan) {
+    out += `## This workspace is on the ${PLAN_NAMES[plan]} plan\n\n`;
+
+    const included = slugs.filter((s) => (MODULE_TIERS[s] ?? []).includes(plan));
+    const addonOnly = slugs.filter((s) => (MODULE_TIERS[s] ?? []).length === 0);
+    const higherTier = slugs.filter(
+      (s) => (MODULE_TIERS[s] ?? []).length > 0 && !(MODULE_TIERS[s] ?? []).includes(plan),
+    );
+
+    out += `### Included in this plan\n`;
+    for (const s of included) out += `- ${MODULE_DISPLAY_NAMES[s] ?? s}\n`;
+    out += `\n### Not included — requires an upgrade\n`;
+    for (const s of higherTier) {
+      const tiers = (MODULE_TIERS[s] ?? []).map((t) => PLAN_NAMES[t] ?? t).join(' or ');
+      out += `- ${MODULE_DISPLAY_NAMES[s] ?? s} (available on ${tiers})\n`;
+    }
+    out += `\n### Available as a paid add-on on any plan\n`;
+    for (const s of addonOnly) out += `- ${MODULE_DISPLAY_NAMES[s] ?? s}\n`;
+
+    const subs = SUB_MODULE_ENTITLEMENTS.filter((r) => r[plan]);
+    const blocked = SUB_MODULE_ENTITLEMENTS.filter((r) => !r[plan]);
+    out += `\n### Sub-features enabled on this plan (${subs.length})\n`;
+    for (const r of subs) out += `- ${r.module} → ${r.subModule}\n`;
+    out += `\n### Sub-features NOT enabled on this plan (${blocked.length})\n`;
+    for (const r of blocked) {
+      const on = (['launch', 'growth', 'scale'] as PlanSlug[])
+        .filter((t) => r[t])
+        .map((t) => PLAN_NAMES[t]);
+      out += `- ${r.module} → ${r.subModule}${on.length ? ` (available on ${on.join(', ')})` : ' (not yet released)'}\n`;
+    }
+  } else {
+    out += `## Plan unknown\n\nThe current workspace plan could not be determined. Describe which plans include a module and ask the user which plan they are on rather than assuming they have access.\n\n`;
+    out += `### Module availability by plan\n`;
+    for (const s of slugs) {
+      const tiers = MODULE_TIERS[s] ?? [];
+      const where = tiers.length
+        ? tiers.map((t) => PLAN_NAMES[t] ?? t).join(', ')
+        : 'paid add-on only';
+      out += `- ${MODULE_DISPLAY_NAMES[s] ?? s}: ${where}\n`;
+    }
+  }
+
+  out += `\n**When answering:** if a feature is not included on this plan, say so plainly and name the plan or add-on that provides it, then offer to explain what it does. Never walk someone through using something their plan does not include.\n`;
+
+  return out;
+}
+
 /**
  * Format the knowledge base as context for AI
  */
-export function formatKnowledgeBaseForAI(): string {
+export function formatKnowledgeBaseForAI(planSlug?: string | null): string {
   let context = `# Property Dashboard - User Guide Knowledge Base\n\n`;
   context += `This is a comprehensive property investment analysis platform. Below is the complete documentation:\n\n`;
-  
+
+  // The module catalogue goes first so the assistant can answer "do I have X"
+  // before it starts describing how X works. Without it, the assistant happily
+  // explained Scale-only features to Launch customers as though they were
+  // sitting in their sidebar.
+  context += formatModuleAwarenessForAI(planSlug);
+
+  context += `\n---\n\n# FEATURE DOCUMENTATION\n\n`;
+
   for (const section of userGuideKnowledge) {
+    // The section id is what the assistant needs to emit a working
+    // [[section:id|Title]] link. It was never included, so the edge function
+    // carried a hand-maintained list of ids instead — a third copy that went
+    // stale the moment a section was added.
     context += `## ${section.title}\n`;
+    context += `Section ID: \`${section.id}\` — link with [[section:${section.id}|${section.title}]]\n`;
     context += `${section.description}\n\n`;
     
     for (const item of section.items) {

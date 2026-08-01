@@ -52,8 +52,46 @@ import {
   Sparkles,
   Webhook,
   X,
+  ShieldCheck,
+  Landmark,
+  Scale,
+  Hammer,
+  Building2,
+  Newspaper,
+  Cpu,
+  Handshake,
+  BarChart4,
+  FileInput,
+  CreditCard,
+  Banknote,
+  BookOpen,
 } from 'lucide-react';
 import { UserGuideAssistant } from '@/components/user-guide/UserGuideAssistant';
+import { ADDITIONAL_GUIDE_SECTIONS } from '@/lib/userGuideSections';
+
+/**
+ * Icons for the data-defined sections. `userGuideSections.ts` names its icon as
+ * a string so it can be imported by the AI knowledge base, which has no React
+ * dependency — the mapping back to a component belongs here, in the UI.
+ */
+const GUIDE_SECTION_ICONS: Record<string, React.ElementType> = {
+  ShieldCheck,
+  Landmark,
+  Scale,
+  Hammer,
+  Building2,
+  Newspaper,
+  Cpu,
+  Target,
+  Handshake,
+  BarChart4,
+  FileInput,
+  CreditCard,
+  Banknote,
+  BookOpen,
+  Keyboard,
+  AlertCircle,
+};
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 
 interface GuideSection {
@@ -1397,98 +1435,17 @@ export default function UserGuide() {
         },
       ],
     },
-    {
-      id: 'keyboard-shortcuts',
-      title: 'Keyboard Shortcuts',
-      icon: Keyboard,
-      description: 'Quick actions for power users',
-      items: [
-        {
-          title: 'Global Shortcuts',
-          description: 'Shortcuts available throughout the application.',
-          shortcuts: [
-            { keys: ['⌘/Ctrl', 'K'], description: 'Open search / history search' },
-            { keys: ['⌘/Ctrl', 'N'], description: 'New chat (in Aurixa Intelligence Hub)' },
-            { keys: ['⌘/Ctrl', '/'], description: 'Focus message input' },
-            { keys: ['Esc'], description: 'Close dialogs / Exit full screen' },
-          ],
-        },
-        {
-          title: 'Aurixa Intelligence Hub Shortcuts',
-          description: 'Shortcuts specific to the AI chat interface.',
-          shortcuts: [
-            { keys: ['⌘/Ctrl', '⇧', 'C'], description: 'Copy last response' },
-            { keys: ['⌘/Ctrl', 'J'], description: 'Scroll to bottom' },
-            { keys: ['⌘/Ctrl', 'B'], description: 'Toggle reports panel' },
-            { keys: ['⌘/Ctrl', 'Enter'], description: 'Toggle full screen' },
-            { keys: ['Enter'], description: 'Send message' },
-            { keys: ['Shift', 'Enter'], description: 'New line in message' },
-          ],
-        },
-        {
-          title: 'Calendar Shortcuts',
-          description: 'Shortcuts for calendar navigation.',
-          shortcuts: [
-            { keys: ['T'], description: 'Go to today' },
-            { keys: ['←', '→'], description: 'Navigate periods' },
-            { keys: ['D'], description: 'Day view' },
-            { keys: ['W'], description: 'Week view' },
-            { keys: ['M'], description: 'Month view' },
-            { keys: ['?'], description: 'Show shortcuts help' },
-          ],
-        },
-      ],
-    },
-    {
-      id: 'troubleshooting',
-      title: 'Troubleshooting',
-      icon: AlertCircle,
-      description: 'Common issues and solutions',
-      items: [
-        {
-          title: 'Report Generation Issues',
-          description: 'Solutions for common report generation problems.',
-          tips: [
-            'If "Data Unavailable" appears, try a broader analysis mode (Address → Postcode → State)',
-            'Complex analysis can take 3-7 minutes depending on data availability',
-            'Avoid generating multiple reports simultaneously',
-            'Check your internet connection for timeouts',
-            'Verify property addresses are correctly formatted',
-          ],
-        },
-        {
-          title: 'Data Sync Issues',
-          description: 'Troubleshooting data synchronization problems.',
-          tips: [
-            'Check the Monitoring page for API health status',
-            'Manual sync can be triggered from Sources page',
-            'Allow up to 24 hours for market data updates',
-            'Contact support if sync failures persist',
-          ],
-        },
-        {
-          title: 'Email Copilot Issues',
-          description: 'Solutions for email-related problems.',
-          tips: [
-            'Verify email credentials in Settings',
-            'Check mailbox permissions for OAuth connections',
-            'AI summaries require email body content',
-            'Refresh the page if emails aren\'t loading',
-          ],
-        },
-        {
-          title: 'Best Practices',
-          description: 'Tips for optimal system usage.',
-          tips: [
-            'Use complete addresses with suburb, state, and postcode',
-            'Generate reports after major market events for current data',
-            'Use consistent financial assumptions when comparing properties',
-            'Regularly review and update client information',
-            'Export important reports for offline access',
-          ],
-        },
-      ],
-    },
+    // Sections defined as data in `lib/userGuideSections.ts`. They live there
+    // rather than inline because the AI knowledge base needs the same content,
+    // and two hand-maintained copies is exactly how this guide fell behind the
+    // app in the first place.
+    ...ADDITIONAL_GUIDE_SECTIONS.map((section) => ({
+      id: section.id,
+      title: section.title,
+      description: section.description,
+      icon: GUIDE_SECTION_ICONS[section.icon] ?? BookOpen,
+      items: section.items,
+    })),
   ];
 
   const quickTips = [

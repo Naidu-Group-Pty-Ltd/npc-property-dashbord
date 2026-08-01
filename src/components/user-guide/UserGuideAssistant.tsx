@@ -5,6 +5,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { formatKnowledgeBaseForAI } from '@/lib/userGuideKnowledge';
+import { usePlanEntitlements } from '@/hooks/usePlanEntitlements';
 import ReactMarkdown from 'react-markdown';
 
 interface Message {
@@ -87,11 +88,19 @@ export function UserGuideAssistant({ onNavigateToSection }: UserGuideAssistantPr
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const knowledgeBaseRef = useRef<string>('');
+  // The assistant needs the plan to answer "can I use X", not just "what is X".
+  const { planSlug, loading: planLoading } = usePlanEntitlements();
 
-  // Generate knowledge base once
+  // Rebuilt when the plan resolves. Building it once on mount would bake in
+  // the pre-load "plan unknown" state and the assistant would answer
+  // availability questions blind for the rest of the session.
   useEffect(() => {
-    knowledgeBaseRef.current = formatKnowledgeBaseForAI();
-  }, []);
+    // Populated immediately with the plan-unknown variant so a question asked
+    // before the plan resolves still gets the full feature documentation — it
+    // just tells the assistant to ask which plan the user is on rather than
+    // assume. Refined the moment the real plan lands.
+    knowledgeBaseRef.current = formatKnowledgeBaseForAI(planLoading ? null : planSlug);
+  }, [planSlug, planLoading]);
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
