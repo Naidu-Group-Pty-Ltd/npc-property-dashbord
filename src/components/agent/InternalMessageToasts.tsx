@@ -456,11 +456,11 @@ export function InternalMessageToasts() {
       } catch {
         /* keep the draft so nothing is lost */
       } finally {
-        setUploadLabel((p) => ({ ...p, [thread.thread_id]: null }));
         setSending((p) => ({ ...p, [thread.thread_id]: false }));
       }
     },
-    [drafts, pendingFiles, priorities, sending, user, setBaseline],
+    [drafts, attachmentQueue, priorities, sending, user, setBaseline],
+
   );
 
   const onDraftChange = useCallback(
