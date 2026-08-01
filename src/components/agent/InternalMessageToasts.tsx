@@ -578,8 +578,31 @@ export function InternalMessageToasts() {
       <div
         role="dialog"
         aria-label={`Message from ${headline}`}
+        onDragEnter={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          dragDepth.current += 1;
+          setDragActive(true);
+        }}
+        onDragOver={(e) => {
+          if (!Array.from(e.dataTransfer?.types ?? []).includes('Files')) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragActive(false);
+        }}
+        onDrop={(e) => {
+          const dropped = filesFromDataTransfer(e.dataTransfer);
+          if (!dropped.length) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragActive(false);
+          addFilesFor(active.thread_id, dropped);
+        }}
         className={cn(
-          'pointer-events-auto flex w-full flex-col overflow-hidden rounded-3xl border bg-card/95 backdrop-blur-xl',
+          'pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-3xl border bg-card/95 backdrop-blur-xl',
           'shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
           'animate-in slide-in-from-right-4 fade-in-0 motion-reduce:animate-none',
           active.priority === 'urgent'
@@ -589,6 +612,8 @@ export function InternalMessageToasts() {
               : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
         )}
       >
+        {dragActive && <AttachmentDropOverlay />}
+
         {/* Header */}
         <div className="flex items-center gap-2.5 border-b border-border/50 px-3.5 py-2.5">
           <span
