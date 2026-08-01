@@ -254,10 +254,13 @@ export function isImageAttachment(a: InternalAttachment) {
 }
 
 export function attachmentScanStatus(a: InternalAttachment): AttachmentScanStatus {
-  const status = a.scan?.status;
+  // Older rows stored the scan verdict as a bare string.
+  const raw = a.scan as unknown;
+  const status = typeof raw === 'string' ? raw : (a.scan?.status as string | undefined);
   if (status === 'clean' || status === 'unscanned' || status === 'blocked') return status;
   return 'legacy';
 }
+
 
 /** Pull real files out of a drop / paste event (multi-file aware). */
 export function filesFromDataTransfer(dt: DataTransfer | null): File[] {
