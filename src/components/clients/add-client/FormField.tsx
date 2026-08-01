@@ -1,5 +1,5 @@
 import type { InputHTMLAttributes } from 'react';
-import { useFormContext } from 'react-hook-form';
+import { useFormContext, useFormState } from 'react-hook-form';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
@@ -9,7 +9,8 @@ function errorAt(errors: unknown, path: string): string | undefined {
   return typeof value?.message === 'string' ? value.message : undefined;
 }
 export function FormField({ name, label, required, ...props }: { name: string; label: string; required?: boolean } & InputHTMLAttributes<HTMLInputElement>) {
-  const { register, formState: { errors } } = useFormContext();
+  const { register, control } = useFormContext();
+  const { errors } = useFormState({ control, name, exact: true });
   const error = errorAt(errors, name); const id = `advanced-${name.replaceAll('.', '-')}`;
   return <div className="space-y-2">
     <Label className="leading-5 text-foreground/90" htmlFor={id}>{label}{required ? <span className="ml-1 text-destructive" aria-hidden="true">*</span> : ''}</Label>
