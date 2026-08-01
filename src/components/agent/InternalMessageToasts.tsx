@@ -22,7 +22,20 @@
  * thread participation server-side.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Megaphone, MessageSquare, Minus, Paperclip, Send, X, AlertTriangle, Loader2 } from 'lucide-react';
+import {
+  Megaphone,
+  MessageSquare,
+  Minus,
+  Paperclip,
+  Send,
+  X,
+  AlertTriangle,
+  Loader2,
+  GripVertical,
+  RotateCcw,
+} from 'lucide-react';
+import { useDraggablePosition } from '@/hooks/useDraggablePosition';
+
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
