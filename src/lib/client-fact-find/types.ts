@@ -48,7 +48,7 @@ export interface AdvancedClientCreationPayload {
   applicants: [FactFindApplicant, FactFindApplicant?]; addresses: FactFindAddress[];
   employment: [FactFindEmployment, FactFindEmployment?]; assets: FactFindAsset[];
   liabilities: FactFindLiability[]; expenses: FactFindLivingExpense[];
-  calculatedTotals?: FactFindCalculatedTotals; syncToGhl?: boolean;
+  calculatedTotals?: FactFindCalculatedTotals;
 }
 export interface ClientFactFind extends FactFindCalculatedTotals {
   id: string; clientId: string; status: FactFindStatus; templateVersion: string; revision: number;
