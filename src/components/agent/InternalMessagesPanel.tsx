@@ -20,13 +20,15 @@ import { toast } from 'sonner';
 import { ShimmerText } from '@/components/aurixa/ShimmerText';
 import { useAuth } from '@/hooks/useAuth';
 import {
-  InternalAttachmentDrafts,
+  AttachmentDropOverlay,
+  InternalAttachmentQueue,
   InternalAttachmentList,
 } from '@/components/agent/InternalAttachmentChips';
+import { useInternalAttachmentQueue } from '@/hooks/useInternalAttachmentQueue';
+import { TypingPresence, type TypingPerson } from '@/components/messaging/TypingPresence';
 import {
   INTERNAL_ATTACHMENT_ACCEPT,
-  MAX_INTERNAL_ATTACHMENTS,
-  uploadInternalAttachments,
+  filesFromDataTransfer,
   type InternalAttachment,
 } from '@/lib/internalMessageAttachments';
 import {
@@ -35,6 +37,7 @@ import {
   publishInternalMessage,
   publishInternalTyping,
 } from '@/lib/internalMessagingBus';
+
 
 export interface InternalStaffMember {
   id: string;
