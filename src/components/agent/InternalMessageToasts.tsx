@@ -470,6 +470,10 @@ export function InternalMessageToasts() {
                 {t.unread > 9 ? '9+' : t.unread}
               </span>
             )}
+            {typing[t.thread_id] && (
+              <TypingDots className="shrink-0" />
+            )}
+
           </button>
           <button
             type="button"
