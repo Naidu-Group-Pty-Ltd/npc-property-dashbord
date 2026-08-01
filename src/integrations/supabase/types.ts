@@ -21856,6 +21856,8 @@ export type Database = {
           ai_latency_ms: number | null
           ai_status: string | null
           ai_summary: string | null
+          archived_at: string | null
+          archived_by: string | null
           audience_tags: Json
           author: string | null
           candidate_reason: string | null
@@ -21888,6 +21890,7 @@ export type Database = {
           model_used: string | null
           original_url: string | null
           policy_implications: string | null
+          pre_archive_status: string | null
           primary_source_urls: Json
           property_implications: string | null
           provider_attempts: Json
@@ -21923,6 +21926,8 @@ export type Database = {
           ai_latency_ms?: number | null
           ai_status?: string | null
           ai_summary?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
           audience_tags?: Json
           author?: string | null
           candidate_reason?: string | null
@@ -21955,6 +21960,7 @@ export type Database = {
           model_used?: string | null
           original_url?: string | null
           policy_implications?: string | null
+          pre_archive_status?: string | null
           primary_source_urls?: Json
           property_implications?: string | null
           provider_attempts?: Json
@@ -21990,6 +21996,8 @@ export type Database = {
           ai_latency_ms?: number | null
           ai_status?: string | null
           ai_summary?: string | null
+          archived_at?: string | null
+          archived_by?: string | null
           audience_tags?: Json
           author?: string | null
           candidate_reason?: string | null
@@ -22022,6 +22030,7 @@ export type Database = {
           model_used?: string | null
           original_url?: string | null
           policy_implications?: string | null
+          pre_archive_status?: string | null
           primary_source_urls?: Json
           property_implications?: string | null
           provider_attempts?: Json
@@ -23106,9 +23115,7 @@ export type Database = {
           created_by: string | null
           entity_id: string | null
           id: string
-          link: string | null
           message: string
-          metadata: Json
           read: boolean
           report_id: string | null
           target_user_id: string | null
@@ -23121,9 +23128,7 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           id?: string
-          link?: string | null
           message: string
-          metadata?: Json
           read?: boolean
           report_id?: string | null
           target_user_id?: string | null
@@ -23136,9 +23141,7 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           id?: string
-          link?: string | null
           message?: string
-          metadata?: Json
           read?: boolean
           report_id?: string | null
           target_user_id?: string | null
