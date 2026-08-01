@@ -251,10 +251,8 @@ test.describe('Builder Portal inventory', () => {
     await page.goto(`${BASE}/builder`);
     const navigation = page.getByRole('navigation', { name: 'Builder portal' });
     await expect(navigation.getByRole('link', { name: 'Inventory' })).toBeVisible();
-    // Modules that are not built yet must still be disabled.
-    for (const label of ['Messages', 'Tasks']) {
-      await expect(navigation.getByRole('button', { name: label })).toBeDisabled();
-    }
+    // The portal is complete, so nothing is a disabled placeholder any more.
+    await expect(navigation.getByRole('button')).toHaveCount(0);
   });
 
   test('the unit list renders what the server returned', async ({ page }) => {
