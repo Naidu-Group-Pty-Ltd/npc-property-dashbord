@@ -92,6 +92,8 @@ export const BRAND = {
   /** `--success` at 32% L — a print-weight green. The screen value (45% L) is
    *  too bright to sit under 9pt type on paper. */
   evergreen: '#188C42',
+  /** `--destructive` at 42% L — print-weight red for negative figures. */
+  crimson: '#C51111',
   /** Paper white. Used only by the minimal voice, which wants no warmth. */
   white: '#FFFFFF',
   /** A cool near-white for the technical voice's panels. */
@@ -450,6 +452,10 @@ export interface VoiceColors extends Record<string, string> {
   /** Cautionary semantic fill — watch points, review required. Deep gold
    *  rather than a screen orange, which fought every palette it landed in. */
   caution: string;
+  /** Negative figures in a financial table. `--destructive` at 42% L: the
+   *  screen red (60% L) greys out under 7pt type on paper, and in a cash-flow
+   *  matrix the sign is the most-read thing on the page. */
+  negative: string;
 }
 
 /**
@@ -488,6 +494,7 @@ export function voiceColors(voice: Voice, accent: AccentName): VoiceColors {
     line: voice.line,
     positive: BRAND.evergreen,
     caution: BRAND.goldDeep,
+    negative: BRAND.crimson,
   };
 }
 

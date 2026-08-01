@@ -18,6 +18,7 @@ import {
   type PageDef,
 } from './blocks';
 import { STANDARD_DISCLAIMER, voiceTokens } from './designSystem';
+import { CASH_FLOW_TEMPLATES } from './templatesCashFlow';
 import { EXTENDED_TEMPLATES } from './templatesExtended';
 
 export interface SeedTemplate {
@@ -1110,4 +1111,8 @@ export const CORE_TEMPLATES: SeedTemplate[] = [
   complianceFileReview(),
 ];
 
-export const SEED_TEMPLATES: SeedTemplate[] = [...CORE_TEMPLATES, ...EXTENDED_TEMPLATES];
+export const SEED_TEMPLATES: SeedTemplate[] = [
+  ...CORE_TEMPLATES,
+  ...EXTENDED_TEMPLATES,
+  ...CASH_FLOW_TEMPLATES,
+];
