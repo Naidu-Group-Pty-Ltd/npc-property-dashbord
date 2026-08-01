@@ -133,22 +133,6 @@ function timeLabel(iso: string) {
   }
 }
 
-/** Three-dot animated typing indicator, matching the messages panel. */
-function TypingDots({ className }: { className?: string }) {
-  return (
-    <span className={cn('flex items-center gap-1', className)} aria-hidden>
-      {[0, 1, 2].map((i) => (
-        <span
-          key={i}
-          className="h-1.5 w-1.5 rounded-full bg-primary/70 animate-bounce motion-reduce:animate-none"
-          style={{ animationDelay: `${i * 140}ms`, animationDuration: '900ms' }}
-        />
-      ))}
-    </span>
-  );
-}
-
-
 export function InternalMessageToasts() {
   const { user } = useAuth();
   const [threads, setThreads] = useState<PopupThread[]>([]);
@@ -162,9 +146,16 @@ export function InternalMessageToasts() {
    * the Going Live dock) instead of jumping into the Aurixa agent.
    */
   const [minimised, setMinimised] = useState<Record<string, true>>({});
-  const [pendingFiles, setPendingFiles] = useState<Record<string, File[]>>({});
-  const [uploadLabel, setUploadLabel] = useState<Record<string, string | null>>({});
+  /**
+   * One upload queue serves the expanded card (only one card is expanded at a
+   * time). It tracks per-file progress, retries and errors.
+   */
+  const attachmentQueue = useInternalAttachmentQueue();
+  const [dragActive, setDragActive] = useState(false);
+  const dragDepth = useRef(0);
+  const queuedForRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
 
   const threadsRef = useRef<PopupThread[]>([]);
   threadsRef.current = threads;
