@@ -13,25 +13,9 @@
  *   * Permissions come from the Phase 1 deny-by-default
  *     `builder_resolve_permission()`. There is no default-allow key set and no
  *     OR-merge (Phase 0 NOCOPY-01).
- *   * The rollout gate is enforced here, server-side, not in the client.
  */
 import { extractBuilderSessionToken, validateBuilderPortalHeaders } from './builderSessionToken.ts';
 import { resolveBuilderSessionToken } from './builderSessions.ts';
-
-export const BUILDER_ROLLOUT_FEATURE = 'builder_portal_identity_v1';
-
-/**
- * Rollout modes that permit the external portal to serve an organisation.
- *
- * Builder is greenfield, so the Solicitor comparison states carry no meaning
- * here: dual_read and dual_write compare a new path against a legacy one, and
- * there is no legacy Builder path. `builder_rollout_transition_allowed` makes
- * them unreachable, and they are listed nowhere below.
- *
- * `off` blocks portal access. `shadow` permits controlled internal verification,
- * and `cutover` permits live external use. `rollback` blocks portal access.
- */
-const ROLLOUT_ENABLED_MODES = new Set(['shadow', 'cutover']);
 
 export interface BuilderOrganisationSummary {
   organisation_id: string;
@@ -40,7 +24,6 @@ export interface BuilderOrganisationSummary {
   org_type: string;
   membership_role: string;
   is_primary: boolean;
-  rollout_enabled: boolean;
 }
 
 export interface BuilderSessionUser {
@@ -116,7 +99,6 @@ const BUILDER_USER_SELECT = `id, email, name, phone, job_title, status, is_activ
  *   4. user active
  *   5. at least one active membership
  *   6. active organisation still reachable
- *   7. rollout enabled for at least one reachable organisation
  *
  * Terms and onboarding are reported but NOT enforced here — handlers call
  * `builderGovernanceError()` so the terms and onboarding endpoints themselves
@@ -162,13 +144,6 @@ export async function resolveBuilderSession(
     };
   }
 
-  if (!organisations.some((organisation) => organisation.rollout_enabled)) {
-    return {
-      ok: false, status: 403, code: 'rollout_disabled',
-      error: 'The Builder Portal is not yet enabled for your organisation.',
-    };
-  }
-
   const { data: sessionRow } = await supabase
     .from('builder_portal_sessions').select('active_organisation_id')
     .eq('id', resolved.session_id).maybeSingle();
@@ -180,11 +155,11 @@ export async function resolveBuilderSession(
     ? organisations.find((organisation) => organisation.organisation_id === stored) ?? null
     : null;
 
-  // Automatic selection: the primary membership when it is valid and enabled,
-  // or the only enabled organisation. Otherwise the caller must choose.
+  // Automatic selection: the accessible primary membership, or the only
+  // accessible organisation. Otherwise the caller must choose.
   if (!active) {
-    const enabled = organisations.filter((organisation) => organisation.rollout_enabled);
-    active = enabled.find((organisation) => organisation.is_primary) ?? (enabled.length === 1 ? enabled[0] : null);
+    active = organisations.find((organisation) => organisation.is_primary)
+      ?? (organisations.length === 1 ? organisations[0] : null);
   }
 
   // Governance is DERIVED here, exactly as `resolveSolicitorSession` derives it:
@@ -236,7 +211,7 @@ export async function resolveBuilderSession(
 }
 
 /**
- * Organisations this user may actually reach, with their rollout state.
+ * Organisations this user may actually reach.
  * Derived entirely server-side from `builder_accessible_organisations`, which
  * requires the user, the membership and the organisation all to be active.
  */
@@ -279,26 +254,10 @@ export async function listAccessibleOrganisations(
       org_type: detail.org_type,
       membership_role: row.membership_role,
       is_primary: primaryBy.get(row.organisation_id) === true,
-      rollout_enabled: await isRolloutEnabled(supabase, row.organisation_id),
     });
   }
   return summaries.sort((a, b) => Number(b.is_primary) - Number(a.is_primary)
     || a.legal_name.localeCompare(b.legal_name));
-}
-
-/**
- * Server-side rollout gate. Uses the Phase 1 generalised control plane; the
- * Solicitor resolution path is untouched.
- */
-export async function isRolloutEnabled(supabase: any, organisationId: string): Promise<boolean> {
-  const { data, error } = await supabase.rpc('resolve_cross_portal_feature_mode_for', {
-    _portal: 'builder', _owner_id: organisationId, _feature_key: BUILDER_ROLLOUT_FEATURE,
-  });
-  if (error) {
-    console.error('[builderPortalAuth] rollout resolution failed', error.message);
-    return false;
-  }
-  return ROLLOUT_ENABLED_MODES.has(String(data ?? 'off'));
 }
 
 /**

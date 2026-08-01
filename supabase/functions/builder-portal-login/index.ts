@@ -144,10 +144,6 @@ Deno.serve(async (req) => {
     // error, so a builder cannot probe organisation state either.
     const organisations = await listAccessibleOrganisations(supabase, portalUser.id);
     if (!organisations.length) return json({ error: GENERIC_AUTH_ERROR }, 401);
-    if (!organisations.some((organisation) => organisation.rollout_enabled)) {
-      return json({ error: GENERIC_AUTH_ERROR }, 401);
-    }
-
     await supabase.from('builder_portal_users').update({
       last_login_at: new Date().toISOString(),
       failed_login_attempts: 0,
@@ -159,10 +155,9 @@ Deno.serve(async (req) => {
       deviceLabel: req.headers.get('user-agent') || undefined,
     });
 
-    // Auto-select the primary organisation, or the only enabled one.
-    const enabled = organisations.filter((organisation) => organisation.rollout_enabled);
-    const autoSelected = enabled.find((organisation) => organisation.is_primary)
-      ?? (enabled.length === 1 ? enabled[0] : null);
+    // Auto-select the accessible primary organisation, or the only accessible one.
+    const autoSelected = organisations.find((organisation) => organisation.is_primary)
+      ?? (organisations.length === 1 ? organisations[0] : null);
     if (autoSelected) {
       await supabase.rpc('builder_select_session_organisation', {
         _session_id: issued.id,
@@ -195,7 +190,7 @@ Deno.serve(async (req) => {
         has_accepted_current_terms: !!portalUser.has_accepted_current_terms,
         has_completed_onboarding: !!portalUser.has_completed_onboarding,
       },
-      organisations: enabled,
+      organisations,
       active_organisation: autoSelected,
       requires_organisation_selection: !autoSelected,
       // Session METADATA only. The token is in the Set-Cookie header.

@@ -140,7 +140,7 @@ Deno.serve(async (req) => {
       // The requested id is a REQUEST, not authority: it must appear in the
       // server-resolved reach, and the database command re-verifies membership
       // again before it writes.
-      if (!session.organisations?.some((o) => o.organisation_id === requested && o.rollout_enabled)) {
+      if (!session.organisations?.some((o) => o.organisation_id === requested)) {
         return json({
           error: 'You do not have access to that organisation', code: 'organisation_not_accessible',
         }, 403);

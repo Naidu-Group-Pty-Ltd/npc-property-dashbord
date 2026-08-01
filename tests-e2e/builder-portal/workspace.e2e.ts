@@ -34,7 +34,6 @@ const organisation = (role: string) => ({
   org_type: 'builder',
   membership_role: role,
   is_primary: true,
-  rollout_enabled: true,
 });
 
 const PERMISSIONS = {
