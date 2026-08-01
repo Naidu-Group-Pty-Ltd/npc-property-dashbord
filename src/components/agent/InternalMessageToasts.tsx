@@ -155,6 +155,9 @@ export function InternalMessageToasts() {
   /** Session start — messages older than this never pop on first load. */
   const bootAtRef = useRef<string>(new Date().toISOString());
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  /** thread_id → last time we broadcast a typing hint (throttling). */
+  const lastTypingSentRef = useRef<Record<string, number>>({});
+
 
   const persist = useCallback((next: PopupThread[]) => {
     writeOpenIds(next.map((t) => t.thread_id));
