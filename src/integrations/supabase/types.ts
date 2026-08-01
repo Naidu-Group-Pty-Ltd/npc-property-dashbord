@@ -18210,6 +18210,7 @@ export type Database = {
           created_at: string
           id: string
           is_system: boolean
+          priority: string
           sender_id: string | null
           thread_id: string
         }
@@ -18218,6 +18219,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_system?: boolean
+          priority?: string
           sender_id?: string | null
           thread_id: string
         }
@@ -18226,6 +18228,7 @@ export type Database = {
           created_at?: string
           id?: string
           is_system?: boolean
+          priority?: string
           sender_id?: string | null
           thread_id?: string
         }
