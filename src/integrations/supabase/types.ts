@@ -23121,7 +23121,9 @@ export type Database = {
           created_by: string | null
           entity_id: string | null
           id: string
+          link: string | null
           message: string
+          metadata: Json
           read: boolean
           report_id: string | null
           target_user_id: string | null
@@ -23134,7 +23136,9 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           id?: string
+          link?: string | null
           message: string
+          metadata?: Json
           read?: boolean
           report_id?: string | null
           target_user_id?: string | null
@@ -23147,7 +23151,9 @@ export type Database = {
           created_by?: string | null
           entity_id?: string | null
           id?: string
+          link?: string | null
           message?: string
+          metadata?: Json
           read?: boolean
           report_id?: string | null
           target_user_id?: string | null
@@ -25921,6 +25927,27 @@ export type Database = {
           updated_at?: string
           url?: string
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      provider_circuit_state: {
+        Row: {
+          failures: number
+          opened_until: string | null
+          scope: string
+          updated_at: string
+        }
+        Insert: {
+          failures?: number
+          opened_until?: string | null
+          scope: string
+          updated_at?: string
+        }
+        Update: {
+          failures?: number
+          opened_until?: string | null
+          scope?: string
+          updated_at?: string
         }
         Relationships: []
       }
@@ -31582,6 +31609,33 @@ export type Database = {
           },
         ]
       }
+      webhook_rejections: {
+        Row: {
+          attempts: number
+          first_seen_at: string
+          function_name: string
+          hour_bucket: string
+          last_seen_at: string
+          reason: string
+        }
+        Insert: {
+          attempts?: number
+          first_seen_at?: string
+          function_name: string
+          hour_bucket: string
+          last_seen_at?: string
+          reason: string
+        }
+        Update: {
+          attempts?: number
+          first_seen_at?: string
+          function_name?: string
+          hour_bucket?: string
+          last_seen_at?: string
+          reason?: string
+        }
+        Relationships: []
+      }
       whitelabel_settings: {
         Row: {
           accent_color: string | null
@@ -35156,6 +35210,15 @@ export type Database = {
         }
         Returns: Json
       }
+      provider_circuit_is_open: { Args: { p_scope: string }; Returns: boolean }
+      provider_circuit_record_failure: {
+        Args: { p_open_seconds: number; p_scope: string; p_threshold: number }
+        Returns: boolean
+      }
+      provider_circuit_record_success: {
+        Args: { p_scope: string }
+        Returns: undefined
+      }
       prune_agent_memories: {
         Args: { p_max?: number; p_user_id: string }
         Returns: number
@@ -35228,6 +35291,10 @@ export type Database = {
           _success: boolean
         }
         Returns: string
+      }
+      record_webhook_rejection: {
+        Args: { p_function_name: string; p_reason: string }
+        Returns: undefined
       }
       refresh_pdf_import_cost_daily: { Args: never; Returns: undefined }
       register_uploaded_document_version: {
@@ -35344,6 +35411,15 @@ export type Database = {
           _reason: string
         }
         Returns: Json
+      }
+      security_consume_rate_limit: {
+        Args: { p_key: string; p_max: number; p_window_seconds: number }
+        Returns: {
+          allowed: boolean
+          count: number
+          remaining: number
+          retry_after_seconds: number
+        }[]
       }
       seed_legal_matter_settlement_tasks: {
         Args: { _matter_id: string }
