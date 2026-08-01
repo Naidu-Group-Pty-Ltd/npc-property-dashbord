@@ -21703,6 +21703,33 @@ export type Database = {
           },
         ]
       }
+      market_update_archive_purge_runs: {
+        Row: {
+          completed_at: string
+          cutoff_at: string
+          deleted_count: number
+          id: string
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string
+          cutoff_at: string
+          deleted_count?: number
+          id?: string
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string
+          cutoff_at?: string
+          deleted_count?: number
+          id?: string
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
       market_update_qa_shares: {
         Row: {
           created_at: string
@@ -21819,33 +21846,6 @@ export type Database = {
           sentiment?: string | null
           source_update_ids?: Json
           time_horizon?: string | null
-        }
-        Relationships: []
-      }
-      market_update_archive_purge_runs: {
-        Row: {
-          completed_at: string
-          cutoff_at: string
-          deleted_count: number
-          id: string
-          started_at: string
-          status: string
-        }
-        Insert: {
-          completed_at?: string
-          cutoff_at: string
-          deleted_count?: number
-          id?: string
-          started_at?: string
-          status?: string
-        }
-        Update: {
-          completed_at?: string
-          cutoff_at?: string
-          deleted_count?: number
-          id?: string
-          started_at?: string
-          status?: string
         }
         Relationships: []
       }
@@ -31937,7 +31937,6 @@ export type Database = {
       }
     }
     Functions: {
-      purge_expired_market_updates_archive: { Args: never; Returns: number }
       acknowledge_client_document: {
         Args: {
           _acknowledgement_type: string
@@ -35155,6 +35154,7 @@ export type Database = {
         Args: { p_max?: number; p_user_id: string }
         Returns: number
       }
+      purge_expired_market_updates_archive: { Args: never; Returns: number }
       read_migration_control_signal: {
         Args: { p_job_id: string }
         Returns: string
