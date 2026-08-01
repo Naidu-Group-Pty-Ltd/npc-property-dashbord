@@ -4,6 +4,8 @@
  */
 import { extractPdfTextClientSide } from '@/lib/pdfClientExtractor';
 import { convertPdfToImages } from '@/utils/pdfToImages';
+import { extractDocxText } from '@/lib/documentText/docxText';
+import { normalizeDocumentText, truncateOnBoundary } from '@/lib/documentText/textHygiene';
 import * as XLSX from 'xlsx';
 
 export interface ExtractedFile {
@@ -145,43 +147,22 @@ async function readAsBase64(file: File): Promise<string> {
 
 async function extractSpreadsheet(file: File): Promise<string> {
   const arrayBuffer = await file.arrayBuffer();
-  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: true });
   const parts: string[] = [];
-  
+
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
-    const csv = XLSX.utils.sheet_to_csv(sheet);
+    if (!sheet) continue;
+    // `blankrows: false` drops the thousands of empty spacer rows that Excel
+    // leaves behind, which otherwise consume the agent's context budget with
+    // nothing but commas.
+    const csv = XLSX.utils.sheet_to_csv(sheet, { blankrows: false, dateNF: 'yyyy-mm-dd' }).trim();
+    if (!csv) continue;
     parts.push(`--- Sheet: ${sheetName} ---\n${csv}`);
   }
-  
-  return parts.join('\n\n');
-}
 
-async function extractDocxText(file: File): Promise<string> {
-  // DOCX files are ZIP archives containing XML
-  // We extract the main document.xml for text content
-  const JSZip = (await import('jszip')).default;
-  const arrayBuffer = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(arrayBuffer);
-  
-  const docXml = zip.file('word/document.xml');
-  if (!docXml) return '[Could not extract text from DOCX]';
-  
-  const xmlContent = await docXml.async('string');
-  // Strip XML tags to get plain text
-  const text = xmlContent
-    .replace(/<w:p[^>]*>/g, '\n') // paragraphs become newlines
-    .replace(/<w:tab\/>/g, '\t')
-    .replace(/<[^>]+>/g, '') // strip all XML tags
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/\n{3,}/g, '\n\n') // collapse multiple newlines
-    .trim();
-  
-  return text;
+  if (!parts.length) return '[Spreadsheet contains no readable cells]';
+  return parts.join('\n\n');
 }
 
 /**
@@ -226,20 +207,34 @@ export async function extractFileContent(
       try {
         const result = await extractPdfTextClientSide(file);
         const textContent = result.text?.trim() || '';
-        
-        if (textContent.length >= MIN_PDF_TEXT_THRESHOLD) {
-          // Text-readable PDF — use extracted text
-          extractedText = result.text;
+
+        // `likelyNeedsOcr` also catches a PDF with a *broken* text layer (bad
+        // CMap, mojibake) — previously that mojibake was long enough to pass the
+        // character threshold and was sent to the agent as if it were content.
+        if (textContent.length >= MIN_PDF_TEXT_THRESHOLD && !result.likelyNeedsOcr) {
+          const notes: string[] = [];
+          if (result.failedPages.length > 0) {
+            notes.push(`pages ${result.failedPages.join(', ')} could not be read`);
+          }
+          if (result.extractedPages < result.totalPages - result.failedPages.length) {
+            notes.push(`${result.totalPages - result.extractedPages} of ${result.totalPages} pages contain no text layer`);
+          }
+          extractedText = notes.length
+            ? `${result.text}\n\n[Extraction notes: ${notes.join('; ')}]`
+            : result.text;
         } else {
-          // Scanned/image-based PDF — fall back to image conversion for vision
-          console.log(`[agentFileExtractor] PDF "${file.name}" has only ${textContent.length} chars of text, falling back to image extraction`);
+          // Scanned or broken text layer — render pages for vision instead.
+          console.log(`[agentFileExtractor] PDF "${file.name}" text layer unusable (${textContent.length} chars, needsOcr=${result.likelyNeedsOcr}); falling back to image extraction`);
           const imageResult = await convertPdfToImages(file);
           if (imageResult.success && imageResult.images.length > 0) {
             pdfPageImages = imageResult.images.map(img => ({
               pageNumber: img.pageNumber,
               base64: img.base64,
             }));
-            extractedText = `[Scanned PDF: ${imageResult.totalPages} pages, ${imageResult.images.length} rendered as images for visual analysis]`;
+            const sampled = imageResult.images.length < imageResult.totalPages
+              ? ` (a representative sample — the document has ${imageResult.totalPages} pages)`
+              : '';
+            extractedText = `[Scanned PDF: ${imageResult.totalPages} pages, ${imageResult.images.length} rendered as images for visual analysis${sampled}]`;
           } else {
             extractedText = '[PDF appears to be scanned/image-based. Could not extract text or render pages.]';
           }
@@ -266,8 +261,9 @@ export async function extractFileContent(
       extractedText = await extractSpreadsheet(file);
     } else if (DOCX_MIME_TYPES.includes(mimeType)) {
       extractedText = await extractDocxText(file);
+      if (!extractedText.trim()) extractedText = '[Word document contains no readable text]';
     } else if (TEXT_MIME_TYPES.includes(mimeType) || mimeType.startsWith('text/')) {
-      extractedText = await readAsText(file);
+      extractedText = normalizeDocumentText(await readAsText(file));
     } else if (isKnownBinaryType(mimeType)) {
       // Known binary type — don't attempt text read
       extractedText = `[Binary file "${file.name}" (${mimeType}) — content cannot be extracted as text]`;
@@ -288,9 +284,10 @@ export async function extractFileContent(
       }
     }
     
-    // Truncate very long extracted text
+    // Truncate very long extracted text at a paragraph/sentence boundary so the
+    // agent never reads a number or an address that was cut in half.
     if (extractedText && extractedText.length > MAX_EXTRACTED_TEXT) {
-      extractedText = extractedText.substring(0, MAX_EXTRACTED_TEXT) + `\n\n[...truncated at ${MAX_EXTRACTED_TEXT.toLocaleString()} chars, original: ${extractedText.length.toLocaleString()} chars]`;
+      extractedText = truncateOnBoundary(extractedText, MAX_EXTRACTED_TEXT).text;
     }
     
     onProgress?.({ filename: file.name, stage: 'done' });

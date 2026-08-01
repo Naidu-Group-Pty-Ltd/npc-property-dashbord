@@ -3,139 +3,21 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage, extractOpenAIUsage } from '../_shared/logApiUsage.ts';
+import {
+  mergeExtractedData,
+  parseVisionResponse,
+  populatedFieldCount,
+  processToStructuredPayload,
+  escapeRegExp,
+  type ExtractedPropertyData,
+  type StructuredPropertyPayload,
+} from '../_shared/propertyExtraction.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
   'Access-Control-Expose-Headers': 'x-correlation-id, x-tokens-used, x-tokens-reserved, x-tokens-estimated, x-duration-ms',
 };
-
-interface ExtractedPropertyData {
-  address?: string;
-  suburb?: string;
-  state?: string;
-  postcode?: string;
-  price?: number;
-  weeklyRent?: number;
-  bedrooms?: number;
-  bathrooms?: number;
-  carSpaces?: number;
-  landSize?: number;
-  buildSize?: number;
-  propertyType?: string;
-  landPrice?: number;
-  buildPrice?: number;
-  isNewBuild?: boolean;
-  councilRates?: number;
-  waterRates?: number;
-  strataFees?: number;
-  insuranceEstimate?: number;
-  propertyManagementPercent?: number;
-  yearBuilt?: number;
-  stampDuty?: number;
-  agentFee?: number;
-  assetClass?: string;
-  assetSubType?: string;
-  tenure?: string;
-  zoning?: string;
-  gfaSqm?: number;
-  nlaSqm?: number;
-  glaSqm?: number;
-  siteAreaSqm?: number;
-  parkingBays?: number;
-  currentValuation?: number;
-  propertyName?: string;
-  siteCoverPct?: number;
-  officePct?: number;
-  hardstandSqm?: number;
-  clearanceMetres?: number;
-  powerKva?: number;
-  dockDoors?: number;
-  groundFloorLoadKpa?: number;
-  conditionRating?: string;
-  // Commercial / industrial enrichment
-  detectedAssetClass?: 'residential' | 'commercial' | 'industrial';
-  detectedAssetConfidence?: number;
-  passingNoiPa?: number;
-  marketNoiPa?: number;
-  passingCapRatePct?: number;
-  marketCapRatePct?: number;
-  vendorAdvisedRentPa?: number;
-  vendorAdvisedOutgoingsPa?: number;
-  outgoingsTotalPa?: number;
-  outgoingsRecoverablePa?: number;
-  leaseType?: string;
-  leaseExpiryDate?: string;
-  leaseOptions?: string;
-  waleYears?: number;
-  tenantNames?: string[];
-  gstTreatment?: string;
-  truckAccess?: string;
-  vendorAdvisedYieldPct?: number;
-}
-
-interface StructuredPropertyPayload {
-  propertyAddress: string;
-  suburb?: string;
-  state?: string;
-  postcode?: string;
-  purchasePrice?: number;
-  weeklyRent?: number;
-  bedrooms?: number;
-  bathrooms?: number;
-  carSpaces?: number;
-  landSize?: number;
-  buildSize?: number;
-  propertyType?: string;
-  landPrice?: number;
-  buildPrice?: number;
-  isNewBuild: boolean;
-  councilRates?: number;
-  waterRates?: number;
-  strataFees?: number;
-  insuranceEstimate?: number;
-  propertyManagementPercent?: number;
-  yearBuilt?: number;
-  stampDuty?: number;
-  agentFee?: number;
-  assetClass?: string;
-  assetSubType?: string;
-  tenure?: string;
-  zoning?: string;
-  gfaSqm?: number;
-  nlaSqm?: number;
-  glaSqm?: number;
-  siteAreaSqm?: number;
-  parkingBays?: number;
-  currentValuation?: number;
-  propertyName?: string;
-  siteCoverPct?: number;
-  officePct?: number;
-  hardstandSqm?: number;
-  clearanceMetres?: number;
-  powerKva?: number;
-  dockDoors?: number;
-  groundFloorLoadKpa?: number;
-  conditionRating?: string;
-  detectedAssetClass?: 'residential' | 'commercial' | 'industrial';
-  detectedAssetConfidence?: number;
-  passingNoiPa?: number;
-  marketNoiPa?: number;
-  passingCapRatePct?: number;
-  marketCapRatePct?: number;
-  vendorAdvisedRentPa?: number;
-  vendorAdvisedOutgoingsPa?: number;
-  outgoingsTotalPa?: number;
-  outgoingsRecoverablePa?: number;
-  vendorAdvisedYieldPct?: number;
-  gstTreatment?: string;
-  leaseType?: string;
-  leaseExpiryDate?: string;
-  leaseOptions?: string;
-  waleYears?: number;
-  tenantNames?: string[];
-  truckAccess?: string;
-}
 
 interface PageImage {
   pageNumber: number;
@@ -375,9 +257,14 @@ async function extractWithVisionSingle(
     });
 
     console.log(`📝 GPT-4o Vision response (${images.length} pages):`, content.substring(0, 200));
-    
-    return parseVisionResponse(content);
-    
+
+    const extracted = parseVisionResponse(content);
+    if (!extracted) {
+      throw new Error('The extraction model returned a response that could not be read as JSON.');
+    }
+    console.log(`📊 Recovered ${populatedFieldCount(extracted)} fields from ${images.length} page(s)`);
+    return extracted;
+
   } catch (error) {
     console.error('❌ Vision extraction error:', error);
     throw error;
@@ -405,7 +292,8 @@ async function extractWithVisionBatched(
   console.log(`📚 Large document: ${images.length} pages → ${batches.length} batches (batch size: ${VISION_BATCH_SIZE}, parallel: ${MAX_PARALLEL_BATCHES})`);
   
   let mergedResult: ExtractedPropertyData = {};
-  
+  const failedBatches: number[] = [];
+
   // Process batches with controlled parallelism
   for (let i = 0; i < batches.length; i += MAX_PARALLEL_BATCHES) {
     const parallelBatches = batches.slice(i, i + MAX_PARALLEL_BATCHES);
@@ -428,122 +316,25 @@ async function extractWithVisionBatched(
     const results = await Promise.all(promises);
     
     for (const { batchIndex, result, error } of results) {
-      if (!error) {
-        mergedResult = mergeExtractedData(mergedResult, result);
-        const fieldCount = Object.values(mergedResult).filter(v => v != null).length;
-        console.log(`✅ Batch ${batchIndex + 1} merged (${fieldCount} fields populated)`);
+      if (error) {
+        failedBatches.push(batchIndex + 1);
+        continue;
       }
+      mergedResult = mergeExtractedData(mergedResult, result);
+      console.log(`✅ Batch ${batchIndex + 1} merged (${populatedFieldCount(mergedResult)} fields populated)`);
     }
   }
-  
+
+  // Losing every batch is a failure, not an empty document — say so instead of
+  // returning `{}` and letting the caller save a blank property record.
+  if (failedBatches.length === batches.length) {
+    throw new Error(`All ${batches.length} extraction batches failed. The document could not be analysed.`);
+  }
+  if (failedBatches.length > 0) {
+    console.warn(`⚠️ ${failedBatches.length}/${batches.length} batches failed (batches ${failedBatches.join(', ')}); the result is partial.`);
+  }
+
   return mergedResult;
-}
-
-/**
- * Merge two extraction results.
- * - For the address/suburb/state/postcode: prefer non-null from first result
- * - For numeric fields: prefer the first non-null value (earlier pages are usually more authoritative)
- * - For isNewBuild: true takes precedence (if ANY page indicates it's new build)
- */
-function mergeExtractedData(existing: ExtractedPropertyData, incoming: ExtractedPropertyData): ExtractedPropertyData {
-  const result: any = { ...existing };
-  
-  for (const [key, value] of Object.entries(incoming)) {
-    if (value == null || value === undefined) continue;
-    
-    // Special handling: isNewBuild — true is sticky
-    if (key === 'isNewBuild' && value === true) {
-      result[key] = true;
-      continue;
-    }
-    
-    // Only fill in missing fields, don't overwrite existing
-    if (result[key] == null || result[key] === undefined) {
-      result[key] = value;
-    }
-  }
-  
-  return result;
-}
-
-/**
- * Parse GPT-4o vision response JSON, handling markdown code blocks
- */
-function parseVisionResponse(content: string): ExtractedPropertyData {
-  let jsonStr = content.trim();
-  if (jsonStr.startsWith('```')) {
-    jsonStr = jsonStr.replace(/```json?\n?/g, '').replace(/```$/g, '').trim();
-  }
-  
-  try {
-    const parsed = JSON.parse(jsonStr);
-    
-    return {
-      address: parsed.address || undefined,
-      suburb: parsed.suburb || undefined,
-      state: parsed.state || undefined,
-      postcode: parsed.postcode?.toString() || undefined,
-      price: typeof parsed.price === 'number' ? parsed.price : undefined,
-      weeklyRent: typeof parsed.weeklyRent === 'number' ? parsed.weeklyRent : undefined,
-      bedrooms: typeof parsed.bedrooms === 'number' ? parsed.bedrooms : undefined,
-      bathrooms: typeof parsed.bathrooms === 'number' ? parsed.bathrooms : undefined,
-      carSpaces: typeof parsed.carSpaces === 'number' ? parsed.carSpaces : undefined,
-      landSize: typeof parsed.landSize === 'number' ? parsed.landSize : undefined,
-      buildSize: typeof parsed.buildSize === 'number' ? parsed.buildSize : undefined,
-      propertyType: parsed.propertyType || undefined,
-      landPrice: typeof parsed.landPrice === 'number' ? parsed.landPrice : undefined,
-      buildPrice: typeof parsed.buildPrice === 'number' ? parsed.buildPrice : undefined,
-      isNewBuild: parsed.isNewBuild === true,
-      councilRates: typeof parsed.councilRates === 'number' ? parsed.councilRates : undefined,
-      waterRates: typeof parsed.waterRates === 'number' ? parsed.waterRates : undefined,
-      strataFees: typeof parsed.strataFees === 'number' ? parsed.strataFees : undefined,
-      insuranceEstimate: typeof parsed.insuranceEstimate === 'number' ? parsed.insuranceEstimate : undefined,
-      propertyManagementPercent: typeof parsed.propertyManagementPercent === 'number' ? parsed.propertyManagementPercent : undefined,
-      yearBuilt: typeof parsed.yearBuilt === 'number' ? parsed.yearBuilt : undefined,
-      stampDuty: typeof parsed.stampDuty === 'number' ? parsed.stampDuty : undefined,
-      agentFee: typeof parsed.agentFee === 'number' ? parsed.agentFee : undefined,
-      assetClass: typeof parsed.assetClass === 'string' ? parsed.assetClass : undefined,
-      assetSubType: typeof parsed.assetSubType === 'string' ? parsed.assetSubType : undefined,
-      tenure: typeof parsed.tenure === 'string' ? parsed.tenure : undefined,
-      zoning: typeof parsed.zoning === 'string' ? parsed.zoning : undefined,
-      gfaSqm: typeof parsed.gfaSqm === 'number' ? parsed.gfaSqm : undefined,
-      nlaSqm: typeof parsed.nlaSqm === 'number' ? parsed.nlaSqm : undefined,
-      glaSqm: typeof parsed.glaSqm === 'number' ? parsed.glaSqm : undefined,
-      siteAreaSqm: typeof parsed.siteAreaSqm === 'number' ? parsed.siteAreaSqm : undefined,
-      parkingBays: typeof parsed.parkingBays === 'number' ? parsed.parkingBays : undefined,
-      currentValuation: typeof parsed.currentValuation === 'number' ? parsed.currentValuation : undefined,
-      propertyName: typeof parsed.propertyName === 'string' ? parsed.propertyName : undefined,
-      siteCoverPct: typeof parsed.siteCoverPct === 'number' ? parsed.siteCoverPct : undefined,
-      officePct: typeof parsed.officePct === 'number' ? parsed.officePct : undefined,
-      hardstandSqm: typeof parsed.hardstandSqm === 'number' ? parsed.hardstandSqm : undefined,
-      clearanceMetres: typeof parsed.clearanceMetres === 'number' ? parsed.clearanceMetres : undefined,
-      powerKva: typeof parsed.powerKva === 'number' ? parsed.powerKva : undefined,
-      dockDoors: typeof parsed.dockDoors === 'number' ? parsed.dockDoors : undefined,
-      groundFloorLoadKpa: typeof parsed.groundFloorLoadKpa === 'number' ? parsed.groundFloorLoadKpa : undefined,
-      conditionRating: typeof parsed.conditionRating === 'string' ? parsed.conditionRating : undefined,
-      detectedAssetClass: (parsed.detectedAssetClass === 'residential' || parsed.detectedAssetClass === 'commercial' || parsed.detectedAssetClass === 'industrial') ? parsed.detectedAssetClass : undefined,
-      detectedAssetConfidence: typeof parsed.detectedAssetConfidence === 'number' ? parsed.detectedAssetConfidence : undefined,
-      passingNoiPa: typeof parsed.passingNoiPa === 'number' ? parsed.passingNoiPa : undefined,
-      marketNoiPa: typeof parsed.marketNoiPa === 'number' ? parsed.marketNoiPa : undefined,
-      passingCapRatePct: typeof parsed.passingCapRatePct === 'number' ? parsed.passingCapRatePct : undefined,
-      marketCapRatePct: typeof parsed.marketCapRatePct === 'number' ? parsed.marketCapRatePct : undefined,
-      vendorAdvisedRentPa: typeof parsed.vendorAdvisedRentPa === 'number' ? parsed.vendorAdvisedRentPa : undefined,
-      vendorAdvisedOutgoingsPa: typeof parsed.vendorAdvisedOutgoingsPa === 'number' ? parsed.vendorAdvisedOutgoingsPa : undefined,
-      outgoingsTotalPa: typeof parsed.outgoingsTotalPa === 'number' ? parsed.outgoingsTotalPa : undefined,
-      outgoingsRecoverablePa: typeof parsed.outgoingsRecoverablePa === 'number' ? parsed.outgoingsRecoverablePa : undefined,
-      vendorAdvisedYieldPct: typeof parsed.vendorAdvisedYieldPct === 'number' ? parsed.vendorAdvisedYieldPct : undefined,
-      gstTreatment: typeof parsed.gstTreatment === 'string' ? parsed.gstTreatment : undefined,
-      leaseType: typeof parsed.leaseType === 'string' ? parsed.leaseType : undefined,
-      leaseExpiryDate: typeof parsed.leaseExpiryDate === 'string' ? parsed.leaseExpiryDate : undefined,
-      leaseOptions: typeof parsed.leaseOptions === 'string' ? parsed.leaseOptions : undefined,
-      waleYears: typeof parsed.waleYears === 'number' ? parsed.waleYears : undefined,
-      tenantNames: Array.isArray(parsed.tenantNames) ? parsed.tenantNames.filter((s: unknown) => typeof s === 'string').slice(0, 5) : undefined,
-      truckAccess: typeof parsed.truckAccess === 'string' ? parsed.truckAccess : undefined,
-    };
-  } catch (parseError) {
-    console.error('❌ Failed to parse vision response as JSON:', parseError, 'Content:', jsonStr.substring(0, 500));
-    return {};
-  }
 }
 
 // ============= SINGLE IMAGE EXTRACTION =============
@@ -601,101 +392,12 @@ async function extractFromSingleImage(
   });
 
   console.log('📝 Single image Vision response:', content.substring(0, 200));
-  
-  return parseVisionResponse(content);
-}
 
-// ============= STRUCTURED PAYLOAD =============
-
-function processToStructuredPayload(extractedData: ExtractedPropertyData): StructuredPropertyPayload {
-  let propertyAddress = '';
-  
-  if (extractedData.address) {
-    propertyAddress = extractedData.address;
+  const extracted = parseVisionResponse(content);
+  if (!extracted) {
+    throw new Error('The extraction model returned a response that could not be read as JSON.');
   }
-  
-  const addressParts: string[] = [];
-  
-  if (extractedData.suburb && !propertyAddress.toLowerCase().includes(extractedData.suburb.toLowerCase())) {
-    addressParts.push(extractedData.suburb);
-  }
-  
-  if (extractedData.state && !propertyAddress.toUpperCase().includes(extractedData.state)) {
-    addressParts.push(extractedData.state);
-  }
-  
-  if (extractedData.postcode && !propertyAddress.includes(extractedData.postcode)) {
-    addressParts.push(extractedData.postcode);
-  }
-  
-  if (addressParts.length > 0) {
-    propertyAddress = propertyAddress 
-      ? `${propertyAddress}, ${addressParts.join(' ')}` 
-      : addressParts.join(', ');
-  }
-  
-  return {
-    propertyAddress: propertyAddress || 'Address Not Found',
-    suburb: extractedData.suburb,
-    state: extractedData.state,
-    postcode: extractedData.postcode,
-    purchasePrice: extractedData.price,
-    weeklyRent: extractedData.weeklyRent,
-    bedrooms: extractedData.bedrooms,
-    bathrooms: extractedData.bathrooms,
-    carSpaces: extractedData.carSpaces,
-    landSize: extractedData.landSize,
-    buildSize: extractedData.buildSize,
-    propertyType: extractedData.propertyType,
-    landPrice: extractedData.landPrice,
-    buildPrice: extractedData.buildPrice,
-    isNewBuild: extractedData.isNewBuild || false,
-    councilRates: extractedData.councilRates,
-    waterRates: extractedData.waterRates,
-    strataFees: extractedData.strataFees,
-    insuranceEstimate: extractedData.insuranceEstimate,
-    propertyManagementPercent: extractedData.propertyManagementPercent,
-    yearBuilt: extractedData.yearBuilt,
-    stampDuty: extractedData.stampDuty,
-    agentFee: extractedData.agentFee,
-    assetClass: extractedData.assetClass,
-    assetSubType: extractedData.assetSubType,
-    tenure: extractedData.tenure,
-    zoning: extractedData.zoning,
-    gfaSqm: extractedData.gfaSqm,
-    nlaSqm: extractedData.nlaSqm,
-    glaSqm: extractedData.glaSqm,
-    siteAreaSqm: extractedData.siteAreaSqm,
-    parkingBays: extractedData.parkingBays,
-    currentValuation: extractedData.currentValuation,
-    propertyName: extractedData.propertyName,
-    siteCoverPct: extractedData.siteCoverPct,
-    officePct: extractedData.officePct,
-    hardstandSqm: extractedData.hardstandSqm,
-    clearanceMetres: extractedData.clearanceMetres,
-    powerKva: extractedData.powerKva,
-    dockDoors: extractedData.dockDoors,
-    groundFloorLoadKpa: extractedData.groundFloorLoadKpa,
-    conditionRating: extractedData.conditionRating,
-    detectedAssetClass: extractedData.detectedAssetClass,
-    detectedAssetConfidence: extractedData.detectedAssetConfidence,
-    passingNoiPa: extractedData.passingNoiPa,
-    marketNoiPa: extractedData.marketNoiPa,
-    passingCapRatePct: extractedData.passingCapRatePct,
-    marketCapRatePct: extractedData.marketCapRatePct,
-    vendorAdvisedRentPa: extractedData.vendorAdvisedRentPa,
-    vendorAdvisedOutgoingsPa: extractedData.vendorAdvisedOutgoingsPa,
-    outgoingsTotalPa: extractedData.outgoingsTotalPa,
-    outgoingsRecoverablePa: extractedData.outgoingsRecoverablePa,
-    vendorAdvisedYieldPct: extractedData.vendorAdvisedYieldPct,
-    gstTreatment: extractedData.gstTreatment,
-    leaseType: extractedData.leaseType,
-    leaseExpiryDate: extractedData.leaseExpiryDate,
-    leaseOptions: extractedData.leaseOptions,
-    waleYears: extractedData.waleYears,
-    tenantNames: extractedData.tenantNames,
-    truckAccess: extractedData.truckAccess,
-  };
+  return extracted;
 }
 
 // ============= GOOGLE MAPS GEOCODING =============
@@ -794,10 +496,18 @@ function buildFullAddress(
   
   if (streetAddress && streetAddress !== 'Address Not Found') {
     let cleanStreet = streetAddress;
-    if (suburb) cleanStreet = cleanStreet.replace(new RegExp(`,?\\s*${suburb}`, 'gi'), '');
-    if (state) cleanStreet = cleanStreet.replace(new RegExp(`,?\\s*${state}\\b`, 'gi'), '');
-    if (postcode) cleanStreet = cleanStreet.replace(new RegExp(`,?\\s*${postcode}`, 'g'), '');
-    cleanStreet = cleanStreet.replace(/,\s*Australia$/i, '').replace(/,\s*,/g, ',').replace(/,\s*$/,'').trim();
+    // Escape the interpolated values: an unescaped suburb like "St. Kilda"
+    // matched "St4 Kilda" too, and a metacharacter could throw outright.
+    if (suburb) cleanStreet = cleanStreet.replace(new RegExp(`,?\\s*\\b${escapeRegExp(suburb)}\\b`, 'gi'), '');
+    if (state) cleanStreet = cleanStreet.replace(new RegExp(`,?\\s*\\b${escapeRegExp(state)}\\b`, 'gi'), '');
+    if (postcode) cleanStreet = cleanStreet.replace(new RegExp(`,?\\s*\\b${escapeRegExp(postcode)}\\b`, 'g'), '');
+    cleanStreet = cleanStreet
+      .replace(/,\s*Australia$/i, '')
+      .replace(/,\s*,/g, ',')
+      .replace(/\s{2,}/g, ' ')
+      .replace(/^\s*,\s*/, '')
+      .replace(/,\s*$/, '')
+      .trim();
     if (cleanStreet) parts.push(cleanStreet);
   }
   

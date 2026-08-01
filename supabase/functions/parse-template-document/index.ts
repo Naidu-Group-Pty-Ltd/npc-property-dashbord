@@ -3,6 +3,12 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { logApiUsage } from '../_shared/logApiUsage.ts';
+import {
+  assessTextQuality,
+  chunkDocumentText,
+  dehyphenateWrappedLines,
+  normalizeDocumentText,
+} from '../_shared/documentText.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -29,47 +35,58 @@ interface TemplateParseRequest {
   useAIExtraction?: boolean; // Flag to use AI-powered extraction
 }
 
-// Company names, branding, and irrelevant content to filter out
-const CONTENT_FILTERS = [
-  // Company names - add more as needed
-  /NPC\s*(Services?|Property|Consulting|Group)?/gi,
-  /National\s*Property\s*Collective/gi,
-  /npcservices\.com\.au/gi,
-  
-  // Generic company patterns
-  /\b(ABN|ACN)\s*:?\s*\d[\d\s]+\d/gi,
-  /©\s*\d{4}\s*[A-Za-z\s]+/g, // Copyright notices
-  /All\s+rights?\s+reserved\.?/gi,
-  
-  // Contact details that should not affect embeddings
-  /\b\d{2}\s*\d{4}\s*\d{4}\b/g, // Phone numbers
-  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, // Email addresses
-  /www\.[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}/gi, // Website URLs
-  
-  // Page numbers and headers/footers
-  /Page\s+\d+\s*(of\s*\d+)?/gi,
-  /^\s*\d+\s*$/gm, // Standalone page numbers
-  
-  // Watermarks and confidentiality notices
-  /CONFIDENTIAL/gi,
-  /DRAFT/gi,
-  /For\s+internal\s+use\s+only/gi,
-  
-  // Prepared by/for lines
-  /Prepared\s+(by|for)\s*:?\s*[A-Za-z\s]+/gi,
-  /Author\s*:?\s*[A-Za-z\s]+/gi,
-  
-  // Date formats that are template-specific
-  /\b(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b/gi,
+/**
+ * Branding and page furniture removed before embedding.
+ *
+ * Every pattern here is deliberately BOUNDED. The previous set used greedy
+ * `[A-Za-z\s]+` tails on `Prepared by`, `Author:` and `©` — and because `\s`
+ * matches newlines, a single `Prepared by: …` line silently ate every following
+ * paragraph until the next digit or punctuation mark. Whole sections of a
+ * template were vanishing from the embeddings without any error. `\S*[^\S\n]*`
+ * style tails and per-line anchors keep each filter to the line it belongs to.
+ */
+const CONTENT_FILTERS: RegExp[] = [
+  // Company names.
+  /\bNPC(?:\s+(?:Services?|Property|Consulting|Group))?\b/gi,
+  /\bNational\s+Property\s+Collective\b/gi,
+  /\bnpcservices\.com\.au\b/gi,
+
+  // Generic company identifiers.
+  /\b(?:ABN|ACN)\s*:?\s*\d[\d ]{6,14}\d\b/gi,
+  /©\s*\d{4}[^\n]{0,60}/g,
+  /\bAll\s+rights?\s+reserved\.?/gi,
+
+  // Contact details that should not influence retrieval.
+  /\b(?:\+?61\s?)?(?:\(0\d\)|0\d)[\s-]?\d{4}[\s-]?\d{4}\b/g,
+  /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  /\bwww\.[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gi,
+
+  // Page furniture.
+  /\bPage\s+\d+(?:\s+of\s+\d+)?\b/gi,
+  /^[ \t]*\d{1,4}[ \t]*$/gm,
+
+  // Watermarks. Anchored with word boundaries so `drafting` and
+  // `confidentiality` survive — the unbounded versions turned them into
+  // `ing` and `iality`.
+  /\bCONFIDENTIAL\b/gi,
+  /\bDRAFT\b/g,
+  /\bFor\s+internal\s+use\s+only\b/gi,
+
+  // Attribution lines — bounded to the rest of their own line.
+  /\bPrepared\s+(?:by|for)\s*:?[^\n]{0,80}/gi,
+  /^[ \t]*Author\s*:?[^\n]{0,80}$/gim,
+
+  // Dates that only identify a particular issue of the template.
+  /\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b/gi,
   /\b\d{1,2}\/\d{1,2}\/\d{2,4}\b/g,
 ];
 
 // Words/phrases to replace with generic placeholders
 const CONTENT_REPLACEMENTS: [RegExp, string][] = [
   // Replace specific company references with generic terms
-  [/NPC(\s+Services?)?/gi, '[Company]'],
-  [/National\s*Property\s*Collective/gi, '[Company]'],
-  
+  [/\bNPC(\s+Services?)?\b/gi, '[Company]'],
+  [/\bNational\s+Property\s+Collective\b/gi, '[Company]'],
+
   // Normalize property address placeholders
   [/\{\{property_address\}\}/gi, '[PROPERTY_ADDRESS]'],
   [/\{\{suburb\}\}/gi, '[SUBURB]'],
@@ -77,69 +94,104 @@ const CONTENT_REPLACEMENTS: [RegExp, string][] = [
   [/\{\{state\}\}/gi, '[STATE]'],
 ];
 
-// Sanitize extracted text to remove company-specific content before embedding
+/**
+ * Strip branding and page furniture ahead of embedding.
+ *
+ * Guards against over-deletion: if the filters would remove more than
+ * `MAX_SANITIZE_LOSS_RATIO` of the document, the original text is kept and a
+ * warning is logged. A runaway pattern degrading retrieval is bad; one silently
+ * deleting most of a template is worse.
+ */
+const MAX_SANITIZE_LOSS_RATIO = 0.4;
+
 function sanitizeForEmbedding(text: string): string {
   let sanitized = text;
-  
-  // Apply replacements first (preserve structure with placeholders)
+
+  // Replacements first so the placeholders survive the deletion pass.
   for (const [pattern, replacement] of CONTENT_REPLACEMENTS) {
     sanitized = sanitized.replace(pattern, replacement);
   }
-  
-  // Apply filters to remove irrelevant content
+
   for (const filter of CONTENT_FILTERS) {
     sanitized = sanitized.replace(filter, '');
   }
-  
-  // Clean up excessive whitespace
+
+  // Tidy up, preserving paragraph structure for the chunker.
   sanitized = sanitized
-    .replace(/\n{3,}/g, '\n\n')  // Max 2 newlines
-    .replace(/[ \t]{2,}/g, ' ')   // Max 1 space
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
-  
+
+  const originalMeaningful = text.replace(/\s+/g, '').length;
+  const sanitizedMeaningful = sanitized.replace(/\s+/g, '').length;
+  if (
+    originalMeaningful > 0 &&
+    sanitizedMeaningful / originalMeaningful < 1 - MAX_SANITIZE_LOSS_RATIO
+  ) {
+    console.warn(
+      `⚠️ Sanitisation would remove ${Math.round((1 - sanitizedMeaningful / originalMeaningful) * 100)}% of the template; keeping the unsanitised text instead.`,
+    );
+    return normalizeDocumentText(text);
+  }
+
   return sanitized;
 }
 
-// Split text into overlapping chunks for better RAG retrieval
+/**
+ * Sanitize, then split into structure-aware overlapping chunks.
+ *
+ * The previous fixed character window cut sentences, tables and headings in
+ * half and orphaned every continuation chunk from the section it belonged to,
+ * which is the dominant cause of poor template retrieval. `chunkDocumentText`
+ * splits on headings and paragraphs, falls back to sentence then word
+ * boundaries, and repeats the governing heading on continuation chunks.
+ */
 function chunkText(text: string, chunkSize: number = CHUNK_SIZE, overlap: number = CHUNK_OVERLAP): string[] {
-  // Sanitize the text before chunking
-  const sanitizedText = sanitizeForEmbedding(text);
-  
-  const chunks: string[] = [];
-  let start = 0;
-  
-  while (start < sanitizedText.length) {
-    const end = Math.min(start + chunkSize, sanitizedText.length);
-    chunks.push(sanitizedText.slice(start, end));
-    start = end - overlap;
-    
-    if (start >= sanitizedText.length - overlap) break;
-  }
-  
-  return chunks;
+  return chunkDocumentText(sanitizeForEmbedding(text), {
+    maxChars: chunkSize,
+    overlapChars: overlap,
+    minChars: Math.min(200, Math.floor(chunkSize / 6)),
+  });
 }
+
+/** Retries a transient embedding failure so one 429 does not silently cost 20 chunks. */
+const EMBEDDING_MAX_ATTEMPTS = 3;
 
 // OPTIMIZED: Generate embeddings for multiple texts in a single API call
 async function generateEmbeddingsBatch(texts: string[], openAIKey: string): Promise<number[][]> {
-  const response = await fetch('https://api.openai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openAIKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'text-embedding-3-small',
-      input: texts,
-    }),
-  });
+  let response: Response | null = null;
 
-  if (!response.ok) {
-    const error = await response.text();
+  for (let attempt = 1; attempt <= EMBEDDING_MAX_ATTEMPTS; attempt += 1) {
+    response = await fetch('https://api.openai.com/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openAIKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'text-embedding-3-small',
+        input: texts,
+      }),
+    });
+
+    if (response.ok) break;
+
+    const retryable = response.status === 429 || response.status >= 500;
+    if (!retryable || attempt === EMBEDDING_MAX_ATTEMPTS) break;
+
+    const backoffMs = 500 * 2 ** (attempt - 1);
+    console.warn(`⏳ Embedding batch got ${response.status}; retrying in ${backoffMs}ms (attempt ${attempt + 1}/${EMBEDDING_MAX_ATTEMPTS})`);
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+  }
+
+  if (!response || !response.ok) {
+    const error = response ? await response.text() : 'no response';
     throw new Error(`OpenAI embedding error: ${error}`);
   }
 
   const data = await response.json();
-  
+
   // Log embeddings API usage
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
@@ -160,14 +212,22 @@ async function generateEmbeddingsBatch(texts: string[], openAIKey: string): Prom
     .map((item: any) => item.embedding);
 }
 
-// Convert PDF to base64 for AI processing
+/**
+ * Convert a PDF to base64 for AI processing.
+ *
+ * Chunked rather than character-by-character: the old loop performed one string
+ * concatenation per byte, which on a 10 MB template meant ten million
+ * reallocations and routinely pushed the function past its wall clock before it
+ * had made a single API call.
+ */
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const CHUNK = 0x8000; // 32 KB — below the argument-count limit of `apply`.
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
   }
-  return btoa(binary);
+  return btoa(parts.join(''));
 }
 
 // NEW: Use Lovable AI with vision to extract text from PDF as Markdown
@@ -234,39 +294,77 @@ OUTPUT FORMAT:
   }
 
   const data = await response.json();
-  const extractedText = data.choices?.[0]?.message?.content || '';
-  
-  if (!extractedText || extractedText.length < 100) {
+  const raw = data.choices?.[0]?.message?.content || '';
+
+  if (!raw || raw.length < 100) {
     throw new Error('AI extraction returned insufficient content. The PDF may be image-only or corrupted.');
   }
-  
+
+  // Normalise before anything downstream sees it: ligatures and soft hyphens
+  // from the source PDF otherwise survive into the stored template and every
+  // embedding built from it, so `identiﬁed` never matches a query for
+  // `identified`.
+  const extractedText = dehyphenateWrappedLines(normalizeDocumentText(raw));
+
+  const quality = assessTextQuality(extractedText);
+  if (quality.likelyGarbled) {
+    throw new Error(
+      'AI extraction produced unreadable text (the PDF is likely scanned or has a broken font encoding). ' +
+        'Upload a text-based PDF, or a .md/.txt version of the template.',
+    );
+  }
+
+  // The model was capped at 32k output tokens; a response that stops mid-word
+  // means the template was longer than one pass. Flag it rather than storing a
+  // silently half-extracted template.
+  if (!/[.!?:)\]"'`\s]$/.test(extractedText)) {
+    console.warn('⚠️ AI extraction ended mid-sentence — the template may exceed the single-pass output limit.');
+  }
+
   console.log(`✓ AI extracted ${extractedText.length} characters of Markdown`);
   return extractedText;
+}
+
+/** Decode the HTML entities a template is likely to contain. */
+function decodeHtmlEntities(text: string): string {
+  const named: Record<string, string> = {
+    nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", '#39': "'",
+    mdash: '—', ndash: '–', hellip: '…', rsquo: '’', lsquo: '‘',
+    rdquo: '”', ldquo: '“', trade: '™', copy: '©', reg: '®', deg: '°',
+  };
+  return text
+    .replace(/&#x([0-9a-f]+);/gi, (_m, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_m, dec) => String.fromCodePoint(Number(dec)))
+    // `&amp;` is decoded LAST so `&amp;lt;` yields `&lt;` and not `<`.
+    .replace(/&([a-z0-9#]+);/gi, (match, name) => named[String(name).toLowerCase()] ?? match)
+    .replace(/&amp;/g, '&');
 }
 
 // Fallback: Basic text extraction for non-PDF files
 async function extractTextBasic(content: string, fileName: string): Promise<string> {
   if (fileName.endsWith('.txt') || fileName.endsWith('.md')) {
-    return content;
-  } else if (fileName.endsWith('.json')) {
-    return JSON.stringify(JSON.parse(content), null, 2);
-  } else if (fileName.endsWith('.html')) {
-    // Remove HTML tags but preserve structure
-    return content
-      .replace(/<h1[^>]*>/gi, '# ')
-      .replace(/<h2[^>]*>/gi, '## ')
-      .replace(/<h3[^>]*>/gi, '### ')
-      .replace(/<\/h[1-6]>/gi, '\n')
-      .replace(/<li[^>]*>/gi, '- ')
-      .replace(/<\/li>/gi, '\n')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<p[^>]*>/gi, '\n')
-      .replace(/<\/p>/gi, '\n')
-      .replace(/<[^>]*>/g, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    return normalizeDocumentText(content);
   }
-  return content;
+  if (fileName.endsWith('.json')) {
+    return JSON.stringify(JSON.parse(content), null, 2);
+  }
+  if (fileName.endsWith('.html') || fileName.endsWith('.htm')) {
+    const structured = content
+      // Script/style bodies are code, not template content, and previously
+      // survived tag-stripping as a wall of JavaScript in the embeddings.
+      .replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<h([1-6])[^>]*>/gi, (_m, level) => `\n${'#'.repeat(Number(level))} `)
+      .replace(/<\/h[1-6]>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '\n- ')
+      .replace(/<\/li>/gi, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(?:p|div|section|article|tr|table|ul|ol|blockquote)>/gi, '\n')
+      .replace(/<\/t[dh]>/gi, ' | ')
+      .replace(/<[^>]*>/g, '');
+    return normalizeDocumentText(decodeHtmlEntities(structured));
+  }
+  return normalizeDocumentText(content);
 }
 
 // Process chunks in parallel batches with embeddings
@@ -425,7 +523,25 @@ Deno.serve(async (req) => {
     
     console.log(`📝 Extracted ${extractedText.length} characters`);
     console.log(`📄 Preview: ${extractedText.substring(0, 300)}...`);
-    
+
+    // Chunk BEFORE writing anything: rejecting an over-large template after the
+    // `parsed_content` update left the row parsed but unembedded, so retrieval
+    // silently used a template with no chunks behind it.
+    const chunks = chunkText(extractedText);
+    if (chunks.length > MAX_CHUNKS) {
+      return new Response(
+        JSON.stringify({
+          error: 'Template produces too many chunks to process safely',
+          chunksRequired: chunks.length,
+          maxChunks: MAX_CHUNKS,
+        }),
+        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+    if (chunks.length === 0) {
+      throw new Error('Template produced no embeddable content after sanitisation.');
+    }
+
     // Update template with parsed Markdown content
     const { error: updateError } = await supabase
       .from('report_structure_templates')
@@ -434,22 +550,14 @@ Deno.serve(async (req) => {
         updated_at: new Date().toISOString(),
       })
       .eq('id', templateId);
-    
+
     if (updateError) {
       console.error('Failed to update template:', updateError);
     }
-    
-    // Chunk the text for RAG (chunking now includes sanitization)
-    const chunks = chunkText(extractedText);
-    if (chunks.length > MAX_CHUNKS) {
-      return new Response(
-        JSON.stringify({ error: 'Template produces too many chunks to process safely' }),
-        { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-      );
-    }
-    console.log(`🔪 Split into ${chunks.length} sanitized chunks for embedding (chunk size: ${CHUNK_SIZE})`);
+
+    console.log(`🔪 Split into ${chunks.length} sanitized chunks for embedding (target chunk size: ${CHUNK_SIZE})`);
     console.log(`🧹 Content sanitized: company names, contact details, and irrelevant content filtered`);
-    
+
     // Delete existing chunks for this template
     const { error: deleteError } = await supabase
       .from('document_chunks')
@@ -471,14 +579,26 @@ Deno.serve(async (req) => {
       supabase
     );
     
-    console.log(`✅ Successfully stored ${storedChunks.length} chunks with embeddings`);
-    
+    console.log(`✅ Successfully stored ${storedChunks.length}/${chunks.length} chunks with embeddings`);
+
+    // Reporting success with zero stored chunks left the template retrievable
+    // in name only — every RAG query against it returned nothing.
+    if (storedChunks.length === 0) {
+      throw new Error(
+        'Template text was extracted but no chunks could be embedded. The embedding service may be unavailable — please retry.',
+      );
+    }
+
+    const chunksFailed = chunks.length - storedChunks.length;
     return new Response(
       JSON.stringify({
         success: true,
         templateId,
         extractedLength: extractedText.length,
         chunksCreated: storedChunks.length,
+        chunksExpected: chunks.length,
+        chunksFailed,
+        partial: chunksFailed > 0,
         preview: extractedText.substring(0, 1000) + (extractedText.length > 1000 ? '...' : ''),
         isMarkdown: true,
       }),

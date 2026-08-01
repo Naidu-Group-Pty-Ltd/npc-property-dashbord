@@ -1,5 +1,12 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import {
+  assessTextQuality,
+  dehyphenateWrappedLines,
+  normalizeDocumentText,
+  truncateOnBoundary,
+} from '../_shared/documentText.pure.ts';
+import { parseLlmJson } from '../_shared/llmJson.pure.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = createCorsHeaders();
@@ -42,8 +49,31 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Truncate to ~60k chars to stay within token limits
-    const truncatedText = extractedText.slice(0, 60000);
+    // Normalise before the model sees it: ligatures, soft hyphens and
+    // non-breaking spaces from the PDF text layer otherwise corrupt names,
+    // amounts and email addresses in the extracted client record.
+    const cleanedText = dehyphenateWrappedLines(normalizeDocumentText(extractedText));
+
+    const quality = assessTextQuality(cleanedText);
+    if (quality.likelyGarbled) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error:
+            'The PDF text layer is unreadable (the form is likely scanned or uses a broken font encoding). Re-export the form as a text-based PDF and try again.',
+        }),
+        { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Truncate to ~60k chars to stay within token limits. A raw `slice()` used
+    // to cut mid-number, so a balance of $1,250,000 could reach the model as
+    // "$1,2" and be extracted as 12 — the boundary-aware cut plus the explicit
+    // marker prevent both the corrupted value and the silent loss.
+    const { text: truncatedText, truncated, originalLength } = truncateOnBoundary(cleanedText, 60_000);
+    if (truncated) {
+      console.warn(`[parse-formara-pdf] Input truncated from ${originalLength} to ${truncatedText.length} chars`);
+    }
 
     console.log(`[parse-formara-pdf] Processing ${truncatedText.length} chars of PDF text`);
 
@@ -109,11 +139,21 @@ JSON Schema:
       );
     }
 
-    const parsedData = JSON.parse(content);
+    // Recover the JSON even when the model wraps it in a fence or prose — a
+    // bare `JSON.parse` threw away the whole extraction in that case.
+    const parsedData = parseLlmJson<Record<string, unknown>>(content);
+    if (!parsedData || typeof parsedData !== 'object') {
+      console.error('[parse-formara-pdf] Unreadable model response:', String(content).slice(0, 500));
+      return new Response(
+        JSON.stringify({ success: false, error: 'The AI response could not be read as structured data. Please retry.' }),
+        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     console.log(`[parse-formara-pdf] Successfully parsed PDF data`);
 
     return new Response(
-      JSON.stringify({ success: true, data: parsedData }),
+      JSON.stringify({ success: true, data: parsedData, inputTruncated: truncated }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 

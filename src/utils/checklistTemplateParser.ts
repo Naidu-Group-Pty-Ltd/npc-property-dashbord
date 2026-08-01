@@ -3,6 +3,7 @@
  * Supports: JSON, Markdown, HTML, Plain Text, and extracted text from PDFs/Word/Excel.
  * Flexible parsing: accepts checkboxes, bullets, numbered lists, and plain text paragraphs.
  */
+import { normalizeDocumentText } from '@/lib/documentText/textHygiene';
 
 export interface ParsedTemplateSection {
   title: string;
@@ -70,9 +71,13 @@ function parseMarkdown(text: string): ParsedTemplate {
   const h1 = /^#\s+(.+)/;
   const h2 = /^##\s+(.+)/;
   const h3 = /^###\s+(.+)/;
-  const checkboxChecked = /^[-*]\s*\[x\]\s*(.+)/i;
-  const checkboxUnchecked = /^[-*]\s*\[\s?\]\s*(.+)/i;
-  const bulletItem = /^[-*]\s+(?!\[)(.+)/;
+  const checkboxChecked = /^[-*]?\s*\[x\]\s*(.+)/i;
+  const checkboxUnchecked = /^[-*]?\s*\[\s?\]\s*(.+)/i;
+  // Word/PDF documents render checkboxes as glyphs, not `[ ]` — the previous
+  // parser fell through to the plain-text branch and lost the checked state.
+  const glyphChecked = /^[-*]?\s*[☑☒✅✔✓]\s*(.+)/;
+  const glyphUnchecked = /^[-*]?\s*[☐□⬜❏]\s*(.+)/;
+  const bulletItem = /^[-*•·▪▸►→‣⁃]\s+(?!\[)(.+)/;
   // Numbered list item (e.g., "1. Do something" or "1) Do something")
   const numberedItem = /^\d+[.)]\s+(.+)/;
   // Bold section-like lines (e.g., **Section Title** or __Section Title__)
@@ -85,9 +90,40 @@ function parseMarkdown(text: string): ParsedTemplate {
 
   const stripEmoji = (s: string) => s.replace(/^[\p{Emoji}\p{Emoji_Presentation}\s]+/u, '').trim();
 
+  // Page furniture from PDF/Word extraction: never a checklist item.
+  const pageFurniture = /^(?:-{2,}\s*page\s+\d+\s*-{2,}|page\s+\d+(?:\s+of\s+\d+)?|\d+\s*\|\s*page)$/i;
+  // A markdown table separator row (`| --- | --- |`) carries no content.
+  const tableSeparator = /^\|?[\s:|-]*\|[\s:|-]*$/;
+
+  const addItem = (section: ParsedTemplateSection, label: string, checked: boolean) => {
+    const cleaned = label.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
+    if (cleaned.length <= 2) return;
+    // Extraction repeats headers/footers on every page; a checklist never has
+    // the same item twice in the same section.
+    if (section.items.some((item) => item.label.toLowerCase() === cleaned.toLowerCase())) return;
+    section.items.push({ label: cleaned, is_pre_checked: checked });
+  };
+
+  // A markdown table's header row is the one immediately above the `| --- |`
+  // separator; without this, "Task | Status" was imported as a checklist item.
+  let lastTableRow: { section: ParsedTemplateSection; index: number } | null = null;
+
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (!line) continue;
+    if (!line) {
+      lastTableRow = null;
+      continue;
+    }
+    if (pageFurniture.test(line)) continue;
+    if (line.startsWith('|') && tableSeparator.test(line)) {
+      if (lastTableRow && lastTableRow.section.items.length > lastTableRow.index) {
+        lastTableRow.section.items.splice(lastTableRow.index, 1);
+      }
+      lastTableRow = null;
+      continue;
+    }
+    const wasTableRow = line.startsWith('|') && line.endsWith('|');
+    if (!wasTableRow) lastTableRow = null;
 
     // H1 → first one is template name, subsequent ones are section headers
     const h1Match = line.match(h1);
@@ -158,40 +194,55 @@ function parseMarkdown(text: string): ParsedTemplate {
       }
     }
 
-    // Checked checkbox
-    const checkedMatch = line.match(checkboxChecked);
-    if (checkedMatch && currentSection) {
-      currentSection.items.push({ label: checkedMatch[1].replace(/\*\*/g, '').trim(), is_pre_checked: true });
-      continue;
-    }
-
-    // Unchecked checkbox
-    const uncheckedMatch = line.match(checkboxUnchecked);
-    if (uncheckedMatch && currentSection) {
-      currentSection.items.push({ label: uncheckedMatch[1].replace(/\*\*/g, '').trim(), is_pre_checked: false });
+    // Checkbox, in either markdown (`- [x]`) or glyph (`☑`) form. Items are
+    // accepted even without a section — an unsectioned checklist previously
+    // produced "Could not find any checklist items".
+    const checkedMatch = line.match(checkboxChecked) || line.match(glyphChecked);
+    const uncheckedMatch = checkedMatch ? null : (line.match(checkboxUnchecked) || line.match(glyphUnchecked));
+    if (checkedMatch || uncheckedMatch) {
+      if (!currentSection) {
+        currentSection = { title: 'Checklist Items', icon: '▶️', items: [] };
+        sections.push(currentSection);
+      }
+      addItem(currentSection, (checkedMatch ?? uncheckedMatch)![1], Boolean(checkedMatch));
       continue;
     }
 
     // Plain bullet
     const bulletMatch = line.match(bulletItem);
     if (bulletMatch && currentSection) {
-      const label = bulletMatch[1].replace(/\*\*/g, '').trim();
-      if (label.length > 2) {
-        currentSection.items.push({ label, is_pre_checked: false });
-      }
+      addItem(currentSection, bulletMatch[1], false);
       continue;
     }
 
     // Numbered list item
     const numberedMatch = line.match(numberedItem);
     if (numberedMatch) {
-      const label = numberedMatch[1].replace(/\*\*/g, '').trim();
-      if (label.length > 2) {
+      if (!currentSection) {
+        currentSection = { title: 'Checklist Items', icon: '▶️', items: [] };
+        sections.push(currentSection);
+      }
+      addItem(currentSection, numberedMatch[1], false);
+      continue;
+    }
+
+    // Markdown table row → first cell is the task, a checkbox-ish second cell
+    // carries its state. Word/PDF checklists are very often tables.
+    if (line.startsWith('|') && line.endsWith('|') && line.split('|').length > 2) {
+      const cells = line.slice(1, -1).split('|').map((cell) => cell.trim());
+      const label = cells[0] ?? '';
+      if (label && label.length > 2) {
         if (!currentSection) {
           currentSection = { title: 'Checklist Items', icon: '▶️', items: [] };
           sections.push(currentSection);
         }
-        currentSection.items.push({ label, is_pre_checked: false });
+        const status = (cells[1] ?? '').toLowerCase();
+        const checked = /^(?:x|y|yes|done|complete[d]?|true|✓|✔|☑|☒)$/.test(status);
+        const before = currentSection.items.length;
+        addItem(currentSection, label, checked);
+        lastTableRow = currentSection.items.length > before
+          ? { section: currentSection, index: before }
+          : null;
       }
       continue;
     }
@@ -201,7 +252,7 @@ function parseMarkdown(text: string): ParsedTemplate {
     if (currentSection && line.length > 5 && line.length < 500) {
       // Skip lines that look like descriptions/metadata
       if (!line.startsWith('http') && !line.startsWith('<!--') && !line.startsWith('//')) {
-        currentSection.items.push({ label: line.replace(/\*\*/g, '').trim(), is_pre_checked: false });
+        addItem(currentSection, line, false);
       }
       continue;
     }
@@ -254,13 +305,15 @@ function extractItemsFromPlainText(text: string): { label: string; is_pre_checke
     for (const line of lines) {
       // Skip very short lines or lines that look like titles
       if (line.length > 3 && line.length < 500) {
+        const checked = /^[-*•·▪▸►→‣⁃]?\s*(?:\[x\]|[☑☒✅✔✓])/i.test(line);
         const cleaned = line
           .replace(/^[-*•·▪▸►→‣⁃]\s*/, '') // strip bullet chars
+          .replace(/^(?:\[[ x]\]|[☑☒✅✔✓☐□⬜❏])\s*/i, '') // strip checkbox markers
           .replace(/^\d+[.)]\s*/, '') // strip numbering
           .replace(/\*\*/g, '') // strip bold
           .trim();
         if (cleaned.length > 3) {
-          items.push({ label: cleaned, is_pre_checked: false });
+          items.push({ label: cleaned, is_pre_checked: checked });
         }
       }
     }
@@ -292,33 +345,86 @@ function parseHTML(html: string): ParsedTemplate {
   const h1El = doc.querySelector('h1');
   if (h1El) templateName = h1El.textContent?.trim() || '';
 
-  const allElements = doc.body.children;
-  for (let i = 0; i < allElements.length; i++) {
-    const el = allElements[i];
-    const tag = el.tagName.toLowerCase();
-    
-    if (['h1', 'h2', 'h3', 'h4'].includes(tag)) {
-      const title = el.textContent?.trim() || '';
-      if (tag === 'h1' && !templateName) {
-        templateName = title;
+  const ensureSection = (): ParsedTemplateSection => {
+    if (!currentSection) {
+      currentSection = { title: 'Checklist Items', icon: '▶️', items: [] };
+      sections.push(currentSection);
+    }
+    return currentSection as ParsedTemplateSection;
+  };
+
+  const pushItem = (label: string, checked: boolean) => {
+    const cleaned = label.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return;
+    const section = ensureSection();
+    if (section.items.some((item) => item.label.toLowerCase() === cleaned.toLowerCase())) return;
+    section.items.push({ label: cleaned, is_pre_checked: checked });
+  };
+
+  // Walk the whole tree rather than only `body`'s direct children: real
+  // exported HTML wraps its content in `<div>`/`<main>`/`<article>`, and the
+  // previous direct-children-only loop found nothing at all in those documents.
+  const walk = (parent: Element) => {
+    for (const el of Array.from(parent.children)) {
+      const tag = el.tagName.toLowerCase();
+
+      if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag)) {
+        const title = el.textContent?.trim() || '';
+        if (tag === 'h1' && !templateName) {
+          templateName = title;
+          continue;
+        }
+        if (title) {
+          currentSection = { title, icon: inferSectionIcon(title), items: [] };
+          sections.push(currentSection);
+        }
         continue;
       }
-      if (title) {
-        currentSection = { title, icon: inferSectionIcon(title), items: [] };
-        sections.push(currentSection);
-      }
-    } else if (['ul', 'ol'].includes(tag) && currentSection) {
-      const listItems = el.querySelectorAll('li');
-      listItems.forEach(li => {
-        const checkbox = li.querySelector('input[type="checkbox"]');
-        const isChecked = checkbox ? (checkbox as HTMLInputElement).checked : false;
-        const label = li.textContent?.trim() || '';
-        if (label) {
-          currentSection!.items.push({ label, is_pre_checked: isChecked });
+
+      if (['ul', 'ol'].includes(tag)) {
+        // `:scope > li` so a nested list's items are not counted twice.
+        for (const li of Array.from(el.querySelectorAll(':scope > li'))) {
+          const checkbox = li.querySelector('input[type="checkbox"]');
+          const isChecked = checkbox
+            ? (checkbox as HTMLInputElement).checked || checkbox.hasAttribute('checked')
+            : /^\s*[☑☒✅✔✓]/.test(li.textContent || '');
+          // A nested list contributes its own items, not its parent's text.
+          const nested = li.querySelector(':scope > ul, :scope > ol');
+          const own = Array.from(li.childNodes)
+            .filter((node) => node !== nested)
+            .map((node) => node.textContent || '')
+            .join('');
+          pushItem(own.replace(/^\s*[☑☒✅✔✓☐□⬜❏]\s*/, ''), isChecked);
+          if (nested) walk(li);
         }
-      });
+        continue;
+      }
+
+      if (tag === 'table') {
+        for (const row of Array.from(el.querySelectorAll('tr'))) {
+          const cells = Array.from(row.querySelectorAll('td'));
+          if (!cells.length) continue;
+          const label = cells[0]?.textContent?.trim() || '';
+          const status = (cells[1]?.textContent || '').trim().toLowerCase();
+          const checked =
+            !!cells[0]?.querySelector('input[type="checkbox"]:checked') ||
+            /^(?:x|y|yes|done|complete[d]?|true|✓|✔|☑|☒)$/.test(status);
+          pushItem(label, checked);
+        }
+        continue;
+      }
+
+      if (['p', 'span', 'label'].includes(tag) && /^\s*[☑☒✅✔✓☐□⬜❏]/.test(el.textContent || '')) {
+        const text = el.textContent || '';
+        pushItem(text.replace(/^\s*[☑☒✅✔✓☐□⬜❏]\s*/, ''), /^\s*[☑☒✅✔✓]/.test(text));
+        continue;
+      }
+
+      if (el.children.length) walk(el);
     }
-  }
+  };
+
+  walk(doc.body);
 
   const meaningful = sections.filter(s => s.items.length > 0);
   
@@ -336,12 +442,25 @@ function parseHTML(html: string): ParsedTemplate {
 
 // ── Main detect-and-parse function ──
 export function parseTemplateContent(content: string, format?: 'json' | 'markdown' | 'html' | 'text'): ParsedTemplate {
-  const trimmed = content.trim();
+  // Normalise first: PDF/Word extraction delivers ligatures, non-breaking
+  // spaces and soft hyphens that otherwise defeat every pattern below.
+  const trimmed = normalizeDocumentText(content).trim();
 
   if (!format) {
+    // Detect HTML structurally rather than by a handful of literal prefixes:
+    // real exported HTML often starts with `<body>` or a wrapper `<div>` and
+    // contains no `<ul` or `<h1` at all, and was previously parsed as markdown
+    // — which turned every tag into a checklist item.
+    const looksLikeHtml =
+      /^<!doctype\s+html/i.test(trimmed) ||
+      /^<html[\s>]/i.test(trimmed) ||
+      (trimmed.startsWith('<') &&
+        /<\/(?:html|body|div|main|section|article|table|ul|ol|h[1-6]|p|li)>/i.test(trimmed)) ||
+      /<(?:ul|ol|table)\b[^>]*>[\s\S]*<\/(?:ul|ol|table)>/i.test(trimmed);
+
     if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
       format = 'json';
-    } else if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html') || trimmed.includes('<ul') || trimmed.includes('<h1')) {
+    } else if (looksLikeHtml) {
       format = 'html';
     } else {
       format = 'markdown';
