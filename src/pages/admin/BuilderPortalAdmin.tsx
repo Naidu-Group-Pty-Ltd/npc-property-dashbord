@@ -17,6 +17,7 @@ import { AdminBuilderProjectsPanel } from '@/components/admin/builder-portal/Adm
 import { AdminBuilderInventoryPanel } from '@/components/admin/builder-portal/AdminBuilderInventoryPanel';
 import { AdminBuilderTransactionsPanel } from '@/components/admin/builder-portal/AdminBuilderTransactionsPanel';
 import { AdminBuilderConstructionPanel } from '@/components/admin/builder-portal/AdminBuilderConstructionPanel';
+import { AdminBuilderDeliveryPanel } from '@/components/admin/builder-portal/AdminBuilderDeliveryPanel';
 import { toast } from 'sonner';
 import { HardHat, Loader2, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 
@@ -257,6 +258,7 @@ export default function BuilderPortalAdmin() {
           <TabsTrigger value="inventory">Inventory</TabsTrigger>
           <TabsTrigger value="transactions">Transactions</TabsTrigger>
           <TabsTrigger value="construction">Construction</TabsTrigger>
+          <TabsTrigger value="delivery">Delivery</TabsTrigger>
         </TabsList>
 
         {/* ---------------------------------------------------- organisations */}
@@ -503,6 +505,10 @@ export default function BuilderPortalAdmin() {
 
         <TabsContent value="construction" className="mt-4">
           <AdminBuilderConstructionPanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="delivery" className="mt-4">
+          <AdminBuilderDeliveryPanel canEdit={canEdit} />
         </TabsContent>
 
       </Tabs>

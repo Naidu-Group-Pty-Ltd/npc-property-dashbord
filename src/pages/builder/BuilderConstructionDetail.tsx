@@ -228,6 +228,11 @@ export default function BuilderConstructionDetail() {
           </Badge>
           <Badge variant="outline">{formatPercentComplete(record.percent_complete)}</Badge>
           <Button asChild variant="outline" size="sm">
+            <Link to={`/builder/construction/${constructionCaseId}/delivery`}>
+              Delivery
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="sm">
             <Link to="/builder/construction">
               <ArrowLeft className="mr-2 h-4 w-4" aria-hidden />All construction
             </Link>

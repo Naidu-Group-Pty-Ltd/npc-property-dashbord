@@ -73,7 +73,7 @@ test('builder_portal_admin is registered and guarded (updated by Phase 1)', () =
   assert.match(app, /moduleKey="builder_portal_admin"/);
 });
 
-test('the Builder function family is exactly identity, projects, inventory, transactions and construction', () => {
+test('the Builder function family is exactly identity, projects, inventory, transactions, construction and delivery', () => {
   // Phase 0 asserted no builder-portal function existed; Phase 1 allowed one;
   // Phase 2 added the external authentication family; Phase 3 added the project
   // module; the inventory module adds two more. The list stays exhaustive so a
@@ -84,11 +84,13 @@ test('the Builder function family is exactly identity, projects, inventory, tran
     .map((entry) => entry.name);
   assert.deepEqual(functionDirs.filter((name) => /^builder-/.test(name)).sort(), [
     'builder-construction-admin',
+    'builder-delivery-admin',
     'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
     'builder-portal-construction',
+    'builder-portal-delivery',
     'builder-portal-forgot-password',
     'builder-portal-inventory',
     'builder-portal-invite',
@@ -122,13 +124,16 @@ test('the Builder schema stops at identity, governance, projects and inventory',
     'builder_unit_pricing', 'builder_unit_holds', 'builder_reservations',
     'builder_allocations', 'builder_transactions', 'builder_transaction_parties',
     'builder_construction_cases', 'builder_construction_stages',
-    'builder_construction_milestones',
+    'builder_construction_milestones', 'builder_variations', 'builder_progress_claims',
+    'builder_inspections', 'builder_defects', 'builder_handovers',
   ]) {
     assert.ok(created.has(table), `expected Builder table missing: ${table}`);
   }
+  // The ceiling now: documents, messages, tasks and notifications are the only
+  // Builder modules still unbuilt.
   for (const table of [
-    'builder_variations', 'builder_progress_claims',
-    'builder_inspections', 'builder_defects', 'builder_handovers',
+    'builder_documents', 'builder_conversations', 'builder_messages',
+    'builder_tasks', 'builder_notifications',
   ]) {
     assert.ok(!created.has(table), `later-phase Builder table created too early: ${table}`);
   }

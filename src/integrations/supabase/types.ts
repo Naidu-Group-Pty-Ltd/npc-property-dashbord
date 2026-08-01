@@ -3410,6 +3410,144 @@ export type Database = {
           },
         ]
       }
+      builder_defects: {
+        Row: {
+          construction_case_id: string
+          created_at: string
+          defect_number: string | null
+          description: string | null
+          due_date: string | null
+          id: string
+          inspection_id: string | null
+          is_customer_visible: boolean
+          location: string | null
+          raised_at: string
+          raised_by_type: string
+          rectified_at: string | null
+          row_version: number
+          severity: string
+          status: string
+          title: string
+          updated_at: string
+          verified_at: string | null
+        }
+        Insert: {
+          construction_case_id: string
+          created_at?: string
+          defect_number?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          inspection_id?: string | null
+          is_customer_visible?: boolean
+          location?: string | null
+          raised_at?: string
+          raised_by_type?: string
+          rectified_at?: string | null
+          row_version?: number
+          severity?: string
+          status?: string
+          title: string
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Update: {
+          construction_case_id?: string
+          created_at?: string
+          defect_number?: string | null
+          description?: string | null
+          due_date?: string | null
+          id?: string
+          inspection_id?: string | null
+          is_customer_visible?: boolean
+          location?: string | null
+          raised_at?: string
+          raised_by_type?: string
+          rectified_at?: string | null
+          row_version?: number
+          severity?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_defects_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_defects_inspection_id_fkey"
+            columns: ["inspection_id"]
+            isOneToOne: false
+            referencedRelation: "builder_inspections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_delivery_status_history: {
+        Row: {
+          changed_by_builder_user_id: string | null
+          changed_by_type: string
+          changed_by_user_id: string | null
+          construction_case_id: string
+          created_at: string
+          entity_id: string
+          entity_kind: string
+          from_status: string | null
+          id: string
+          metadata: Json
+          reason: string | null
+          to_status: string
+        }
+        Insert: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          construction_case_id: string
+          created_at?: string
+          entity_id: string
+          entity_kind: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          to_status: string
+        }
+        Update: {
+          changed_by_builder_user_id?: string | null
+          changed_by_type?: string
+          changed_by_user_id?: string | null
+          construction_case_id?: string
+          created_at?: string
+          entity_id?: string
+          entity_kind?: string
+          from_status?: string | null
+          id?: string
+          metadata?: Json
+          reason?: string | null
+          to_status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_delivery_status_history_changed_by_builder_user_id_fkey"
+            columns: ["changed_by_builder_user_id"]
+            isOneToOne: false
+            referencedRelation: "builder_portal_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_delivery_status_history_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       builder_developments: {
         Row: {
           address_line: string | null
@@ -4421,6 +4559,262 @@ export type Database = {
             columns: ["unit_id"]
             isOneToOne: false
             referencedRelation: "builder_units"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_handovers: {
+        Row: {
+          attendee_names: string | null
+          completed_at: string | null
+          construction_case_id: string
+          created_at: string
+          id: string
+          key_set_count: number | null
+          keys_released_at: string | null
+          manual_provided: boolean
+          notes: string | null
+          row_version: number
+          scheduled_for: string | null
+          status: string
+          updated_at: string
+          walkthrough_at: string | null
+        }
+        Insert: {
+          attendee_names?: string | null
+          completed_at?: string | null
+          construction_case_id: string
+          created_at?: string
+          id?: string
+          key_set_count?: number | null
+          keys_released_at?: string | null
+          manual_provided?: boolean
+          notes?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          updated_at?: string
+          walkthrough_at?: string | null
+        }
+        Update: {
+          attendee_names?: string | null
+          completed_at?: string | null
+          construction_case_id?: string
+          created_at?: string
+          id?: string
+          key_set_count?: number | null
+          keys_released_at?: string | null
+          manual_provided?: boolean
+          notes?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          updated_at?: string
+          walkthrough_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_handovers_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_inspections: {
+        Row: {
+          construction_case_id: string
+          construction_stage_id: string | null
+          created_at: string
+          defect_count: number
+          id: string
+          inspection_type: string
+          inspector_name: string | null
+          inspector_organisation: string | null
+          is_customer_visible: boolean
+          outcome_notes: string | null
+          performed_at: string | null
+          row_version: number
+          scheduled_for: string | null
+          status: string
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          construction_case_id: string
+          construction_stage_id?: string | null
+          created_at?: string
+          defect_count?: number
+          id?: string
+          inspection_type?: string
+          inspector_name?: string | null
+          inspector_organisation?: string | null
+          is_customer_visible?: boolean
+          outcome_notes?: string | null
+          performed_at?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          construction_case_id?: string
+          construction_stage_id?: string | null
+          created_at?: string
+          defect_count?: number
+          id?: string
+          inspection_type?: string
+          inspector_name?: string | null
+          inspector_organisation?: string | null
+          is_customer_visible?: boolean
+          outcome_notes?: string | null
+          performed_at?: string | null
+          row_version?: number
+          scheduled_for?: string | null
+          status?: string
+          title?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_inspections_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_inspections_construction_stage_id_fkey"
+            columns: ["construction_stage_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_stages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_practical_completions: {
+        Row: {
+          achieved_at: string | null
+          certificate_reference: string | null
+          construction_case_id: string
+          created_at: string
+          dispute_reason: string | null
+          id: string
+          inspected_at: string | null
+          notes: string | null
+          notified_at: string | null
+          outstanding_defect_count: number
+          row_version: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          achieved_at?: string | null
+          certificate_reference?: string | null
+          construction_case_id: string
+          created_at?: string
+          dispute_reason?: string | null
+          id?: string
+          inspected_at?: string | null
+          notes?: string | null
+          notified_at?: string | null
+          outstanding_defect_count?: number
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          achieved_at?: string | null
+          certificate_reference?: string | null
+          construction_case_id?: string
+          created_at?: string
+          dispute_reason?: string | null
+          id?: string
+          inspected_at?: string | null
+          notes?: string | null
+          notified_at?: string | null
+          outstanding_defect_count?: number
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_practical_completions_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      builder_progress_claims: {
+        Row: {
+          certified_amount: number | null
+          certified_at: string | null
+          claim_number: string | null
+          claimed_amount: number
+          claimed_at: string | null
+          construction_case_id: string
+          created_at: string
+          dispute_reason: string | null
+          finance_payment_id: string | null
+          id: string
+          milestone_id: string | null
+          notes: string | null
+          row_version: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          certified_amount?: number | null
+          certified_at?: string | null
+          claim_number?: string | null
+          claimed_amount: number
+          claimed_at?: string | null
+          construction_case_id: string
+          created_at?: string
+          dispute_reason?: string | null
+          finance_payment_id?: string | null
+          id?: string
+          milestone_id?: string | null
+          notes?: string | null
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          certified_amount?: number | null
+          certified_at?: string | null
+          claim_number?: string | null
+          claimed_amount?: number
+          claimed_at?: string | null
+          construction_case_id?: string
+          created_at?: string
+          dispute_reason?: string | null
+          finance_payment_id?: string | null
+          id?: string
+          milestone_id?: string | null
+          notes?: string | null
+          row_version?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "builder_progress_claims_construction_case_id_fkey"
+            columns: ["construction_case_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_cases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "builder_progress_claims_milestone_id_fkey"
+            columns: ["milestone_id"]
+            isOneToOne: false
+            referencedRelation: "builder_construction_milestones"
             referencedColumns: ["id"]
           },
         ]

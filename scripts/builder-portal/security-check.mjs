@@ -48,11 +48,13 @@ const functionDirs = readdirSync(new URL('supabase/functions/', root), { withFil
 
 const EXPECTED_FUNCTIONS = [
     'builder-construction-admin',
+    'builder-delivery-admin',
     'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
     'builder-portal-construction',
+    'builder-portal-delivery',
     'builder-portal-forgot-password',
     'builder-portal-inventory',
     'builder-portal-invite',

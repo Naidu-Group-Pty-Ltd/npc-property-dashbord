@@ -29,7 +29,7 @@ const USER = process.env.LOCAL_PG_USER || 'postgres';
 // source of truth for introspection. Build it with:
 //   node scripts/builder-portal/local-db/verify-phase-2.mjs
 const DB = process.env.LOCAL_PG_TYPES_DB
-  || process.env.LOCAL_PG_VERIFY_DB_CON || 'aurixa_construction_verify';
+  || process.env.LOCAL_PG_VERIFY_DB_DEL || 'aurixa_delivery_verify';
 const checkOnly = process.argv.includes('--check');
 
 const TYPES_PATH = join(root, 'src/integrations/supabase/types.ts');
@@ -47,6 +47,8 @@ const TABLES = [
   'builder_construction_progress_updates',
   'builder_construction_stages',
   'builder_construction_status_history',
+  'builder_defects',
+  'builder_delivery_status_history',
   'builder_developments',
   'builder_membership_permissions',
   'builder_onboarding_steps',
@@ -62,6 +64,10 @@ const TABLES = [
   'builder_projects',
   'builder_reservation_status_history',
   'builder_reservations',
+  'builder_handovers',
+  'builder_inspections',
+  'builder_practical_completions',
+  'builder_progress_claims',
   'builder_role_default_permissions',
   'builder_stages',
   'builder_transaction_parties',

@@ -424,6 +424,18 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
+    "builder-portal-delivery": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
+    "builder-delivery-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
     "builder-portal-verify": {
       "verify_jwt": false,
       "exposure_class": "portal-authenticated",

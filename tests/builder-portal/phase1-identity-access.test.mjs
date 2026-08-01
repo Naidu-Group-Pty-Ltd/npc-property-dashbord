@@ -554,11 +554,13 @@ test('the external portal family stops at inventory', () => {
     .map((entry) => entry.name).sort();
   assert.deepEqual(functionDirs, [
     'builder-construction-admin',
+    'builder-delivery-admin',
     'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
     'builder-portal-construction',
+    'builder-portal-delivery',
     'builder-portal-forgot-password',
     'builder-portal-inventory',
     'builder-portal-invite',

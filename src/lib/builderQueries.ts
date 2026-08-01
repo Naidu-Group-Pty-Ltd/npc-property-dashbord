@@ -15,6 +15,11 @@ import type {
   BuilderConstructionCase, BuilderConstructionDateHistoryEntry, BuilderConstructionHistoryEntry,
   BuilderConstructionStage, BuilderMilestone, BuilderPhotograph, BuilderProgressUpdate,
 } from '@/lib/builderConstruction';
+import type {
+  BuilderDefect, BuilderDeliveryHistoryEntry, BuilderDeliveryKind, BuilderHandover,
+  BuilderInspection, BuilderPracticalCompletion, BuilderProgressClaim, BuilderVariation,
+  BuilderVariationApproval, BuilderWarranty, BuilderWarrantyClaim,
+} from '@/lib/builderDelivery';
 
 /**
  * Builder Portal query layer. Mirrors `src/lib/solicitorQueries.ts`: query keys,
@@ -46,6 +51,9 @@ export const builderKeys = {
     [...builderKeys.constructionRoot(), filters] as const,
   constructionCase: (caseId: string) => ['builder', 'construction-case', caseId] as const,
   constructionStats: (projectId: string) => ['builder', 'construction-stats', projectId] as const,
+  deliveryRoot: (caseId: string) => ['builder', 'delivery', caseId] as const,
+  delivery: (caseId: string, kind: string) => ['builder', 'delivery', caseId, kind] as const,
+  deliverySummary: (projectId: string) => ['builder', 'delivery-summary', projectId] as const,
 };
 
 export interface ProjectFilters { search: string; status: string; page: number; pageSize: number }
@@ -481,4 +489,117 @@ export async function fetchBuilderPhotographUrl(caseId: string, photographId: st
     photograph_id: photographId,
   }) as { url: string; expires_in: number };
   return data;
+}
+
+
+/* ────────────────────────────── DELIVERY ────────────────────────────── */
+
+export interface DeliverySummary {
+  open_defects: number;
+  overdue_defects: number;
+  pending_variations: number;
+  scheduled_inspections: number;
+}
+
+export interface CompletionBundle {
+  practical_completion: BuilderPracticalCompletion | null;
+  handover: BuilderHandover | null;
+  warranty: BuilderWarranty | null;
+  warranty_claims: BuilderWarrantyClaim[];
+}
+
+/**
+ * One list hook per delivery aggregate, all sharing the same operation shape.
+ * The construction case id is the only key: every record is a child of it, and
+ * the server re-resolves that case's grant on every call.
+ */
+function useDeliveryList<T>(caseId: string, kind: string, operation: string) {
+  return useQuery({
+    queryKey: builderKeys.delivery(caseId, kind),
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-delivery', {
+      operation, construction_case_id: caseId,
+    }, signal)) as { records: T[] }).records,
+    enabled: Boolean(caseId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderVariations(caseId: string) {
+  return useDeliveryList<BuilderVariation>(caseId, 'variations', 'list_variations');
+}
+
+export function useBuilderClaims(caseId: string) {
+  return useDeliveryList<BuilderProgressClaim>(caseId, 'claims', 'list_claims');
+}
+
+export function useBuilderInspections(caseId: string) {
+  return useDeliveryList<BuilderInspection>(caseId, 'inspections', 'list_inspections');
+}
+
+export function useBuilderDefects(caseId: string) {
+  return useDeliveryList<BuilderDefect>(caseId, 'defects', 'list_defects');
+}
+
+export function useBuilderVariationApprovals(caseId: string, variationId: string) {
+  return useQuery({
+    queryKey: [...builderKeys.delivery(caseId, 'approvals'), variationId],
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-delivery', {
+      operation: 'list_approvals', construction_case_id: caseId, variation_id: variationId,
+    }, signal)) as { records: BuilderVariationApproval[] }).records,
+    enabled: Boolean(caseId && variationId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderCompletion(caseId: string) {
+  return useQuery({
+    queryKey: builderKeys.delivery(caseId, 'completion'),
+    queryFn: ({ signal }) => invoke('builder-portal-delivery', {
+      operation: 'get_completion', construction_case_id: caseId,
+    }, signal) as Promise<CompletionBundle>,
+    enabled: Boolean(caseId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderDeliveryHistory(caseId: string, kind?: BuilderDeliveryKind) {
+  return useQuery({
+    queryKey: [...builderKeys.delivery(caseId, 'history'), kind ?? 'all'],
+    queryFn: async ({ signal }) => ((await invoke('builder-portal-delivery', {
+      operation: 'delivery_history', construction_case_id: caseId, kind,
+    }, signal)) as { records: BuilderDeliveryHistoryEntry[] }).records,
+    enabled: Boolean(caseId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderDeliverySummary(projectId = '') {
+  return useQuery({
+    queryKey: builderKeys.deliverySummary(projectId),
+    queryFn: ({ signal }) => invoke('builder-portal-delivery', {
+      operation: 'delivery_summary', project_id: projectId || undefined,
+    }, signal) as Promise<DeliverySummary>,
+    staleTime: 60_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+/**
+ * One mutation hook per construction case. The case id is bound here rather
+ * than passed per call so a caller cannot accidentally mutate a record under a
+ * different case than the one on screen.
+ */
+export function useBuilderDeliveryMutation(caseId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      invoke('builder-portal-delivery', { ...payload, construction_case_id: caseId }),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: builderKeys.deliveryRoot(caseId) }),
+        client.invalidateQueries({ queryKey: ['builder', 'delivery-summary'] }),
+        client.invalidateQueries({ queryKey: builderKeys.constructionCase(caseId) }),
+      ]);
+    },
+  });
 }
