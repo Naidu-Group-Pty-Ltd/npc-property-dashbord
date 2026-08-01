@@ -23073,6 +23073,7 @@ export type Database = {
       notifications: {
         Row: {
           created_at: string
+          created_by: string | null
           entity_id: string | null
           id: string
           message: string
@@ -23085,6 +23086,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          created_by?: string | null
           entity_id?: string | null
           id?: string
           message: string
@@ -23097,6 +23099,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          created_by?: string | null
           entity_id?: string | null
           id?: string
           message?: string
@@ -30721,6 +30724,7 @@ export type Database = {
       }
       token_balance_cache: {
         Row: {
+          addon_slugs: string[]
           available: number
           current_period_end: string | null
           lifetime_granted: number
@@ -30733,6 +30737,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          addon_slugs?: string[]
           available?: number
           current_period_end?: string | null
           lifetime_granted?: number
@@ -30745,6 +30750,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          addon_slugs?: string[]
           available?: number
           current_period_end?: string | null
           lifetime_granted?: number
@@ -34510,6 +34516,12 @@ export type Database = {
         }
         Returns: Json
       }
+      current_user_can_delete: {
+        Args: { _module_key: string }
+        Returns: boolean
+      }
+      current_user_can_edit: { Args: { _module_key: string }; Returns: boolean }
+      current_user_can_view: { Args: { _module_key: string }; Returns: boolean }
       dispatch_market_updates_automation: {
         Args: {
           p_completed_window?: boolean
