@@ -63,7 +63,8 @@ export const BUILDER_DOCUMENT_SELECT = `
 /** No `storage_path`. A path is resolved into a signed URL, never returned raw. */
 export const BUILDER_DOCUMENT_VERSION_SELECT = `
   id, document_id, version_number, file_name, content_type, byte_size, checksum,
-  change_note, uploaded_by_type, uploaded_by_builder_user_id, created_at
+  change_note, uploaded_by_type, uploaded_by_builder_user_id, created_at,
+  lifecycle_status, malware_scan_status, detected_mime_type, scanned_at
 `;
 
 export const BUILDER_DOCUMENT_GRANT_SELECT = `

@@ -52,6 +52,12 @@ export interface BuilderUserPreferences {
   notify_task_assigned: boolean;
   notify_message_posted: boolean;
   notify_status_change: boolean;
+  /**
+   * When this user finished or skipped the guided onboarding tour. NULL means
+   * the tour is still due. Server-stamped — the Builder Portal persists nothing
+   * in the browser, so this is where tour state lives.
+   */
+  tour_completed_at: string | null;
   row_version: number;
   created_at: string;
   updated_at: string;

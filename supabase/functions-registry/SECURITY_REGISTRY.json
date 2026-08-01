@@ -436,6 +436,12 @@
       "owner": "builder-portal-program",
       "reviewed": true
     },
+    "builder-document-processor": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "builder-portal-program",
+      "reviewed": true
+    },
     "builder-portal-collaboration": {
       "verify_jwt": false,
       "exposure_class": "portal-authenticated",

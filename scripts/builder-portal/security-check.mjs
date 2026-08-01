@@ -50,6 +50,7 @@ const EXPECTED_FUNCTIONS = [
     'builder-collaboration-admin',
     'builder-construction-admin',
     'builder-delivery-admin',
+    'builder-document-processor',
     'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
