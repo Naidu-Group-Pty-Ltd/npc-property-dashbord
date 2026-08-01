@@ -23,7 +23,7 @@ function json(body: unknown, status: number, cors: Record<string,string>, correl
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get('origin'));
-  const correlationId = marketCorrelationId(req.headers);
+  let correlationId = marketCorrelationId(req.headers);
   if (req.method === 'OPTIONS') return new Response(null, { headers:cors });
   const csrf = enforceCsrf(req);
   if (!csrf.ok) return csrfDenied(cors, csrf);
@@ -43,6 +43,7 @@ Deno.serve(async (req) => {
     return json({ error:'Invalid request', code:'invalid_request', correlation_id:correlationId }, 400, cors, correlationId);
   }
   const body = parsed.value as Record<string, unknown>;
+  correlationId = marketCorrelationId(req.headers, body);
   if (auth.error || !auth.userId) auth = await verifyAuth(sb, req.headers, body);
   if (auth.error || !auth.userId) return json({ error:'Authentication required', code:'market_updates_auth_required', correlation_id:correlationId, retryable:false }, 401, cors, correlationId);
 

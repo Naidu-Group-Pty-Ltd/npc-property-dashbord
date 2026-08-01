@@ -7,6 +7,7 @@ import { createCorsHeaders, verifyAuth } from '../_shared/auth.ts';
 import { requireAdmin, requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
+import { marketCorrelationId } from '../_shared/marketUpdatesObservability.ts';
 
 const UPDATE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,visibility,shadow_would_publish,created_at,updated_at';
 const ARCHIVE_COLUMNS = 'id,title,source_name,source_url,category,geography,ai_summary,public_excerpt,source_published_at,archived_at,archived_by,pre_archive_status';
@@ -34,7 +35,7 @@ function admin() {
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get('origin'));
-  const correlationId = req.headers.get('x-correlation-id')?.slice(0, 100) || crypto.randomUUID();
+  let correlationId = marketCorrelationId(req.headers);
   if (req.method === 'OPTIONS') return new Response(null, { headers:cors });
   const csrf = enforceCsrf(req);
   if (!csrf.ok) return csrfDenied(cors, csrf);
@@ -53,6 +54,7 @@ Deno.serve(async (req) => {
     return json({ error:'Invalid request', code:'invalid_request', correlation_id:correlationId }, 400, cors, correlationId);
   }
   const body = parsed.value as Record<string, unknown>;
+  correlationId = marketCorrelationId(req.headers, body);
   if (auth.error || !auth.userId) auth = await verifyAuth(sb, req.headers, body);
   if (auth.error || !auth.userId) return json({ error:'Authentication required', code:'market_updates_auth_required', correlation_id:correlationId, retryable:false }, 401, cors, correlationId);
   const permission = await requireModulePermission(sb, { userId:auth.userId, authMethod:auth.authMethod }, 'market_updates', 'can_view');

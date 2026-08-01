@@ -97,7 +97,7 @@ async function synthesizeWithAI(period: Period, windowLabel: string, updates: an
 
 Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get("origin"));
-  const correlationId = marketCorrelationId(req.headers);
+  let correlationId = marketCorrelationId(req.headers);
   cors['x-correlation-id'] = correlationId;
   const requestStartedAt = Date.now();
   const json = jsonWithCors(cors);
@@ -122,6 +122,8 @@ Deno.serve(async (req) => {
   const rawBody = await req.text();
   let payload: any = {};
   try { payload = JSON.parse(rawBody); } catch {}
+  correlationId = marketCorrelationId(req.headers, payload);
+  cors['x-correlation-id'] = correlationId;
 
   const sb = createClient(
     Deno.env.get("SUPABASE_URL")!,
