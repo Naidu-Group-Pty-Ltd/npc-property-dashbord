@@ -192,6 +192,21 @@ import BuilderTerms from "@/pages/builder/BuilderTerms";
 import BuilderOnboarding from "@/pages/builder/BuilderOnboarding";
 import BuilderDashboard from "@/pages/builder/BuilderDashboard";
 import BuilderSettings from "@/pages/builder/BuilderSettings";
+import BuilderProjects from "@/pages/builder/BuilderProjects";
+import BuilderProjectDetail from "@/pages/builder/BuilderProjectDetail";
+import BuilderInventory from "@/pages/builder/BuilderInventory";
+import BuilderUnitDetail from "@/pages/builder/BuilderUnitDetail";
+import BuilderTransactions from "@/pages/builder/BuilderTransactions";
+import BuilderTransactionDetail from "@/pages/builder/BuilderTransactionDetail";
+import BuilderPipeline from "@/pages/builder/BuilderPipeline";
+import BuilderConstruction from "@/pages/builder/BuilderConstruction";
+import BuilderConstructionDetail from "@/pages/builder/BuilderConstructionDetail";
+import BuilderDeliveryDetail from "@/pages/builder/BuilderDeliveryDetail";
+import BuilderDocuments from "@/pages/builder/BuilderDocuments";
+import BuilderMessages from "@/pages/builder/BuilderMessages";
+import BuilderTasks from "@/pages/builder/BuilderTasks";
+import BuilderNotifications from "@/pages/builder/BuilderNotifications";
+import BuilderActivity from "@/pages/builder/BuilderActivity";
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
 import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
@@ -420,6 +435,21 @@ const App = () => (
                                 <Route element={<BuilderPortalLayout />}>
                                   <Route index element={<BuilderDashboard />} />
                                   <Route path="dashboard" element={<BuilderDashboard />} />
+                                  <Route path="projects" element={<BuilderProjects />} />
+                                  <Route path="projects/:projectId" element={<BuilderProjectDetail />} />
+                                  <Route path="inventory" element={<BuilderInventory />} />
+                                  <Route path="inventory/:unitId" element={<BuilderUnitDetail />} />
+                                  <Route path="transactions" element={<BuilderTransactions />} />
+                                  <Route path="transactions/:transactionId" element={<BuilderTransactionDetail />} />
+                                  <Route path="pipeline" element={<BuilderPipeline />} />
+                                  <Route path="construction" element={<BuilderConstruction />} />
+                                  <Route path="construction/:constructionCaseId" element={<BuilderConstructionDetail />} />
+                                  <Route path="construction/:constructionCaseId/delivery" element={<BuilderDeliveryDetail />} />
+                                  <Route path="documents" element={<BuilderDocuments />} />
+                                  <Route path="messages" element={<BuilderMessages />} />
+                                  <Route path="tasks" element={<BuilderTasks />} />
+                                  <Route path="notifications" element={<BuilderNotifications />} />
+                                  <Route path="activity" element={<BuilderActivity />} />
                                   <Route path="settings" element={<BuilderSettings />} />
                                 </Route>
                               </Route>

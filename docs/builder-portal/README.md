@@ -1,7 +1,7 @@
 # Builder / Developer Portal programme
 
 **Baseline:** `a2ec188faa806ff97cb272f7f5a8bcf56b984cb1`
-**Current phase:** 1 — complete. Phase 2 has not started.
+**Current module:** Inventory — complete. The modules after it have not started (see [18](./18-inventory-report.md) §8).
 
 The Builder / Developer Portal is the fourth external portal alongside Client,
 Finance and Solicitor. The Solicitor Portal is the architectural reference and is
@@ -34,6 +34,10 @@ only production-adjacent change is two additive `package.json` script entries.
 | 12 | [Phase 1 report](./12-phase-1-report.md) | Identity and access foundation: schema, permissions, sessions, generalisations, test results, Phase 2 recommendation |
 | 13 | [Phase 2 mirroring inventory](./13-phase-2-mirroring-inventory.md) | The exact Solicitor files and functions Phase 2 mirrors, and the defects it does not copy |
 | 14 | [Phase 2 report](./14-phase-2-report.md) | External authentication, governance and portal shell: migration, eight Edge Functions, route tree, defects found by verification, test results |
+| 15 | [Phase 3 mirroring inventory](./15-phase-3-mirroring-inventory.md) | The exact Solicitor Matters files mirrored by the Builder Projects module, and the defects not copied |
+| 16 | [Phase 3 report](./16-phase-3-report.md) | Projects: developments, projects, parties, project access, internal administration, external pages, test results |
+| 17 | [Inventory mirroring inventory](./17-inventory-mirroring-inventory.md) | The exact Projects files mirrored by the Inventory module, why there is no unit access table, and the defects corrected in place |
+| 18 | [Inventory report](./18-inventory-report.md) | Stages, buildings, lots, units, pricing, holds, reservations, allocations: access control, data boundaries, concurrency, test results, what is not built |
 
 ## Architecture documents
 
@@ -55,7 +59,7 @@ only production-adjacent change is two additive `package.json` script entries.
 ## Verification
 
 ```bash
-npm run test:builder-portal        # 166 contract tests, no dependencies
+npm run test:builder-portal        # 325 contract tests, no dependencies
 npm run builder:phase-0-inspect    # phase-aware invariants + findings re-derivation
 ```
 
@@ -64,12 +68,14 @@ Against a local PostgreSQL cluster (see `scripts/builder-portal/local-db/`):
 ```bash
 npm run builder:db:reset           # clean full-corpus migration replay
 npm run builder:db:verify          # 135 behavioural assertions for Phase 1
-npm run builder:db:verify:phase2   # 61 behavioural assertions for Phase 2
+npm run builder:db:verify:phase2   # 73 behavioural assertions for Phase 2
+npm run builder:db:verify:phase3   # 117 behavioural assertions for Phase 3
+npm run builder:db:verify:inventory # 136 behavioural assertions for Inventory
 npm run builder:types:check        # Supabase types are current
-npm run typecheck:builder-edge     # Deno type check for all 9 Builder functions
-npm run test:builder-portal        # 216 static contract assertions
+npm run typecheck:builder-edge     # Deno type check for all 13 Builder functions
+npm run test:builder-portal        # 325 static contract assertions
 npm run security:builder-portal    # Builder Portal security check
-npm run test:e2e:builder-portal    # portal shell in real Chromium (needs a build)
+npm run test:e2e:builder-portal    # 27 browser tests in real Chromium (needs a build)
 ```
 
 Against a database, with a read-only role:

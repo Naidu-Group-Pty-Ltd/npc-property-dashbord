@@ -356,3 +356,228 @@ export async function builderPermissionMatrix(
   }
   return matrix;
 }
+
+// ===========================================================================
+// Phase 3 — project access
+//
+// Mirrors the matter-access half of `_shared/solicitorPortalAuth.ts`:
+//   resolveSolicitorMatterAccess -> resolveBuilderProjectAccess
+//   resolveMatterPermissions     -> resolveBuilderProjectPermissions
+//   listAccessibleMatterIds      -> listAccessibleBuilderProjectIds
+//   logSolicitorActivity         -> logBuilderProjectActivity
+//
+// The resolution itself lives in the database (`builder_resolve_project_permission`),
+// exactly as Phase 1 put permission resolution there. These functions are the
+// thin adapter, not a second implementation.
+// ===========================================================================
+
+/**
+ * A resolved permission matrix, as returned to a caller and to the browser.
+ * Mirrors `PermissionMatrix` in `_shared/solicitorPortalAuth.ts`.
+ */
+export type BuilderPermissionMatrix = Record<string, { view: boolean; edit: boolean; delete: boolean }>;
+
+/**
+ * Read an already-resolved matrix. Mirrors `can(matrix, key, level)` on the
+ * Solicitor side.
+ *
+ * Named `builderMatrixCan` rather than `builderCan` because this module already
+ * exports an ASYNC `builderCan(supabase, session, organisationId, ...)` that
+ * resolves an organisation permission against the database. Two functions with
+ * the same name and different arities would be an easy call-site mistake, and a
+ * silently-awaited boolean is always truthy.
+ */
+export function builderMatrixCan(
+  matrix: BuilderPermissionMatrix | null,
+  permissionKey: string,
+  level: 'view' | 'edit' | 'delete' = 'view',
+): boolean {
+  if (BUILDER_FORBIDDEN_KEYS.has(permissionKey)) return false;
+  if (!matrix) return false;
+  return matrix[permissionKey]?.[level] === true;
+}
+
+export interface BuilderProjectAccess {
+  id: string;
+  builder_user_id: string;
+  project_id: string;
+  organisation_id: string;
+  organisation_side: 'developer' | 'builder';
+  access_role: string;
+  permissions: Record<string, Record<string, string>>;
+  valid_from: string;
+  valid_until: string | null;
+  revoked_at: string | null;
+  row_version: number;
+}
+
+/**
+ * Resolve one user's live grant for one project.
+ *
+ * Returns null for absent, revoked, not-yet-valid and expired grants — the
+ * database does the window arithmetic so a clock difference in the function
+ * runtime cannot widen access. A project id supplied by the browser is only ever
+ * a lookup key here; it is never treated as proof of anything.
+ */
+export async function resolveBuilderProjectAccess(
+  supabase: any,
+  builderUserId: string,
+  projectId: string,
+): Promise<BuilderProjectAccess | null> {
+  if (!projectId) return null;
+  const { data, error } = await supabase
+    .from('builder_project_access')
+    .select(`id, builder_user_id, project_id, organisation_id, organisation_side,
+             access_role, permissions, valid_from, valid_until, revoked_at, row_version`)
+    .eq('builder_user_id', builderUserId)
+    .eq('project_id', projectId)
+    .is('revoked_at', null)
+    .lte('valid_from', new Date().toISOString())
+    .maybeSingle();
+
+  if (error || !data) return null;
+  // Expiry is re-checked here as well as in the database so an expired grant can
+  // never be returned by this adapter even if the query above is later relaxed.
+  if (data.valid_until && new Date(data.valid_until).getTime() <= Date.now()) return null;
+  return data as BuilderProjectAccess;
+}
+
+/**
+ * The effective permission matrix for one grant, resolved by the database.
+ *
+ * `builder_resolve_project_permission` applies, in order: the grant must be live,
+ * the organisation baseline from Phase 1 (which denies forbidden keys, requires
+ * an active membership and clamps read_only), the project-scoped membership
+ * override, the grant's own tri-state override, a forbidden-key re-assertion,
+ * and the grant's read_only clamp.
+ */
+export async function resolveBuilderProjectPermissions(
+  supabase: any,
+  access: BuilderProjectAccess,
+): Promise<BuilderPermissionMatrix> {
+  const matrix: BuilderPermissionMatrix = {};
+  for (const key of BUILDER_PERMISSION_KEYS) {
+    if (BUILDER_FORBIDDEN_KEYS.has(key)) {
+      matrix[key] = { view: false, edit: false, delete: false };
+      continue;
+    }
+    const [view, edit, remove] = await Promise.all(
+      (['view', 'edit', 'delete'] as const).map(async (level) => {
+        const { data } = await supabase.rpc('builder_resolve_project_permission', {
+          _user_id: access.builder_user_id,
+          _project_id: access.project_id,
+          _permission_key: key,
+          _level: level,
+        });
+        return data === true;
+      }),
+    );
+    matrix[key] = { view, edit, delete: remove };
+  }
+  return matrix;
+}
+
+/**
+ * Every project id this user may currently see, optionally narrowed to the
+ * session's active organisation. Mirrors `listAccessibleMatterIds`.
+ */
+export async function listAccessibleBuilderProjectIds(
+  supabase: any,
+  builderUserId: string,
+  organisationId: string | null = null,
+  permissionKey = 'projects',
+): Promise<string[]> {
+  const { data, error } = await supabase.rpc('builder_accessible_projects', {
+    _user_id: builderUserId,
+    _organisation_id: organisationId,
+    _permission_key: permissionKey,
+  });
+  if (error || !Array.isArray(data)) return [];
+  return data.map((row: any) => row.project_id);
+}
+
+/**
+ * Every unit id this user may currently see, optionally narrowed to the
+ * session's active organisation. The database resolver walks the parent project
+ * first, so a unit can never be visible when its project is not.
+ */
+export async function listAccessibleBuilderUnitIds(
+  supabase: any,
+  builderUserId: string,
+  organisationId: string | null = null,
+  permissionKey = 'inventory',
+): Promise<string[]> {
+  const { data, error } = await supabase.rpc('builder_accessible_units', {
+    _user_id: builderUserId,
+    _organisation_id: organisationId,
+    _permission_key: permissionKey,
+  });
+  if (error || !Array.isArray(data)) return [];
+  return data.map((row: any) => row.unit_id);
+}
+
+/**
+ * Entity types the trusted activity log accepts. Kept in step with the
+ * `builder_portal_activity_log_entity_type_check` CHECK constraint: a value that
+ * is not in both places is rejected by the database at write time.
+ */
+export type BuilderActivityEntityType =
+  | 'organisation' | 'portal_user' | 'membership' | 'membership_permissions' | 'session'
+  | 'development' | 'project' | 'project_party' | 'project_access'
+  | 'stage' | 'building' | 'lot' | 'unit' | 'unit_price' | 'unit_hold'
+  | 'reservation' | 'allocation'
+  | 'transaction' | 'transaction_party' | 'transaction_case_link'
+  | 'construction_case' | 'construction_stage' | 'milestone'
+  | 'progress_update' | 'photograph'
+  | 'variation' | 'variation_approval' | 'progress_claim'
+  | 'inspection' | 'defect' | 'practical_completion' | 'handover' | 'warranty_claim'
+  | 'document' | 'document_version' | 'document_grant'
+  | 'conversation' | 'message' | 'task' | 'task_assignment' | 'notification';
+
+/**
+ * Append a project event to the trusted activity log.
+ *
+ * Returns whether the write succeeded, like `auditBuilderIdentity` and unlike
+ * `logSolicitorActivity`, which swallows the failure (Phase 0 NOCOPY-04).
+ * Callers performing an access-control change must fail closed on `false`.
+ */
+export async function logBuilderProjectActivity(
+  supabase: any,
+  req: Request,
+  entry: {
+    actorUserId?: string | null;
+    actorType?: 'builder_user' | 'command_user' | 'service_role' | 'system';
+    builderUserId?: string | null;
+    organisationId?: string | null;
+    action: string;
+    entityType?: BuilderActivityEntityType;
+    entityId?: string | null;
+    previousState?: Record<string, unknown> | null;
+    newState?: Record<string, unknown> | null;
+    reason?: string | null;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<boolean> {
+  const { error } = await supabase.rpc('builder_log_activity', {
+    _actor_user_id: entry.actorUserId ?? null,
+    _actor_type: entry.actorType ?? 'builder_user',
+    _action: entry.action,
+    _entity_type: entry.entityType ?? 'project',
+    _entity_id: entry.entityId ?? null,
+    _organisation_id: entry.organisationId ?? null,
+    _builder_user_id: entry.builderUserId ?? null,
+    _previous_state: entry.previousState ?? null,
+    _new_state: entry.newState ?? null,
+    _reason: entry.reason ?? null,
+    _metadata: entry.metadata ?? {},
+    _ip_address: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null,
+    _user_agent: req.headers.get('user-agent') || null,
+  });
+
+  if (error) {
+    console.error('[builderPortalAuth] project activity log failed',
+      { action: entry.action, message: error.message });
+    return false;
+  }
+  return true;
+}

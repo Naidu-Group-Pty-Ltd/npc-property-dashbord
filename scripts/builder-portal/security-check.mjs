@@ -42,20 +42,34 @@ const builderMigrations = readdirSync(migrationsDir)
 const migrationCode = stripSql(builderMigrations);
 
 const functionDirs = readdirSync(new URL('supabase/functions/', root), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && entry.name.startsWith('builder-portal-'))
+  .filter((entry) => entry.isDirectory() && /^builder-/.test(entry.name))
   .map((entry) => entry.name)
   .sort();
 
 const EXPECTED_FUNCTIONS = [
-  'builder-portal-accept-invite',
-  'builder-portal-admin',
-  'builder-portal-change-password',
-  'builder-portal-forgot-password',
-  'builder-portal-invite',
-  'builder-portal-login',
-  'builder-portal-logout',
-  'builder-portal-reset-password',
-  'builder-portal-verify',
+    'builder-collaboration-admin',
+    'builder-construction-admin',
+    'builder-delivery-admin',
+    'builder-inventory-admin',
+    'builder-portal-accept-invite',
+    'builder-portal-admin',
+    'builder-portal-change-password',
+    'builder-portal-collaboration',
+    'builder-portal-construction',
+    'builder-portal-delivery',
+    'builder-portal-forgot-password',
+    'builder-portal-inventory',
+    'builder-portal-invite',
+    'builder-portal-login',
+    'builder-portal-logout',
+    'builder-portal-projects',
+    'builder-portal-reset-password',
+    'builder-portal-transactions',
+    'builder-portal-verify',
+    'builder-portal-workspace',
+    'builder-projects-admin',
+    'builder-transactions-admin',
+    'builder-workspace-admin',
 ];
 
 const fnSource = Object.fromEntries(

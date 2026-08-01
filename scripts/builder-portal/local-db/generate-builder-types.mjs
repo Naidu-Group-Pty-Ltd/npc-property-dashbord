@@ -12,8 +12,8 @@
  * blocks are introspected from the verified local database instead, which keeps
  * nullability and defaults faithful rather than hand-written.
  *
- * Run after scripts/builder-portal/local-db/verify-phase-2.mjs, which builds the
- * database this reads.
+ * Run after the LAST module's verification script, which builds the database
+ * this reads — each one is a superset of every earlier module's.
  *
  * Usage: node scripts/builder-portal/local-db/generate-builder-types.mjs [--check]
  */
@@ -28,7 +28,8 @@ const USER = process.env.LOCAL_PG_USER || 'postgres';
 // Phase 2's verification database is a superset of Phase 1's, so it is the
 // source of truth for introspection. Build it with:
 //   node scripts/builder-portal/local-db/verify-phase-2.mjs
-const DB = process.env.LOCAL_PG_TYPES_DB || process.env.LOCAL_PG_VERIFY_DB_2 || 'aurixa_phase2_verify';
+const DB = process.env.LOCAL_PG_TYPES_DB
+  || process.env.LOCAL_PG_VERIFY_DB_WS || 'aurixa_workspace_verify';
 const checkOnly = process.argv.includes('--check');
 
 const TYPES_PATH = join(root, 'src/integrations/supabase/types.ts');
@@ -37,15 +38,57 @@ const BEGIN = '      // BEGIN builder-portal-phase-1 (generated)';
 const END = '      // END builder-portal-phase-1 (generated)';
 
 const TABLES = [
+  'builder_allocations',
+  'builder_buildings',
+  'builder_construction_cases',
+  'builder_construction_date_history',
+  'builder_construction_milestones',
+  'builder_construction_photographs',
+  'builder_construction_progress_updates',
+  'builder_construction_stages',
+  'builder_construction_status_history',
+  'builder_conversation_participants',
+  'builder_conversations',
+  'builder_defects',
+  'builder_delivery_status_history',
+  'builder_developments',
+  'builder_document_grants',
+  'builder_document_versions',
+  'builder_documents',
+  'builder_handovers',
+  'builder_inspections',
   'builder_membership_permissions',
+  'builder_messages',
+  'builder_notifications',
   'builder_onboarding_steps',
   'builder_organisation_memberships',
+  'builder_organisation_settings',
   'builder_organisations',
   'builder_permission_keys',
   'builder_portal_activity_log',
   'builder_portal_sessions',
   'builder_portal_users',
+  'builder_practical_completions',
+  'builder_progress_claims',
+  'builder_project_access',
+  'builder_project_parties',
+  'builder_project_status_history',
+  'builder_projects',
+  'builder_reservation_status_history',
+  'builder_reservations',
   'builder_role_default_permissions',
+  'builder_stages',
+  'builder_task_assignments',
+  'builder_tasks',
+  'builder_transaction_parties',
+  'builder_transaction_pipeline_stages',
+  'builder_transaction_status_history',
+  'builder_transactions',
+  'builder_unit_holds',
+  'builder_unit_pricing',
+  'builder_unit_status_history',
+  'builder_units',
+  'builder_user_preferences',
 ];
 
 const query = (sql) =>

@@ -198,7 +198,7 @@ export function builderAcceptTerms() {
 }
 
 export function builderCompleteOnboarding(stepKey?: string) {
-  return invokeBuilderFunction<{ onboarding_complete: boolean }>('builder-portal-verify', {
+  return invokeBuilderFunction<{ success: boolean; onboarding_complete: boolean }>('builder-portal-verify', {
     action: 'complete_onboarding',
     ...(stepKey ? { step_key: stepKey } : {}),
   });
@@ -213,7 +213,7 @@ export function builderCompleteOnboarding(stepKey?: string) {
 // ---------------------------------------------------------------------------
 
 export function builderSelectOrganisation(organisationId: string) {
-  return invokeBuilderFunction<{ active_organisation: BuilderOrganisation }>(
+  return invokeBuilderFunction<{ success: boolean; active_organisation: BuilderOrganisation }>(
     'builder-portal-verify',
     { action: 'select_organisation', organisation_id: organisationId },
   );

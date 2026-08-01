@@ -545,25 +545,40 @@ test('transaction_case_links gains no builder slot in Phase 1', () => {
     'the Phase 2 transaction-case link slot was added in Phase 1');
 });
 
-test('the external portal family stops at authentication and governance', () => {
-  // Phase 1 allowed only the internal admin function. Phase 2 adds the external
-  // authentication family and nothing else — no projects, transactions,
-  // documents or messaging function may appear before its phase.
+test('the external portal function family is exactly the built modules', () => {
+  // Phase 1 allowed only the internal admin function; every module since has
+  // added its portal/admin pair. The list stays exhaustive so a function for a
+  // module nobody asked for cannot appear without this test failing.
   const functionDirs = readdirSync(join(root, 'supabase/functions'), { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith('builder-portal-'))
+    .filter((entry) => entry.isDirectory() && /^builder-/.test(entry.name))
     .map((entry) => entry.name).sort();
   assert.deepEqual(functionDirs, [
+    'builder-collaboration-admin',
+    'builder-construction-admin',
+    'builder-delivery-admin',
+    'builder-inventory-admin',
     'builder-portal-accept-invite',
     'builder-portal-admin',
     'builder-portal-change-password',
+    'builder-portal-collaboration',
+    'builder-portal-construction',
+    'builder-portal-delivery',
     'builder-portal-forgot-password',
+    'builder-portal-inventory',
     'builder-portal-invite',
     'builder-portal-login',
     'builder-portal-logout',
+    'builder-portal-projects',
     'builder-portal-reset-password',
+    'builder-portal-transactions',
     'builder-portal-verify',
-  ], 'a Builder function outside identity and governance appeared');
+    'builder-portal-workspace',
+    'builder-projects-admin',
+    'builder-transactions-admin',
+    'builder-workspace-admin',
+  ], 'a Builder function outside the built module set appeared');
 });
+
 
 // ---------------------------------------------------------------------------
 // Supabase types

@@ -9,6 +9,10 @@ import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 import {
   builderListSessions, builderRevokeOtherSessions, builderRevokeSession,
 } from '@/lib/builderPortal';
+import { BuilderPreferencesCard } from '@/components/builder-portal/BuilderPreferencesCard';
+import {
+  BuilderOrganisationSettingsCard,
+} from '@/components/builder-portal/BuilderOrganisationSettingsCard';
 
 /**
  * Builder / Developer Portal account and session settings.
@@ -81,7 +85,8 @@ export default function BuilderSettings() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Your account details and the devices signed into the Builder Portal.
+          Your account, your preferences, your organisation's settings and the devices signed
+          into the Builder Portal.
         </p>
       </div>
 
@@ -133,6 +138,10 @@ export default function BuilderSettings() {
           </div>
         </CardContent>
       </Card>
+
+      <BuilderPreferencesCard />
+
+      <BuilderOrganisationSettingsCard />
 
       <Card>
         <CardHeader>

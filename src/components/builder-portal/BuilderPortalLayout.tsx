@@ -1,7 +1,7 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
-  Building2, HardHat, KanbanSquare, LayoutDashboard, ListChecks, LogOut,
-  MessageSquare, Receipt, Settings,
+  Bell, Boxes, Building2, FileText, Hammer, HardHat, History, KanbanSquare,
+  LayoutDashboard, ListChecks, LogOut, MessageSquare, Receipt, Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -18,8 +18,8 @@ import { BuilderOrganisationSwitcher } from './BuilderOrganisationSwitcher';
  * One authenticated layout owns the Builder Portal chrome. Mirrors
  * `SolicitorPortalLayout`.
  *
- * Navigation shows the eventual portal shape, but only Dashboard and Settings
- * operate in Phase 2. Every other item is rendered disabled with an explicit
+ * Navigation shows the eventual portal shape. Items whose module is not yet
+ * built are rendered disabled with an explicit
  * "available in a later phase" tooltip rather than linking to a placeholder —
  * there are no fake business records or stub APIs behind them.
  */
@@ -34,11 +34,16 @@ interface BuilderNavItem {
 
 const NAV: BuilderNavItem[] = [
   { to: '/builder', label: 'Dashboard', icon: LayoutDashboard, exact: true, available: true },
-  { to: '/builder/projects', label: 'Projects', icon: Building2, available: false },
-  { to: '/builder/transactions', label: 'Transactions', icon: Receipt, available: false },
-  { to: '/builder/pipeline', label: 'Pipeline', icon: KanbanSquare, available: false },
-  { to: '/builder/messages', label: 'Messages', icon: MessageSquare, available: false },
-  { to: '/builder/tasks', label: 'Tasks', icon: ListChecks, available: false },
+  { to: '/builder/projects', label: 'Projects', icon: Building2, available: true },
+  { to: '/builder/inventory', label: 'Inventory', icon: Boxes, available: true },
+  { to: '/builder/transactions', label: 'Transactions', icon: Receipt, available: true },
+  { to: '/builder/pipeline', label: 'Pipeline', icon: KanbanSquare, available: true },
+  { to: '/builder/construction', label: 'Construction', icon: Hammer, available: true },
+  { to: '/builder/documents', label: 'Documents', icon: FileText, available: true },
+  { to: '/builder/messages', label: 'Messages', icon: MessageSquare, available: true },
+  { to: '/builder/tasks', label: 'Tasks', icon: ListChecks, available: true },
+  { to: '/builder/notifications', label: 'Notifications', icon: Bell, available: true },
+  { to: '/builder/activity', label: 'Activity', icon: History, available: true },
   { to: '/builder/settings', label: 'Settings', icon: Settings, available: true },
 ];
 

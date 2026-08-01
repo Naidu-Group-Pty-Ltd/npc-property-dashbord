@@ -173,15 +173,19 @@ test.describe('Builder Portal shell', () => {
     await expect(page.getByRole('heading', { name: /Welcome/ })).toBeVisible();
   });
 
-  test('unbuilt navigation is visibly disabled, not a working link', async ({ page }) => {
+  test('no navigation item is a disabled placeholder', async ({ page }) => {
+    // Phase 2 shipped this navigation with every business item disabled; each
+    // became a working link as its module landed. The portal is now complete, so
+    // the assertion is the other half of the same rule: nothing is left disabled,
+    // and every item is a real link into the portal tree.
     await stubFunctions(page, sessionFixture('clear'));
     await page.goto(`${BASE}/builder`);
     const navigation = page.getByRole('navigation', { name: 'Builder portal' });
-    for (const label of ['Projects', 'Transactions', 'Pipeline', 'Messages', 'Tasks']) {
-      const control = navigation.getByRole('button', { name: label });
-      await expect(control).toBeDisabled();
+    await expect(navigation.getByRole('button')).toHaveCount(0);
+    for (const label of ['Dashboard', 'Projects', 'Inventory', 'Transactions', 'Pipeline',
+      'Construction', 'Documents', 'Messages', 'Tasks', 'Notifications', 'Settings']) {
+      await expect(navigation.getByRole('link', { name: label, exact: true })).toBeVisible();
     }
-    await expect(navigation.getByRole('link', { name: 'Dashboard' })).toBeVisible();
   });
 
   test('the dashboard shows no business or financial data', async ({ page }) => {
@@ -198,7 +202,9 @@ test.describe('Builder Portal shell', () => {
 
   test('an unknown Builder path returns to the portal entry, not a blank screen', async ({ page }) => {
     await stubFunctions(page, sessionFixture('clear'));
-    await page.goto(`${BASE}/builder/projects/does-not-exist`);
+    // Deliberately a path with no route at all — /builder/projects/:projectId
+    // became a real route in Phase 3.
+    await page.goto(`${BASE}/builder/not-a-real-surface`);
     await expect(page).toHaveURL(/\/builder$/);
   });
 });
