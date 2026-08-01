@@ -17,6 +17,18 @@
 //                { recipient_user_id, body }    → post into (or open) a direct thread
 //                { broadcast: true, body, title } → new broadcast to all active staff
 //   mark_read    { thread_id }                  → stamp last_read_at
+//   attachment_upload_url   { thread_id, file_name }  → short-lived signed PUT ticket
+//   attachment_download_url { thread_id, path }       → short-lived signed GET url
+//
+// DEPLOYMENT NOTE. Attachments live entirely in this function: the browser has
+// no table or bucket privileges and cannot mint its own storage tickets. So a
+// stale deployment does not degrade attachments, it removes them — the two
+// actions above fall through to `unknown action` and every upload fails at the
+// first step. That is exactly what happened: this function sat at a revision
+// predating attachments while the client shipped them, so `push_subscriptions`-
+// style silence set in — zero objects in the bucket, zero messages with
+// attachments, and a client-side error nobody could act on. If you change the
+// action list here, redeploy before (or with) the frontend.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';

@@ -138,12 +138,25 @@ function putWithProgress(opts: {
   });
 }
 
+/**
+ * The project URL, matching how the rest of this app resolves it.
+ *
+ * The fallback below used to read `import.meta.env.VITE_SUPABASE_URL`. There is
+ * no `.env` in this repo — only `.env.example` — and every other module that
+ * needs this URL hardcodes it as a constant for exactly that reason. When the
+ * variable is undefined at build time the expression collapses to `''`, so the
+ * "fallback" produced a RELATIVE url and the upload PUT went to the app's own
+ * origin, which answers with HTML. A fallback that cannot work is worse than no
+ * fallback: it turns a recoverable hiccup into a confusing failure.
+ */
+const SUPABASE_URL =
+  ((import.meta.env.VITE_SUPABASE_URL as string | undefined) || 'https://dduzbchuswwbefdunfct.supabase.co')
+    .replace(/\/$/, '');
+
 function ticketUrl(ticket: UploadTicket): string {
   if (ticket.signed_url && /^https?:\/\//i.test(ticket.signed_url)) return ticket.signed_url;
-  const base =
-    (import.meta.env.VITE_SUPABASE_URL as string | undefined)?.replace(/\/$/, '') ?? '';
   const encoded = ticket.path.split('/').map(encodeURIComponent).join('/');
-  return `${base}/storage/v1/object/upload/sign/${INTERNAL_ATTACHMENT_BUCKET}/${encoded}?token=${ticket.token}`;
+  return `${SUPABASE_URL}/storage/v1/object/upload/sign/${INTERNAL_ATTACHMENT_BUCKET}/${encoded}?token=${ticket.token}`;
 }
 
 /**
