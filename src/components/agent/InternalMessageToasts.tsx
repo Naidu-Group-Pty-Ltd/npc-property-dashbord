@@ -394,6 +394,20 @@ export function InternalMessageToasts() {
     setActiveId((current) => (current === threadId ? null : current));
   }, []);
 
+  /** Stage files against the expanded thread (drag, paste or picker). */
+  const addFilesFor = useCallback(
+    (threadId: string, files: File[]) => {
+      if (!files.length) return;
+      if (queuedForRef.current !== threadId) {
+        attachmentQueue.clear();
+        queuedForRef.current = threadId;
+      }
+      attachmentQueue.addFiles(files);
+    },
+    [attachmentQueue],
+  );
+
+
   const send = useCallback(
     async (thread: PopupThread) => {
       const text = (drafts[thread.thread_id] ?? '').trim();
