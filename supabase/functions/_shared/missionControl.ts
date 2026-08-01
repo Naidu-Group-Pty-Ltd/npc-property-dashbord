@@ -626,11 +626,21 @@ export interface PaymentMethodRecord {
   role: string;
   originUsername: string | null;
   createdAt: string;
+  /** Stripe's own id for this card. */
+  stripePaymentMethodId: string | null;
+  /** Whether Stripe will charge this card. null = Stripe not reachable. */
+  isStripeDefault: boolean | null;
+  /** Whether Stripe still has this card attached. null = not reachable. */
+  attachedAtStripe: boolean | null;
 }
 
 export interface PaymentMethodsResult {
   paymentMethods: PaymentMethodRecord[];
   maxPaymentMethods: number;
+  /** False when Mission Control could not reach Stripe on this call. */
+  stripeVerified: boolean;
+  /** The Stripe payment method that will actually be charged. */
+  stripeDefaultPaymentMethodId: string | null;
 }
 
 function mapPaymentMethods(body: any): PaymentMethodsResult {
@@ -649,9 +659,16 @@ function mapPaymentMethods(body: any): PaymentMethodsResult {
           role: String(m.role ?? ""),
           originUsername: m.origin_username ?? null,
           createdAt: m.created_at,
+          stripePaymentMethodId: m.stripe_payment_method_id ?? null,
+          // null (not false) when Stripe could not be consulted — the UI must
+          // be able to say "couldn't confirm" rather than assert a mismatch.
+          isStripeDefault: typeof m.is_stripe_default === "boolean" ? m.is_stripe_default : null,
+          attachedAtStripe: typeof m.attached_at_stripe === "boolean" ? m.attached_at_stripe : null,
         }))
       : [],
     maxPaymentMethods: Number(body?.max_payment_methods ?? 3),
+    stripeVerified: body?.stripe_verified === true,
+    stripeDefaultPaymentMethodId: body?.stripe_default_payment_method_id ?? null,
   };
 }
 
@@ -666,7 +683,8 @@ export async function listPaymentMethods(): Promise<PaymentMethodsResult> {
 export type PaymentMethodAction =
   | { action: "make_primary"; paymentMethodId: string }
   | { action: "reorder"; orderedIds: string[] }
-  | { action: "remove"; paymentMethodId: string };
+  | { action: "remove"; paymentMethodId: string }
+  | { action: "sync_default" };
 
 export async function managePaymentMethod(
   action: PaymentMethodAction,
@@ -676,7 +694,7 @@ export async function managePaymentMethod(
     tenant_ref: AGENCY_TENANT_REF,
   };
   if (action.action === "reorder") payload.ordered_ids = action.orderedIds;
-  else payload.payment_method_id = action.paymentMethodId;
+  else if (action.action !== "sync_default") payload.payment_method_id = action.paymentMethodId;
 
   const res = await mcFetch("/api/public/billing/payment-methods", {
     method: "POST",

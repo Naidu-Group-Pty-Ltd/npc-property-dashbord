@@ -66,8 +66,19 @@ Deno.serve(async (req) => {
       return j({ error: 'temporarily_unavailable', success: false }, 503);
     }
 
+    // A circuit breaker reports whether GOOGLE is failing. If our own circuit
+    // store cannot be read, that says nothing about Google — treating it as
+    // "open" converts a local database gap into a total outage of the feature,
+    // which is exactly what happened here: the provider_circuit_* migration
+    // (20260724000000) was never applied, so every read errored and every
+    // request 503'd. Fail closed on a genuinely open circuit; fail open on an
+    // unreadable one, and log so the gap is visible.
     const { data: circuitOpen, error: circuitReadError } = await supabase.rpc('provider_circuit_is_open', { p_scope: CIRCUIT_SCOPE });
-    if (circuitReadError || circuitOpen === true) return j({ error: 'temporarily_unavailable', success: false }, 503);
+    if (circuitReadError) {
+      console.warn('[street-view] circuit state unreadable, proceeding:', circuitReadError.message);
+    } else if (circuitOpen === true) {
+      return j({ error: 'temporarily_unavailable', success: false }, 503);
+    }
 
     const location = `${lat},${lng}`;
 
