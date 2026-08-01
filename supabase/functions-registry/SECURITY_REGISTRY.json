@@ -431,6 +431,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "client-legal-workspace": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
+    },
     "client-portal-accept-invite": {
       "verify_jwt": false,
       "exposure_class": "public-auth",
@@ -550,12 +556,25 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "create-advanced-client": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "client-fact-find-program",
+      "reviewed": true,
+      "reviewed_in": "advanced-client-fact-find-phases-1-2"
+    },
     "crime-statistics-service": {
       "verify_jwt": false,
       "exposure_class": "public",
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "cross-portal-outbox-worker": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
     },
     "custom-auth-login": {
       "verify_jwt": false,
@@ -686,6 +705,12 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "finance-legal-coordination": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
     },
     "finance-portal-accept-invite": {
       "verify_jwt": false,
@@ -1410,6 +1435,18 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "legal-document-processor": {
+      "verify_jwt": false,
+      "exposure_class": "cron-worker",
+      "owner": "solicitor-cross-portal-programme",
+      "reviewed": true
+    },
+    "legal-matters-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
     "list-token-audit": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
@@ -1647,6 +1684,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "market-updates-feed": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-updates-unified-feed"
+    },
     "market-updates-ingest": {
       "verify_jwt": false,
       "exposure_class": "cron-worker",
@@ -1666,6 +1710,13 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "wp14_auto_classified": true
+    },
+    "market-updates-status": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-updates-phase-3-authoritative-read-contract"
     },
     "market-updates-voice-transcribe": {
       "verify_jwt": false,
@@ -1847,6 +1898,13 @@
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
     },
+    "parse-formara-pdf": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "wp14_auto_classified": true
+    },
     "parse-property-pdf": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
@@ -1856,13 +1914,6 @@
     },
     "parse-template-document": {
       "verify_jwt": true,
-      "exposure_class": "human-authenticated",
-      "owner": "security-remediation-program",
-      "reviewed": true,
-      "wp14_auto_classified": true
-    },
-    "parse-formara-pdf": {
-      "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
@@ -2169,6 +2220,78 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "solicitor-portal-accept-invite": {
+      "verify_jwt": false,
+      "exposure_class": "public-auth",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-admin": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-change-password": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-comms": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-documents": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-forgot-password": {
+      "verify_jwt": false,
+      "exposure_class": "public-auth",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-invite": {
+      "verify_jwt": true,
+      "exposure_class": "module-gated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-login": {
+      "verify_jwt": false,
+      "exposure_class": "public-auth",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-logout": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-matters": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-reset-password": {
+      "verify_jwt": false,
+      "exposure_class": "public-auth",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
+    "solicitor-portal-verify": {
+      "verify_jwt": false,
+      "exposure_class": "portal-authenticated",
+      "owner": "solicitor-portal-program",
+      "reviewed": true
+    },
     "sqm-rent-service": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
@@ -2315,122 +2438,6 @@
       "owner": "security-remediation-program",
       "reviewed": true,
       "reviewed_in": "second-round-audit-remediation"
-    },
-    "market-updates-status": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "market-intelligence",
-      "reviewed": true,
-      "reviewed_in": "market-updates-phase-3-authoritative-read-contract"
-    },
-    "market-updates-feed": {
-      "verify_jwt": false,
-      "exposure_class": "human-authenticated",
-      "owner": "market-intelligence",
-      "reviewed": true,
-      "reviewed_in": "market-updates-unified-feed"
-    },
-    "solicitor-portal-login": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-logout": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-verify": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-accept-invite": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-forgot-password": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-reset-password": {
-      "verify_jwt": false,
-      "exposure_class": "public-auth",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-change-password": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-invite": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-matters": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "legal-matters-admin": {
-      "verify_jwt": true,
-      "exposure_class": "module-gated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-documents": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "solicitor-portal-comms": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-portal-program",
-      "reviewed": true
-    },
-    "cross-portal-outbox-worker": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
-      "owner": "solicitor-cross-portal-programme",
-      "reviewed": true
-    },
-    "legal-document-processor": {
-      "verify_jwt": false,
-      "exposure_class": "cron-worker",
-      "owner": "solicitor-cross-portal-programme",
-      "reviewed": true
-    },
-    "client-legal-workspace": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-cross-portal-programme",
-      "reviewed": true
-    },
-    "finance-legal-coordination": {
-      "verify_jwt": false,
-      "exposure_class": "portal-authenticated",
-      "owner": "solicitor-cross-portal-programme",
-      "reviewed": true
     }
   }
 }

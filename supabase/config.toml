@@ -1074,3 +1074,6 @@ verify_jwt = false
 
 [functions.builder-portal-invite]
 verify_jwt = true
+
+[functions.create-advanced-client]
+verify_jwt = true
