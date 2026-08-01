@@ -1048,6 +1048,9 @@ verify_jwt = false
 [functions.finance-legal-coordination]
 verify_jwt = false
 
+[functions.builder-document-processor]
+verify_jwt = false
+
 [functions.builder-portal-admin]
 verify_jwt = true
 

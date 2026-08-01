@@ -406,7 +406,7 @@ Deno.serve(async (req) => {
         return json({ error: 'That file location is not allowed' }, 400);
       }
 
-      const { data, error } = await supabase.rpc('builder_add_document_version', {
+      const { data: created, error } = await supabase.rpc('builder_add_document_version', {
         _actor_user_id: null,
         _actor_type: 'builder_user',
         _actor_builder_user_id: me.id,
@@ -415,8 +415,28 @@ Deno.serve(async (req) => {
         _reason: cleanText(body.reason, 500),
       });
       if (error) return fail(String(error.message || ''), 400, 'The version could not be added');
+
+      // The bytes are in private storage but nothing has inspected them yet.
+      // Quarantine the version and queue it for the shared scanner. Until the
+      // scanner returns clean it is not downloadable and does not become the
+      // document's current version.
+      const { data, error: registerError } = await supabase
+        .rpc('builder_register_uploaded_document_version', {
+          _document_version_id: (created as any)?.id,
+          _actor_builder_user_id: me.id,
+          _actor_type: 'builder_user',
+        });
+      if (registerError) {
+        return fail(String(registerError.message || ''), 400, 'The version could not be queued for scanning');
+      }
+
       const { storage_path: _path, ...safe } = (data || {}) as any;
-      return json({ success: true, record: safe });
+      return json({
+        success: true,
+        record: safe,
+        // The client renders a "scanning" state rather than a download button.
+        scan_pending: true,
+      });
     }
 
     if (operation === 'document_url') {
@@ -429,9 +449,29 @@ Deno.serve(async (req) => {
       if (!versionId) return json({ error: 'This document has no file yet' }, 404);
 
       const { data: version } = await supabase.from('builder_document_versions')
-        .select('id, storage_path, file_name').eq('id', versionId)
+        .select('id, storage_path, file_name, lifecycle_status, malware_scan_status')
+        .eq('id', versionId)
         .eq('document_id', res.document.id).maybeSingle();
       if (!version) return json({ error: 'Version not found' }, 404);
+
+      // CONTENT SAFETY, checked before permission so an unscanned file is
+      // refused identically to everyone. The database is the authority; this
+      // call re-reads the current state rather than trusting anything cached.
+      const { data: downloadable } = await supabase
+        .rpc('builder_document_version_is_downloadable', { _version_id: version.id });
+      if (downloadable !== true) {
+        const scan = String((version as any).malware_scan_status || 'pending');
+        return json({
+          error: scan === 'infected'
+            ? 'This file was blocked because it failed a malware scan.'
+            : scan === 'error'
+              ? 'This file could not be scanned. It stays blocked until a scan succeeds.'
+              : 'This file is still being scanned and cannot be downloaded yet.',
+          code: scan === 'infected' ? 'document_infected' : 'document_not_scanned',
+          lifecycle_status: (version as any).lifecycle_status,
+          malware_scan_status: scan,
+        }, 409);
+      }
 
       // A grant may permit viewing without downloading. When any live grant
       // exists, the caller's own grant decides.

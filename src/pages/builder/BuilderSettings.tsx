@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Loader2, MonitorSmartphone } from 'lucide-react';
+import { Loader2, MonitorSmartphone, PlayCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,7 @@ import { BuilderPreferencesCard } from '@/components/builder-portal/BuilderPrefe
 import {
   BuilderOrganisationSettingsCard,
 } from '@/components/builder-portal/BuilderOrganisationSettingsCard';
+import { BUILDER_TOUR_EVENT } from '@/components/builder-portal/BuilderOnboardingTour';
 
 /**
  * Builder / Developer Portal account and session settings.
@@ -153,6 +154,26 @@ export default function BuilderSettings() {
         <CardContent>
           <Button asChild variant="outline">
             <Link to="/builder/change-password">Change password</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <PlayCircle className="h-4 w-4 text-primary" aria-hidden /> Portal help
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Replay the guided tour of the portal at any time.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => window.dispatchEvent(new CustomEvent(BUILDER_TOUR_EVENT))}
+          >
+            <PlayCircle className="h-4 w-4" aria-hidden /> Replay portal tour
           </Button>
         </CardContent>
       </Card>

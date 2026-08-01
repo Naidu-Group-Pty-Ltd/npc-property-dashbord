@@ -13,6 +13,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 import { BuilderOrganisationSwitcher } from './BuilderOrganisationSwitcher';
+import { BuilderOnboardingTour } from './BuilderOnboardingTour';
 
 /**
  * One authenticated layout owns the Builder Portal chrome. Mirrors
@@ -46,6 +47,19 @@ const NAV: BuilderNavItem[] = [
   { to: '/builder/activity', label: 'Activity', icon: History, available: true },
   { to: '/builder/settings', label: 'Settings', icon: Settings, available: true },
 ];
+
+/**
+ * Anchor the guided onboarding tour points at, derived from the route so it can
+ * never drift from the destination it labels. `/builder` is the dashboard;
+ * every other destination uses its path segment.
+ *
+ * Deliberately derived rather than stored on BuilderNavItem: NAV entries are
+ * asserted verbatim by the per-domain contract tests, and an extra field would
+ * make those assertions about the tour rather than about the navigation.
+ */
+function tourAnchor(to: string): string {
+  return to === '/builder' ? 'dashboard' : to.slice('/builder/'.length);
+}
 
 export function BuilderPortalLayout() {
   const { user, activeOrganisation, signOut } = useBuilderPortalAuth();
@@ -114,7 +128,11 @@ export function BuilderPortalLayout() {
                       size="sm"
                       variant={active ? 'default' : 'ghost'}
                     >
-                      <Link to={to} aria-current={active ? 'page' : undefined}>
+                      <Link
+                        to={to}
+                        aria-current={active ? 'page' : undefined}
+                        data-tour={tourAnchor(to)}
+                      >
                         <Icon className="mr-2 h-4 w-4" aria-hidden />
                         <span>{label}</span>
                       </Link>
@@ -163,6 +181,8 @@ export function BuilderPortalLayout() {
       <main id="main-content" className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
         <Outlet />
       </main>
+
+      <BuilderOnboardingTour />
     </div>
   );
 }
