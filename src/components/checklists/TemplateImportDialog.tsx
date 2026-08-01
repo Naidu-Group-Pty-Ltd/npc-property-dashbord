@@ -12,6 +12,7 @@ import { Upload, FileText, Code, Globe, Loader2, CheckCircle2, AlertCircle, File
 import { useDropzone } from 'react-dropzone';
 import { parseTemplateContent, readFileAsText, detectFormatFromFile, type ParsedTemplate } from '@/utils/checklistTemplateParser';
 import { extractPdfTextClientSide } from '@/lib/pdfClientExtractor';
+import { extractDocxText } from '@/lib/documentText/docxText';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 
@@ -73,13 +74,23 @@ export function TemplateImportDialog({ open, onOpenChange, onImport }: TemplateI
 
       if (format === 'pdf') {
         setProgressLabel('Extracting text from PDF...');
-        const result = await extractPdfTextClientSide(file, (current, total) => {
-          setProgress(Math.round((current / total) * 100));
-        });
+        // Page markers would be parsed as checklist items, so they stay off here.
+        const result = await extractPdfTextClientSide(
+          file,
+          (current, total) => setProgress(Math.round((current / total) * 100)),
+          { includePageMarkers: false },
+        );
+        if (result.likelyNeedsOcr) {
+          throw new Error(
+            'This PDF has no usable text layer (it looks scanned). Export it as text, or copy the checklist into the paste tab.',
+          );
+        }
+        if (result.failedPages.length > 0) {
+          toast.warning(`Page${result.failedPages.length > 1 ? 's' : ''} ${result.failedPages.join(', ')} could not be read and ${result.failedPages.length > 1 ? 'were' : 'was'} skipped.`);
+        }
         textContent = result.text;
       } else if (format === 'docx') {
         setProgressLabel('Reading Word document...');
-        // Extract text from DOCX using ZIP structure
         textContent = await extractDocxText(file);
         setProgress(100);
       } else if (format === 'xlsx') {
@@ -364,54 +375,6 @@ export function TemplateImportDialog({ open, onOpenChange, onImport }: TemplateI
       </DialogContent>
     </Dialog>
   );
-}
-
-// ── DOCX text extraction (basic ZIP-based) ──
-async function extractDocxText(file: File): Promise<string> {
-  const JSZip = (await import('jszip')).default;
-  const arrayBuffer = await file.arrayBuffer();
-  const zip = await JSZip.loadAsync(arrayBuffer);
-  const docXml = await zip.file('word/document.xml')?.async('string');
-  if (!docXml) throw new Error('Could not read Word document content');
-  
-  // Parse XML and extract text + structure
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(docXml, 'application/xml');
-  const paragraphs = doc.getElementsByTagName('w:p');
-  const lines: string[] = [];
-
-  for (let i = 0; i < paragraphs.length; i++) {
-    const p = paragraphs[i];
-    const style = p.getElementsByTagName('w:pStyle')[0]?.getAttribute('w:val') || '';
-    const texts = p.getElementsByTagName('w:t');
-    let lineText = '';
-    for (let j = 0; j < texts.length; j++) {
-      lineText += texts[j].textContent || '';
-    }
-    if (!lineText.trim()) continue;
-
-    // Convert Word heading styles to markdown
-    if (style.match(/Heading1|heading1/i)) {
-      lines.push(`# ${lineText}`);
-    } else if (style.match(/Heading2|heading2/i)) {
-      lines.push(`## ${lineText}`);
-    } else if (style.match(/Heading3|heading3/i)) {
-      lines.push(`### ${lineText}`);
-    } else if (style.match(/ListParagraph|listparagraph/i) || p.getElementsByTagName('w:numPr').length > 0) {
-      // Check for checkbox characters
-      if (lineText.match(/^[\u2610\u2611☐☑✓✔]/)) {
-        const checked = lineText.match(/^[\u2611☑✓✔]/);
-        const label = lineText.replace(/^[\u2610\u2611☐☑✓✔]\s*/, '');
-        lines.push(checked ? `- [x] ${label}` : `- [ ] ${label}`);
-      } else {
-        lines.push(`- [ ] ${lineText}`);
-      }
-    } else {
-      lines.push(lineText);
-    }
-  }
-
-  return lines.join('\n');
 }
 
 // ── Excel text extraction ──

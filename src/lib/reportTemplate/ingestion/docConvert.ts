@@ -82,6 +82,68 @@ interface DocxContext {
   media: Map<string, string>;
 }
 
+/**
+ * Resolves whether a `w:numPr` refers to a numbered or a bulleted list.
+ *
+ * Word records only `numId` + `ilvl` on the paragraph; the actual format lives
+ * in `word/numbering.xml`, so without this every list — numbered ones included —
+ * was imported as a `<ul>`.
+ */
+class NumberingIndex {
+  /** `${numId}:${ilvl}` → true when the level uses a counting format. */
+  private readonly ordered = new Map<string, boolean>();
+
+  constructor(entries: Iterable<[string, boolean]> = []) {
+    for (const [key, value] of entries) this.ordered.set(key, value);
+  }
+
+  isOrdered(numId: string | null, level: number): boolean {
+    if (!numId) return false;
+    return this.ordered.get(`${numId}:${level}`) ?? this.ordered.get(`${numId}:0`) ?? false;
+  }
+}
+
+const BULLET_FORMATS = new Set(['bullet', 'none']);
+
+async function loadNumberingIndex(zip: JSZip): Promise<NumberingIndex> {
+  const file = zip.file('word/numbering.xml');
+  if (!file) return new NumberingIndex();
+  try {
+    const xml = new DOMParser().parseFromString(await file.async('text'), 'application/xml');
+    const all = Array.from(xml.getElementsByTagName('*'));
+
+    // abstractNumId → (ilvl → ordered)
+    const abstractLevels = new Map<string, Map<number, boolean>>();
+    for (const abstract of all.filter((el) => el.localName === 'abstractNum')) {
+      const abstractId = attrByLocalName(abstract, 'abstractNumId');
+      if (!abstractId) continue;
+      const levels = new Map<number, boolean>();
+      for (const lvl of descendantsByLocalName(abstract, 'lvl')) {
+        const ilvl = Number(attrByLocalName(lvl, 'ilvl') ?? 0);
+        const numFmt = firstByLocalName(lvl, 'numFmt');
+        const format = (numFmt ? attrByLocalName(numFmt, 'val') : null) ?? 'bullet';
+        levels.set(Number.isFinite(ilvl) ? ilvl : 0, !BULLET_FORMATS.has(format.toLowerCase()));
+      }
+      abstractLevels.set(abstractId, levels);
+    }
+
+    const entries: [string, boolean][] = [];
+    for (const num of all.filter((el) => el.localName === 'num')) {
+      const numId = attrByLocalName(num, 'numId');
+      const abstractRef = firstByLocalName(num, 'abstractNumId');
+      const abstractId = abstractRef ? attrByLocalName(abstractRef, 'val') : null;
+      if (!numId || !abstractId) continue;
+      for (const [ilvl, ordered] of abstractLevels.get(abstractId) ?? []) {
+        entries.push([`${numId}:${ilvl}`, ordered]);
+      }
+    }
+    return new NumberingIndex(entries);
+  } catch {
+    // Numbering is a presentation detail; falling back to bullets is safe.
+    return new NumberingIndex();
+  }
+}
+
 function headingTagForStyle(styleVal: string | null): string | null {
   if (!styleVal) return null;
   if (/^title$/i.test(styleVal)) return 'h1';
@@ -90,35 +152,76 @@ function headingTagForStyle(styleVal: string | null): string | null {
   return null;
 }
 
+/** `w:*` wrappers whose children are runs we must descend into. */
+const RUN_WRAPPERS = new Set(['hyperlink', 'ins', 'smartTag', 'sdt', 'sdtContent', 'moveTo']);
+
+/** Wrappers whose whole subtree is excluded (rejected/moved-away revisions). */
+const REVISION_EXCLUSIONS = new Set(['del', 'moveFrom']);
+
+/** A `w:rPr` toggle is on unless it carries an explicit off value. */
+function toggleOn(rPr: Element | null, name: string): boolean {
+  if (!rPr) return false;
+  const el = firstByLocalName(rPr, name);
+  if (!el) return false;
+  const val = attrByLocalName(el, 'val');
+  return val !== 'false' && val !== '0' && val !== 'none';
+}
+
 function renderDocxRuns(container: Element, ctx: DocxContext): string {
   let html = '';
   for (const child of Array.from(container.children)) {
-    if (child.localName === 'hyperlink') {
+    const name = child.localName ?? '';
+    // Tracked-change *insertions* wrap their runs in `w:ins`; the previous
+    // `localName !== 'r'` skip silently dropped that text, so an accepted edit
+    // was missing from the imported document.
+    if (RUN_WRAPPERS.has(name)) {
       html += renderDocxRuns(child, ctx);
       continue;
     }
-    if (child.localName !== 'r') continue;
+    if (REVISION_EXCLUSIONS.has(name)) continue;
+    if (name !== 'r') continue;
+
     const rPr = firstByLocalName(child, 'rPr');
-    const bold = !!(rPr && firstByLocalName(rPr, 'b') && attrByLocalName(firstByLocalName(rPr, 'b')!, 'val') !== 'false' && attrByLocalName(firstByLocalName(rPr, 'b')!, 'val') !== '0');
-    const italic = !!(rPr && firstByLocalName(rPr, 'i') && attrByLocalName(firstByLocalName(rPr, 'i')!, 'val') !== 'false' && attrByLocalName(firstByLocalName(rPr, 'i')!, 'val') !== '0');
-    const underline = !!(rPr && firstByLocalName(rPr, 'u') && attrByLocalName(firstByLocalName(rPr, 'u')!, 'val') !== 'none');
+    const bold = toggleOn(rPr, 'b');
+    const italic = toggleOn(rPr, 'i');
+    const underline = toggleOn(rPr, 'u');
+    const strike = toggleOn(rPr, 'strike') || toggleOn(rPr, 'dstrike');
+    const vertAlign = rPr ? attrByLocalName(firstByLocalName(rPr, 'vertAlign') ?? rPr, 'val') : null;
+
     let runHtml = '';
     for (const part of Array.from(child.children)) {
-      if (part.localName === 't') runHtml += escapeHtml(part.textContent ?? '');
-      else if (part.localName === 'br' || part.localName === 'cr') runHtml += '<br />';
-      else if (part.localName === 'tab') runHtml += '&emsp;';
-      else if (part.localName === 'drawing' || part.localName === 'pict') {
+      const partName = part.localName ?? '';
+      if (partName === 't') runHtml += escapeHtml(part.textContent ?? '');
+      else if (partName === 'br' || partName === 'cr') runHtml += '<br />';
+      else if (partName === 'tab') runHtml += '&emsp;';
+      else if (partName === 'noBreakHyphen') runHtml += '-';
+      else if (partName === 'sym') {
+        const code = attrByLocalName(part, 'char');
+        const point = code ? Number.parseInt(code, 16) : Number.NaN;
+        if (Number.isFinite(point) && point > 0x20) runHtml += escapeHtml(String.fromCharCode(point));
+      } else if (partName === 'drawing' || partName === 'pict') {
         for (const blip of descendantsByLocalName(part, 'blip')) {
           const rel = attrByLocalName(blip, 'embed') ?? attrByLocalName(blip, 'link');
           const src = rel ? ctx.media.get(rel) : undefined;
           if (src) runHtml += `<img src="${src}" alt="" />`;
         }
+        // A text box carries real prose, not just an image.
+        for (const box of descendantsByLocalName(part, 'txbxContent')) {
+          for (const p of descendantsByLocalName(box, 'p')) {
+            const inner = renderDocxRuns(p, ctx).trim();
+            if (inner) runHtml += `<p>${inner}</p>`;
+          }
+        }
       }
+      // `instrText`, `fldChar`, `delText` and `rPr` are metadata, not content.
     }
     if (!runHtml) continue;
     if (bold) runHtml = `<strong>${runHtml}</strong>`;
     if (italic) runHtml = `<em>${runHtml}</em>`;
     if (underline) runHtml = `<u>${runHtml}</u>`;
+    if (strike) runHtml = `<s>${runHtml}</s>`;
+    if (vertAlign === 'superscript') runHtml = `<sup>${runHtml}</sup>`;
+    else if (vertAlign === 'subscript') runHtml = `<sub>${runHtml}</sub>`;
     html += runHtml;
   }
   return html;
@@ -128,50 +231,153 @@ interface DocxBlock {
   kind: 'paragraph' | 'list-item' | 'heading' | 'table';
   tag?: string;
   html: string;
+  /** `w:ilvl` for list items — drives nesting. */
+  level?: number;
+  /** True when the item belongs to a numbered list. */
+  ordered?: boolean;
 }
 
-function renderDocxParagraph(p: Element, ctx: DocxContext): DocxBlock | null {
+function renderDocxParagraph(p: Element, ctx: DocxContext, numbering: NumberingIndex): DocxBlock | null {
   const pPr = firstByLocalName(p, 'pPr');
-  const styleVal = pPr ? attrByLocalName(firstByLocalName(pPr, 'pStyle') ?? p, 'val') : null;
+  // Only read `w:val` from an actual `w:pStyle`. The previous `?? p` fallback
+  // read the paragraph's own `val` attribute, which is a different thing.
+  const pStyle = pPr ? firstByLocalName(pPr, 'pStyle') : null;
+  const styleVal = pStyle ? attrByLocalName(pStyle, 'val') : null;
   const headingTag = headingTagForStyle(styleVal);
-  const isListItem = !!(pPr && firstByLocalName(pPr, 'numPr'));
+  const numPr = pPr ? firstByLocalName(pPr, 'numPr') : null;
   const inner = renderDocxRuns(p, ctx).trim();
   if (!inner) return null;
   if (headingTag) return { kind: 'heading', tag: headingTag, html: inner };
-  if (isListItem) return { kind: 'list-item', html: inner };
+  if (numPr) {
+    const ilvl = firstByLocalName(numPr, 'ilvl');
+    const numId = firstByLocalName(numPr, 'numId');
+    const level = Math.max(0, Math.min(8, Number(ilvl ? attrByLocalName(ilvl, 'val') : 0) || 0));
+    const id = numId ? attrByLocalName(numId, 'val') : null;
+    return { kind: 'list-item', html: inner, level, ordered: numbering.isOrdered(id, level) };
+  }
   return { kind: 'paragraph', html: inner };
 }
 
-function renderDocxTable(tbl: Element, ctx: DocxContext): DocxBlock {
-  const rows = childrenByLocalName(tbl, 'tr').map((tr) => {
-    const cells = childrenByLocalName(tr, 'tc').map((tc) => {
-      const parts = childrenByLocalName(tc, 'p')
-        .map((p) => renderDocxRuns(p, ctx).trim())
-        .filter(Boolean);
-      return `<td>${parts.join('<br />') || '&nbsp;'}</td>`;
-    });
-    return `<tr>${cells.join('')}</tr>`;
+/** Horizontal merge width of a cell (`w:gridSpan`). */
+function cellGridSpan(tc: Element): number {
+  const tcPr = firstByLocalName(tc, 'tcPr');
+  const span = tcPr ? firstByLocalName(tcPr, 'gridSpan') : null;
+  const value = Number(span ? attrByLocalName(span, 'val') : 1);
+  return Number.isFinite(value) && value > 1 ? Math.min(64, Math.floor(value)) : 1;
+}
+
+/** `restart` opens a vertically merged run; `continue` (or empty) extends it. */
+function cellVerticalMerge(tc: Element): 'restart' | 'continue' | null {
+  const tcPr = firstByLocalName(tc, 'tcPr');
+  const merge = tcPr ? firstByLocalName(tcPr, 'vMerge') : null;
+  if (!merge) return null;
+  return attrByLocalName(merge, 'val') === 'restart' ? 'restart' : 'continue';
+}
+
+function renderCellContent(tc: Element, ctx: DocxContext, numbering: NumberingIndex): string {
+  const parts: string[] = [];
+  for (const child of Array.from(tc.children)) {
+    if (child.localName === 'p') {
+      const html = renderDocxRuns(child, ctx).trim();
+      if (html) parts.push(html);
+    } else if (child.localName === 'tbl') {
+      // A nested table is rendered, not dropped.
+      parts.push(renderDocxTable(child, ctx, numbering).html);
+    }
+  }
+  return parts.join('<br />') || '&nbsp;';
+}
+
+function renderDocxTable(tbl: Element, ctx: DocxContext, numbering: NumberingIndex): DocxBlock {
+  const trs = childrenByLocalName(tbl, 'tr');
+  // Track which grid column each open vertical merge belongs to so a
+  // continuation cell becomes a rowspan on the cell above instead of an empty
+  // cell that pushes every value one column to the right.
+  const openMerges = new Map<number, { rowIndex: number; cellIndex: number; rows: number }>();
+  const rows: { cells: string[]; header: boolean }[] = [];
+
+  trs.forEach((tr, rowIndex) => {
+    const trPr = firstByLocalName(tr, 'trPr');
+    const header = !!(trPr && firstByLocalName(trPr, 'tblHeader'));
+    const cells: string[] = [];
+    let column = 0;
+
+    for (const tc of childrenByLocalName(tr, 'tc')) {
+      const span = cellGridSpan(tc);
+      const merge = cellVerticalMerge(tc);
+
+      if (merge === 'continue') {
+        const open = openMerges.get(column);
+        const anchorRow = open ? rows[open.rowIndex] : undefined;
+        const anchorCell = anchorRow?.cells[open!.cellIndex];
+        if (open && anchorRow && anchorCell != null) {
+          open.rows += 1;
+          anchorRow.cells[open.cellIndex] = anchorCell.replace(
+            /^<t([dh])(?: rowspan="\d+")?/,
+            (_match, tag: string) => `<t${tag} rowspan="${open.rows}"`,
+          );
+        }
+        column += span;
+        continue;
+      }
+
+      const tag = header ? 'th' : 'td';
+      const spanAttr = span > 1 ? ` colspan="${span}"` : '';
+      cells.push(`<${tag}${spanAttr}>${renderCellContent(tc, ctx, numbering)}</${tag}>`);
+      if (merge === 'restart') {
+        openMerges.set(column, { rowIndex: rows.length, cellIndex: cells.length - 1, rows: 1 });
+      } else {
+        openMerges.delete(column);
+      }
+      column += span;
+    }
+
+    rows.push({ cells, header });
   });
-  return { kind: 'table', html: `<table><tbody>${rows.join('')}</tbody></table>` };
+
+  const headerRows = rows.filter((row) => row.header);
+  const bodyRows = rows.filter((row) => !row.header);
+  const renderRows = (list: typeof rows) => list.map((row) => `<tr>${row.cells.join('')}</tr>`).join('');
+  const thead = headerRows.length ? `<thead>${renderRows(headerRows)}</thead>` : '';
+  return { kind: 'table', html: `<table>${thead}<tbody>${renderRows(bodyRows)}</tbody></table>` };
 }
 
 function blocksToHtml(blocks: DocxBlock[]): string {
   const out: string[] = [];
-  let listBuffer: string[] = [];
-  const flushList = () => {
-    if (listBuffer.length) {
-      out.push(`<ul>${listBuffer.map((item) => `<li>${item}</li>`).join('')}</ul>`);
-      listBuffer = [];
+  // Stack of open lists so `w:ilvl` produces real nesting rather than a flat
+  // `<ul>`, and numbered lists render as `<ol>`.
+  let openLists: { level: number; ordered: boolean }[] = [];
+
+  const closeTo = (depth: number) => {
+    while (openLists.length > depth) {
+      const list = openLists.pop()!;
+      out.push(list.ordered ? '</ol>' : '</ul>');
     }
   };
+
   for (const block of blocks) {
-    if (block.kind === 'list-item') { listBuffer.push(block.html); continue; }
-    flushList();
+    if (block.kind === 'list-item') {
+      const targetDepth = (block.level ?? 0) + 1;
+      const ordered = block.ordered ?? false;
+      // A change of list type at the same depth starts a new list.
+      if (openLists.length === targetDepth && openLists[targetDepth - 1]!.ordered !== ordered) {
+        closeTo(targetDepth - 1);
+      }
+      closeTo(targetDepth);
+      while (openLists.length < targetDepth) {
+        out.push(ordered ? '<ol>' : '<ul>');
+        openLists.push({ level: openLists.length, ordered });
+      }
+      out.push(`<li>${block.html}</li>`);
+      continue;
+    }
+    closeTo(0);
     if (block.kind === 'heading') out.push(`<${block.tag}>${block.html}</${block.tag}>`);
     else if (block.kind === 'table') out.push(block.html);
     else out.push(`<p>${block.html}</p>`);
   }
-  flushList();
+  closeTo(0);
+  openLists = [];
   return out.join('');
 }
 
@@ -204,15 +410,25 @@ export async function convertDocxToHtml(file: File): Promise<string> {
   if (!body) throw new Error('Could not read the Word document structure.');
 
   const ctx: DocxContext = { media: await loadDocxMedia(zip) };
+  const numbering = await loadNumberingIndex(zip);
   const blocks: DocxBlock[] = [];
-  for (const child of Array.from(body.children)) {
-    if (child.localName === 'p') {
-      const block = renderDocxParagraph(child, ctx);
-      if (block) blocks.push(block);
-    } else if (child.localName === 'tbl') {
-      blocks.push(renderDocxTable(child, ctx));
+
+  const walk = (parent: Element) => {
+    for (const child of Array.from(parent.children)) {
+      if (child.localName === 'p') {
+        const block = renderDocxParagraph(child, ctx, numbering);
+        if (block) blocks.push(block);
+      } else if (child.localName === 'tbl') {
+        blocks.push(renderDocxTable(child, ctx, numbering));
+      } else if (child.localName === 'sdt' || child.localName === 'sdtContent') {
+        // Content controls wrap ordinary block content; the previous
+        // direct-children scan skipped everything inside them.
+        walk(child);
+      }
     }
-  }
+  };
+  walk(body);
+
   if (!blocks.length) throw new Error('The Word document appears to be empty.');
   return wrapDocumentHtml(blocksToHtml(blocks), file.name.replace(/\.docx$/i, ''));
 }

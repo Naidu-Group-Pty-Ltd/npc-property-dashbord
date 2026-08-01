@@ -27,8 +27,18 @@ export async function parseFormaraPdf(
     onProgress?.({ stage: 'extracting', current, total });
   });
 
-  if (!extraction.text || extraction.text.trim().length < 50) {
-    throw new Error('Could not extract sufficient text from the PDF. The file may be scanned/image-based or empty.');
+  // `likelyNeedsOcr` also catches a PDF whose text layer decodes to mojibake:
+  // that produces plenty of characters, so the old length-only check passed it
+  // straight to the extraction model, which then invented plausible-looking
+  // client financials from noise.
+  if (!extraction.text || extraction.text.trim().length < 50 || extraction.likelyNeedsOcr) {
+    throw new Error(
+      'Could not read usable text from the PDF. The form is likely scanned, image-based, or empty — re-export it as a text-based PDF and try again.',
+    );
+  }
+
+  if (extraction.failedPages.length > 0) {
+    console.warn(`[formaraPdfParser] Pages ${extraction.failedPages.join(', ')} could not be read and were skipped`);
   }
 
   console.log(`[formaraPdfParser] Extracted ${extraction.text.length} chars from ${extraction.extractedPages}/${extraction.totalPages} pages`);

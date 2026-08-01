@@ -684,9 +684,12 @@ export default function ReportQA() {
 
       let extractedText = result.text;
 
-      // If client-side extraction yielded very little text (scanned PDF), fall back to server OCR
-      if (extractedText.length < 500) {
-        console.log(`[ReportQA] Low text from client extraction (${extractedText.length} chars), trying server-side OCR...`);
+      // Fall back to server OCR when the text layer is thin (scanned PDF) OR
+      // unreadable. A broken font encoding produces plenty of characters, so a
+      // length check alone let mojibake through to the QA model as if it were
+      // the report's real content.
+      if (extractedText.length < 500 || result.likelyNeedsOcr) {
+        console.log(`[ReportQA] Client text layer unusable (${extractedText.length} chars, needsOcr=${result.likelyNeedsOcr}), trying server-side OCR...`);
         updateProgress(85, 'processing');
 
         let pageImages: Array<{ pageNumber: number; base64: string; width: number; height: number; mimeType: string }> = [];
