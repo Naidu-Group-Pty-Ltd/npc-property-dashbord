@@ -74,7 +74,7 @@ interface PopupThread {
 
 const POLL_MS = 15_000;
 /** Collapsed chips shown above the expanded card. */
-const MAX_CHIPS = 4;
+const MAX_CHIPS = 6;
 const OPEN_KEY = 'aurixa.internalMessages.openPopups';
 const BASELINE_KEY = 'aurixa.internalMessages.threadBaselines';
 const PRIORITY_RANK: Record<Priority, number> = { urgent: 0, high: 1, normal: 2 };
@@ -502,9 +502,9 @@ export function InternalMessageToasts() {
 
   if (!user || (!active && !chips.length)) return null;
 
-  const priority = priorities[active.thread_id] ?? 'normal';
-  const typer = typing[active.thread_id];
-  const headline = active.kind === 'broadcast' ? active.title : active.sender;
+  const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
+  const typer = active ? typing[active.thread_id] : undefined;
+  const headline = active ? (active.kind === 'broadcast' ? active.title : active.sender) : '';
 
   return (
     <div className="pointer-events-none fixed right-4 top-20 z-[60] flex w-[min(26rem,calc(100vw-2rem))] flex-col items-end gap-2">
@@ -565,6 +565,7 @@ export function InternalMessageToasts() {
       ))}
 
       {/* Expanded conversation */}
+      {active && (
       <div
         role="dialog"
         aria-label={`Message from ${headline}`}
