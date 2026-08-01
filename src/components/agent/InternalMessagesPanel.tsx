@@ -523,39 +523,7 @@ export function InternalMessagesPanel({
           </div>
         )}
 
-        <div className="border-t p-3 shrink-0">
-          <InternalAttachmentDrafts
-            files={pendingFiles}
-            uploading={uploading}
-            progressLabel={uploadLabel}
-            onRemove={(i) => setPendingFiles(prev => prev.filter((_, idx) => idx !== i))}
-          />
-          <div className="flex items-end gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            accept={INTERNAL_ATTACHMENT_ACCEPT}
-            className="hidden"
-            onChange={e => {
-              const picked = Array.from(e.target.files ?? []);
-              if (picked.length) {
-                setPendingFiles(prev => [...prev, ...picked].slice(0, MAX_INTERNAL_ATTACHMENTS));
-              }
-              e.target.value = '';
-            }}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-9 w-9 shrink-0"
-            aria-label="Attach files"
-            title="Attach files — any format, any size"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <Paperclip className="h-4 w-4" />
-          </Button>
+        <div className="border-t p-3 shrink-0 flex items-end gap-2">
           <Textarea
             value={draft}
             onChange={e => setDraft(e.target.value)}
@@ -568,6 +536,7 @@ export function InternalMessagesPanel({
           </Button>
         </div>
       </div>
+
     );
   }
 
