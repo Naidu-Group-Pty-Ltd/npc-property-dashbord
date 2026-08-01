@@ -22,7 +22,7 @@
  * thread participation server-side.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { Megaphone, MessageSquare, Send, X, AlertTriangle, ArrowUpRight, Loader2 } from 'lucide-react';
+import { Megaphone, MessageSquare, Minus, Paperclip, Send, X, AlertTriangle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
@@ -33,8 +33,17 @@ import {
   onInternalTyping,
   publishInternalMessage,
   publishInternalTyping,
-  requestOpenInternalMessages,
 } from '@/lib/internalMessagingBus';
+import {
+  InternalAttachmentDrafts,
+  InternalAttachmentList,
+} from '@/components/agent/InternalAttachmentChips';
+import {
+  INTERNAL_ATTACHMENT_ACCEPT,
+  MAX_INTERNAL_ATTACHMENTS,
+  uploadInternalAttachments,
+  type InternalAttachment,
+} from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
 
 type Priority = 'normal' | 'high' | 'urgent';
@@ -46,6 +55,7 @@ interface PopupMessage {
   sender_name: string;
   mine: boolean;
   priority?: Priority;
+  attachments?: InternalAttachment[] | null;
 }
 
 interface PopupThread {
@@ -144,6 +154,14 @@ export function InternalMessageToasts() {
   const [priorities, setPriorities] = useState<Record<string, Priority>>({});
   const [sending, setSending] = useState<Record<string, boolean>>({});
   const [typing, setTyping] = useState<Record<string, { name: string; at: number }>>({});
+  /**
+   * Threads the user explicitly minimised. They stay open as side chips (like
+   * the Going Live dock) instead of jumping into the Aurixa agent.
+   */
+  const [minimised, setMinimised] = useState<Record<string, true>>({});
+  const [pendingFiles, setPendingFiles] = useState<Record<string, File[]>>({});
+  const [uploadLabel, setUploadLabel] = useState<Record<string, string | null>>({});
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const threadsRef = useRef<PopupThread[]>([]);
   threadsRef.current = threads;
@@ -225,7 +243,15 @@ export function InternalMessageToasts() {
             ),
           );
           // A brand-new inbound message brings this conversation to the front.
-          if (changed && (t.unread ?? 0) > 0) setActiveId(t.id);
+          if (changed && (t.unread ?? 0) > 0) {
+            setMinimised((prev) => {
+              if (!prev[t.id]) return prev;
+              const next = { ...prev };
+              delete next[t.id];
+              return next;
+            });
+            setActiveId(t.id);
+          }
           continue;
         }
 
@@ -292,10 +318,15 @@ export function InternalMessageToasts() {
       return;
     }
     if (!activeId || !threads.some((t) => t.thread_id === activeId)) {
-      const next = [...threads].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))[0];
+      const candidates = threads.filter((t) => !minimised[t.thread_id]);
+      if (!candidates.length) {
+        if (activeId) setActiveId(null);
+        return;
+      }
+      const next = [...candidates].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))[0];
       setActiveId(next.thread_id);
     }
-  }, [threads, activeId]);
+  }, [threads, activeId, minimised]);
 
   // Typing hints for threads with an open pop-up.
   useEffect(() => {
@@ -347,23 +378,54 @@ export function InternalMessageToasts() {
         persist(next);
         return next;
       });
+      setMinimised((prev) => {
+        if (!prev[threadId]) return prev;
+        const next = { ...prev };
+        delete next[threadId];
+        return next;
+      });
+      setPendingFiles((prev) => {
+        if (!prev[threadId]) return prev;
+        const next = { ...prev };
+        delete next[threadId];
+        return next;
+      });
       if (activeRef.current === threadId) setActiveId(null);
     },
     [persist, setBaseline],
   );
 
+  /** Collapse the expanded card into a side chip (never opens the agent). */
+  const minimise = useCallback((threadId: string) => {
+    setMinimised((prev) => ({ ...prev, [threadId]: true }));
+    setActiveId((current) => (current === threadId ? null : current));
+  }, []);
+
   const send = useCallback(
     async (thread: PopupThread) => {
       const text = (drafts[thread.thread_id] ?? '').trim();
-      if (!text || sending[thread.thread_id]) return;
+      const files = pendingFiles[thread.thread_id] ?? [];
+      if ((!text && files.length === 0) || sending[thread.thread_id]) return;
       const priority = priorities[thread.thread_id] ?? 'normal';
       setSending((p) => ({ ...p, [thread.thread_id]: true }));
       try {
+        let attachments: InternalAttachment[] = [];
+        if (files.length) {
+          attachments = await uploadInternalAttachments(
+            thread.thread_id,
+            files,
+            (done, total, name) =>
+              setUploadLabel((p) => ({ ...p, [thread.thread_id]: `Uploading ${done}/${total} · ${name}` })),
+          );
+          setUploadLabel((p) => ({ ...p, [thread.thread_id]: null }));
+          setPendingFiles((p) => ({ ...p, [thread.thread_id]: [] }));
+        }
         const { data } = await invokeSecureFunction('internal-messaging', {
           action: 'send_message',
           thread_id: thread.thread_id,
           body: text,
           priority,
+          attachments,
         });
         const msg = data?.message;
         const createdAt = msg?.created_at ?? new Date().toISOString();
@@ -384,6 +446,7 @@ export function InternalMessageToasts() {
                       sender_name: 'You',
                       mine: true,
                       priority,
+                      attachments,
                     },
                   ].slice(-60),
                 }
@@ -398,10 +461,11 @@ export function InternalMessageToasts() {
       } catch {
         /* keep the draft so nothing is lost */
       } finally {
+        setUploadLabel((p) => ({ ...p, [thread.thread_id]: null }));
         setSending((p) => ({ ...p, [thread.thread_id]: false }));
       }
     },
-    [drafts, priorities, sending, user, setBaseline],
+    [drafts, pendingFiles, priorities, sending, user, setBaseline],
   );
 
   const onDraftChange = useCallback(
@@ -436,7 +500,7 @@ export function InternalMessageToasts() {
     [threads, activeId],
   );
 
-  if (!user || !active) return null;
+  if (!user || (!active && !chips.length)) return null;
 
   const priority = priorities[active.thread_id] ?? 'normal';
   const typer = typing[active.thread_id];
@@ -541,11 +605,12 @@ export function InternalMessageToasts() {
           )}
           <button
             type="button"
-            aria-label="Open in team messages"
-            onClick={() => requestOpenInternalMessages(active.thread_id)}
+            aria-label="Minimise conversation"
+            title="Minimise"
+            onClick={() => minimise(active.thread_id)}
             className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <ArrowUpRight className="h-3.5 w-3.5" />
+            <Minus className="h-3.5 w-3.5" />
           </button>
           <button
             type="button"
@@ -583,6 +648,11 @@ export function InternalMessageToasts() {
                     )}
                   >
                     {m.body}
+                    <InternalAttachmentList
+                      threadId={active.thread_id}
+                      attachments={m.attachments ?? []}
+                      mine={m.mine}
+                    />
                   </div>
                   <span className="mt-0.5 px-1 text-[9px] text-muted-foreground/70">
                     {m.mine ? 'You' : m.sender_name} · {timeLabel(m.created_at)}
@@ -606,6 +676,37 @@ export function InternalMessageToasts() {
 
         {/* Reply */}
         <div className="border-t border-border/50 px-3 py-2.5">
+          <InternalAttachmentDrafts
+            files={pendingFiles[active.thread_id] ?? []}
+            uploading={!!sending[active.thread_id] && !!uploadLabel[active.thread_id]}
+            progressLabel={uploadLabel[active.thread_id] ?? null}
+            onRemove={(i) =>
+              setPendingFiles((p) => ({
+                ...p,
+                [active.thread_id]: (p[active.thread_id] ?? []).filter((_, idx) => idx !== i),
+              }))
+            }
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={INTERNAL_ATTACHMENT_ACCEPT}
+            className="hidden"
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              if (picked.length) {
+                setPendingFiles((p) => ({
+                  ...p,
+                  [active.thread_id]: [...(p[active.thread_id] ?? []), ...picked].slice(
+                    0,
+                    MAX_INTERNAL_ATTACHMENTS,
+                  ),
+                }));
+              }
+              e.target.value = '';
+            }}
+          />
           <Textarea
             value={drafts[active.thread_id] ?? ''}
             onChange={(e) => onDraftChange(active, e.target.value)}
@@ -621,6 +722,15 @@ export function InternalMessageToasts() {
           />
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="Attach files"
+                title="Attach files — any format, any size"
+                onClick={() => fileInputRef.current?.click()}
+                className="mr-0.5 rounded-full border border-border/60 p-1 text-muted-foreground transition-colors hover:text-foreground"
+              >
+                <Paperclip className="h-3 w-3" />
+              </button>
               {(['normal', 'high', 'urgent'] as Priority[]).map((p) => (
                 <button
                   key={p}
@@ -645,7 +755,11 @@ export function InternalMessageToasts() {
             <Button
               size="sm"
               className="h-7 gap-1.5 rounded-full px-3 text-[11px]"
-              disabled={!((drafts[active.thread_id] ?? '').trim()) || !!sending[active.thread_id]}
+              disabled={
+                (!((drafts[active.thread_id] ?? '').trim()) &&
+                  (pendingFiles[active.thread_id] ?? []).length === 0) ||
+                !!sending[active.thread_id]
+              }
               onClick={() => send(active)}
             >
               {sending[active.thread_id] ? (
