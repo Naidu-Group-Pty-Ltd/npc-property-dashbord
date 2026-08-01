@@ -120,6 +120,22 @@ function timeLabel(iso: string) {
   }
 }
 
+/** Three-dot animated typing indicator, matching the messages panel. */
+function TypingDots({ className }: { className?: string }) {
+  return (
+    <span className={cn('flex items-center gap-1', className)} aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-1.5 w-1.5 rounded-full bg-primary/70 animate-bounce motion-reduce:animate-none"
+          style={{ animationDelay: `${i * 140}ms`, animationDuration: '900ms' }}
+        />
+      ))}
+    </span>
+  );
+}
+
+
 export function InternalMessageToasts() {
   const { user } = useAuth();
   const [threads, setThreads] = useState<PopupThread[]>([]);
