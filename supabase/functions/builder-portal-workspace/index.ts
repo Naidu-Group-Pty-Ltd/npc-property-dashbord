@@ -23,7 +23,7 @@
  * Operations
  *   workspace_summary | activity_history
  *   get_organisation_settings | save_organisation_settings
- *   get_my_preferences | save_my_preferences
+ *   get_my_preferences | save_my_preferences | complete_onboarding_tour
  */
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders } from '../_shared/auth.ts';
@@ -203,6 +203,20 @@ Deno.serve(async (req) => {
         .select(BUILDER_USER_PREFERENCES_SELECT)
         .eq('builder_user_id', me.id).maybeSingle();
       return json({ success: true, preferences: data ?? null });
+    }
+
+    // Guided onboarding tour completion.
+    //
+    // A separate operation rather than a field on save_my_preferences: it is
+    // idempotent, writes exactly one column, and must not 409 against the
+    // preferences form's expected_version. The owner is always the session
+    // user — no id is taken from the body.
+    if (operation === 'complete_onboarding_tour') {
+      const { data, error } = await supabase.rpc('builder_complete_onboarding_tour', {
+        _builder_user_id: me.id,
+      });
+      if (error) return fail(error.message);
+      return json({ success: true, tour_completed_at: data ?? null });
     }
 
     if (operation === 'save_my_preferences') {

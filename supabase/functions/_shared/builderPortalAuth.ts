@@ -20,8 +20,22 @@ import { resolveBuilderSessionToken } from './builderSessions.ts';
 
 export const BUILDER_ROLLOUT_FEATURE = 'builder_portal_identity_v1';
 
-/** Rollout modes that permit the external portal to serve an organisation. */
-const ROLLOUT_ENABLED_MODES = new Set(['shadow', 'dual_read', 'dual_write', 'cutover']);
+/**
+ * Rollout modes that permit the external portal to serve an organisation.
+ *
+ * Builder is greenfield, so the Solicitor comparison states carry no meaning
+ * here: dual_read and dual_write compare a new path against a legacy one, and
+ * there is no legacy Builder path. `builder_rollout_transition_allowed` makes
+ * them unreachable, and they are listed nowhere below.
+ *
+ * `shadow` is deliberately NOT enabling. For Solicitor, shadow means the new
+ * path runs in the background while the legacy path still serves the user. For
+ * Builder there is nothing else serving, so treating shadow as enabling would
+ * make the very first transition open the portal to real external users with no
+ * observation stage in between. Shadow is the provisioned-and-internally-
+ * verifiable stage; only `cutover` serves external Builder users.
+ */
+const ROLLOUT_ENABLED_MODES = new Set(['cutover']);
 
 export interface BuilderOrganisationSummary {
   organisation_id: string;

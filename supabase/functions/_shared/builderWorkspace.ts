@@ -52,7 +52,7 @@ export const BUILDER_ORGANISATION_SETTINGS_SELECT = `
 export const BUILDER_USER_PREFERENCES_SELECT = `
   id, builder_user_id, default_organisation_id, landing_page, timezone, date_format,
   email_digest, notify_task_assigned, notify_message_posted, notify_status_change,
-  row_version, created_at, updated_at
+  tour_completed_at, row_version, created_at, updated_at
 `;
 
 export function cleanText(value: unknown, max = 500): string | null {

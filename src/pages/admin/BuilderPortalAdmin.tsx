@@ -20,6 +20,7 @@ import { AdminBuilderConstructionPanel } from '@/components/admin/builder-portal
 import { AdminBuilderDeliveryPanel } from '@/components/admin/builder-portal/AdminBuilderDeliveryPanel';
 import { AdminBuilderCollaborationPanel } from '@/components/admin/builder-portal/AdminBuilderCollaborationPanel';
 import { AdminBuilderWorkspacePanel } from '@/components/admin/builder-portal/AdminBuilderWorkspacePanel';
+import { AdminBuilderReleasePanel } from '@/components/admin/builder-portal/AdminBuilderReleasePanel';
 import { toast } from 'sonner';
 import { HardHat, Loader2, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 
@@ -263,6 +264,7 @@ export default function BuilderPortalAdmin() {
           <TabsTrigger value="delivery">Delivery</TabsTrigger>
           <TabsTrigger value="collaboration">Collaboration</TabsTrigger>
           <TabsTrigger value="workspace">Workspace</TabsTrigger>
+          <TabsTrigger value="release">Release</TabsTrigger>
         </TabsList>
 
         {/* ---------------------------------------------------- organisations */}
@@ -521,6 +523,10 @@ export default function BuilderPortalAdmin() {
 
         <TabsContent value="workspace" className="mt-4">
           <AdminBuilderWorkspacePanel canEdit={canEdit} />
+        </TabsContent>
+
+        <TabsContent value="release" className="mt-4">
+          <AdminBuilderReleasePanel organisations={organisations} canEdit={canEdit} />
         </TabsContent>
 
       </Tabs>
