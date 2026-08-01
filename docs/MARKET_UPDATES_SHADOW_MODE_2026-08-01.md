@@ -192,3 +192,42 @@ producing evidence:
 - `market-updates-status` — returns `ingest_mode` and shadow metrics
 - `market-updates-digest` — scopes the candidate count to `visibility = 'public'`
 - `market-updates-embed-backfill` — embeds public rows only
+
+### What was tried
+
+120 deploy attempts across those four functions between 13:00 and 15:08 UTC on
+2026-08-01. Every one failed, with no variation in the error.
+
+| Route | Result |
+| --- | --- |
+| `supabase functions deploy … --use-api` (CLI 2.111.0) | `failed to deploy function: TransportError` — asset uploads all succeed, the final deploy POST fails |
+| `POST /v1/projects/{ref}/functions/deploy?slug=…` | HTTP 409 `{"message":"deployment already exists"}` |
+| Same, without `name` in metadata / with `bundleOnly=false` | HTTP 409, identical |
+| `PATCH /v1/projects/{ref}/functions/{slug}` | HTTP 500 `Cannot read properties of undefined (reading 'toString')` |
+
+The failure is not local. `GET /v1/projects/{ref}/functions` returns 200,
+`x-ratelimit-remaining` sits at 119/120, and the 409 is served by Supabase's own
+API (`x-powered-by: Express` behind Cloudflare) — so the token, the network path
+and the request shape are all fine. A 409 of `deployment already exists` that
+persists for hours across multiple functions points at a stuck deployment record
+on the project, which cannot be cleared from the client side.
+
+### How to unblock it
+
+In rough order of effort:
+
+1. **Deploy from a different network.** The same commands from a local machine
+   are worth trying first — if the block turns out to be edge-specific rather
+   than account-state, this costs nothing to rule out:
+   ```
+   supabase functions deploy market-updates-ingest --project-ref dduzbchuswwbefdunfct --no-verify-jwt --use-api
+   ```
+   (repeat for `-status`, `-digest`, `-embed-backfill`)
+2. **Deploy from the Supabase dashboard** function editor.
+3. **Raise a Supabase support ticket** quoting the 409 body and the `cf-ray`
+   from a failing request, and ask them to clear the pending deployment for
+   project `dduzbchuswwbefdunfct`.
+
+Once the functions are live, run one ingestion. Shadow evidence appears in
+`market_shadow_source_metrics` and in the workspace's **Source coverage** panel,
+which should then read 30 live / 7 shadow / 6 held.
