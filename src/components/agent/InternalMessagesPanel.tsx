@@ -9,7 +9,7 @@
  * sole mediator for the service_role-only messaging tables.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Megaphone, MessageSquare, Plus, Search, Send, Users, ChevronLeft } from 'lucide-react';
+import { Loader2, Megaphone, MessageSquare, Paperclip, Plus, Search, Send, Users, ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,6 +19,16 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { toast } from 'sonner';
 import { ShimmerText } from '@/components/aurixa/ShimmerText';
 import { useAuth } from '@/hooks/useAuth';
+import {
+  InternalAttachmentDrafts,
+  InternalAttachmentList,
+} from '@/components/agent/InternalAttachmentChips';
+import {
+  INTERNAL_ATTACHMENT_ACCEPT,
+  MAX_INTERNAL_ATTACHMENTS,
+  uploadInternalAttachments,
+  type InternalAttachment,
+} from '@/lib/internalMessageAttachments';
 import {
   onInternalMessage,
   onInternalTyping,
@@ -52,6 +62,7 @@ export interface InternalMessage {
   mine: boolean;
   is_system: boolean;
   created_at: string;
+  attachments?: InternalAttachment[] | null;
 }
 
 const call = async (payload: Record<string, unknown>) => {
@@ -101,6 +112,12 @@ export function InternalMessagesPanel({
   const [staffSearch, setStaffSearch] = useState('');
   const [recipientId, setRecipientId] = useState<string | null>(null);
   const [broadcastTitle, setBroadcastTitle] = useState('');
+
+  // Attachments (all MIME types, no client-side size cap).
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastTypingSentRef = useRef<number>(0);
@@ -237,11 +254,28 @@ export function InternalMessagesPanel({
 
   const sendInThread = async () => {
     const text = draft.trim();
-    if (!text || !activeThread || sending) return;
+    if ((!text && pendingFiles.length === 0) || !activeThread || sending) return;
     setSending(true);
     try {
-      await call({ action: 'send_message', thread_id: activeThread.id, body: text });
+      let attachments: InternalAttachment[] = [];
+      if (pendingFiles.length) {
+        setUploading(true);
+        attachments = await uploadInternalAttachments(
+          activeThread.id,
+          pendingFiles,
+          (done, total, name) => setUploadLabel(`Uploading ${done}/${total} · ${name}`),
+        );
+        setUploading(false);
+        setUploadLabel(null);
+      }
+      await call({
+        action: 'send_message',
+        thread_id: activeThread.id,
+        body: text,
+        attachments,
+      });
       setDraft('');
+      setPendingFiles([]);
       publishInternalMessage({
         thread_id: activeThread.id,
         sender_id: user?.id ?? null,
@@ -253,6 +287,8 @@ export function InternalMessagesPanel({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Message failed to send');
     } finally {
+      setUploading(false);
+      setUploadLabel(null);
       setSending(false);
     }
   };
@@ -325,6 +361,11 @@ export function InternalMessagesPanel({
                     m.mine ? 'bg-primary/15 text-foreground' : 'bg-muted/60 text-foreground',
                   )}>
                     {m.body}
+                    <InternalAttachmentList
+                      threadId={activeThread.id}
+                      attachments={m.attachments ?? []}
+                      mine={m.mine}
+                    />
                   </div>
                 </div>
               ))}
@@ -337,7 +378,39 @@ export function InternalMessagesPanel({
             <ShimmerText className="text-[11px]">{typingLabel}</ShimmerText>
           </div>
         )}
-        <div className="border-t p-3 shrink-0 flex items-end gap-2">
+        <div className="border-t p-3 shrink-0">
+          <InternalAttachmentDrafts
+            files={pendingFiles}
+            uploading={uploading}
+            progressLabel={uploadLabel}
+            onRemove={(i) => setPendingFiles(prev => prev.filter((_, idx) => idx !== i))}
+          />
+          <div className="flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={INTERNAL_ATTACHMENT_ACCEPT}
+            className="hidden"
+            onChange={e => {
+              const picked = Array.from(e.target.files ?? []);
+              if (picked.length) {
+                setPendingFiles(prev => [...prev, ...picked].slice(0, MAX_INTERNAL_ATTACHMENTS));
+              }
+              e.target.value = '';
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            aria-label="Attach files"
+            title="Attach files — any format, any size"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
           <Textarea
             value={draft}
             onChange={e => { setDraft(e.target.value); signalTyping(); }}
@@ -347,9 +420,15 @@ export function InternalMessagesPanel({
             className="min-h-[36px] max-h-28 resize-none text-xs"
           />
 
-          <Button size="icon" className="h-9 w-9 shrink-0" onClick={sendInThread} disabled={sending || !draft.trim()}>
+          <Button
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            onClick={sendInThread}
+            disabled={sending || (!draft.trim() && pendingFiles.length === 0)}
+          >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           </Button>
+          </div>
         </div>
       </div>
     );
@@ -444,7 +523,39 @@ export function InternalMessagesPanel({
           </div>
         )}
 
-        <div className="border-t p-3 shrink-0 flex items-end gap-2">
+        <div className="border-t p-3 shrink-0">
+          <InternalAttachmentDrafts
+            files={pendingFiles}
+            uploading={uploading}
+            progressLabel={uploadLabel}
+            onRemove={(i) => setPendingFiles(prev => prev.filter((_, idx) => idx !== i))}
+          />
+          <div className="flex items-end gap-2">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={INTERNAL_ATTACHMENT_ACCEPT}
+            className="hidden"
+            onChange={e => {
+              const picked = Array.from(e.target.files ?? []);
+              if (picked.length) {
+                setPendingFiles(prev => [...prev, ...picked].slice(0, MAX_INTERNAL_ATTACHMENTS));
+              }
+              e.target.value = '';
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 shrink-0"
+            aria-label="Attach files"
+            title="Attach files — any format, any size"
+            onClick={() => fileInputRef.current?.click()}
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
           <Textarea
             value={draft}
             onChange={e => setDraft(e.target.value)}
