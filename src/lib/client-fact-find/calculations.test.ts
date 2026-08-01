@@ -1,11 +1,11 @@
 import { describe,expect,it } from 'vitest';
-import { brandingFooter, calculateFactFindTotals, dollarsToCents, formatNetPosition, fullApplicantName, normalizePercentage, safeBlankToZero } from './calculations';
+import { calculateFactFindTotals, dollarsToCents, formatNetPosition, fullApplicantName, normalizePercentage, safeBlankToZero } from './calculations';
 import { applicant, employment, zeroFactFind } from './testFixtures';
 describe('workbook calculation parity',()=>{
  it('treats blanks safely and rounds currency to cents',()=>{expect(safeBlankToZero('')).toBe(0);expect(dollarsToCents(null)).toBe(0);expect(dollarsToCents('1,234.565')).toBe(123457)});
  it('calculates an all-zero fact find including corrected Output D45',()=>{const t=calculateFactFindTotals(zeroFactFind());expect(Object.values(t)).toEqual(Array(9).fill(0));expect(t.clientFormOutputLivingExpensesCents).toBe(t.totalMonthlyLivingExpensesCents)});
  it('implements only the workbook asset, debt, income and expense dependencies',()=>{const p=zeroFactFind();p.assets[0]={...p.assets[0],currentValue:500000,loanBalance:300000,rentalOrOtherIncome:99999,monthlyRepayment:777};p.assets[9]={...p.assets[9],currentValue:'100000.50',loanBalance:10000};p.liabilities[0]={...p.liabilities[0],limitOrOriginalAmount:999999,currentBalance:5000,monthlyRepayment:888};p.expenses[0].monthlyAmount=100;p.expenses[49].monthlyAmount=25.25;p.employment[0]={...p.employment[0],baseSalary:100000,bonus:1000,commission:2000,overtime:3000,otherTaxableIncome:4000};p.employment.push({...employment(2),baseSalary:50000,bonus:500});const t=calculateFactFindTotals(p);expect(t).toMatchObject({totalAssetsCents:60000050,totalAssetLinkedDebtCents:31000000,totalOtherLiabilitiesCents:500000,totalDebtCents:31500000,netPositionCents:28500050,applicant1AnnualIncomeCents:11000000,applicant2AnnualIncomeCents:5050000,totalMonthlyLivingExpensesCents:12525,clientFormOutputLivingExpensesCents:12525})});
- it('formats negative positions and domain text helpers',()=>{expect(formatNetPosition(-12345)).toBe('-$123.45');expect(fullApplicantName({...applicant(1),middleName:'J'})).toBe('Alex J Smith');expect(brandingFooter({email:'a@b.test',phone:'1',businessAddress:'Here'})).toBe('a@b.test | 1 | Here');expect(normalizePercentage('5%')).toBe(5)});
+ it('formats negative positions and domain text helpers',()=>{expect(formatNetPosition(-12345)).toBe('-$123.45');expect(fullApplicantName({...applicant(1),middleName:'J'})).toBe('Alex J Smith');expect(normalizePercentage('5%')).toBe(5)});
  it('supports a negative net position',()=>{const p=zeroFactFind();p.liabilities[7].currentBalance=1;expect(calculateFactFindTotals(p).netPositionCents).toBe(-100)});
 });
 

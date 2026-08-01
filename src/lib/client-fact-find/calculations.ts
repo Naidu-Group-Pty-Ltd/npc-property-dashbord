@@ -1,4 +1,4 @@
-import type { AdvancedClientCreationPayload, FactFindApplicant, FactFindBrandingSnapshot, FactFindCalculatedTotals, MoneyInput } from './types';
+import type { AdvancedClientCreationPayload, FactFindApplicant, FactFindCalculatedTotals, MoneyInput } from './types';
 
 export function safeBlankToZero(value: MoneyInput): number {
   if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return 0;
@@ -11,9 +11,6 @@ export function centsToDisplay(cents: number, locale='en-AU', currency='AUD'): s
 }
 export function fullApplicantName(applicant: Pick<FactFindApplicant,'firstName'|'middleName'|'surname'>): string {
   return [applicant.firstName, applicant.middleName, applicant.surname].map(v=>v.trim()).filter(Boolean).join(' ');
-}
-export function brandingFooter(branding: Pick<FactFindBrandingSnapshot,'email'|'phone'|'businessAddress'>): string {
-  return [branding.email,branding.phone,branding.businessAddress].map(v=>v.trim()).join(' | ');
 }
 export function formatNetPosition(cents:number): string { return cents < 0 ? `-${centsToDisplay(Math.abs(cents))}` : centsToDisplay(cents); }
 /** Normalizes a user-entered percentage to percentage points (5 or "5%" => 5). */

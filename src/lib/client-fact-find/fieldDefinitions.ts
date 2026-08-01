@@ -1,15 +1,6 @@
-export type WorkbookFieldType = 'text' | 'email' | 'phone' | 'date' | 'integer' | 'money' | 'percentage' | 'colour' | 'logo';
+export type WorkbookFieldType = 'text' | 'email' | 'phone' | 'date' | 'integer' | 'money' | 'percentage';
 export interface WorkbookFieldDefinition<K extends string = string> { key: K; label: string; displayOrder: number; type: WorkbookFieldType; cell: string; }
 const fields = <T extends readonly WorkbookFieldDefinition[]>(value: T) => value;
-export const WHITE_LABEL_FIELDS = fields([
-  {key:'organisationName',label:'Organisation Name',displayOrder:0,type:'text',cell:'B5'}, {key:'tradingName',label:'Trading Name / Division',displayOrder:1,type:'text',cell:'B6'},
-  {key:'tagline',label:'Tagline',displayOrder:2,type:'text',cell:'B7'}, {key:'primaryColour',label:'Primary Colour (Hex)',displayOrder:3,type:'colour',cell:'B8'},
-  {key:'accentColour',label:'Accent Colour (Hex)',displayOrder:4,type:'colour',cell:'B9'}, {key:'website',label:'Website',displayOrder:5,type:'text',cell:'B10'},
-  {key:'email',label:'Email',displayOrder:6,type:'email',cell:'B11'}, {key:'phone',label:'Phone',displayOrder:7,type:'phone',cell:'B12'},
-  {key:'businessAddress',label:'Business Address',displayOrder:8,type:'text',cell:'B13'}, {key:'documentTitle',label:'Document Title',displayOrder:9,type:'text',cell:'E5'},
-  {key:'confidentialityLabel',label:'Confidentiality Label',displayOrder:10,type:'text',cell:'E6'}, {key:'preparedBy',label:'Prepared By',displayOrder:11,type:'text',cell:'E7'},
-  {key:'logoReference',label:'Logo Placeholder',displayOrder:12,type:'logo',cell:'E8'}, {key:'version',label:'Version',displayOrder:13,type:'text',cell:'E9'},
-] as const);
 export const APPLICANT_FIELDS = fields([
   {key:'title',label:'Title',displayOrder:0,type:'text',cell:'C6'}, {key:'firstName',label:'First Name',displayOrder:1,type:'text',cell:'C7'},
   {key:'middleName',label:'Middle Name',displayOrder:2,type:'text',cell:'C8'}, {key:'surname',label:'Surname',displayOrder:3,type:'text',cell:'C9'},
