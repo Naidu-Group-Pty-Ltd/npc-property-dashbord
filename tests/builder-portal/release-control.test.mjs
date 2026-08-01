@@ -376,12 +376,29 @@ test('a transition without a reason is rejected before it reaches the database',
 // ===========================================================================
 // Runtime gate
 // ===========================================================================
-test('shadow does not open the external Builder portal', () => {
-  assert.match(auth, /const ROLLOUT_ENABLED_MODES = new Set\(\['cutover'\]\)/);
+test('the runtime gate enables shadow and cutover while blocking off and rollback', () => {
+  assert.match(auth, /const ROLLOUT_ENABLED_MODES = new Set\(\['shadow', 'cutover'\]\)/);
   const gate = auth.slice(auth.indexOf('ROLLOUT_ENABLED_MODES'), auth.indexOf('export interface'));
-  assert.doesNotMatch(gate, /'shadow'/);
+  const enabledModes = new Set([...gate.matchAll(/'(shadow|cutover)'/g)].map((match) => match[1]));
+  assert.equal(enabledModes.has('off'), false);
+  assert.equal(enabledModes.has('shadow'), true);
+  assert.equal(enabledModes.has('cutover'), true);
+  assert.equal(enabledModes.has('rollback'), false);
   assert.doesNotMatch(gate, /'dual_read'/);
   assert.doesNotMatch(gate, /'dual_write'/);
+});
+
+test('the runtime rollout decision remains organisation-scoped', () => {
+  const resolver = auth.slice(auth.indexOf('export async function isRolloutEnabled'));
+  assert.match(resolver, /_owner_id: organisationId/);
+  assert.match(resolver, /_portal: 'builder'/);
+
+  const listing = auth.slice(
+    auth.indexOf('export async function listAccessibleOrganisations'),
+    auth.indexOf('export async function isRolloutEnabled'));
+  assert.match(listing, /for \(const row of accessible\)/);
+  assert.match(listing, /isRolloutEnabled\(supabase, row\.organisation_id\)/);
+  assert.doesNotMatch(listing, /rollout_enabled:\s*true/);
 });
 
 test('the rollout gate is enforced server-side on every entry point', () => {

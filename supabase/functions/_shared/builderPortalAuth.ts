@@ -28,14 +28,10 @@ export const BUILDER_ROLLOUT_FEATURE = 'builder_portal_identity_v1';
  * there is no legacy Builder path. `builder_rollout_transition_allowed` makes
  * them unreachable, and they are listed nowhere below.
  *
- * `shadow` is deliberately NOT enabling. For Solicitor, shadow means the new
- * path runs in the background while the legacy path still serves the user. For
- * Builder there is nothing else serving, so treating shadow as enabling would
- * make the very first transition open the portal to real external users with no
- * observation stage in between. Shadow is the provisioned-and-internally-
- * verifiable stage; only `cutover` serves external Builder users.
+ * `off` blocks portal access. `shadow` permits controlled internal verification,
+ * and `cutover` permits live external use. `rollback` blocks portal access.
  */
-const ROLLOUT_ENABLED_MODES = new Set(['cutover']);
+const ROLLOUT_ENABLED_MODES = new Set(['shadow', 'cutover']);
 
 export interface BuilderOrganisationSummary {
   organisation_id: string;
