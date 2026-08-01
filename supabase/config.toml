@@ -1122,3 +1122,8 @@ verify_jwt = true
 
 [functions.create-advanced-client]
 verify_jwt = true
+
+[functions.internal-messaging]
+# Custom Command Centre sessions are verified in-function; the gateway must
+# preserve their session headers. Anonymous requests are rejected by verifyAuth.
+verify_jwt = false
