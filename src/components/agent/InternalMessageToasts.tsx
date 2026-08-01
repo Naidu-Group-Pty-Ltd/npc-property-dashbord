@@ -125,7 +125,7 @@ export function InternalMessageToasts() {
     <div className="pointer-events-none fixed right-4 top-20 z-[60] flex w-[min(20rem,calc(100vw-2rem))] flex-col gap-2">
       {items.map(item => (
         <div
-          key={item.thread_id}
+          key={item.key}
           role="alert"
           className={cn(
             'pointer-events-auto overflow-hidden rounded-xl border border-[color:var(--glass-hairline,hsl(var(--border)))]',
@@ -135,23 +135,26 @@ export function InternalMessageToasts() {
         >
           <div className="flex items-start gap-2.5 px-3 py-2.5">
             <span className={cn(
-              'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full',
+              'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold uppercase',
               item.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-primary/15 text-primary',
             )}>
               {item.kind === 'broadcast'
                 ? <Megaphone className="h-3.5 w-3.5" />
-                : <MessageSquare className="h-3.5 w-3.5" />}
+                : (item.sender?.trim()?.[0] ?? <MessageSquare className="h-3.5 w-3.5" />)}
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-xs font-semibold text-foreground">
-                {item.title}
+                {item.sender}
                 {item.unread > 1 && (
                   <span className="ml-1.5 rounded-full bg-destructive px-1.5 py-px text-[9px] font-bold text-destructive-foreground">
                     {item.unread}
                   </span>
                 )}
               </p>
-              <p className="mt-0.5 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
+              <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/80">
+                {item.kind === 'broadcast' ? `Announcement · ${item.title}` : item.title}
+              </p>
+              <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-muted-foreground">
                 {item.preview}
               </p>
               <div className="mt-2 flex items-center gap-1.5">
@@ -162,7 +165,7 @@ export function InternalMessageToasts() {
                   size="sm"
                   variant="ghost"
                   className="h-6 px-2 text-[11px] text-muted-foreground"
-                  onClick={() => dismiss(item.thread_id)}
+                  onClick={() => dismiss(item.key)}
                 >
                   Later
                 </Button>
@@ -171,11 +174,14 @@ export function InternalMessageToasts() {
             <button
               type="button"
               aria-label="Dismiss message alert"
-              onClick={() => dismiss(item.thread_id)}
+              onClick={() => dismiss(item.key)}
               className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
             >
               <X className="h-3.5 w-3.5" />
             </button>
+          </div>
+        </div>
+
           </div>
         </div>
       ))}
