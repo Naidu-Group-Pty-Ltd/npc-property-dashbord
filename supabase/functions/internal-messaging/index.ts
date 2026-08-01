@@ -13,7 +13,7 @@
 //   unread_count                                → total unread for badge
 //   get_thread   { thread_id }                  → messages for a participating thread
 //   start_direct { user_id }                    → find-or-create direct thread
-//   send_message { thread_id, body }            → post into an existing thread
+//   send_message { thread_id, body, priority }  → post into an existing thread
 //                { recipient_user_id, body }    → post into (or open) a direct thread
 //                { broadcast: true, body, title } → new broadcast to all active staff
 //   mark_read    { thread_id }                  → stamp last_read_at
@@ -107,7 +107,7 @@ Deno.serve(async (req) => {
       // Unread per thread: messages after last_read_at not sent by me.
       const { data: recent, error: mErr } = await sb
         .from('internal_messages')
-        .select('thread_id, sender_id, created_at')
+        .select('thread_id, sender_id, created_at, priority')
         .in('thread_id', ids)
         .order('created_at', { ascending: false })
         .limit(2000);
@@ -128,10 +128,17 @@ Deno.serve(async (req) => {
       }
 
       // Latest message per thread (recent is ordered created_at desc).
-      const latestByThread = new Map<string, { sender_id: string | null; created_at: string }>();
+      const latestByThread = new Map<
+        string,
+        { sender_id: string | null; created_at: string; priority: string }
+      >();
       for (const m of recent ?? []) {
         if (!latestByThread.has(m.thread_id)) {
-          latestByThread.set(m.thread_id, { sender_id: m.sender_id, created_at: m.created_at });
+          latestByThread.set(m.thread_id, {
+            sender_id: m.sender_id,
+            created_at: m.created_at,
+            priority: (m as { priority?: string }).priority ?? 'normal',
+          });
         }
       }
 
@@ -164,6 +171,7 @@ Deno.serve(async (req) => {
             ? (latestSenderId === me ? 'You' : nameById.get(latestSenderId) ?? 'Unknown')
             : 'System',
           last_message_id: latest ? `${t.id}:${latest.created_at}` : null,
+          last_message_priority: latest?.priority ?? 'normal',
           display_title:
             t.kind === 'broadcast'
               ? t.title || 'Company announcement'
@@ -191,7 +199,7 @@ Deno.serve(async (req) => {
 
       const { data: msgs, error } = await sb
         .from('internal_messages')
-        .select('id, thread_id, sender_id, body, is_system, created_at')
+        .select('id, thread_id, sender_id, body, is_system, created_at, priority')
         .eq('thread_id', threadId)
         .order('created_at', { ascending: true })
         .limit(500);
@@ -289,6 +297,10 @@ Deno.serve(async (req) => {
         return json({ success: false, error: 'body_too_long' }, 400, corsHeaders);
       }
 
+      const allowedPriorities = ['normal', 'high', 'urgent'];
+      const rawPriority = String(body.priority ?? 'normal');
+      const priority = allowedPriorities.includes(rawPriority) ? rawPriority : 'normal';
+
       let threadId = String(body.thread_id ?? '');
       let kind = 'direct';
 
@@ -335,8 +347,8 @@ Deno.serve(async (req) => {
 
       const { data: msg, error: mErr } = await sb
         .from('internal_messages')
-        .insert({ thread_id: threadId, sender_id: me, body: text })
-        .select('id, thread_id, sender_id, body, created_at')
+        .insert({ thread_id: threadId, sender_id: me, body: text, priority })
+        .select('id, thread_id, sender_id, body, created_at, priority')
         .single();
       if (mErr) throw mErr;
 
@@ -368,7 +380,9 @@ Deno.serve(async (req) => {
         .filter((r) => r.user_id !== me)
         .map((r) => ({
           type: 'internal_message',
-          title: kind === 'broadcast' ? `Announcement from ${senderName}` : `New message from ${senderName}`,
+          title: `${priority === 'urgent' ? 'URGENT: ' : priority === 'high' ? 'Priority: ' : ''}${
+            kind === 'broadcast' ? `Announcement from ${senderName}` : `New message from ${senderName}`
+          }`,
           message: preview(text),
           target_user_id: r.user_id,
           entity_id: threadId,
