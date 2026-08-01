@@ -35,16 +35,19 @@ import {
   publishInternalTyping,
 } from '@/lib/internalMessagingBus';
 import {
-  InternalAttachmentDrafts,
+  AttachmentDropOverlay,
+  InternalAttachmentQueue,
   InternalAttachmentList,
 } from '@/components/agent/InternalAttachmentChips';
+import { useInternalAttachmentQueue } from '@/hooks/useInternalAttachmentQueue';
+import { TypingDots, TypingPresence } from '@/components/messaging/TypingPresence';
 import {
   INTERNAL_ATTACHMENT_ACCEPT,
-  MAX_INTERNAL_ATTACHMENTS,
-  uploadInternalAttachments,
+  filesFromDataTransfer,
   type InternalAttachment,
 } from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
+
 
 type Priority = 'normal' | 'high' | 'urgent';
 
