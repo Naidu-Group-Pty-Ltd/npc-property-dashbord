@@ -47,8 +47,10 @@ export function DashboardLayout() {
 
         <MobileNav />
         <AgentChatWidget />
+        <InternalMessageToasts />
         <GlobalCommandPalette />
       </div>
+
     );
   }
 
