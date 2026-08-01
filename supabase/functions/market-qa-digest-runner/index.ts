@@ -108,7 +108,7 @@ async function runDue(sb: any) {
         title: `Your ${cadence} ${digest_group} digest is ready`,
         message: `${items.length} question${items.length === 1 ? '' : 's'} refreshed`,
         metadata: { digest_id: digest?.id, digest_group },
-        is_read: false,
+        read: false,
       });
 
       const nextIso = nextRunAt(cadence);

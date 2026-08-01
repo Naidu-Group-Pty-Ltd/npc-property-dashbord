@@ -1,4 +1,4 @@
-import { Bell, Check, CheckCheck, Trash2, FileText, AlertCircle, Info, Phone, CalendarPlus, CalendarClock, CalendarX, Clock, AlarmClock, PhoneMissed, Mail, Send, FileCheck, FileClock, FileX, RefreshCw, Archive, ArchiveRestore, Loader2, UserPlus, UserCheck, Wallet, FileSpreadsheet, Download, Share2, ShieldCheck, UserCog, Wrench, DatabaseZap, MessageSquare, FileSignature, Contact, Megaphone, Timer, Users, Map, Flag, Target } from 'lucide-react';
+import { Bell, Check, CheckCheck, Trash2, FileText, AlertCircle, Info, Phone, CalendarPlus, CalendarClock, CalendarX, Clock, AlarmClock, PhoneMissed, Mail, Send, FileCheck, FileClock, FileX, RefreshCw, Archive, ArchiveRestore, Loader2, UserPlus, UserCheck, Wallet, FileSpreadsheet, Download, Share2, ShieldCheck, UserCog, Wrench, DatabaseZap, MessageSquare, FileSignature, Contact, Megaphone, Timer, Users, Map, Flag, Target, Landmark, BadgeCheck, Link2, Unlink, Lightbulb, ClipboardCheck, Newspaper, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -27,7 +27,7 @@ export function NotificationsDropdown() {
     switch (type) {
       case 'report_generated':
       case 'report_generation_completed':
-        return <FileCheck className="h-4 w-4 text-success-foreground0" />;
+        return <FileCheck className="h-4 w-4 text-success" />;
       case 'report_failed':
       case 'report_generation_failed':
         return <FileX className="h-4 w-4 text-destructive" />;
@@ -36,17 +36,17 @@ export function NotificationsDropdown() {
       case 'report_regeneration_started':
         return <RefreshCw className="h-4 w-4 text-primary animate-spin" />;
       case 'report_regeneration_completed':
-        return <FileCheck className="h-4 w-4 text-success-foreground0" />;
+        return <FileCheck className="h-4 w-4 text-success" />;
       case 'report_regeneration_failed':
         return <FileX className="h-4 w-4 text-destructive" />;
       case 'report_archived':
         return <Archive className="h-4 w-4 text-muted-foreground" />;
       case 'report_restored':
-        return <ArchiveRestore className="h-4 w-4 text-success-foreground0" />;
+        return <ArchiveRestore className="h-4 w-4 text-success" />;
       case 'call_completed':
         return <Phone className="h-4 w-4 text-primary" />;
       case 'appointment_created':
-        return <CalendarPlus className="h-4 w-4 text-success-foreground0" />;
+        return <CalendarPlus className="h-4 w-4 text-success" />;
       case 'appointment_rescheduled':
         return <CalendarClock className="h-4 w-4 text-brand-500" />;
       case 'appointment_cancelled':
@@ -63,57 +63,89 @@ export function NotificationsDropdown() {
       case 'email_received':
         return <Mail className="h-4 w-4 text-primary" />;
       case 'email_reply_sent':
-        return <Send className="h-4 w-4 text-success-foreground0" />;
+        return <Send className="h-4 w-4 text-success" />;
       // Phase 3 - Client & Portfolio
       case 'client_created':
-        return <UserPlus className="h-4 w-4 text-success-foreground0" />;
+        return <UserPlus className="h-4 w-4 text-success" />;
       case 'client_updated':
-        return <UserCheck className="h-4 w-4 text-info-foreground0" />;
+        return <UserCheck className="h-4 w-4 text-info" />;
       case 'portfolio_updated':
-        return <Wallet className="h-4 w-4 text-accent-foreground0" />;
+        return <Wallet className="h-4 w-4 text-accent-foreground" />;
       case 'formara_form_uploaded':
-        return <FileSpreadsheet className="h-4 w-4 text-success-foreground0" />;
+        return <FileSpreadsheet className="h-4 w-4 text-success" />;
       case 'formara_form_exported':
-        return <Download className="h-4 w-4 text-info-foreground0" />;
+        return <Download className="h-4 w-4 text-info" />;
       case 'finance_agent_notified':
         return <Send className="h-4 w-4 text-primary" />;
       case 'client_file_shared':
-        return <Share2 className="h-4 w-4 text-info-foreground0" />;
+        return <Share2 className="h-4 w-4 text-info" />;
       // Phase 4 - System & User
       case 'user_role_updated':
-        return <ShieldCheck className="h-4 w-4 text-accent-foreground0" />;
+        return <ShieldCheck className="h-4 w-4 text-accent-foreground" />;
       case 'new_user_invited':
-        return <UserCog className="h-4 w-4 text-success-foreground0" />;
+        return <UserCog className="h-4 w-4 text-success" />;
       case 'system_maintenance':
         return <Wrench className="h-4 w-4 text-brand-500" />;
       case 'data_import_complete':
-        return <DatabaseZap className="h-4 w-4 text-success-foreground0" />;
+        return <DatabaseZap className="h-4 w-4 text-success" />;
       case 'report_comment_added':
-        return <MessageSquare className="h-4 w-4 text-info-foreground0" />;
+        return <MessageSquare className="h-4 w-4 text-info" />;
       case 'outlook_event_created':
-        return <CalendarPlus className="h-4 w-4 text-info-foreground0" />;
+        return <CalendarPlus className="h-4 w-4 text-info" />;
       // Phase 6 - Extended coverage
       case 'agreement_generated':
-        return <FileSignature className="h-4 w-4 text-success-foreground0" />;
+        return <FileSignature className="h-4 w-4 text-success" />;
       case 'new_ghl_contact':
-        return <Contact className="h-4 w-4 text-info-foreground0" />;
+        return <Contact className="h-4 w-4 text-info" />;
       case 'new_marketing_lead':
-        return <Megaphone className="h-4 w-4 text-warning-foreground0" />;
+        return <Megaphone className="h-4 w-4 text-warning" />;
       case 'portal_report_requested':
-        return <FileText className="h-4 w-4 text-accent-foreground0" />;
+        return <FileText className="h-4 w-4 text-accent-foreground" />;
       case 'client_reminder_upcoming':
         return <Timer className="h-4 w-4 text-info" />;
       case 'conversation_shared':
-        return <Users className="h-4 w-4 text-accent-foreground0" />;
+        return <Users className="h-4 w-4 text-accent-foreground" />;
       // Game Plan
       case 'game_plan_created':
-        return <Map className="h-4 w-4 text-accent-foreground0" />;
+        return <Map className="h-4 w-4 text-accent-foreground" />;
       case 'game_plan_updated':
         return <Flag className="h-4 w-4 text-brand-500" />;
       case 'game_plan_milestone_completed':
-        return <Target className="h-4 w-4 text-success-foreground0" />;
+        return <Target className="h-4 w-4 text-success" />;
+      // Producers repaired in 20260803030000. Every type below was writing a
+      // column that does not exist on `notifications`, so none of them had ever
+      // reached the bell and none had an icon.
+      case 'internal_message':
+        return <MessageSquare className="h-4 w-4 text-primary" />;
+      case 'lender_submission_status':
+        return <Landmark className="h-4 w-4 text-brand-500" />;
+      case 'purchase_file_unconditional_approval':
+        return <BadgeCheck className="h-4 w-4 text-success" />;
+      case 'purchase_file_linked':
+        return <Link2 className="h-4 w-4 text-info" />;
+      case 'purchase_file_unlinked':
+        return <Unlink className="h-4 w-4 text-muted-foreground" />;
+      case 'agent_insight':
+        return <Lightbulb className="h-4 w-4 text-warning" />;
+      case 'agent_plan_scheduled':
+        return <ClipboardCheck className="h-4 w-4 text-primary" />;
+      case 'market_qa_digest':
+        return <Newspaper className="h-4 w-4 text-info" />;
+      case 'market_qa_subscription':
+        return <BellRing className="h-4 w-4 text-brand-500" />;
+      case 'qa_conversation_shared':
+        return <Users className="h-4 w-4 text-accent-foreground" />;
+      case 'portal_message_received':
+      case 'finance_portal_message_received':
+        return <MessageSquare className="h-4 w-4 text-info" />;
+      case 'client_data_updated':
+        return <UserCheck className="h-4 w-4 text-info" />;
+      case 'client_property_added':
+        return <Wallet className="h-4 w-4 text-success" />;
+      case 'bulk_conversation_sync_completed':
+        return <RefreshCw className="h-4 w-4 text-info" />;
       default:
-        return <Info className="h-4 w-4 text-info-foreground0" />;
+        return <Info className="h-4 w-4 text-info" />;
     }
   };
 

@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useEffect, ReactNode, useCallback 
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
+import { requestOpenInternalMessages } from '@/lib/internalMessagingBus';
+import { resolveNotificationLink } from '@/lib/notificationLink';
 
 export type NotificationType = 
   | 'report_generated' 
@@ -69,7 +71,21 @@ export type NotificationType =
   | 'portal_message_received'
   | 'finance_portal_message_received'
   // Conversation sync
-  | 'bulk_conversation_sync_completed';
+  | 'bulk_conversation_sync_completed'
+  // Producers repaired in 20260803030000 — every one of these was writing a
+  // column that did not exist on `notifications`, so none had ever been seen.
+  | 'internal_message'
+  | 'lender_submission_status'
+  | 'purchase_file_unconditional_approval'
+  | 'purchase_file_linked'
+  | 'purchase_file_unlinked'
+  | 'agent_insight'
+  | 'agent_plan_scheduled'
+  | 'market_qa_digest'
+  | 'market_qa_subscription'
+  | 'qa_conversation_shared'
+  | 'client_data_updated'
+  | 'client_property_added';
 
 /**
  * The DB no longer enumerates notification types (it validates the slug format
@@ -89,6 +105,10 @@ export interface Notification {
   targetUserId?: string;
   timestamp: Date;
   read: boolean;
+  /** Optional in-app path supplied by the producer. */
+  link?: string;
+  /** Producer-supplied context; `link_path`/`url` are honoured for routing. */
+  metadata?: Record<string, unknown>;
 }
 
 interface NotificationsContextType {
@@ -138,6 +158,8 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
           reportId: n.report_id,
           entityId: n.entity_id,
           targetUserId: n.target_user_id,
+          link: typeof n.link === 'string' ? n.link : undefined,
+          metadata: n.metadata && typeof n.metadata === 'object' ? n.metadata : undefined,
           timestamp: new Date(n.timestamp)
         }));
         setNotifications(notificationsWithDates);
@@ -170,7 +192,23 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       )
       .subscribe();
 
+    // Realtime is a best-effort transport, not a guarantee: corporate proxies
+    // block WebSockets outright, the socket dies silently on sleep/resume, and
+    // a CHANNEL_ERROR surfaces nowhere the user can see. When it fails the bell
+    // simply freezes on whatever it had at mount, which reads as "notifications
+    // are broken". Poll on an interval and whenever the tab regains focus so
+    // the bell keeps filling in regardless of the socket's health.
+    const refresh = () => {
+      if (document.visibilityState === 'visible') fetchNotifications();
+    };
+    const poll = window.setInterval(refresh, 60_000);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('focus', refresh);
+
     return () => {
+      window.clearInterval(poll);
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('focus', refresh);
       supabase.removeChannel(channel);
     };
   }, [fetchNotifications, supabase, accessToken]);
@@ -197,56 +235,52 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  /**
+   * Every mutation below applies to local state first.
+   *
+   * These used to write to the database and then wait for the realtime
+   * subscription to echo the change back before the UI moved. When the socket
+   * is not connected — the normal case behind a proxy that blocks WebSockets —
+   * "Mark all read" and "Clear all" appeared to do nothing at all. Apply the
+   * change immediately and re-sync from the server only if the write failed.
+   */
   const markAsRead = async (id: string) => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ read: true })
-        .eq('id', id);
-
-      if (error) throw error;
-    } catch (error) {
+    setNotifications(prev => prev.map(n => (n.id === id ? { ...n, read: true } : n)));
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('id', id);
+    if (error) {
       console.error('Failed to mark notification as read:', error);
+      fetchNotifications();
     }
   };
 
   const markAllAsRead = async () => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ read: true })
-        .eq('read', false);
-
-      if (error) throw error;
-    } catch (error) {
+    setNotifications(prev => prev.map(n => (n.read ? n : { ...n, read: true })));
+    const { error } = await supabase.from('notifications').update({ read: true }).eq('read', false);
+    if (error) {
       console.error('Failed to mark all as read:', error);
+      fetchNotifications();
     }
   };
 
   const clearNotification = async (id: string) => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-    } catch (error) {
+    setNotifications(prev => prev.filter(n => n.id !== id));
+    const { error } = await supabase.from('notifications').delete().eq('id', id);
+    if (error) {
       console.error('Failed to clear notification:', error);
+      fetchNotifications();
     }
   };
 
   const clearAll = async () => {
-    try {
-      // Delete all notifications where created_at is not null (i.e., all notifications)
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .gte('created_at', '1970-01-01');
-
-      if (error) throw error;
-    } catch (error) {
+    setNotifications([]);
+    // RLS narrows this to rows the caller may delete (their own + broadcasts).
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .gte('created_at', '1970-01-01');
+    if (error) {
       console.error('Failed to clear all notifications:', error);
+      fetchNotifications();
     }
   };
 
@@ -423,8 +457,18 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       case 'bulk_conversation_sync_completed':
         navigate('/conversations');
         break;
-      default:
+      case 'internal_message':
+        // Internal messaging lives in the Aurixa widget, not on a route.
+        // `entity_id` is the thread id.
+        requestOpenInternalMessages(notification.entityId);
         break;
+      default: {
+        // Types added by the backend no longer need a `case` here: producers
+        // ship `link` (or `metadata.link_path`) and we follow it.
+        const target = resolveNotificationLink(notification);
+        if (target) navigate(target);
+        break;
+      }
     }
   };
 

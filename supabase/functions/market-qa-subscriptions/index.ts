@@ -206,7 +206,7 @@ async function runOne(sb: any, sub: any): Promise<{ question_id: string | null; 
         title: 'New answer for your subscribed question',
         message: preview || sub.question_template,
         metadata: { subscription_id: sub.id, question_id: questionId },
-        is_read: false,
+        read: false,
       });
     }
 
