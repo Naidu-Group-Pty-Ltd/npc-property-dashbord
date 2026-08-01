@@ -33,6 +33,30 @@ these are the preferred way to do frontend work:
 | **frontend-design** | Anthropic `anthropics/skills` | Set the aesthetic direction for new or reshaped UI — palette, typography, layout — so it looks intentional, not templated. Invoke before building a new surface. |
 | **web-design-guidelines** | Vercel `vercel-labs/agent-skills` | Review UI code for accessibility, UX, and Web Interface Guidelines compliance. Invoke after building, before finishing. |
 
+### Claude Design — the published design system
+
+The canonical design system is a **Claude Design** project called
+**NPC Services Design System**, at [claude.ai/design](https://claude.ai/design). It
+holds the token files (`tokens/colors.css`, `tokens/typography.css`, …), the
+guideline cards, and the UI kits. Claude Code reaches it with the built-in
+**DesignSync** tool (`list_projects` → `get_file` → `finalize_plan` → `write_files`).
+
+Treat it as the **source of the brand**, and this repo as the source of the code:
+
+- **Reading:** derive colours, type and spacing from the project's token files
+  rather than inventing values. `tokens/colors.css` is the authority, and it is a
+  verbatim copy of `src/styles/tokens.css` — if the two disagree, the repo wins
+  and the project needs re-syncing.
+- **Writing:** push a card back when you add a durable, reusable pattern. Sync
+  **incrementally, one component at a time** — never wholesale-replace the project.
+- Colours there are HSL triplets without the `hsl()` wrapper, so they compose with
+  alpha: `background: hsl(var(--primary) / 0.12)`.
+
+The **report-template** layer of the system — the five voices the PDF catalogue is
+built from — is generated from code so it cannot drift:
+`npm run templates:library:cards`, then push `.design-system/report-templates/`.
+See [`docs/template-library/06-design-system.md`](./docs/template-library/06-design-system.md).
+
 If your tool does **not** support MCP/skills, still follow the same intent: prefer
 shadcn components, design deliberately, verify in a browser, and review for
 accessibility.

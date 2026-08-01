@@ -114,6 +114,7 @@
     "test:solicitor-phase15": "node --test tests/solicitor-portal/phase15-controlled-cutover.test.mjs",
     "test:solicitor-phase15-migration": "node scripts/solicitor-portal/phase-15-migration-check.mjs",
     "templates:library:seed": "tsx scripts/template-library/buildSeedCatalogue.ts",
+    "templates:library:cards": "tsx scripts/template-library/buildDesignSystemCards.ts",
     "templates:library:verify": "vitest run src/lib/templateLibrary"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
 /**
  * Composable page/block helpers for the seeded catalogue.
  *
- * Two rules hold everything together:
+ * Four rules hold everything together:
  *
  *  1. **Geometry is computed, never guessed.** `flow()` stacks blocks down a
  *     page from a single margin constant, so a template author changes content
@@ -15,12 +15,31 @@
  *     `isBrandSafe()` reports true. The block renderers already default to
  *     `token:primary` / `token:bg` / `token:muted`, so the safest thing an
  *     author can do is omit a colour entirely.
+ *  4. **Type and rhythm come from the voice, not the call site.** A template
+ *     declares its voice once via `beginTemplate()`; every helper below then
+ *     sizes itself from `scripts/template-library/designSystem.ts`. This is
+ *     what makes the catalogue's `style` axis mean something — see the module
+ *     comment there for why it previously did not.
  */
 import { randomUUID } from 'node:crypto';
+import {
+  runningHeadFor,
+  VOICES,
+  type AccentName,
+  type Voice,
+  type VoiceId,
+} from './designSystem';
 
 export const PAGE = { width: 595, height: 842 } as const;
 export const MARGIN = 42;
 export const CONTENT_WIDTH = PAGE.width - MARGIN * 2; // 511pt
+/** Height of the standing footer, reserved at the foot of every content page. */
+export const FOOTER_HEIGHT = 26;
+/**
+ * The lowest point a flowed block may reach before it collides with the
+ * footer. Enforced by `flow()`; see `takeOverflows()`.
+ */
+export const CONTENT_BOTTOM = PAGE.height - MARGIN - FOOTER_HEIGHT; // 774pt
 
 export interface BlockDef {
   id: string;
@@ -46,6 +65,21 @@ export interface FlowItem {
   gap?: number;
 }
 
+// ── Active voice ─────────────────────────────────────────────────────────────
+
+/**
+ * The voice the helpers below size themselves from.
+ *
+ * Module-level state rather than a parameter threaded through every helper:
+ * a template is built by one `build*()` function from top to bottom, and the
+ * alternative is adding a `voice` argument to some five hundred call sites for
+ * no gain in expressiveness. `beginTemplate()` sets it, and every template
+ * function must call that before building pages.
+ */
+let activeVoice: Voice = VOICES.corporate;
+let activeAccent: AccentName = 'gold';
+let activeRunningHead = '';
+
 let counter = 0;
 /** Deterministic ids: a seed migration re-run must produce identical SQL. */
 function id(type: string): string {
@@ -57,22 +91,94 @@ export function resetIds(): void {
   counter = 0;
 }
 
+/**
+ * Open a template. Resets the id counter and selects the voice, accent and
+ * running head that every helper below will use until the next call.
+ *
+ * `category` drives the running head — the eyebrow that names the *document*
+ * above each section heading. See `RUNNING_HEAD` for why it is the document
+ * rather than the section.
+ */
+export function beginTemplate(style: VoiceId, accent: AccentName, category: string): void {
+  resetIds();
+  activeVoice = VOICES[style];
+  activeAccent = accent;
+  activeRunningHead = runningHeadFor(category);
+}
+
+export function currentVoice(): Voice {
+  return activeVoice;
+}
+
+export function currentAccent(): AccentName {
+  return activeAccent;
+}
+
+// ── Layout overflow guard ────────────────────────────────────────────────────
+
+export interface Overflow {
+  page: string;
+  bottom: number;
+  overBy: number;
+}
+
+const overflows: Overflow[] = [];
+/** Marker for an overflow whose page has not been named yet. */
+const UNNAMED = '(unnamed)';
+
+/**
+ * Log a flow that ran into the footer.
+ *
+ * The page name is not known here: templates are written as
+ * `page('Financials', flow([...]))`, and JavaScript evaluates the argument
+ * before the call, so `flow()` always runs first. Entries are therefore
+ * recorded unnamed and back-filled by `page()`.
+ */
+function recordOverflow(bottom: number): void {
+  if (bottom > CONTENT_BOTTOM) {
+    overflows.push({ page: UNNAMED, bottom, overBy: Math.round(bottom - CONTENT_BOTTOM) });
+  }
+}
+
+/**
+ * Drain the overflow log.
+ *
+ * `buildSeedCatalogue.ts` calls this and refuses to write a migration if
+ * anything is in it. Without the check, a change to the shared type scale
+ * pushes content under the footer on some subset of forty templates and the
+ * only symptom is a customer's report with a truncated table.
+ */
+export function takeOverflows(): Overflow[] {
+  return overflows.splice(0, overflows.length);
+}
+
 function block(type: string, props: Record<string, unknown>, name?: string): BlockDef {
   return { id: id(type), type, props, overlays: [], ...(name ? { name } : {}) };
 }
 
-/** Stack items from `startY`, honouring each item's height and gap. */
+/**
+ * Stack items from `startY`, honouring each item's height, gap, and the active
+ * voice's rhythm. Records an overflow if the stack runs into the footer.
+ */
 export function flow(items: FlowItem[], startY = MARGIN): BlockDef[] {
   let y = startY;
   const out: BlockDef[] = [];
   for (const item of items) {
     out.push(item.block(y));
-    y += item.height + (item.gap ?? 16);
+    y += item.height + (item.gap ?? 16 + activeVoice.rhythm);
   }
+  // The last gap is trailing whitespace, not occupied space.
+  const last = items[items.length - 1];
+  recordOverflow(last ? y - (last.gap ?? 16 + activeVoice.rhythm) : y);
   return out;
 }
 
 export function page(name: string, blocks: BlockDef[], background = 'token:surface'): PageDef {
+  // Back-fill the flow(s) whose blocks this page is being built from.
+  for (let i = overflows.length - 1; i >= 0; i -= 1) {
+    if (overflows[i].page !== UNNAMED) break;
+    overflows[i].page = name;
+  }
   return {
     id: id('page'),
     name,
@@ -97,7 +203,7 @@ export function cover(opts: {
       title: opts.title,
       subtitle: opts.subtitle ?? '',
       footnote: opts.footnote ?? '',
-      titleSize: opts.titleSize ?? 40,
+      titleSize: opts.titleSize ?? activeVoice.coverSize,
       bg: 'token:bg',
       accent: 'token:primary',
       color: 'token:text',
@@ -107,15 +213,55 @@ export function cover(opts: {
 
 // ── Flow-item factories ──────────────────────────────────────────────────────
 
-export function heading(text: string, body?: string, height = 58): FlowItem {
+/**
+ * Vertical space the eyebrow adds above a heading.
+ *
+ * The eyebrow is the design system's signature — the brand's wide uppercase
+ * label, previously used on covers only. Carrying it onto section headings is
+ * what tells a reader eleven pages into a dossier which section they are in.
+ * It costs this much room, which `heading()` adds on the caller's behalf so no
+ * template has to restate its heights.
+ */
+const EYEBROW_SPACE = 15;
+
+/**
+ * A section heading, under the running head.
+ *
+ * The eyebrow defaults to the template's running head — the document's name,
+ * not the section's. Defaulting it to the heading text instead, which is the
+ * obvious thing to do, produces "EXECUTIVE SUMMARY / Executive summary": the
+ * same words twice, which reads as a mistake rather than a signature.
+ *
+ * `height` describes the heading and its body copy, as it always has; the
+ * eyebrow's space is added on top. Pass `null` to suppress it on a page where
+ * a label would be noise.
+ */
+export function heading(
+  text: string,
+  body?: string,
+  height = 58,
+  eyebrow?: string | null,
+): FlowItem {
+  const label = eyebrow === undefined ? activeRunningHead : eyebrow;
+  // Never repeat the heading back at the reader.
+  const showEyebrow = typeof label === 'string'
+    && label.length > 0
+    && label.trim().toLowerCase() !== text.trim().toLowerCase();
   return {
-    height,
+    height: height + (showEyebrow ? EYEBROW_SPACE : 0),
     block: (y) => block('text-block', {
+      ...(showEyebrow
+        ? {
+          eyebrow: label,
+          eyebrowSize: activeVoice.eyebrowSize,
+          eyebrowColor: 'token:primary',
+        }
+        : {}),
       heading: text,
       body: body ?? '',
-      headingSize: 17,
-      headingColor: 'token:primary',
-      bodySize: 9.5,
+      headingSize: activeVoice.headingSize,
+      headingColor: 'token:ink',
+      bodySize: activeVoice.bodySize,
       color: 'token:ink',
       x: MARGIN, y, width: CONTENT_WIDTH,
     }),
@@ -127,20 +273,30 @@ export function prose(body: string, height = 52): FlowItem {
     height,
     block: (y) => block('text-block', {
       body,
-      bodySize: 9.5,
+      bodySize: activeVoice.bodySize,
       color: 'token:ink',
       x: MARGIN, y, width: CONTENT_WIDTH,
     }),
   };
 }
 
+/**
+ * The section rule.
+ *
+ * Every voice draws this differently, and that difference is most of what makes
+ * the five look like five: Chancery divides with a full accent rule, Broadsheet
+ * whispers with a beige hairline, Slip states its case with a short bold stub.
+ */
 export function rule(height = 2): FlowItem {
+  const v = activeVoice;
   return {
     height,
     gap: 14,
     block: (y) => block('divider', {
-      color: 'token:primary', style: 'solid', thickness: 1.5,
-      x: MARGIN, y, width: CONTENT_WIDTH,
+      color: v.ruleColor === 'accent' ? 'token:primary' : 'token:line',
+      style: v.ruleStyle,
+      thickness: v.ruleWeight,
+      x: MARGIN, y, width: Math.round(CONTENT_WIDTH * v.ruleSpan),
     }),
   };
 }
@@ -155,17 +311,33 @@ export function kpis(items: Array<{ label: string; value: string }>, height = 92
       tileBg: 'token:panel',
       accent: 'token:primary',
       labelColor: 'token:muted',
+      radius: activeVoice.radii.md,
+      // A four-up tile is ~87pt wide; a formatted currency value overruns the
+      // renderer's 20pt default and gets clipped mid-figure.
+      valueSize: items.length >= 4 ? 15 : items.length === 3 ? 17 : 19,
       x: MARGIN, y, width: CONTENT_WIDTH, height,
     }),
   };
 }
 
+/**
+ * A data table.
+ *
+ * `numeric` marks the columns that hold figures. Under the technical voice they
+ * are set in IBM Plex Mono and right-aligned, which is the only reason a
+ * ten-year projection is readable down the column; under the other voices they
+ * still get tabular figures so the digits align.
+ */
 export function table(
   headers: string[],
   rows: string[][],
   columnWidths?: number[],
   rowHeight = 22,
+  numeric?: number[],
 ): FlowItem {
+  // Convention across this catalogue: column 0 labels the row, the rest carry
+  // figures. Templates that differ pass `numeric` explicitly.
+  const numericColumns = numeric ?? headers.map((_, i) => i).slice(1);
   return {
     height: 30 + rows.length * rowHeight,
     block: (y) => block('data-table', {
@@ -176,6 +348,9 @@ export function table(
       headerFg: 'token:onPrimary',
       stripeBg: 'token:panel',
       cellFg: 'token:ink',
+      borderColor: 'token:line',
+      numericColumns,
+      ...(activeVoice.mono ? { numericFont: 'token:mono' } : {}),
       x: MARGIN, y, width: CONTENT_WIDTH,
     }),
   };
@@ -189,6 +364,7 @@ export function callout(title: string, body: string, variant = 'info', height = 
       accent: 'token:primary',
       bg: 'token:panel',
       color: 'token:ink',
+      radius: activeVoice.radii.md,
       x: MARGIN, y, width: CONTENT_WIDTH,
     }),
   };
@@ -206,7 +382,7 @@ export function twoColumn(
       rightHeading: right.heading, rightBody: right.body,
       ratio: 0.5, gap: 22,
       headingSize: 12, headingColor: 'token:primary',
-      bodySize: 9.5, bodyColor: 'token:ink',
+      bodySize: activeVoice.bodySize, bodyColor: 'token:ink',
       x: MARGIN, y, width: CONTENT_WIDTH,
     }),
   };
@@ -323,14 +499,28 @@ export function checklist(
   };
 }
 
+/**
+ * Two columns of bullets — strengths on the left, watch points on the right.
+ *
+ * The per-item allowance assumes **two lines**, not one. Every item is a
+ * `{{binding}}`, so the real length is unknowable at build time; but each
+ * column is only ~227pt wide, and a written strength ("412m² of R2 land, 18%
+ * above the suburb average lot size") wraps at that measure almost every time.
+ * The previous one-line allowance let the block run into whatever followed it.
+ */
 export function strengthsWatch(strengths: string[], watch: string[]): FlowItem {
   return {
-    height: 40 + Math.max(strengths.length, watch.length) * 20,
+    height: 40 + Math.max(strengths.length, watch.length) * 34,
     block: (y) => block('strengths-watch', {
       strengthsTitle: 'Strengths',
       strengths,
       watchTitle: 'Watch points',
       watch,
+      positiveColor: 'token:positive',
+      cautionColor: 'token:caution',
+      onFillColor: 'token:surface',
+      color: 'token:ink',
+      radius: activeVoice.radii.sm,
       x: MARGIN, y, width: CONTENT_WIDTH,
     }),
   };
@@ -403,7 +593,7 @@ export function signature(signerName: string, signerRole: string): FlowItem {
     height: 90,
     block: (y) => block('signature', {
       signerName, signerRole, dateLabel: 'Date',
-      color: 'token:ink', lineColor: 'token:muted', mutedColor: 'token:muted',
+      color: 'token:ink', lineColor: 'token:line', mutedColor: 'token:muted',
       x: MARGIN, y, width: CONTENT_WIDTH,
     }),
   };
@@ -414,8 +604,8 @@ export function contents(entries: string): FlowItem {
     height: 400,
     block: (y) => block('toc', {
       title: entries,
-      titleSize: 22,
-      titleColor: 'token:primary',
+      titleSize: activeVoice.headingSize + 4,
+      titleColor: 'token:ink',
       color: 'token:ink',
       indexColor: 'token:primary',
       size: 10.5,
@@ -427,13 +617,22 @@ export function contents(entries: string): FlowItem {
 
 // ── Page furniture ───────────────────────────────────────────────────────────
 
+/**
+ * The standing footer.
+ *
+ * It used to be a full-bleed band in `token:bg` — a 26pt slab of obsidian
+ * across the foot of every page of every template, which is a large part of
+ * why the catalogue read as heavy and dated. It now sits on the paper under a
+ * hairline, which is both quieter and cheaper to print.
+ */
 export function footer(text: string): BlockDef {
   return block('footer', {
     text,
     align: 'center',
-    bg: 'token:bg',
+    bg: 'token:surface',
     color: 'token:muted',
-    height: 26,
+    ruleColor: 'token:line',
+    height: FOOTER_HEIGHT,
   });
 }
 

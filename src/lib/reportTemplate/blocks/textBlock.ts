@@ -3,6 +3,9 @@
  *
  * Props:
  *   x,y,width,height
+ *   eyebrow?: bindable string — wide uppercase section label above the heading
+ *   eyebrowSize?: pt (default 8)
+ *   eyebrowColor?: bindable color (default token:primary)
  *   heading?: bindable string
  *   body: bindable string (line breaks honoured)
  *   bodySize?: pt (default 10)
@@ -20,6 +23,19 @@ export function drawTextBlock(block: Block, ctx: BlockRenderContext): void {
   const w = Number(p.width ?? page.width - 48);
 
   let cursor = y;
+
+  // The brand eyebrow. jsPDF has no letter-spacing property, but `charSpace`
+  // on the text call is the same thing in points — 0.18em at this size.
+  const eyebrow = resolveBindable(p.eyebrow, ctx);
+  if (eyebrow) {
+    const size = Number(p.eyebrowSize ?? 8);
+    const c = hex(resolveBindableColor(p.eyebrowColor ?? 'token:primary', ctx, '#BF9B50'));
+    doc.setTextColor(c.r, c.g, c.b);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(size);
+    doc.text(eyebrow.toUpperCase(), x, cursor + size, { maxWidth: w, charSpace: size * 0.18 });
+    cursor += size + 6;
+  }
 
   const heading = resolveBindable(p.heading, ctx);
   if (heading) {

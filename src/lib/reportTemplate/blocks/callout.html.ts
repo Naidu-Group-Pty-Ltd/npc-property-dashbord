@@ -21,8 +21,9 @@ export function renderCalloutHtml(block: Block, ctx: HtmlBlockContext): string {
   const fg = resolveBindableColor(p.color ?? v.fg, ctx, v.fg);
   const title = resolveBindable(p.title, ctx);
   const body = resolveBindable(p.body, ctx);
+  const radius = Number.isFinite(Number(p.radius)) ? Number(p.radius) : 6;
 
-  return `<div style="position:absolute;left:${x}pt;top:${y}pt;width:${w}pt;background:${bg};border-radius:6pt;border-left:4pt solid ${accent};padding:14pt 16pt 14pt 44pt;color:${fg};">
+  return `<div style="position:absolute;left:${x}pt;top:${y}pt;width:${w}pt;background:${bg};border-radius:${radius}pt;border-left:4pt solid ${accent};padding:14pt 16pt 14pt 44pt;color:${fg};">
     <div style="position:absolute;left:14pt;top:14pt;width:16pt;height:16pt;background:${accent};color:#fff;border-radius:50%;font-weight:700;font-size:11pt;display:flex;align-items:center;justify-content:center;">${esc(v.glyph)}</div>
     ${title ? `<div style="font-weight:700;font-size:11pt;margin-bottom:4pt;">${esc(title)}</div>` : ''}
     ${body ? `<div style="font-size:9.5pt;line-height:1.4;white-space:pre-wrap;">${esc(body)}</div>` : ''}
