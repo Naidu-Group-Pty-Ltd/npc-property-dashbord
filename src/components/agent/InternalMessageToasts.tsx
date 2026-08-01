@@ -146,6 +146,91 @@ function timeLabel(iso: string) {
   }
 }
 
+/**
+ * A minimised conversation chip. Each chip can be dragged out of the dock to any
+ * spot on the page (position persisted per thread); the grip resets it back to
+ * the dock on double-click.
+ */
+function MinimisedChip({
+  thread,
+  typingNow,
+  onExpand,
+  onDismiss,
+}: {
+  thread: PopupThread;
+  typingNow: boolean;
+  onExpand: () => void;
+  onDismiss: () => void;
+}) {
+  const drag = useDraggablePosition(`aurixa.internalMessages.chipPos.${thread.thread_id}`);
+  const label = thread.kind === 'broadcast' ? thread.title : thread.sender;
+
+  return (
+    <div
+      ref={drag.nodeRef}
+      style={drag.positionStyle}
+      className={cn(
+        'pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border bg-card/95 px-2 py-1.5 backdrop-blur-xl',
+        'shadow-[var(--elevation-2,0_10px_24px_-14px_rgba(0,0,0,0.5))]',
+        drag.dragging && 'z-[70] scale-[1.02] shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
+        drag.position && 'z-[65]',
+        thread.priority === 'urgent'
+          ? 'border-destructive/60'
+          : thread.priority === 'high'
+            ? 'border-warning/50'
+            : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
+      )}
+    >
+      <span
+        {...drag.handleProps}
+        onDoubleClick={drag.reset}
+        role="button"
+        tabIndex={-1}
+        aria-label={`Move ${label} chat — double-click to snap back`}
+        title="Drag to move · double-click to snap back"
+        className="shrink-0 cursor-grab text-muted-foreground/70 hover:text-foreground active:cursor-grabbing"
+      >
+        <GripVertical className="h-3.5 w-3.5" />
+      </span>
+      <button
+        type="button"
+        onClick={onExpand}
+        className="flex min-w-0 items-center gap-2 text-left"
+        aria-label={`Expand conversation with ${label}`}
+      >
+        <span
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold uppercase',
+            thread.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-primary/15 text-primary',
+          )}
+        >
+          {thread.kind === 'broadcast' ? (
+            <Megaphone className="h-3 w-3" />
+          ) : (
+            thread.sender?.trim()?.[0] ?? <MessageSquare className="h-3 w-3" />
+          )}
+        </span>
+        <span className="truncate text-xs font-semibold text-foreground">{label}</span>
+        {thread.unread > 0 && (
+          <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">
+            {thread.unread > 9 ? '9+' : thread.unread}
+          </span>
+        )}
+        {typingNow && <TypingDots className="shrink-0" />}
+      </button>
+      <button
+        type="button"
+        aria-label="Close conversation"
+        onClick={onDismiss}
+        className="shrink-0 rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  );
+}
+
+
 export function InternalMessageToasts() {
   const { user } = useAuth();
   const [threads, setThreads] = useState<PopupThread[]>([]);
