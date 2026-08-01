@@ -56,7 +56,6 @@ import {
   Landmark,
   Scale,
   Hammer,
-  Building2,
   Newspaper,
   Cpu,
   Handshake,
