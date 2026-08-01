@@ -753,9 +753,10 @@ export function InternalMessageToasts() {
               className="h-7 gap-1.5 rounded-full px-3 text-[11px]"
               disabled={
                 (!((drafts[active.thread_id] ?? '').trim()) &&
-                  (pendingFiles[active.thread_id] ?? []).length === 0) ||
+                  attachmentQueue.items.length === 0) ||
                 !!sending[active.thread_id]
               }
+
               onClick={() => send(active)}
             >
               {sending[active.thread_id] ? (
