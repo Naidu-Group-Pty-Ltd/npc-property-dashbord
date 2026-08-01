@@ -672,16 +672,10 @@ export function InternalMessageToasts() {
 
         {/* Reply */}
         <div className="border-t border-border/50 px-3 py-2.5">
-          <InternalAttachmentDrafts
-            files={pendingFiles[active.thread_id] ?? []}
-            uploading={!!sending[active.thread_id] && !!uploadLabel[active.thread_id]}
-            progressLabel={uploadLabel[active.thread_id] ?? null}
-            onRemove={(i) =>
-              setPendingFiles((p) => ({
-                ...p,
-                [active.thread_id]: (p[active.thread_id] ?? []).filter((_, idx) => idx !== i),
-              }))
-            }
+          <InternalAttachmentQueue
+            items={attachmentQueue.items}
+            onRemove={attachmentQueue.remove}
+            onRetry={(id) => attachmentQueue.retry(active.thread_id, id)}
           />
           <input
             ref={fileInputRef}
@@ -690,19 +684,11 @@ export function InternalMessageToasts() {
             accept={INTERNAL_ATTACHMENT_ACCEPT}
             className="hidden"
             onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []);
-              if (picked.length) {
-                setPendingFiles((p) => ({
-                  ...p,
-                  [active.thread_id]: [...(p[active.thread_id] ?? []), ...picked].slice(
-                    0,
-                    MAX_INTERNAL_ATTACHMENTS,
-                  ),
-                }));
-              }
+              addFilesFor(active.thread_id, Array.from(e.target.files ?? []));
               e.target.value = '';
             }}
           />
+
           <Textarea
             value={drafts[active.thread_id] ?? ''}
             onChange={(e) => onDraftChange(active, e.target.value)}
