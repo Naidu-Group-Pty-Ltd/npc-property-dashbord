@@ -21822,33 +21822,6 @@ export type Database = {
         }
         Relationships: []
       }
-      market_update_archive_purge_runs: {
-        Row: {
-          completed_at: string
-          cutoff_at: string
-          deleted_count: number
-          id: string
-          started_at: string
-          status: string
-        }
-        Insert: {
-          completed_at?: string
-          cutoff_at: string
-          deleted_count?: number
-          id?: string
-          started_at?: string
-          status?: string
-        }
-        Update: {
-          completed_at?: string
-          cutoff_at?: string
-          deleted_count?: number
-          id?: string
-          started_at?: string
-          status?: string
-        }
-        Relationships: []
-      }
       market_updates: {
         Row: {
           ai_failure_code: string | null
@@ -21856,8 +21829,6 @@ export type Database = {
           ai_latency_ms: number | null
           ai_status: string | null
           ai_summary: string | null
-          archived_at: string | null
-          archived_by: string | null
           audience_tags: Json
           author: string | null
           candidate_reason: string | null
@@ -21890,7 +21861,6 @@ export type Database = {
           model_used: string | null
           original_url: string | null
           policy_implications: string | null
-          pre_archive_status: string | null
           primary_source_urls: Json
           property_implications: string | null
           provider_attempts: Json
@@ -21926,8 +21896,6 @@ export type Database = {
           ai_latency_ms?: number | null
           ai_status?: string | null
           ai_summary?: string | null
-          archived_at?: string | null
-          archived_by?: string | null
           audience_tags?: Json
           author?: string | null
           candidate_reason?: string | null
@@ -21960,7 +21928,6 @@ export type Database = {
           model_used?: string | null
           original_url?: string | null
           policy_implications?: string | null
-          pre_archive_status?: string | null
           primary_source_urls?: Json
           property_implications?: string | null
           provider_attempts?: Json
@@ -21996,8 +21963,6 @@ export type Database = {
           ai_latency_ms?: number | null
           ai_status?: string | null
           ai_summary?: string | null
-          archived_at?: string | null
-          archived_by?: string | null
           audience_tags?: Json
           author?: string | null
           candidate_reason?: string | null
@@ -22030,7 +21995,6 @@ export type Database = {
           model_used?: string | null
           original_url?: string | null
           policy_implications?: string | null
-          pre_archive_status?: string | null
           primary_source_urls?: Json
           property_implications?: string | null
           provider_attempts?: Json
@@ -31937,7 +31901,6 @@ export type Database = {
       }
     }
     Functions: {
-      purge_expired_market_updates_archive: { Args: never; Returns: number }
       acknowledge_client_document: {
         Args: {
           _acknowledgement_type: string
