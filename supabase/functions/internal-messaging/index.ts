@@ -135,9 +135,13 @@ async function screenAttachments(
       ...a,
       // Trust the sniffed type when we recognised one.
       mime: detected ?? a.mime,
-      scan: scanned ? 'clean' : 'unscanned',
-      scanned_at: new Date().toISOString(),
+      scan: {
+        status: scanned ? 'clean' : 'unscanned',
+        engine: 'magic-byte',
+        at: new Date().toISOString(),
+      },
     } as Attachment);
+
   }
 
   return { safe, blocked };
