@@ -56,6 +56,90 @@ function normaliseAttachments(raw: unknown, threadId: string): Attachment[] {
     .filter((a): a is Attachment => !!a);
 }
 
+/**
+ * Server-side attachment safety gate. Every object is confirmed to exist in the
+ * thread's storage prefix, then its leading bytes are sniffed so a declared MIME
+ * type can never be trusted blindly. Executables / scripted installers are
+ * blocked outright; everything else is stamped `scan: 'clean'` and only becomes
+ * visible to recipients after this check passes.
+ */
+const BLOCKED_EXTENSIONS = new Set([
+  'exe', 'dll', 'com', 'scr', 'pif', 'msi', 'msp', 'cpl', 'jar', 'app',
+  'bat', 'cmd', 'sh', 'ps1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'hta',
+  'apk', 'deb', 'rpm', 'dmg',
+]);
+
+const MAGIC_SIGNATURES: Array<{ bytes: number[]; label: string; blocked: boolean }> = [
+  { bytes: [0x4d, 0x5a], label: 'application/x-dosexec', blocked: true },              // PE / MZ
+  { bytes: [0x7f, 0x45, 0x4c, 0x46], label: 'application/x-elf', blocked: true },       // ELF
+  { bytes: [0xcf, 0xfa, 0xed, 0xfe], label: 'application/x-mach-binary', blocked: true },
+  { bytes: [0xce, 0xfa, 0xed, 0xfe], label: 'application/x-mach-binary', blocked: true },
+  { bytes: [0x25, 0x50, 0x44, 0x46], label: 'application/pdf', blocked: false },
+  { bytes: [0x89, 0x50, 0x4e, 0x47], label: 'image/png', blocked: false },
+  { bytes: [0xff, 0xd8, 0xff], label: 'image/jpeg', blocked: false },
+  { bytes: [0x50, 0x4b, 0x03, 0x04], label: 'application/zip', blocked: false },
+];
+
+function sniff(head: Uint8Array) {
+  for (const sig of MAGIC_SIGNATURES) {
+    if (sig.bytes.every((b, i) => head[i] === b)) return sig;
+  }
+  return null;
+}
+
+async function screenAttachments(
+  sb: ReturnType<typeof admin>,
+  attachments: Attachment[],
+): Promise<{ safe: Attachment[]; blocked: string[] }> {
+  const safe: Attachment[] = [];
+  const blocked: string[] = [];
+
+  for (const a of attachments) {
+    const ext = (a.name.split('.').pop() ?? '').toLowerCase();
+    if (BLOCKED_EXTENSIONS.has(ext)) {
+      blocked.push(a.name);
+      continue;
+    }
+
+    let detected: string | null = null;
+    try {
+      const { data: signed } = await sb.storage
+        .from(ATTACHMENT_BUCKET)
+        .createSignedUrl(a.path, 60);
+      if (!signed?.signedUrl) {
+        blocked.push(a.name);
+        continue;
+      }
+      const res = await fetch(signed.signedUrl, { headers: { Range: 'bytes=0-4095' } });
+      if (!res.ok && res.status !== 206) {
+        blocked.push(a.name);
+        continue;
+      }
+      const head = new Uint8Array(await res.arrayBuffer());
+      const hit = sniff(head);
+      if (hit?.blocked) {
+        blocked.push(a.name);
+        continue;
+      }
+      detected = hit?.label ?? null;
+    } catch {
+      blocked.push(a.name);
+      continue;
+    }
+
+    safe.push({
+      ...a,
+      // Trust the sniffed type when we recognised one.
+      mime: detected ?? a.mime,
+      scan: 'clean',
+      scanned_at: new Date().toISOString(),
+    } as Attachment);
+  }
+
+  return { safe, blocked };
+}
+
+
 function admin() {
   return createClient(
     Deno.env.get('SUPABASE_URL')!,
