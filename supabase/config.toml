@@ -1093,5 +1093,11 @@ verify_jwt = false
 [functions.builder-transactions-admin]
 verify_jwt = true
 
+[functions.builder-portal-construction]
+verify_jwt = false
+
+[functions.builder-construction-admin]
+verify_jwt = true
+
 [functions.create-advanced-client]
 verify_jwt = true

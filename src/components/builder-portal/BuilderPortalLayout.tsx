@@ -1,6 +1,6 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import {
-  Boxes, Building2, HardHat, KanbanSquare, LayoutDashboard, ListChecks, LogOut,
+  Boxes, Building2, Hammer, HardHat, KanbanSquare, LayoutDashboard, ListChecks, LogOut,
   MessageSquare, Receipt, Settings,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -38,6 +38,7 @@ const NAV: BuilderNavItem[] = [
   { to: '/builder/inventory', label: 'Inventory', icon: Boxes, available: true },
   { to: '/builder/transactions', label: 'Transactions', icon: Receipt, available: true },
   { to: '/builder/pipeline', label: 'Pipeline', icon: KanbanSquare, available: true },
+  { to: '/builder/construction', label: 'Construction', icon: Hammer, available: true },
   { to: '/builder/messages', label: 'Messages', icon: MessageSquare, available: false },
   { to: '/builder/tasks', label: 'Tasks', icon: ListChecks, available: false },
   { to: '/builder/settings', label: 'Settings', icon: Settings, available: true },

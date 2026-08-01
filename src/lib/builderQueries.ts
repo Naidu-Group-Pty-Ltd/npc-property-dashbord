@@ -11,6 +11,10 @@ import type {
   BuilderCaseLink, BuilderPipelineColumn, BuilderPipelineStage, BuilderTransaction,
   BuilderTransactionHistoryEntry, BuilderTransactionParty,
 } from '@/lib/builderTransactions';
+import type {
+  BuilderConstructionCase, BuilderConstructionDateHistoryEntry, BuilderConstructionHistoryEntry,
+  BuilderConstructionStage, BuilderMilestone, BuilderPhotograph, BuilderProgressUpdate,
+} from '@/lib/builderConstruction';
 
 /**
  * Builder Portal query layer. Mirrors `src/lib/solicitorQueries.ts`: query keys,
@@ -37,6 +41,11 @@ export const builderKeys = {
   transaction: (transactionId: string) => ['builder', 'transaction', transactionId] as const,
   transactionStats: (projectId: string) => ['builder', 'transaction-stats', projectId] as const,
   pipeline: (projectId: string) => ['builder', 'pipeline', projectId] as const,
+  constructionRoot: () => ['builder', 'construction'] as const,
+  constructionCases: (filters: ConstructionFilters) =>
+    [...builderKeys.constructionRoot(), filters] as const,
+  constructionCase: (caseId: string) => ['builder', 'construction-case', caseId] as const,
+  constructionStats: (projectId: string) => ['builder', 'construction-stats', projectId] as const,
 };
 
 export interface ProjectFilters { search: string; status: string; page: number; pageSize: number }
@@ -363,4 +372,113 @@ export function useBuilderTransactionMutation(transactionId: string) {
       ]);
     },
   });
+}
+
+
+/* ───────────────────────────── CONSTRUCTION ───────────────────────────── */
+
+export interface ConstructionFilters {
+  projectId: string;
+  search: string;
+  status: string;
+  page: number;
+  pageSize: number;
+}
+
+export interface ConstructionPage {
+  records: BuilderConstructionCase[];
+  pagination: { page: number; page_size: number; total: number; total_pages: number };
+}
+
+export interface ConstructionDetail {
+  construction_case: BuilderConstructionCase;
+  project: { id: string; name: string; project_reference: string | null };
+  unit: { id: string; unit_number: string; unit_type: string } | null;
+  stages: BuilderConstructionStage[];
+  milestones: BuilderMilestone[];
+  progress_updates: BuilderProgressUpdate[];
+  photographs: BuilderPhotograph[];
+  status_history: BuilderConstructionHistoryEntry[];
+  date_history: BuilderConstructionDateHistoryEntry[];
+  permissions: Record<string, { view: boolean; edit: boolean; delete: boolean }>;
+}
+
+export interface ConstructionStats {
+  total: number;
+  by_status: Record<string, number>;
+  average_percent: number;
+  overdue: number;
+}
+
+export function useBuilderConstructionCases(filters: ConstructionFilters) {
+  return useQuery({
+    queryKey: builderKeys.constructionCases(filters),
+    queryFn: async ({ signal }) => await invoke('builder-portal-construction', {
+      operation: 'list_cases',
+      project_id: filters.projectId || undefined,
+      search: filters.search,
+      status: filters.status,
+      page: filters.page,
+      page_size: filters.pageSize,
+    }, signal) as ConstructionPage,
+    placeholderData: (previous) => previous,
+    staleTime: 30_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderConstructionCase(caseId: string) {
+  return useQuery({
+    queryKey: builderKeys.constructionCase(caseId),
+    queryFn: ({ signal }) => invoke('builder-portal-construction', {
+      operation: 'get_case', construction_case_id: caseId,
+    }, signal) as Promise<ConstructionDetail>,
+    enabled: Boolean(caseId),
+    retry: retryBuilderQuery,
+  });
+}
+
+export function useBuilderConstructionStats(projectId = '') {
+  return useQuery({
+    queryKey: builderKeys.constructionStats(projectId),
+    queryFn: ({ signal }) => invoke('builder-portal-construction', {
+      operation: 'construction_stats', project_id: projectId || undefined,
+    }, signal) as Promise<ConstructionStats>,
+    staleTime: 60_000,
+    retry: retryBuilderQuery,
+  });
+}
+
+/**
+ * One mutation hook per construction case. The case id is bound here rather than
+ * passed per call so a caller cannot accidentally mutate a different case than
+ * the one on screen.
+ */
+export function useBuilderConstructionMutation(caseId: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      invoke('builder-portal-construction', { ...payload, construction_case_id: caseId }),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: builderKeys.constructionCase(caseId) }),
+        client.invalidateQueries({ queryKey: builderKeys.constructionRoot() }),
+        client.invalidateQueries({ queryKey: ['builder', 'construction-stats'] }),
+      ]);
+    },
+  });
+}
+
+/**
+ * Fetch a short-lived signed URL for one photograph. It is NOT cached: the
+ * server re-resolves the grant on every request and the URL expires in minutes,
+ * so a link that leaks cannot outlive the access that produced it.
+ */
+export async function fetchBuilderPhotographUrl(caseId: string, photographId: string) {
+  const data = await invoke('builder-portal-construction', {
+    operation: 'photograph_url',
+    construction_case_id: caseId,
+    photograph_id: photographId,
+  }) as { url: string; expires_in: number };
+  return data;
 }

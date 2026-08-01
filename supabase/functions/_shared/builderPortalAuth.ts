@@ -526,7 +526,9 @@ export type BuilderActivityEntityType =
   | 'development' | 'project' | 'project_party' | 'project_access'
   | 'stage' | 'building' | 'lot' | 'unit' | 'unit_price' | 'unit_hold'
   | 'reservation' | 'allocation'
-  | 'transaction' | 'transaction_party' | 'transaction_case_link';
+  | 'transaction' | 'transaction_party' | 'transaction_case_link'
+  | 'construction_case' | 'construction_stage' | 'milestone'
+  | 'progress_update' | 'photograph';
 
 /**
  * Append a project event to the trusted activity log.
