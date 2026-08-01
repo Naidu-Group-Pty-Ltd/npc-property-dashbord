@@ -65,7 +65,10 @@ import {
   Banknote,
   BookOpen,
   Lock,
+  ExternalLink,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { openDocumentation } from '@/lib/missionControl';
 import { UserGuideAssistant } from '@/components/user-guide/UserGuideAssistant';
 import { ADDITIONAL_GUIDE_SECTIONS } from '@/lib/userGuideSections';
 import { filterEntitledSections, lockedSections } from '@/lib/userGuideEntitlements';
@@ -1781,8 +1784,18 @@ export default function UserGuide() {
                 </button>
               )}
             </label>
-            <div className="flex min-w-0 items-center rounded-2xl border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground dark:bg-background/40">
-              Full documentation list stays visible while search shows jump results.
+            <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-border/60 bg-background/60 px-3 py-2 text-xs text-muted-foreground dark:bg-background/40">
+              <span>Full documentation list stays visible while search shows jump results.</span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full gap-2"
+                onClick={() => openDocumentation()}
+              >
+                <BookOpen className="h-4 w-4" />
+                Read full documentation
+                <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+              </Button>
             </div>
           </div>
 
@@ -1853,6 +1866,25 @@ export default function UserGuide() {
                 </AccordionTrigger>
                 <AccordionContent className="data-[state=open]:animate-accordion-down data-[state=closed]:animate-accordion-up">
                   <div className="min-h-0 min-w-0 border-t border-border/50 bg-background/45 px-3 py-5 sm:px-5">
+                    {/* The guide is the quick reference; the documentation site
+                        carries the long form. It is gated by the same plan and
+                        add-on entitlement as this page, so a section visible
+                        here is always readable there. */}
+                    <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/15 bg-primary/5 px-4 py-3">
+                      <p className="min-w-0 text-sm leading-6 text-muted-foreground">
+                        Want the full detail on {section.title}?
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-shrink-0 gap-2"
+                        onClick={() => openDocumentation(section.id)}
+                      >
+                        <BookOpen className="h-4 w-4" />
+                        Read documentation
+                        <ExternalLink className="h-3.5 w-3.5 opacity-70" />
+                      </Button>
+                    </div>
                     <div className="ml-2 min-w-0 space-y-5 border-l-2 border-primary/25 pl-3 sm:ml-5 sm:pl-6">
                     {section.items.map((item, itemIndex) => (
                       <article
