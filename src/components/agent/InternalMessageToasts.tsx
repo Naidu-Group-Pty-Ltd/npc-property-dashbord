@@ -773,7 +773,9 @@ export function InternalMessageToasts() {
           </div>
         </div>
       </div>
+      )}
     </div>
+
   );
 }
 
