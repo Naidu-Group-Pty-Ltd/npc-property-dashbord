@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchiveOutcome, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -147,16 +147,42 @@ export async function clearMarketSourceError(source_id: string): Promise<MarketS
   } catch (e) { throw operationalError('function', e, 'market-updates-source-admin'); }
 }
 
-/**
- * Takes a published update off the dashboard, or puts it back. Hiding sets the
- * row to `ignored` rather than deleting it so the dedupe hash survives and a
- * later ingestion run cannot rediscover and republish the same article.
- */
+/** Temporary compatibility wrapper for the pre-Phase-4 Remove/Undo UI. */
 export async function setMarketUpdateHidden(updateId: string, hidden: boolean): Promise<void> {
   try {
     const { error } = await invokeSecureFunction('market-updates-curate', { action: hidden ? 'hide' : 'restore', updateId });
     if (error) throw error;
   } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+}
+
+export async function archiveMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
+  try {
+    const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'archive', updateId });
+    if (error) throw error;
+    const outcome = data?.outcome;
+    if (outcome !== 'archived' && outcome !== 'already_archived') throw new Error('Archive operation returned an invalid outcome.');
+    return outcome;
+  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+}
+
+export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
+  try {
+    const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'restore', updateId });
+    if (error) throw error;
+    const outcome = data?.outcome;
+    if (outcome !== 'restored' && outcome !== 'already_restored') throw new Error('Restore operation returned an invalid outcome.');
+    return outcome;
+  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+}
+
+export async function fetchMarketUpdateArchive(options: { search?:string; page?:number; pageSize?:number; sort?:'archived_desc'|'deletion_asc' } = {}): Promise<MarketUpdateArchivePage> {
+  const payload = await invokeMarketRead<{ archive?:MarketUpdateArchivePage }>({ action:'archive', ...options });
+  const archive = payload.archive;
+  if (!archive) throw operationalError('database', new Error('Market Updates archive was missing.'), 'market-updates-status');
+  return {
+    items:safeArray<ArchivedMarketUpdate>(archive.items).map(item => ({ ...item, geography:safeArray(item.geography), days_remaining:Number(item.days_remaining ?? 0) })),
+    count:Number(archive.count ?? 0), page:Number(archive.page ?? 1), pageSize:Number(archive.pageSize ?? 20), hasMore:Boolean(archive.hasMore),
+  };
 }
 
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {

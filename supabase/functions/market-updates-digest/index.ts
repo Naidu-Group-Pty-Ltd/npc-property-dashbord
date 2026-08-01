@@ -172,6 +172,7 @@ Deno.serve(async (req) => {
       "id, title, category, segments, impact_level, geography, source_name, source_url, source_published_at, ai_summary, why_it_matters, citation_urls, ingested_at",
     )
     .eq("status", "published")
+    .is("archived_at", null)
     .gte("ingested_at", start.toISOString())
     .lt("ingested_at", end.toISOString())
     .order("ingested_at", { ascending: false })
@@ -184,8 +185,8 @@ Deno.serve(async (req) => {
   const [{ count:candidateCount, error:candidateError }, { data:lastPublished, error:lastPublishedError }] = await Promise.all([
     // Shadow-mode rows are also candidates, but they are validation evidence rather
     // than work awaiting an operator decision, so they are excluded from this count.
-    sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status','candidate').eq('visibility','public').gte('ingested_at',start.toISOString()).lt('ingested_at',end.toISOString()),
-    sb.from('market_updates').select('source_published_at,ingested_at').eq('status','published').order('ingested_at',{ascending:false}).limit(1).maybeSingle(),
+    sb.from('market_updates').select('id',{ count:'exact',head:true }).eq('status','candidate').eq('visibility','public').is('archived_at',null).gte('ingested_at',start.toISOString()).lt('ingested_at',end.toISOString()),
+    sb.from('market_updates').select('source_published_at,ingested_at').eq('status','published').is('archived_at',null).order('ingested_at',{ascending:false}).limit(1).maybeSingle(),
   ]);
   if (candidateError || lastPublishedError) {
     await sb.from('market_digests').update({status:'failed',completed_at:new Date().toISOString(),error_code:'digest_context_failed',safe_error_message:'Digest context could not be loaded.'}).eq('period',period).eq('period_key',periodKey);
