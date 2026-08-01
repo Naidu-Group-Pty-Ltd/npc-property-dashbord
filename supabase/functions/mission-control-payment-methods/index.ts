@@ -54,7 +54,11 @@ Deno.serve(async (req) => {
     }
 
     let mcAction: PaymentMethodAction;
-    if (action === "make_primary" && typeof body?.paymentMethodId === "string") {
+    if (action === "sync_default") {
+      // No payload: Mission Control re-reads the wallet and pushes the primary
+      // card onto the Stripe customer. Repairs drift without reordering cards.
+      mcAction = { action: "sync_default" };
+    } else if (action === "make_primary" && typeof body?.paymentMethodId === "string") {
       mcAction = { action: "make_primary", paymentMethodId: body.paymentMethodId };
     } else if (action === "remove" && typeof body?.paymentMethodId === "string") {
       mcAction = { action: "remove", paymentMethodId: body.paymentMethodId };

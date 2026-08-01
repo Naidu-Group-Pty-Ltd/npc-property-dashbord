@@ -21,9 +21,54 @@
 
 import { getTrustedClientIp } from './requestSecurity.ts';
 
-async function consumeQuota(supabase: any, key: string, opts: { limit: number; windowMs: number }): Promise<{ ok: boolean; retryAfterMs: number }> {
+/**
+ * Per-isolate fallback counter, used only when the shared DB primitive cannot
+ * answer. Weaker than the shared limiter — a horizontally scaled deployment
+ * gets one window per isolate — but a real ceiling nonetheless, and vastly
+ * better than the two alternatives when the primitive is missing: no limit at
+ * all, or (as this did) refusing every request.
+ */
+const localBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function consumeLocalQuota(key: string, opts: { limit: number; windowMs: number }): { ok: boolean; retryAfterMs: number } {
+  const now = Date.now();
+  const bucket = localBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    localBuckets.set(key, { count: 1, resetAt: now + opts.windowMs });
+    // Opportunistic sweep so a long-lived isolate does not accumulate keys.
+    if (localBuckets.size > 5_000) {
+      for (const [k, v] of localBuckets) if (v.resetAt <= now) localBuckets.delete(k);
+    }
+    return { ok: true, retryAfterMs: 0 };
+  }
+  bucket.count += 1;
+  return bucket.count <= opts.limit
+    ? { ok: true, retryAfterMs: 0 }
+    : { ok: false, retryAfterMs: Math.max(0, bucket.resetAt - now) };
+}
+
+/**
+ * Consume one unit against the shared rate-limit primitive.
+ *
+ * `security_consume_rate_limit` being UNAVAILABLE is a different fact from a
+ * caller being over their limit, and conflating the two took down features
+ * that were working correctly. The migration that defines it (20260723140000)
+ * had never been applied to production, so every call returned an RPC error,
+ * every helper reported `ok: false`, and Street View answered 429 to every
+ * request while telling the user Google had no imagery for their address.
+ *
+ * So: an over-limit answer still denies, but an unavailable primitive falls
+ * back to a per-isolate counter and logs. These callers are authenticated and
+ * module-gated; the quota is defence-in-depth against a staff member looping,
+ * not a public abuse boundary, and disabling the feature outright is the more
+ * expensive failure.
+ */
+async function consumeQuota(supabase: any, key: string, opts: { limit: number; windowMs: number }): Promise<{ ok: boolean; retryAfterMs: number; degraded?: boolean }> {
   const { data, error } = await supabase.rpc('security_consume_rate_limit', { p_key: key, p_max: opts.limit, p_window_seconds: Math.max(1, Math.ceil(opts.windowMs / 1000)) });
-  if (error || !data?.[0]) return { ok: false, retryAfterMs: 1000 };
+  if (error || !data?.[0]) {
+    console.warn('[abuse-controls] shared rate limiter unavailable, using per-isolate fallback:', error?.message ?? 'empty response');
+    return { ...consumeLocalQuota(key, opts), degraded: true };
+  }
   return { ok: data[0].allowed === true, retryAfterMs: Number(data[0].retry_after_seconds || 0) * 1000 };
 }
 export async function enforceIpQuota(supabase: any, ip: string | null, scope: string, opts: { limit: number; windowMs: number }) { return consumeQuota(supabase, `public:ip:${ip || 'unknown'}:${scope}`, opts); }

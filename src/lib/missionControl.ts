@@ -412,11 +412,29 @@ export interface PaymentMethodRecord {
   role: string;
   originUsername: string | null;
   createdAt: string;
+  /** Stripe's own id for this card. */
+  stripePaymentMethodId?: string | null;
+  /**
+   * Whether Stripe will actually charge this card.
+   *
+   * Distinct from `priority`, which is only this platform's record of intent.
+   * They diverge when a sync fails, a card is changed in the Stripe dashboard,
+   * or a subscription flow moves the default — and a badge that says "Primary"
+   * while Stripe charges a different card is the failure worth surfacing.
+   *
+   * `null` means Stripe could not be reached, which is not the same as false.
+   */
+  isStripeDefault?: boolean | null;
+  /** Whether Stripe still has this card attached. null = not reachable. */
+  attachedAtStripe?: boolean | null;
 }
 
 export interface PaymentMethodsResult {
   paymentMethods: PaymentMethodRecord[];
   maxPaymentMethods: number;
+  /** False when Mission Control could not reach Stripe on this call. */
+  stripeVerified?: boolean;
+  stripeDefaultPaymentMethodId?: string | null;
 }
 
 export async function fetchPaymentMethods(): Promise<PaymentMethodsResult> {
@@ -432,7 +450,9 @@ export async function fetchPaymentMethods(): Promise<PaymentMethodsResult> {
 export type PaymentMethodUpdate =
   | { action: "make_primary"; paymentMethodId: string }
   | { action: "reorder"; orderedIds: string[] }
-  | { action: "remove"; paymentMethodId: string };
+  | { action: "remove"; paymentMethodId: string }
+  /** Push the primary card back onto the Stripe customer as its default. */
+  | { action: "sync_default" };
 
 /** Admin-only server-side; throws with the server's error message otherwise. */
 export async function updatePaymentMethods(

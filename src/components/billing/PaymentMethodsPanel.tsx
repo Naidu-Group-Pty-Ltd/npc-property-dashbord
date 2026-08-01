@@ -65,6 +65,10 @@ function isExpiringSoon(m: PaymentMethodRecord): boolean {
 export function PaymentMethodsPanel() {
   const [methods, setMethods] = useState<PaymentMethodRecord[]>([]);
   const [maxCards, setMaxCards] = useState(3);
+  // What Stripe itself reports. `stripeVerified` false means we could not ask,
+  // which the UI must present differently from "asked, and they disagree".
+  const [stripeVerified, setStripeVerified] = useState(false);
+  const [stripeDefaultId, setStripeDefaultId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +87,8 @@ export function PaymentMethodsPanel() {
         const result = await fetchPaymentMethods();
         setMethods(result.paymentMethods);
         setMaxCards(result.maxPaymentMethods);
+        setStripeVerified(result.stripeVerified === true);
+        setStripeDefaultId(result.stripeDefaultPaymentMethodId ?? null);
         setError(null);
         setErrorKind(null);
         break;
@@ -119,12 +125,16 @@ export function PaymentMethodsPanel() {
       const result = await updatePaymentMethods(update);
       setMethods(result.paymentMethods);
       setMaxCards(result.maxPaymentMethods);
+      setStripeVerified(result.stripeVerified === true);
+      setStripeDefaultId(result.stripeDefaultPaymentMethodId ?? null);
       toast.success(
         update.action === "remove"
-          ? "Card removed."
+          ? "Card removed at Stripe."
           : update.action === "make_primary"
-            ? "Primary card updated."
-            : "Card order updated.",
+            ? "Primary card updated — Stripe will now charge it."
+            : update.action === "sync_default"
+              ? "Stripe default re-synced."
+              : "Card order updated.",
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Update failed";
@@ -148,6 +158,16 @@ export function PaymentMethodsPanel() {
   }
 
   const sorted = [...methods].sort((a, b) => a.priority - b.priority);
+
+  // Drift: this workspace says one card is primary, Stripe will charge another.
+  // Only claimed when Stripe actually answered — `stripeVerified` false means
+  // we could not ask, and asserting a mismatch from ignorance would be worse
+  // than saying nothing.
+  const localPrimary = sorted.find((m) => m.priority === 1) ?? null;
+  const stripeCharges = sorted.find((m) => m.isStripeDefault === true) ?? null;
+  const defaultDrifted =
+    stripeVerified && sorted.length > 0 && localPrimary?.isStripeDefault !== true;
+  const orphaned = stripeVerified ? sorted.filter((m) => m.attachedAtStripe === false) : [];
   // While the wallet backend is unprovisioned, a card vaulted on Stripe's
   // page would never land in the wallet — block the entry point entirely.
   const canAdd = methods.length < maxCards && errorKind !== "not_provisioned";
@@ -208,6 +228,58 @@ export function PaymentMethodsPanel() {
             >
               Retry
             </Button>
+          </div>
+        )}
+
+        {/* What Stripe actually holds. A wallet that only reports its own table
+            can look perfectly healthy while Stripe charges a different card —
+            which is the whole point of showing this. */}
+        {!loading && sorted.length > 0 && (
+          <div
+            className={cn(
+              "flex min-w-0 flex-col gap-3 rounded-2xl border px-4 py-3 text-xs sm:flex-row sm:items-center sm:justify-between",
+              defaultDrifted || orphaned.length > 0
+                ? "border-warning/30 bg-warning/10 text-warning-foreground"
+                : stripeVerified
+                  ? "border-success/25 bg-success/10 text-foreground"
+                  : "border-border/60 bg-muted/25 text-muted-foreground",
+            )}
+          >
+            <div className="flex min-w-0 items-start gap-2">
+              {stripeVerified ? (
+                defaultDrifted || orphaned.length > 0 ? (
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                ) : (
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                )
+              ) : (
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              )}
+              <span className="min-w-0 break-words">
+                {!stripeVerified
+                  ? "Couldn't confirm these against Stripe just now — the list below is this workspace's record, which may be out of date."
+                  : orphaned.length > 0
+                    ? `Stripe no longer holds ${orphaned.length === 1 ? "one of these cards" : `${orphaned.length} of these cards`}. Remove and re-add to keep charges working.`
+                    : defaultDrifted
+                      ? stripeCharges
+                        ? `Stripe will charge ${stripeCharges.brand ?? "the card"} •••• ${stripeCharges.last4 ?? "????"}, not the card marked Primary here.`
+                        : "Stripe has no default card set, so renewals have nothing to charge."
+                      : "Confirmed with Stripe — the Primary card below is the one Stripe will charge."}
+              </span>
+            </div>
+            {(defaultDrifted || !stripeVerified) && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0 rounded-xl"
+                disabled={busyId !== null || loading}
+                onClick={() => void applyUpdate({ action: "sync_default" }, "sync")}
+              >
+                <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", busyId === "sync" && "animate-spin")} />
+                Sync with Stripe
+              </Button>
+            )}
           </div>
         )}
 
@@ -272,6 +344,18 @@ export function PaymentMethodsPanel() {
                         {m.funding && (
                           <Badge variant="secondary" className="rounded-full border border-border/60 bg-muted/55 px-2.5 py-0.5 capitalize text-muted-foreground">
                             {m.funding}
+                          </Badge>
+                        )}
+                        {/* The badge that matters: "Primary" is our record of
+                            intent, this is Stripe's actual behaviour. */}
+                        {m.isStripeDefault === true && (
+                          <Badge variant="outline" className="rounded-full border-success/30 bg-success/10 px-2.5 py-0.5 text-success">
+                            Stripe charges this
+                          </Badge>
+                        )}
+                        {m.attachedAtStripe === false && (
+                          <Badge variant="outline" className="rounded-full border-destructive/30 bg-destructive/10 px-2.5 py-0.5 text-destructive">
+                            Not at Stripe
                           </Badge>
                         )}
                       </div>
