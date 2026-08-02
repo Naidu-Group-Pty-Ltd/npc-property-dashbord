@@ -54,11 +54,12 @@ Deno.serve(async (req) => {
   // Keep `hide` as a temporary API alias while the Phase 4 frontend rolls from
   // Remove to Archive. It performs the same server-authoritative archive.
   const action = requestedAction === 'hide' ? 'archive' : requestedAction;
-  if (action !== 'archive' && action !== 'restore') {
+  if (action !== 'archive' && action !== 'restore' && action !== 'publish') {
     return json({ error:'Unknown action', code:'invalid_action', correlation_id:correlationId }, 400, cors, correlationId);
   }
   const updateId = typeof body.updateId === 'string' ? body.updateId : '';
   if (!UUID.test(updateId)) return json({ error:'Invalid update ID', code:'invalid_request', correlation_id:correlationId }, 400, cors, correlationId);
+
 
   const { data: existing, error: readError } = await sb.from('market_updates')
     .select('id,status,archived_at,archived_by,pre_archive_status')
