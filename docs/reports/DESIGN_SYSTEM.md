@@ -345,6 +345,14 @@ PDFs from live form state; there is no row for a server to read.
 | **A** — server-side | data already persisted: investment, market intelligence, portfolio, borrowing capacity | edge function reads the row → builds HTML → WeasyPrint |
 | **B** — client-side HTML | data that exists only in browser state: cash flow, Formara, Q&A | client imports the same design system via the bridge → POSTs HTML to `render-template-pdf` |
 
+### The first format: Borrowing Capacity Snapshot
+
+The Snapshot is a Target A format and the first one being migrated. Its ground
+truth — the five competing implementations, the captured golden, and eleven
+numbered findings against the shipping output — is
+[`BORROWING_CAPACITY.md`](./BORROWING_CAPACITY.md). Phases 1–5 of that migration
+cite those findings by number.
+
 Target B is already in production for Compass via
 `routeReportThroughTemplate.ts` → `render-template-pdf`, with auth, resource-safety
 (`assertSafeRenderResources`), upload and an audit row all solved. Both targets share
