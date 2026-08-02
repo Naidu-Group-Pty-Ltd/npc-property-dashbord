@@ -998,6 +998,10 @@ verify_jwt = false
 # Archive writes use the Command Centre HttpOnly session and are verified in-function.
 verify_jwt = false
 
+[functions.market-news-archive-v2]
+# Versioned canonical archive mutation transport; auth and permissions are enforced in-function.
+verify_jwt = false
+
 [functions.market-updates-curate]
 # Operator curation (hide/restore a published update). Matches the read contract above:
 # authentication and the market_updates can_edit check are enforced in-function.
