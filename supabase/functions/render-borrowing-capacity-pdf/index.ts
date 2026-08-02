@@ -31,6 +31,7 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { canAccessClient } from '../_shared/clientAccess.ts';
+import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import {
@@ -69,23 +70,6 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
-
-/**
- * The tenant's display name, cased for print.
- *
- * The rule is the one `smartCapitalize` uses on the client: a name that is
- * already mixed case is left alone, and one that is all upper or all lower is
- * title-cased. Someone entered "JOHN & MARY SMITH" in a form, and the cover of
- * their report should not shout.
- */
-function displayName(raw: string): string {
-  const name = (raw || '').trim();
-  if (!name) return 'Client';
-  if (name !== name.toLowerCase() && name !== name.toUpperCase()) return name;
-  return name
-    .toLowerCase()
-    .replace(/(^|[\s\-'])(\w)/g, (_m, lead: string, ch: string) => lead + ch.toUpperCase());
-}
 
 /**
  * The company block, out of the key/value table it actually lives in.
@@ -171,7 +155,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       .eq('client_id', request.clientId);
 
     const [clientRes, assessmentRes, whitelabelRes, settingsRes] = await Promise.all([
-      supabase.from('clients').select('id, first_name, surname, company_name').eq('id', request.clientId).maybeSingle(),
+      supabase.from('clients').select(CLIENT_NAME_COLUMNS).eq('id', request.clientId).maybeSingle(),
       request.assessmentId
         ? assessmentQuery.eq('id', request.assessmentId).maybeSingle()
         : assessmentQuery.order('created_at', { ascending: false }).limit(1).maybeSingle(),
@@ -182,17 +166,27 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .in('setting_key', ['contact_details', 'professional_disclaimer']),
     ]);
 
+    // A failed read is not a missing row. Selecting a column that does not
+    // exist returns `{ data: null, error }`, and treating that as "not found"
+    // is what turned a typo into a 404 on every client in the database — see
+    // `CLIENT_NAME_COLUMNS`. The error is the answer here, and it is quoted.
+    for (const [what, res] of [['client', clientRes], ['assessment', assessmentRes]] as const) {
+      if (res.error) {
+        throw new Error(`could not read the ${what}: ${res.error.message}`);
+      }
+    }
+
     if (!clientRes.data) return json({ error: 'not found' }, 404);
     if (!assessmentRes.data) {
       return json({ error: 'no borrowing capacity assessment for this client' }, 409);
     }
 
     const assessment = assessmentRes.data as Record<string, unknown>;
-    const client = clientRes.data as Record<string, unknown>;
-    const clientName = displayName(
-      [client.first_name, client.surname].filter(Boolean).join(' ')
-      || String(client.company_name ?? ''),
-    );
+    // `clientDisplayName` returns '' for a row with no name on it, so the cover
+    // and the filename decide what to do about that rather than the reader. On
+    // this document they say "Client", which is what the filename has always
+    // fallen back to.
+    const clientName = clientDisplayName(clientRes.data as Record<string, unknown>) || 'Client';
 
     // ── The brand, frozen ───────────────────────────────────────────────────
 

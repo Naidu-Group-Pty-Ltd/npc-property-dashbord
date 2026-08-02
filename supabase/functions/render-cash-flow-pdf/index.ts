@@ -34,6 +34,7 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
 import { countPdfPages, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
@@ -68,22 +69,6 @@ const json = (body: unknown, status = 200) =>
     status,
     headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
-
-/**
- * The client's name, cased for print.
- *
- * The same rule `smartCapitalize` uses on the client: a name already in mixed
- * case is left alone, one that is all upper or all lower is title-cased.
- * Someone typed "JOHN & MARY SMITH" into a form; the cover should not shout.
- */
-function displayName(raw: string): string {
-  const name = (raw || '').trim();
-  if (!name) return '';
-  if (name !== name.toLowerCase() && name !== name.toUpperCase()) return name;
-  return name
-    .toLowerCase()
-    .replace(/(^|[\s\-'])(\w)/g, (_m, lead: string, ch: string) => lead + ch.toUpperCase());
-}
 
 /**
  * The company block, out of the key/value table it lives in.
@@ -190,17 +175,18 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .eq('id', report.client_property_id)
         .maybeSingle();
       if (property?.client_id) {
-        const { data: client } = await supabase
+        const { data: client, error } = await supabase
           .from('clients')
-          .select('first_name, surname, company_name')
+          .select(CLIENT_NAME_COLUMNS)
           .eq('id', property.client_id)
           .maybeSingle();
-        if (client) {
-          clientName = displayName(
-            [client.first_name, client.surname].filter(Boolean).join(' ')
-            || String(client.company_name ?? ''),
-          );
+        // Reported rather than swallowed. This select named three columns that
+        // do not exist on `clients` and nobody noticed, because a name missing
+        // from a cover looks like a report with no client attached.
+        if (error) {
+          console.warn(`[render-cash-flow-pdf] could not read the client: ${error.message}`);
         }
+        clientName = clientDisplayName(client);
       }
     }
 

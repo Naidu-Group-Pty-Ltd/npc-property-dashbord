@@ -850,3 +850,75 @@ superseded by the Snapshot's render route, and deleting one because "the Snapsho
 moved" would take a different document down with it. `legacyPathStays.spec.ts`
 asserts all three are still present, which is the cheapest possible protection
 against exactly that mistake.
+
+---
+
+## 14. F18 — the 404 that was a typo
+
+After §12's three fixes, the route was deployed and still returned
+`{"error":"not found"}` on every attempt, and `borrowing_capacity_renders` was
+still empty.
+
+**The route selected columns that do not exist.**
+
+```ts
+supabase.from('clients').select('id, first_name, surname, company_name')
+```
+
+`clients` stores a primary and a secondary applicant — `primary_first_name`,
+`primary_surname`, `secondary_first_name`, `secondary_surname` — and has no
+company name at all. PostgREST answered `column clients.first_name does not
+exist`, supabase-js returned `{ data: null, error }`, and this line turned that
+into a 404:
+
+```ts
+if (!clientRes.data) return json({ error: 'not found' }, 404);
+```
+
+For every client in the database, on every request, before the render row was
+written. Every other edge function in the repo reads `primary_first_name,
+primary_surname`; the two report renderers were the only ones that did not.
+
+### Why it looked like a permissions problem
+
+"Not found" is what this route says when `canAccessClient` refuses, and that
+check is genuinely fragile here: 759 of 766 clients have a null `created_by` and
+all 766 have a null `assigned_team_user_id`, so access rests entirely on the
+superadmin branch. Hours can go into that before anyone questions the read
+underneath it. (It was fine — all four active staff are `super_admin` in
+`custom_users` and `superadmin` in `user_roles`, and `canonicalizeRole` maps
+both.)
+
+### The three fixes
+
+1. **`_shared/clientName.ts`** — one constant and one function for reading a
+   client's name, so a third format cannot invent a fourth spelling. It also
+   holds the `smartCapitalize` rule, which matters more than it sounds: names in
+   this database are stored lower-case (`rugesh naidu`), and a cover should not
+   print them that way or shout them back.
+
+2. **A failed read is no longer a missing row.** Both reads are checked for
+   `error` before `data`, and an error is thrown with the message the database
+   gave. This is the third time in this function that a select naming the wrong
+   thing has been silently converted into something else — the disclaimer (F17),
+   the contact block (F17) and now the client. It cannot happen a fourth time
+   without saying so.
+
+3. **`render-cash-flow-pdf` had the identical select**, copied from this route.
+   Non-fatal there — the cover simply lost its "prepared for" line — which is
+   exactly why nobody would have found it.
+
+### What holds it
+
+`src/lib/reports/__tests__/clientName.spec.ts`: the constant names the four
+columns the table has and none of the three it does not; the helper is tested
+against the rows production actually holds, joint applicants included; both
+routes must use the shared constant and may spell no client column themselves;
+and the borrowing capacity route must check `error` before `data`. Verified by
+putting the old select back and watching it fail.
+
+Every column both routes name was then checked against
+`information_schema.columns` — all present — and the `upsert_report_brand_snapshot`
+RPC's six parameter names against `pg_get_function_identity_arguments`. String
+keys into a database are exactly what the type checker cannot see, so they were
+checked the only way that means anything.
