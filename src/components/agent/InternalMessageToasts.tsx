@@ -35,6 +35,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useDraggablePosition } from '@/hooks/useDraggablePosition';
+import { useResizablePanel } from '@/hooks/useResizablePanel';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
