@@ -371,6 +371,21 @@ figure on the next.
 
 Both are asserted in `reportCss.spec.ts`.
 
+#### And what the first tenant-branded render found
+
+`assets.pure.ts` capped bytes, restricted MIME and refused URLs and SVG — and
+never looked at how big the picture was. A 1×1 PNG passed every check and
+printed on the cover as a 22mm block. `logo_config` accepts whatever a tenant
+uploads, so a favicon-as-report-mark is a real case, not a contrived one.
+
+The module now reads pixel dimensions from the header — PNG from `IHDR`, JPEG by
+walking the marker chain past EXIF or ICC to the first frame header — and
+rejects below `MIN_ASSET_EDGE_PX` (96) with the measured size in the reason, so
+`resolveReportAsset` walks on to the next mark in the chain. WebP reports "cannot
+measure" rather than guessing across its three containers, and an unmeasurable
+asset is accepted: refusing to print a logo whose header would not parse is worse
+than printing one that might be small.
+
 Target B is already in production for Compass via
 `routeReportThroughTemplate.ts` → `render-template-pdf`, with auth, resource-safety
 (`assertSafeRenderResources`), upload and an audit row all solved. Both targets share

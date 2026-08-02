@@ -42,6 +42,9 @@ import type { ResolvedReportPalette } from '../../reportDesign/roles.pure.ts';
 import type { ReportDesignOptions } from '../../reportDesign/options.pure.ts';
 import type { CompanyBlock } from '../../reportDesign/companyBlock.pure.ts';
 import { REPORT_ARCHETYPES } from '../../reportDesign/structure.pure.ts';
+import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
+import type { CompanyDisclaimer } from '../../reportDesign/companyBlock.pure.ts';
+import { resolveSnapshotBrand } from './brand.pure.ts';
 
 import type { Measure } from './measure.pure.ts';
 import { formatAmount, formatDelta, formatMeasure, periodLabel } from './measure.pure.ts';
@@ -132,6 +135,8 @@ export interface RenderSnapshotInput {
   edition?: string | null;
   /** Printed at the foot of the cover, right side. An assessment id, typically. */
   reference?: string | null;
+  /** Cover foot, left. The snapshot's wording; defaults to the house line. */
+  confidentiality?: string | null;
 }
 
 // ── Section renderers ───────────────────────────────────────────────────────
@@ -480,7 +485,7 @@ export function renderSnapshotBody(input: RenderSnapshotInput): string {
     ].filter((m) => m.value),
     lockup: input.lockup ?? null,
     heroDataUri: input.heroDataUri ?? null,
-    footerLeft: 'Private and confidential',
+    footerLeft: input.confidentiality ?? 'Private and confidential',
     footerRight: input.reference ?? '',
   });
 
@@ -534,6 +539,63 @@ export function renderBorrowingCapacityDocument(input: RenderSnapshotInput): str
     }),
     bodyHtml: renderSnapshotBody(input),
   });
+}
+
+// ── Driven from a brand snapshot ────────────────────────────────────────────
+
+export interface RenderSnapshotFromBrandInput {
+  payload: BorrowingCapacitySnapshot;
+  /**
+   * The brand, as it was at generation time.
+   *
+   * This is the input the render path uses. Everything the document looks like
+   * — the palette, the marks, the company on the cover and the closing page,
+   * the running foot — comes from here, so a report re-issued a year later
+   * reproduces the brand it was issued under rather than today's.
+   */
+  snapshot: ReportBrandSnapshot;
+  disclaimer?: CompanyDisclaimer | null;
+  /** The **tenant's** cover art, inlined. Never the house art — see `brand.pure.ts`. */
+  coverArtDataUri?: string | null;
+  options?: Partial<ReportDesignOptions> | null;
+  edition?: string | null;
+  reference?: string | null;
+}
+
+/**
+ * The document and whatever the snapshot was missing.
+ *
+ * The gaps travel beside the HTML rather than being thrown or swallowed: "no
+ * ABN on an Australian advisory document" is worth a line in a log, and is not
+ * worth failing a client's report over.
+ */
+export interface SnapshotRenderResult {
+  html: string;
+  gaps: string[];
+}
+
+export function renderSnapshotFromBrand(input: RenderSnapshotFromBrandInput): SnapshotRenderResult {
+  const brand = resolveSnapshotBrand({
+    snapshot: input.snapshot,
+    disclaimer: input.disclaimer ?? null,
+    coverArtDataUri: input.coverArtDataUri ?? null,
+  });
+
+  return {
+    html: renderBorrowingCapacityDocument({
+      payload: input.payload,
+      palette: brand.palette,
+      company: brand.company,
+      masthead: brand.masthead,
+      lockup: brand.lockup,
+      heroDataUri: brand.heroDataUri,
+      confidentiality: brand.confidentiality,
+      options: input.options ?? null,
+      edition: input.edition ?? null,
+      reference: input.reference ?? null,
+    }),
+    gaps: brand.gaps,
+  };
 }
 
 /** Re-exported so a caller does not need `measure.pure.ts` just to label a KPI. */

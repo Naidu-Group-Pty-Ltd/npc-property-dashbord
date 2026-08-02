@@ -23,6 +23,8 @@ import {
   MAX_TOTAL_ASSET_BYTES,
   assetBudget,
   base64ByteLength,
+  readImageDimensions,
+  MIN_ASSET_EDGE_PX,
   inlineAsset,
   resolveReportAsset,
   type InlineAsset,
@@ -153,6 +155,63 @@ describe('resolveReportAsset', () => {
   it('resolves cover art only from the cover key', () => {
     expect(resolveReportAsset({ sidebar: SMALL_PNG }, 'cover').resolved).toBeNull();
     expect(resolveReportAsset({ cover: SMALL_PNG }, 'cover').resolved?.source).toBe('cover');
+  });
+});
+
+describe('image dimensions', () => {
+  /**
+   * The byte cap says nothing about how big the picture is, and `logo_config`
+   * accepts whatever the tenant uploads. A favicon passes every other check and
+   * prints on the cover as a 22mm blurred square — seen in a real render, which
+   * is why this check exists.
+   */
+  const png128 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAA8klEQVR42u3SMQ0AAAjAMOQgGzm4Ahsk9JiBpdGVo7+FCQAYAYAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAgAAEwAwAgABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIAAEgAASAABAAAkAACAABIAAEgAAQAAJAAAgAASAABIAAEAACQDdaLmbJjrk146QAAAAASUVORK5CYII=';
+  const png64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAZUlEQVR42u3QQREAAAQAMHHEFkcrcjh7rMCiK+ezECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAgQIECBAgAABAu5b62fyWd5N7L4AAAAASUVORK5CYII=';
+  const jpeg320x200 = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/wAARCADIAUADAREAAiEAAzEA/9k=';
+
+  it('reads a PNG size from its IHDR', () => {
+    expect(readImageDimensions('image/png', png128.split(',')[1])).toEqual({ width: 128, height: 128 });
+  });
+
+  /** Not at a fixed offset: an APP0 or EXIF block precedes the frame header. */
+  it('walks a JPEG marker chain to its frame header', () => {
+    expect(readImageDimensions('image/jpeg', jpeg320x200.split(',')[1])).toEqual({ width: 320, height: 200 });
+  });
+
+  it('admits it cannot measure a WebP rather than guessing', () => {
+    expect(readImageDimensions('image/webp', 'UklGRg==')).toBeNull();
+  });
+
+  it('accepts a mark large enough to print, and carries its size', () => {
+    const result = inlineAsset(png128);
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.asset.dimensions).toEqual({ width: 128, height: 128 });
+  });
+
+  it('refuses one that would print soft, and says how big it was', () => {
+    const result = inlineAsset(png64);
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.reason).toBe('too-small');
+    expect(!result.ok && result.detail).toContain('64x64');
+    expect(!result.ok && result.detail).toContain(String(MIN_ASSET_EDGE_PX));
+  });
+
+  /**
+   * An unmeasurable asset is accepted. Refusing to print a logo because its
+   * header could not be read is worse than printing one that might be small.
+   */
+  it('accepts an asset it cannot measure', () => {
+    const result = inlineAsset('data:image/webp;base64,UklGRhAAAABXRUJQVlA4TAMAAAAvAAAAAA==');
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.asset.dimensions).toBeNull();
+  });
+
+  it('walks past a too-small mark to the next asset in the chain', () => {
+    const { resolved, skipped } = resolveReportAsset({ report: png64, sidebar: png128 }, 'report');
+    expect(resolved?.source).toBe('sidebar');
+    expect(skipped).toEqual([
+      expect.objectContaining({ source: 'report', reason: 'too-small' }),
+    ]);
   });
 });
 

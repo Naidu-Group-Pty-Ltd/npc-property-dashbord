@@ -486,13 +486,65 @@ the claim, so the two can disagree loudly rather than silently.
   inputs. Phase 3 resolves them from a snapshot so a re-issued report reproduces
   the brand it was issued under.
 
-## 8. Phase map
+## 8. The brand (Phase 3)
+
+One input decides what the document looks like: a `ReportBrandSnapshot`.
+`brand.pure.ts` turns it into the palette, the company block, the running-foot
+masthead, the cover lockup and the confidentiality line;
+`renderSnapshotFromBrand` is the entry point the render path uses.
+
+**F1 is answered by construction.** The tenant is on the cover, in the running
+foot of every page and on the closing page, from one resolution. There is no
+branch where our name can appear — a test walks the whole document for "Naidu",
+our tagline, and the first 120 characters of `NPC_HOUSE_COVER_ART` and
+`NPC_HOUSE_MARK`.
+
+The house cover art is deliberately unreachable. Its own doc comment in
+`defaultAssets.generated.ts` says it must never be a white-label fallback: it is
+not a photograph, it is a finished NPC cover with our company name, tagline and
+monogram burned into the pixels. A tenant with no cover art gets the typographic
+cover — a designed state, not a gap.
+
+**F7 is closed for this format.** `#C9A55A` — the fallback cover's gold in
+`BorrowingCapacityPDFReport.tsx`, one of three across the five implementations
+and none of them the brand — now comes from `accentOnField`, the role the design
+system contrast-checks for brand type on a dark ground. A test reads all four
+generator files and fails on the literal. The same line also carried NPC's
+tagline hard-coded under the tenant's name; that is gone too.
+
+**A re-issued report reproduces the brand it was issued under.** That is the
+reason a snapshot exists rather than a lookup: the same snapshot produces
+byte-identical HTML, a changed one does not, and the fingerprint moves with it.
+
+**Gaps are reported, not thrown.** `renderSnapshotFromBrand` returns
+`{ html, gaps }`. A report with no ABN is a worse report, not an impossible one,
+and refusing to render would turn a cosmetic gap into an outage. Phase 4 decides
+where those lines are logged.
+
+### What the tenant render found
+
+The first tenant-branded render put a **22mm red block** on the cover. The
+fixture mark was a 1×1 PNG, and it passed every check the asset policy had:
+`data:` URI, allowed MIME, well-formed base64, under the byte cap. Nothing
+looked at how big the picture was.
+
+That is not a fixture problem. `logo_config` accepts whatever a tenant uploads,
+and a favicon uploaded as a report mark prints at 22mm on the cover and 13mm on
+paper. `assets.pure.ts` now reads the pixel dimensions out of the header — PNG
+from its `IHDR`, JPEG by walking the marker chain past any EXIF or ICC block to
+the first frame header — and rejects below a 96px floor with the measured size
+in the reason, so the fallback chain walks on to the next mark the tenant did
+upload. WebP returns "cannot measure" rather than a guess, and an unmeasurable
+asset is accepted: refusing to print a logo whose header would not parse is
+worse than printing one that might be small.
+
+## 9. Phase map
 
 | Phase | Delivers |
 |---|---|
 | **0** ✅ | This document, the golden capture, and the audit above |
 | **1** ✅ | One payload contract — pure, typed, tested; units and direction carried on values (F2, F9, F10, F13, F14) |
 | **2** ✅ | The document through the design system — structure, primitives, spine (F3, F4, F5, F6) |
-| 3 | Driven from a brand snapshot; the cover stops being a raster (F1, F7) |
+| **3** ✅ | Driven from a brand snapshot; the cover stops being a raster (F1, F7) |
 | 4 | The render path — route, auth, storage, signing; brand typefaces (F8). **F12 is decided here**: the audit trail and the explanation are computed on every assessment and discarded, so the render path has to either persist them or recompute them |
 | 5 | Charts, golden diff against this capture, and deletion of D and the superseded packs |
