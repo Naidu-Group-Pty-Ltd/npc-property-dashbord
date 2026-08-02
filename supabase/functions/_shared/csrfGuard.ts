@@ -33,7 +33,10 @@ function parseAllowedOrigins(): string[] {
     .split(',')
     .map((s: string) => s.trim())
     .filter((s: string) => s.length > 0);
-  return fromEnv.length > 0 ? fromEnv : LEGACY_FALLBACK;
+  // Environment configuration extends the known first-party origins rather
+  // than replacing them. Replacing the list caused preview releases to become
+  // CSRF-denied whenever production configured only the custom domain.
+  return [...new Set([...LEGACY_FALLBACK, ...fromEnv])];
 }
 
 function lovablePreviewSuffixAllowed(origin: string): boolean {
