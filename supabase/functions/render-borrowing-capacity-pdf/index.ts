@@ -31,6 +31,8 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { canAccessClient } from '../_shared/clientAccess.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
+
 import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
