@@ -187,7 +187,8 @@ function MinimisedChip({
   onDismiss: () => void;
 }) {
   const drag = useDraggablePosition(`aurixa.internalMessages.chipPos.${thread.thread_id}`);
-  const label = thread.kind === 'broadcast' ? thread.title : thread.sender;
+  const label = threadLabel(thread);
+
 
   return (
     <div
