@@ -32,11 +32,49 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
-import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
+
+// Self-contained CSRF allowlist (kept local: the shared module can ship stale in
+// a cached bundle, which produced spurious `origin_not_allowed` denials).
+const LOVABLE_PROJECT_ID = '7976d60b-c277-4851-889b-c170285f4be2';
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const EXACT_ORIGINS = new Set([
+  'https://command-centre.npcservices.com.au',
+  'https://npc-property-dashbord.lovable.app',
+  'http://localhost:5173',
+  'http://localhost:8080',
+  ...(Deno.env.get('ALLOWED_ORIGINS') || '').split(',').map((s) => s.trim()).filter(Boolean),
+]);
+
+function originAllowed(origin: string | null): boolean {
+  if (!origin) return false;
+  if (EXACT_ORIGINS.has(origin)) return true;
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    const firstParty = ['.lovable.app', '.lovableproject.com', '.lovable.dev'].some((s) => host.endsWith(s));
+    return firstParty && host.includes(LOVABLE_PROJECT_ID);
+  } catch {
+    return false;
+  }
+}
+
+function csrfCheck(req: Request): { ok: boolean; reason?: string; origin?: string | null } {
+  if (SAFE_METHODS.has(req.method.toUpperCase())) return { ok: true };
+  if (!req.headers.get('cookie')) return { ok: true };
+  const origin = req.headers.get('origin');
+  const referer = req.headers.get('referer');
+  let candidate: string | null = origin;
+  if (!candidate && referer) {
+    try { candidate = new URL(referer).origin; } catch { candidate = null; }
+  }
+  if (!candidate) return { ok: false, reason: 'origin_missing', origin: null };
+  return originAllowed(candidate)
+    ? { ok: true, origin: candidate }
+    : { ok: false, reason: 'origin_not_allowed', origin: candidate };
+}
 
 function admin() {
   return createClient(
