@@ -113,7 +113,7 @@ describe('buildReportBrandSnapshot', () => {
 
   it('resolves both marks, and the mono slot falls back to the colour mark', () => {
     const input = fullInput();
-    input.whitelabel.assets = { report: PNG };
+    input.whitelabel.assets = { report: PNG, reportMono: '' };
     const { snapshot } = buildReportBrandSnapshot(input);
     expect(snapshot.logo.report).toBe(PNG);
     expect(snapshot.logo.mono).toBe(PNG);
