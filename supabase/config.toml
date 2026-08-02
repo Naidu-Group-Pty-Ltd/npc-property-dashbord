@@ -994,6 +994,10 @@ verify_jwt = false
 # Authoritative sanitised read contract; authentication and module access are enforced in-function.
 verify_jwt = false
 
+[functions.market-updates-archive]
+# Archive writes use the Command Centre HttpOnly session and are verified in-function.
+verify_jwt = false
+
 [functions.market-updates-curate]
 # Operator curation (hide/restore a published update). Matches the read contract above:
 # authentication and the market_updates can_edit check are enforced in-function.

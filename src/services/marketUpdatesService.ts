@@ -156,16 +156,34 @@ export async function setMarketUpdateHidden(updateId: string, hidden: boolean): 
 }
 
 export async function setMarketNewsArchiveState(input:SetMarketNewsArchiveStateInput):Promise<SetMarketNewsArchiveStateResult> {
-  try {
-    const {data,error}=await invokeSecureFunction<{ok?:boolean;data?:Omit<SetMarketNewsArchiveStateResult,'correlationId'>;correlationId?:string}>('market-updates-archive',{
-      action:'set_archive_state',
-      updateId:input.updateId,
-      archived:input.archived,
-    });
-    if(error)throw error;
-    if(!data?.ok||!data.data||typeof data.correlationId!=='string')throw new Error('Archive operation returned an invalid response.');
-    return {...data.data,correlationId:data.correlationId};
-  } catch(e) { throw operationalError('function',e,'market-updates-archive'); }
+  const statusAction=input.archived?'archive_write':'restore_write';
+  const primary=await invokeSecureFunction<{outcome?:string;id?:string;archived_at?:string|null;correlation_id?:string}>('market-updates-status',{
+    action:statusAction,
+    updateId:input.updateId,
+  });
+  const expectedOutcomes=input.archived?['archived','already_archived']:['restored','already_restored'];
+  if(!primary.error&&primary.data?.id===input.updateId&&expectedOutcomes.includes(String(primary.data.outcome))){
+    return {
+      id:primary.data.id,
+      isArchived:input.archived,
+      archivedAt:input.archived?primary.data.archived_at??null:null,
+      outcome:primary.data.outcome as SetMarketNewsArchiveStateResult['outcome'],
+      correlationId:primary.data.correlation_id??crypto.randomUUID(),
+    };
+  }
+
+  // Rollback transport: both operations are idempotent, so a stale/partially
+  // deployed status bundle can safely fall through to the single-purpose
+  // archive function without risking a duplicate state transition.
+  const direct=await invokeSecureFunction<{ok?:boolean;data?:Omit<SetMarketNewsArchiveStateResult,'correlationId'>;correlationId?:string}>('market-updates-archive',{
+    action:'set_archive_state',
+    updateId:input.updateId,
+    archived:input.archived,
+  });
+  if(!direct.error&&direct.data?.ok&&direct.data.data&&typeof direct.data.correlationId==='string'){
+    return {...direct.data.data,correlationId:direct.data.correlationId};
+  }
+  throw operationalError('function',direct.error??primary.error??new Error('Archive operation returned an invalid response.'),'market-updates-status');
 }
 
 export async function archiveMarketUpdate(updateId:string):Promise<SetMarketNewsArchiveStateResult> {

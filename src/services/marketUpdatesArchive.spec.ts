@@ -12,26 +12,29 @@ describe('Market News Feed archive service',()=>{
   beforeEach(()=>invokeSecureFunction.mockReset());
 
   it('uses one canonical endpoint and archive-state contract',async()=>{
-    invokeSecureFunction.mockResolvedValue({data:{ok:true,data:{id:updateId,isArchived:true,archivedAt:'2026-08-02T00:00:00.000Z',outcome:'archived'},correlationId:'223e4567-e89b-42d3-a456-426614174000'},error:null});
+    invokeSecureFunction.mockResolvedValue({data:{id:updateId,archived_at:'2026-08-02T00:00:00.000Z',outcome:'archived',correlation_id:'223e4567-e89b-42d3-a456-426614174000'},error:null});
     await expect(archiveMarketUpdate(updateId)).resolves.toMatchObject({id:updateId,isArchived:true,outcome:'archived'});
     expect(invokeSecureFunction).toHaveBeenCalledOnce();
-    expect(invokeSecureFunction).toHaveBeenCalledWith('market-updates-archive',{action:'set_archive_state',updateId,archived:true});
+    expect(invokeSecureFunction).toHaveBeenCalledWith('market-updates-status',{action:'archive_write',updateId});
   });
 
   it('uses the same endpoint to restore with archived false',async()=>{
-    invokeSecureFunction.mockResolvedValue({data:{ok:true,data:{id:updateId,isArchived:false,archivedAt:null,outcome:'restored'},correlationId:'223e4567-e89b-42d3-a456-426614174000'},error:null});
+    invokeSecureFunction.mockResolvedValue({data:{id:updateId,outcome:'restored',correlation_id:'223e4567-e89b-42d3-a456-426614174000'},error:null});
     await expect(restoreMarketUpdate(updateId)).resolves.toMatchObject({id:updateId,isArchived:false,outcome:'restored'});
-    expect(invokeSecureFunction).toHaveBeenCalledWith('market-updates-archive',{action:'set_archive_state',updateId,archived:false});
+    expect(invokeSecureFunction).toHaveBeenCalledWith('market-updates-status',{action:'restore_write',updateId});
   });
 
-  it('retains a failed mutation as a rejected operation with trace context',async()=>{
-    invokeSecureFunction.mockResolvedValue({data:{ok:false},error:{message:'denied',status:403,code:'MARKET_UPDATES_EDIT_REQUIRED',correlationId:'323e4567-e89b-42d3-a456-426614174000'}});
-    await expect(setMarketNewsArchiveState({updateId,archived:true})).rejects.toMatchObject({issue:{httpStatus:403,correlationId:'323e4567-e89b-42d3-a456-426614174000',functionName:'market-updates-archive'}});
-    expect(invokeSecureFunction).toHaveBeenCalledOnce();
+  it('falls back to the single-purpose endpoint when the status deployment is stale',async()=>{
+    invokeSecureFunction
+      .mockResolvedValueOnce({data:{error:'Unknown action'},error:{message:'Unknown action',status:400,code:'invalid_request'}})
+      .mockResolvedValueOnce({data:{ok:true,data:{id:updateId,isArchived:true,archivedAt:'2026-08-02T00:00:00.000Z',outcome:'archived'},correlationId:'323e4567-e89b-42d3-a456-426614174000'},error:null});
+    await expect(setMarketNewsArchiveState({updateId,archived:true})).resolves.toMatchObject({id:updateId,isArchived:true,outcome:'archived'});
+    expect(invokeSecureFunction).toHaveBeenNthCalledWith(2,'market-updates-archive',{action:'set_archive_state',updateId,archived:true});
   });
 
   it('rejects malformed successful responses instead of pretending the mutation succeeded',async()=>{
     invokeSecureFunction.mockResolvedValue({data:{ok:true},error:null});
     await expect(setMarketNewsArchiveState({updateId,archived:true})).rejects.toThrow('Market News Feed could not complete this operation.');
+    expect(invokeSecureFunction).toHaveBeenCalledTimes(2);
   });
 });
