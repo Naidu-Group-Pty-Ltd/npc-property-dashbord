@@ -123,7 +123,7 @@ scripts/reportDesign/buildTokens.ts          ← the generator (+ `--check` for 
 scripts/reportDesign/buildDefaultAssets.ts   ← asset inliner (+ `--check` for CI)
 scripts/reportDesign/buildSpecimen.ts        ← `npm run reportkit:specimen`
 supabase/migrations/20260813000000_report_brand_snapshots.sql
-weasyprint-service/fonts/                    ← the two brand faces + OFL licences
+weasyprint-service/fonts/                    ← the three brand faces, OFL licences, PROVENANCE.md
 ```
 
 `premiumPdfDesign.ts` (the design panel's option contract) and
@@ -278,6 +278,62 @@ The render caps carried over unchanged (`MAX_WATERFALL_ITEMS`,
 `MAX_HEATMAP_CELLS`, `MAX_WHEEL_SCORES` …). Chart data is model-generated and,
 on the shared-report path, attacker-influenced; the reason for each cap is still
 true.
+
+### What Phase 4 found and fixed — and what Phase 5's CI then found in it
+
+The font contract in `typography.pure.ts` described itself as "a contract with
+`weasyprint-service/Dockerfile`". Nothing checked it, and it was wrong in a way
+with a much larger consequence than bad typography.
+
+**The image could not be built.** The Dockerfile installed
+`fonts-playfair-display`, `fonts-cormorant-garamond`, `fonts-fraunces` and
+`fonts-ibm-plex`. **None of the four exists as a binary package in Debian** —
+bookworm or trixie. `apt-get install -y` exits non-zero on an unknown package, so
+that `RUN` layer failed and the build aborted. Whatever image is serving Cloud
+Run today was not built from this Dockerfile.
+
+That also explains the one typographic defect visible in the Phase 2 render: the
+accent stack led with Cormorant Garamond, which was never installed, so every
+standfirst and dek fell through to the engine's default serif and was *not
+italic at all*.
+
+`fonts-ibm-plex` survived the first attempt at this fix, and the reason is worth
+recording because the mistake is easy to repeat: it is a Debian **source**
+package name, so `packages.debian.org/bookworm/fonts-ibm-plex` returns a page and
+a website check reads it as available. Only the binary index disagrees. **Check
+`dists/<release>/main/binary-amd64/Packages.gz`, not the website.** The
+`render-container` CI job caught it on its first real run against `main` — which
+is the entire argument for that job existing.
+
+| Fixed | How |
+|---|---|
+| Four non-existent packages | Removed. Playfair Display and IBM Plex Mono arrive as COPY-ed TTFs. |
+| Cinzel absent | `weasyprint-service/fonts/Cinzel-Bold.ttf`, extracted from the repo's own `Cinzel_Playfair_Display.zip` with its OFL licence. |
+| No italic for the accent role | `PlayfairDisplay-Italic.ttf`. Without a real italic the engine synthesises a slant, which on a high-contrast didone reads as a printing fault. |
+| **Every Playfair weight synthesised** | Shipping Medium alone while the stylesheet asks for 400, 600 and 700 does not produce a *missing* font — it produces a **faked** one. Invisible locally, where a distribution package fills the gaps. The font set is now exactly what the report requests. |
+| Two serif families where the second never loaded | The accent role is now the *same* family as display, set in italic. One editorial serif used two ways is a system; two where the second is missing is a bug. |
+| Unpinned base image | `python:3.12-slim-bookworm`. A font contract is only checkable against a known release, and `-slim` moves distribution when the tag is rebuilt. |
+| Stale service README | It claimed an Api2PDF fallback on WeasyPrint failure. `index.ts:5567` re-throws — deliberately. The service is critical infrastructure and the README now says so. |
+
+Three gates, because a font failure is uniquely invisible — the engine
+substitutes silently, the PDF renders, every test passes, and only the client
+sees it:
+
+1. `reportTypography.spec.ts` reads the Dockerfile and fails if the packages, the
+   COPY-ed files, `CONTAINER_INSTALLED_FAMILIES` and the type stacks disagree,
+   with a named regression check for the phantom packages. It also reads the real
+   stylesheet **and the chart drawings** and fails both ways on weight coverage:
+   on a weight something requests with no file to answer it, and on a file
+   nothing requests. Writing that check found two further defects — the closing
+   page requested Cinzel at 400 from a bold-only face, and Playfair Bold is
+   requested only by charts, which the first version of the scan did not read.
+2. The Dockerfile's own `fc-cache` layer asserts each brand family resolves, so a
+   missing face breaks the build rather than the document.
+3. CI builds the image, checks `fc-list` inside it, renders a smoke document
+   through the service and asserts with `pdffonts` that the faces are
+   **embedded** — a substituted face still produces a valid PDF.
+
+Font hashes and sources are in `weasyprint-service/fonts/PROVENANCE.md`.
 
 ## 8 · Two migration targets
 
