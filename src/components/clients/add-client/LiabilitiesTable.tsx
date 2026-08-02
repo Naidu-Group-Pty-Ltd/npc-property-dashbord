@@ -48,4 +48,4 @@ const LiabilityRow = memo(function LiabilityRow({ row, register, onRemove }: { r
   </fieldset>;
 });
 
-function LiabilityTotals() { const { control } = useFormContext<AdvancedClientCreationPayload>(); const liabilities = useWatch({ control, name: 'liabilities' }) ?? []; const total = useMemo(() => calculateOtherLiabilitiesCents(liabilities), [liabilities]); return <div data-testid="liability-totals" className={advKpi}><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Other Liabilities</p><strong className="text-sm">{centsToDisplay(total)}</strong></div>; }
+function LiabilityTotals() { const { control } = useFormContext<AdvancedClientCreationPayload>(); const liabilities = useWatch({ control, name: 'liabilities' }) ?? []; const total = useMemo(() => calculateOtherLiabilitiesCents(liabilities), [liabilities]); return <div data-testid="liability-totals" className={advKpi}><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Other Liabilities</p><strong className="text-sm font-bold tabular-nums text-foreground">{centsToDisplay(total)}</strong></div>; }
