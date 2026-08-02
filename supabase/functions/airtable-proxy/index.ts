@@ -4,6 +4,7 @@ import { createCorsHeaders, verifyAuth, createUnauthorizedResponse } from '../_s
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { checkModuleView } from '../_shared/permissions.ts';
 import { isSuperadmin, rateLimit, redactUpstreamError } from '../_shared/wp08Guards.ts';
+import { projectAirtableRecord } from '../_shared/airtableListing.pure.ts';
 
 interface AirtableRecord {
   id: string;
@@ -254,125 +255,11 @@ Deno.serve(async (req) => {
       metadata: { records_fetched: data.records.length, has_offset: !!data.offset, table: tableName, op: op || 'list' },
     });
 
-    // Transform the data to match the expected format
-    console.log('Transforming record example:', data.records[0]?.fields);
-    console.log('Zipcode field value:', data.records[0]?.fields?.Zipcode);
-    const transformedRecords = data.records.map(record => {
-      const fields = record.fields;
-      
-      // Enhanced data cleaning and normalization
-      const cleanPrice = (price: any): number | null => {
-        if (!price) return null;
-        const numPrice = typeof price === 'string' ? parseFloat(price.replace(/[^0-9.]/g, '')) : price;
-        return numPrice > 0 && numPrice < 50000000 ? numPrice : null; // Filter unrealistic prices
-      };
-
-      const normalizeConfidence = (confidence: any): number | null => {
-        if (!confidence) return null;
-        const numConf = typeof confidence === 'string' ? parseFloat(confidence) : confidence;
-        if (numConf >= 0 && numConf <= 1) return numConf; // Already normalized
-        if (numConf >= 0 && numConf <= 100) return numConf / 100; // Convert percentage
-        return null;
-      };
-
-      const standardizePropertyType = (type: string | undefined): string => {
-        if (!type) return 'Unknown';
-        const normalized = type.toLowerCase().trim();
-        if (normalized.includes('apartment') || normalized.includes('unit')) return 'Apartment';
-        if (normalized.includes('house') || normalized.includes('home')) return 'House';
-        if (normalized.includes('townhouse') || normalized.includes('town house')) return 'Townhouse';
-        if (normalized.includes('villa')) return 'Villa';
-        if (normalized.includes('duplex')) return 'Duplex';
-        if (normalized.includes('land')) return 'Land';
-        return type; // Return original if no match
-      };
-
-      const standardizeSuburb = (suburb: string | undefined): string => {
-        if (!suburb) return 'Unknown Suburb';
-        return suburb.split(',')[0].trim(); // Remove state/postcode if present
-      };
-
-      // Enhanced date handling with multiple fallback options
-      const getValidDate = (): string => {
-        const candidates = [
-          fields['Created'], // Primary field name in Airtable
-          fields['Created At'],
-          fields['Listed_Date'],
-          fields['Date_Listed'],
-          record.createdTime
-        ];
-        
-        for (const candidate of candidates) {
-          if (candidate) {
-            try {
-              const date = new Date(candidate);
-              if (!isNaN(date.getTime())) return date.toISOString();
-            } catch (e) {
-              continue;
-            }
-          }
-        }
-        return new Date().toISOString(); // Fallback to now
-      };
-
-      return {
-        id: record.id,
-        fields: fields,
-        createdTime: getValidDate(),
-        
-        // Core property information with enhanced mapping
-        title: fields.Address || fields.Property_Title || fields.Title || 'Untitled Property',
-        price: cleanPrice(fields.Price || fields.Asking_Price),
-        location: `${fields.Address || ''}, ${standardizeSuburb(fields.Suburb)}`.replace(/^, |, $/, '') || 'Location not specified',
-        address: fields.Address || 'Unknown Address',
-        suburb: standardizeSuburb(fields.Suburb),
-        
-        // Property details with data validation
-        beds: Math.max(0, parseInt(String(fields.Beds || fields.Bedrooms || fields.Bedroom_Count || 0))) || null,
-        baths: Math.max(0, parseInt(String(fields.Baths || fields.Bathrooms || fields.Bathroom_Count || 0))) || null,
-        bedrooms: Math.max(0, parseInt(String(fields.Beds || fields.Bedrooms || fields.Bedroom_Count || 0))) || null,
-        bathrooms: Math.max(0, parseInt(String(fields.Baths || fields.Bathrooms || fields.Bathroom_Count || 0))) || null,
-        carSpaces: Math.max(0, parseInt(String(fields['Car Spaces'] || fields.Car_Spaces || 0))) || null,
-        
-        propertyType: standardizePropertyType(fields['Property Type'] || fields.Property_Type),
-        listingDate: getValidDate(),
-        status: fields.Status || 'Available',
-        
-        // Quality and confidence metrics
-        confidence: normalizeConfidence(fields['Confidence Score'] || fields.Confidence_Score || fields.Confidence),
-        source: fields.Source || fields.Data_Source || 'Airtable',
-        
-        // Agent and agency information - FIXED MAPPING
-        agent: fields['Agent Name'] || fields.Agent || fields.Listing_Agent || 'Unknown Agent',
-        agentName: fields['Agent Name'] || fields.Agent || fields.Listing_Agent || 'Unknown Agent',
-        agencyName: fields['Agency Name'] || fields.Agency || fields['Agent Agency'] || 'Unknown Agency',
-        agentPhone: fields['Agent Phone'] || null,
-        
-        // Additional details
-        createdAt: getValidDate(),
-        receivedAt: getValidDate(),
-        description: fields['Property Description'] || fields.Description || fields.Summary || '',
-        images: fields.Images || fields.Property_Images || [],
-        features: fields.Features || fields.Property_Features || [],
-        
-        // Location details
-        landSize: fields['Square Feet'] || fields['Land Size'] || fields.Land_Size || fields.LandSize || null,
-        lotNumber: fields['Lot Number'] || null,
-        webLinks: fields['Web Link'] || null,
-        state: fields['State'] || null,
-        zipCode: fields['Zipcode'] || fields['Zip Code'] || fields['Post Code'] || fields['Postcode'] || null,
-        
-        // Additional metadata
-        summary: fields.Summary || null,
-        keyEntities: fields['Key Entities'] || null,
-        rawExtract: fields['Raw Extract'] || null,
-        category: fields.Category || null,
-        inspectionStart: fields['Inspection Start'] ? new Date(fields['Inspection Start']) : null,
-        inspectionEnd: fields['Inspection End'] ? new Date(fields['Inspection End']) : null,
-        inspectionNotes: fields['Inspection Notes'] || null,
-        floorplans: fields.Floorplans || [],
-      };
-    });
+    // Transform the data to match the expected format. The projection lives in
+    // `_shared/airtableListing.pure.ts` because `listings-cache` stores Airtable
+    // `fields` verbatim and applies the same projection at read time; two copies
+    // would drift the first time a column was renamed.
+    const transformedRecords = data.records.map((record) => projectAirtableRecord(record));
 
     // Enhanced scoring system with weighted fields and quality penalties
     const calculateEnrichmentScore = (record: any): number => {

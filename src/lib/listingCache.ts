@@ -29,7 +29,7 @@ const STORE = 'sets';
  * discarded rather than migrated — it is a cache, and re-fetching is always
  * correct.
  */
-export const CACHE_SCHEMA_VERSION = 3;
+export const CACHE_SCHEMA_VERSION = 4;
 
 /** Beyond this the entry is not worth hydrating; a full fetch is cheaper than trusting it. */
 export const MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1000;
@@ -69,14 +69,19 @@ interface StoredRawFields {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Splits the bulky `rawFields` mirror off the listings.
+ * Splits the bulky raw Airtable mirror off the listings.
  *
- * `rawFields` is a verbatim copy of the Airtable record kept beside the fields
- * already projected onto the typed listing. It is 67% of the cached bytes and
- * has exactly one consumer — the intake panel in the details modal, which shows
- * one record at a time, on demand. Carrying it on the hot path meant every page
- * load restored ten megabytes to serve a panel that might never open, so it is
- * stored separately and merged back once the listings are already on screen.
+ * A listing carries the untouched Airtable record twice: once as `rawFields`,
+ * and once as `fields`, because the projection copies the record through and the
+ * client then aliases it. Both point at the same 205-column object, which is
+ * roughly two thirds of the cached bytes, and it has exactly one consumer — the
+ * intake panel in the details modal, which shows one record at a time, on
+ * demand. Carrying it on the hot path meant every page load restored megabytes
+ * to serve a panel that might never open.
+ *
+ * Stripping `rawFields` alone achieved nothing, because `fields` survived and it
+ * is the same data; both go, and only `rawFields` is put back — nothing reads
+ * `fields` on the client.
  */
 export function splitRawFields(listings: PropertyListing[]): {
   slim: PropertyListing[];
@@ -84,9 +89,11 @@ export function splitRawFields(listings: PropertyListing[]): {
 } {
   const rawById: Record<string, Record<string, unknown>> = {};
   const slim = listings.map((listing) => {
-    if (!listing.rawFields) return listing;
-    const { rawFields, ...rest } = listing;
-    rawById[listing.id] = rawFields as Record<string, unknown>;
+    const withFields = listing as PropertyListing & { fields?: Record<string, unknown> };
+    const raw = listing.rawFields ?? withFields.fields;
+    if (!raw) return listing;
+    const { rawFields: _raw, fields: _fields, ...rest } = withFields;
+    rawById[listing.id] = raw as Record<string, unknown>;
     return rest as PropertyListing;
   });
   return { slim, rawById };
@@ -202,7 +209,7 @@ function openDb(): Promise<IDBDatabase | null> {
   const idb = resolveFactory();
   if (!idb) return Promise.resolve(null);
 
-  dbPromise = new Promise<IDBDatabase | null>((resolve) => {
+  const attempt = new Promise<IDBDatabase | null>((resolve) => {
     let settled = false;
     const done = (value: IDBDatabase | null) => {
       if (settled) return;
@@ -225,7 +232,16 @@ function openDb(): Promise<IDBDatabase | null> {
       done(null);
     }
   });
-  return dbPromise;
+  dbPromise = attempt;
+  // A failed open is not permanent. The 2 s watchdog above fires while another
+  // tab holds an upgrade, and that tab eventually closes; memoising the `null`
+  // would disable the cache for the rest of the session over a few seconds of
+  // contention. Concurrent callers within the same tick still share `attempt` —
+  // only the *next* call after a failure pays for a retry.
+  void attempt.then((db) => {
+    if (db === null && dbPromise === attempt) dbPromise = null;
+  });
+  return attempt;
 }
 
 function run<T>(

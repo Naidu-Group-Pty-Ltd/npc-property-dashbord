@@ -361,7 +361,9 @@ export default function Listings() {
 
   // Refresh function — bypass cache for explicit user refresh
   const loadListings = useCallback(() => {
-    propertyDataService.clearCache();
+    // Scoped to this table. Clearing everything also reset Overview to cold,
+    // which then paid for a full walk nobody had asked for.
+    propertyDataService.clearCache(PROPERTY_INTAKE_TABLE);
     refetch();
   }, [refetch]);
 

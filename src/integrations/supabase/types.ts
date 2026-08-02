@@ -21338,6 +21338,72 @@ export type Database = {
         }
         Relationships: []
       }
+      listings_cache: {
+        Row: {
+          created_time: string | null
+          fields: Json
+          fingerprint: string | null
+          first_seen_at: string
+          last_modified_time: string | null
+          last_verified_at: string
+          listing_id: string
+          table_key: string
+        }
+        Insert: {
+          created_time?: string | null
+          fields: Json
+          fingerprint?: string | null
+          first_seen_at?: string
+          last_modified_time?: string | null
+          last_verified_at?: string
+          listing_id: string
+          table_key: string
+        }
+        Update: {
+          created_time?: string | null
+          fields?: Json
+          fingerprint?: string | null
+          first_seen_at?: string
+          last_modified_time?: string | null
+          last_verified_at?: string
+          listing_id?: string
+          table_key?: string
+        }
+        Relationships: []
+      }
+      listings_cache_sync: {
+        Row: {
+          error_count: number
+          last_error: string | null
+          last_full_sync_at: string | null
+          last_sync_at: string | null
+          reconciled: boolean
+          record_count: number
+          status: string
+          table_key: string
+        }
+        Insert: {
+          error_count?: number
+          last_error?: string | null
+          last_full_sync_at?: string | null
+          last_sync_at?: string | null
+          reconciled?: boolean
+          record_count?: number
+          status?: string
+          table_key: string
+        }
+        Update: {
+          error_count?: number
+          last_error?: string | null
+          last_full_sync_at?: string | null
+          last_sync_at?: string | null
+          reconciled?: boolean
+          record_count?: number
+          status?: string
+          table_key?: string
+        }
+        Relationships: []
+      }
       llm_integration_settings: {
         Row: {
           created_at: string

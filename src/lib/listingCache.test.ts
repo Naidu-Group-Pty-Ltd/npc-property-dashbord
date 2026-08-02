@@ -81,6 +81,29 @@ describe('splitRawFields / mergeRawFields', () => {
     splitRawFields(input);
     expect(input[0].rawFields).toEqual({ x: 1 });
   });
+
+  it('strips `fields` as well, which is the same object under another name', () => {
+    // The projection carries Airtable's record through as `fields` and the
+    // client then aliases it as `rawFields`. Stripping only the alias left the
+    // bytes in the cache, so the reduction this split exists for was never
+    // actually realised.
+    const raw = { Address: '1 Test St', Price: 900_000 };
+    const input = [listing('a', { rawFields: raw, fields: raw } as Record<string, unknown>)];
+
+    const { slim, rawById } = splitRawFields(input);
+
+    expect(slim[0]).not.toHaveProperty('fields');
+    expect(slim[0]).not.toHaveProperty('rawFields');
+    expect(rawById).toEqual({ a: raw });
+    expect(mergeRawFields(slim, rawById)[0].rawFields).toEqual(raw);
+  });
+
+  it('recovers the raw record from `fields` when the alias is missing', () => {
+    const input = [listing('a', { fields: { Address: 'only here' } } as Record<string, unknown>)];
+    const { slim, rawById } = splitRawFields(input);
+    expect(rawById).toEqual({ a: { Address: 'only here' } });
+    expect(mergeRawFields(slim, rawById)[0].rawFields).toEqual({ Address: 'only here' });
+  });
 });
 
 describe('planRefresh', () => {

@@ -1,7 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { airtableService, PropertyListing } from '@/lib/airtable';
 import { __setIndexedDBFactory } from '@/lib/listingCache';
+import { listingsCacheApi } from '@/lib/listingsCacheApi';
 import { propertyDataService } from './propertyDataService';
+
+/**
+ * Makes the server-side cache decline to answer, so the test exercises the
+ * Airtable fallback. Most of this file predates the cache and is still the
+ * regression net for the walk, which is what runs when the cache is cold,
+ * undeployed, or erroring.
+ */
+function stubServerCacheMiss() {
+  return vi.spyOn(listingsCacheApi, 'read').mockResolvedValue(null);
+}
 
 const makeListing = (id: number): PropertyListing => ({
   id: String(id),
@@ -23,8 +34,9 @@ const makeListing = (id: number): PropertyListing => ({
 
 describe('propertyDataService cache', () => {
   beforeEach(() => {
-    propertyDataService.clearCache();
+    propertyDataService.clearAllCaches();
     vi.restoreAllMocks();
+    stubServerCacheMiss();
     // jsdom has no IndexedDB; these cover the in-memory and network paths.
     __setIndexedDBFactory(null);
   });
@@ -79,8 +91,9 @@ describe('propertyDataService request economy', () => {
   const ids = (listings: PropertyListing[] | null | undefined) => listings?.map((l) => l.id);
 
   beforeEach(() => {
-    propertyDataService.clearCache();
+    propertyDataService.clearAllCaches();
     vi.restoreAllMocks();
+    stubServerCacheMiss();
     __setIndexedDBFactory(null);
   });
 
@@ -133,6 +146,7 @@ describe('propertyDataService request economy', () => {
       servePages(pages);
       await propertyDataService.fetchAllListings();
       vi.restoreAllMocks();
+      stubServerCacheMiss();
       vi.useFakeTimers();
       vi.setSystemTime(Date.now() + ageMs);
     }
@@ -193,5 +207,102 @@ describe('propertyDataService request economy', () => {
       // A failed refresh must never empty what the page is already showing.
       expect(ids(propertyDataService.peek())).toEqual(['1']);
     });
+  });
+});
+
+/**
+ * The server-side cache is the whole point of the change: it replaces the
+ * sequential walk with a single request, and it is the only layer that helps a
+ * first visit. These cover that it is actually preferred, and that a cache which
+ * cannot answer degrades to the walk rather than to an empty dashboard.
+ */
+describe('propertyDataService server cache', () => {
+  const makeCacheResult = (listings: PropertyListing[], tableKey = 'Property Intake Master') => ({
+    listings,
+    tableKey,
+    sync: {
+      last_sync_at: '2026-08-02T00:00:00.000Z',
+      last_full_sync_at: '2026-08-02T00:00:00.000Z',
+      status: 'ok',
+      reconciled: true,
+      record_count: listings.length,
+    },
+  });
+
+  beforeEach(() => {
+    propertyDataService.clearAllCaches();
+    vi.restoreAllMocks();
+    __setIndexedDBFactory(null);
+    try {
+      globalThis.localStorage?.clear();
+    } catch {
+      /* storage unavailable in this environment */
+    }
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reads the whole set in one request and never touches Airtable', async () => {
+    const read = vi
+      .spyOn(listingsCacheApi, 'read')
+      .mockResolvedValue(makeCacheResult([makeListing(1), makeListing(2)]));
+    const getRecords = vi.spyOn(airtableService, 'getRecords');
+
+    const result = await propertyDataService.fetchAllListings({ tableName: 'Listings' });
+
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(getRecords).not.toHaveBeenCalled();
+    expect(result.listings.map((l) => l.id)).toEqual(['1', '2']);
+  });
+
+  it('falls back to the Airtable walk when the cache cannot answer', async () => {
+    vi.spyOn(listingsCacheApi, 'read').mockResolvedValue(null);
+    const getRecords = vi
+      .spyOn(airtableService, 'getRecords')
+      .mockResolvedValue({ records: [makeListing(7)], offset: undefined, total: 1 });
+
+    const result = await propertyDataService.fetchAllListings({ tableName: 'Listings' });
+
+    expect(getRecords).toHaveBeenCalled();
+    expect(result.listings.map((l) => l.id)).toEqual(['7']);
+  });
+
+  it('collapses an unnamed request onto the table the server resolved it to', async () => {
+    // Overview passes no table name and Listings passes one, for the same table.
+    // Cached under two keys they never shared anything; the server's answer is
+    // what tells the client they are the same thing.
+    vi.spyOn(listingsCacheApi, 'read').mockResolvedValue(
+      makeCacheResult([makeListing(1)], 'Property Intake Master'),
+    );
+    const getRecords = vi.spyOn(airtableService, 'getRecords');
+
+    await propertyDataService.fetchAllListings();
+    expect(propertyDataService.peek('Property Intake Master')?.map((l) => l.id)).toEqual(['1']);
+
+    // The named request now finds the unnamed one's entry already warm.
+    const named = await propertyDataService.fetchAllListings({
+      tableName: 'Property Intake Master',
+      includeDebugInfo: true,
+    });
+    expect(named.debugInfo.fromCache).toBe(true);
+    expect(getRecords).not.toHaveBeenCalled();
+  });
+
+  it('does not use the cache for a bounded read', async () => {
+    // `maxRecords` is a different question from "the whole table" and must not be
+    // answered from, or written to, the full-table cache.
+    const read = vi.spyOn(listingsCacheApi, 'read');
+    vi.spyOn(airtableService, 'getRecords').mockResolvedValue({
+      records: [makeListing(1), makeListing(2)],
+      offset: undefined,
+      total: 2,
+    });
+
+    const result = await propertyDataService.fetchAllListings({ maxRecords: 1 });
+
+    expect(read).not.toHaveBeenCalled();
+    expect(result.listings).toHaveLength(1);
   });
 });

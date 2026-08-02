@@ -1,4 +1,5 @@
 import { airtableService, PropertyListing } from '@/lib/airtable';
+import { listingsCacheApi } from '@/lib/listingsCacheApi';
 import {
   clearListingCache,
   isCacheUsable,
@@ -48,6 +49,35 @@ interface MemoryEntry {
 }
 
 /**
+ * Key used before the server's default table name is known.
+ *
+ * Overview asks for "the listings" and passes no table name; Listings passes
+ * `'Property Intake Master'` explicitly. The proxy resolves the first to the
+ * second, so it is one table — but the client cached it twice under two keys,
+ * which meant the two pages never shared a cache entry and never coalesced a
+ * request, and every navigation between them paid for a fresh walk.
+ */
+const FALLBACK_TABLE_KEY = '__default__';
+
+/**
+ * Where the resolved name is remembered between visits.
+ *
+ * Only the very first load of a fresh profile can be ambiguous; after that the
+ * name is known before the first request goes out, so both pages agree on the
+ * key from the start. A stale value is harmless — the worst case is one wasted
+ * cache entry, which the schema version or the 24 h age limit clears.
+ */
+const DEFAULT_TABLE_STORAGE_KEY = 'npc:listings:default-table';
+
+function readStoredDefaultTable(): string | null {
+  try {
+    return globalThis.localStorage?.getItem(DEFAULT_TABLE_STORAGE_KEY) || null;
+  } catch {
+    return null; // Private mode, disabled storage — the fallback key still works.
+  }
+}
+
+/**
  * Unified property data service: one fetch path, one cache, shared by Overview,
  * Listings and the report generators.
  *
@@ -55,6 +85,11 @@ interface MemoryEntry {
  * the offset for page N+1 only exists once page N has come back, so there is no
  * parallelism to find. The wins therefore have to come from not doing the walk:
  *
+ *  0. **Not walking at all.** The `listings-cache` edge function keeps a
+ *     Postgres mirror of the table, refreshed by cron, so the normal path is one
+ *     request rather than fifteen — and unlike everything below it, that holds
+ *     on a first visit, a new device and a cleared profile too. The Airtable
+ *     walk survives as the fallback for when the cache cannot answer.
  *  1. **Coalescing.** Overview and Listings mount within milliseconds of each
  *     other and both asked for everything, so the whole walk ran twice, in
  *     parallel, against the same rate limit. Concurrent callers now share one
@@ -75,6 +110,34 @@ class PropertyDataService {
   /** Set once per table so hydration from disk is attempted exactly once. */
   private hydrated = new Map<string, Promise<MemoryEntry | null>>();
   private listeners = new Map<string, Set<RevalidateListener>>();
+  /** The server's resolved default table name, once anything has told us. */
+  private defaultTableKey: string | null = readStoredDefaultTable();
+
+  /** The cache key for a request, collapsing "no table name" onto the real one. */
+  private keyFor(tableName?: string): string {
+    return tableName || this.defaultTableKey || FALLBACK_TABLE_KEY;
+  }
+
+  /**
+   * Records what the server resolved "no table name" to, and moves anything
+   * already filed under the placeholder across so the pages converge within the
+   * same visit rather than at the next reload.
+   */
+  private learnDefaultTable(resolved: string): void {
+    if (!resolved || this.defaultTableKey === resolved) return;
+    this.defaultTableKey = resolved;
+    try {
+      globalThis.localStorage?.setItem(DEFAULT_TABLE_STORAGE_KEY, resolved);
+    } catch {
+      // Storage unavailable; the in-memory value still unifies this session.
+    }
+    for (const map of [this.memory, this.hydrated, this.listeners] as Array<Map<string, unknown>>) {
+      const held = map.get(FALLBACK_TABLE_KEY);
+      if (held === undefined) continue;
+      map.delete(FALLBACK_TABLE_KEY);
+      if (!map.has(resolved)) map.set(resolved, held);
+    }
+  }
 
   /**
    * Subscribe to background revalidations for a table.
@@ -83,7 +146,7 @@ class PropertyDataService {
    * the network has been touched; this is how it finds out the fresh set landed.
    */
   subscribe(tableName: string | undefined, listener: RevalidateListener): () => void {
-    const key = tableName || '__default__';
+    const key = this.keyFor(tableName);
     const set = this.listeners.get(key) ?? new Set();
     set.add(listener);
     this.listeners.set(key, set);
@@ -91,7 +154,13 @@ class PropertyDataService {
   }
 
   private emit(tableKey: string, listings: PropertyListing[]): void {
-    const set = this.listeners.get(tableKey);
+    // A refresh that started before the default table name was resolved emits
+    // under the placeholder key, but its listeners have since been moved.
+    const set =
+      this.listeners.get(tableKey) ??
+      (tableKey === FALLBACK_TABLE_KEY && this.defaultTableKey
+        ? this.listeners.get(this.defaultTableKey)
+        : undefined);
     if (!set?.size) return;
     const result = this.buildResult(listings, Date.now(), true, false);
     for (const listener of set) {
@@ -105,7 +174,7 @@ class PropertyDataService {
 
   /** Whatever is already in memory for this table, with no I/O of any kind. */
   peek(tableName?: string): PropertyListing[] | null {
-    return this.memory.get(tableName || '__default__')?.listings ?? null;
+    return this.memory.get(this.keyFor(tableName))?.listings ?? null;
   }
 
   private async hydrate(tableKey: string): Promise<MemoryEntry | null> {
@@ -139,6 +208,29 @@ class PropertyDataService {
 
     this.hydrated.set(tableKey, promise);
     return promise;
+  }
+
+  /**
+   * Reads the whole set from the server-side cache.
+   *
+   * This is the fast path and it is one request: the `listings-cache` edge
+   * function keeps a Postgres mirror of the Airtable table, refreshed by cron,
+   * so a page load costs a single Postgres read instead of `ceil(N/100)`
+   * sequential Airtable trips. Unlike the browser cache it also helps a first
+   * visit, a new device and a cleared profile, which is most of the load worth
+   * fixing.
+   *
+   * Returns null when the cache cannot answer — not deployed, never synced,
+   * erroring — and the caller falls back to walking Airtable. The cache is an
+   * optimisation; a blank dashboard is worse than a slow one.
+   */
+  private async readServerCache(tableName: string | undefined): Promise<PropertyListing[] | null> {
+    const result = await listingsCacheApi.read(tableName);
+    if (!result) return null;
+    // The response says which table the server resolved the request to, which is
+    // the only authoritative answer to what `__default__` means.
+    if (!tableName && result.tableKey) this.learnDefaultTable(result.tableKey);
+    return this.processAndDeduplicateListings(result.listings);
   }
 
   /**
@@ -192,6 +284,16 @@ class PropertyDataService {
       const cached = this.memory.get(tableKey);
       const now = Date.now();
 
+      // One request for the whole set, so there is no incremental variant to
+      // choose here — a server-cache read is always a complete read.
+      const served = await this.readServerCache(tableName);
+      if (served) {
+        const key = this.keyFor(tableName);
+        this.memory.set(key, { listings: served, savedAt: now, fullReadAt: now });
+        void writeListingCache(key, served, { savedAt: now, fullReadAt: now });
+        return served;
+      }
+
       if (mode === 'incremental' && cached?.listings.length) {
         const knownIds = new Set(cached.listings.map((l) => l.id));
         const fetched = await this.walk(tableName, { stopWhenKnown: knownIds });
@@ -224,7 +326,7 @@ class PropertyDataService {
   async fetchAllListings(options: PropertyDataOptions = {}): Promise<PropertyDataResult> {
     const startTime = Date.now();
     const { maxRecords, includeDebugInfo = false, bypassCache = false, tableName } = options;
-    const tableKey = tableName || '__default__';
+    const tableKey = this.keyFor(tableName);
 
     // A bounded read is a different question from "the whole table" and must not
     // be answered from, or written to, the full-table cache.
@@ -267,17 +369,27 @@ class PropertyDataService {
     return this.buildResult(listings, startTime, includeDebugInfo, false);
   }
 
-  /** Clear both halves of the cache so the next read goes to the network. */
+  /**
+   * Clear one table's cache so the next read goes to the network.
+   *
+   * Scoped deliberately. This used to wipe the entire IndexedDB store when
+   * called without a table name, which is what the Listings refresh button and
+   * the data-validation panel both do — so hitting Refresh on Listings also
+   * reset Overview to cold, and the next visit there paid for a full walk it
+   * had not asked for.
+   */
   clearCache(tableName?: string): void {
-    if (tableName) {
-      const key = tableName || '__default__';
-      this.memory.delete(key);
-      this.hydrated.delete(key);
-    } else {
-      this.memory.clear();
-      this.hydrated.clear();
-    }
-    void clearListingCache(tableName);
+    const key = this.keyFor(tableName);
+    this.memory.delete(key);
+    this.hydrated.delete(key);
+    void clearListingCache(key);
+  }
+
+  /** Drop every table. Only for teardown — see `clearCache` for the usual case. */
+  clearAllCaches(): void {
+    this.memory.clear();
+    this.hydrated.clear();
+    void clearListingCache();
   }
 
   /**
