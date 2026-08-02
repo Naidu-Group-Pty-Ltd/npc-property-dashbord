@@ -1,7 +1,7 @@
 import { ClipboardList, FileSpreadsheet, FileText, ReceiptText } from 'lucide-react';
 import { TabsList, TabsTrigger } from '@/components/ui/tabs';
 export type AdvancedTab = 'excel'|'fact-find'|'expenses'|'output';
-const ADVANCED_TABS=[{value:'excel',label:'Excel Import',hint:'Import workbook',icon:FileSpreadsheet},{value:'fact-find',label:'Client Fact Find',hint:'Applicants & position',icon:ClipboardList},{value:'expenses',label:'Living Expenses',hint:'Monthly worksheet',icon:ReceiptText},{value:'output',label:'Client Form Output',hint:'Final review',icon:FileText}] as const;
+const ADVANCED_TABS=[{value:'excel',label:'Excel Import',icon:FileSpreadsheet},{value:'fact-find',label:'Client Fact Find',icon:ClipboardList},{value:'expenses',label:'Living Expenses',icon:ReceiptText},{value:'output',label:'Client Form Output',icon:FileText}] as const;
 const STEP_PREFIX=['before:content-[\'01\']','before:content-[\'02\']','before:content-[\'03\']','before:content-[\'04\']'] as const;
 export function AdvancedTabNavigation(){return <nav data-testid="advanced-navigation" aria-label="Advanced client workflow" className="relative shrink-0 border-b border-border/50 bg-card/95 px-3 py-3 sm:px-6">
   <span aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-brand-300/50 to-transparent"/>
