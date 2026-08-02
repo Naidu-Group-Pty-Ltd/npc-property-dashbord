@@ -48,6 +48,7 @@ import { TypingPresence, type TypingPerson } from '@/components/messaging/Typing
 import {
   INTERNAL_ATTACHMENT_ACCEPT,
   filesFromDataTransfer,
+  ensureMessageAttachments,
   type InternalAttachment,
 } from '@/lib/internalMessageAttachments';
 import {
