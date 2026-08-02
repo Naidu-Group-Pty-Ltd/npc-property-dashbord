@@ -6,9 +6,10 @@ the brand rules themselves are in the
 [`npc-services-design`](../../.claude/skills/npc-services-design/) skill.
 
 **Status:** Phase 0 (this document + the skill), Phase 1 (the Kit foundation),
-Phase 2 (stylesheet, primitives, document spine) and **Phase 3 (brand, logo and
-snapshotting)** delivered. Charts and the per-format migrations are next; no
-shipping render path has been switched over yet.
+Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
+snapshotting) and **Phase 4 (fonts and the render container)** delivered. Charts
+and the per-format migrations are next; no shipping render path has been
+switched over yet.
 Scope is the report/PDF layer. The Template Library catalogue and the Template
 Builder editor are out of scope, but the shared **block renderers** in
 `src/lib/reportTemplate/blocks/*.html.ts` are in scope as reusable infrastructure.
@@ -113,6 +114,7 @@ src/lib/reportDesign/__tests__/reportSourceHygiene.spec.ts   ← no literals, no
 src/lib/reportDesign/__tests__/reportCss.spec.ts             ← print legality
 src/lib/reportDesign/__tests__/reportPrimitives.spec.ts      ← escaping + contract
 src/lib/reportDesign/__tests__/reportStructure.spec.ts       ← spine validation
+src/lib/reportDesign/__tests__/reportTypography.spec.ts       ← the Dockerfile contract
 src/lib/reportDesign/__tests__/reportAssets.spec.ts           ← inline policy
 src/lib/reportDesign/__tests__/reportSnapshot.spec.ts         ← fingerprint coverage
 src/branding/__tests__/brandAssetSlots.spec.ts                ← the two resolvers agree
@@ -120,6 +122,7 @@ scripts/reportDesign/buildTokens.ts          ← the generator (+ `--check` for 
 scripts/reportDesign/buildDefaultAssets.ts   ← asset inliner (+ `--check` for CI)
 scripts/reportDesign/buildSpecimen.ts        ← `npm run reportkit:specimen`
 supabase/migrations/20260813000000_report_brand_snapshots.sql
+weasyprint-service/fonts/                    ← the two brand faces + OFL licences
 ```
 
 `premiumPdfDesign.ts` (the design panel's option contract) and
@@ -257,6 +260,48 @@ adapters, keeping the sanitisation where its test targets it.
 "download this chart" feature — but leaves every *report* path, because
 html2canvas cannot run server-side.
 
+### What Phase 4 found and fixed
+
+The font contract in `typography.pure.ts` described itself as "a contract with
+`weasyprint-service/Dockerfile`". Nothing checked it, and it was wrong in a way
+that had a much larger consequence than bad typography.
+
+**The image could not be built.** The Dockerfile installed
+`fonts-playfair-display`, `fonts-cormorant-garamond` and `fonts-fraunces`. None
+of the three exists in Debian — verified against both bookworm and trixie.
+`apt-get install -y` exits non-zero on an unknown package, so that `RUN` layer
+failed and the build aborted. Whatever image is serving Cloud Run today was not
+built from this Dockerfile.
+
+That also explains the one typographic defect visible in the Phase 2 render: the
+accent stack led with Cormorant Garamond, which was never installed, so every
+standfirst and dek fell through to the engine's default serif and was *not
+italic at all*.
+
+| Fixed | How |
+|---|---|
+| Three non-existent packages | Removed. Playfair Display now arrives as a COPY-ed TTF. |
+| Cinzel absent | `weasyprint-service/fonts/Cinzel-Bold.ttf`, extracted from the repo's own `Cinzel_Playfair_Display.zip` with its OFL licence. |
+| No italic for the accent role | `PlayfairDisplay-MediumItalic.ttf`. Without a real italic the engine synthesises a slant, which on a high-contrast didone reads as a printing fault. |
+| Two serif families where the second never loaded | The accent role is now the *same* family as display, set in italic. One editorial serif used two ways is a system; two where the second is missing is a bug. |
+| Unpinned base image | `python:3.12-slim-bookworm`. A font-package contract is only checkable against a known release, and `-slim` moves distribution when the tag is rebuilt. |
+| Stale service README | It claimed a Api2PDF fallback on WeasyPrint failure. `index.ts:5567` re-throws — deliberately. The service is critical infrastructure and the README now says so. |
+
+Three new gates, because a font failure is uniquely invisible — the engine
+substitutes silently, the PDF renders, every test passes:
+
+1. `reportTypography.spec.ts` reads the Dockerfile and fails if the packages, the
+   COPY-ed files, `CONTAINER_INSTALLED_FAMILIES` and the type stacks disagree —
+   including a named regression check for the three phantom packages.
+2. The Dockerfile's own `fc-cache` layer asserts each brand family resolves, so a
+   missing face breaks the build rather than the document.
+3. CI builds the image, checks `fc-list` inside it, renders a smoke document
+   through the service and asserts with `pdffonts` that Cinzel, Playfair and
+   Inter are **embedded** — a substituted face still produces a valid PDF.
+
+Fonts are also now verified in the specimen: the render in §9 was produced with
+the real faces installed, which closes the caveat recorded there.
+
 ## 8 · Two migration targets
 
 Not every report can move server-side. `CashFlowAnalysisModal` computes its three
@@ -309,10 +354,10 @@ either impossible by construction or asserted by a test.
 
 One caveat on that render, stated because it bounds what it proves: it was
 produced by WeasyPrint 69 on this workspace, not by the container
-(`weasyprint-service` pins 62.3), and the workspace has none of the brand faces
-installed — so every stack fell back to DejaVu/Liberation. **Layout, colour,
-pagination, banding and the running chrome are verified; the actual typefaces are
-not.** Confirming those needs the container, which is Phase 4's font work.
+(`weasyprint-service` pins 62.3). **Phase 4 closed the font half of this
+caveat** — the faces are now installed and the specimen re-rendered with Inter,
+Playfair Display (upright and italic), Cinzel and IBM Plex Mono. What remains
+unverified is engine-version parity, which needs the container itself.
 
 The specimen is also the re-skin proof: the same content rendered with
 `--preset=minimal_ink --brand='#00A3FF' --density=compact --table=ledger
@@ -321,13 +366,17 @@ the negative figures stay the one red and the positives the one green.
 
 ## 10 · Known hazards
 
-1. **Cinzel is not in the render container.** Both TTFs are in `public/fonts/`,
-   unwired. `COPY` + `fc-cache`; the container must deploy before any report using
-   Cinzel ships.
+1. ~~**Cinzel is not in the render container.**~~ **Resolved in Phase 4.** Cinzel
+   and Playfair Display (upright *and* italic) are `COPY`-ed from
+   `weasyprint-service/fonts/` and `fc-cache`-d, the build fails if either
+   family fails to resolve, and CI builds the image and asserts the faces embed
+   in a rendered PDF. **The container must be redeployed** before any report set
+   in Cinzel ships — the image on Cloud Run predates this change.
 2. **Signed-URL TTLs are inconsistent and long** — 7 days in
    `render-investment-report-pdf:5447`, 24h in `render-template-pdf`, against a
    15-minute ceiling that `secure-storage` enforces on client-originated requests.
-   Migrating volume onto these paths multiplies the exposure. Unify before Phase 4.
+   Migrating volume onto these paths multiplies the exposure. Unify before the
+   first format migration.
 3. **WeasyPrint hard-fails.** Contrary to `weasyprint-service/README.md`, the
    Api2PDF fallback is disabled when WeasyPrint is configured, so a render failure
    is user-visible. The README is stale.

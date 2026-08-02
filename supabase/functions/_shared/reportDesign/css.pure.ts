@@ -463,9 +463,12 @@ function coverRules(
     color: ${palette.accentOnField};
     margin-bottom: 14mm;
   }
+  /* Cinzel — the brand's cover face, and the only place it appears. It ships
+     Bold alone and sets lowercase as small capitals, which is why it is
+     confined to the two places set large and short. */
   .report-cover h1.cover-title {
-    font-family: ${PRINT_STACK.display};
-    font-weight: 500;
+    font-family: ${PRINT_STACK.cover};
+    font-weight: 700;
     font-size: ${pt(type.coverTitle)};
     line-height: 1.02;
     letter-spacing: ${PRINT_TRACKING.snug};
@@ -473,10 +476,17 @@ function coverRules(
     margin: 0;
     max-width: 165mm;
   }
+  /* The subtitle sets smaller than the title and on its own line. At parity it
+     wraps a locality onto a third line, which pushes the meta block into the
+     cover footer — seen in a real render before this was corrected. */
   .report-cover .cover-title em {
+    display: block;
+    margin-top: 3mm;
     font-family: ${PRINT_STACK.accent};
     font-style: italic;
     font-weight: 400;
+    font-size: 0.66em;
+    line-height: 1.05;
     color: ${palette.accentOnField};
   }
   .report-cover .cover-meta {
@@ -550,11 +560,13 @@ function coverRules(
 
   return `${shared}
 
-  /* Title overlay — the house default. The title block is centred in the lower
-     half over a full-bleed scrim. */
+  /* Title overlay — the house default. Anchored to the FOOT of the sheet, not
+     the top: the block grows upward into empty space, so a long address cannot
+     push the meta rows down into the cover footer. Both are absolutely
+     positioned, so nothing would have stopped it. */
   .report-cover .cover-body {
     position: absolute;
-    left: 22mm; right: 22mm; top: 46%;
+    left: 22mm; right: 22mm; bottom: 40mm;
   }`;
 }
 
@@ -883,7 +895,7 @@ ${options.showDropCaps
     page-break-before: always;
   }
   .company-page .company-name {
-    font-family: ${PRINT_STACK.display};
+    font-family: ${PRINT_STACK.cover};
     font-size: ${pt(type.h1 - 4)};
     line-height: 1.05;
     color: ${palette.accentOnField};
