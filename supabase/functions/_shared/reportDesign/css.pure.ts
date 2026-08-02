@@ -39,6 +39,8 @@ import {
   type ReportDesignOptions,
 } from './options.pure.ts';
 import {
+  GRID_GUTTER_MM,
+  GRID_SPANS,
   NAMED_PAGES,
   PAGE_SIZE,
   marginsFor,
@@ -754,14 +756,12 @@ ${options.showDropCaps
     display: table;
     table-layout: fixed;
     width: 100%;
-    border-spacing: 4mm 0;
-    margin: ${pt(d.blockGapPt)} -4mm;
+    border-spacing: ${GRID_GUTTER_MM}mm 0;
+    margin: ${pt(d.blockGapPt)} -${GRID_GUTTER_MM}mm;
   }
   .grid-12 > .col { display: table-cell; vertical-align: top; }
-  .grid-12 > .col-4 { width: 30%; }
-  .grid-12 > .col-5 { width: 38%; }
-  .grid-12 > .col-7 { width: 58%; }
-  .grid-12 > .col-8 { width: 66%; }
+${(Object.entries(GRID_SPANS) as Array<[string, number]>)
+    .map(([span, pct]) => `  .grid-12 > .col-${span} { width: ${pct}%; }`).join('\n')}
 
   /* ── Sidenote, callout, decision box ────────────────────────────────── */
   .sidenote {
@@ -935,6 +935,26 @@ ${options.showDropCaps
   }
   .company-page .disclaimer p { margin: 0 0 ${pt(d.paragraphGapPt - 2)}; text-align: left; }
   .company-page .disclaimer p:last-child { margin-bottom: 0; }
+
+  /* ── Charts ─────────────────────────────────────────────────────────── */
+  .chart-figure {
+    margin: ${pt(d.blockGapPt)} 0;
+    page-break-inside: avoid;
+  }
+  /* The SVG carries its own viewBox and scales to the measure; the width here
+     is what fixes the printed size, and therefore what the point sizes in
+     charts.pure.ts are computed against. */
+  .chart-figure svg { display: block; width: 100%; height: auto; }
+  .chart-figure figcaption {
+    margin-top: 6pt;
+    font-family: ${PRINT_STACK.mono};
+    font-size: ${pt(type.micro)};
+    letter-spacing: ${PRINT_TRACKING.eyebrow};
+    text-transform: uppercase;
+    color: ${palette.mutedInk};
+  }
+  /* A sparkline that flows inside a line of body copy keeps its own size. */
+  .spark-inline { display: inline; width: auto; height: 1em; vertical-align: -0.15em; }
 
   /* ── Utilities ──────────────────────────────────────────────────────── */
   .avoid-break { page-break-inside: avoid; }

@@ -7,9 +7,9 @@ the brand rules themselves are in the
 
 **Status:** Phase 0 (this document + the skill), Phase 1 (the Kit foundation),
 Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
-snapshotting) and **Phase 4 (fonts and the render container)** delivered. Charts
-and the per-format migrations are next; no shipping render path has been
-switched over yet.
+snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
+delivered. The design system is complete; the per-format migrations are next,
+and no shipping render path has been switched over yet.
 Scope is the report/PDF layer. The Template Library catalogue and the Template
 Builder editor are out of scope, but the shared **block renderers** in
 `src/lib/reportTemplate/blocks/*.html.ts` are in scope as reusable infrastructure.
@@ -105,7 +105,7 @@ supabase/functions/_shared/reportDesign/     ← canonical, pure TS
   assets.pure.ts       ✅ inline policy, slot fallback chains, budget
   snapshot.pure.ts     ✅ ReportBrandSnapshot, fingerprint, palette/contact adapters
   defaultAssets.generated.ts ✅ GENERATED — the house cover art and mark, inlined
-  charts.pure.ts       ⬜ SVG chart geometry
+  charts.pure.ts       ✅ 16 SVG charts, palette-driven, sized in points
 
 src/lib/reportDesign/<same names>.pure.ts    ← one-line export * bridges
 src/lib/reportDesign/__tests__/designSystemSourceOfTruth.spec.ts
@@ -114,6 +114,7 @@ src/lib/reportDesign/__tests__/reportSourceHygiene.spec.ts   ← no literals, no
 src/lib/reportDesign/__tests__/reportCss.spec.ts             ← print legality
 src/lib/reportDesign/__tests__/reportPrimitives.spec.ts      ← escaping + contract
 src/lib/reportDesign/__tests__/reportStructure.spec.ts       ← spine validation
+src/lib/reportDesign/__tests__/reportCharts.spec.ts           ← colour, size, safety
 src/lib/reportDesign/__tests__/reportTypography.spec.ts       ← the Dockerfile contract
 src/lib/reportDesign/__tests__/reportAssets.spec.ts           ← inline policy
 src/lib/reportDesign/__tests__/reportSnapshot.spec.ts         ← fingerprint coverage
@@ -247,60 +248,36 @@ at all.
 
 ## 7 · Charts
 
-`src/lib/reportTemplate/blocks/charts.html.ts` already emits inline SVG for bar,
-line, area, pie, donut, scatter, radar, sparkline and heatmap, is WeasyPrint-targeted
-by design, and is security-tested against colour injection. The premium track adds
-17 more bespoke renderers inside `index.ts`.
+**Reuse, not rebuild.** `render-investment-report-pdf/index.ts` already carried
+fifteen chart renderers and two sparklines, written for Deno and deliberately
+local so a render makes no network calls — `renderGauge`, `renderWaterfall`,
+`renderHeatmap`, `renderScoreWheel`, `renderBullet`, `renderMarimekko`,
+`renderMicroMap`, `renderCalendarHeatmap`, `renderBars`, `renderQuadrant`,
+`renderPictograph`, `renderDonut`, `renderTiles`, `renderTimelineRibbon` and the
+two sparks. They are good drawings. `charts.pure.ts` is that work promoted, with
+the geometry ported faithfully so a migrated report draws the same shapes.
 
-**Reuse both; do not write a third chart engine.** Extract the geometry into
-`charts.pure.ts` with plain signatures and leave the existing renderers as thin
-adapters, keeping the sanitisation where its test targets it.
+Extracting them also retires the `html2canvas` rasterisation in
+`useChartExport.tsx`, `CashFlowAnalysisModal.tsx` and
+`PropertyReportGenerator.tsx`, none of which can work server-side.
 
-`src/components/charts/useChartExport.tsx` (html2canvas) stays — it is the on-screen
-"download this chart" feature — but leaves every *report* path, because
-html2canvas cannot run server-side.
+### Four defects found in the port
 
-### What Phase 4 found and fixed
+| Defect | Consequence | Fix |
+|---|---|---|
+| **Eleven more hardcoded colours** — `VIZ_GOLD #D4A843`, `VIZ_NAVY #0A2540`, `VIZ_GOOD #4F7A33`, `VIZ_RISK #A8401C` and seven others | A twelfth palette: unreachable from a tenant, unaudited for contrast, with its own idea of what "risk" looks like | Every colour is a role. The semantic three are Category B, so a chart cannot be where risk turns green. |
+| **Chart type was too small to read** | Sizes were viewBox units, which say nothing about printed size. A 9.5-unit label in a 760-unit viewBox across the 174mm measure is **6.2pt** — under the product's own floor | Sizes are declared in points and converted per chart. `reportCharts.spec.ts` walks every `font-size` in every chart and fails below 7.4pt. |
+| **A chart in a grid column printed at the column's scale** | A chart built for the full measure and dropped into a 38% column printed every label at 38% of the size asked for. Visible in the first charted render as ~4pt axis labels | `chartContextForSpan()`, and `GRID_SPANS` moved into `page.pure.ts` so the stylesheet and the chart sizer read one definition. |
+| **A fixed gradient id and an inverted arc flag** | Two gauges on a page shared `id="gauge-fill"`; and the value arc set the large-arc flag whenever the score exceeded half, drawing it the long way round — two disconnected segments | Ids hash the chart's own content. The flag is always 0: the sweep is `pct` of a half circle and can never exceed 180°. |
 
-The font contract in `typography.pure.ts` described itself as "a contract with
-`weasyprint-service/Dockerfile`". Nothing checked it, and it was wrong in a way
-that had a much larger consequence than bad typography.
+A fifth, found by rendering: at the corrected type sizes a donut legend beside
+the ring does not fit a 66mm column — the label printed through the percentage.
+The legend now stacks beneath the ring below `DONUT_STACK_BELOW_MM`.
 
-**The image could not be built.** The Dockerfile installed
-`fonts-playfair-display`, `fonts-cormorant-garamond` and `fonts-fraunces`. None
-of the three exists in Debian — verified against both bookworm and trixie.
-`apt-get install -y` exits non-zero on an unknown package, so that `RUN` layer
-failed and the build aborted. Whatever image is serving Cloud Run today was not
-built from this Dockerfile.
-
-That also explains the one typographic defect visible in the Phase 2 render: the
-accent stack led with Cormorant Garamond, which was never installed, so every
-standfirst and dek fell through to the engine's default serif and was *not
-italic at all*.
-
-| Fixed | How |
-|---|---|
-| Three non-existent packages | Removed. Playfair Display now arrives as a COPY-ed TTF. |
-| Cinzel absent | `weasyprint-service/fonts/Cinzel-Bold.ttf`, extracted from the repo's own `Cinzel_Playfair_Display.zip` with its OFL licence. |
-| No italic for the accent role | `PlayfairDisplay-MediumItalic.ttf`. Without a real italic the engine synthesises a slant, which on a high-contrast didone reads as a printing fault. |
-| Two serif families where the second never loaded | The accent role is now the *same* family as display, set in italic. One editorial serif used two ways is a system; two where the second is missing is a bug. |
-| Unpinned base image | `python:3.12-slim-bookworm`. A font-package contract is only checkable against a known release, and `-slim` moves distribution when the tag is rebuilt. |
-| Stale service README | It claimed a Api2PDF fallback on WeasyPrint failure. `index.ts:5567` re-throws — deliberately. The service is critical infrastructure and the README now says so. |
-
-Three new gates, because a font failure is uniquely invisible — the engine
-substitutes silently, the PDF renders, every test passes:
-
-1. `reportTypography.spec.ts` reads the Dockerfile and fails if the packages, the
-   COPY-ed files, `CONTAINER_INSTALLED_FAMILIES` and the type stacks disagree —
-   including a named regression check for the three phantom packages.
-2. The Dockerfile's own `fc-cache` layer asserts each brand family resolves, so a
-   missing face breaks the build rather than the document.
-3. CI builds the image, checks `fc-list` inside it, renders a smoke document
-   through the service and asserts with `pdffonts` that Cinzel, Playfair and
-   Inter are **embedded** — a substituted face still produces a valid PDF.
-
-Fonts are also now verified in the specimen: the render in §9 was produced with
-the real faces installed, which closes the caveat recorded there.
+The render caps carried over unchanged (`MAX_WATERFALL_ITEMS`,
+`MAX_HEATMAP_CELLS`, `MAX_WHEEL_SCORES` …). Chart data is model-generated and,
+on the shared-report path, attacker-influenced; the reason for each cap is still
+true.
 
 ## 8 · Two migration targets
 

@@ -40,6 +40,16 @@ import {
   REPORT_ARCHETYPES,
 } from '../../src/lib/reportDesign/structure.pure';
 import {
+  chartContext,
+  chartContextForSpan,
+  chartFigure,
+  renderBars,
+  renderDonut,
+  renderGauge,
+  renderInlineSpark,
+  renderWaterfall,
+} from '../../src/lib/reportDesign/charts.pure';
+import {
   closeChapter,
   openChapter,
   renderBandedMatrix,
@@ -161,6 +171,11 @@ const { snapshot, skippedAssets } = buildReportBrandSnapshot({
 });
 
 const palette = resolveReportPalette(paletteInputFor(snapshot));
+// A chart drawn for the full measure and dropped into a 38% column prints its
+// labels at 38% of the size the code asked for. One context per width.
+const charts = chartContext(palette);
+const chartsCol7 = chartContextForSpan(palette, 7);
+const chartsCol5 = chartContextForSpan(palette, 5);
 const contact = companyContactFor(snapshot);
 const masthead = mastheadFor(contact);
 const spine = buildSpine({ archetype: 'financial-analysis', chapters: CHAPTERS });
@@ -221,6 +236,50 @@ const positionChapter = `
     ],
     { caption: 'Funds required at settlement' },
   )}
+  ${renderGrid12([
+    {
+      span: 7,
+      html: chartFigure(
+        renderWaterfall(chartsCol7, [
+          { label: 'Gross rent', value: 42_400 },
+          { label: 'Operating', value: -11_900 },
+          { label: 'Interest', value: -38_600 },
+          { label: 'Net year 1', value: -8_100, total: true },
+        ]),
+        'Year-one cash flow build-up',
+      ),
+    },
+    {
+      span: 5,
+      html: chartFigure(
+        renderGauge(chartsCol5, 72, { label: 'Investment score', caption: 'weighted composite' }),
+        'Composite score',
+      ),
+    },
+  ])}
+  ${renderGrid12([
+    {
+      span: 7,
+      html: chartFigure(
+        renderBars(chartsCol7, [
+          { label: 'Schools within 5km', value: 8 },
+          { label: 'Transport access', value: 6 },
+          { label: 'Employment depth', value: 4, tone: 'caution' },
+          { label: 'Vacancy pressure', value: 2, tone: 'negative' },
+        ], { title: 'Locality scorecard', max: 10, unit: '/10' }),
+      ),
+    },
+    {
+      span: 5,
+      html: chartFigure(
+        renderDonut(chartsCol5, [
+          { label: 'Owner-occupied', value: 62 },
+          { label: 'Rented', value: 31 },
+          { label: 'Other', value: 7 },
+        ], { title: 'Tenure mix', centerSub: 'owner-occupied' }),
+      ),
+    },
+  ])}
   ${renderCallout(
     'caution',
     'Watch',
@@ -264,6 +323,8 @@ const verdictChapter = `
     label: archetype.chapterLabel,
   })}
   <div class="chapter-body">
+  <p>Rent has moved ${renderInlineSpark(charts, [38_200, 39_100, 40_400, 41_000, 42_400])}
+  steadily over five years, and the model carries that forward at 3.0%.</p>
   <p>On the stated assumptions the asset is serviceable from the outset and
   self-supporting from year six. The exposure is concentrated in the rate path
   rather than in the rent: the locality has carried sub-2% vacancy for eleven
