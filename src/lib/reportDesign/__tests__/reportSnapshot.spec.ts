@@ -113,7 +113,7 @@ describe('buildReportBrandSnapshot', () => {
 
   it('resolves both marks, and the mono slot falls back to the colour mark', () => {
     const input = fullInput();
-    input.whitelabel.assets = { report: PNG };
+    input.whitelabel.assets = { report: PNG, reportMono: '' };
     const { snapshot } = buildReportBrandSnapshot(input);
     expect(snapshot.logo.report).toBe(PNG);
     expect(snapshot.logo.mono).toBe(PNG);
@@ -121,7 +121,7 @@ describe('buildReportBrandSnapshot', () => {
 
   it('reports an asset that failed policy instead of swallowing it', () => {
     const input = fullInput();
-    input.whitelabel.assets = { report: 'https://cdn.example.com/logo.png' };
+    input.whitelabel.assets = { report: 'https://cdn.example.com/logo.png', reportMono: '' };
     const { snapshot, skippedAssets } = buildReportBrandSnapshot(input);
     expect(snapshot.logo.report).toBeNull();
     expect(skippedAssets).toEqual([

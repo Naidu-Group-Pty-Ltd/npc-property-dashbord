@@ -89,6 +89,23 @@ export interface RunCriticalContainmentResult {
   manualReviewRequired: boolean;
 }
 
+/**
+ * Drop a blocked page's background raster.
+ *
+ * A page reaches `block_manual_review` precisely because no usable raster
+ * exists, so whatever is still sitting in `background.imageUrl` is either an
+ * unusable leftover — which would render as a blank raster-only page — or a
+ * carrier for something that should not be persisted: an inline `data:` copy of
+ * the source page, or a signed URL with its token still attached. Saved template
+ * JSON is the wrong place for either.
+ */
+function withoutSourceRaster(page: Page): Page {
+  const background = page.background as Record<string, unknown> | undefined;
+  if (!background || background.imageUrl === undefined) return page;
+  const { imageUrl: _removed, ...rest } = background;
+  return { ...page, background: rest } as Page;
+}
+
 function rasterAvailable(ctx: ContainmentPageContext | undefined): boolean {
   if (!ctx) return false;
   if (ctx.rasterRef?.path) return true;
@@ -190,7 +207,7 @@ export function runCriticalContainment(args: RunCriticalContainmentArgs): RunCri
       // Keep native output (nothing better is possible) but persist the decision
       // so the import is flagged for manual review — never a silent healthy-native claim.
       return applyPagePolicyToPage(
-        pageForPersistence,
+        withoutSourceRaster(pageForPersistence),
         decoratePolicy(nativePolicy('semantic'), { ...assessment, action: 'block_manual_review' }, decidedAt),
       );
     }

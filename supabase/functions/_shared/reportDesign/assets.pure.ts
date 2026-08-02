@@ -312,8 +312,9 @@ export function resolveReportAsset(
     const value = assets[source];
     if (value == null || value === '') continue;
     const result = inlineAsset(value);
-    if (result.ok) return { resolved: { slot, source, asset: result.asset }, skipped };
-    skipped.push({ source, reason: result.reason, detail: result.detail });
+    if (result.ok === true) return { resolved: { slot, source, asset: result.asset }, skipped };
+    const rejected = result as { ok: false; reason: AssetRejection; detail: string };
+    skipped.push({ source, reason: rejected.reason, detail: rejected.detail });
   }
   return { resolved: null, skipped };
 }

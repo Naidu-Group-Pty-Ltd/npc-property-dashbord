@@ -41,12 +41,14 @@ if (!handler.includes("if (body.only_user || !(await actorIsSuperadmin(sb, userI
 // generic ai_dashboard shell for the un-remapped set). Keep this list in sync
 // with public.dashboard_modules.
 const REGISTERED_MODULES = new Set([
-  'activity_logs','admin_email_access','agent','agreements','automation','borrowing_capacity',
-  'calendar','call_logs','cash_flow','charts','checklists','client_management','client_tracker',
-  'cloudflare','conversations','data_import','depreciation_comps','email_copilot','error_logs',
-  'finance_portal_admin','game_plans','generated_reports','listings','monitoring','overview',
-  'quality_assurance','reminders','report_qa','report_requests','reports','settings','sources',
-  'templates','user_guide','user_management','white_label','client_portal_admin','ai_dashboard',
+  'activity_logs','admin_email_access','agent','agreements','ai_dashboard','automation',
+  'borrowing_capacity','builder_portal_admin','calendar','call_logs','cash_flow','charts',
+  'checklists','client_management','client_portal_admin','client_tracker','cloudflare',
+  'conversations','data_import','deal_pipeline','depreciation_comps','email_copilot',
+  'error_logs','finance_portal_admin','game_plans','generated_reports','listings',
+  'marketing_analytics','monitoring','overview','portal_config','portfolio_reports',
+  'quality_assurance','reminders','report_qa','report_requests','reports','settings',
+  'solicitor_portal_admin','sources','templates','user_guide','user_management','white_label'
 ]);
 const overrideBlock = policy.slice(policy.indexOf('REAL_MODULE_OVERRIDES'), policy.indexOf('TOOL_SECURITY_POLICIES'));
 for (const m of overrideBlock.matchAll(/moduleKey:\s*'([a-z_]+)'/g)) {

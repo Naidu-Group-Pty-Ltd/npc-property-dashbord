@@ -21,7 +21,7 @@ const SEGMENT_LABEL_OVERRIDES: Record<string, string> = {
   'finance-portal': 'Finance Portal',
   'portal-config': 'Client Portal',
   'model-hub': 'Model Hub',
-  'market-updates': 'Market Updates',
+  'market-updates': 'Market News Feed',
   'generated-reports': 'Generated Reports',
   'quantitative-reports': 'Quantitative Reports',
   'cash-flow-analysis': 'Cash Flow',

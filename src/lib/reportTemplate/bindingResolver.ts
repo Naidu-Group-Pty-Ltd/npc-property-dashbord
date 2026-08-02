@@ -148,15 +148,78 @@ function getByPath(obj: any, path: string): any {
 // ─── Computed field evaluation ────────────────────────────────────────────────
 const SAFE_EXPR_RE = /^[\s\w.@$'"=!<>&|()+\-*/%?:,\[\]]*$/;
 
+/**
+ * Names that cannot be function parameters, so they cannot be bound and are
+ * left for the expression to fail on naturally.
+ */
+const RESERVED = new Set([
+  'arguments', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
+  'debugger', 'default', 'delete', 'do', 'else', 'enum', 'eval', 'export',
+  'extends', 'false', 'finally', 'for', 'function', 'if', 'implements', 'import',
+  'in', 'instanceof', 'interface', 'let', 'new', 'null', 'package', 'private',
+  'protected', 'public', 'return', 'static', 'super', 'switch', 'this', 'throw',
+  'true', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield', 'tokens', '$',
+]);
+
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+
+/**
+ * The data keys an expression may reference by bare name.
+ *
+ * These become the evaluated function's parameters, which is what `with (data)`
+ * used to provide. `with` cannot appear in strict-mode code, so the previous
+ * form threw at construction and every expression fell into its catch — a
+ * silent empty string for computed fields, a silent `false` for conditionals.
+ */
+function dataParameterNames(ctx: ResolveContext): string[] {
+  return Object.keys(ctx.data ?? {}).filter(
+    (key) => IDENTIFIER.test(key) && !RESERVED.has(key),
+  );
+}
+
+/** Bare words that are language literals rather than references to look up. */
+const LITERAL_NAMES = new Set(['true', 'false', 'null', 'undefined']);
+
+/**
+ * Whether every bare name in the expression is something we deliberately bind.
+ *
+ * The character whitelist alone never made this a sandbox: `window.location`
+ * is all word characters and dots, and an unbound name resolves against the
+ * global scope. That was invisible only because the evaluator threw on every
+ * input; once it actually runs, an allow-list of *names* is what keeps an
+ * expression inside its data.
+ *
+ * Names after a dot are property accesses on an already-checked base, so only
+ * the leading identifier of each chain is tested.
+ */
+function referencesOnlyBoundNames(expr: string, bound: string[]): boolean {
+  const withoutStrings = expr.replace(/'[^']*'|"[^"]*"/g, ' ');
+  const allowed = new Set([...bound, 'tokens', '$']);
+  for (const match of withoutStrings.matchAll(/(?<![.\w$])[A-Za-z_$][\w$]*/g)) {
+    const name = match[0];
+    if (!LITERAL_NAMES.has(name) && !allowed.has(name)) return false;
+  }
+  return true;
+}
+
 function evalExpression(expr: string, ctx: ResolveContext): any {
   if (!SAFE_EXPR_RE.test(expr)) {
     console.warn('[binding] Rejected unsafe expression:', expr);
     return '';
   }
   try {
+    // Same defect as evalConditional had: `with` is a syntax error in strict
+    // mode, so this threw while constructing and every computed field resolved
+    // to ''. Bind the data keys as parameters instead.
+    const names = dataParameterNames(ctx);
+    if (!referencesOnlyBoundNames(expr, names)) {
+      console.warn('[binding] Rejected expression referencing unbound name:', expr);
+      return '';
+    }
     // eslint-disable-next-line no-new-func
-    const fn = new Function('data', 'tokens', '$', `"use strict"; with (data) { return (${expr}); }`);
-    return fn(ctx.data, ctx.tokens, ctx.data);
+    const fn = new Function(...names, 'tokens', '$', `"use strict"; return (${expr});`);
+    const data = ctx.data as Record<string, unknown>;
+    return fn(...names.map((key) => data[key]), ctx.tokens, ctx.data);
   } catch (e) {
     console.warn('[binding] Expression eval failed:', expr, e);
     return '';
@@ -365,9 +428,21 @@ export function evalConditional(expr: string | undefined, ctx: ResolveContext): 
     return false;
   }
   try {
+    // Data keys are bound as named parameters rather than exposed through
+    // `with`. `with` is a syntax error inside strict-mode code, so the previous
+    // `"use strict"; with (data) {...}` form threw while *constructing* every
+    // conditional — which the catch below swallowed into `false`. The effect was
+    // that every conditional overlay silently failed to render, whatever the
+    // data said. Parameters give the same lexical lookup and keep strict mode.
+    const names = dataParameterNames(ctx);
+    if (!referencesOnlyBoundNames(expr, names)) {
+      console.warn('[conditional] Rejected expression referencing unbound name:', expr);
+      return false;
+    }
     // eslint-disable-next-line no-new-func
-    const fn = new Function('data', 'tokens', `"use strict"; with (data) { return (${expr}); }`);
-    return Boolean(fn(ctx.data, ctx.tokens));
+    const fn = new Function(...names, 'tokens', `"use strict"; return (${expr});`);
+    const data = ctx.data as Record<string, unknown>;
+    return Boolean(fn(...names.map((key) => data[key]), ctx.tokens));
   } catch (e) {
     console.warn('[conditional] Eval failed:', expr, e);
     return false;

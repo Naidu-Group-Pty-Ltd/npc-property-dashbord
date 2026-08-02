@@ -43,6 +43,7 @@ import {
   Inbox,
   ChevronDown,
   ArrowLeftRight,
+  Workflow,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
@@ -57,7 +58,7 @@ interface MobileSidebarProps {
 // Mirror of DashboardSidebar navigation — keep in sync.
 const navigationItems = [
   { title: 'Overview', url: '/', icon: Home, moduleKey: 'overview' },
-  { title: 'Market Updates', url: '/market-updates', icon: Newspaper, moduleKey: '__always__' },
+  { title: 'Market News Feed', url: '/market-updates', icon: Newspaper, moduleKey: '__always__' },
   { title: 'Property Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings' },
   { title: 'Commercial / Industrial', url: '/commercial', icon: Building2, moduleKey: '__always__' },
   { title: 'Calendar', url: '/calendar', icon: Calendar, moduleKey: 'calendar' },
@@ -92,7 +93,7 @@ const navigationItems = [
 const navigationGroups = [
   {
     title: 'Main Dashboard',
-    itemTitles: ['Overview', 'Market Updates', 'Property Marketplace', 'Commercial / Industrial', 'Calendar'],
+    itemTitles: ['Overview', 'Market News Feed', 'Property Marketplace', 'Commercial / Industrial', 'Calendar'],
   },
   {
     title: 'Reports & Analysis',
@@ -119,6 +120,7 @@ const adminGroup = {
     'Templates',
     'Branding',
     'Integrations',
+    'Workflow Playground',
     'Cloudflare',
     'API Usage',
     'Model Hub',
@@ -147,6 +149,7 @@ const adminItems = [
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates' },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations' },
+  { title: 'Workflow Playground', url: '/workflow-playground', icon: Workflow, moduleKey: 'integrations' },
   { title: 'Cloudflare', url: '/cloudflare', icon: Cloud, moduleKey: 'cloudflare' },
   { title: 'API Usage', url: '/api-usage', icon: Gauge, moduleKey: 'api_usage' },
   { title: 'Model Hub', url: '/model-hub', icon: Cpu, moduleKey: 'integrations' },

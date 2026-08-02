@@ -83,10 +83,25 @@ export function serializePaletteDrag(built: BuiltPaletteItem): string {
   return token;
 }
 
+/**
+ * The token proves an item came from this runtime's palette; it does not prove
+ * the item is well-formed. A malformed overlay reaching the canvas ends up in
+ * saved template JSON and then in a renderer, so provenance and shape are both
+ * checked before the drop is accepted.
+ */
+function isValidPaletteItem(built: BuiltPaletteItem): boolean {
+  if ((built as { kind?: string }).kind === 'overlay') {
+    return OverlaySchema.safeParse((built as { overlay: Overlay }).overlay).success;
+  }
+  return BlockSchema.safeParse(built).success;
+}
+
 export function parsePaletteDrag(raw: string): BuiltPaletteItem | null {
   if (!raw) return null;
   const built = pendingPaletteDrags.get(raw) ?? null;
+  // Consumed either way — a rejected token must not be retryable.
   pendingPaletteDrags.delete(raw);
+  if (!built || !isValidPaletteItem(built)) return null;
   return built;
 }
 

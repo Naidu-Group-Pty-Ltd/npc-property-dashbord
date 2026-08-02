@@ -25,6 +25,7 @@ import {
 } from '@/lib/internalMessageAttachments';
 import type { QueueItem } from '@/hooks/useInternalAttachmentQueue';
 import { Progress } from '@/components/ui/progress';
+import { toast } from 'sonner';
 
 /** Read-only list rendered inside a message bubble. */
 export function InternalAttachmentList({
@@ -53,7 +54,9 @@ export function InternalAttachmentList({
             onClick={async () => {
               setBusy(a.path);
               try {
-                await openInternalAttachment(threadId, a);
+                await openInternalAttachment(threadId, a, true);
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : `Could not download ${a.name}`);
               } finally {
                 setBusy(null);
               }

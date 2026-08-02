@@ -683,6 +683,8 @@ export default function WhiteLabel() {
     sidebar: { status: 'idle', detail: 'Waiting for validation.', src: null },
     'sidebar-icon': { status: 'idle', detail: 'Waiting for validation.', src: null },
     favicon: { status: 'idle', detail: 'Waiting for validation.', src: null },
+    report: { status: 'idle', detail: 'Waiting for validation.', src: null },
+    'report-mono': { status: 'idle', detail: 'Waiting for validation.', src: null },
   });
   const [showLeavePrompt, setShowLeavePrompt] = useState(false);
   const [showResetPrompt, setShowResetPrompt] = useState(false);
