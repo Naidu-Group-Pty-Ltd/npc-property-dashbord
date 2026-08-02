@@ -7065,6 +7065,94 @@ export type Database = {
           },
         ]
       }
+      cash_flow_comparison_renders: {
+        Row: {
+          ai_sections_missing: string[]
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          compared_report_ids: string[]
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          has_ai_analysis: boolean
+          id: string
+          investor_profile: string | null
+          primary_report_id: string
+          property_count: number | null
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          term_years: number | null
+        }
+        Insert: {
+          ai_sections_missing?: string[]
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          compared_report_ids?: string[]
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_ai_analysis?: boolean
+          id?: string
+          investor_profile?: string | null
+          primary_report_id: string
+          property_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Update: {
+          ai_sections_missing?: string[]
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          compared_report_ids?: string[]
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_ai_analysis?: boolean
+          id?: string
+          investor_profile?: string | null
+          primary_report_id?: string
+          property_count?: number | null
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_flow_comparison_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_comparison_renders_primary_report_id_fkey"
+            columns: ["primary_report_id"]
+            isOneToOne: false
+            referencedRelation: "investment_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_comparison_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cash_flow_renders: {
         Row: {
           brand_gaps: string[]
