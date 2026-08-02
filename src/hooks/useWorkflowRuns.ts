@@ -8,10 +8,15 @@
  * Persistence is best-effort by design. A test run that executed correctly but
  * failed to write its history is still a successful run, and losing the result
  * on screen because a row would not insert would be the worse failure.
+ *
+ * Reads and writes go straight to Postgres under RLS, for the same reason as
+ * `useWorkflows`: routing them through the manage-templates broker made the
+ * feature depend on that function's hand-maintained table allow-list being
+ * redeployed. Both run tables carry admin-or-superadmin policies.
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { runWorkflow } from '@/lib/workflow/runtime/engine';
 import type { RunResult, StepResult } from '@/lib/workflow/runtime/engine';
 import { simulate } from '@/lib/workflow/runtime/performers';
@@ -92,6 +97,7 @@ const stepRow = (runId: string, step: StepResult, sequence: number) => ({
 });
 
 export function useWorkflowRuns(workflowId: string | null) {
+  const { supabase, isAuthenticated } = useAuthenticatedSupabase();
   const [history, setHistory] = useState<RunSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
@@ -106,24 +112,20 @@ export function useWorkflowRuns(workflowId: string | null) {
     }
     setHistoryLoading(true);
     try {
-      const { data } = await invokeSecureFunction('manage-templates', {
-        operation: 'list',
-        table: 'workflow_runs',
-        listOptions: {
-          orderBy: 'started_at',
-          orderAsc: false,
-          limit: HISTORY_LIMIT,
-          filters: { workflow_id: workflowId },
-        },
-      });
-      setHistory(((data?.records ?? []) as RunRow[]).map(toSummary));
+      const { data } = await supabase
+        .from('workflow_runs')
+        .select('id, mode, status, halt_reason, step_count, failed_step_count, duration_ms, started_at')
+        .eq('workflow_id', workflowId)
+        .order('started_at', { ascending: false })
+        .limit(HISTORY_LIMIT);
+      setHistory(((data ?? []) as RunRow[]).map(toSummary));
     } catch {
       // History is context, not the feature; a failure here stays quiet.
       setHistory([]);
     } finally {
       setHistoryLoading(false);
     }
-  }, [workflowId]);
+  }, [supabase, workflowId]);
 
   useEffect(() => {
     void refreshHistory();
@@ -131,45 +133,43 @@ export function useWorkflowRuns(workflowId: string | null) {
 
   const persist = useCallback(
     async (mode: RunMode, run: RunResult, triggerPayload: Record<string, unknown>) => {
-      if (!workflowId) return;
+      if (!workflowId || !isAuthenticated) return;
 
-      const { data, error } = await invokeSecureFunction('manage-templates', {
-        operation: 'insert',
-        table: 'workflow_runs',
-        data: {
+      const { data, error } = await supabase
+        .from('workflow_runs')
+        .insert({
           workflow_id: workflowId,
           mode,
           status: run.status,
-          trigger_payload: jsonSafe(triggerPayload),
+          trigger_payload: jsonSafe(triggerPayload) as never,
           halt_reason: run.haltReason ?? null,
           step_count: run.steps.length,
           failed_step_count: run.steps.filter((s) => s.status === 'failed').length,
           duration_ms: run.durationMs,
           started_at: run.startedAt,
           finished_at: new Date().toISOString(),
-        },
-      });
+        })
+        .select('id')
+        .single();
 
-      const runId = (data?.record as { id?: string } | undefined)?.id;
+      const runId = (data as { id?: string } | null)?.id;
       if (error || !runId) {
         setPersistenceWarning('This run was not saved to history.');
         return;
       }
 
-      // All steps in one insert: the broker accepts an array, and a run with
-      // thirty steps should not be thirty round trips.
+      // All steps in one statement — a run with thirty steps should not be
+      // thirty round trips.
       if (run.steps.length) {
-        const { error: stepsError } = await invokeSecureFunction('manage-templates', {
-          operation: 'insert',
-          table: 'workflow_run_steps',
-          data: run.steps.map((step, index) => stepRow(runId, step, index)),
-        });
+        const { error: stepsError } = await supabase
+          .from('workflow_run_steps')
+          .insert(run.steps.map((step, index) => stepRow(runId, step, index)) as never);
         if (stepsError) setPersistenceWarning('The run was saved, but its step detail was not.');
       }
 
       await refreshHistory();
     },
-    [refreshHistory, workflowId],
+    [isAuthenticated, refreshHistory, supabase, workflowId],
   );
 
   const start = useCallback(

@@ -1,10 +1,23 @@
 /**
- * Saved workflows, read and written through the manage-templates broker so the
- * `integrations` module permission is enforced server-side on every call.
+ * Saved workflows, read and written straight against Postgres under RLS.
+ *
+ * These used to go through the `manage-templates` broker so the `integrations`
+ * module permission was checked server-side. That indirection turned out to be
+ * the wrong trade: the broker keeps a hand-maintained `validTables` allow-list,
+ * so the feature could not work until a *separate deployment* of a function
+ * shared by 38 other call sites caught up with the migration that created these
+ * tables. It didn't, and every "New workflow" returned `Invalid table:
+ * workflows` — a deployment gap surfacing as a user-facing error.
+ *
+ * Talking to the table directly removes that coupling entirely. The access rule
+ * is not weakened, it moves: `workflows` carries admin-or-superadmin policies on
+ * all four verbs (`auth.uid()` against `user_roles`), so Postgres enforces on
+ * every statement what the broker enforced on every call — and a new table
+ * cannot be forgotten in an allow-list, because there isn't one.
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import { EMPTY_GRAPH, type WorkflowGraph, type WorkflowRecord } from '@/lib/workflow/types';
 
 interface WorkflowRow {
@@ -40,31 +53,51 @@ const toRecord = (row: WorkflowRow): WorkflowRecord => ({
   updatedAt: row.updated_at,
 });
 
+/**
+ * RLS answers "not allowed" by returning no rows on a read and a violation on a
+ * write, neither of which says *why*. Naming the likely cause keeps the person
+ * from hunting through their own graph for a problem that is in their access.
+ */
+const describe = (message: string | undefined, fallback: string): string => {
+  const text = String(message ?? '');
+  if (/row-level security|violates row-level/i.test(text)) {
+    return 'You do not have permission to change workflows. An administrator can grant Integrations access from User Management.';
+  }
+  if (/JWT|not authenticated|invalid claim/i.test(text)) {
+    return 'Your sign-in session has expired. Sign out, sign back in, and try again.';
+  }
+  return text || fallback;
+};
+
 export function useWorkflows() {
+  const { supabase, isAuthenticated } = useAuthenticatedSupabase();
   const [workflows, setWorkflows] = useState<WorkflowRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    // Without a token every query is anonymous and RLS returns nothing, which
+    // would render as "no workflows yet" rather than as a sign-in problem.
+    if (!isAuthenticated) return;
     setLoading(true);
     try {
-      const { data, error: invokeError } = await invokeSecureFunction('manage-templates', {
-        operation: 'list',
-        table: 'workflows',
-        listOptions: { orderBy: 'updated_at', orderAsc: false },
-      });
-      if (invokeError) {
-        setError(invokeError.message ?? 'Could not load workflows.');
+      const { data, error: queryError } = await supabase
+        .from('workflows')
+        .select('id, name, description, graph, status, created_at, updated_at')
+        .order('updated_at', { ascending: false });
+
+      if (queryError) {
+        setError(describe(queryError.message, 'Could not load workflows.'));
         return;
       }
-      setWorkflows(((data?.records ?? []) as WorkflowRow[]).map(toRecord));
+      setWorkflows(((data ?? []) as WorkflowRow[]).map(toRecord));
       setError(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not load workflows.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAuthenticated, supabase]);
 
   useEffect(() => {
     void refresh();
@@ -72,55 +105,65 @@ export function useWorkflows() {
 
   const create = useCallback(
     async (name: string, description?: string): Promise<WorkflowRecord | null> => {
-      const { data, error: invokeError } = await invokeSecureFunction('manage-templates', {
-        operation: 'insert',
-        table: 'workflows',
-        data: { name, description: description ?? null, graph: EMPTY_GRAPH, status: 'draft' },
-      });
-      if (invokeError || !data?.record) {
-        setError(invokeError?.message ?? 'Could not create the workflow.');
+      const { data, error: insertError } = await supabase
+        .from('workflows')
+        // The generated row types model `graph` as `Json`, which a structural
+        // WorkflowGraph does not satisfy even though it round-trips exactly.
+        // `toGraph` re-validates on the way back out, which is where it matters.
+        .insert({
+          name,
+          description: description ?? null,
+          graph: EMPTY_GRAPH as unknown as never,
+          status: 'draft',
+        })
+        .select('id, name, description, graph, status, created_at, updated_at')
+        .single();
+
+      if (insertError || !data) {
+        setError(describe(insertError?.message, 'Could not create the workflow.'));
         return null;
       }
-      const record = toRecord(data.record as WorkflowRow);
+      const record = toRecord(data as WorkflowRow);
       setWorkflows((current) => [record, ...current]);
+      setError(null);
       return record;
     },
-    [],
+    [supabase],
   );
 
   const save = useCallback(
     async (id: string, changes: Partial<Pick<WorkflowRecord, 'name' | 'description' | 'graph' | 'status'>>) => {
-      const { error: invokeError } = await invokeSecureFunction('manage-templates', {
-        operation: 'update',
-        table: 'workflows',
-        recordId: id,
-        data: changes,
-      });
-      if (invokeError) {
-        setError(invokeError.message ?? 'Could not save the workflow.');
+      const { error: updateError } = await supabase
+        .from('workflows')
+        .update({ ...changes, updated_at: new Date().toISOString() } as never)
+        .eq('id', id);
+
+      if (updateError) {
+        setError(describe(updateError.message, 'Could not save the workflow.'));
         return false;
       }
       setWorkflows((current) =>
         current.map((w) => (w.id === id ? { ...w, ...changes, updatedAt: new Date().toISOString() } : w)),
       );
+      setError(null);
       return true;
     },
-    [],
+    [supabase],
   );
 
-  const remove = useCallback(async (id: string) => {
-    const { error: invokeError } = await invokeSecureFunction('manage-templates', {
-      operation: 'delete',
-      table: 'workflows',
-      recordId: id,
-    });
-    if (invokeError) {
-      setError(invokeError.message ?? 'Could not delete the workflow.');
-      return false;
-    }
-    setWorkflows((current) => current.filter((w) => w.id !== id));
-    return true;
-  }, []);
+  const remove = useCallback(
+    async (id: string) => {
+      const { error: deleteError } = await supabase.from('workflows').delete().eq('id', id);
+      if (deleteError) {
+        setError(describe(deleteError.message, 'Could not delete the workflow.'));
+        return false;
+      }
+      setWorkflows((current) => current.filter((w) => w.id !== id));
+      setError(null);
+      return true;
+    },
+    [supabase],
+  );
 
   return { workflows, loading, error, refresh, create, save, remove };
 }
