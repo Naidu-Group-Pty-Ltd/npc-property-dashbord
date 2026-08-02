@@ -30,6 +30,7 @@ these are the preferred way to do frontend work:
 
 | Skill | Source | Use it to… |
 | --- | --- | --- |
+| **npc-services-design** | The NPC Services Design System (claude.ai/design) | **The brand itself** — colour categories, the type scale and eyebrow signature, spacing, the logo marks, voice, and the print rules for generated reports. Invoke for any NPC surface, and always for a PDF/report. |
 | **frontend-design** | Anthropic `anthropics/skills` | Set the aesthetic direction for new or reshaped UI — palette, typography, layout — so it looks intentional, not templated. Invoke before building a new surface. |
 | **web-design-guidelines** | Vercel `vercel-labs/agent-skills` | Review UI code for accessibility, UX, and Web Interface Guidelines compliance. Invoke after building, before finishing. |
 
@@ -52,10 +53,21 @@ Treat it as the **source of the brand**, and this repo as the source of the code
 - Colours there are HSL triplets without the `hsl()` wrapper, so they compose with
   alpha: `background: hsl(var(--primary) / 0.12)`.
 
+A **local working copy** is installed at
+[`.claude/skills/npc-services-design/`](./.claude/skills/npc-services-design/) so the
+brand is readable offline and by any tool. It carries the type/spacing/surface
+tokens, the voice, the asset inventory and the print rules — but **not** a copy of
+the colour palette, because `src/styles/tokens.css` is authoritative and a second
+copy would drift. Where the skill and the repo disagree, the repo wins.
+
 The **report-template** layer of the system — the five voices the PDF catalogue is
 built from — is generated from code so it cannot drift:
 `npm run templates:library:cards`, then push `.design-system/report-templates/`.
 See [`docs/template-library/06-design-system.md`](./docs/template-library/06-design-system.md).
+
+For **generated PDFs**, read
+[`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
+and [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
 If your tool does **not** support MCP/skills, still follow the same intent: prefer
 shadcn components, design deliberately, verify in a browser, and review for

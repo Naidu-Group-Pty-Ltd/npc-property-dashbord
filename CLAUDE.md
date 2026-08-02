@@ -19,8 +19,17 @@ Guidance for Claude Code (and Claude-based tools) working in this repo.
 - **MCP servers** — [`.mcp.json`](./.mcp.json): `shadcn`, `chrome-devtools`,
   `@21st-dev/magic`, `21st` (hosted HTTP). Setup and the `MAGIC_API_KEY` /
   `TWENTY_FIRST_API_KEY` steps are in [`MCP_SETUP.md`](./MCP_SETUP.md).
-- **Skills** — [`.claude/skills/`](./.claude/skills/): `frontend-design` (aesthetic
-  direction) and `web-design-guidelines` (accessibility / UX review).
+- **Skills** — [`.claude/skills/`](./.claude/skills/): **`npc-services-design`** (the
+  brand itself — colours, type, logo marks, voice, and the print rules for generated
+  reports), `frontend-design` (aesthetic direction) and `web-design-guidelines`
+  (accessibility / UX review).
+
+## Generated reports / PDFs
+Read [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
+before touching any PDF generator — print has different contrast, colour and font
+rules from screen, and most of the repo's "logo" files are email-signature banners
+carrying the director's personal mobile number. Architecture and the migration
+programme: [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
 ## Report templates
 The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look
