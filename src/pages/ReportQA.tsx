@@ -71,6 +71,7 @@ import { ConversationClientLinker } from '@/components/report-qa/ConversationCli
 import { ConversationTags } from '@/components/report-qa/ConversationTags';
 import { type Theme } from '@/components/report-qa/ChatThemeSelector';
 import { ConversationExport } from '@/components/report-qa/ConversationExport';
+import { ReportQaDownloadButton } from '@/components/report-qa/ReportQaDownloadButton';
 import { MessageThreading, useMessageThreads } from '@/components/report-qa/MessageThreading';
 import { AutoSummarize } from '@/components/report-qa/AutoSummarize';
 import { PinConversation, usePinnedConversations } from '@/components/report-qa/PinConversation';
@@ -2264,6 +2265,25 @@ export default function ReportQA() {
               <span className="hidden sm:inline">Export PDF</span>
             </Button>
           )}
+          {/*
+            Beside the raster export, not in place of it. The button above still
+            calls `generate-qa-pdf` and still posts its pdf-lib document into the
+            chat; this one produces the typeset document through WeasyPrint and
+            can post the same attachment shape, so the in-place email composer
+            reaches either.
+          */}
+          {messages.length > 0 && conversationId && (
+            <ReportQaDownloadButton
+              conversationId={conversationId}
+              className="h-8 text-xs sm:h-9 sm:text-sm"
+              onAttached={() => {
+                // Reload so the attachment message the route wrote appears in
+                // the thread, the same way the legacy button's does.
+                const open = savedConversations.find((c) => c.id === conversationId);
+                if (open) void loadConversation(open);
+              }}
+            />
+          )}
           {uploadedReports.length > 0 && (
             <Button variant="outline" onClick={clearAll} className="gap-1.5 h-8 text-xs sm:h-9 sm:text-sm" size="sm">
               <X className="h-3.5 w-3.5" />
@@ -3864,6 +3884,7 @@ export default function ReportQA() {
           }}
           content={editingMessage.content}
           messageId={editingMessage.id}
+          conversationId={conversationId}
           title={uploadedReports.length > 1
             ? 'Property Comparison Summary'
             : uploadedReports.length === 1
