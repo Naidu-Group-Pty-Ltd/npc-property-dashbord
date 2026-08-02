@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Activity, AlertTriangle, Archive, BarChart3, Building2, ExternalLink, Eye, FileText, Globe2, Loader2, Newspaper, RefreshCw, RotateCcw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, Radio, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, Archive, BarChart3, Building2, ExternalLink, Eye, FileText, Globe2, Loader2, Newspaper, Radio, RotateCcw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { normaliseSegmentBreakdown } from '@/lib/marketDigestSegments';
 import { interleaveBySource } from '@/lib/marketFeedOrder';
-import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, followMarketIngestionRun, generateMarketDigest, publishMarketUpdate, restoreMarketUpdate, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
+import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, generateMarketDigest, publishMarketUpdate, restoreMarketUpdate, streamMarketUpdateQuestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
@@ -92,7 +92,6 @@ export default function MarketUpdates() {
   const [updates, setUpdates] = useState<MarketUpdate[]>([]);
   const [sourceHealth, setSourceHealth] = useState<MarketSourceHealth>({ totalSources:0, enabledSources:0, healthySources:0, degradedSources:0, failedSources:0 });
   const [loading, setLoading] = useState(true);
-  const [ingesting, setIngesting] = useState(false);
   const [digestLoading, setDigestLoading] = useState(false);
   const [period, setPeriod] = useState<MarketDigestPeriod>('24h');
   const [digest, setDigest] = useState<MarketDigest24h | null>(null);
@@ -248,27 +247,8 @@ export default function MarketUpdates() {
     finally { setDigestLoading(false); }
   };
 
-  const handleIngest = async () => {
-    setIngesting(true);
-    try {
-      setActionIssue(null);
-      let summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' });
-      if (summary.runId) {
-        setRunSummary({ id:summary.runId, trigger_type:'manual', started_at:new Date().toISOString(), status:summary.active ? 'running' : summary.status ?? 'completed', sources_considered:summary.sourcesConsidered ?? 0, sources_processed:summary.sourcesProcessed ?? 0, sources_succeeded:summary.sourcesSucceeded ?? 0, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored });
-        if (summary.active) summary = await followMarketIngestionRun(summary.runId);
-      }
-      setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`);
-      setRunShadow(summary.shadowSources
-        ? { sources:summary.shadowSources, ingested:summary.shadowIngested ?? 0, wouldPublish:summary.shadowWouldPublish ?? 0 }
-        : null);
-      await loadUpdates();
-      setRunSummary((current) => current ? { ...current, status:summary.status ?? 'completed', completed_at:new Date().toISOString(), sources_processed:summary.sourcesProcessed ?? current.sources_processed, sources_succeeded:summary.sourcesSucceeded ?? current.sources_succeeded, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_deduplicated:summary.skippedDuplicates, items_classified:summary.classified ?? 0, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored, items_rejected:summary.rejected ?? 0, items_failed:summary.persistenceFailed ?? 0 } : current);
-    }
-    catch(error) { setActionIssue(issueFrom(error)); }
-    finally { setIngesting(false); }
-  };
 
-  const reviewCandidates = () => { setActionIssue(null); setFeedScope('held'); setWorkspaceTab('updates'); };
+  // legacy helper kept for a graceful transition from the old candidate-review modal
 
   const publishHeldUpdate = async (update: MarketUpdate) => {
     if (publishingId) return;
@@ -514,10 +494,6 @@ export default function MarketUpdates() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={loadUpdates} variant="outline"><RefreshCw className="mr-2 h-4 w-4" />Refresh View</Button>
-              <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
-              <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
-              {heldUpdates.length > 0 && <Button variant="outline" onClick={reviewCandidates}>Held<Badge variant="secondary" className="ml-2">{heldUpdates.length}</Badge></Button>}
               <Button variant="outline" onClick={() => navigate('/market-updates/archived')} aria-label="Open Archived News"><Archive className="mr-2 h-4 w-4" aria-hidden />Archived{typeof sourceHealth.archivedUpdates === 'number' && <Badge variant="secondary" className="ml-2">{sourceHealth.archivedUpdates}</Badge>}</Button>
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
@@ -783,10 +759,8 @@ export default function MarketUpdates() {
                     <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{feedEmptyState.description}</p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       {feedEmptyState.kind === 'filters' && <Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button>}
-                      <Button size="sm" variant="outline" onClick={loadUpdates}><RefreshCw className="mr-2 h-4 w-4" />Retry page data</Button>
-                      <Button size="sm" onClick={handleIngest} disabled={ingesting}>{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
                       {['registry','disabled'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button>}
-                      {['candidates','classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={reviewCandidates}>Review held items</Button>}
+                      
                       {sourceHealth.latestRun && ['classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setRunSummary(sourceHealth.latestRun ?? null)}>View latest run</Button>}
                       {feedEmptyState.kind === 'classification' && <Button size="sm" variant="outline" onClick={() => setWorkspaceTab('ask-ai')}>Test AI route</Button>}
                     </div>

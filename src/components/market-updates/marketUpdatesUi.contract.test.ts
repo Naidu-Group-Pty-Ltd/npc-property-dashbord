@@ -23,12 +23,12 @@ describe('Market Updates Phase 4 UI contract',()=>{
     expect(page).toContain("useModulePermissions('market_updates')");
   });
 
-  it('contains Candidate Review in one viewport-relative flex scroller',()=>{
-    expect(page).toContain('max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl');
-    expect(page).toContain('min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain');
-    expect(page).toContain('pb-8');
-    expect(page).toContain('break-words font-semibold leading-snug');
-    expect(page).not.toContain('max-h-[70vh]');
+  it('surfaces published and held scopes inline in the feed rather than a separate candidate review modal',()=>{
+    expect(page).toContain('Published');
+    expect(page).toContain('Held');
+    expect(page).toContain('setFeedScope');
+    expect(page).not.toContain('max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl');
+    expect(page).not.toContain('reviewCandidates');
   });
 
   it('keeps Clear All in the filter container and preserves unrelated state',()=>{
