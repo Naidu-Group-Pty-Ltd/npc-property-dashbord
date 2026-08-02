@@ -10,7 +10,14 @@
 import { describe, expect, it } from 'vitest';
 import { buildReportCss } from '../css.pure';
 import { resolveReportPalette, type ReportPreset } from '../brandResolve.pure';
-import { NAMED_PAGES, type NamedPage } from '../page.pure';
+import {
+  GRID_GUTTER_MM,
+  GRID_SPANS,
+  NAMED_PAGES,
+  contentWidthMm,
+  spanWidthMm,
+  type NamedPage,
+} from '../page.pure';
 import {
   DEFAULT_REPORT_DESIGN_OPTIONS,
   type ReportDesignOptions,
@@ -46,6 +53,25 @@ describe('buildReportCss — page geometry is derived, not restated', () => {
   it('sets the landscape page landscape', () => {
     const rule = sheet.slice(sheet.indexOf('@page landscape-table {'));
     expect(rule.slice(0, rule.indexOf('\n  }'))).toContain('size: A4 landscape;');
+  });
+});
+
+describe('buildReportCss — the grid is derived from page.pure.ts', () => {
+  const sheet = css();
+
+  it.each(Object.entries(GRID_SPANS))('emits .col-%s at %d%%', (span, pct) => {
+    expect(sheet).toContain(`.grid-12 > .col-${span} { width: ${pct}%; }`);
+  });
+
+  it('uses the declared gutter', () => {
+    expect(sheet).toContain(`border-spacing: ${GRID_GUTTER_MM}mm 0;`);
+  });
+
+  it('a span width is a real printed measure a chart can size to', () => {
+    for (const span of [4, 5, 7, 8] as const) {
+      expect(spanWidthMm(span)).toBeGreaterThan(40);
+      expect(spanWidthMm(span)).toBeLessThan(contentWidthMm('body'));
+    }
   });
 });
 
