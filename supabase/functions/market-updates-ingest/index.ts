@@ -20,10 +20,39 @@ const json = (body: unknown, status = 200, cors: Record<string, string> = {}) =>
 
 const RELEVANCE_THRESHOLD = Number(Deno.env.get("MARKET_RELEVANCE_THRESHOLD") ?? 40);
 const AI_CONFIDENCE_THRESHOLD = Number(Deno.env.get("MARKET_AI_CONFIDENCE_THRESHOLD") ?? 55);
+
+// Tiered publication policy. A flat confidence gate held high-authority primary
+// sources (RBA/APRA/ABS/Treasury) out of the feed whenever the classifier was
+// timid or fell back to heuristics — the score was measuring model certainty,
+// not source quality. Authority now carries part of that burden, and the noise
+// risk it introduces is absorbed by a higher relevance floor per tier.
+const TIER_1_RELIABILITY = new Set(["official", "partner", "institutional_research"]);
+const TIER_2_RELIABILITY = new Set(["tier_1_media", "industry"]);
+const TIER_2_CONFIDENCE_FLOOR = Number(Deno.env.get("MARKET_TIER2_CONFIDENCE_FLOOR") ?? 40);
+const TIER_2_RELEVANCE_FLOOR = Number(Deno.env.get("MARKET_TIER2_RELEVANCE_FLOOR") ?? 55);
+
+type PublicationPolicy = { tier:1|2|3; confidenceFloor:number; relevanceFloor:number; allowHeuristic:boolean };
+
+function publicationPolicy(source:any):PublicationPolicy {
+  const tierKey = String(source?.reliability_tier ?? "").toLowerCase();
+  if (TIER_1_RELIABILITY.has(tierKey)) {
+    // Tier 1: regulators, official statistics, government, contracted data
+    // partners and bank research. Publishes on relevance and a valid citation;
+    // a heuristic classification is acceptable because provenance is the
+    // guarantee, not the model's self-reported confidence.
+    return { tier:1, confidenceFloor:0, relevanceFloor:RELEVANCE_THRESHOLD, allowHeuristic:true };
+  }
+  if (TIER_2_RELIABILITY.has(tierKey)) {
+    return { tier:2, confidenceFloor:TIER_2_CONFIDENCE_FLOOR, relevanceFloor:TIER_2_RELEVANCE_FLOOR, allowHeuristic:false };
+  }
+  // Tier 3 (watchlist / unclassified): unchanged strict gate.
+  return { tier:3, confidenceFloor:AI_CONFIDENCE_THRESHOLD, relevanceFloor:RELEVANCE_THRESHOLD, allowHeuristic:false };
+}
 const SOURCE_CONCURRENCY = Math.max(1, Math.min(6, Number(Deno.env.get("MARKET_SOURCE_CONCURRENCY") ?? 3)));
 const ITEM_CONCURRENCY = Math.max(1, Math.min(8, Number(Deno.env.get("MARKET_ITEM_CONCURRENCY") ?? 3)));
 const PROVIDER_CIRCUIT_FAILURES = Math.max(1, Number(Deno.env.get("MARKET_PROVIDER_CIRCUIT_FAILURES") ?? 3));
 const RUN_DEADLINE_MS = Math.max(30_000, Number(Deno.env.get("MARKET_UPDATES_RUN_DEADLINE_MS") ?? 170_000));
+
 
 async function mapWithConcurrency<T>(items:T[], limit:number, task:(item:T)=>Promise<void>) {
   let cursor = 0;
