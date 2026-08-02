@@ -35,6 +35,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useDraggablePosition } from '@/hooks/useDraggablePosition';
+import { useResizablePanel } from '@/hooks/useResizablePanel';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -630,6 +631,18 @@ export function InternalMessageToasts() {
   /** The whole minimised stack can be dragged anywhere on the page. */
   const dock = useDraggablePosition('aurixa.internalMessages.dockPos');
 
+  /**
+   * The expanded conversation can be resized by dragging its bottom-left grip.
+   * The dock is right-anchored, so dragging left grows the panel (`invertX`).
+   */
+  const panelResize = useResizablePanel('aurixa.internalMessages.panelSize', {
+    invertX: true,
+    minWidth: 288,
+    minHeight: 260,
+    maxWidth: 780,
+    maxHeight: 820,
+  });
+
   const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
 
   const typer = active ? typing[active.thread_id] : undefined;
@@ -640,10 +653,14 @@ export function InternalMessageToasts() {
   return (
     <div
       ref={dock.nodeRef}
-      style={dock.positionStyle}
+      style={{
+        ...dock.positionStyle,
+        ...(panelResize.size ? { width: panelResize.size.width } : {}),
+      }}
       className={cn(
-        'pointer-events-none fixed right-4 top-20 z-[60] flex w-[min(26rem,calc(100vw-2rem))] flex-col items-end gap-2',
-        dock.dragging && 'z-[70]',
+        'pointer-events-none fixed right-4 top-20 z-[60] flex flex-col items-end gap-2',
+        !panelResize.size && 'w-[min(26rem,calc(100vw-2rem))]',
+        (dock.dragging || panelResize.resizing) && 'z-[70]',
       )}
     >
       {/* Dock handle — drag the whole stack anywhere on the page */}
@@ -658,12 +675,15 @@ export function InternalMessageToasts() {
         >
           <GripVertical className="h-3.5 w-3.5" />
         </span>
-        {dock.position && (
+        {(dock.position || panelResize.size) && (
           <button
             type="button"
-            onClick={dock.reset}
-            aria-label="Snap dock back to the corner"
-            title="Snap back to the corner"
+            onClick={() => {
+              dock.reset();
+              panelResize.reset();
+            }}
+            aria-label="Reset chat position and size"
+            title="Reset position & size"
             className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <RotateCcw className="h-3 w-3" />
@@ -699,6 +719,8 @@ export function InternalMessageToasts() {
       {/* Expanded conversation */}
       {active && (
       <div
+        ref={panelResize.nodeRef}
+        style={panelResize.size ? { height: panelResize.size.height } : undefined}
         role="dialog"
         aria-label={`Message from ${headline}`}
         onDragEnter={(e) => {
@@ -742,7 +764,45 @@ export function InternalMessageToasts() {
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-info via-primary to-chart-5 opacity-90"
         />
+
+        {/* Resize grip — drag the bottom-left corner to size the conversation.
+            Arrow keys nudge it for keyboard users; double-click restores the
+            default size. */}
+        <span
+          {...panelResize.handleProps}
+          role="slider"
+          tabIndex={0}
+          aria-label="Resize conversation window"
+          aria-valuetext={
+            panelResize.size
+              ? `${Math.round(panelResize.size.width)} by ${Math.round(panelResize.size.height)} pixels`
+              : 'Default size'
+          }
+          title="Drag to resize · double-click to reset"
+          onDoubleClick={panelResize.reset}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 48 : 16;
+            if (e.key === 'ArrowLeft') panelResize.nudge(step, 0);
+            else if (e.key === 'ArrowRight') panelResize.nudge(-step, 0);
+            else if (e.key === 'ArrowDown') panelResize.nudge(0, step);
+            else if (e.key === 'ArrowUp') panelResize.nudge(0, -step);
+            else return;
+            e.preventDefault();
+          }}
+          className={cn(
+            'absolute bottom-0 left-0 z-10 flex h-6 w-6 cursor-nesw-resize items-end justify-start rounded-bl-3xl',
+            'text-muted-foreground/60 transition-colors hover:text-primary focus-visible:outline-none',
+            'focus-visible:ring-2 focus-visible:ring-ring',
+            panelResize.resizing && 'text-primary',
+          )}
+        >
+          <svg viewBox="0 0 12 12" aria-hidden className="h-3.5 w-3.5 translate-x-1 -translate-y-1">
+            <path d="M11 1 L1 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <path d="M11 5.5 L5.5 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </span>
         {dragActive && <AttachmentDropOverlay />}
+
 
 
         {/* Header */}
@@ -802,7 +862,10 @@ export function InternalMessageToasts() {
         {/* Conversation — native scroll so the newest bubble is never clipped */}
         <div
           ref={scrollRef}
-          className="h-64 overflow-y-auto overscroll-contain px-3 py-2.5"
+          className={cn(
+            'overflow-y-auto overscroll-contain px-3 py-2.5',
+            panelResize.size ? 'min-h-0 flex-1' : 'h-64',
+          )}
           aria-live="polite"
         >
           {active.loading ? (
