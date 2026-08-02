@@ -293,6 +293,8 @@ export function InternalMessageToasts() {
       const { data } = await invokeSecureFunction('internal-messaging', {
         action: 'get_thread',
         thread_id: threadId,
+        // Only an explicit open marks the conversation reviewed server-side.
+        mark_read: clearUnread,
       });
       const msgs: PopupMessage[] = await hydrateThreadAttachments(
         threadId,
@@ -311,6 +313,7 @@ export function InternalMessageToasts() {
       );
     }
   }, []);
+
 
   /** Poll thread list: opens new pop-ups and refreshes already-open ones. */
   const check = useCallback(async () => {
@@ -348,7 +351,11 @@ export function InternalMessageToasts() {
                     priority: (t.last_message_priority as Priority) ?? x.priority,
                     sender: senderName,
                     // The chip carries the count; the expanded card is "read".
-                    unread: isExpanded ? 0 : (t.unread ?? x.unread),
+                    // A background poll must never shrink a pending badge — it
+                    // only clears when the user opens (reviews) the chat.
+                    unread: isExpanded
+                      ? 0
+                      : Math.max(t.unread ?? 0, x.unread ?? 0),
                   }
                 : x,
             ),
