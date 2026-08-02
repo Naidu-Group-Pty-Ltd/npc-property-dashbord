@@ -5,8 +5,10 @@ that will live. This is the architecture doc for the report-rendering programme;
 the brand rules themselves are in the
 [`npc-services-design`](../../.claude/skills/npc-services-design/) skill.
 
-**Status:** Phase 0 (this document + the skill) and **Phase 1 (the Kit
-foundation)** delivered. Phases 2+ not started.
+**Status:** Phase 0 (this document + the skill), Phase 1 (the Kit foundation),
+Phase 2 (stylesheet, primitives, document spine) and **Phase 3 (brand, logo and
+snapshotting)** delivered. Charts and the per-format migrations are next; no
+shipping render path has been switched over yet.
 Scope is the report/PDF layer. The Template Library catalogue and the Template
 Builder editor are out of scope, but the shared **block renderers** in
 `src/lib/reportTemplate/blocks/*.html.ts` are in scope as reusable infrastructure.
@@ -99,9 +101,10 @@ supabase/functions/_shared/reportDesign/     ← canonical, pure TS
   primitives.pure.ts   ✅ cover, chapter, KPI strip, table, callout, company page…
   companyBlock.pure.ts ✅ contact/disclaimer shaping shared by all three renderers
   structure.pure.ts    ✅ REPORT_ARCHETYPES, buildSpine(), validateSpine()
-  assets.pure.ts       ⬜ logo resolution + inline policy
+  assets.pure.ts       ✅ inline policy, slot fallback chains, budget
+  snapshot.pure.ts     ✅ ReportBrandSnapshot, fingerprint, palette/contact adapters
+  defaultAssets.generated.ts ✅ GENERATED — the house cover art and mark, inlined
   charts.pure.ts       ⬜ SVG chart geometry
-  snapshot.pure.ts     ⬜ ReportBrandSnapshot type + builder
 
 src/lib/reportDesign/<same names>.pure.ts    ← one-line export * bridges
 src/lib/reportDesign/__tests__/designSystemSourceOfTruth.spec.ts
@@ -110,8 +113,13 @@ src/lib/reportDesign/__tests__/reportSourceHygiene.spec.ts   ← no literals, no
 src/lib/reportDesign/__tests__/reportCss.spec.ts             ← print legality
 src/lib/reportDesign/__tests__/reportPrimitives.spec.ts      ← escaping + contract
 src/lib/reportDesign/__tests__/reportStructure.spec.ts       ← spine validation
+src/lib/reportDesign/__tests__/reportAssets.spec.ts           ← inline policy
+src/lib/reportDesign/__tests__/reportSnapshot.spec.ts         ← fingerprint coverage
+src/branding/__tests__/brandAssetSlots.spec.ts                ← the two resolvers agree
 scripts/reportDesign/buildTokens.ts          ← the generator (+ `--check` for CI)
+scripts/reportDesign/buildDefaultAssets.ts   ← asset inliner (+ `--check` for CI)
 scripts/reportDesign/buildSpecimen.ts        ← `npm run reportkit:specimen`
+supabase/migrations/20260813000000_report_brand_snapshots.sql
 ```
 
 `premiumPdfDesign.ts` (the design panel's option contract) and
@@ -196,6 +204,43 @@ already requests — forbids unresolved external references. It also unblocks lo
 development, where the SSRF guard rejects `localhost` asset URLs outright.
 
 This retires the hardcoded `lovable.app` cover URL in `index.ts:3078`.
+
+### What Phase 3 delivered
+
+- **`report` and `report-mono` logo slots** in `logo_config`, wired through
+  `BrandLogoConfig` → `BrandProvider` → `getBrandAssetSrc` → the White Label page.
+  Additive: no `theme_version` gate, so a tenant on version 1 keeps saving.
+- **`resolveReportAsset()`** — the fallback chain `report → sidebar → auth →
+  sidebarIcon`, with the inline policy enforced at each step. A key that fails
+  policy does not stop the walk, so a tenant whose report mark is a 12 MB PNG
+  still gets their sidebar logo rather than a blank space, and the skip is
+  reported with a reason.
+- **`report_brand_snapshots`** (migration `20260813000000`) — deduplicated by
+  content fingerprint rather than one row per artefact, with
+  `investment_reports.brand_snapshot_id … ON DELETE RESTRICT`. The upsert is a
+  single `ON CONFLICT` statement because read-then-write races two concurrent
+  renders of the same brand.
+- **The `lovable.app` cover URL is gone.** `render-investment-report-pdf` now
+  imports the same JPEG as an inlined `data:` URI. Same pixels, no outbound
+  fetch, no dependence on a preview host still serving that path.
+- **A generated report carries a logo for the first time.** `lockupFor()` puts
+  the mark on the cover and the closing page; verified in a real render.
+
+### The finding that changes the migration plan
+
+`public/templates/npc-portfolio-cover-new.jpg` — the cover art the live
+investment report has always used — **is not a photograph.** It is a finished
+NPC cover with *"NAIDU PROPERTY CONSULTING SERVICES"*, the tagline and the
+monogram burned into the pixels. Rendering the new cover over it produces two
+company names and two marks on one page.
+
+This is the same class of problem as the `public/icons/*` files (email-signature
+banners carrying the director's mobile number). The consequence for the
+migration phases: **no legacy cover asset can become a white-label default**, and
+any format still using one needs replacement artwork before it can be re-skinned.
+`NPC_HOUSE_COVER_ART` is named to make misuse obvious, and
+`reportSourceHygiene.spec.ts` fails if any design module imports the asset file
+at all.
 
 ## 7 · Charts
 
@@ -291,6 +336,11 @@ the negative figures stay the one red and the positives the one green.
 5. **Three divergent `InvestmentReport` types** bridged by a hand-maintained
    `overrideMapping` table. The system needs one payload contract or it inherits
    the drift.
-6. **Server-side generation changes delivery** — a Blob download becomes an
+6. **Most brand artwork in the repo is unusable in a client PDF.** The cover
+   JPEGs carry NPC's company name and tagline in their pixels; every
+   `public/icons/*` file is an email-signature banner with the director's mobile
+   number. The monogram at `public/images/npc-logo-monogram.png` is the only
+   clean mark. A white-label rollout needs artwork, not just plumbing.
+7. **Server-side generation changes delivery** — a Blob download becomes an
    authenticated invocation plus a storage object plus a signed URL, with Cloud Run
    cold-start latency. The UI needs progress states.

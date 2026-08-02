@@ -62,6 +62,12 @@ jobs:
       - name: Report design system — token drift
         run: npm run reportkit:tokens:check
 
+      # The inlined default report assets must match the files they came from.
+      # Without this, editing public/templates/… silently has no effect on a
+      # render — the module keeps shipping the old bytes.
+      - name: Report asset drift check
+        run: npm run reportkit:assets:check
+
       # Enforces the single-source contract (bridges are re-exports only) and
       # the print contrast floors for every preset x tenant-brand combination.
       - name: Unit tests (report design system)
