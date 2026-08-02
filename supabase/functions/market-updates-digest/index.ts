@@ -152,7 +152,8 @@ Deno.serve(async (req) => {
   const { data: existingDigest, error:existingError } = await sb.from('market_digests')
     .select('*').eq('period', period).eq('period_key', periodKey).maybeSingle();
   if (existingError) return json({ error:'Digest state could not be loaded.', code:'digest_state_failed' },500);
-  if (existingDigest && ['published','no_data'].includes(existingDigest.status)) return json({ digest: existingDigest, noData: existingDigest.status === 'no_data', period, period_key:periodKey, period_start: start.toISOString(), period_end: end.toISOString(), idempotent: true, message: 'Market digest window is already complete.' });
+  // A stale no_data window is re-attempted so carry-forward intelligence can fill it.
+  if (existingDigest && existingDigest.status === 'published') return json({ digest: existingDigest, noData: existingDigest.status === 'no_data', period, period_key:periodKey, period_start: start.toISOString(), period_end: end.toISOString(), idempotent: true, message: 'Market digest window is already complete.' });
 
   if (interactiveUserId) {
     try {
