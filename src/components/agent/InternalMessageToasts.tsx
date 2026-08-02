@@ -59,6 +59,7 @@ import {
   filesFromDataTransfer,
   type InternalAttachment,
   sendInternalMessageWithAttachments,
+  hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -285,7 +286,10 @@ export function InternalMessageToasts() {
         action: 'get_thread',
         thread_id: threadId,
       });
-      const msgs: PopupMessage[] = (data?.messages ?? []).slice(-60);
+      const msgs: PopupMessage[] = await hydrateThreadAttachments(
+        threadId,
+        (data?.messages ?? []).slice(-60) as PopupMessage[],
+      );
       setThreads((prev) =>
         prev.map((t) =>
           t.thread_id === threadId ? { ...t, messages: msgs, loading: false, unread: 0 } : t,
