@@ -364,12 +364,10 @@ export function InternalMessageToasts() {
                 : x,
             ),
           );
-          // A brand-new inbound message brings the conversation forward — unless
-          // the user deliberately minimised it, in which case the chip's unread
-          // badge is the notification and we never steal focus back.
-          if (changed && (t.unread ?? 0) > 0 && !isMinimised) {
-            setActiveId(t.id);
-          }
+          // A new inbound message only bumps the chip's unread badge. It never
+          // promotes a conversation to a full card — expanding stays a
+          // deliberate user action.
+
           continue;
         }
 
