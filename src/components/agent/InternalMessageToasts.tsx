@@ -406,7 +406,7 @@ export function InternalMessageToasts() {
 
         additions.push({
           thread_id: t.id,
-          kind: t.kind === 'broadcast' ? 'broadcast' : 'direct',
+          kind: t.kind === 'broadcast' ? 'broadcast' : t.kind === 'group' ? 'group' : 'direct',
           title: t.display_title || 'Team message',
           sender: senderName,
           priority: (t.last_message_priority as Priority) ?? 'normal',
