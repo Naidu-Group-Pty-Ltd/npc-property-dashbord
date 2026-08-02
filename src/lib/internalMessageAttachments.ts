@@ -246,6 +246,39 @@ export async function uploadInternalAttachment(
 
   }
 
+  // Last resort: hand the bytes to the edge function and let it write to
+  // storage with service credentials. This covers every environment where the
+  // browser cannot reach the signed storage URL at all (corporate proxy, CORS
+  // interception, blocked host). Capped because the function body has a payload
+  // ceiling — beyond it the direct-to-storage path is the only option.
+  const DIRECT_MAX_BYTES = 12 * 1024 * 1024;
+  if (!options.signal?.aborted && file.size <= DIRECT_MAX_BYTES) {
+    try {
+      options.onProgress?.(0.05);
+      const fileData = await fileToBase64(file);
+      options.onProgress?.(0.6);
+      const result = await call({
+        action: 'attachment_upload_direct',
+        thread_id: threadId,
+        file_name: file.name,
+        content_type: file.type || 'application/octet-stream',
+        file_data: fileData,
+      });
+      if (result?.path) {
+        options.onProgress?.(1);
+        return {
+          name: file.name,
+          path: result.path as string,
+          mime: file.type || 'application/octet-stream',
+          size: file.size,
+          ...(result.attachment?.scan ? { scan: result.attachment.scan } : {}),
+        };
+      }
+    } catch (directError) {
+      lastError = directError instanceof Error ? directError : lastError;
+    }
+  }
+
   throw new Error(
     lastError instanceof Error
       ? `${file.name}: ${lastError.message}`
