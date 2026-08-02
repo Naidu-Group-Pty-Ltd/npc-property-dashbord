@@ -44,10 +44,10 @@ import type { CompanyBlock } from '../../reportDesign/companyBlock.pure.ts';
 import { REPORT_ARCHETYPES } from '../../reportDesign/structure.pure.ts';
 import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
 import type { CompanyDisclaimer } from '../../reportDesign/companyBlock.pure.ts';
-import { resolveSnapshotBrand } from './brand.pure.ts';
+import { resolveSnapshotBrand } from '../../reportDesign/documentBrand.pure.ts';
 
-import type { Measure } from './measure.pure.ts';
-import { formatAmount, formatDelta, formatMeasure, periodLabel } from './measure.pure.ts';
+import type { Measure } from '../../reportDesign/measure.pure.ts';
+import { formatAmount, formatDelta, formatMeasure, periodLabel } from '../../reportDesign/measure.pure.ts';
 import type { Direction } from './audit.pure.ts';
 import type {
   AuditRow,

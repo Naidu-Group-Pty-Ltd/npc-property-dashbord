@@ -1,0 +1,142 @@
+/**
+ * Asking the server for a 10 Year Cash Flow Analysis.
+ *
+ * ## What crosses the wire
+ *
+ * The projection the modal is showing, as plain numbers. Not the overrides, not
+ * the report id and a hope the server recomputes the same thing — the actual
+ * ten years on screen. `CashFlowAnalysisModal` lets an adviser edit any of ten
+ * fields in any of ten years without saving, so "recompute it server-side" and
+ * "render what the adviser reviewed" are different documents, and only one of
+ * them is the one they meant to send.
+ *
+ * Units are attached on the server (`normalise.pure.ts`), which is why every
+ * value here is a bare number: there is one place that decides that a rate of
+ * `5` means five percent, and it is not this file.
+ *
+ * ## The fallback, and why it is narrow
+ *
+ * `render-cash-flow-pdf` has to be deployed and its migration applied before it
+ * can answer. Between merging this and doing those, the button would fail. So a
+ * missing *function* — and only that — falls back to the jsPDF generator that
+ * ships today, and says which one the caller got.
+ *
+ * A 400 from a deployed function is a real failure and must surface as one. A
+ * 500 likewise: falling back on it would hand a client a document produced by
+ * the generator this format exists to replace, while telling nobody.
+ */
+import { invokeSecureFunction } from '@/lib/secureInvoke';
+
+/** One projected year, exactly as `CashFlowAnalysisModal` computes it. */
+export interface WireProjectionYear {
+  year: number;
+  calendarYear?: number | null;
+  propertyValue: number;
+  loanBalance: number;
+  rentalIncome: number;
+  grossYield: number;
+  netYield: number;
+  expenses: number;
+  interestRate: number;
+  interest: number;
+  principal: number;
+  preTaxAnnual: number;
+  afterTaxAnnual: number;
+  depreciation: number;
+  taxRefund: number;
+  landTax: number;
+  capitalGrowth: number;
+  cpiGrowth: number;
+}
+
+export interface WireAcquisition {
+  purchasePrice: number;
+  marketValue: number;
+  deposit: number;
+  loanAmount: number;
+  loanTermYears: number;
+  interestRate: number;
+  loanType: string;
+  weeklyRent: number;
+  costs: Array<{ label: string; amount: number }>;
+}
+
+export interface WireProjection {
+  acquisition: WireAcquisition;
+  years: WireProjectionYear[];
+  assumptions: Array<{ label: string; value: string }>;
+  notes: string[];
+}
+
+export interface CashFlowPdfResult {
+  url: string;
+  fileName: string;
+  bytes: number;
+  pageCount: number | null;
+  /** What the tenant's brand snapshot was missing. Empty for a complete one. */
+  brandGaps: string[];
+  /** `server` for the new path, `legacy` when the route is not deployed yet. */
+  source: 'server' | 'legacy';
+}
+
+/**
+ * True when the failure means "this function does not exist here yet".
+ *
+ * Deliberately narrow, and deliberately not a bare 404 — the route answers 404
+ * for a report the caller may not see, and treating that as "not deployed"
+ * would hand someone a document for a report they have no access to.
+ */
+function looksUndeployed(error: { message?: string; status?: number } | null): boolean {
+  if (!error) return false;
+  const message = (error.message || '').toLowerCase();
+  return message.includes('function not found')
+    || message.includes('requested function')
+    || message.includes('does not exist')
+    || message.includes('failed to fetch')
+    || message.includes('failed to send a request');
+}
+
+/**
+ * Request the document.
+ *
+ * `legacyFallback` is passed in rather than imported so this module does not
+ * drag the jsPDF generator into every bundle that touches the button.
+ */
+export async function requestCashFlowPdf(
+  request: { reportId: string; projection: WireProjection; edition?: string | null },
+  legacyFallback?: () => Promise<{ url: string; fileName: string; bytes: number } | null>,
+): Promise<CashFlowPdfResult> {
+  const { data, error } = await invokeSecureFunction<{
+    url: string;
+    fileName: string;
+    bytes: number;
+    pageCount: number | null;
+    brandGaps: string[];
+  }>('render-cash-flow-pdf', {
+    reportId: request.reportId,
+    projection: request.projection,
+    edition: request.edition ?? null,
+  }, { timeoutMs: 180_000 });
+
+  if (!error && data?.url) {
+    return {
+      url: String(data.url),
+      fileName: String(data.fileName ?? 'Cash_Flow_Analysis.pdf'),
+      bytes: Number(data.bytes ?? 0),
+      pageCount: Number.isFinite(data.pageCount) ? Number(data.pageCount) : null,
+      brandGaps: Array.isArray(data.brandGaps) ? data.brandGaps.map(String) : [],
+      source: 'server',
+    };
+  }
+
+  if (legacyFallback && looksUndeployed(error)) {
+    console.warn(
+      '[cash-flow] render-cash-flow-pdf is not deployed; falling back to the in-browser '
+      + 'generator. Deploy the function and apply migration 20260815000000 to use the new report.',
+    );
+    const legacy = await legacyFallback();
+    if (legacy) return { ...legacy, pageCount: null, brandGaps: [], source: 'legacy' };
+  }
+
+  throw new Error(error?.message || 'Could not generate the Cash Flow Analysis');
+}

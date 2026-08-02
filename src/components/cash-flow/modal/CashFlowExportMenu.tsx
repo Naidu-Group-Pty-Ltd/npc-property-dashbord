@@ -1,4 +1,4 @@
-import { ChevronDown, Download, FileText, Printer, Send, Settings2 } from 'lucide-react';
+import { ChevronDown, Download, FileText, Loader2, Printer, Send, Settings2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -15,6 +15,15 @@ interface CashFlowExportMenuProps {
   onGlobalChartsToggle: (checked: boolean) => void;
   onChartToggle: (chartKey: 'cashFlowTrends' | 'yieldChart' | 'comparisonChart', checked: boolean) => void;
   onExportExcel: () => void;
+  /**
+   * The typeset PDF — built server-side and rendered by WeasyPrint.
+   *
+   * Separate from `onExportPdf` rather than replacing it: the jsPDF generator
+   * stays available while this path beds in, and an adviser who needs the
+   * layout they are used to can still have it.
+   */
+  onExportServerPdf: () => void;
+  isExportingServerPdf?: boolean;
   onExportPdf: (options?: { returnBlob?: boolean }) => Promise<Blob | void>;
   onPrintView: () => void;
   onSendToClient: () => void;
@@ -27,6 +36,8 @@ export function CashFlowExportMenu({
   onGlobalChartsToggle,
   onChartToggle,
   onExportExcel,
+  onExportServerPdf,
+  isExportingServerPdf = false,
   onExportPdf,
   onPrintView,
   onSendToClient,
@@ -52,9 +63,19 @@ export function CashFlowExportMenu({
             <Download className="mr-2 h-4 w-4 text-success" />
             Export Excel
           </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={onExportServerPdf}
+            disabled={isExportingServerPdf}
+            className="min-h-10 cursor-pointer rounded-xl"
+          >
+            {isExportingServerPdf
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin text-primary" />
+              : <Sparkles className="mr-2 h-4 w-4 text-primary" />}
+            {isExportingServerPdf ? 'Generating PDF…' : 'Generate PDF'}
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => onExportPdf()} className="min-h-10 cursor-pointer rounded-xl">
-            <FileText className="mr-2 h-4 w-4 text-primary" />
-            Generate PDF
+            <FileText className="mr-2 h-4 w-4 text-muted-foreground" />
+            Generate PDF (legacy layout)
           </DropdownMenuItem>
           <div className="px-2 py-1">
             <FlattenPdfIconButton

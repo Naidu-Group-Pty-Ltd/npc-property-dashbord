@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { formatMeasure } from '../measure.pure';
+import { formatMeasure } from '@/lib/reportDesign/measure.pure';
 import {
   AUDIT_CATEGORY_ORDER,
   buildSnapshot,

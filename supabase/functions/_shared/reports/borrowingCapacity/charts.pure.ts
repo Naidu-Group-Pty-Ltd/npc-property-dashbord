@@ -42,7 +42,7 @@ import {
   renderDonut,
   type BarItem,
 } from '../../reportDesign/charts.pure.ts';
-import { formatMeasure } from './measure.pure.ts';
+import { formatMeasure } from '../../reportDesign/measure.pure.ts';
 import type { BorrowingCapacitySnapshot } from './payload.pure.ts';
 
 /**

@@ -17,18 +17,18 @@
  * pure, so the whole brand path is testable without a database.
  */
 
-import type { ReportBrandSnapshot } from '../../reportDesign/snapshot.pure.ts';
+import type { ReportBrandSnapshot } from './snapshot.pure.ts';
 import {
   auditSnapshot,
   companyContactFor,
   lockupFor,
   paletteInputFor,
-} from '../../reportDesign/snapshot.pure.ts';
-import type { ResolvedReportPalette } from '../../reportDesign/roles.pure.ts';
-import { resolveReportPalette } from '../../reportDesign/brandResolve.pure.ts';
-import type { CompanyBlock, CompanyDisclaimer } from '../../reportDesign/companyBlock.pure.ts';
-import { mastheadFor, resolveCompanyBlock } from '../../reportDesign/companyBlock.pure.ts';
-import type { BrandLockupProps } from '../../reportDesign/primitives.pure.ts';
+} from './snapshot.pure.ts';
+import type { ResolvedReportPalette } from './roles.pure.ts';
+import { resolveReportPalette } from './brandResolve.pure.ts';
+import type { CompanyBlock, CompanyDisclaimer } from './companyBlock.pure.ts';
+import { mastheadFor, resolveCompanyBlock } from './companyBlock.pure.ts';
+import type { BrandLockupProps } from './primitives.pure.ts';
 
 export interface ResolveSnapshotBrandInput {
   snapshot: ReportBrandSnapshot;
