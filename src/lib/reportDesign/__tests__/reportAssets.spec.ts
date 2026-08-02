@@ -107,7 +107,7 @@ describe('inlineAsset', () => {
     for (const value of [null, 'https://x/y.png', 'data:image/svg+xml;base64,QQ==', pngOf(9e6)]) {
       const result = inlineAsset(value);
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.detail.length).toBeGreaterThan(10);
+      expect(String((result as { detail?: string }).detail ?? '').length).toBeGreaterThan(10);
     }
   });
 });
