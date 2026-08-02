@@ -461,6 +461,48 @@ export function InternalMessageToasts() {
     };
   }, [user, check]);
 
+  /**
+   * "Pop out chat" from the Aurixa widget: detach any conversation (direct,
+   * group or announcement) into a free-floating, draggable, resizable window.
+   * Unlike inbound traffic, this IS a deliberate user action, so the thread is
+   * expanded immediately.
+   */
+  useEffect(() => {
+    if (!user) return;
+    return onInternalThreadPopOut((hint) => {
+      const id = hint.thread_id;
+      setThreads((prev) => {
+        if (prev.some((t) => t.thread_id === id)) return prev;
+        const seeded: PopupThread = {
+          thread_id: id,
+          kind: hint.kind ?? 'direct',
+          title: hint.title || 'Team message',
+          sender: hint.title || 'Team member',
+          priority: 'normal',
+          lastAt: new Date().toISOString(),
+          unread: 0,
+          messages: [],
+          loading: true,
+        };
+        const next = [...prev, seeded];
+        persist(next);
+        return next;
+      });
+      // Clear any "minimised" memory so the card actually opens.
+      setMinimised((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setActiveId(id);
+      loadMessages(id, true);
+      // Pull authoritative title / sender / priority for the new pop-out.
+      check();
+    });
+  }, [user, persist, loadMessages, check]);
+
+
   // Pop-ups never auto-expand. A conversation is only ever rendered as a full
   // card when the user clicks its chip, so signing in with ten live threads
   // shows ten compact chips instead of ten stacked chat windows.
