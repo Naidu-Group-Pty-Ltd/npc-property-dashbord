@@ -43,6 +43,7 @@ import {
   REPORT_SNAPSHOT_VERSION,
 } from '../_shared/reportDesign/snapshot.pure.ts';
 import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
+import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { buildSnapshot } from '../_shared/reports/borrowingCapacity/normalise.pure.ts';
 import { renderSnapshotFromBrand } from '../_shared/reports/borrowingCapacity/render.pure.ts';
 import {
@@ -84,6 +85,37 @@ function displayName(raw: string): string {
   return name
     .toLowerCase()
     .replace(/(^|[\s\-'])(\w)/g, (_m, lead: string, ch: string) => lead + ch.toUpperCase());
+}
+
+/**
+ * The company block, out of the key/value table it actually lives in.
+ *
+ * `global_report_settings` is `(setting_key, setting_value jsonb)` — there is no
+ * `contact_details` column and no `disclaimer` column. Selecting them by name
+ * returned an error rather than a row, and because the error was never read,
+ * every Snapshot went out with no ABN, no phone, no address and the house
+ * disclaimer instead of the firm's. `render-investment-report-pdf` has always
+ * read it the way below; this is the same read.
+ *
+ * A failure here is reported, not thrown: a document with a thinner closing page
+ * is worth having, and `brandGaps` already tells the caller what is missing.
+ */
+function readReportSettings(
+  rows: unknown,
+  queryError: string | null,
+): { contact: Record<string, unknown> | null; disclaimer: Record<string, unknown> | null } {
+  if (queryError) {
+    console.warn(`[render-borrowing-capacity-pdf] global_report_settings unreadable: ${queryError}`);
+  }
+  let contact: Record<string, unknown> | null = null;
+  let disclaimer: Record<string, unknown> | null = null;
+  for (const row of (Array.isArray(rows) ? rows : []) as Record<string, unknown>[]) {
+    const value = row.setting_value;
+    if (!value || typeof value !== 'object') continue;
+    if (row.setting_key === 'contact_details') contact = value as Record<string, unknown>;
+    else if (row.setting_key === 'professional_disclaimer') disclaimer = value as Record<string, unknown>;
+  }
+  return { contact, disclaimer };
 }
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
@@ -144,7 +176,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         ? assessmentQuery.eq('id', request.assessmentId).maybeSingle()
         : assessmentQuery.order('created_at', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('whitelabel_settings').select('*').limit(1).maybeSingle(),
-      supabase.from('global_report_settings').select('contact_details, disclaimer').limit(1).maybeSingle(),
+      supabase
+        .from('global_report_settings')
+        .select('setting_key, setting_value')
+        .in('setting_key', ['contact_details', 'professional_disclaimer']),
     ]);
 
     if (!clientRes.data) return json({ error: 'not found' }, 404);
@@ -162,9 +197,21 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // ── The brand, frozen ───────────────────────────────────────────────────
 
     const whitelabel = (whitelabelRes.data ?? null) as Record<string, unknown> | null;
-    const settings = (settingsRes.data ?? null) as Record<string, unknown> | null;
-    const logoConfig = (whitelabel?.logo_config ?? {}) as Record<string, string | null>;
+    const settings = readReportSettings(settingsRes.data, settingsRes.error?.message ?? null);
+    const storedLogos = (whitelabel?.logo_config ?? {}) as Record<string, string | null>;
     const themeConfig = (whitelabel?.theme_config ?? {}) as Record<string, unknown>;
+
+    // The branding form stores URLs; the snapshot builder only accepts bytes.
+    // Without this step every asset is rejected as `not-a-data-uri` and the
+    // document carries no company mark at all.
+    const { assets: logoConfig, notes: assetNotes } = await inlineBrandAssets(storedLogos, {
+      supabaseUrl: Deno.env.get('SUPABASE_URL') || '',
+    });
+    for (const note of assetNotes) {
+      console.warn(
+        `[render-borrowing-capacity-pdf] asset ${note.key} not inlined (${note.reason}): ${note.detail}`,
+      );
+    }
 
     const { snapshot, skippedAssets } = buildReportBrandSnapshot({
       whitelabel: whitelabel
@@ -178,7 +225,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             assets: logoConfig,
           }
         : null,
-      contact: (settings?.contact_details ?? null) as never,
+      contact: settings.contact as never,
       document: {
         confidentiality: String(themeConfig.reportConfidentiality ?? ''),
         preparedBy: String(whitelabel?.company_name ?? ''),
@@ -226,7 +273,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const { html, gaps } = renderSnapshotFromBrand({
       payload,
       snapshot,
-      disclaimer: (settings?.disclaimer ?? null) as never,
+      disclaimer: settings.disclaimer as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
       reference: String(assessment.id ?? '').slice(0, 8).toUpperCase() || null,
