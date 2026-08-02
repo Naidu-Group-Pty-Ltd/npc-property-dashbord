@@ -269,9 +269,8 @@ export function InternalMessageToasts() {
   /** Minimised map, read inside the poll loop without re-creating it. */
   const minimisedRef = useRef<Record<string, true>>({});
   minimisedRef.current = minimised;
-  /** Set while a user-initiated minimise is in-flight so the auto-expand effect
-   * does not immediately promote another thread to a full card. */
-  const skipAutoExpandRef = useRef(false);
+
+
 
 
   /** Baselines: thread_id → ISO timestamp of the newest message already handled. */
