@@ -17,6 +17,13 @@ import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { reloadForFreshBuild } from '@/lib/chunkReload';
 import { MobileFilterSheet } from '@/components/listings/MobileFilterSheet';
 import { PropertyCard } from '@/components/listings/PropertyCard';
+import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
+import { useListingImages } from '@/hooks/useListingImages';
+import {
+  DEFAULT_LISTING_FILTERS,
+  matchesListingFilters,
+  type ListingFilterState,
+} from '@/lib/listingFilters';
 import { propertyDataService } from '@/services/propertyDataService';
 import { PropertyListing } from '@/lib/airtable';
 import { BulkActionBar } from '@/components/aurixa';
@@ -83,30 +90,13 @@ const InvestmentReportModal = lazyWithRetry(() => import('@/components/listings/
 const BulkGenerationModal = lazyWithRetry(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
 const ListingsMapView = lazyWithRetry(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
 
-// Default empty filter state — keyword always starts blank
-const DEFAULT_FILTERS = {
-  propertyType: 'all',
-  suburb: 'all',
-  state: 'all',
-  zipCode: 'all',
-  sourceHost: 'all',
-  hasInspection: false,
-  lowConfidence: false,
-  offMarket: false,
-  priceMin: '',
-  priceMax: '',
-  bedsMin: '',
-  bedsMax: '',
-  bathsMin: '',
-  bathsMax: '',
-  carsMin: '',
-  carsMax: '',
-  agencyName: 'all',
-  keywordSearch: '',
-  includeNearbySuburbs: false,
-};
+// Default empty filter state — keyword always starts blank.
+// Both the shape and the defaults come from `@/lib/listingFilters`, so the
+// predicate and the panels can never disagree about what a filter is called or
+// what "unset" means for it.
+const DEFAULT_FILTERS = DEFAULT_LISTING_FILTERS;
 
-type ListingFilters = typeof DEFAULT_FILTERS;
+type ListingFilters = ListingFilterState;
 
 // URL <-> filter serialisation. Only non-default values are written to the URL so
 // links stay clean. Boolean flags are serialised as "1" and view/search live under
@@ -455,101 +445,19 @@ export default function Listings() {
     return null;
   }, [filters.includeNearbySuburbs, filters.suburb, listings]);
 
-  // Memoize filtered listings for performance
+  // Memoize filtered listings for performance.
+  // The predicate itself lives in `@/lib/listingFilters` so list, table and map
+  // are guaranteed to agree, and so its edge cases (unknown bedroom counts,
+  // undisclosed prices, undated listings) can be asserted directly.
   const filteredListings = useMemo(() => {
-    return listings.filter(listing => {
-      // Search filter
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        const searchText = [
-          listing.address,
-          listing.suburb,
-          listing.agencyName,
-          listing.agentName
-        ].join(' ').toLowerCase();
-        
-        if (!searchText.includes(query)) return false;
-      }
-
-      // Keyword search across summary, rawExtract, keyEntities, description
-      if (filters.keywordSearch) {
-        const keywords = filters.keywordSearch.toLowerCase().split(/[,\s]+/).filter(Boolean);
-        const contentText = [
-          listing.summary,
-          listing.rawExtract,
-          listing.keyEntities,
-          listing.description,
-          listing.address,
-        ].filter(Boolean).join(' ').toLowerCase();
-        
-        if (!keywords.every(kw => contentText.includes(kw))) return false;
-      }
-
-      // Property type filter
-      if (filters.propertyType && filters.propertyType !== 'all' && listing.propertyType !== filters.propertyType) return false;
-
-      // Suburb filter (with nearby suburbs support)
-      if (filters.suburb && filters.suburb !== 'all') {
-        if (filters.includeNearbySuburbs && nearbySuburbsList) {
-          if (!listing.suburb || !nearbySuburbsList.includes(listing.suburb)) return false;
-        } else {
-          if (listing.suburb !== filters.suburb) return false;
-        }
-      }
-
-      // State filter — check both field and extracted from address
-      if (filters.state && filters.state !== 'all') {
-        const listingState = listing.state || extractAUState(listing.address || '');
-        if (listingState !== filters.state) return false;
-      }
-
-      // Postcode filter — check both field and extracted
-      if (filters.zipCode && filters.zipCode !== 'all') {
-        const listingPostcode = listing.zipCode || extractPostcode(listing.address || '');
-        if (listingPostcode !== filters.zipCode) return false;
-      }
-
-      // Source host filter
-      if (filters.sourceHost && filters.sourceHost !== 'all' && listing.sourceHost !== filters.sourceHost) return false;
-
-      // Has inspection filter
-      if (filters.hasInspection && !listing.inspectionStart) return false;
-
-      // Low confidence filter
-      if (filters.lowConfidence && (listing.confidence === undefined || listing.confidence >= 0.7)) return false;
-
-      // Off-market filter
-      if (filters.offMarket) {
-        const status = (listing.status || '').toLowerCase();
-        const category = (listing.category || '').toLowerCase();
-        const isOffMarket = status.includes('off-market') || status.includes('off market') || 
-                            category.includes('off-market') || category.includes('off market');
-        if (!isOffMarket) return false;
-      }
-
-      // Agency filter
-      if (filters.agencyName && filters.agencyName !== 'all' && listing.agencyName !== filters.agencyName) return false;
-
-      // Price filters
-      const hasPriceFilter = filters.priceMin || filters.priceMax;
-      if (hasPriceFilter && (!listing.price || listing.price <= 0)) return false;
-      if (filters.priceMin && listing.price && listing.price < parseFloat(filters.priceMin)) return false;
-      if (filters.priceMax && listing.price && listing.price > parseFloat(filters.priceMax)) return false;
-
-      // Bedroom filters
-      if (filters.bedsMin && listing.beds && listing.beds < parseInt(filters.bedsMin)) return false;
-      if (filters.bedsMax && listing.beds && listing.beds > parseInt(filters.bedsMax)) return false;
-
-      // Bathroom filters
-      if (filters.bathsMin && listing.baths && listing.baths < parseInt(filters.bathsMin)) return false;
-      if (filters.bathsMax && listing.baths && listing.baths > parseInt(filters.bathsMax)) return false;
-
-      // Car space filters
-      if (filters.carsMin && listing.carSpaces && listing.carSpaces < parseInt(filters.carsMin)) return false;
-      if (filters.carsMax && listing.carSpaces && listing.carSpaces > parseInt(filters.carsMax)) return false;
-
-      return true;
-    }).sort((a, b) => {
+    return listings.filter((listing) =>
+      matchesListingFilters(listing, filters, {
+        searchQuery,
+        nearbySuburbs: nearbySuburbsList,
+        extractState: (address) => extractAUState(address),
+        extractPostcode: (address) => extractPostcode(address),
+      }),
+    ).sort((a, b) => {
       const getTs = (l: PropertyListing) => {
         const d = (l as any).receivedAt || l.createdAt || l.createdTime;
         if (!d) return 0;
@@ -631,6 +539,12 @@ export default function Listings() {
     return value !== '';
   });
   const hasSearchQuery = searchQuery.trim().length > 0;
+  // Photos are resolved once for the filtered set and shared by every view, so
+  // switching list ↔ table ↔ map re-uses the same signed URLs instead of asking
+  // again. The map's popup resolves its own single listing on top of this.
+  const { images: listingImages, isResolving: listingImagesResolving } =
+    useListingImages(filteredListings);
+
   const showListView = viewMode === 'list';
   const showTableView = viewMode === 'table';
   const showMapView = viewMode === 'map';
@@ -929,6 +843,8 @@ export default function Listings() {
                 onOpenSource={listing.url ? () => openSourceUrl(listing.url!) : undefined}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}
+                images={listingImages[listing.id]}
+                imagesResolving={listingImagesResolving}
               />
             ))
           )}
@@ -988,6 +904,14 @@ export default function Listings() {
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
+                    <div className="flex min-w-0 items-center gap-3">
+                    <ListingThumbnail
+                      images={listingImages[listing.id]}
+                      isResolving={listingImagesResolving}
+                      label={listing.address || listing.suburb || undefined}
+                      className="h-11 w-16"
+                      onClick={() => openDetailsModal(listing)}
+                    />
                     <div className="min-w-0 space-y-1.5">
                       <div className={cn(
                         "max-w-[360px] truncate text-[15px] font-semibold leading-5 tracking-[-0.01em] text-foreground",
@@ -1008,8 +932,9 @@ export default function Listings() {
                         )}
                       </div>
                     </div>
+                    </div>
                   </TableCell>
-                  
+
                   <TableCell className="py-4 text-right align-middle">
                     {listing.price && listing.price > 0 ? (
                       <span className="font-semibold tabular-nums text-foreground">{formatCurrency(listing.price)}</span>

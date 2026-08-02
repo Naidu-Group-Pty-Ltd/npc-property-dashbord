@@ -134,6 +134,20 @@ export function useListingImages(listings: PropertyListing[]) {
     [listings],
   );
 
+  /**
+   * Stable key for "what is outstanding", used as the effect's dependency.
+   *
+   * Depending on `payload` itself restarts the pass on every render that hands
+   * this hook a new array — which is every render of a parent whose `listings`
+   * prop is rebuilt, i.e. most of them. In the map popup that showed up as the
+   * popup remounting mid-interaction and throwing away local state. Same lesson
+   * `useListingCoordinates` records: decouple the pass from render identity.
+   */
+  const payloadSignature = useMemo(
+    () => payload.map((row) => `${row.id}:${fingerprints.get(row.id) ?? ''}`).join('|'),
+    [payload, fingerprints],
+  );
+
   const payloadRef = useRef(payload);
   const fingerprintsRef = useRef(fingerprints);
   const imagesRef = useRef(images);
@@ -229,9 +243,9 @@ export function useListingImages(listings: PropertyListing[]) {
   }, []);
 
   useEffect(() => {
-    if (payload.length === 0) return;
+    if (payloadRef.current.length === 0) return;
     void runPass();
-  }, [payload, retryNonce, runPass]);
+  }, [payloadSignature, retryNonce, runPass]);
 
   const retry = useCallback(() => {
     resolvedRef.current.clear();

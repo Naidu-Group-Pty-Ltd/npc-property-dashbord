@@ -8,6 +8,19 @@ interface StreetViewPanelProps {
   lng: number;
   label?: string;
   className?: string;
+  /**
+   * `card` (default) is the standalone block: its own heading, the capture date
+   * beside it, and a full-width link out to Google Maps.
+   *
+   * `inline` is the same imagery with the chrome stripped down to overlays, for
+   * callers that already provide a heading — the map popup shows Street View
+   * and the property photo in one framed slot with a toggle between them, and a
+   * second heading plus a second full-width button there is what made the card
+   * taller than the map itself.
+   */
+  variant?: 'card' | 'inline';
+  /** Frame height. Only meaningful for `inline`. */
+  frameClassName?: string;
 }
 
 /**
@@ -68,7 +81,14 @@ const MESSAGES: Record<Exclude<Status, 'loading' | 'available'>, { title: string
   },
 };
 
-export function StreetViewPanel({ lat, lng, label, className }: StreetViewPanelProps) {
+export function StreetViewPanel({
+  lat,
+  lng,
+  label,
+  className,
+  variant = 'card',
+  frameClassName,
+}: StreetViewPanelProps) {
   const [state, setState] = useState<StreetViewState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
 
@@ -118,6 +138,68 @@ export function StreetViewPanel({ lat, lng, label, className }: StreetViewPanelP
   const message = failed ? MESSAGES[state.status as keyof typeof MESSAGES] : null;
   // Retrying a genuine coverage gap or a missing key just repeats the answer.
   const canRetry = state.status === 'busy' || state.status === 'error';
+
+  const frame = frameClassName ?? 'h-32';
+
+  if (variant === 'inline') {
+    return (
+      <div
+        className={`relative overflow-hidden rounded-lg border border-border/60 bg-muted/30 ${frame} ${className ?? ''}`}
+      >
+        {state.status === 'loading' && (
+          <div className="flex h-full items-center justify-center text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+            <span className="sr-only">Loading Street View imagery</span>
+          </div>
+        )}
+
+        {state.status === 'available' && state.imageDataUrl && (
+          <img
+            src={state.imageDataUrl}
+            alt={label ? `Street View of ${label}` : 'Street View of the property location'}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        )}
+
+        {message && (
+          <div className="flex h-full flex-col items-center justify-center gap-1 px-3 text-center">
+            <p className="text-[11px] font-medium text-foreground">{message.title}</p>
+            <p className="text-[10px] leading-4 text-muted-foreground">{message.detail}</p>
+            {canRetry && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-0.5 h-6 gap-1 px-2 text-[10px]"
+                onClick={retry}
+              >
+                <RefreshCw className="h-3 w-3" />
+                Try again
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* Chrome as overlays so it costs no vertical space. */}
+        {state.status === 'available' && state.panoramaDate ? (
+          <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-background/85 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur">
+            {state.panoramaDate}
+          </span>
+        ) : null}
+        {state.status === 'available' ? (
+          <button
+            type="button"
+            onClick={() => window.open(mapsUrl, '_blank', 'noopener,noreferrer')}
+            aria-label="Open this location in Google Maps"
+            title="Open in Google Maps"
+            className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded bg-background/85 text-muted-foreground backdrop-blur transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className={className}>

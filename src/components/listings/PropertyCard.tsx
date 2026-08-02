@@ -22,6 +22,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
+import type { StoredListingImage } from '@/lib/listingImages';
 
 const LISTING_CARD_BADGE_BASE = 'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold leading-none tracking-[0.02em] shadow-sm';
 const LISTING_CARD_PROPERTY_TYPE_BADGE = 'border-border/80 bg-muted/90 text-foreground dark:border-white/10 dark:bg-white/[0.06] dark:text-foreground';
@@ -41,6 +43,9 @@ interface PropertyCardProps {
   onOpenSource?: () => void;
   formatCurrency: (value: number) => string;
   formatDate: (date: Date | string | null | undefined) => string;
+  /** Stored photos for this listing, resolved once for the page. */
+  images?: StoredListingImage[];
+  imagesResolving?: boolean;
 }
 
 export function PropertyCard({
@@ -53,6 +58,8 @@ export function PropertyCard({
   onOpenSource,
   formatCurrency,
   formatDate,
+  images,
+  imagesResolving,
 }: PropertyCardProps) {
   return (
     <Card 
@@ -71,6 +78,14 @@ export function PropertyCard({
             aria-label={`Select ${listing.address || listing.location || 'listing'}`}
           />
           
+          <ListingThumbnail
+            images={images}
+            isResolving={imagesResolving}
+            label={listing.address || listing.suburb || undefined}
+            className="h-14 w-20"
+            onClick={onOpenDetails}
+          />
+
           <button type="button" className="min-w-0 flex-1 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2" onClick={onOpenDetails}>
             <span role="heading" aria-level={3} className="block font-medium text-sm leading-tight truncate">
               {listing.address || 'Unknown Address'}

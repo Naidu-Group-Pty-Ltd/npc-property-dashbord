@@ -254,34 +254,46 @@
   --pin-fg: hsl(var(--primary-foreground));
 }
 
-/* Price bands run cool → hot on the same four stops as the heat ramp, and for
-   the same reason `ListingsHeatLayer` gives: the brand `--primary` must stay
-   out of an ordered scale. A tenant hue lands wherever the tenant puts it, and
-   in this palette's dark theme `--primary` and `--warning` are the same colour
-   — with `mid` on the brand, two of the four bands were indistinguishable for
-   every dark-theme user. These four are Category B, fixed by design. */
-/* Scoped to match the base rule above. An unscoped `.listing-pin--top` loses to
+/* Price bands ride the configured brand ramp.
+
+   `--brand-50 … --brand-950` is generated at runtime from the White-Label brand
+   colour (src/branding/token-resolver.ts): one hue, one saturation, a fixed
+   lightness ladder. That makes it the only token family in the system that is
+   both *branded* and *ordered*, which is what a price scale needs — a
+   sequential variable wants a single-hue ramp, not four unrelated status hues.
+
+   Steps of roughly 20 lightness points keep the four bands apart at pin scale
+   whatever hue a tenant configures, and each band pairs with the ramp end that
+   contrasts against it.
+
+   `--primary` is deliberately not used even though it is also a brand token: it
+   is a single point rather than a scale, and in this palette's dark theme it is
+   byte-identical to `--warning`.
+
+   Scoped to match the base rule above. An unscoped `.listing-pin--top` loses to
    `.listings-map .listing-pin`, and every pin on the map silently falls back to
-   the default brand colour — the price bands stop existing. */
+   one flat colour — the bands stop existing. */
 .listings-map .listing-pin--unknown {
+  /* Not part of the ramp: "no price on record" is a gap in the data, not a
+     cheap listing, so it must not read as the bottom of the scale. */
   --pin-bg: hsl(var(--muted-foreground));
   --pin-fg: hsl(var(--background));
 }
 .listings-map .listing-pin--low {
-  --pin-bg: hsl(var(--info));
-  --pin-fg: hsl(var(--info-foreground));
+  --pin-bg: hsl(var(--brand-200));
+  --pin-fg: hsl(var(--brand-950));
 }
 .listings-map .listing-pin--mid {
-  --pin-bg: hsl(var(--success));
-  --pin-fg: hsl(var(--success-foreground));
+  --pin-bg: hsl(var(--brand-500));
+  --pin-fg: hsl(var(--brand-950));
 }
 .listings-map .listing-pin--high {
-  --pin-bg: hsl(var(--warning));
-  --pin-fg: hsl(var(--warning-foreground));
+  --pin-bg: hsl(var(--brand-800));
+  --pin-fg: hsl(var(--brand-50));
 }
 .listings-map .listing-pin--top {
-  --pin-bg: hsl(var(--destructive));
-  --pin-fg: hsl(var(--destructive-foreground));
+  --pin-bg: hsl(var(--brand-950));
+  --pin-fg: hsl(var(--brand-50));
 }
 
 .listings-map .listing-pin--ghost {
@@ -507,10 +519,10 @@
   align-items: center;
   justify-content: center;
   overflow: visible;
-  --tier-low: hsl(var(--info));
-  --tier-mid: hsl(var(--success));
-  --tier-high: hsl(var(--warning));
-  --tier-top: hsl(var(--destructive));
+  --tier-low: hsl(var(--brand-200));
+  --tier-mid: hsl(var(--brand-500));
+  --tier-high: hsl(var(--brand-800));
+  --tier-top: hsl(var(--brand-950));
   --tier-unknown: hsl(var(--muted-foreground));
 }
 
@@ -577,19 +589,19 @@
 
 .listings-cluster__price--low {
   background: var(--tier-low);
-  color: hsl(var(--info-foreground));
+  color: hsl(var(--brand-950));
 }
 .listings-cluster__price--mid {
   background: var(--tier-mid);
-  color: hsl(var(--success-foreground));
+  color: hsl(var(--brand-950));
 }
 .listings-cluster__price--high {
   background: var(--tier-high);
-  color: hsl(var(--warning-foreground));
+  color: hsl(var(--brand-50));
 }
 .listings-cluster__price--top {
   background: var(--tier-top);
-  color: hsl(var(--destructive-foreground));
+  color: hsl(var(--brand-50));
 }
 
 .listings-cluster--ghost .listings-cluster__ring {
@@ -681,16 +693,16 @@
 }
 
 .listings-tier-swatch--low {
-  background: hsl(var(--info));
+  background: hsl(var(--brand-200));
 }
 .listings-tier-swatch--mid {
-  background: hsl(var(--success));
+  background: hsl(var(--brand-500));
 }
 .listings-tier-swatch--high {
-  background: hsl(var(--warning));
+  background: hsl(var(--brand-800));
 }
 .listings-tier-swatch--top {
-  background: hsl(var(--destructive));
+  background: hsl(var(--brand-950));
 }
 
 /* --- Results panel rows -------------------------------------------------
@@ -716,20 +728,20 @@
 }
 
 .listings-row-mark--low {
-  background: hsl(var(--info));
-  color: hsl(var(--info-foreground));
+  background: hsl(var(--brand-200));
+  color: hsl(var(--brand-950));
 }
 .listings-row-mark--mid {
-  background: hsl(var(--success));
-  color: hsl(var(--success-foreground));
+  background: hsl(var(--brand-500));
+  color: hsl(var(--brand-950));
 }
 .listings-row-mark--high {
-  background: hsl(var(--warning));
-  color: hsl(var(--warning-foreground));
+  background: hsl(var(--brand-800));
+  color: hsl(var(--brand-50));
 }
 .listings-row-mark--top {
-  background: hsl(var(--destructive));
-  color: hsl(var(--destructive-foreground));
+  background: hsl(var(--brand-950));
+  color: hsl(var(--brand-50));
 }
 
 /* Property-type key — the same glyph the pins carry, at legend scale. */
