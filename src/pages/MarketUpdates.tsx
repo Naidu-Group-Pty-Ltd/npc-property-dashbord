@@ -248,7 +248,7 @@ export default function MarketUpdates() {
   };
 
 
-  const reviewCandidates = () => { setActionIssue(null); setFeedScope('held'); setWorkspaceTab('updates'); };
+  // legacy helper kept for a graceful transition from the old candidate-review modal
 
   const publishHeldUpdate = async (update: MarketUpdate) => {
     if (publishingId) return;
