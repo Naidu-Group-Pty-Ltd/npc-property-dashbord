@@ -230,11 +230,14 @@ function MinimisedChip({
             thread.kind === 'broadcast' ? 'bg-warning/15 text-warning' : 'bg-primary/15 text-primary',
           )}
         >
-          {thread.kind === 'broadcast' ? (
-            <Megaphone className="h-3 w-3" />
-          ) : (
-            thread.sender?.trim()?.[0] ?? <MessageSquare className="h-3 w-3" />
-          )}
+        {thread.kind === 'broadcast' ? (
+          <Megaphone className="h-3 w-3" />
+        ) : thread.kind === 'group' ? (
+          <UsersRound className="h-3 w-3" />
+        ) : (
+          thread.sender?.trim()?.[0] ?? <MessageSquare className="h-3 w-3" />
+        )}
+
         </span>
         <span className="truncate text-xs font-semibold text-foreground">{label}</span>
         {thread.unread > 0 && (
