@@ -515,11 +515,17 @@ export function InternalMessageToasts() {
     [persist, setBaseline],
   );
 
-  /** Collapse the expanded card into a side chip (never opens the agent). */
+  /** Collapse the expanded card into a side chip (never opens another card). */
   const minimise = useCallback((threadId: string) => {
     setMinimised((prev) => ({ ...prev, [threadId]: true }));
     setActiveId((current) => (current === threadId ? null : current));
+    skipAutoExpandRef.current = true;
+    // The auto-expand effect is guarded by this flag for the immediate re-render.
+    window.setTimeout(() => {
+      skipAutoExpandRef.current = false;
+    }, 120);
   }, []);
+
 
   /** Stage files against the expanded thread (drag, paste or picker). */
   const addFilesFor = useCallback(
