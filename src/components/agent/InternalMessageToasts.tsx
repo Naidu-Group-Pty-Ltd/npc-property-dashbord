@@ -432,8 +432,11 @@ export function InternalMessageToasts() {
     };
   }, [user, check]);
 
-  // Keep an expanded card whenever pop-ups exist.
+  // Keep an expanded card whenever pop-ups exist — unless the user has just
+  // deliberately minimised the active card, in which case every chat stays as a
+  // chip so the unread badge on the chip is the only notification.
   useEffect(() => {
+    if (skipAutoExpandRef.current) return;
     if (!threads.length) {
       if (activeId) setActiveId(null);
       return;
@@ -448,6 +451,7 @@ export function InternalMessageToasts() {
       setActiveId(next.thread_id);
     }
   }, [threads, activeId, minimised]);
+
 
   // Typing hints for threads with an open pop-up.
   useEffect(() => {
