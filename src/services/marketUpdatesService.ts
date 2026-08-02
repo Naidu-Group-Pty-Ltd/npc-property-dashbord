@@ -166,7 +166,13 @@ export async function setMarketNewsArchiveState(input:SetMarketNewsArchiveStateI
   });
   const expectedOutcomes=input.archived?['archived','already_archived']:['restored','already_restored'];
   if(!primary.error&&primary.data?.id===input.updateId&&expectedOutcomes.includes(String(primary.data.outcome))){
-    return primary.data;
+    return {
+      id:primary.data.id,
+      isArchived:input.archived,
+      archivedAt:input.archived?primary.data.archivedAt??null:null,
+      outcome:primary.data.outcome,
+      correlationId:primary.data.correlationId??crypto.randomUUID(),
+    };
   }
 
   // Keep the previous dedicated endpoint as temporary rollback coverage. Both
