@@ -801,6 +801,9 @@ export function InternalMessageToasts() {
                     )}
                   >
                     {m.body}
+                    {!m.body?.trim() && !(m.attachments?.length) && (
+                      <span className="italic opacity-70">Attachment unavailable</span>
+                    )}
                     <InternalAttachmentList
                       threadId={active.thread_id}
                       attachments={m.attachments ?? []}
