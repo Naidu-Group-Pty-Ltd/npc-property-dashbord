@@ -652,7 +652,7 @@ export function InternalMessageToasts() {
           return a.lastAt < b.lastAt ? 1 : -1;
         })
         .slice(0, MAX_CHIPS),
-    [threads, activeId],
+    [threads, active?.thread_id],
   );
 
   /** The whole minimised stack can be dragged anywhere on the page. */
