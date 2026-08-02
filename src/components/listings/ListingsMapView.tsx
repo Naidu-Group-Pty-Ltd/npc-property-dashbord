@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, ScaleControl } from 'react-leaflet';
+import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -18,11 +18,15 @@ import {
   Layers,
   LayoutGrid,
   Loader2,
+  LocateFixed,
   MapPin,
   Maximize2,
   Minimize2,
   Minus,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -58,7 +62,10 @@ import {
   priceTier,
   propertyGlyph,
   PROPERTY_GLYPHS,
+  summariseCluster,
+  tierMixGradientStops,
   type BasemapId,
+  type ClusterMember,
   type GeoPoint,
   type HeatFocus,
   type HeatMetric,
@@ -68,6 +75,21 @@ import {
   type PropertyGlyph,
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
+import { useToast } from '@/hooks/use-toast';
+
+/**
+ * Leaflet copies unknown constructor options straight onto `marker.options`, and
+ * react-leaflet forwards every prop it does not consume into that constructor.
+ * That is the cheapest channel for handing a marker's price down to the cluster
+ * icon factory, which only ever sees `L.Marker` instances — no React state, no
+ * side lookup table that could drift out of sync with the rendered markers.
+ */
+declare module 'leaflet' {
+  interface MarkerOptions {
+    listingPrice?: number | null;
+    listingTier?: PriceTier;
+  }
+}
 
 export type { GeoPoint } from '@/lib/listingsMap';
 
@@ -91,7 +113,19 @@ const STORAGE_KEYS = {
   basemap: 'npc.listings.map.basemap',
   metric: 'npc.listings.map.heatMetric',
   focus: 'npc.listings.map.heatFocus',
+  panel: 'npc.listings.map.resultsPanel',
 } as const;
+
+/**
+ * Rows the results panel will hold. Past this the list stops being scannable
+ * and the per-pan render stops being free; the overflow is always reported in
+ * the panel footer rather than silently dropped.
+ */
+const IN_VIEW_LIMIT = 250;
+
+type PanelState = 'open' | 'closed';
+const isPanelState = (value: unknown): value is PanelState =>
+  value === 'open' || value === 'closed';
 
 interface ListingsMapViewProps {
   listings: PropertyListing[];
@@ -211,17 +245,28 @@ function cacheIcon(key: string, factory: () => L.DivIcon): L.DivIcon {
   return icon;
 }
 
+/**
+ * `idle` | the listing whose popup is open | the listing under the pointer in
+ * the results panel. Peek is carried by the icon rather than by adding a class
+ * to the marker's element: react-leaflet tears marker elements down and rebuilds
+ * them on later commits, so a hand-applied class survives only until the next
+ * render — which is how the highlight silently stopped appearing at all.
+ */
+type PinState = 'idle' | 'active' | 'peek';
+
 function pinIcon(
   variant: PinVariant,
   tier: PriceTier,
   glyph: PropertyGlyph,
   label: string | null,
-  active: boolean,
+  pinState: PinState,
 ): L.DivIcon {
-  const state = active ? ' listing-pin--active' : '';
+  const active = pinState === 'active';
+  const state =
+    pinState === 'active' ? ' listing-pin--active' : pinState === 'peek' ? ' listing-pin--peek' : '';
 
   if (variant === 'ghost') {
-    return cacheIcon(`ghost|${active}`, () =>
+    return cacheIcon(`ghost|${pinState}`, () =>
       L.divIcon({
         className: `listing-pin listing-pin--ghost${state}`,
         html: '<span class="listing-pin__dot"></span>',
@@ -233,7 +278,7 @@ function pinIcon(
   }
 
   if (variant === 'pin' || !label) {
-    return cacheIcon(`pin|${tier}|${glyph}|${active}`, () =>
+    return cacheIcon(`pin|${tier}|${glyph}|${pinState}`, () =>
       L.divIcon({
         className: `listing-pin listing-pin--pin listing-pin--${tier}${state}`,
         html: (active ? HALO_HTML : '') + teardropSvg(glyph),
@@ -246,7 +291,7 @@ function pinIcon(
     );
   }
 
-  return cacheIcon(`chip|${tier}|${glyph}|${label}|${active}`, () => {
+  return cacheIcon(`chip|${tier}|${glyph}|${label}|${pinState}`, () => {
     // Estimated so the icon box matches the rendered chip: Leaflet needs real
     // dimensions for hit-testing, anchoring, and cluster spiderfy geometry.
     // 40 covers the glyph disc, gutters and border; 7 is a generous per-character
@@ -270,24 +315,68 @@ function pinIcon(
 }
 
 function clusterSizeTier(count: number): { tier: string; size: number } {
-  if (count < 10) return { tier: 'sm', size: 34 };
-  if (count < 50) return { tier: 'md', size: 42 };
-  if (count < 250) return { tier: 'lg', size: 50 };
-  return { tier: 'xl', size: 58 };
+  if (count < 10) return { tier: 'sm', size: 36 };
+  if (count < 50) return { tier: 'md', size: 44 };
+  if (count < 250) return { tier: 'lg', size: 52 };
+  return { tier: 'xl', size: 60 };
+}
+
+/** Below this a median price label crowds the ring more than it informs. */
+const CLUSTER_PRICE_MIN_COUNT = 4;
+
+interface ClusterLike {
+  getChildCount: () => number;
+  getAllChildMarkers: () => L.Marker[];
+}
+
+function clusterMembers(cluster: ClusterLike): ClusterMember[] {
+  return cluster.getAllChildMarkers().map((marker) => ({
+    price: marker.options.listingPrice ?? null,
+    tier: marker.options.listingTier ?? 'unknown',
+  }));
 }
 
 function makeClusterIconFactory(ghost: boolean) {
-  return (cluster: { getChildCount: () => number }): L.DivIcon => {
+  return (cluster: ClusterLike): L.DivIcon => {
     const count = cluster.getChildCount();
     const { tier, size } = clusterSizeTier(count);
     const compact = count > 999 ? `${Math.round(count / 1000)}k` : String(count);
+
+    if (ghost) {
+      return L.divIcon({
+        className: cn('listings-cluster', `listings-cluster--${tier}`, 'listings-cluster--ghost'),
+        html:
+          '<span class="listings-cluster__ring" aria-hidden="true"></span>' +
+          `<span class="listings-cluster__count">${escapeHtml(compact)}</span>`,
+        iconSize: L.point(size, size),
+        iconAnchor: [size / 2, size / 2],
+      });
+    }
+
+    const summary = summariseCluster(clusterMembers(cluster));
+    const medianLabel = formatCompactAud(summary.median);
+    const showPrice = medianLabel !== null && count >= CLUSTER_PRICE_MIN_COUNT;
+    // Stops are the only thing interpolated: `tierMixGradientStops` emits
+    // `var(--tier-*)` names, so no colour value is ever written from here.
+    const ring =
+      '<span class="listings-cluster__ring" aria-hidden="true" style="background:conic-gradient(from -90deg,' +
+      `${tierMixGradientStops(summary.mix)})"></span>`;
+
+    const parts = [
+      ring,
+      '<span class="listings-cluster__core" aria-hidden="true"></span>',
+      `<span class="listings-cluster__count">${escapeHtml(compact)}</span>`,
+    ];
+    if (showPrice) {
+      parts.push(
+        `<span class="listings-cluster__price listings-cluster__price--${summary.medianTier}">` +
+          `${escapeHtml(medianLabel)}</span>`,
+      );
+    }
+
     return L.divIcon({
-      className: cn(
-        'listings-cluster',
-        `listings-cluster--${tier}`,
-        ghost && 'listings-cluster--ghost',
-      ),
-      html: `<span class="listings-cluster__ring" aria-hidden="true"></span><span class="listings-cluster__count">${escapeHtml(compact)}</span>`,
+      className: cn('listings-cluster', `listings-cluster--${tier}`),
+      html: parts.join(''),
       iconSize: L.point(size, size),
       iconAnchor: [size / 2, size / 2],
     });
@@ -295,6 +384,19 @@ function makeClusterIconFactory(ghost: boolean) {
 }
 
 const clusterRadius = (zoom: number) => (zoom >= 15 ? 24 : zoom >= 12 ? 42 : 62);
+
+/**
+ * "You are here". Deliberately nothing like a listing pin — it is a fact about
+ * the viewer, not a record on the map, so it stays a dot and never a teardrop.
+ */
+const USER_LOCATION_ICON = L.divIcon({
+  className: 'listings-locator',
+  html:
+    '<span class="listings-locator__pulse" aria-hidden="true"></span>' +
+    '<span class="listings-locator__dot" aria-hidden="true"></span>',
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
 
 /* -------------------------------------------------------------------------- */
 /* Persisted preference hook                                                   */
@@ -400,11 +502,14 @@ function MapIconButton({
   onClick,
   children,
   disabled,
+  active,
 }: {
   label: string;
   onClick: () => void;
   children: React.ReactNode;
   disabled?: boolean;
+  /** Sticky on/off controls report their state, not just their action. */
+  active?: boolean;
 }) {
   return (
     <button
@@ -412,12 +517,16 @@ function MapIconButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
+      aria-pressed={active === undefined ? undefined : active}
       title={label}
       className={cn(
-        'flex h-9 w-9 items-center justify-center border-b border-border/50 bg-background/90 text-foreground transition-colors',
+        'flex h-9 w-9 items-center justify-center border-b border-border/50 transition-colors',
         'first:rounded-t-xl last:rounded-b-xl last:border-b-0',
-        'hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50',
         'disabled:cursor-not-allowed disabled:opacity-40',
+        active
+          ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+          : 'bg-background/90 text-foreground hover:bg-muted',
       )}
     >
       {children}
@@ -504,6 +613,159 @@ function PinLegend({ tiers }: { tiers: PriceTiers | null }) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* In-view results panel                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** The pin's own mark, at list scale, so a row and its pin are the same object. */
+function RowMark({ tier, glyph }: { tier: PriceTier; glyph: PropertyGlyph }) {
+  return (
+    <span className={`listings-row-mark listings-row-mark--${tier}`} aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path fillRule="evenodd" d={PIN_GLYPH_PATHS[glyph]} />
+      </svg>
+    </span>
+  );
+}
+
+interface ResultsPanelProps {
+  rows: ListingMarker[];
+  total: number;
+  tiers: PriceTiers | null;
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onHover: (id: string | null) => void;
+  onClose: () => void;
+}
+
+/**
+ * The listings currently inside the viewport, as a real list.
+ *
+ * Two things it fixes. Pins are only reachable with a pointer — a marker in a
+ * collapsed cluster has no DOM node at all — so this is the only keyboard route
+ * to the map's contents. And a map answers "where" far better than "which";
+ * sorted by price, the panel answers the second question without leaving it.
+ */
+function ResultsPanel({
+  rows,
+  total,
+  tiers,
+  selectedId,
+  onSelect,
+  onHover,
+  onClose,
+}: ResultsPanelProps) {
+  const sorted = useMemo(
+    () =>
+      [...rows].sort((a, b) => {
+        const pa = typeof a.listing.price === 'number' && a.listing.price > 0 ? a.listing.price : -1;
+        const pb = typeof b.listing.price === 'number' && b.listing.price > 0 ? b.listing.price : -1;
+        // Priced listings first, dearest at the top; undisclosed sink to the end.
+        if (pa !== pb) return pb - pa;
+        return (a.listing.address || '').localeCompare(b.listing.address || '');
+      }),
+    [rows],
+  );
+
+  return (
+    <div
+      id="listings-map-results"
+      className="flex h-72 min-h-0 shrink-0 flex-col border-t border-border/60 bg-background/95 backdrop-blur lg:h-auto lg:w-80 lg:border-l lg:border-t-0"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            In this view
+          </p>
+          <p className="truncate text-xs text-foreground">
+            <span className="font-semibold tabular-nums">{total}</span>
+            {total === 1 ? ' listing' : ' listings'}
+            <span className="text-muted-foreground"> · dearest first</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close the results panel"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {sorted.length === 0 ? (
+        <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+          No listings in view. Pan the map, or zoom out to bring stock back.
+        </p>
+      ) : (
+        <ul className="min-h-0 flex-1 divide-y divide-border/40 overflow-y-auto">
+          {sorted.map(({ listing }) => {
+            const tier = priceTier(listing.price, tiers);
+            const glyph = propertyGlyph(listing.propertyType);
+            const active = listing.id === selectedId;
+            const locality = [listing.suburb, listing.state].filter(Boolean).join(' ');
+            const beds = listing.beds ?? listing.bedrooms;
+            const baths = listing.baths ?? listing.bathrooms;
+            const meta = [
+              beds ? `${beds} bed` : null,
+              baths ? `${baths} bath` : null,
+              listing.propertyType || null,
+            ]
+              .filter(Boolean)
+              .join(' · ');
+
+            return (
+              <li key={listing.id}>
+                <button
+                  type="button"
+                  onClick={() => onSelect(listing.id)}
+                  onMouseEnter={() => onHover(listing.id)}
+                  onMouseLeave={() => onHover(null)}
+                  onFocus={() => onHover(listing.id)}
+                  onBlur={() => onHover(null)}
+                  aria-current={active ? 'true' : undefined}
+                  className={cn(
+                    'flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50',
+                    active ? 'bg-primary/10' : 'hover:bg-muted/60',
+                  )}
+                >
+                  <RowMark tier={tier} glyph={glyph} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium text-foreground">
+                      {listing.address || listing.title || 'Untitled listing'}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {locality || 'No locality on record'}
+                    </span>
+                    {meta ? (
+                      <span className="mt-0.5 block truncate text-[10px] text-muted-foreground">
+                        {meta}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 text-xs font-semibold tabular-nums text-foreground">
+                    {formatCompactAud(listing.price) ?? (
+                      <span className="font-normal text-muted-foreground">—</span>
+                    )}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {total > sorted.length && (
+        <p className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
+          Showing the first <span className="tabular-nums">{sorted.length}</span> of{' '}
+          <span className="tabular-nums">{total}</span> in view — zoom in to narrow the list.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /* Markers layer                                                               */
 /* -------------------------------------------------------------------------- */
 
@@ -512,7 +774,12 @@ interface ListingMarkersProps {
   tiers: PriceTiers | null;
   variant: PinVariant;
   selectedId: string | null;
+  /** The listing under the pointer in the results panel, if any. */
+  hoveredId: string | null;
   onSelect: (id: string) => void;
+  /** Keeps a live id → marker index so the results panel can reach a pin. */
+  registerMarker: (id: string, marker: L.Marker | null) => void;
+  clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
 }
 
 const ListingMarkers = memo(function ListingMarkers({
@@ -520,7 +787,10 @@ const ListingMarkers = memo(function ListingMarkers({
   tiers,
   variant,
   selectedId,
+  hoveredId,
   onSelect,
+  registerMarker,
+  clusterRef,
 }: ListingMarkersProps) {
   const ghost = variant === 'ghost';
   const iconFactory = useMemo(() => makeClusterIconFactory(ghost), [ghost]);
@@ -529,6 +799,7 @@ const ListingMarkers = memo(function ListingMarkers({
 
   return (
     <MarkerClusterGroup
+      ref={clusterRef}
       // The cluster group only reads its options once, so switching between the
       // solid and ghost cluster styles has to remount it. Chip ↔ dot only
       // changes the child markers, so it deliberately shares a key.
@@ -545,7 +816,8 @@ const ListingMarkers = memo(function ListingMarkers({
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
         const glyph = propertyGlyph(listing.propertyType);
-        const active = listing.id === selectedId;
+        const pinState: PinState =
+          listing.id === selectedId ? 'active' : listing.id === hoveredId ? 'peek' : 'idle';
         const title = [
           listing.address || listing.suburb || 'Listing',
           listing.propertyType,
@@ -556,11 +828,16 @@ const ListingMarkers = memo(function ListingMarkers({
         return (
           <Marker
             key={listing.id}
+            ref={(instance) => registerMarker(listing.id, instance)}
             position={[point.lat, point.lng]}
-            icon={pinIcon(variant, tier, glyph, label, active)}
-            // Lift the open listing clear of its neighbours so the popup's
-            // owner is obvious in a dense cluster.
-            zIndexOffset={active ? 1200 : 0}
+            icon={pinIcon(variant, tier, glyph, label, pinState)}
+            // Lift the open (or peeked) listing clear of its neighbours so the
+            // highlighted pin is never buried under the ones around it.
+            zIndexOffset={pinState === 'active' ? 1200 : pinState === 'peek' ? 900 : 0}
+            // Read back by the cluster icon factory — see the `leaflet` module
+            // augmentation above.
+            listingPrice={typeof listing.price === 'number' ? listing.price : null}
+            listingTier={tier}
             title={title}
             alt={title}
             riseOnHover
@@ -600,8 +877,25 @@ function ListingPopupCard({
   const beds = listing.beds ?? listing.bedrooms;
   const baths = listing.baths ?? listing.bathrooms;
 
+  // The listing's own photo beats a Street View frame when there is one, so it
+  // leads the card. Source URLs rot, so a broken one retires the whole block
+  // rather than leaving a torn-image placeholder in the popup.
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const photo = !photoFailed ? listing.images?.find((src) => typeof src === 'string' && src) : null;
+  useEffect(() => setPhotoFailed(false), [listing.id]);
+
   return (
     <div className="min-w-[248px] max-w-[280px] space-y-2.5">
+      {photo ? (
+        <img
+          src={photo}
+          alt={`${listing.address || listing.title || 'This listing'} — listing photo`}
+          className="h-28 w-full rounded-lg border border-border/60 object-cover"
+          loading="lazy"
+          onError={() => setPhotoFailed(true)}
+        />
+      ) : null}
+
       <div>
         <h3 className="text-sm font-semibold leading-snug text-foreground">
           {listing.address || listing.title || 'Unknown address'}
@@ -633,11 +927,18 @@ function ListingPopupCard({
         </div>
       )}
 
-      <StreetViewPanel
-        lat={point.lat}
-        lng={point.lng}
-        label={listing.address || listing.suburb || undefined}
-      />
+      {/* One frame, not two. Street View is the *fallback* for a listing with
+          no usable photo, so it only loads when there is nothing better —
+          which also saves an edge-function call per popup. Showing both made
+          the card taller than the map itself, and Leaflet's auto-pan then
+          shoved the marker off the bottom of the viewport to fit it. */}
+      {!photo ? (
+        <StreetViewPanel
+          lat={point.lat}
+          lng={point.lng}
+          label={listing.address || listing.suburb || undefined}
+        />
+      ) : null}
 
       <Button size="sm" className="w-full" onClick={onOpenDetails}>
         Open details
@@ -669,19 +970,35 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
     isHeatFocus,
   );
 
+  const [panelState, setPanelState] = usePersistedChoice<PanelState>(
+    STORAGE_KEYS.panel,
+    'closed',
+    isPanelState,
+  );
+
   const [map, setMap] = useState<L.Map | null>(null);
   const [zoom, setZoom] = useState(AUSTRALIA_ZOOM);
   const [inViewCount, setInViewCount] = useState<number | null>(null);
+  const [inViewRows, setInViewRows] = useState<ListingMarker[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [legendOpen, setLegendOpen] = useState(true);
+  const [locating, setLocating] = useState(false);
+  const [userLocation, setUserLocation] = useState<
+    { lat: number; lng: number; accuracy: number } | null
+  >(null);
 
   const shellRef = useRef<HTMLDivElement | null>(null);
+  const mapFrameRef = useRef<HTMLDivElement | null>(null);
   const popupRef = useRef<L.Popup | null>(null);
   const markersRef = useRef<ListingMarker[]>([]);
+  const markerIndexRef = useRef(new Map<string, L.Marker>());
+  const clusterRef = useRef<L.MarkerClusterGroup | null>(null);
   const userMovedRef = useRef(false);
   const programmaticUntilRef = useRef(0);
   const reducedMotion = useMemo(prefersReducedMotion, []);
+  const { toast } = useToast();
 
   const { points, isResolving, failure, retry } = useListingCoordinates(listings);
 
@@ -769,13 +1086,22 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
     const instance = map;
     if (!instance) return;
     const bounds = instance.getBounds();
+    const rows: ListingMarker[] = [];
     let count = 0;
     for (const m of markersRef.current) {
-      if (bounds.contains([m.point.lat, m.point.lng])) count += 1;
+      if (!bounds.contains([m.point.lat, m.point.lng])) continue;
+      count += 1;
+      if (rows.length < IN_VIEW_LIMIT) rows.push(m);
     }
     setInViewCount(count);
+    setInViewRows(rows);
     setZoom(instance.getZoom());
   }, [map]);
+
+  const registerMarker = useCallback((id: string, marker: L.Marker | null) => {
+    if (marker) markerIndexRef.current.set(id, marker);
+    else markerIndexRef.current.delete(id);
+  }, []);
 
   // Track user navigation so automatic re-framing never fights the user.
   useEffect(() => {
@@ -796,6 +1122,12 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
     };
   }, [map, recount]);
 
+  // Coordinates trickle in as they resolve, and each one may land in view — the
+  // panel has to follow the data, not just the navigation.
+  useEffect(() => {
+    recount();
+  }, [markerSignature, recount]);
+
   // A new filter result set is a new question — always re-frame it.
   useEffect(() => {
     userMovedRef.current = false;
@@ -808,23 +1140,38 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
     fitToMarkers(false);
   }, [map, markerSignature, markers.length, fitToMarkers]);
 
-  // Leaflet renders grey tiles when its container resizes underneath it.
+  // Leaflet renders grey tiles when its container resizes underneath it. Watch
+  // the map frame rather than the shell: opening the results panel narrows the
+  // frame while leaving the shell exactly the same size.
   useEffect(() => {
-    if (!map || !shellRef.current || typeof ResizeObserver === 'undefined') return;
+    if (!map || !mapFrameRef.current || typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(() => map.invalidateSize({ animate: false }));
-    observer.observe(shellRef.current);
+    observer.observe(mapFrameRef.current);
     return () => observer.disconnect();
   }, [map]);
 
   // Single shared popup: clear the selection only when *our* popup closes, not
   // when it is torn down to make way for the next one.
+  //
+  // `popupclose` is not the same event as "the user dismissed this". Leaflet
+  // also fires it whenever it detaches a popup it is about to re-attach, which
+  // is exactly what a zoom does — so opening a listing from the results panel
+  // (which zooms to break its cluster apart) used to close its own popup a
+  // beat later. Only a popup that is *still* closed on the next tick was
+  // closed by the user.
   useEffect(() => {
     if (!map) return;
+    let settle = 0;
     const onPopupClose = (event: L.PopupEvent) => {
-      if (popupRef.current && event.popup === popupRef.current) setSelectedId(null);
+      if (!popupRef.current || event.popup !== popupRef.current) return;
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => {
+        if (!popupRef.current?.isOpen()) setSelectedId(null);
+      }, 0);
     };
     map.on('popupclose', onPopupClose);
     return () => {
+      window.clearTimeout(settle);
       map.off('popupclose', onPopupClose);
     };
   }, [map]);
@@ -855,7 +1202,90 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
     }
   }, []);
 
+  // Geolocation ----------------------------------------------------------
+  useEffect(() => {
+    if (!map) return;
+    const onFound = (event: L.LocationEvent) => {
+      setLocating(false);
+      setUserLocation({
+        lat: event.latlng.lat,
+        lng: event.latlng.lng,
+        accuracy: event.accuracy,
+      });
+    };
+    const onError = (event: L.ErrorEvent) => {
+      setLocating(false);
+      toast({
+        variant: 'destructive',
+        title: 'Could not find your location',
+        description:
+          event.message ||
+          'The browser refused the request. Check that location access is allowed for this site.',
+      });
+    };
+    map.on('locationfound', onFound);
+    map.on('locationerror', onError);
+    return () => {
+      map.off('locationfound', onFound);
+      map.off('locationerror', onError);
+    };
+  }, [map, toast]);
+
+  const toggleLocate = useCallback(() => {
+    if (userLocation) {
+      setUserLocation(null);
+      return;
+    }
+    if (!map) return;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      toast({
+        variant: 'destructive',
+        title: 'Location unavailable',
+        description: 'This browser cannot share a location.',
+      });
+      return;
+    }
+    setLocating(true);
+    // Jumping to the user is a navigation they asked for, so it must switch off
+    // the automatic re-framing exactly as a drag would.
+    userMovedRef.current = true;
+    map.locate({ setView: true, maxZoom: 15, enableHighAccuracy: true, timeout: 10_000 });
+  }, [map, toast, userLocation]);
+
   const handleSelect = useCallback((id: string) => setSelectedId(id), []);
+
+  /**
+   * Open a listing chosen from the results panel.
+   *
+   * The pin may be swallowed by a cluster, in which case it has no element and
+   * the popup would open over a stack of markers with nothing to attach it to.
+   * `zoomToShowLayer` zooms or spiderfies until the marker is genuinely visible
+   * and only then selects it.
+   */
+  const revealListing = useCallback(
+    (id: string) => {
+      const row = markersRef.current.find((m) => m.listing.id === id);
+      if (!row || !map) return;
+      userMovedRef.current = true;
+      markProgrammatic();
+
+      const group = clusterRef.current;
+      const marker = markerIndexRef.current.get(id);
+      if (group && marker && typeof group.zoomToShowLayer === 'function') {
+        try {
+          group.zoomToShowLayer(marker, () => setSelectedId(id));
+          return;
+        } catch {
+          /* falls through to a plain pan — never leave the click unanswered */
+        }
+      }
+      map.setView([row.point.lat, row.point.lng], Math.max(map.getZoom(), 15), {
+        animate: !reducedMotion,
+      });
+      setSelectedId(id);
+    },
+    [map, markProgrammatic, reducedMotion],
+  );
 
   const openSelectedDetails = useCallback(() => {
     if (!selected) return;
@@ -886,6 +1316,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
   ];
 
   const plottedSummary = `${markers.length} of ${listings.length} plotted`;
+  const panelOpen = panelState === 'open' && markers.length > 0;
 
   return (
     <div
@@ -900,10 +1331,27 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
       )}
       data-basemap={basemap.id}
     >
+      {/* The panel is a sibling of the map, not an overlay on it: the map gives
+          up width instead of hiding behind a drawer, and no control has to move
+          out of the way.
+
+          Side by side, the row owns the height and both children stretch into
+          it. Sizing the map instead would let the panel's own content — one row
+          per listing in view — drive the row and leave the map floating in a
+          column thousands of pixels tall. */}
       <div
         className={cn(
-          'relative w-full',
-          isFullscreen ? 'h-screen' : 'h-[70vh] min-h-[480px] max-h-[860px]',
+          'flex flex-col lg:flex-row',
+          isFullscreen ? 'h-screen' : 'lg:h-[70vh] lg:min-h-[480px] lg:max-h-[860px]',
+        )}
+      >
+      <div
+        ref={mapFrameRef}
+        className={cn(
+          'relative w-full min-w-0 flex-1',
+          isFullscreen
+            ? 'min-h-0'
+            : 'h-[70vh] min-h-[480px] max-h-[860px] lg:h-auto lg:min-h-0 lg:max-h-none',
         )}
       >
         <MapContainer
@@ -953,8 +1401,32 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
             tiers={tiers}
             variant={pinVariant}
             selectedId={selectedId}
+            hoveredId={hoveredId}
             onSelect={handleSelect}
+            registerMarker={registerMarker}
+            clusterRef={clusterRef}
           />
+
+          {userLocation ? (
+            <>
+              {/* The reported accuracy is part of the answer: a 2km circle and a
+                  20m circle mean very different things about "you are here". */}
+              <Circle
+                center={[userLocation.lat, userLocation.lng]}
+                radius={userLocation.accuracy}
+                pathOptions={{ className: 'listings-accuracy' }}
+                interactive={false}
+              />
+              <Marker
+                position={[userLocation.lat, userLocation.lng]}
+                icon={USER_LOCATION_ICON}
+                zIndexOffset={2000}
+                keyboard={false}
+                title="Your location"
+                alt="Your location"
+              />
+            </>
+          ) : null}
 
           {selected ? (
             <Popup
@@ -963,7 +1435,11 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
               position={[selected.point.lat, selected.point.lng]}
               maxWidth={300}
               minWidth={248}
-              autoPanPadding={L.point(48, 72)}
+              // Bounded so the card can never outgrow the frame it sits in:
+              // an over-tall popup makes Leaflet auto-pan its own marker out
+              // of view. Leaflet scrolls the content past this height.
+              maxHeight={300}
+              autoPanPadding={L.point(32, 44)}
               className="listings-map__popup"
             >
               <ListingPopupCard
@@ -974,7 +1450,6 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
             </Popup>
           ) : null}
         </MapContainer>
-      </div>
 
       {/* Top bar --------------------------------------------------------- */}
       <div className="pointer-events-none absolute inset-x-3 top-3 z-[500] flex flex-wrap items-start justify-between gap-2">
@@ -992,12 +1467,31 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
                 aria-label="Resolving addresses"
               />
             )}
-            {inViewCount !== null && markers.length > 0 && (
-              <span className="font-normal text-muted-foreground">
-                · <span className="tabular-nums">{inViewCount}</span> in view
-              </span>
-            )}
           </div>
+
+          {markers.length > 0 && inViewCount !== null && (
+            <button
+              type="button"
+              onClick={() => setPanelState(panelOpen ? 'closed' : 'open')}
+              aria-expanded={panelOpen}
+              aria-controls="listings-map-results"
+              title={panelOpen ? 'Hide the results panel' : 'List the listings in this view'}
+              className={cn(
+                'flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold shadow-md backdrop-blur transition-colors',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                panelOpen
+                  ? 'border-primary/50 bg-primary text-primary-foreground'
+                  : 'border-border/60 bg-background/85 text-foreground hover:bg-muted/60',
+              )}
+            >
+              {panelOpen ? (
+                <PanelRightClose className="h-3.5 w-3.5" />
+              ) : (
+                <PanelRightOpen className="h-3.5 w-3.5" />
+              )}
+              <span className="tabular-nums">{inViewCount}</span> in view
+            </button>
+          )}
 
           {unmappedListings.length > 0 && !isResolving && (
             <Popover>
@@ -1232,6 +1726,18 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
           <Crosshair className="h-4 w-4" />
         </MapIconButton>
         <MapIconButton
+          label={userLocation ? 'Clear your location' : 'Show my location'}
+          onClick={toggleLocate}
+          disabled={locating}
+          active={Boolean(userLocation)}
+        >
+          {locating ? (
+            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <LocateFixed className="h-4 w-4" />
+          )}
+        </MapIconButton>
+        <MapIconButton
           label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen map'}
           onClick={toggleFullscreen}
         >
@@ -1285,6 +1791,20 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
           </p>
         </div>
       )}
+      </div>
+
+        {panelOpen && (
+          <ResultsPanel
+            rows={inViewRows}
+            total={inViewCount ?? inViewRows.length}
+            tiers={tiers}
+            selectedId={selectedId}
+            onSelect={revealListing}
+            onHover={setHoveredId}
+            onClose={() => setPanelState('closed')}
+          />
+        )}
+      </div>
     </div>
   );
 }

@@ -238,8 +238,12 @@
   }
 }
 
-/* --- Listing pins ------------------------------------------------------ */
-.listing-pin {
+/* --- Listing pins ------------------------------------------------------
+   Scoped under `.listings-map` for the reason given above: Leaflet ships
+   `.leaflet-marker-icon { display: block }`, which ties with a bare
+   `.listing-pin` on specificity and loads later, so an unscoped rule loses
+   the `display` and the icon's contents stop being centred. */
+.listings-map .listing-pin {
   background: transparent;
   border: 0;
   display: flex;
@@ -250,17 +254,23 @@
   --pin-fg: hsl(var(--primary-foreground));
 }
 
+/* Price bands run cool → hot on the same four stops as the heat ramp, and for
+   the same reason `ListingsHeatLayer` gives: the brand `--primary` must stay
+   out of an ordered scale. A tenant hue lands wherever the tenant puts it, and
+   in this palette's dark theme `--primary` and `--warning` are the same colour
+   — with `mid` on the brand, two of the four bands were indistinguishable for
+   every dark-theme user. These four are Category B, fixed by design. */
 .listing-pin--unknown {
   --pin-bg: hsl(var(--muted-foreground));
   --pin-fg: hsl(var(--background));
 }
 .listing-pin--low {
-  --pin-bg: hsl(var(--success));
-  --pin-fg: hsl(var(--success-foreground));
+  --pin-bg: hsl(var(--info));
+  --pin-fg: hsl(var(--info-foreground));
 }
 .listing-pin--mid {
-  --pin-bg: hsl(var(--primary));
-  --pin-fg: hsl(var(--primary-foreground));
+  --pin-bg: hsl(var(--success));
+  --pin-fg: hsl(var(--success-foreground));
 }
 .listing-pin--high {
   --pin-bg: hsl(var(--warning));
@@ -271,7 +281,7 @@
   --pin-fg: hsl(var(--destructive-foreground));
 }
 
-.listing-pin--ghost {
+.listings-map .listing-pin--ghost {
   align-items: center;
 }
 
@@ -392,6 +402,27 @@
     0 8px 20px hsl(var(--foreground) / 0.45);
 }
 
+/* --- Peek: the pin for the row under the pointer in the results panel -----
+   Applied straight to the element rather than through the icon props, so
+   hovering a row costs one classList call instead of a marker re-render. */
+.listing-pin--peek .listing-pin__marker {
+  transform: scale(1.22);
+  filter: drop-shadow(0 0 3px hsl(var(--primary))) drop-shadow(0 4px 6px hsl(var(--foreground) / 0.45));
+}
+
+.listing-pin--peek .listing-pin__chip {
+  transform: translateY(-3px);
+  box-shadow:
+    0 0 0 2px hsl(var(--primary)),
+    0 8px 20px hsl(var(--foreground) / 0.45);
+}
+
+.listing-pin--peek .listing-pin__dot {
+  transform: scale(1.5);
+  opacity: 1;
+  border-color: hsl(var(--primary));
+}
+
 .listing-pin__halo {
   position: absolute;
   border-radius: 9999px;
@@ -459,29 +490,49 @@
   border-radius: 0.9rem;
 }
 
-/* --- Clusters ---------------------------------------------------------- */
-.listings-cluster {
+/* --- Clusters -----------------------------------------------------------
+   A cluster carries two facts, not one: how many listings it hides (the
+   count) and what they are worth (a band-mix ring plus the median price).
+   The ring's conic-gradient stops are written inline by the icon factory —
+   these custom properties are the colours it names, so no value is ever
+   emitted from JavaScript. */
+.listings-map .listings-cluster {
   background: transparent;
   border: 0;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  overflow: visible;
+  --tier-low: hsl(var(--info));
+  --tier-mid: hsl(var(--success));
+  --tier-high: hsl(var(--warning));
+  --tier-top: hsl(var(--destructive));
+  --tier-unknown: hsl(var(--muted-foreground));
 }
 
 .listings-cluster__ring {
   position: absolute;
   inset: 0;
   border-radius: 9999px;
-  background: hsl(var(--primary) / 0.2);
-  border: 1px solid hsl(var(--primary) / 0.4);
   box-shadow:
-    0 0 0 5px hsl(var(--primary) / 0.1),
-    0 6px 18px hsl(var(--foreground) / 0.22);
+    0 0 0 1px hsl(var(--background) / 0.9),
+    0 6px 18px hsl(var(--foreground) / 0.28);
   transition: transform 140ms ease;
 }
 
-.listings-cluster:hover .listings-cluster__ring {
+/* Punches the ring into a donut and gives the count a surface to sit on. */
+.listings-cluster__core {
+  position: absolute;
+  inset: 22%;
+  border-radius: 9999px;
+  background: hsl(var(--background));
+  box-shadow: inset 0 0 0 1px hsl(var(--foreground) / 0.08);
+  transition: transform 140ms ease;
+}
+
+.listings-cluster:hover .listings-cluster__ring,
+.listings-cluster:hover .listings-cluster__core {
   transform: scale(1.08);
 }
 
@@ -490,12 +541,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 60%;
-  height: 62%;
-  padding: 0 0.4rem;
-  border-radius: 9999px;
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
+  color: hsl(var(--foreground));
   font-size: 0.6875rem;
   font-weight: 700;
   line-height: 1;
@@ -507,10 +553,45 @@
   font-size: 0.8125rem;
 }
 
+/* The median, hung under the ring. Absolute so it never changes the icon box:
+   markercluster anchors the icon at its centre and the geometry has to hold. */
+.listings-cluster__price {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translate(-50%, -0.28rem);
+  padding: 0.05rem 0.3rem;
+  border-radius: 9999px;
+  white-space: nowrap;
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  color: hsl(var(--background));
+  background: var(--tier-unknown);
+  box-shadow: 0 1px 4px hsl(var(--foreground) / 0.3);
+}
+
+.listings-cluster__price--low {
+  background: var(--tier-low);
+  color: hsl(var(--info-foreground));
+}
+.listings-cluster__price--mid {
+  background: var(--tier-mid);
+  color: hsl(var(--success-foreground));
+}
+.listings-cluster__price--high {
+  background: var(--tier-high);
+  color: hsl(var(--warning-foreground));
+}
+.listings-cluster__price--top {
+  background: var(--tier-top);
+  color: hsl(var(--destructive-foreground));
+}
+
 .listings-cluster--ghost .listings-cluster__ring {
   background: transparent;
-  border-style: dashed;
-  border-color: hsl(var(--foreground) / 0.3);
+  border: 1px dashed hsl(var(--foreground) / 0.3);
   box-shadow: none;
 }
 
@@ -522,6 +603,53 @@
 .listings-cluster--ghost:hover .listings-cluster__count,
 .listings-cluster--ghost:focus-visible .listings-cluster__count {
   opacity: 1;
+}
+
+/* --- Your location ------------------------------------------------------
+   Deliberately unlike a listing pin: a fact about the viewer, not a record. */
+.listings-map .listings-locator {
+  background: transparent;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.listings-locator__dot {
+  position: relative;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 9999px;
+  background: hsl(var(--info));
+  border: 2px solid hsl(var(--background));
+  box-shadow: 0 1px 6px hsl(var(--foreground) / 0.45);
+}
+
+.listings-locator__pulse {
+  position: absolute;
+  inset: -0.25rem;
+  border-radius: 9999px;
+  background: hsl(var(--info) / 0.35);
+  animation: listings-locator-pulse 2.4s ease-out infinite;
+}
+
+@keyframes listings-locator-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.6;
+  }
+  70%,
+  100% {
+    transform: scale(1.9);
+    opacity: 0;
+  }
+}
+
+.listings-map .listings-accuracy {
+  fill: hsl(var(--info) / 0.12);
+  stroke: hsl(var(--info) / 0.5);
+  stroke-width: 1;
 }
 
 /* --- Heat legend ------------------------------------------------------- */
@@ -550,16 +678,55 @@
 }
 
 .listings-tier-swatch--low {
-  background: hsl(var(--success));
+  background: hsl(var(--info));
 }
 .listings-tier-swatch--mid {
-  background: hsl(var(--primary));
+  background: hsl(var(--success));
 }
 .listings-tier-swatch--high {
   background: hsl(var(--warning));
 }
 .listings-tier-swatch--top {
   background: hsl(var(--destructive));
+}
+
+/* --- Results panel rows -------------------------------------------------
+   The row's mark is the pin's mark: same glyph, same band colour, so a row
+   and the pin it points at are recognisably the same object. */
+.listings-row-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
+  margin-top: 0.05rem;
+  border-radius: 9999px;
+  background: hsl(var(--muted-foreground));
+  color: hsl(var(--background));
+}
+
+.listings-row-mark svg {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  fill: currentColor;
+}
+
+.listings-row-mark--low {
+  background: hsl(var(--info));
+  color: hsl(var(--info-foreground));
+}
+.listings-row-mark--mid {
+  background: hsl(var(--success));
+  color: hsl(var(--success-foreground));
+}
+.listings-row-mark--high {
+  background: hsl(var(--warning));
+  color: hsl(var(--warning-foreground));
+}
+.listings-row-mark--top {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
 }
 
 /* Property-type key — the same glyph the pins carry, at legend scale. */
@@ -601,15 +768,22 @@
 
   .listing-pin--chip:hover .listing-pin__chip,
   .listing-pin--pin:hover .listing-pin__marker,
-  .listings-cluster:hover .listings-cluster__ring {
+  .listings-cluster:hover .listings-cluster__ring,
+  .listings-cluster:hover .listings-cluster__core {
     transform: none;
   }
 
-  /* The selection still has to be findable, so keep the halo — just hold it at
-     a steady ring instead of pulsing it. */
+  /* The selection and the peeked row still have to be findable, so keep the
+     halo and the locator — just hold them steady instead of pulsing. */
   .listing-pin__halo {
     animation: none;
     opacity: 0.32;
+  }
+
+  .listings-locator__pulse {
+    animation: none;
+    transform: scale(1.4);
+    opacity: 0.35;
   }
 }
 
