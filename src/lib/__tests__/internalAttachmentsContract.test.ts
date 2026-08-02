@@ -31,13 +31,12 @@ const fn = read('supabase/functions/internal-messaging/index.ts');
 const transport = read('supabase/functions/internal-message-attachments/index.ts');
 
 describe('client and function agree on the attachment protocol', () => {
-  it('uses the same action names on both sides', () => {
+  it('keeps the legacy main-function actions available during transition', () => {
     for (const action of [
       'attachment_upload_url',
       'attachment_upload_direct',
       'attachment_download_url',
     ]) {
-      expect(client, `client never calls ${action}`).toContain(action);
       expect(fn, `function does not implement ${action}`).toContain(action);
     }
   });
