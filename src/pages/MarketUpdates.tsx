@@ -400,7 +400,7 @@ export default function MarketUpdates() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle className="flex items-center gap-2 text-lg">
-              <Sparkles className="h-4 w-4 text-primary" />Ask AI
+              <Sparkles className="h-4 w-4 text-primary" />Ask Aurixa
             </CardTitle>
             <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market news. Threaded — follow-ups keep prior context.</p>
           </div>
@@ -1071,7 +1071,7 @@ export default function MarketUpdates() {
                 </div>
               )}
               <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[120px] flex-none text-sm" />
-              <div className="flex gap-2">
+              <div className="flex flex-none gap-2">
                 <MarketQAVoiceButton onTranscript={(t) => setQuestion((q) => (q ? `${q.trim()} ${t}` : t))} disabled={asking} />
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>
                   {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
