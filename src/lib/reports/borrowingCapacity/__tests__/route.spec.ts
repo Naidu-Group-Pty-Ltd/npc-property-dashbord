@@ -68,7 +68,8 @@ describe('parseRenderRequest', () => {
     expect(parseRenderRequest({ clientId: CLIENT, scenarioPresets: presets(MAX_SCENARIO_PRESETS) }).ok).toBe(true);
     const over = parseRenderRequest({ clientId: CLIENT, scenarioPresets: presets(MAX_SCENARIO_PRESETS + 1) });
     expect(over.ok).toBe(false);
-    expect(!over.ok && over.error).toContain(String(MAX_SCENARIO_PRESETS));
+    if (over.ok) throw new Error('expected rejection');
+    expect(over.error).toContain(String(MAX_SCENARIO_PRESETS));
   });
 
   it('bounds the edition line rather than trusting it', () => {

@@ -191,7 +191,7 @@ describe('a snapshot with holes in it', () => {
     const { gaps } = renderSnapshotFromBrand({
       payload,
       snapshot: tenantSnapshot(),
-      disclaimer: { ...(SAMPLE_GLOBAL_SETTINGS.disclaimer as never), is_enabled: false },
+      disclaimer: { ...(SAMPLE_GLOBAL_SETTINGS.disclaimer as Record<string, unknown>), is_enabled: false } as never,
     });
     expect(gaps.join(' ')).toContain('disclaimer is disabled');
   });

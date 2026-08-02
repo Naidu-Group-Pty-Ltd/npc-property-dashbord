@@ -191,9 +191,10 @@ describe('image dimensions', () => {
   it('refuses one that would print soft, and says how big it was', () => {
     const result = inlineAsset(png64);
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.reason).toBe('too-small');
-    expect(!result.ok && result.detail).toContain('64x64');
-    expect(!result.ok && result.detail).toContain(String(MIN_ASSET_EDGE_PX));
+    if (result.ok) throw new Error('expected rejection');
+    expect(result.reason).toBe('too-small');
+    expect(result.detail).toContain('64x64');
+    expect(result.detail).toContain(String(MIN_ASSET_EDGE_PX));
   });
 
   /**
@@ -217,7 +218,7 @@ describe('image dimensions', () => {
 
 describe('assetBudget', () => {
   const asset = (bytes: number): InlineAsset =>
-    ({ dataUri: pngOf(bytes), mime: 'image/png', bytes });
+    ({ dataUri: pngOf(bytes), mime: 'image/png', bytes, dimensions: null });
 
   it('accounts for base64 overhead rather than the decoded size alone', () => {
     const { totalBytes, encodedBytes } = assetBudget([asset(3000)]);
