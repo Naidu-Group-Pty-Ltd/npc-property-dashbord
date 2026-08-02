@@ -156,8 +156,10 @@ export async function setMarketUpdateHidden(updateId: string, hidden: boolean): 
 }
 
 export async function archiveMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
-  // Dedicated archive function first (single-purpose, deploys cleanly); the
-  // multiplexed curate function stays as the fallback.
+  // Use the same authoritative transport that already loads the visible feed.
+  // The dedicated archive endpoint remains a deployment-safe fallback.
+  const primary = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-status', { action:'archive_write', updateId });
+  if (!primary.error && (primary.data?.outcome === 'archived' || primary.data?.outcome === 'already_archived')) return primary.data.outcome;
   const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'archive', id:updateId });
   if (!direct.error && (direct.data?.outcome === 'archived' || direct.data?.outcome === 'already_archived')) return direct.data.outcome;
   try {
@@ -170,8 +172,8 @@ export async function archiveMarketUpdate(updateId: string): Promise<MarketUpdat
 }
 
 export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
-  // Dedicated archive function first — it is single-purpose and deploys cleanly;
-  // the multiplexed curate function stays as the fallback.
+  const primary = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-status', { action:'restore_write', updateId });
+  if (!primary.error && (primary.data?.outcome === 'restored' || primary.data?.outcome === 'already_restored')) return primary.data.outcome;
   const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'restore', id:updateId });
   if (!direct.error && (direct.data?.outcome === 'restored' || direct.data?.outcome === 'already_restored')) return direct.data.outcome;
   try {
@@ -185,6 +187,8 @@ export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdat
 
 /** Promotes a held candidate into the published feed. Server-authoritative. */
 export async function publishMarketUpdate(updateId: string): Promise<'published' | 'already_published'> {
+  const primary = await invokeSecureFunction<{ outcome?:string }>('market-updates-status', { action:'publish_write', updateId });
+  if (!primary.error && (primary.data?.outcome === 'published' || primary.data?.outcome === 'already_published')) return primary.data.outcome as 'published' | 'already_published';
   const direct = await invokeSecureFunction<{ outcome?:string }>('market-updates-archive', { action:'publish', id:updateId });
   if (!direct.error && (direct.data?.outcome === 'published' || direct.data?.outcome === 'already_published')) return direct.data.outcome as 'published' | 'already_published';
   try {
