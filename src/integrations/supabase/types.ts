@@ -21148,6 +21148,108 @@ export type Database = {
         }
         Relationships: []
       }
+      listing_image_sets: {
+        Row: {
+          airtable_sync_fingerprint: string | null
+          airtable_synced_at: string | null
+          error_count: number
+          fingerprint: string | null
+          image_count: number
+          last_error: string | null
+          last_harvested_at: string | null
+          listed_at: string | null
+          listing_id: string
+          refresh_after: string
+          stored_count: number
+        }
+        Insert: {
+          airtable_sync_fingerprint?: string | null
+          airtable_synced_at?: string | null
+          error_count?: number
+          fingerprint?: string | null
+          image_count?: number
+          last_error?: string | null
+          last_harvested_at?: string | null
+          listed_at?: string | null
+          listing_id: string
+          refresh_after?: string
+          stored_count?: number
+        }
+        Update: {
+          airtable_sync_fingerprint?: string | null
+          airtable_synced_at?: string | null
+          error_count?: number
+          fingerprint?: string | null
+          image_count?: number
+          last_error?: string | null
+          last_harvested_at?: string | null
+          listed_at?: string | null
+          listing_id?: string
+          refresh_after?: string
+          stored_count?: number
+        }
+        Relationships: []
+      }
+      listing_images: {
+        Row: {
+          bytes: number | null
+          checksum: string | null
+          content_type: string | null
+          error_count: number
+          first_seen_at: string
+          height: number | null
+          id: string
+          image_identity: string
+          last_error: string | null
+          last_verified_at: string | null
+          listing_id: string
+          origin: string
+          position: number
+          source_url: string | null
+          status: string
+          storage_path: string | null
+          width: number | null
+        }
+        Insert: {
+          bytes?: number | null
+          checksum?: string | null
+          content_type?: string | null
+          error_count?: number
+          first_seen_at?: string
+          height?: number | null
+          id?: string
+          image_identity: string
+          last_error?: string | null
+          last_verified_at?: string | null
+          listing_id: string
+          origin?: string
+          position?: number
+          source_url?: string | null
+          status?: string
+          storage_path?: string | null
+          width?: number | null
+        }
+        Update: {
+          bytes?: number | null
+          checksum?: string | null
+          content_type?: string | null
+          error_count?: number
+          first_seen_at?: string
+          height?: number | null
+          id?: string
+          image_identity?: string
+          last_error?: string | null
+          last_verified_at?: string | null
+          listing_id?: string
+          origin?: string
+          position?: number
+          source_url?: string | null
+          status?: string
+          storage_path?: string | null
+          width?: number | null
+        }
+        Relationships: []
+      }
       llm_integration_settings: {
         Row: {
           created_at: string
