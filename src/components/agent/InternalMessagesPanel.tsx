@@ -573,6 +573,17 @@ export function InternalMessagesPanel({
           <Button
             size="icon"
             variant="ghost"
+            className="h-7 w-7 shrink-0 text-primary hover:text-primary"
+            aria-label="Pop out chat into a floating window"
+            title="Pop out chat"
+            onClick={() => popOut(activeThread)}
+          >
+            <PictureInPicture2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+
+            size="icon"
+            variant="ghost"
             className="h-7 w-7 shrink-0"
             aria-label={activeThread.archived ? 'Unarchive conversation' : 'Archive conversation'}
             title={activeThread.archived ? 'Unarchive conversation' : 'Archive conversation'}
