@@ -1008,15 +1008,9 @@ export default function MarketUpdates() {
             </div>
           </DialogContent>
         </Dialog>
+        {/* The candidate-review modal was retired: held items are now managed
+            inline through the Held scope chip on the feed itself. */}
 
-        <Dialog open={candidateReview !== null} onOpenChange={(open) => { if (!open) setCandidateReview(null); }}>
-          <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-4xl">
-            <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-4 pr-14 text-left"><DialogTitle>Candidate review</DialogTitle><p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">Admin-only items awaiting a publication decision. Reasons and source links remain visible for review.</p></DialogHeader>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 pb-8" tabIndex={0} aria-label="Candidate market news items">
-              {candidateReview?.length ? candidateReview.map(candidate => <article key={candidate.id} className="min-w-0 rounded-lg border border-border/60 p-4"><div className="flex min-w-0 flex-wrap items-center gap-2"><Badge variant="outline">Candidate</Badge><span className="min-w-0 break-words text-xs text-muted-foreground" title={candidate.source_name}>{candidate.source_name}</span></div><h3 className="mt-2 break-words font-semibold leading-snug">{candidate.title}</h3><p className="mt-2 break-words text-sm text-muted-foreground">{candidate.candidate_reason ? titleCase(candidate.candidate_reason) : 'Publication criteria were not met.'}</p><div className="mt-3 flex min-w-0 flex-wrap items-center gap-2"><a href={candidate.source_url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1 break-all text-xs text-primary hover:underline" title={candidate.source_url}><ExternalLink className="h-3 w-3 shrink-0" aria-hidden />Open source</a>{candidate.model_used && <Badge variant="secondary" className="max-w-full whitespace-normal break-words text-left">{candidate.route_used ?? 'route'} · {candidate.model_used}</Badge>}</div></article>) : <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No candidate items require review.</div>}
-            </div>
-          </DialogContent>
-        </Dialog>
 
         <MarketSourcesAdminDialog open={sourcesAdminOpen} onOpenChange={setSourcesAdminOpen} onChanged={loadUpdates} />
       </div>
