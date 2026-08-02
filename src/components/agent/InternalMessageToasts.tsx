@@ -351,7 +351,11 @@ export function InternalMessageToasts() {
                     priority: (t.last_message_priority as Priority) ?? x.priority,
                     sender: senderName,
                     // The chip carries the count; the expanded card is "read".
-                    unread: isExpanded ? 0 : (t.unread ?? x.unread),
+                    // A background poll must never shrink a pending badge — it
+                    // only clears when the user opens (reviews) the chat.
+                    unread: isExpanded
+                      ? 0
+                      : Math.max(t.unread ?? 0, x.unread ?? 0),
                   }
                 : x,
             ),
