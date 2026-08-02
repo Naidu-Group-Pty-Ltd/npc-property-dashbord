@@ -425,7 +425,7 @@ export default function MarketUpdates() {
               {turn.citations && turn.citations.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {turn.citations.map((url, j) => (
-                    <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:border-primary/40 hover:text-primary"><ExternalLink className="h-3 w-3" />Cite {j + 1}</a>
+                    <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
                   ))}
                 </div>
               )}
@@ -476,10 +476,7 @@ export default function MarketUpdates() {
           <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge className="bg-primary/15 text-primary hover:bg-primary/20">AI Market Intelligence</Badge>
-                <Badge variant="outline">Australia · RBA · APRA · Treasury</Badge>
-                <LiveModelBadge agentKey="market_updates_classifier" size="sm" showSlot={false} />
-                <LiveModelBadge agentKey="market_updates_digest" size="sm" showSlot={false} />
+                <Badge className="bg-primary/15 text-primary hover:bg-primary/20">Aurixa Market News Intelligence</Badge>
               </div>
               <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market News Feed</h1>
               <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
@@ -823,13 +820,8 @@ export default function MarketUpdates() {
                         {hidingId === update.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive
                       </Button>}
                       <div className="ml-auto flex flex-wrap items-center gap-1">
-                        {update.citation_urls.slice(0, 3).map((url, i) => (
-                          <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-primary">
-                            <ExternalLink className="h-2.5 w-2.5" />Cite {i + 1}
-                          </a>
-                        ))}
-                        <a href={update.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20">
-                          <ExternalLink className="h-2.5 w-2.5" />Open original source
+                        <a href={update.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/20">
+                          <ExternalLink className="h-4 w-4" />Open original source
                         </a>
                       </div>
                     </div>
@@ -921,10 +913,7 @@ export default function MarketUpdates() {
                 </div>
                 {selectedUpdate.risk_flags.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-destructive">Risk Flags</h4><div className="mt-1.5 flex flex-wrap gap-1.5">{selectedUpdate.risk_flags.map(r => <Badge key={r} variant="outline" className="border-destructive/30 text-destructive">{r}</Badge>)}</div></div>}
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
-                  <a href={selectedUpdate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/20"><ExternalLink className="h-3 w-3" />Original source</a>
-                  {selectedUpdate.citation_urls.map((url, i) => (
-                    <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary"><ExternalLink className="h-3 w-3" />Citation {i + 1}</a>
-                  ))}
+                  <a href={selectedUpdate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
                   {canEditMarketUpdates && <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-foreground" disabled={hidingId === selectedUpdate.id} onClick={() => { const target = selectedUpdate; setSelectedUpdate(null); archiveUpdate(target); }} aria-label={`Archive ${selectedUpdate.title}`}>
                     {hidingId === selectedUpdate.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive update
                   </Button>}
