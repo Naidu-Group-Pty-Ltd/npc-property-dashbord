@@ -74,6 +74,7 @@ export type ReportArchetypeId =
   | 'client-details'
   | 'portfolio-performance'
   | 'property-comparison'
+  | 'report-qa'
   | 'snapshot';
 
 export interface ReportArchetype {
@@ -263,6 +264,37 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
       + 'source is stored model output with no deterministic figures at all, and '
       + 'the only one that reads part of its content back out of a response that '
       + 'was cut off while it was being written.',
+  },
+  'report-qa': {
+    id: 'report-qa',
+    documentName: 'Report Q&A',
+    chapterLabel: 'Section',
+    slots: FULL_SLOTS,
+    // Three documents under one archetype, and the band has to hold all three.
+    //
+    // Measured against the record. A structured report averages 8,193
+    // characters and tops out at 18,912, bounded by its producer's own
+    // `max_completion_tokens: 8192`; the largest single answer is 33,377; and a
+    // transcript is capped at `MAX_TRANSCRIPT_CHARS` (50,000), which keeps 234
+    // of the 244 conversations whole. At the design system's 65-character
+    // measure that ceiling is roughly twenty pages of body copy, and the
+    // remaining headroom is the chapter furniture a transcript of many turns
+    // carries.
+    //
+    // The floor is the arithmetic minimum for the shortest real document: a
+    // one-answer export is a cover, a contents page, one section and the
+    // closing page. It exists to catch a spine that collapsed, not to predict a
+    // page count — the Client Details band was set by estimate and refused a
+    // legitimate five-page document on its first render.
+    pageBudget: [4, 30],
+    // The only format whose contents page is discovered rather than declared:
+    // the sections come from the headings the model wrote. A conversation of
+    // twenty exchanges without one is unnavigable.
+    contents: true,
+    note: 'The Report Q&A export, in three subjects: the structured write-up, '
+      + 'one answer, or the transcript. The only format whose payload is prose '
+      + 'rather than figures, so its sections are read out of the content '
+      + 'instead of being fixed by the format.',
   },
   snapshot: {
     id: 'snapshot',
