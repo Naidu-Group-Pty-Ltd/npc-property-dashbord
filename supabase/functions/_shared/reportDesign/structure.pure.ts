@@ -70,6 +70,7 @@ export type ReportArchetypeId =
   | 'cash-flow-projection'
   | 'market-intelligence'
   | 'borrowing-capacity'
+  | 'portfolio-performance'
   | 'snapshot';
 
 export interface ReportArchetype {
@@ -140,6 +141,40 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     contents: false,
     note: 'Serviceability and capacity. Implemented three times in the codebase '
       + 'today; one archetype so the three converge rather than diverge further.',
+  },
+  'portfolio-performance': {
+    id: 'portfolio-performance',
+    documentName: 'Portfolio Performance Review',
+    chapterLabel: 'Section',
+    slots: FULL_SLOTS,
+    // Measured: all 21 stored reports rendered through WeasyPrint land between
+    // 18 and 26 pages.
+    //
+    // The band is far wider than that range, and deliberately so — it is the
+    // one archetype whose length scales with its subject. A portfolio is
+    // between one and sixty properties, and the sections that describe them
+    // grow with the count, so a band tight enough to be a page prediction would
+    // refuse to render a legitimate large portfolio. This ceiling is a runaway
+    // guard: with `MAX_HOLDINGS` properties and the per-property commentary
+    // capped at `DETAIL_CAP`, the spine tops out in the low forties.
+    //
+    // The floor is the arithmetic minimum, not a preference: cover, contents,
+    // where-the-portfolio-stands, one page of holdings matrix and the closing
+    // page is seven, and that is what a report whose `report_data.analysis` came
+    // back empty produces. That is a real state — the analysis is stored model
+    // output parsed out of a fenced code block — and such a document is still
+    // worth sending, because the figures in it are the deterministic half.
+    // Refusing to render a client's report because the model wrote fewer blocks
+    // would turn a content problem into an outage. Found by rendering one.
+    pageBudget: [7, 46],
+    // The first migrated format long enough to need one. Borrowing Capacity
+    // refuses a contents page for four pages and is right to; this document
+    // runs to nine sections and the legacy generator built one by hand.
+    contents: true,
+    note: 'The whole-of-portfolio document: every holding in one landscape '
+      + 'matrix, then what the portfolio is, how it performs, and what to do '
+      + 'about it. The only format that reads a second, optional table — a '
+      + 'portfolio review — to enrich a report it can already write without it.',
   },
   snapshot: {
     id: 'snapshot',

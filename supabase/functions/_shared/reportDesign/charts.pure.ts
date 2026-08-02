@@ -746,12 +746,43 @@ export function renderBars(
 
 export interface QuadrantPoint { x: number; y: number; label: string; highlight?: boolean }
 
+/**
+ * Roughly how wide a micro-size, letter-spaced caption runs, per character.
+ *
+ * There is no text measurement available to a pure module that emits SVG for a
+ * renderer it never talks to, so this is a conservative average advance for the
+ * uppercase captions these charts draw. It is used only to decide whether two
+ * labels would collide — over-estimating drops a label, which is safe; the
+ * alternative is two captions printed on top of one another.
+ */
+const MICRO_ADVANCE = 6.1;
+
+/**
+ * Past this fraction of the plot, a dot's label is written to its left.
+ *
+ * A label anchored at `cx + 10` on a point near `xMax` runs outside the SVG
+ * viewport and is clipped — which is how a chart silently stops naming its
+ * rightmost holdings. Measured against the longest label a caller may pass:
+ * ~22 characters at micro size is a shade over a quarter of the standard chart
+ * width, so the flip has to happen well before the edge.
+ */
+const QUADRANT_LABEL_FLIP = 0.72;
+
 /** 2×2 matrix — risk against return, growth against yield. */
 export function renderQuadrant(
   ctx: ChartContext,
   points: QuadrantPoint[],
   opts: {
     xLabel?: string; yLabel?: string; xMax?: number; yMax?: number; title?: string;
+    /**
+     * Where the dividing lines fall, in data units rather than geometry.
+     *
+     * Default is the geometric middle, which means "half of the largest value
+     * plotted" — a divider that moves when a new holding is added and stands for
+     * nothing. A caller with a real threshold (a portfolio's own average, an
+     * LMI line) passes it here so the four corners mean what their captions say.
+     */
+    xMid?: number; yMid?: number;
     q1?: string; q2?: string; q3?: string; q4?: string;
   } = {},
 ): string {
@@ -762,22 +793,57 @@ export function renderQuadrant(
   const yMax = opts.yMax ?? Math.max(...points.map((p) => p.y), 10);
   const xOf = (v: number) => padL + (v / xMax) * plotW;
   const yOf = (v: number) => padT + plotH - (v / yMax) * plotH;
-  const midX = padL + plotW / 2, midY = padT + plotH / 2;
+  // Clamped into the plot: a divider outside the drawn box would leave one
+  // quadrant with no area and the other three mislabelled.
+  const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+  const midX = opts.xMid === undefined
+    ? padL + plotW / 2
+    : clamp(xOf(opts.xMid), padL, padL + plotW);
+  const midY = opts.yMid === undefined
+    ? padT + plotH / 2
+    : clamp(yOf(opts.yMid), padT, padT + plotH);
 
+  // Anchored to the corners of the box rather than centred in each region.
+  // Centring only works while the divider is in the middle; with a divider at a
+  // real threshold one region can be a sliver, and a caption centred in it
+  // either overflows its own quadrant or has to be dropped. At the corners the
+  // captions need no room from the region at all — only from each other.
+  const advance = (t: string) => t.length * MICRO_ADVANCE;
+  const rowFits = (a?: string, b?: string) =>
+    advance(a ?? '') + advance(b ?? '') + 24 <= plotW;
+  const topFits = rowFits(opts.q1, opts.q2);
+  const bottomFits = rowFits(opts.q3, opts.q4);
   const quadLabels = [
-    { x: midX + plotW / 4, y: padT + 16, t: opts.q1 },
-    { x: midX - plotW / 4, y: padT + 16, t: opts.q2 },
-    { x: midX - plotW / 4, y: padT + plotH - 8, t: opts.q3 },
-    { x: midX + plotW / 4, y: padT + plotH - 8, t: opts.q4 },
+    { x: padL + plotW - 8, end: true, y: padT + 16, t: topFits ? opts.q1 : undefined },
+    { x: padL + 8, end: false, y: padT + 16, t: topFits ? opts.q2 : undefined },
+    { x: padL + 8, end: false, y: padT + plotH - 8, t: bottomFits ? opts.q3 : undefined },
+    { x: padL + plotW - 8, end: true, y: padT + plotH - 8, t: bottomFits ? opts.q4 : undefined },
   ].filter((q) => q.t).map((q) => text(ctx, w,
-    { x: q.x, y: q.y, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', weight: 700, tracking: 1.2 },
+    {
+      x: q.x,
+      y: q.y,
+      pt: 'micro',
+      fill: ctx.palette.inkMuted,
+      anchor: q.end ? 'end' : 'start',
+      weight: 700,
+      tracking: 1.2,
+    },
     svgEscape(q.t!.toUpperCase()))).join('');
 
+  const flipAt = padL + plotW * QUADRANT_LABEL_FLIP;
   const dots = points.map((p) => {
     const cx = xOf(p.x), cy = yOf(p.y);
+    const flip = cx > flipAt;
     return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${p.highlight ? 7.5 : 5}" `
       + `fill="${p.highlight ? ctx.palette.accent : ctx.palette.ink}" stroke="${ctx.palette.ground}" stroke-width="2"/>`
-      + text(ctx, w, { x: cx + 10, y: cy + 4, pt: 'micro', fill: ctx.palette.ink, weight: p.highlight ? 700 : 500 }, svgEscape(p.label));
+      + text(ctx, w, {
+        x: flip ? cx - 10 : cx + 10,
+        y: cy + 4,
+        pt: 'micro',
+        fill: ctx.palette.ink,
+        weight: p.highlight ? 700 : 500,
+        anchor: flip ? 'end' : 'start',
+      }, svgEscape(p.label));
   }).join('');
 
   return `${svgOpen(w, h)}

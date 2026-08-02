@@ -10,12 +10,21 @@ Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
 snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
 delivered. The design system is complete.
 
-**First format migrated:** the Borrowing Capacity Snapshot, its own six phases
-delivered — see [`BORROWING_CAPACITY.md`](./BORROWING_CAPACITY.md). It has a
-payload contract, a document, a brand snapshot, a server-side render path with
-its own edge function, charts and a golden diff against the capture of what
-shipped before it. Its call sites still use the in-browser generator: switching
-them needs the function deployed and its migration applied, which are manual.
+**Formats migrated:** three, each with its own contract document, payload,
+document, brand snapshot, server-side render route and tests, and each keeping
+its legacy generator reachable rather than retiring it.
+
+1. The Borrowing Capacity Snapshot — [`BORROWING_CAPACITY.md`](./BORROWING_CAPACITY.md).
+   Also carries a golden diff against a capture of what shipped before it.
+2. The 10 Year Cash Flow Analysis — [`CASH_FLOW.md`](./CASH_FLOW.md). The one
+   format whose arithmetic stays in the browser, because the adviser's overrides
+   are not persisted when the document is produced.
+3. The Portfolio Performance Review — [`PORTFOLIO.md`](./PORTFOLIO.md). The first
+   long enough to need a contents page, the first whose length scales with its
+   subject, and the only one that reads a second, optional table.
+
+Each new route needs its function deployed and its migration applied before its
+call sites do anything; both are manual.
 Scope is the report/PDF layer. The Template Library catalogue and the Template
 Builder editor are out of scope, but the shared **block renderers** in
 `src/lib/reportTemplate/blocks/*.html.ts` are in scope as reusable infrastructure.
