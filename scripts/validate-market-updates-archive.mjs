@@ -65,7 +65,7 @@ const dedupeBlock = ingest.slice(ingest.indexOf('const lookups = ['), ingest.ind
 requireTokens(dedupeBlock, [".eq('dedupe_hash',dedupe_hash)", ".eq('canonical_url',canonicalUrl)", ".eq('external_id',item.externalId)"], 'ingestion dedupe');
 assert.ok(!dedupeBlock.includes('archived_at'), 'ingestion dedupe must include retained archived rows');
 
-requireTokens(service, ['setMarketNewsArchiveState', 'archiveMarketUpdate', 'restoreMarketUpdate', 'fetchMarketUpdateArchive', "'market-updates-archive'", "action:'set_archive_state'", 'archived:input.archived'], 'frontend service contract');
+requireTokens(service, ['setMarketNewsArchiveState', 'archiveMarketUpdate', 'restoreMarketUpdate', 'fetchMarketUpdateArchive', "'market-updates-status'", "'archive_write'", "'restore_write'", "'market-updates-archive'", "action:'set_archive_state'", 'archived:input.archived'], 'frontend service contract');
 requireTokens(archiveFunction, [
   "action === 'set_archive_state'", "typeof body.updateId==='string'", "typeof body.archived!=='boolean'",
   "'market_updates', 'can_edit'", 'archived_by:auth.userId', 'pre_archive_status:row.status',
