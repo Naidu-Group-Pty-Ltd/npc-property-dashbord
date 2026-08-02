@@ -302,11 +302,30 @@ export function propertyOutgoings(p: Row): number {
     + num(p.monthly_water_rates) / 12;
 }
 
+/**
+ * The fund's particulars, when the record holds any.
+ *
+ * "Any" is the rule, not "an identifying one". An earlier version required a
+ * fund name, a trustee or an ABN before it would show the block, which would
+ * have silently dropped a compliance status recorded without them — and a
+ * compliance status is exactly the kind of thing a broker looks for.
+ *
+ * **Measured: all seven SMSF properties in the record carry none of these seven
+ * columns.** So the legacy's "Fund Details & Compliance" block, ticks and
+ * hourglasses included, has never had anything to show. Here the section is
+ * simply absent until something is recorded.
+ */
 function toSmsf(p: Row): SmsfDetails | null {
   const fundName = text(p.smsf_fund_name, 160);
   const trusteeName = text(p.smsf_trustee_name, 160);
   const abn = text(p.smsf_abn, 40);
-  if (!fundName && !trusteeName && !abn) return null;
+  const anyRecorded = [
+    fundName, trusteeName, abn,
+    text(p.smsf_trustee_type, 40),
+    text(p.smsf_compliance_status, 40),
+    text(p.smsf_auditor_name, 160),
+  ].some(Boolean);
+  if (!anyRecorded) return null;
 
   const trusteeType = text(p.smsf_trustee_type, 40).toLowerCase();
   return {

@@ -79,6 +79,7 @@ import { ExportFormaraButton } from './ExportFormaraButton';
 import { ClientEmailCompose } from './ClientEmailCompose';
 import { ClientReportsTab } from './ClientReportsTab';
 import { FormaraPDFGenerator } from './FormaraPDFGenerator';
+import { ClientDetailsDownloadButton } from './ClientDetailsDownloadButton';
 import { PropertyEditSheet } from './PropertyEditSheet';
 import { ClientPropertyInvestmentReport } from './ClientPropertyInvestmentReport';
 import { CGTCalculator } from './CGTCalculator';
@@ -265,6 +266,20 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
         "client-action-toolbar flex min-w-0 flex-wrap items-center gap-2 overflow-visible px-1 [&>button]:h-9 [&>button]:max-w-full [&>button]:whitespace-normal [&>button]:transition-all [&>button]:duration-200 [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-ring sm:[&>button]:whitespace-nowrap",
         isMobile ? "pb-2 border-b border-border mb-2" : "mr-10 pr-2"
       )}>
+
+        {/*
+          First in the toolbar, beside the two buttons that already produce this
+          document rather than instead of them. It offers the same three
+          destinations — save, attach to an email, send through the Finance
+          Portal — and what arrives is selectable text rather than a stack of
+          page images. The server reads the record itself, so this needs only
+          the id.
+        */}
+        <ClientDetailsDownloadButton
+          clientId={client.id}
+          clientName={`${client.primary_first_name} ${client.primary_surname}`}
+          onAttachToEmail={handlePdfEmailClick}
+        />
 
         <FormaraPDFGenerator
           data={{
