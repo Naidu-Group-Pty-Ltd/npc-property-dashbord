@@ -121,7 +121,7 @@ describe('buildReportBrandSnapshot', () => {
 
   it('reports an asset that failed policy instead of swallowing it', () => {
     const input = fullInput();
-    input.whitelabel.assets = { report: 'https://cdn.example.com/logo.png' };
+    input.whitelabel.assets = { report: 'https://cdn.example.com/logo.png', reportMono: '' };
     const { snapshot, skippedAssets } = buildReportBrandSnapshot(input);
     expect(snapshot.logo.report).toBeNull();
     expect(skippedAssets).toEqual([
