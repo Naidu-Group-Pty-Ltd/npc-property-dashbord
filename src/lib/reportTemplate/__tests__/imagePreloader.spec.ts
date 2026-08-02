@@ -51,7 +51,9 @@ describe('preloadImages raster references', () => {
     rasterRefs.invalidateArtifactSignedUrl.mockClear();
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.endsWith('/expired')) return new Response(null, { status: 403 });
-      return new Response(new Blob(['raster'], { type: 'image/png' }), { status: 200 });
+      // Built from a string, not a Blob: this environment's `Response` and
+      // `Blob` come from different implementations and will not compose.
+      return new Response('raster', { status: 200, headers: { 'Content-Type': 'image/png' } });
     }));
   });
 

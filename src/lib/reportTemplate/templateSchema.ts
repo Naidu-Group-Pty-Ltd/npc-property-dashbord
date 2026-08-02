@@ -19,9 +19,24 @@ import { z } from 'zod';
 export const BindableStringSchema = z.string();
 export const BindableColorSchema = z.string(); // "#hex" or "token:primary" or "{{...}}"
 export const BindableNumberSchema = z.union([z.number(), z.string()]);
+/**
+ * Refinement messages that mean "this template is hostile", not "this template
+ * is old".
+ *
+ * Every one of these guards a value that gets interpolated into a quoted style
+ * attribute or a generated `<style>` element, where a rejected value is an
+ * attempted break-out rather than drift a salvage pass should paper over. See
+ * `parseTemplate`, which refuses instead of salvaging when one of these fires.
+ */
+export const SECURITY_REFINEMENT_MESSAGES = [
+  'Gradient stops must be a hex color or transparent',
+  'Font stylesheet URLs must use HTTP or HTTPS',
+  'Font sources must be an HTTP(S) URL or a base64-encoded font data URL',
+] as const;
+
 const GradientStopColorSchema = z.string().regex(
   /^(?:#[0-9a-f]{3,4}|#[0-9a-f]{6}|#[0-9a-f]{8}|transparent)$/i,
-  'Gradient stops must be a hex color or transparent',
+  SECURITY_REFINEMENT_MESSAGES[0],
 );
 
 function isHttpUrl(value: string): boolean {
@@ -35,12 +50,12 @@ function isHttpUrl(value: string): boolean {
 
 const RemoteFontUrlSchema = z.string().refine(
   isHttpUrl,
-  'Font stylesheet URLs must use HTTP or HTTPS',
+  SECURITY_REFINEMENT_MESSAGES[1],
 );
 const FontSourceSchema = z.string().refine(
   (value) => isHttpUrl(value)
     || /^data:font\/(?:woff2?|ttf|otf|opentype);base64,[a-z0-9+/]+={0,2}$/i.test(value),
-  'Font sources must be an HTTP(S) URL or a base64-encoded font data URL',
+  SECURITY_REFINEMENT_MESSAGES[2],
 );
 
 // ─── Tokens ───────────────────────────────────────────────────────────────────
@@ -900,14 +915,40 @@ function normaliseImportUnderlays(template: ReportTemplate): ReportTemplate {
 }
 
 /** Parse arbitrary JSON safely; returns EMPTY_TEMPLATE on failure. */
+/**
+ * Drop token extensions that `backwardsCompatibleTokenExtension` rejected.
+ *
+ * That preprocess maps an unusable value to `undefined`, but Zod keeps a key
+ * the input supplied — so the extension was still *present*, just holding
+ * `undefined`. Anything reading `'radii' in tokens` (or `toHaveProperty`) then
+ * sees an extension that does not exist. Stripping the key restores the stated
+ * contract: an unreadable extension is treated exactly like one that was never
+ * there.
+ */
+function stripRejectedTokenExtensions(template: ReportTemplate): ReportTemplate {
+  const tokens = template.tokens as Record<string, unknown>;
+  const rejected = Object.keys(tokens).filter((key) => tokens[key] === undefined);
+  if (!rejected.length) return template;
+  for (const key of rejected) delete tokens[key];
+  return template;
+}
+
 export function parseTemplate(input: unknown): ReportTemplate {
   const result = ReportTemplateSchema.safeParse(input);
   if (!result.success) {
+    // Salvage is for age, not for attacks. A value that only failed because it
+    // would have broken out of a style attribute must not be quietly dropped and
+    // the rest of the template returned as if nothing happened — the caller
+    // would have no way to tell a repaired template from a rejected one.
+    const hostile = result.error.issues.find((issue) =>
+      (SECURITY_REFINEMENT_MESSAGES as readonly string[]).includes(issue.message));
+    if (hostile) throw new Error(hostile.message);
+
     console.warn('[templateSchema] Failed to parse template, using empty', result.error.flatten());
     const fallback = salvageTemplate(input);
-    return fallback ? normaliseImportUnderlays(fallback) : EMPTY_TEMPLATE;
+    return fallback ? stripRejectedTokenExtensions(normaliseImportUnderlays(fallback)) : EMPTY_TEMPLATE;
   }
-  return normaliseImportUnderlays(result.data);
+  return stripRejectedTokenExtensions(normaliseImportUnderlays(result.data));
 }
 
 function normaliseFontWeight(value: unknown): 'normal' | 'bold' {

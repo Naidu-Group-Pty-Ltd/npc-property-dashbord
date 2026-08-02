@@ -91,7 +91,15 @@ function fmtCell(value: any, format?: string): string {
   }
 }
 
-/** Compose CSS for overlay-level effects (shadow / filter / blend / outline). */
+/**
+ * Compose CSS for overlay-level effects (shadow / filter / blend / outline).
+ *
+ * Every value that reaches the output is either coerced through `Number` or
+ * passed through `esc` here, so the returned string is already safe to embed in
+ * a quoted style attribute. It must not be escaped again by the caller: doing so
+ * turned an encoded quote into `&amp;quot;`, which renders as literal text
+ * instead of closing nothing, and made the encoding untestable.
+ */
 function buildEffectStyle(o: any): string {
   const e = o?.effects;
   if (!e) return '';
@@ -108,9 +116,9 @@ function buildEffectStyle(o: any): string {
     const inset = s.inset ? 'inset ' : '';
     parts.push(`box-shadow:${inset}${Number(s.x ?? 0)}pt ${Number(s.y ?? 2)}pt ${Number(s.blur ?? 8)}pt ${Number(s.spread ?? 0)}pt ${esc(s.color ?? 'rgba(0,0,0,0.25)')}`);
   }
-  if (e.blendMode && e.blendMode !== 'normal') parts.push(`mix-blend-mode:${e.blendMode}`);
+  if (e.blendMode && e.blendMode !== 'normal') parts.push(`mix-blend-mode:${esc(e.blendMode)}`);
   if (e.outline && Number(e.outline.width ?? 0) > 0) {
-    parts.push(`outline:${Number(e.outline.width)}pt ${e.outline.style ?? 'solid'} ${esc(e.outline.color ?? '#BF9B50')}`);
+    parts.push(`outline:${Number(e.outline.width)}pt ${esc(e.outline.style ?? 'solid')} ${esc(e.outline.color ?? '#BF9B50')}`);
     parts.push(`outline-offset:${Number(e.outline.offset ?? 0)}pt`);
   }
   return parts.length ? parts.join(';') + ';' : '';
@@ -154,9 +162,9 @@ function withCascadeWrapper(html: string, node: { anchors?: any[]; id?: string }
 export function renderOverlay(overlay: Overlay, ctx: ResolveContext): string {
   if (!shouldRenderOverlay(overlay, ctx)) return '';
   // Effects originate in saved template JSON and are embedded in quoted style
-  // attributes below. Encode them at this shared boundary so a CSS value cannot
-  // terminate the attribute and inject HTML.
-  const fx = esc(buildEffectStyle(overlay as any));
+  // attributes below. buildEffectStyle encodes each value as it composes them,
+  // so a CSS value cannot terminate the attribute and inject HTML.
+  const fx = buildEffectStyle(overlay as any);
   const z = Number.isFinite(Number((overlay as any).zIndex)) ? `z-index:${Number((overlay as any).zIndex)};` : '';
   const opacity = Number.isFinite(Number(overlay.opacity)) ? Number(overlay.opacity) : 1;
   const rotation = Number.isFinite(Number(overlay.rotation)) ? Number(overlay.rotation) : 0;
