@@ -190,7 +190,7 @@ jobs:
         run: |
           docker run --rm --entrypoint sh weasyprint-service:ci -c '
             set -e
-            for family in "Cinzel" "Playfair Display" "Inter" "IBM Plex Mono" "IBM Plex Sans"; do
+            for family in "Cinzel" "Playfair Display" "Inter" "IBM Plex Mono"; do
               fc-list : family | grep -qi "$family" || { echo "MISSING: $family"; exit 1; }
               echo "ok: $family"
             done

@@ -15,9 +15,15 @@
  * **Fraunces** in its stacks and listed them as installed, on the strength of
  * the Dockerfile's `apt-get install fonts-cormorant-garamond fonts-fraunces`.
  * Neither package exists in Debian — bookworm or trixie — and neither does
- * `fonts-playfair-display`. `apt-get install -y` exits non-zero on an unknown
- * package, so that `RUN` layer fails and **the image could not be built at
- * all**. The contract was never checked, so nothing said so.
+ * `fonts-playfair-display` or `fonts-ibm-plex`. `apt-get install -y` exits
+ * non-zero on an unknown package, so that `RUN` layer fails and **the image
+ * could not be built at all**. The contract was never checked, so nothing said
+ * so.
+ *
+ * `fonts-ibm-plex` survived the first attempt at this fix because it is a
+ * Debian *source* package name: packages.debian.org serves a page for it, so a
+ * website check reads it as available. Only the binary index disagrees. Verify
+ * against `dists/<release>/main/binary-amd64/Packages.gz`.
  *
  * It is checked now. `CONTAINER_FONT_PACKAGES` and `CONTAINER_FONT_FILES` are
  * the two ways a face can reach the image, `CONTAINER_INSTALLED_FAMILIES` is
@@ -29,14 +35,16 @@
 /**
  * Debian packages the image installs, and the families each provides.
  *
- * Every one of these is verified present in **both** bookworm and trixie, so
- * the image builds whichever base `python:3.12-slim` resolves to. Adding a row
- * here without adding the package to the Dockerfile fails the spec, and vice
- * versa.
+ * Every one is verified present in **both** bookworm and trixie against the
+ * binary index — `dists/<release>/main/binary-amd64/Packages.gz` — not against
+ * packages.debian.org, which also serves pages for source package names and is
+ * how `fonts-ibm-plex` got into this list in the first place.
+ *
+ * Adding a row here without adding the package to the Dockerfile fails the
+ * spec, and vice versa.
  */
 export const CONTAINER_FONT_PACKAGES: Record<string, readonly string[]> = {
   'fonts-inter': ['Inter'],
-  'fonts-ibm-plex': ['IBM Plex Sans', 'IBM Plex Mono'],
   'fonts-roboto': ['Roboto'],
   'fonts-lato': ['Lato'],
   'fonts-dejavu': ['DejaVu Sans', 'DejaVu Serif'],
@@ -47,31 +55,75 @@ export const CONTAINER_FONT_PACKAGES: Record<string, readonly string[]> = {
   'fonts-noto-cjk': [],
 };
 
+/** One `COPY`-ed font file: which family it provides, at which weight. */
+export interface ContainerFontFile {
+  family: string;
+  /** CSS `font-weight` this file answers. */
+  weight: number;
+  italic?: boolean;
+}
+
 /**
  * TTFs the image `COPY`s into `/usr/local/share/fonts/` and `fc-cache`s.
  *
- * The two brand faces are not packaged by any distribution, so they travel with
- * the service. They live in `weasyprint-service/fonts/` rather than
- * `public/fonts/` because Docker cannot `COPY` from outside its build context,
- * and the documented build context is the service directory.
+ * None of these families is packaged by Debian, so they travel with the
+ * service. They live in `weasyprint-service/fonts/` rather than `public/fonts/`
+ * because Docker cannot `COPY` from outside its build context, and the
+ * documented build context is the service directory.
  *
- * They are SIL OFL 1.1; `Cinzel-OFL.txt` and `PlayfairDisplay-OFL.txt` ship
- * beside them, which the licence requires for redistribution in an image.
+ * All are SIL OFL 1.1; a `*-OFL.txt` ships beside each family, which the licence
+ * requires for redistribution inside an image. Hashes and sources are in
+ * `weasyprint-service/fonts/PROVENANCE.md`.
+ *
+ * ## Why the weight matters, and is declared
+ *
+ * A weight the stylesheet asks for and the image does not have is not a missing
+ * font — it is a **synthesised** one. The engine smears the nearest face to fake
+ * it, which on a high-contrast didone at 34pt reads as a printing fault rather
+ * than as bold.
+ *
+ * The first version of this shipped Playfair Medium alone while the stylesheet
+ * asked for 400, 600 and 700, so *every* chapter title and pull quote in the
+ * container would have been a synthetic bold of the wrong weight. It is not
+ * visible locally, where a distribution package fills the gaps.
+ * `reportTypography.spec.ts` now reads the real stylesheet and fails on any
+ * (family, weight) pair this table cannot answer exactly.
  */
-export const CONTAINER_FONT_FILES: Record<string, readonly string[]> = {
-  'Cinzel-Bold.ttf': ['Cinzel'],
-  'PlayfairDisplay-Medium.ttf': ['Playfair Display'],
-  // The italic is a separate file and a separate decision: the accent role is
-  // set in italic, and without this the engine synthesises a slant from the
-  // upright — which on a high-contrast didone reads as a printing fault.
-  'PlayfairDisplay-MediumItalic.ttf': ['Playfair Display'],
+export const CONTAINER_FONT_FILES: Record<string, ContainerFontFile> = {
+  // Cover titles and the closing lockup only, and only ever bold.
+  'Cinzel-Bold.ttf': { family: 'Cinzel', weight: 700 },
+
+  // Display and accent. The italic is a separate file and a separate decision:
+  // without a real italic the engine synthesises a slant from the upright.
+  'PlayfairDisplay-Regular.ttf': { family: 'Playfair Display', weight: 400 },
+  'PlayfairDisplay-Italic.ttf': { family: 'Playfair Display', weight: 400, italic: true },
+  'PlayfairDisplay-SemiBold.ttf': { family: 'Playfair Display', weight: 600 },
+  'PlayfairDisplay-Bold.ttf': { family: 'Playfair Display', weight: 700 },
+
+  // Eyebrows, running heads, page numbers, table column heads.
+  'IBMPlexMono-Regular.ttf': { family: 'IBM Plex Mono', weight: 400 },
+  'IBMPlexMono-Medium.ttf': { family: 'IBM Plex Mono', weight: 500 },
+  'IBMPlexMono-Bold.ttf': { family: 'IBM Plex Mono', weight: 700 },
 };
+
+/** Families that arrive as files rather than packages — the ones with declared weights. */
+export function isFileShippedFamily(family: string): boolean {
+  return Object.values(CONTAINER_FONT_FILES).some((f) => f.family === family);
+}
+
+/** Weights a file-shipped family can answer without synthesis. */
+export function shippedWeights(family: string, italic = false): number[] {
+  return Object.values(CONTAINER_FONT_FILES)
+    .filter((f) => f.family === family && Boolean(f.italic) === italic)
+    .map((f) => f.weight)
+    .sort((a, b) => a - b);
+}
 
 /** Every family the container provides, from either route. De-duplicated. */
 export const CONTAINER_INSTALLED_FAMILIES: readonly string[] = [
   ...new Set([
     ...Object.values(CONTAINER_FONT_PACKAGES).flat(),
-    ...Object.values(CONTAINER_FONT_FILES).flat(),
+    ...Object.values(CONTAINER_FONT_FILES).map((f) => f.family),
   ]),
 ].sort();
 

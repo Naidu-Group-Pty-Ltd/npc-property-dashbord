@@ -26,8 +26,22 @@ import {
   PRINT_STACK,
   effectiveFamily,
   familiesInStack,
+  isFileShippedFamily,
   missingFamilies,
+  shippedWeights,
 } from '../typography.pure';
+import { buildReportCss } from '../css.pure';
+import { resolveReportPalette } from '../brandResolve.pure';
+import {
+  chartContext,
+  renderBars,
+  renderDonut,
+  renderGauge,
+  renderHeatmap,
+  renderQuadrant,
+  renderTiles,
+  renderWaterfall,
+} from '../charts.pure';
 
 const REPO = resolve(__dirname, '../../../..');
 const SERVICE = resolve(REPO, 'weasyprint-service');
@@ -81,6 +95,20 @@ describe('the Dockerfile and the type stacks agree', () => {
 });
 
 describe('the font files themselves', () => {
+  it.each(Object.keys(CONTAINER_FONT_FILES))('%s declares a plausible weight', (file) => {
+    const spec = CONTAINER_FONT_FILES[file];
+    expect(spec.weight).toBeGreaterThanOrEqual(100);
+    expect(spec.weight).toBeLessThanOrEqual(900);
+    // The filename is the only cross-check available without parsing the OS/2
+    // table, and a mislabelled weight is silently wrong forever.
+    const named: Record<string, number> = {
+      Regular: 400, Italic: 400, Medium: 500, SemiBold: 600, Bold: 700, Black: 900,
+    };
+    const suffix = Object.keys(named).find((n) => file.includes(n));
+    if (suffix) expect(spec.weight).toBe(named[suffix]);
+    expect(Boolean(spec.italic)).toBe(/italic/i.test(file));
+  });
+
   it.each(Object.keys(CONTAINER_FONT_FILES))('%s exists and is a real font', (file) => {
     const path = resolve(FONT_DIR, file);
     expect(existsSync(path), `${file} is declared but not present`).toBe(true);
@@ -98,7 +126,7 @@ describe('the font files themselves', () => {
     // SIL OFL 1.1 requires the licence to travel with the font, and these are
     // redistributed inside a container image.
     const licences = readdirSync(FONT_DIR).filter((f) => f.endsWith('-OFL.txt'));
-    const families = [...new Set(Object.values(CONTAINER_FONT_FILES).flat())];
+    const families = [...new Set(Object.values(CONTAINER_FONT_FILES).map((f) => f.family))];
     expect(licences.length).toBeGreaterThanOrEqual(families.length);
     for (const licence of licences) {
       expect(readFileSync(resolve(FONT_DIR, licence), 'utf8')).toContain('SIL OPEN FONT LICENSE');
@@ -110,12 +138,9 @@ describe('the font files themselves', () => {
     // which on a high-contrast didone reads as a printing fault. The first real
     // render showed exactly that, because the accent stack led with a family
     // that was not installed at all.
-    const italics = Object.keys(CONTAINER_FONT_FILES).filter((f) => /italic/i.test(f));
-    expect(italics.length).toBeGreaterThan(0);
     const accentFamily = effectiveFamily(PRINT_STACK.accent);
     expect(accentFamily).not.toBeNull();
-    expect(italics.some((f) => f.replace(/[^a-z]/gi, '').toLowerCase()
-      .includes(accentFamily!.replace(/[^a-z]/gi, '').toLowerCase()))).toBe(true);
+    expect(shippedWeights(accentFamily!, true).length).toBeGreaterThan(0);
   });
 });
 
@@ -151,11 +176,92 @@ describe('every stack resolves to a face that exists', () => {
   });
 });
 
+/**
+ * The check that would have caught the real defect.
+ *
+ * A weight the stylesheet asks for and the image cannot answer is not a missing
+ * font — it is a *synthesised* one: the engine smears the nearest face, the PDF
+ * renders, and nothing reports it. This reads the actual stylesheet, so it
+ * cannot drift from what ships.
+ */
+describe('every weight the stylesheet asks for exists as a file', () => {
+  const css = buildReportCss({ palette: resolveReportPalette(), masthead: 'Acme' });
+
+  /**
+   * The drawings request type too, through SVG attributes rather than
+   * declarations — and they are where Playfair Bold is asked for. Scanning only
+   * the stylesheet would have shipped a file nothing used and missed a weight
+   * something did.
+   */
+  const chartCtx = chartContext(resolveReportPalette());
+  const charts = [
+    renderGauge(chartCtx, 72, { label: 'Score', caption: 'weighted' }),
+    renderWaterfall(chartCtx, [{ label: 'A', value: 10 }, { label: 'B', value: -4, total: true }]),
+    renderBars(chartCtx, [{ label: 'A', value: 4 }], { title: 'Scorecard' }),
+    renderDonut(chartCtx, [{ label: 'A', value: 6 }, { label: 'B', value: 4 }], { title: 'Mix' }),
+    renderHeatmap(chartCtx, [[1, 2], [3, 4]], { title: 'Grid' }),
+    renderTiles(chartCtx, [{ label: 'A', value: '$1' }], { title: 'Tiles' }),
+    renderQuadrant(chartCtx, [{ x: 1, y: 1, label: 'A', highlight: true }], { title: 'Q' }),
+  ].join('');
+
+  /** (family, weight, italic) triples the report actually requests. */
+  const requested = (() => {
+    const out = new Map<string, { family: string; weight: number; italic: boolean }>();
+    const add = (family: string, weight: number, italic: boolean) => {
+      const head = family.split(',')[0].trim().replace(/^['"]|['"]$/g, '');
+      out.set(`${head}|${weight}|${italic}`, { family: head, weight, italic });
+    };
+    for (const tag of charts.match(/<text [^>]*>/g) ?? []) {
+      const family = tag.match(/font-family="([^"]+)"/)?.[1];
+      if (!family) continue;
+      add(family, Number(tag.match(/font-weight="(\d+)"/)?.[1] ?? 400), false);
+    }
+    for (const [, block] of css.matchAll(/\{([^{}]*)\}/g)) {
+      const family = block.match(/font-family:\s*([^;]+);/)?.[1];
+      if (!family) continue;
+      // An unstated weight is 400, not "no request" — which is precisely where
+      // Playfair Regular is used (the pull quote states no weight at all).
+      const weight = Number(block.match(/font-weight:\s*(\d+)/)?.[1] ?? 400);
+      const head = family.split(',')[0].trim().replace(/^['"]|['"]$/g, '');
+      const italic = /font-style:\s*italic/.test(block);
+      out.set(`${head}|${weight}|${italic}`, { family: head, weight, italic });
+    }
+    return [...out.values()];
+  })();
+
+  it('finds weight declarations to check', () => {
+    expect(requested.length).toBeGreaterThan(3);
+  });
+
+  it.each(requested.map((r) => [`${r.family} ${r.weight}${r.italic ? ' italic' : ''}`, r]))(
+    '%s is answered by a real file, not synthesised',
+    (_label, req) => {
+      // Families from a Debian package ship their full weight range; only the
+      // file-shipped ones can have a gap.
+      if (!isFileShippedFamily(req.family)) return;
+      expect(
+        shippedWeights(req.family, req.italic),
+        `${req.family} ${req.weight}${req.italic ? ' italic' : ''} would be `
+          + 'synthesised — add the weight to weasyprint-service/fonts/',
+      ).toContain(req.weight);
+    },
+  );
+
+  it('ships no weight the stylesheet never asks for', () => {
+    // Not a correctness failure, but every file is ~190KB in the image.
+    const asked = new Set(requested.map((r) => `${r.family}|${r.weight}|${r.italic}`));
+    for (const [file, spec] of Object.entries(CONTAINER_FONT_FILES)) {
+      const key = `${spec.family}|${spec.weight}|${Boolean(spec.italic)}`;
+      expect(asked.has(key), `${file} is not requested anywhere`).toBe(true);
+    }
+  });
+});
+
 describe('CONTAINER_INSTALLED_FAMILIES is derived, not restated', () => {
   it('is exactly the union of the two installation routes', () => {
     const union = [...new Set([
       ...Object.values(CONTAINER_FONT_PACKAGES).flat(),
-      ...Object.values(CONTAINER_FONT_FILES).flat(),
+      ...Object.values(CONTAINER_FONT_FILES).map((f) => f.family),
     ])].sort();
     expect([...CONTAINER_INSTALLED_FAMILIES]).toEqual(union);
   });

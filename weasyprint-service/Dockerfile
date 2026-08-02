@@ -16,11 +16,19 @@
 # file. A face a report names must be installed here, or it silently falls back
 # to the engine default — invisible in review, obvious in a client's hands.
 #
-# This previously installed `fonts-playfair-display`, `fonts-cormorant-garamond`
-# and `fonts-fraunces`. **None of the three exists in Debian**, bookworm or
-# trixie. `apt-get install -y` exits non-zero on an unknown package, so this
-# layer failed and the image could not be built. Playfair Display now arrives as
-# a COPY-ed TTF; Cormorant and Fraunces are gone from the type stacks entirely.
+# This previously installed `fonts-playfair-display`, `fonts-cormorant-garamond`,
+# `fonts-fraunces` and `fonts-ibm-plex`. **None of the four exists as a binary
+# package in Debian**, bookworm or trixie. `apt-get install -y` exits non-zero on
+# an unknown package, so this layer failed and the image could not be built.
+#
+# `fonts-ibm-plex` is the subtle one: it is a Debian *source* package name, so
+# packages.debian.org serves a page for it and it reads as available. Only the
+# binary index says otherwise. Verify against
+# `deb.debian.org/debian/dists/<release>/main/binary-amd64/Packages.gz`, not the
+# website — the CI `render-container` job is what caught this.
+#
+# Playfair Display and IBM Plex Mono now arrive as COPY-ed TTFs; Cormorant and
+# Fraunces are gone from the type stacks entirely.
 
 # Pinned to the distribution, not just the Python version. The font contract
 # above is only checkable against a known Debian release, and an unpinned
@@ -41,11 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fontconfig \
       fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
       fonts-inter fonts-roboto fonts-lato \
-      fonts-ibm-plex \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# The brand faces. Not packaged by any distribution, so they travel with the
+# The brand faces. None is packaged by Debian, so they travel with the
 # service — which is also why they live here rather than in `public/fonts/`:
 # Docker cannot COPY from outside its build context, and the documented build
 # context is this directory. SIL OFL 1.1; the licence files ship beside them,

@@ -896,6 +896,10 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
   }
   .company-page .company-name {
     font-family: ${PRINT_STACK.cover};
+    /* Cinzel ships Bold alone. Stating 700 is not decoration: an unstated
+       weight is a 400 request, and a request the image cannot answer exactly is
+       how a face gets synthesised. */
+    font-weight: 700;
     font-size: ${pt(type.h1 - 4)};
     line-height: 1.05;
     color: ${palette.accentOnField};
