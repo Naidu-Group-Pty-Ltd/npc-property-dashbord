@@ -1331,7 +1331,7 @@ export const userGuideKnowledge: GuideSection[] = [
 
 /** Display names for the pricing-catalogue slugs, for AI-facing prose. */
 const MODULE_DISPLAY_NAMES: Readonly<Record<string, string>> = {
-  'market-updates': 'Market Updates',
+  'market-updates': 'Market News Feed',
   'commercial-industrial': 'Commercial / Industrial',
   'opportunity-marketplace': 'Property Marketplace',
   'intelligence-hub': 'Aurixa Intelligence Hub',

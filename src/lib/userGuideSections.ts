@@ -325,7 +325,7 @@ export const ADDITIONAL_GUIDE_SECTIONS: GuideSectionContent[] = [
   // ── Market Updates ─────────────────────────────────────────────────
   {
     id: 'market-updates',
-    title: 'Market Updates',
+    title: 'Market News Feed',
     description: 'Curated market intelligence, digests and shareable Q&A',
     icon: 'Newspaper',
     moduleSlug: 'market-updates',
@@ -333,7 +333,7 @@ export const ADDITIONAL_GUIDE_SECTIONS: GuideSectionContent[] = [
       {
         title: 'Market Feed',
         description:
-          'Market Updates ingests configured sources, scores each item for relevance, and surfaces what matters rather than everything published.',
+          'Market News Feed ingests configured sources, scores each item for relevance, and surfaces what matters rather than everything published.',
         features: [
           'Relevance and confidence thresholds filter low-value items',
           'Source list is administered from the Market Sources dialog',

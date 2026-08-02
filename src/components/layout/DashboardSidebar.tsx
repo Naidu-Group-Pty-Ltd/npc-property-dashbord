@@ -67,7 +67,7 @@ import { cn } from '@/lib/utils';
 
 const navigationItems = [
   { title: 'Overview', url: '/', icon: Home, moduleKey: 'overview' },
-  { title: 'Market Updates', url: '/market-updates', icon: Newspaper, moduleKey: '__always__' },
+  { title: 'Market News Feed', url: '/market-updates', icon: Newspaper, moduleKey: '__always__' },
   { title: 'Property Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings' },
   { title: 'Commercial / Industrial', url: '/commercial', icon: Building2, moduleKey: '__always__' },
   { title: 'Calendar', url: '/calendar', icon: Calendar, moduleKey: 'calendar' },
@@ -106,7 +106,7 @@ const navigationItems = [
 const navigationGroups = [
   {
     title: 'Main Dashboard',
-    itemTitles: ['Overview', 'Market Updates', 'Property Marketplace', 'Commercial / Industrial', 'Calendar'],
+    itemTitles: ['Overview', 'Market News Feed', 'Property Marketplace', 'Commercial / Industrial', 'Calendar'],
   },
   {
     title: 'Reports & Analysis',
