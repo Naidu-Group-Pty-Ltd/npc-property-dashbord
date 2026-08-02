@@ -719,6 +719,8 @@ export function InternalMessageToasts() {
       {/* Expanded conversation */}
       {active && (
       <div
+        ref={panelResize.nodeRef}
+        style={panelResize.size ? { height: panelResize.size.height } : undefined}
         role="dialog"
         aria-label={`Message from ${headline}`}
         onDragEnter={(e) => {
