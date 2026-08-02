@@ -604,6 +604,43 @@ Deno.serve(async (req) => {
         );
       }
 
+      // Server-side upload fallback: the browser hands us the bytes (base64)
+      // and we put them in the bucket with service credentials. Used when the
+      // signed PUT cannot be reached (proxy, CORS, or an unroutable host), so
+      // an upload never silently disappears.
+      if (action === 'attachment_upload_direct') {
+        const fileName = safeFileName(String(body.file_name ?? 'file'));
+        const raw = String(body.file_data ?? '');
+        if (!raw) return json({ success: false, error: 'file_data required' }, 400, corsHeaders);
+        const base64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw;
+        let bytes: Uint8Array;
+        try {
+          const binary = atob(base64);
+          bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        } catch {
+          return json({ success: false, error: 'file_data_not_base64' }, 400, corsHeaders);
+        }
+        const contentType = String(body.content_type ?? 'application/octet-stream');
+        const screened = await screenAttachments([
+          { file_name: fileName, mime_type: contentType, size: bytes.byteLength, head: bytes.slice(0, 32) },
+        ]);
+        if (!screened.ok) {
+          return json({ success: false, error: screened.error ?? 'attachment_rejected' }, 400, corsHeaders);
+        }
+        const path = `${threadId}/${crypto.randomUUID()}-${fileName}`;
+        const { error } = await sb.storage
+          .from(ATTACHMENT_BUCKET)
+          .upload(path, bytes, { contentType, upsert: false });
+        if (error) {
+          return json({ success: false, error: error.message ?? 'upload_failed' }, 500, corsHeaders);
+        }
+        return json(
+          { success: true, path, file_name: fileName, size: bytes.byteLength, content_type: contentType },
+          200,
+          corsHeaders,
+        );
+
       const path = String(body.path ?? '');
       if (!path.startsWith(`${threadId}/`)) {
         return json({ success: false, error: 'invalid_path' }, 400, corsHeaders);
