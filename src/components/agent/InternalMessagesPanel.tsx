@@ -57,7 +57,9 @@ import {
   onInternalTyping,
   publishInternalMessage,
   publishInternalTyping,
+  requestPopOutInternalThread,
 } from '@/lib/internalMessagingBus';
+
 
 
 export interface InternalStaffMember {
