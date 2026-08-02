@@ -1,12 +1,11 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { wrapInlineInsightParagraphs } from '../../supabase/functions/render-investment-report-pdf/insightSections';
 
-const functionSource = readFileSync(
-  join(process.cwd(), 'supabase/functions/render-investment-report-pdf/index.ts'),
-  'utf8',
-);
+const FUNCTION_DIR = join(process.cwd(), 'supabase/functions/render-investment-report-pdf');
+
+const functionSource = readFileSync(join(FUNCTION_DIR, 'index.ts'), 'utf8');
 
 const insightOptions = {
   isInsightLabel: (label: string) => label.toLowerCase() === 'what this means',
@@ -54,6 +53,49 @@ describe('render-investment-report-pdf SVG escaping contract', () => {
     expect(functionSource).toContain('return createForbiddenResponse(');
     expect(permissionGate).toBeGreaterThan(-1);
     expect(reportRead).toBeGreaterThan(permissionGate);
+  });
+});
+
+/**
+ * The bug this catches shipped and stopped every investment PDF for weeks.
+ *
+ * `index.ts` calls `wrapInsightHeadingSections` and `wrapInlineInsightParagraphs`
+ * and imported neither, so `buildHtml` threw
+ * `ReferenceError: wrapInsightHeadingSections is not defined` on every request —
+ * before WeasyPrint was ever reached. Nothing caught it: both helpers live in
+ * sibling modules that the *tests* import directly, so the unit tests kept
+ * passing while the function could not produce a single document.
+ *
+ * A helper that a sibling module exports and `index.ts` calls must be imported
+ * by `index.ts`. That is the whole rule, and it is the one that was broken.
+ */
+describe('render-investment-report-pdf imports every sibling helper it calls', () => {
+  const siblings = readdirSync(FUNCTION_DIR)
+    .filter((f) => f.endsWith('.ts') && f !== 'index.ts' && !f.includes('.test.'));
+
+  const importedNames = new Set(
+    [...functionSource.matchAll(/import\s*\{([^}]*)\}\s*from/g)]
+      .flatMap((m) => m[1].split(','))
+      .map((name) => name.trim().split(/\s+as\s+/).pop()!.trim())
+      .filter(Boolean),
+  );
+
+  it.each(siblings)('%s', (file) => {
+    const source = readFileSync(join(FUNCTION_DIR, file), 'utf8');
+    const exported = [...source.matchAll(/^export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)]
+      .map((m) => m[1]);
+
+    for (const name of exported) {
+      // Called somewhere in index.ts — as `name(` and not as a definition of
+      // its own, which this function directory does not do anyway.
+      const called = new RegExp(`\\b${name}\\s*\\(`).test(functionSource);
+      if (!called) continue;
+      expect(
+        importedNames.has(name),
+        `index.ts calls ${name}() from ./${file} but never imports it — `
+          + 'that is a ReferenceError on every request, not a type error',
+      ).toBe(true);
+    }
   });
 });
 
