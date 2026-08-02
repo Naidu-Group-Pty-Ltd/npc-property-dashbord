@@ -126,7 +126,7 @@ export function enforceCsrf(req: Request): CsrfCheckResult {
 /** Convenience 403 factory used by handlers that want a canned response. */
 export function csrfDenied(cors: Record<string, string>, detail: CsrfCheckResult): Response {
   return new Response(
-    JSON.stringify({ error: 'CSRF check failed', code: 'csrf_denied', reason: detail.reason }),
+    JSON.stringify({ error: 'CSRF check failed', code: 'csrf_denied', reason: detail.reason, origin: detail.origin ?? null, guard: 'v2' }),
     { status: 403, headers: { ...cors, 'Content-Type': 'application/json' } },
   );
 }
