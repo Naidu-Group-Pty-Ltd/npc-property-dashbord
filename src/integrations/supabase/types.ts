@@ -26031,6 +26031,94 @@ export type Database = {
         }
         Relationships: []
       }
+      property_comparison_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          comparison_id: string
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          missing_sections: string[]
+          pages: number | null
+          property_count: number | null
+          recovered_sections: string[]
+          requested_by: string | null
+          score_scale: number | null
+          source_shape: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          comparison_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          missing_sections?: string[]
+          pages?: number | null
+          property_count?: number | null
+          recovered_sections?: string[]
+          requested_by?: string | null
+          score_scale?: number | null
+          source_shape?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          comparison_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          missing_sections?: string[]
+          pages?: number | null
+          property_count?: number | null
+          recovered_sections?: string[]
+          requested_by?: string | null
+          score_scale?: number | null
+          source_shape?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "property_comparison_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_comparison_renders_comparison_id_fkey"
+            columns: ["comparison_id"]
+            isOneToOne: false
+            referencedRelation: "property_comparisons"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "property_comparison_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       property_comparisons: {
         Row: {
           analysis_depth: string | null
