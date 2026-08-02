@@ -172,16 +172,17 @@ function MinimisedChip({
       ref={drag.nodeRef}
       style={drag.positionStyle}
       className={cn(
-        'pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border bg-card/95 px-2 py-1.5 backdrop-blur-xl',
-        'shadow-[var(--elevation-2,0_10px_24px_-14px_rgba(0,0,0,0.5))]',
+        'pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border-2 bg-card/95 px-2 py-1.5 backdrop-blur-xl',
+        'shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_12px_28px_-14px_hsl(var(--primary)/0.4)]',
         drag.dragging && 'z-[70] scale-[1.02] shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
         drag.position && 'z-[65]',
         thread.priority === 'urgent'
-          ? 'border-destructive/60'
+          ? 'border-destructive/70 ring-2 ring-destructive/20'
           : thread.priority === 'high'
-            ? 'border-warning/50'
-            : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
+            ? 'border-warning/70 ring-2 ring-warning/15'
+            : 'border-primary/55 ring-2 ring-primary/15',
       )}
+
     >
       <span
         {...drag.handleProps}
