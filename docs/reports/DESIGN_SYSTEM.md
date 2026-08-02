@@ -10,7 +10,7 @@ Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
 snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
 delivered. The design system is complete.
 
-**Formats migrated:** four, each with its own contract document, payload,
+**Formats migrated:** five, each with its own contract document, payload,
 document, brand snapshot, server-side render route and tests, and each keeping
 its legacy generator reachable rather than retiring it.
 
@@ -27,6 +27,12 @@ its legacy generator reachable rather than retiring it.
    its content back out of a model response that was cut off mid-write, and the
    only one whose migration makes downloading a saved document *free* — the path
    it sits beside asks a model to rewrite the report on every download.
+5. The Cash Flow Comparison Analysis — [`CASH_FLOW_COMPARISON.md`](./CASH_FLOW_COMPARISON.md).
+   Two to five 10 Year Cash Flow Analyses side by side, so its payload is N of
+   another format's and it imports that format rather than restating it. The
+   first comparison with real deterministic figures, the only format with
+   *nothing* persisted about its subject, and the first migration to edit the
+   legacy path it sits beside rather than only leaving it reachable.
 
 Each new route needs its function deployed and its migration applied before its
 call sites do anything; both are manual.

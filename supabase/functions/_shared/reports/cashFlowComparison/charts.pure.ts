@@ -231,12 +231,15 @@ export function categoryWinsChart(
       // ring's hole: the first render printed "WHISTLESONG COURT GYMPIE" straight
       // through the ring on both sides. The leader is named in the caption
       // instead, where there is room for it.
-      centerLabel: `${leader[1]}/${decided.length}`,
+      // Out of *all* the measures, not out of the decided ones. The centre and
+      // the caption then say the same thing, where "5/5" beside a caption
+      // mentioning eight measures reads as two different claims.
+      centerLabel: `${leader[1]}/${p.scoreboard.winners.length}`,
       centerSub: 'MEASURES LED',
     }),
-    `${leaderProperty ? `${leaderProperty.shortAddress} leads on ${leader[1]} of the ` : ''}`
-    + `${decided.length} measures with a clear leader`
-    + `${undecided ? `, of ${p.scoreboard.winners.length} compared — ${tied}` : ''}.`,
+    `${leaderProperty ? `${leaderProperty.shortAddress} leads on ${leader[1]} of the ` : 'Of the '}`
+    + `${p.scoreboard.winners.length} measures compared`
+    + `${undecided ? `; ${tied}` : ''}.`,
   );
 }
 
