@@ -290,6 +290,25 @@ describe('propertyDataService server cache', () => {
     expect(getRecords).not.toHaveBeenCalled();
   });
 
+  it('goes to Airtable for an explicit refresh, not to a cache that may be stale', async () => {
+    // The server cache is at most one sync interval behind. That is right for a
+    // page load and wrong for someone who just pressed Refresh — handing back
+    // the same set they were looking at is exactly what they clicked to avoid.
+    const read = vi.spyOn(listingsCacheApi, 'read');
+    const getRecords = vi
+      .spyOn(airtableService, 'getRecords')
+      .mockResolvedValue({ records: [makeListing(9)], offset: undefined, total: 1 });
+
+    const result = await propertyDataService.fetchAllListings({
+      tableName: 'Listings',
+      bypassCache: true,
+    });
+
+    expect(read).not.toHaveBeenCalled();
+    expect(getRecords).toHaveBeenCalled();
+    expect(result.listings.map((l) => l.id)).toEqual(['9']);
+  });
+
   it('does not use the cache for a bounded read', async () => {
     // `maxRecords` is a different question from "the whole table" and must not be
     // answered from, or written to, the full-table cache.

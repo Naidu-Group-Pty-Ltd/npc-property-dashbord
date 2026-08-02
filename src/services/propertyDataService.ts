@@ -276,6 +276,7 @@ class PropertyDataService {
     tableKey: string,
     tableName: string | undefined,
     mode: Exclude<RefreshMode, 'none'>,
+    opts: { skipServerCache?: boolean } = {},
   ): Promise<PropertyListing[]> {
     const running = this.inFlight.get(tableKey);
     if (running) return running;
@@ -286,7 +287,12 @@ class PropertyDataService {
 
       // One request for the whole set, so there is no incremental variant to
       // choose here — a server-cache read is always a complete read.
-      const served = await this.readServerCache(tableName);
+      //
+      // Skipped when the user pressed Refresh. The server cache is at most one
+      // sync interval behind Airtable, which is right for a page load and wrong
+      // for someone who just clicked a button to get current data — they would
+      // be handed the same stale set they were already looking at.
+      const served = opts.skipServerCache ? null : await this.readServerCache(tableName);
       if (served) {
         const key = this.keyFor(tableName);
         this.memory.set(key, { listings: served, savedAt: now, fullReadAt: now });
@@ -336,7 +342,11 @@ class PropertyDataService {
     }
 
     if (bypassCache) {
-      const listings = await this.refresh(tableKey, tableName, 'full');
+      // An explicit refresh goes all the way to Airtable. Every cache layer is
+      // bypassed, including the server one — otherwise the button would hand
+      // back data up to a sync interval old, which is what the user pressed it
+      // to get away from.
+      const listings = await this.refresh(tableKey, tableName, 'full', { skipServerCache: true });
       return this.buildResult(listings, startTime, includeDebugInfo, false);
     }
 
