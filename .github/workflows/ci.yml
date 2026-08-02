@@ -56,6 +56,17 @@ jobs:
       - name: Unit tests (report token metering)
         run: npx vitest run src/lib/tokens
 
+      # The report design system is derived from src/styles/tokens.css, so the
+      # committed print tokens must be exactly what the generator produces.
+      # Without this the two silently diverge and reports drift off-brand.
+      - name: Report design system — token drift
+        run: npm run reportkit:tokens:check
+
+      # Enforces the single-source contract (bridges are re-exports only) and
+      # the print contrast floors for every preset x tenant-brand combination.
+      - name: Unit tests (report design system)
+        run: npx vitest run src/lib/reportDesign
+
       - name: Build
         run: npm run build
 
@@ -104,6 +115,11 @@ jobs:
             supabase/functions/_shared/notify.ts \
             supabase/functions/_shared/resetTokens.ts \
             supabase/functions/_shared/jwt.ts
+
+      # The report design system is imported by Edge Functions AND re-exported
+      # into src/. If Deno cannot resolve it, the render path breaks at deploy.
+      - name: Deno type-check the report design system
+        run: deno check supabase/functions/_shared/reportDesign/*.pure.ts
 
       # WP-14: type-check every Edge Function entry point, not only shared modules.
       - name: Deno type-check every Edge Function entry point (WP-14)

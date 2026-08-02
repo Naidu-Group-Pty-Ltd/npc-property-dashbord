@@ -5,7 +5,8 @@ that will live. This is the architecture doc for the report-rendering programme;
 the brand rules themselves are in the
 [`npc-services-design`](../../.claude/skills/npc-services-design/) skill.
 
-**Status:** Phase 0 (this document + the skill) delivered. Phases 1+ not started.
+**Status:** Phase 0 (this document + the skill) and **Phase 1 (the Kit
+foundation)** delivered. Phases 2+ not started.
 Scope is the report/PDF layer. The Template Library catalogue and the Template
 Builder editor are out of scope, but the shared **block renderers** in
 `src/lib/reportTemplate/blocks/*.html.ts` are in scope as reusable infrastructure.
@@ -87,22 +88,32 @@ none.
 
 ```
 supabase/functions/_shared/reportDesign/     ← canonical, pure TS
-  color.pure.ts        hex/HSL conversion, contrast, ensureContrast()
-  tokens.pure.ts       print surfaces, ink, semantics, type scale, page geometry
-  roles.pure.ts        ReportColourRole union + ResolvedReportPalette
-  brandResolve.pure.ts resolveReportPalette(snapshot, preset)
-  typography.pure.ts   font stacks, CONTAINER_INSTALLED_FAMILIES, @font-face emitter
-  page.pure.ts         named @page rules + running strings
-  css.pure.ts          buildReportCss(palette, options)
-  primitives.pure.ts   cover, chapter, KPI strip, ledger, callout, disclaimer…
-  structure.pure.ts    REPORT_ARCHETYPES — page/section contract per format
-  assets.pure.ts       logo resolution + inline policy
-  charts.pure.ts       SVG chart geometry
-  snapshot.pure.ts     ReportBrandSnapshot type + builder
+  color.pure.ts        ✅ hex/HSL conversion, contrast, ensureContrast()
+  tokens.pure.ts       ✅ GENERATED from tokens.css — surfaces, ink, semantics, scale
+  roles.pure.ts        ✅ role union, INK_LEGALITY, ResolvedReportPalette
+  brandResolve.pure.ts ✅ resolveReportPalette(), auditPaletteContrast()
+  typography.pure.ts   ✅ print stacks, CONTAINER_INSTALLED_FAMILIES, missingFamilies()
+  page.pure.ts         ✅ page geometry + the seven named pages
+  css.pure.ts          ⬜ buildReportCss(palette, options)
+  primitives.pure.ts   ⬜ cover, chapter, KPI strip, ledger, callout, disclaimer…
+  structure.pure.ts    ⬜ REPORT_ARCHETYPES — page/section contract per format
+  assets.pure.ts       ⬜ logo resolution + inline policy
+  charts.pure.ts       ⬜ SVG chart geometry
+  snapshot.pure.ts     ⬜ ReportBrandSnapshot type + builder
 
-src/lib/reportDesign/<same names>.ts         ← one-line export * bridges
+src/lib/reportDesign/<same names>.pure.ts    ← one-line export * bridges
 src/lib/reportDesign/__tests__/designSystemSourceOfTruth.spec.ts
+src/lib/reportDesign/__tests__/printContrast.spec.ts
+scripts/reportDesign/buildTokens.ts          ← the generator (+ `--check` for CI)
 ```
+
+`src/branding/color-utils.ts` is now a bridge onto `color.pure.ts` rather than a
+second implementation of the same ten functions.
+
+CI gates added: `npm run reportkit:tokens:check` (token drift),
+`npx vitest run src/lib/reportDesign` (bridge purity + contrast), and
+`deno check supabase/functions/_shared/reportDesign/*.pure.ts` (the modules must
+resolve in the runtime that actually renders).
 
 `src/branding/brandPalette.ts` becomes a deprecated adapter over
 `resolveReportPalette` so its consumers keep compiling during migration, then is
@@ -114,10 +125,11 @@ deleted.
 `src/styles/tokens.css` variable, with the reason inline. The adjustments are real
 and non-obvious:
 
-- **Paper is `#FAF7F1`, not white.** Panels are *darker* than the sheet, inverting
-  the screen relationship.
+- **Paper is `#FAF7EF`, not white** — `--background`, derived, not the `#FAF7F1`
+  the dead prototype invented. Panels are *darker* than the sheet, inverting the
+  screen relationship.
 - **Contrast floors by size** (see the skill's `reports/REPORT_RULES.md` §2).
-  `--brand` on ivory is ≈2.3:1 and fails at the 8.5pt eyebrow — the single most
+  `--brand` on ivory is 2.10:1 and fails at the 8.5pt eyebrow — the single most
   important adjustment, and the reason eight golds exist.
 - **Category B darkens, never brand-derives.** `PRINT_SEMANTIC` is frozen and
   `resolveReportPalette` accepts no override for it, so tenant leakage is a type
@@ -127,6 +139,29 @@ and non-obvious:
 
 The colour-format chain (`H S% L%` → hex → pdf-lib 0–1 floats) collapses to one
 conversion at snapshot time; downstream everything is `#RRGGBB`.
+
+### What the derivation actually found (Phase 1)
+
+- **The NPC gold is a dark-ground colour.** `--brand` is **7.26:1 on obsidian**
+  and **2.10:1 on ivory**. It fails at every size on paper, including the 8.5pt
+  eyebrow that is the brand's own signature. On the cover it needs no help at
+  all; on paper it steps down the ramp. That asymmetry — not carelessness — is
+  why eight golds accumulated: each was someone solving the paper case locally.
+- **The step is `--brand-800` (`#8E6C15`, 4.56:1).** `ensureContrast()` and the
+  `--brand-*` ramp arrive at the same value independently, so the derived colour
+  is one the design system already names.
+- **A uniform lightness does not work for Category B.** At 33% L the warning
+  gold is 4.35:1 and fails, while the success green passes comfortably —
+  contrast is a function of hue, not lightness alone. Each semantic is therefore
+  darkened until it clears the floor against the *darkest* stock any preset can
+  put it on.
+- **The floor is 4.5:1, not 7:1.** Body copy is graphite at **13.22:1** and
+  clears AAA regardless; the floor only ever binds on accent type, which is
+  short, bold and letterspaced. Forcing AAA there turns the brand gold brown.
+- **`accentOnPaper` must be derived against the worst paper ground, not the
+  default one.** Under `minimal_ink` the `paper` role is porcelain while
+  `paperAlt` is champagne; deriving against `paper` alone shipped a palette that
+  was legible on one ground and not the other. The contrast test caught it.
 
 ## 6 · Brand, logo and snapshotting
 
