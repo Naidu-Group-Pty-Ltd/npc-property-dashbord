@@ -43,6 +43,7 @@ import {
   Inbox,
   ChevronDown,
   ArrowLeftRight,
+  Workflow,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
@@ -147,6 +148,7 @@ const adminItems = [
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates' },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations' },
+  { title: 'Workflow Playground', url: '/workflow-playground', icon: Workflow, moduleKey: 'integrations' },
   { title: 'Cloudflare', url: '/cloudflare', icon: Cloud, moduleKey: 'cloudflare' },
   { title: 'API Usage', url: '/api-usage', icon: Gauge, moduleKey: 'api_usage' },
   { title: 'Model Hub', url: '/model-hub', icon: Cpu, moduleKey: 'integrations' },

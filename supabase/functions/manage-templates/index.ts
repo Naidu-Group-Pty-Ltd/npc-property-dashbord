@@ -5,7 +5,7 @@ import { TemplateSchemaVersionError, validateAndMigrateTemplateSchemaVersion } f
 import { permForAction, requireModulePermission } from '../_shared/authz.ts';
 import { insertGoesLive, validateReportTemplateInsert } from '../_shared/reportTemplateInsertGuard.pure.ts';
 
-type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'comparison_analysis_templates';
+type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'comparison_analysis_templates' | 'workflows';
 
 interface RequestBody {
   // Operation type
@@ -68,6 +68,7 @@ const DEFAULT_SELECTS: Record<TableName, string> = {
   report_templates: '*',
   report_template_versions: '*',
   comparison_analysis_templates: '*',
+  workflows: '*',
 };
 
 function normaliseTemplateSchema(schema: any): any {
@@ -265,6 +266,10 @@ async function assertTemplatePermission(
   if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
   const moduleKey = table.startsWith('checklist_')
     ? 'checklists'
+    // A workflow can invoke any configured integration, so editing one is the
+    // same privilege as editing the integrations themselves.
+    : table === 'workflows'
+      ? 'integrations'
     : table === 'report_templates' || table === 'report_template_versions'
       ? 'templates'
       : null;
@@ -509,7 +514,7 @@ Deno.serve(async (req) => {
     }
 
     // Validate table
-    const validTables: TableName[] = ['report_structure_templates', 'client_branding_profiles', 'integration_configs', 'depreciation_comps', 'depreciation_estimator_runs', 'charts', 'chart_analysis', 'chart_configurations', 'global_report_settings', 'finance_agent_contacts', 'bulk_generation_jobs', 'property_comparisons', 'portfolio_analysis_templates', 'checklist_templates', 'checklist_template_sections', 'checklist_template_items', 'checklist_instances', 'checklist_instance_items', 'game_plans', 'game_plan_phases', 'game_plan_milestones', 'game_plan_kpis', 'game_plan_notes', 'game_plan_actions', 'custom_users', 'cover_page_overlays', 'report_templates', 'report_template_versions', 'comparison_analysis_templates'];
+    const validTables: TableName[] = ['report_structure_templates', 'client_branding_profiles', 'integration_configs', 'depreciation_comps', 'depreciation_estimator_runs', 'charts', 'chart_analysis', 'chart_configurations', 'global_report_settings', 'finance_agent_contacts', 'bulk_generation_jobs', 'property_comparisons', 'portfolio_analysis_templates', 'checklist_templates', 'checklist_template_sections', 'checklist_template_items', 'checklist_instances', 'checklist_instance_items', 'game_plans', 'game_plan_phases', 'game_plan_milestones', 'game_plan_kpis', 'game_plan_notes', 'game_plan_actions', 'custom_users', 'cover_page_overlays', 'report_templates', 'report_template_versions', 'comparison_analysis_templates', 'workflows'];
     if (!validTables.includes(table)) {
       return new Response(
         JSON.stringify({ error: `Invalid table: ${table}` }),
