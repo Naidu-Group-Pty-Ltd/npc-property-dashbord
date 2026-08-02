@@ -70,6 +70,18 @@ describe('dedicated attachment transport', () => {
       client.indexOf("operation: 'upload_ticket'"),
     );
   });
+
+  it('owns attachment message creation atomically', () => {
+    expect(client).toContain("operation: 'send'");
+    expect(transport).toContain("operation === 'send'");
+    expect(transport).toMatch(/insert\(\{ thread_id: threadId, sender_id: auth\.userId, body: text, priority, attachments: cleaned \}\)/);
+  });
+
+  it('opens the download window during the click gesture', () => {
+    expect(client.indexOf("window.open('', '_blank')")).toBeLessThan(
+      client.indexOf("operation: 'download_ticket'"),
+    );
+  });
 });
 
 describe('the upload URL fallback can actually resolve', () => {

@@ -325,9 +325,9 @@ export function InternalMessagesPanel({
     try {
       const attachments = await uploadStaged(activeThread.id);
       if (!attachments) { setSending(false); return; }
-      const sent = attachments.length
+      await (attachments.length
         ? await sendInternalMessageWithAttachments(activeThread.id, text, attachments)
-        : await call({ action: 'send_message', thread_id: activeThread.id, body: text });
+        : await call({ action: 'send_message', thread_id: activeThread.id, body: text }));
 
       setDraft('');
       attachmentQueue.clear();
