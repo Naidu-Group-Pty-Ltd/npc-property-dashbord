@@ -1,9 +1,11 @@
+import { inlineXlsxPlugin } from "./vite-inline-xlsx";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import path from "path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [inlineXlsxPlugin(), react()],
+  assetsInclude: ["**/*.xlsx"],
   test: {
     environment: "jsdom",
     globals: true,
