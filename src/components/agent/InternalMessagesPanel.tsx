@@ -402,7 +402,16 @@ export function InternalMessagesPanel({
         ? { action: 'send_message', broadcast: true, title: broadcastTitle.trim() || undefined, body: text }
         : { action: 'send_message', thread_id: threadId, body: text, attachments };
       const data = await call(payload);
+      if (attachments.length && threadId) {
+        await ensureMessageAttachments(
+          threadId,
+          data?.message?.id,
+          attachments,
+          data?.message?.attachments,
+        );
+      }
       publishInternalMessage({ thread_id: data?.thread_id, sender_id: user?.id ?? null, sender_name: myName });
+
 
       setDraft('');
       setBroadcastTitle('');
