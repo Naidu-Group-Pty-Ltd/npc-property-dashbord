@@ -394,10 +394,15 @@ test('the page no longer offers a bare Activate action', () => {
 test('the page exposes the full set of per-user access actions', () => {
   for (const label of [
     'Send invite', 'Resend invite', 'Revoke invite',
-    'Suspend', 'Restore', 'Revoke sessions', 'Copy link',
+    'Suspend', 'Restore', 'Copy link', 'Sessions',
   ]) {
     assert.ok(adminPageCode.includes(label), `missing the ${label} action`);
   }
+  // Session revocation moved behind the sessions dialog so it is an informed
+  // action rather than a blind one, but it is still wired to the same operation.
+  assert.match(adminPageCode, /onRevokeAll=\{\(user\) => mutate\('revoke_user_sessions'/);
+  const sessionsDialog = read('src/components/admin/builder-portal/BuilderUserSessionsDialog.tsx');
+  assert.match(sessionsDialog, /Revoke all sessions/);
 });
 
 test('the invitation link is surfaced only when email delivery failed', () => {
@@ -412,6 +417,143 @@ test('the page states the lifecycle order it enforces', () => {
   assert.match(adminPageCode, /send the invitation/);
   assert.match(adminPageCode, /accepts and sets a password/);
   assert.match(adminPageCode, /becomes active/);
+});
+
+// ---------------------------------------------------------------------------
+// Every admin operation the server supports is reachable from the Command Centre
+// ---------------------------------------------------------------------------
+
+const accessSurfaces = [
+  'src/pages/admin/BuilderPortalAdmin.tsx',
+  'src/components/admin/builder-portal/BuilderOrganisationDialog.tsx',
+  'src/components/admin/builder-portal/BuilderOrganisationStatusDialog.tsx',
+  'src/components/admin/builder-portal/BuilderUserDialog.tsx',
+  'src/components/admin/builder-portal/BuilderMembershipDialog.tsx',
+  'src/components/admin/builder-portal/BuilderUserSessionsDialog.tsx',
+  'src/components/admin/builder-portal/BuilderMembershipPermissionsDialog.tsx',
+  'src/components/admin/builder-portal/accessTypes.ts',
+].map((path) => read(path)).join('\n');
+
+test('every builder-portal-admin operation has a Command Centre caller', () => {
+  // The gap this closes: get_permission_catalogue, get_membership_permissions,
+  // update_membership_permissions and list_user_sessions were implemented
+  // server-side and unreachable from any browser surface, and update_user and
+  // the edit paths of upsert_organisation / upsert_membership had no form.
+  const operations = [...adminFn.matchAll(/case '([a-z_]+)':/g)].map((match) => match[1]);
+  assert.ok(operations.length >= 15, `expected the full operation set, found ${operations.length}`);
+  for (const operation of operations) {
+    assert.ok(accessSurfaces.includes(`'${operation}'`),
+      `${operation} is supported by the server but has no Command Centre caller`);
+  }
+});
+
+test('organisations can be edited and given any lifecycle status', () => {
+  const dialog = read('src/components/admin/builder-portal/BuilderOrganisationDialog.tsx');
+  // The edit path round-trips the version the form loaded.
+  assert.match(dialog, /payload\.organisation_id = organisation\.id/);
+  assert.match(dialog, /payload\.expected_version = organisation\.row_version/);
+  // Every column upsert_organisation accepts is on the form.
+  for (const field of [
+    'legal_name', 'trading_name', 'org_type', 'abn', 'acn', 'contact_email',
+    'contact_phone', 'website', 'address_line1', 'address_line2', 'suburb',
+    'state', 'postcode', 'notes',
+  ]) {
+    assert.match(dialog, new RegExp(`\\b${field}\\b`), `the organisation form is missing ${field}`);
+  }
+  // Status is a separate audited transition, not a field on the details form.
+  assert.doesNotMatch(dialog, /status:/);
+
+  const statusDialog = read('src/components/admin/builder-portal/BuilderOrganisationStatusDialog.tsx');
+  assert.match(statusDialog, /expected_version: organisation\.row_version/);
+  const statuses = read('src/components/admin/builder-portal/accessTypes.ts');
+  for (const status of ['pending_activation', 'active', 'suspended', 'closed']) {
+    assert.match(statuses, new RegExp(`value: '${status}'`), `ORG_STATUSES is missing ${status}`);
+  }
+});
+
+test('a status change that removes access warns about ending sessions', () => {
+  const statusDialog = read('src/components/admin/builder-portal/BuilderOrganisationStatusDialog.tsx');
+  assert.match(statusDialog, /const endsSessions = status !== 'active'/);
+  assert.match(statusDialog, /ends the sessions of/);
+  assert.match(statusDialog, /Closing is terminal/);
+});
+
+test('portal users can be edited without touching access or identity', () => {
+  const dialog = read('src/components/admin/builder-portal/BuilderUserDialog.tsx');
+  assert.match(dialog, /builder_user_id: user!\.id/);
+  assert.match(dialog, /expected_version: user!\.row_version/);
+  // Email is the login identifier and update_user does not accept it.
+  assert.match(dialog, /disabled=\{isEdit\}/);
+  assert.match(dialog, /cannot be changed here/);
+  // Status, password and invitation state each have their own audited path.
+  // Comments are stripped: this file explains those paths in prose.
+  const code = stripJsComments(dialog);
+  for (const forbidden of ['password', 'status:', 'invite_token']) {
+    assert.ok(!code.includes(forbidden), `the user form must not carry ${forbidden}`);
+  }
+});
+
+test('membership role and primary organisation are editable', () => {
+  const dialog = read('src/components/admin/builder-portal/BuilderMembershipDialog.tsx');
+  assert.match(dialog, /membership_role: form\.membership_role/);
+  assert.match(dialog, /is_primary: form\.is_primary/);
+  assert.match(dialog, /payload\.expected_version = membership\.row_version/);
+  // Primary matters: acceptance and login both auto-select it.
+  assert.match(dialog, /auto-select the primary organisation/);
+  // A closed organisation and a revoked user cannot take a membership.
+  assert.match(dialog, /organisation\.status !== 'closed'/);
+  assert.match(dialog, /user\.status !== 'revoked'/);
+});
+
+test('revoking a user’s last membership is confirmed before it happens', () => {
+  assert.match(adminPageCode, /isLastForUser/);
+  assert.match(adminPageCode, /removes their portal access entirely and ends their sessions/);
+  assert.match(adminPageCode, /window\.confirm\(warning\)/);
+});
+
+test('the permission editor reflects the server’s three invariants', () => {
+  const dialog = read('src/components/admin/builder-portal/BuilderMembershipPermissionsDialog.tsx');
+  // Forbidden keys never arrive — the catalogue excludes them server-side.
+  assert.match(adminFnCode, /\.eq\('is_forbidden', false\)/);
+  // Inbound projections are read-only, so edit and delete are locked.
+  assert.match(dialog, /key\.key_kind === 'inbound_projection'/);
+  assert.match(dialog, /const locked = readOnlyKey && level !== 'view_decision'/);
+  // A row left entirely on inherit is not sent; the role baseline applies.
+  assert.match(dialog, /\.filter\(\(\[, row\]\) => !isBlank\(row\)\)/);
+  // Rejected keys are reported rather than silently dropped.
+  assert.match(adminPageCode, /rejected\.length/);
+  assert.match(adminPageCode, /key\(s\) were rejected/);
+});
+
+test('the permission editor never sends a decision the server does not accept', () => {
+  const dialog = read('src/components/admin/builder-portal/BuilderMembershipPermissionsDialog.tsx');
+  const offered = [...dialog.matchAll(/value: '(inherit|allow|deny)'/g)].map((match) => match[1]);
+  assert.deepEqual([...new Set(offered)].sort(), ['allow', 'deny', 'inherit']);
+  // Same three the server validates against.
+  assert.match(adminFn, /const DECISIONS = new Set\(\['inherit', 'allow', 'deny'\]\)/);
+});
+
+test('the sessions view never exposes a session token hash', () => {
+  const dialog = stripJsComments(read('src/components/admin/builder-portal/BuilderUserSessionsDialog.tsx'));
+  assert.doesNotMatch(dialog, /token_hash|\btoken\b/);
+  // The server does not select it either.
+  const handler = adminFnCode.slice(
+    adminFnCode.indexOf("case 'list_user_sessions'"),
+    adminFnCode.indexOf("case 'revoke_user_sessions'"));
+  assert.doesNotMatch(handler, /token_hash/);
+});
+
+test('every access dialog round-trips the version it loaded', () => {
+  // Optimistic concurrency is only a protection if the form sends the version
+  // it read rather than a freshly fetched one.
+  for (const path of [
+    'src/components/admin/builder-portal/BuilderOrganisationDialog.tsx',
+    'src/components/admin/builder-portal/BuilderOrganisationStatusDialog.tsx',
+    'src/components/admin/builder-portal/BuilderUserDialog.tsx',
+    'src/components/admin/builder-portal/BuilderMembershipDialog.tsx',
+  ]) {
+    assert.match(read(path), /expected_version/, `${path} does not send expected_version`);
+  }
 });
 
 // ---------------------------------------------------------------------------

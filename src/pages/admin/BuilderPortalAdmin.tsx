@@ -6,13 +6,24 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
+import { BuilderOrganisationDialog } from '@/components/admin/builder-portal/BuilderOrganisationDialog';
+import { BuilderOrganisationStatusDialog } from '@/components/admin/builder-portal/BuilderOrganisationStatusDialog';
+import { BuilderUserDialog } from '@/components/admin/builder-portal/BuilderUserDialog';
+import { BuilderMembershipDialog } from '@/components/admin/builder-portal/BuilderMembershipDialog';
+import { BuilderUserSessionsDialog } from '@/components/admin/builder-portal/BuilderUserSessionsDialog';
+import { BuilderMembershipPermissionsDialog } from '@/components/admin/builder-portal/BuilderMembershipPermissionsDialog';
+import {
+  MEMBERSHIP_ROLES, ORG_STATUS_META, ORG_TYPES,
+  type BuilderMembership, type BuilderOrganisation, type BuilderPermissionKey,
+  type BuilderPermissionOverride, type BuilderRoleDefault, type BuilderUser,
+  type BuilderUserSession,
+} from '@/components/admin/builder-portal/accessTypes';
 import { AdminBuilderProjectsPanel } from '@/components/admin/builder-portal/AdminBuilderProjectsPanel';
 import { AdminBuilderInventoryPanel } from '@/components/admin/builder-portal/AdminBuilderInventoryPanel';
 import { AdminBuilderTransactionsPanel } from '@/components/admin/builder-portal/AdminBuilderTransactionsPanel';
@@ -21,7 +32,9 @@ import { AdminBuilderDeliveryPanel } from '@/components/admin/builder-portal/Adm
 import { AdminBuilderCollaborationPanel } from '@/components/admin/builder-portal/AdminBuilderCollaborationPanel';
 import { AdminBuilderWorkspacePanel } from '@/components/admin/builder-portal/AdminBuilderWorkspacePanel';
 import { toast } from 'sonner';
-import { Copy, HardHat, Loader2, Mail, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
+import {
+  Copy, HardHat, KeyRound, Loader2, Mail, Pencil, Plus, RefreshCw, ShieldCheck, Users,
+} from 'lucide-react';
 
 /**
  * Builder / Developer Portal administration — Phase 1 shell.
@@ -34,57 +47,6 @@ import { Copy, HardHat, Loader2, Mail, Plus, RefreshCw, ShieldCheck, Users } fro
  * route tree with its own provider and its own session and is never linked from
  * here or from any internal navigation surface (ADR 018).
  */
-
-const ORG_TYPES = [
-  { value: 'developer', label: 'Developer' },
-  { value: 'builder', label: 'Builder' },
-  { value: 'builder_developer', label: 'Builder and developer' },
-  { value: 'sales_representative', label: 'Authorised sales representative' },
-] as const;
-
-const MEMBERSHIP_ROLES = [
-  { value: 'owner', label: 'Organisation owner' },
-  { value: 'administrator', label: 'Administrator' },
-  { value: 'manager', label: 'Manager' },
-  { value: 'member', label: 'Member' },
-  { value: 'read_only', label: 'Read only' },
-] as const;
-
-const ORG_STATUS_META: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
-  active: { label: 'Active', variant: 'default' },
-  pending_activation: { label: 'Pending activation', variant: 'secondary' },
-  suspended: { label: 'Suspended', variant: 'outline' },
-  closed: { label: 'Closed', variant: 'destructive' },
-};
-
-interface BuilderOrganisation {
-  id: string;
-  legal_name: string;
-  trading_name: string | null;
-  org_type: string;
-  abn: string | null;
-  acn: string | null;
-  contact_email: string | null;
-  status: string;
-  is_active: boolean;
-  row_version: number;
-}
-
-interface BuilderUser {
-  id: string;
-  email: string;
-  name: string;
-  job_title: string | null;
-  status: string;
-  is_active: boolean;
-  invited_at: string | null;
-  invite_token_expires_at: string | null;
-  invite_accepted_at: string | null;
-  last_login_at: string | null;
-  /** Derived server-side: the invite was accepted and a password exists. */
-  has_completed_account_setup: boolean;
-  row_version: number;
-}
 
 /**
  * Where a user sits in the Builder access lifecycle:
@@ -145,16 +107,6 @@ function accessStageFor(user: BuilderUser, hasMembership: boolean): AccessStage 
   return new Date(user.invite_token_expires_at) > new Date() ? 'invite_pending' : 'invite_expired';
 }
 
-interface BuilderMembership {
-  id: string;
-  builder_user_id: string;
-  organisation_id: string;
-  membership_role: string;
-  status: string;
-  revoked_at: string | null;
-  row_version: number;
-}
-
 export default function BuilderPortalAdmin() {
   const { canEdit } = useModulePermissions('builder_portal_admin');
   const [loading, setLoading] = useState(true);
@@ -164,14 +116,24 @@ export default function BuilderPortalAdmin() {
   const [memberships, setMemberships] = useState<BuilderMembership[]>([]);
   const [search, setSearch] = useState('');
 
+  // Each dialog holds the row it is editing; null means "create".
   const [orgDialogOpen, setOrgDialogOpen] = useState(false);
-  const [orgForm, setOrgForm] = useState({ legal_name: '', trading_name: '', org_type: 'builder', abn: '', contact_email: '' });
+  const [orgEditing, setOrgEditing] = useState<BuilderOrganisation | null>(null);
+
+  const [orgStatusOpen, setOrgStatusOpen] = useState(false);
+  const [orgStatusTarget, setOrgStatusTarget] = useState<BuilderOrganisation | null>(null);
 
   const [userDialogOpen, setUserDialogOpen] = useState(false);
-  const [userForm, setUserForm] = useState({ email: '', name: '', job_title: '' });
+  const [userEditing, setUserEditing] = useState<BuilderUser | null>(null);
 
   const [membershipDialogOpen, setMembershipDialogOpen] = useState(false);
-  const [membershipForm, setMembershipForm] = useState({ builder_user_id: '', organisation_id: '', membership_role: 'member' });
+  const [membershipEditing, setMembershipEditing] = useState<BuilderMembership | null>(null);
+
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [sessionsUser, setSessionsUser] = useState<BuilderUser | null>(null);
+
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [permissionsMembership, setPermissionsMembership] = useState<BuilderMembership | null>(null);
 
   // Surfaced only when the invite function reports that email delivery did not
   // happen. The link is one-time and is never persisted anywhere in the browser.
@@ -255,6 +217,71 @@ export default function BuilderPortalAdmin() {
       setBusy(false);
     }
   }, [callInvite, load]);
+
+  const loadSessions = useCallback(async (userId: string): Promise<BuilderUserSession[]> => {
+    try {
+      const data = await call('list_user_sessions', { builder_user_id: userId });
+      return (data?.sessions ?? []) as BuilderUserSession[];
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to load sessions');
+      return [];
+    }
+  }, [call]);
+
+  /**
+   * The catalogue is the same for every membership, so it is fetched per dialog
+   * open rather than cached here — it is small, and a stale catalogue would
+   * offer a key the server has since forbidden.
+   */
+  const loadCatalogue = useCallback(async (): Promise<{
+    permission_keys: BuilderPermissionKey[]; role_defaults: BuilderRoleDefault[];
+  }> => {
+    try {
+      const data = await call('get_permission_catalogue');
+      return {
+        permission_keys: (data?.permission_keys ?? []) as BuilderPermissionKey[],
+        role_defaults: (data?.role_defaults ?? []) as BuilderRoleDefault[],
+      };
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to load the permission catalogue');
+      return { permission_keys: [], role_defaults: [] };
+    }
+  }, [call]);
+
+  const loadOverrides = useCallback(async (membershipId: string): Promise<BuilderPermissionOverride[]> => {
+    try {
+      const data = await call('get_membership_permissions', { membership_id: membershipId });
+      return (data?.overrides ?? []) as BuilderPermissionOverride[];
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to load permission overrides');
+      return [];
+    }
+  }, [call]);
+
+  const savePermissions = useCallback(async (
+    membershipId: string, overrides: Record<string, unknown>[], reason: string | null,
+  ) => {
+    setBusy(true);
+    try {
+      const data = await call('update_membership_permissions', {
+        membership_id: membershipId, overrides, reason,
+      });
+      const rejected: string[] = data?.rejected_keys ?? [];
+      if (rejected.length) {
+        // The server strips forbidden and unknown keys rather than failing the
+        // whole write, so say which were dropped instead of implying success.
+        toast.warning(`Saved. ${rejected.length} key(s) were rejected: ${rejected.join(', ')}`);
+      } else {
+        toast.success(`Permissions saved (${data?.applied ?? 0} override(s))`);
+      }
+      return data as { applied: number; rejected_keys: string[] };
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to save permissions');
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }, [call]);
 
   const revokeInvite = useCallback(async (user: BuilderUser) => {
     setBusy(true);
@@ -388,7 +415,11 @@ export default function BuilderPortalAdmin() {
                   created automatically from existing builder names.
                 </CardDescription>
               </div>
-              <Button size="sm" disabled={!canEdit || busy} onClick={() => setOrgDialogOpen(true)}>
+              <Button
+                size="sm"
+                disabled={!canEdit || busy}
+                onClick={() => { setOrgEditing(null); setOrgDialogOpen(true); }}
+              >
                 <Plus className="mr-2 h-4 w-4" aria-hidden />
                 Add organisation
               </Button>
@@ -431,19 +462,25 @@ export default function BuilderPortalAdmin() {
                           <TableCell className="text-sm text-muted-foreground">{organisation.abn ?? '—'}</TableCell>
                           <TableCell><Badge variant={meta.variant}>{meta.label}</Badge></TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={!canEdit || busy}
-                              onClick={() => void mutate('set_organisation_status', {
-                                organisation_id: organisation.id,
-                                expected_version: organisation.row_version,
-                                status: organisation.is_active ? 'suspended' : 'active',
-                                reason: organisation.is_active ? 'Suspended by administrator' : null,
-                              }, organisation.is_active ? 'Organisation suspended' : 'Organisation activated')}
-                            >
-                              {organisation.is_active ? 'Suspend' : 'Activate'}
-                            </Button>
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!canEdit || busy}
+                                onClick={() => { setOrgEditing(organisation); setOrgDialogOpen(true); }}
+                              >
+                                <Pencil className="mr-2 h-4 w-4" aria-hidden />
+                                Edit
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!canEdit || busy}
+                                onClick={() => { setOrgStatusTarget(organisation); setOrgStatusOpen(true); }}
+                              >
+                                Change status
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -471,7 +508,11 @@ export default function BuilderPortalAdmin() {
                   invitation. Job title is descriptive and grants nothing.
                 </CardDescription>
               </div>
-              <Button size="sm" disabled={!canEdit || busy} onClick={() => setUserDialogOpen(true)}>
+              <Button
+                size="sm"
+                disabled={!canEdit || busy}
+                onClick={() => { setUserEditing(null); setUserDialogOpen(true); }}
+              >
                 <Plus className="mr-2 h-4 w-4" aria-hidden />
                 Add user
               </Button>
@@ -587,11 +628,19 @@ export default function BuilderPortalAdmin() {
                                 size="sm"
                                 variant="outline"
                                 disabled={!canEdit || busy}
-                                onClick={() => void mutate('revoke_user_sessions', {
-                                  builder_user_id: user.id, reason: 'revoked by administrator',
-                                }, 'Sessions revoked')}
+                                onClick={() => { setUserEditing(user); setUserDialogOpen(true); }}
                               >
-                                Revoke sessions
+                                <Pencil className="mr-2 h-4 w-4" aria-hidden />
+                                Edit
+                              </Button>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => { setSessionsUser(user); setSessionsOpen(true); }}
+                              >
+                                Sessions
                               </Button>
                             </div>
                           </TableCell>
@@ -616,7 +665,11 @@ export default function BuilderPortalAdmin() {
                   membership immediately ends their sessions.
                 </CardDescription>
               </div>
-              <Button size="sm" disabled={!canEdit || busy} onClick={() => setMembershipDialogOpen(true)}>
+              <Button
+                size="sm"
+                disabled={!canEdit || busy}
+                onClick={() => { setMembershipEditing(null); setMembershipDialogOpen(true); }}
+              >
                 <Plus className="mr-2 h-4 w-4" aria-hidden />
                 Grant membership
               </Button>
@@ -641,31 +694,67 @@ export default function BuilderPortalAdmin() {
                         </TableCell>
                       </TableRow>
                     )}
-                    {liveMemberships.map((membership) => (
-                      <TableRow key={membership.id}>
-                        <TableCell className="font-medium">{userName(membership.builder_user_id)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {organisationName(membership.organisation_id)}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {MEMBERSHIP_ROLES.find((r) => r.value === membership.membership_role)?.label
-                            ?? membership.membership_role}
-                        </TableCell>
-                        <TableCell><Badge variant="default">Active</Badge></TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!canEdit || busy}
-                            onClick={() => void mutate('revoke_membership', {
-                              membership_id: membership.id, reason: 'revoked by administrator',
-                            }, 'Membership revoked')}
-                          >
-                            Revoke
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {liveMemberships.map((membership) => {
+                      // Revoking a user's only membership removes their access
+                      // entirely and ends their sessions, so say so first.
+                      const isLastForUser = liveMemberships.filter(
+                        (entry) => entry.builder_user_id === membership.builder_user_id).length === 1;
+                      return (
+                        <TableRow key={membership.id}>
+                          <TableCell className="font-medium">{userName(membership.builder_user_id)}</TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {organisationName(membership.organisation_id)}
+                            {membership.is_primary && (
+                              <Badge variant="secondary" className="ml-2">Primary</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {MEMBERSHIP_ROLES.find((r) => r.value === membership.membership_role)?.label
+                              ?? membership.membership_role}
+                          </TableCell>
+                          <TableCell><Badge variant="default">Active</Badge></TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!canEdit || busy}
+                                onClick={() => { setMembershipEditing(membership); setMembershipDialogOpen(true); }}
+                              >
+                                <Pencil className="mr-2 h-4 w-4" aria-hidden />
+                                Edit
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={busy}
+                                onClick={() => { setPermissionsMembership(membership); setPermissionsOpen(true); }}
+                              >
+                                <KeyRound className="mr-2 h-4 w-4" aria-hidden />
+                                Permissions
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!canEdit || busy}
+                                onClick={() => {
+                                  const who = userName(membership.builder_user_id);
+                                  const warning = isLastForUser
+                                    ? `${who} has no other organisation. Revoking this membership removes their portal access entirely and ends their sessions. Continue?`
+                                    : `Revoke ${who}'s membership of ${organisationName(membership.organisation_id)}?`;
+                                  if (!window.confirm(warning)) return;
+                                  void mutate('revoke_membership', {
+                                    membership_id: membership.id, reason: 'revoked by administrator',
+                                  }, 'Membership revoked');
+                                }}
+                              >
+                                Revoke
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>
@@ -703,111 +792,45 @@ export default function BuilderPortalAdmin() {
       </Tabs>
 
       {/* ------------------------------------------------------------ dialogs */}
-      <Dialog open={orgDialogOpen} onOpenChange={setOrgDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add organisation</DialogTitle>
-            <DialogDescription>
-              New organisations start pending activation. Activate them once details are confirmed.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="org-legal-name">Legal name</Label>
-              <Input id="org-legal-name" value={orgForm.legal_name}
-                onChange={(event) => setOrgForm({ ...orgForm, legal_name: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-trading-name">Trading name</Label>
-              <Input id="org-trading-name" value={orgForm.trading_name}
-                onChange={(event) => setOrgForm({ ...orgForm, trading_name: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-type">Organisation type</Label>
-              <Select value={orgForm.org_type} onValueChange={(value) => setOrgForm({ ...orgForm, org_type: value })}>
-                <SelectTrigger id="org-type"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ORG_TYPES.map((type) => (
-                    <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-abn">ABN</Label>
-              <Input id="org-abn" value={orgForm.abn} inputMode="numeric"
-                onChange={(event) => setOrgForm({ ...orgForm, abn: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-email">Contact email</Label>
-              <Input id="org-email" type="email" value={orgForm.contact_email}
-                onChange={(event) => setOrgForm({ ...orgForm, contact_email: event.target.value })} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOrgDialogOpen(false)}>Cancel</Button>
-            <Button
-              disabled={busy || !orgForm.legal_name.trim()}
-              onClick={async () => {
-                const ok = await mutate('upsert_organisation', orgForm, 'Organisation created');
-                if (ok) {
-                  setOrgDialogOpen(false);
-                  setOrgForm({ legal_name: '', trading_name: '', org_type: 'builder', abn: '', contact_email: '' });
-                }
-              }}
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BuilderOrganisationDialog
+        open={orgDialogOpen}
+        onOpenChange={setOrgDialogOpen}
+        organisation={orgEditing}
+        busy={busy}
+        onSubmit={(payload, isEdit) => mutate('upsert_organisation', payload,
+          isEdit ? 'Organisation updated' : 'Organisation created')}
+      />
 
-      <Dialog open={userDialogOpen} onOpenChange={setUserDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add portal user</DialogTitle>
-            <DialogDescription>
-              The user is created without access. Grant a membership to give them portal access.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="user-name">Name</Label>
-              <Input id="user-name" value={userForm.name}
-                onChange={(event) => setUserForm({ ...userForm, name: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="user-email">Email</Label>
-              <Input id="user-email" type="email" value={userForm.email}
-                onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="user-job-title">Job title</Label>
-              <Input id="user-job-title" value={userForm.job_title}
-                placeholder="Project manager, site supervisor, sales consultant…"
-                onChange={(event) => setUserForm({ ...userForm, job_title: event.target.value })} />
-              <p className="text-xs text-muted-foreground">
-                Descriptive only. Access comes from the membership role, not the job title.
-              </p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setUserDialogOpen(false)}>Cancel</Button>
-            <Button
-              disabled={busy || !userForm.name.trim() || !userForm.email.trim()}
-              onClick={async () => {
-                const ok = await mutate('create_user', userForm, 'Portal user created');
-                if (ok) {
-                  setUserDialogOpen(false);
-                  setUserForm({ email: '', name: '', job_title: '' });
-                }
-              }}
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BuilderOrganisationStatusDialog
+        open={orgStatusOpen}
+        onOpenChange={setOrgStatusOpen}
+        organisation={orgStatusTarget}
+        memberCount={orgStatusTarget
+          ? liveMemberships.filter((m) => m.organisation_id === orgStatusTarget.id).length
+          : 0}
+        busy={busy}
+        onSubmit={(payload) => mutate('set_organisation_status', payload, 'Organisation status changed')}
+      />
+
+      <BuilderUserDialog
+        open={userDialogOpen}
+        onOpenChange={setUserDialogOpen}
+        user={userEditing}
+        busy={busy}
+        onSubmit={(payload, isEdit) => mutate(isEdit ? 'update_user' : 'create_user', payload,
+          isEdit ? 'Portal user updated' : 'Portal user created')}
+      />
+
+      <BuilderUserSessionsDialog
+        open={sessionsOpen}
+        onOpenChange={setSessionsOpen}
+        user={sessionsUser}
+        busy={busy}
+        loadSessions={loadSessions}
+        onRevokeAll={(user) => mutate('revoke_user_sessions', {
+          builder_user_id: user.id, reason: 'revoked by administrator',
+        }, 'Sessions revoked')}
+      />
 
       {/* Shown only when the server reports that the invitation email could not
           be sent. The link is one-time; it is not stored and cannot be shown
@@ -845,69 +868,30 @@ export default function BuilderPortalAdmin() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={membershipDialogOpen} onOpenChange={setMembershipDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Grant membership</DialogTitle>
-            <DialogDescription>
-              Membership binds a user to one organisation and is the only source of portal access.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="membership-user">User</Label>
-              <Select value={membershipForm.builder_user_id}
-                onValueChange={(value) => setMembershipForm({ ...membershipForm, builder_user_id: value })}>
-                <SelectTrigger id="membership-user"><SelectValue placeholder="Select a user" /></SelectTrigger>
-                <SelectContent>
-                  {users.map((user) => (
-                    <SelectItem key={user.id} value={user.id}>{user.name} — {user.email}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="membership-org">Organisation</Label>
-              <Select value={membershipForm.organisation_id}
-                onValueChange={(value) => setMembershipForm({ ...membershipForm, organisation_id: value })}>
-                <SelectTrigger id="membership-org"><SelectValue placeholder="Select an organisation" /></SelectTrigger>
-                <SelectContent>
-                  {organisations.filter((o) => o.status !== 'closed').map((organisation) => (
-                    <SelectItem key={organisation.id} value={organisation.id}>{organisation.legal_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="membership-role">Role</Label>
-              <Select value={membershipForm.membership_role}
-                onValueChange={(value) => setMembershipForm({ ...membershipForm, membership_role: value })}>
-                <SelectTrigger id="membership-role"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {MEMBERSHIP_ROLES.map((role) => (
-                    <SelectItem key={role.value} value={role.value}>{role.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMembershipDialogOpen(false)}>Cancel</Button>
-            <Button
-              disabled={busy || !membershipForm.builder_user_id || !membershipForm.organisation_id}
-              onClick={async () => {
-                const ok = await mutate('upsert_membership', membershipForm, 'Membership granted');
-                if (ok) {
-                  setMembershipDialogOpen(false);
-                  setMembershipForm({ builder_user_id: '', organisation_id: '', membership_role: 'member' });
-                }
-              }}
-            >
-              Grant
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BuilderMembershipDialog
+        open={membershipDialogOpen}
+        onOpenChange={setMembershipDialogOpen}
+        membership={membershipEditing}
+        users={users}
+        organisations={organisations}
+        liveMemberships={liveMemberships}
+        busy={busy}
+        onSubmit={(payload, isEdit) => mutate('upsert_membership', payload,
+          isEdit ? 'Membership updated' : 'Membership granted')}
+      />
+
+      <BuilderMembershipPermissionsDialog
+        open={permissionsOpen}
+        onOpenChange={setPermissionsOpen}
+        membership={permissionsMembership}
+        userName={permissionsMembership ? userName(permissionsMembership.builder_user_id) : ''}
+        organisationName={permissionsMembership ? organisationName(permissionsMembership.organisation_id) : ''}
+        canEdit={canEdit}
+        busy={busy}
+        loadCatalogue={loadCatalogue}
+        loadOverrides={loadOverrides}
+        onSave={savePermissions}
+      />
     </div>
   );
 }
