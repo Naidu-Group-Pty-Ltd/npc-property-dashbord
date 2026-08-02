@@ -74,6 +74,19 @@ const call = async (payload: Record<string, unknown>) => {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** Base64 payload (no data-URI prefix) for the server-side upload fallback. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      resolve(result.includes(',') ? result.slice(result.indexOf(',') + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export interface UploadTicket {
   path: string;
   token: string;
