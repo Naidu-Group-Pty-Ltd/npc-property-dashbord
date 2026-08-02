@@ -1003,15 +1003,25 @@ export default function MarketUpdates() {
         </Dialog>
 
         {/* Q&A Dialog */}
-        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Ask AI about this update</DialogTitle>
-              <p className="text-xs text-muted-foreground">{qaUpdate?.title}</p>
+        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); } }}>
+          <DialogContent className="flex h-[90vh] max-w-4xl flex-col gap-0 p-0 sm:max-w-4xl">
+            <DialogHeader className="flex-none border-b border-border/60 p-5 pb-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <DialogTitle className="flex items-center gap-2 text-lg">
+                    <Sparkles className="h-4 w-4 text-primary" aria-hidden />Ask Aurixa about this update
+                  </DialogTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">{qaUpdate?.title}</p>
+                </div>
+                {qaThread.length > 0 && (
+                  <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setDialogConversationId(crypto.randomUUID()); }}>New thread</Button>
+                )}
+              </div>
             </DialogHeader>
-            <div className="space-y-3">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
               {qaThread.length > 0 && (
-                <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-background/40 p-2">
+                <div aria-label="Ask Aurixa conversation" className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-background/40 p-3">
+
                   {qaThread.map((turn, i) => (
                     <div key={i} className={cn('rounded-md p-2 text-sm', turn.role === 'user' ? 'bg-primary/10' : 'bg-background/70 border border-border/60')}>
                       <div className="mb-0.5 flex flex-wrap items-center gap-1 text-[10px] font-semibold uppercase text-muted-foreground">
