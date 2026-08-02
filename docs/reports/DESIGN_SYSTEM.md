@@ -94,9 +94,11 @@ supabase/functions/_shared/reportDesign/     ← canonical, pure TS
   brandResolve.pure.ts ✅ resolveReportPalette(), auditPaletteContrast()
   typography.pure.ts   ✅ print stacks, CONTAINER_INSTALLED_FAMILIES, missingFamilies()
   page.pure.ts         ✅ page geometry + the seven named pages
-  css.pure.ts          ⬜ buildReportCss(palette, options)
-  primitives.pure.ts   ⬜ cover, chapter, KPI strip, ledger, callout, disclaimer…
-  structure.pure.ts    ⬜ REPORT_ARCHETYPES — page/section contract per format
+  options.pure.ts      ✅ ReportDesignOptions, density metrics, clamping
+  css.pure.ts          ✅ buildReportCss({palette, options, masthead})
+  primitives.pure.ts   ✅ cover, chapter, KPI strip, table, callout, company page…
+  companyBlock.pure.ts ✅ contact/disclaimer shaping shared by all three renderers
+  structure.pure.ts    ✅ REPORT_ARCHETYPES, buildSpine(), validateSpine()
   assets.pure.ts       ⬜ logo resolution + inline policy
   charts.pure.ts       ⬜ SVG chart geometry
   snapshot.pure.ts     ⬜ ReportBrandSnapshot type + builder
@@ -104,8 +106,17 @@ supabase/functions/_shared/reportDesign/     ← canonical, pure TS
 src/lib/reportDesign/<same names>.pure.ts    ← one-line export * bridges
 src/lib/reportDesign/__tests__/designSystemSourceOfTruth.spec.ts
 src/lib/reportDesign/__tests__/printContrast.spec.ts
+src/lib/reportDesign/__tests__/reportSourceHygiene.spec.ts   ← no literals, no "NPC"
+src/lib/reportDesign/__tests__/reportCss.spec.ts             ← print legality
+src/lib/reportDesign/__tests__/reportPrimitives.spec.ts      ← escaping + contract
+src/lib/reportDesign/__tests__/reportStructure.spec.ts       ← spine validation
 scripts/reportDesign/buildTokens.ts          ← the generator (+ `--check` for CI)
+scripts/reportDesign/buildSpecimen.ts        ← `npm run reportkit:specimen`
 ```
+
+`premiumPdfDesign.ts` (the design panel's option contract) and
+`src/utils/pdfDisclaimerPage.ts` (the jsPDF and pdf-lib closing pages) are now
+adapters over these modules rather than second definitions.
 
 `src/branding/color-utils.ts` is now a bridge onto `color.pure.ts` rather than a
 second implementation of the same ten functions.
@@ -234,6 +245,34 @@ one design system, so brand consistency does not depend on which one a format us
   `src/**/*.{test,spec}.{ts,tsx}`, so every `supabase/functions/**/*.test.ts` —
   including `render-investment-report-pdf/security-contract.test.ts` — never
   executes in CI.
+
+### What the first real render found (Phase 2)
+
+`npm run reportkit:specimen` builds a document that exercises every primitive;
+rendering it through WeasyPrint and rasterising the pages found six defects that
+no amount of reading the CSS would have. All six are fixed, and each one is now
+either impossible by construction or asserted by a test.
+
+| Defect | Cause | Fix |
+|---|---|---|
+| No running head on any continuation page of a chapter | `page: chapter-opener` applies to **every** page an element spans, not its first | The low title is `padding-top` on `.chapter`; `openChapter()` defaults to the `body` page |
+| Table caption stranded on the previous page | A `<caption>` is a separate box; `page-break-inside: avoid` on the table does not cover it | `renderDataTable` wraps table + caption in `.table-block` |
+| A pale stripe down the left of every banded row | The first cell is `<th scope="row">` for the tagged-PDF structure tree, and the band selector named only `td` | Cell selectors hoisted to constants that name both, so a variant cannot forget one |
+| Contact block ran off the right edge of the closing page | `.company-page` is 210mm **plus** 22mm padding on a zero-margin page | `box-sizing: border-box` on every full-bleed block |
+| Running foot wrapped to two lines | The `@bottom-left` box is a third of the measure; company + document name does not fit in letterspaced mono | `mastheadFor()` returns the company name alone; the document name lives on the cover, in the PDF title and in the running head |
+| The drop cap printed on top of the words it opened | WeasyPrint places a floated `::first-letter` but does not shorten the first line box around it | Ships a raised initial instead; `reportCss.spec.ts` fails on `float: left` |
+
+One caveat on that render, stated because it bounds what it proves: it was
+produced by WeasyPrint 69 on this workspace, not by the container
+(`weasyprint-service` pins 62.3), and the workspace has none of the brand faces
+installed — so every stack fell back to DejaVu/Liberation. **Layout, colour,
+pagination, banding and the running chrome are verified; the actual typefaces are
+not.** Confirming those needs the container, which is Phase 4's font work.
+
+The specimen is also the re-skin proof: the same content rendered with
+`--preset=minimal_ink --brand='#00A3FF' --density=compact --table=ledger
+--chapter=opener_band` changes stock, rhythm, rules and every brand mark, while
+the negative figures stay the one red and the positives the one green.
 
 ## 10 · Known hazards
 

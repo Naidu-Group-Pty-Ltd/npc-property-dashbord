@@ -1,105 +1,125 @@
 /**
- * Shared Disclaimer & Contact Page for all PDF reports.
- * 
- * This is the SINGLE SOURCE OF TRUTH for the dark-themed branded
- * disclaimer/contact page used across every report type.
- * 
- * Two implementations are provided:
- *   - drawJsPDFDisclaimerPage()  → for jsPDF-based generators
- *   - drawPdfLibDisclaimerPage() → for pdf-lib-based generators
+ * The shared disclaimer & contact page — the dark closing page every report
+ * ends on.
+ *
+ * Two renderers remain because two PDF libraries remain: jsPDF and pdf-lib are
+ * both still in the shipping client paths. What is no longer duplicated is the
+ * *design*. Both now take their colour from `resolveReportPalette()` and their
+ * text shaping from `companyBlock.pure.ts`, which is the same pair the
+ * WeasyPrint page uses (`renderCompanyPage` in `primitives.pure.ts`). Three
+ * renderers, one page.
+ *
+ * What changed in the port:
+ *  - `#BF9B50` — one of eight brand golds in this repo, and 2.6:1 on the
+ *    near-black it was painted on — is gone. The accent is the palette's
+ *    on-field brand colour, which is contrast-audited against that exact ground
+ *    by `printContrast.spec.ts`.
+ *  - `#141414` becomes the design system's obsidian, so the closing page
+ *    matches the cover instead of being a different black.
+ *  - Contact *values* are set in ink rather than gold. Gold-on-black at 9pt for
+ *    a phone number was the least legible type in the product.
+ *  - The disclaimer's `font_size` setting is honoured here. The jsPDF
+ *    implementation hardcoded 8.5pt and silently ignored it.
  */
-
 import type { jsPDF } from 'jspdf';
 import type { PDFDocument, PDFFont } from 'pdf-lib';
 import { rgb } from 'pdf-lib';
 import type { ContactDetails, ProfessionalDisclaimer } from '@/hooks/useGlobalReportSettings';
+import { hexToRgb01, mixHex } from '@/lib/reportDesign/color.pure';
+import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
+import type { ResolvedReportPalette } from '@/lib/reportDesign/roles.pure';
+import { disclaimerFontPt, resolveCompanyBlock } from '@/lib/reportDesign/companyBlock.pure';
 
-// ─── Design tokens (matching the Q&A message export template) ─────────────────
-const GOLD = { r: 191, g: 155, b: 80 };     // #BF9B50
-const GRAY = { r: 153, g: 153, b: 153 };     // #999999
-const BG   = { r: 20,  g: 20,  b: 20 };      // #141414
+/**
+ * The house palette.
+ *
+ * A parameter rather than a constant so Phase 3 can thread a tenant's brand
+ * snapshot through without touching eleven call sites.
+ */
+const DEFAULT_PALETTE = resolveReportPalette();
 
-// ─── Sanitisation helper ──────────────────────────────────────────────────────
-function sanitise(text: string): string {
-  if (!text) return '';
-  return text
-    .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}]/gu, '')
-    .replace(/[^\x20-\x7E\xA0-\xFF\n\r\t]/g, '');
+/** Muted ink on the dark field. No alpha channel on either path — pre-mix it. */
+function mutedOnField(palette: ResolvedReportPalette): string {
+  return mixHex(palette.onFieldInk, palette.field, 0.32);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  jsPDF implementation
-// ═══════════════════════════════════════════════════════════════════════════════
+const to255 = (hex: string): { r: number; g: number; b: number } => {
+  const [r, g, b] = hexToRgb01(hex);
+  return { r: Math.round(r * 255), g: Math.round(g * 255), b: Math.round(b * 255) };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  jsPDF
+// ═══════════════════════════════════════════════════════════════════════════
 
 export function drawJsPDFDisclaimerPage(
   doc: jsPDF,
   contact: ContactDetails,
   disclaimer: ProfessionalDisclaimer,
+  palette: ResolvedReportPalette = DEFAULT_PALETTE,
 ) {
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
   const margin = 20;
 
+  const block = resolveCompanyBlock(contact, disclaimer);
+  const accent = to255(palette.accentOnField);
+  const ink = to255(palette.onFieldInk);
+  const muted = to255(mutedOnField(palette));
+  const field = to255(palette.field);
+
   doc.addPage();
 
-  // Dark background
-  doc.setFillColor(BG.r, BG.g, BG.b);
+  doc.setFillColor(field.r, field.g, field.b);
   doc.rect(0, 0, pageWidth, pageHeight, 'F');
 
-  // Company name — split last word to second line in smaller font
-  doc.setTextColor(GOLD.r, GOLD.g, GOLD.b);
+  // Company lockup — lead line large, tail line smaller beneath.
+  doc.setTextColor(accent.r, accent.g, accent.b);
   doc.setFontSize(28);
   doc.setFont('helvetica', 'bold');
-  const companyParts = (contact.company_name || 'Property Consulting')
-    .toUpperCase()
-    .split(' ');
-  if (companyParts.length >= 2) {
-    doc.text(companyParts.slice(0, -1).join(' '), margin, 40);
+  doc.text(block.name.lead, margin, 40);
+  if (block.name.tail) {
     doc.setFontSize(16);
     doc.setFont('helvetica', 'normal');
-    doc.text(companyParts[companyParts.length - 1], margin, 52);
-  } else {
-    doc.text(companyParts[0], margin, 40);
+    doc.text(block.name.tail, margin, 52);
   }
 
-  // "CONTACT US" heading
-  doc.setFontSize(14);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(GOLD.r, GOLD.g, GOLD.b);
-  doc.text('CONTACT US', margin, 80);
-
-  // Contact detail rows
-  const labelX = margin;
-  const valueX = margin + 35;
   let contactY = 100;
-  const lineH = 12;
 
-  const drawLine = (label: string, value: string | undefined | null) => {
-    if (!value) return;
-    doc.setFontSize(9);
+  if (block.rows.length) {
+    doc.setFontSize(14);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(GOLD.r, GOLD.g, GOLD.b);
-    doc.text(label.toUpperCase() + ':', labelX, contactY);
-    doc.setFont('helvetica', 'normal');
-    doc.text(value, valueX, contactY);
-    contactY += lineH;
-  };
+    doc.setTextColor(accent.r, accent.g, accent.b);
+    doc.text('CONTACT US', margin, 80);
 
-  drawLine('Website', contact.website);
-  drawLine('Email', contact.email);
-  drawLine('Phone', contact.phone);
-  drawLine('Address', contact.address);
-  drawLine('ABN', contact.abn);
+    const labelX = margin;
+    const valueX = margin + 35;
+    const lineH = 12;
 
-  // Disclaimer text anchored to the bottom
-  if (disclaimer.is_enabled && disclaimer.text) {
-    doc.setFontSize(8.5);
+    for (const row of block.rows) {
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(accent.r, accent.g, accent.b);
+      doc.text(`${row.label.toUpperCase()}:`, labelX, contactY);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(ink.r, ink.g, ink.b);
+      doc.text(row.value, valueX, contactY);
+      contactY += lineH;
+    }
+  }
+
+  if (block.disclaimer.paragraphs.length) {
+    const fontPt = block.disclaimer.fontPt;
+    doc.setFontSize(fontPt);
     doc.setFont('helvetica', 'normal');
-    doc.setTextColor(GRAY.r, GRAY.g, GRAY.b);
-    const cleaned = sanitise(disclaimer.text);
+    doc.setTextColor(muted.r, muted.g, muted.b);
+
     const maxW = pageWidth - margin * 1.5;
-    const wrapped: string[] = doc.splitTextToSize(cleaned, maxW);
-    const lh = 4.2;
+    const wrapped = block.disclaimer.paragraphs
+      .flatMap((para) => doc.splitTextToSize(para, maxW) as string[]);
+    // jsPDF measures in mm here; 0.353 converts a point to a millimetre and 1.4
+    // is the leading the page has always used.
+    const lh = fontPt * 0.353 * 1.4;
     const startY = pageHeight - 20 - wrapped.length * lh;
     doc.text(wrapped, margin * 0.75, Math.max(startY, contactY + 20), {
       lineHeightFactor: 1.4,
@@ -107,9 +127,9 @@ export function drawJsPDFDisclaimerPage(
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  pdf-lib implementation
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+//  pdf-lib
+// ═══════════════════════════════════════════════════════════════════════════
 
 export function drawPdfLibDisclaimerPage(
   pdfDoc: PDFDocument,
@@ -119,86 +139,72 @@ export function drawPdfLibDisclaimerPage(
   helveticaBold: PDFFont,
   contact: ContactDetails,
   disclaimer: ProfessionalDisclaimer,
+  palette: ResolvedReportPalette = DEFAULT_PALETTE,
 ) {
   const page = pdfDoc.addPage([pageWidth, pageHeight]);
   const marginLeft = 60;
 
-  const goldColor = rgb(GOLD.r / 255, GOLD.g / 255, GOLD.b / 255);
-  const grayColor = rgb(GRAY.r / 255, GRAY.g / 255, GRAY.b / 255);
+  const block = resolveCompanyBlock(contact, disclaimer);
+  const hex = (value: string) => {
+    const [r, g, b] = hexToRgb01(value);
+    return rgb(r, g, b);
+  };
+  const accentColor = hex(palette.accentOnField);
+  const inkColor = hex(palette.onFieldInk);
+  const mutedColor = hex(mutedOnField(palette));
 
-  // Dark background
   page.drawRectangle({
     x: 0,
     y: 0,
     width: pageWidth,
     height: pageHeight,
-    color: rgb(BG.r / 255, BG.g / 255, BG.b / 255),
+    color: hex(palette.field),
   });
 
   let yPos = pageHeight - 80;
 
-  // Company name — split last word to second line
-  const companyName = (contact.company_name || 'Property Consulting').toUpperCase();
-  const parts = companyName.split(' ');
-  if (parts.length >= 2) {
-    page.drawText(parts.slice(0, -1).join(' '), {
-      x: marginLeft, y: yPos, size: 28, font: helveticaBold, color: goldColor,
-    });
+  page.drawText(block.name.lead, {
+    x: marginLeft, y: yPos, size: 28, font: helveticaBold, color: accentColor,
+  });
+  if (block.name.tail) {
     yPos -= 20;
-    page.drawText(parts[parts.length - 1], {
-      x: marginLeft, y: yPos, size: 16, font: helveticaFont, color: goldColor,
-    });
-  } else {
-    page.drawText(companyName, {
-      x: marginLeft, y: yPos, size: 28, font: helveticaBold, color: goldColor,
+    page.drawText(block.name.tail, {
+      x: marginLeft, y: yPos, size: 16, font: helveticaFont, color: accentColor,
     });
   }
 
   yPos -= 40;
 
-  // "CONTACT US" heading
-  page.drawText('CONTACT US', {
-    x: marginLeft, y: yPos, size: 14, font: helveticaBold, color: goldColor,
-  });
-
-  yPos -= 30;
-
-  // Contact detail rows
-  const valueX = marginLeft + 80;
-  const lineH = 22;
-
-  const drawLine = (label: string, value: string | undefined | null) => {
-    if (!value) return;
-    page.drawText(label.toUpperCase() + ':', {
-      x: marginLeft, y: yPos, size: 9, font: helveticaBold, color: goldColor,
+  if (block.rows.length) {
+    page.drawText('CONTACT US', {
+      x: marginLeft, y: yPos, size: 14, font: helveticaBold, color: accentColor,
     });
-    page.drawText(value, {
-      x: valueX, y: yPos, size: 9, font: helveticaFont, color: goldColor,
-    });
-    yPos -= lineH;
-  };
+    yPos -= 30;
 
-  drawLine('Website', contact.website);
-  drawLine('Email', contact.email);
-  drawLine('Phone', contact.phone);
-  drawLine('Address', contact.address);
-  drawLine('ABN', contact.abn);
+    const valueX = marginLeft + 80;
+    const lineH = 22;
+    for (const row of block.rows) {
+      page.drawText(`${row.label.toUpperCase()}:`, {
+        x: marginLeft, y: yPos, size: 9, font: helveticaBold, color: accentColor,
+      });
+      page.drawText(row.value, {
+        x: valueX, y: yPos, size: 9, font: helveticaFont, color: inkColor,
+      });
+      yPos -= lineH;
+    }
+  }
 
-  // Disclaimer text anchored to the bottom
-  if (disclaimer.is_enabled && disclaimer.text) {
-    const cleaned = sanitise(disclaimer.text);
+  if (block.disclaimer.paragraphs.length) {
     const maxWidth = pageWidth - marginLeft * 2;
-    const fontSizeMap: Record<string, number> = { small: 8, medium: 10, large: 12 };
-    const fontSize = fontSizeMap[disclaimer.font_size || 'small'] || 8;
+    const fontSize = disclaimerFontPt(disclaimer.font_size);
     const lh = fontSize * 1.5;
     const paragraphGap = fontSize * 0.8;
 
-    const paragraphs = cleaned.split(/\n\s*\n|\n/).filter(p => p.trim());
     const allWrapped: string[][] = [];
     let totalHeight = 0;
 
-    for (const para of paragraphs) {
-      const words = para.trim().split(' ');
+    for (const para of block.disclaimer.paragraphs) {
+      const words = para.split(' ');
       let cur = '';
       const lines: string[] = [];
       for (const w of words) {
@@ -223,7 +229,7 @@ export function drawPdfLibDisclaimerPage(
       for (const line of lines) {
         if (dY < bottomMargin) break;
         page.drawText(line, {
-          x: marginLeft, y: dY, size: fontSize, font: helveticaFont, color: grayColor,
+          x: marginLeft, y: dY, size: fontSize, font: helveticaFont, color: mutedColor,
         });
         dY -= lh;
       }
