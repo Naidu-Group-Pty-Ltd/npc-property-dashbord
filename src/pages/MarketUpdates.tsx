@@ -783,7 +783,7 @@ export default function MarketUpdates() {
                       {update.geography.slice(0, 2).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
                     </div>
 
-                    <h3 className="mt-3 text-lg font-semibold leading-snug">
+                    <h3 className="mt-3 text-xl font-semibold leading-snug tracking-tight lg:text-2xl">
                       <a
                         href={update.source_url}
                         target="_blank"
