@@ -30,7 +30,7 @@ export function ClientFactFindSectionNavigation({ value, onChange }: { value: Cl
     role="tablist"
     aria-label="Client Fact Find sections"
     onKeyDown={handleKeyDown}
-    className="grid grid-cols-2 gap-1.5 rounded-2xl border border-border bg-card p-1.5 shadow-sm sm:grid-cols-3 lg:grid-cols-5"
+    className="grid grid-cols-2 gap-1.5 rounded-xl border border-border/80 bg-card p-1.5 shadow-md sm:grid-cols-3 lg:grid-cols-5"
   >
     {SECTIONS.map(section => {
       const Icon = section.icon;
@@ -45,9 +45,9 @@ export function ClientFactFindSectionNavigation({ value, onChange }: { value: Cl
         aria-selected={selected}
         tabIndex={selected ? 0 : -1}
         onClick={() => onChange(section.value)}
-        className="group flex min-h-12 min-w-0 items-center gap-2 rounded-xl border border-transparent bg-muted/40 px-2.5 py-1.5 text-left text-foreground transition-[background-color,border-color,color,box-shadow] hover:border-brand-300/35 hover:bg-brand-300/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card aria-selected:border-brand-300 aria-selected:bg-brand-300 aria-selected:text-primary-foreground aria-selected:shadow-md"
+        className="group flex min-h-11 min-w-0 items-center gap-2 rounded-lg border border-transparent bg-muted/30 px-2.5 py-1.5 text-left text-foreground transition-[background-color,border-color,color,box-shadow,transform] duration-150 hover:border-brand-300/30 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card active:scale-[0.98] motion-reduce:transition-none aria-selected:border-brand-300/50 aria-selected:bg-primary/20 aria-selected:text-foreground aria-selected:shadow-sm"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-muted-foreground shadow-sm group-hover:text-foreground group-aria-selected:border-primary-foreground/30 group-aria-selected:bg-primary-foreground/15 group-aria-selected:text-primary-foreground">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-muted-foreground shadow-inner group-hover:text-foreground group-aria-selected:border-brand-300/40 group-aria-selected:bg-primary/20 group-aria-selected:text-brand-200">
           <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
         <span className="min-w-0">
