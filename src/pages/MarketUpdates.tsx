@@ -724,7 +724,7 @@ export default function MarketUpdates() {
                       {held.source_authority && <Badge variant="secondary">{titleCase(held.source_authority)}</Badge>}
                       <span className="text-xs text-muted-foreground">Relevance {held.relevance_score}{typeof held.confidence_score === 'number' ? ` · Confidence ${held.confidence_score}` : ''}</span>
                     </div>
-                    <h3 className="mt-2 break-words font-semibold leading-snug">{held.title}</h3>
+                    <h3 className="mt-2 break-words text-xl font-semibold leading-snug tracking-tight lg:text-2xl">{held.title}</h3>
                     <p className="mt-2 break-words text-sm text-muted-foreground">{held.candidate_reason ? titleCase(held.candidate_reason) : 'Publication criteria were not met.'}</p>
                     {held.ai_summary && <p className="mt-2 break-words text-sm">{held.ai_summary}</p>}
                     <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
