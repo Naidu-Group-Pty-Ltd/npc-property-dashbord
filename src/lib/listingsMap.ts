@@ -164,6 +164,56 @@ export function priceTier(price: number | null | undefined, tiers: PriceTiers | 
 }
 
 /* -------------------------------------------------------------------------- */
+/* Property type glyphs (pin iconography)                                      */
+/* -------------------------------------------------------------------------- */
+
+export type PropertyGlyph = 'house' | 'apartment' | 'land' | 'commercial' | 'property';
+
+export const PROPERTY_GLYPHS: PropertyGlyph[] = [
+  'house',
+  'apartment',
+  'land',
+  'commercial',
+  'property',
+];
+
+/**
+ * `propertyType` is free text copied from whichever portal supplied the listing
+ * ("Unit/Apartment", "Vacant Land", "Semi-Rural Acreage"), so this matches on
+ * vocabulary rather than an enum.
+ *
+ * First match wins, and the order encodes the tie-breaks: a strata word beats a
+ * structure word ("Apartment Block" is an apartment), a trade word beats both
+ * ("Commercial Land" is commercial), and a structure beats a parcel so a
+ * "House and Land" package reads as a house while "Residential Land" stays land.
+ */
+const GLYPH_MATCHERS: Array<[PropertyGlyph, RegExp]> = [
+  ['apartment', /\b(apartment|apartments|unit|units|flat|flats|studio|penthouse|condo)\b/],
+  [
+    'commercial',
+    /\b(commercial|office|offices|retail|industrial|warehouse|shop|showroom|medical|hotel|motel)\b/,
+  ],
+  [
+    // "semi" only as the full phrase: "Semi-Rural Acreage" is a parcel, not a
+    // semi-detached dwelling.
+    'house',
+    /\b(house|houses|home|homes|cottage|villa|villas|duplex|townhouse|townhouses|terrace|semi detached)\b/,
+  ],
+  ['land', /\b(land|block|blocks|vacant|acreage|rural|farm|lot|allotment)\b/],
+];
+
+export function propertyGlyph(propertyType: string | null | undefined): PropertyGlyph {
+  if (typeof propertyType !== 'string') return 'property';
+  // Portals join types with slashes, dashes and underscores; \b needs separators.
+  const normalised = propertyType.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  if (!normalised || normalised === 'unknown') return 'property';
+  for (const [glyph, pattern] of GLYPH_MATCHERS) {
+    if (pattern.test(normalised)) return glyph;
+  }
+  return 'property';
+}
+
+/* -------------------------------------------------------------------------- */
 /* Heat weighting                                                              */
 /* -------------------------------------------------------------------------- */
 

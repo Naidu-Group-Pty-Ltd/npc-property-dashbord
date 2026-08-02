@@ -271,17 +271,20 @@
   --pin-fg: hsl(var(--destructive-foreground));
 }
 
-.listing-pin--dot,
 .listing-pin--ghost {
   align-items: center;
 }
 
+/* --- Chip pin (zoomed in): type glyph + price ---------------------------- */
 .listing-pin__chip {
+  /* Positioned so it shares a paint layer with the absolutely-positioned halo
+     and wins on DOM order — an unpositioned chip would paint underneath it. */
+  position: relative;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  height: 1.5rem;
-  padding: 0 0.5rem;
+  gap: 0.3rem;
+  height: 1.625rem;
+  padding: 0 0.55rem 0 0.16rem;
   border-radius: 9999px;
   white-space: nowrap;
   font-size: 0.6875rem;
@@ -290,11 +293,39 @@
   font-variant-numeric: tabular-nums;
   color: var(--pin-fg);
   background: var(--pin-bg);
-  border: 1px solid hsl(var(--background) / 0.75);
-  box-shadow: 0 3px 10px hsl(var(--foreground) / 0.3);
+  /* Two rings: the inner one lifts the pin off the tiles whatever the basemap,
+     the outer shadow gives it height. Together they are what makes a pin
+     traceable over satellite imagery. */
+  border: 1.5px solid hsl(var(--background));
+  box-shadow:
+    0 0 0 1px hsl(var(--foreground) / 0.14),
+    0 4px 12px hsl(var(--foreground) / 0.34);
   transition:
     transform 130ms ease,
     box-shadow 130ms ease;
+}
+
+/* The glyph sits in a disc of the chip's own text colour, so the icon reads as
+   a knocked-out silhouette rather than a smudge at 12px. */
+.listing-pin__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 9999px;
+  background: var(--pin-fg);
+}
+
+.listing-pin__glyph-svg {
+  width: 0.75rem;
+  height: 0.75rem;
+  fill: var(--pin-bg);
+}
+
+.listing-pin__label {
+  padding-bottom: 0.03rem;
 }
 
 .listing-pin__stem {
@@ -304,30 +335,96 @@
   transform: translateX(-50%);
   width: 0;
   height: 0;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-top: 7px solid var(--pin-bg);
-  filter: drop-shadow(0 2px 2px hsl(var(--foreground) / 0.25));
+  border-left: 5.5px solid transparent;
+  border-right: 5.5px solid transparent;
+  border-top: 8px solid var(--pin-bg);
+  filter: drop-shadow(0 2px 2px hsl(var(--foreground) / 0.3));
 }
 
 .listing-pin--chip:hover .listing-pin__chip,
 .listing-pin--chip:focus-visible .listing-pin__chip {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px hsl(var(--foreground) / 0.38);
+  box-shadow:
+    0 0 0 1px hsl(var(--foreground) / 0.14),
+    0 8px 18px hsl(var(--foreground) / 0.42);
 }
 
-.listing-pin--dot .listing-pin__dot {
-  width: 0.75rem;
-  height: 0.75rem;
+/* --- Teardrop pin (zoomed out): type glyph, no price --------------------- */
+.listing-pin__marker {
+  position: relative; /* see `.listing-pin__chip` — paints over the halo */
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 3px 4px hsl(var(--foreground) / 0.42));
+  /* Grow away from the tip: the tip is the coordinate and must not move. */
+  transform-origin: 50% 96%;
+  transition: transform 140ms ease;
+}
+
+.listing-pin__body {
+  fill: var(--pin-bg);
+  stroke: hsl(var(--background));
+  stroke-width: 1.5;
+}
+
+.listing-pin__face {
+  fill: var(--pin-fg);
+}
+
+.listing-pin__symbol {
+  fill: var(--pin-bg);
+}
+
+.listing-pin--pin:hover .listing-pin__marker,
+.listing-pin--pin:focus-visible .listing-pin__marker {
+  transform: scale(1.12);
+}
+
+/* --- Selected pin -------------------------------------------------------- */
+.listing-pin--active .listing-pin__marker {
+  transform: scale(1.18);
+}
+
+.listing-pin--active .listing-pin__chip {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 2px hsl(var(--primary)),
+    0 8px 20px hsl(var(--foreground) / 0.45);
+}
+
+.listing-pin__halo {
+  position: absolute;
   border-radius: 9999px;
   background: var(--pin-bg);
-  border: 2px solid hsl(var(--background));
-  box-shadow: 0 1px 5px hsl(var(--foreground) / 0.35);
-  transition: transform 130ms ease;
+  opacity: 0.28;
+  animation: listing-pin-halo 1.9s ease-out infinite;
 }
 
-.listing-pin--dot:hover .listing-pin__dot {
-  transform: scale(1.25);
+.listing-pin--pin .listing-pin__halo {
+  left: 50%;
+  top: 35.5%;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin: -1.25rem 0 0 -1.25rem;
+}
+
+.listing-pin--chip .listing-pin__halo {
+  left: -0.3rem;
+  right: -0.3rem;
+  top: -0.3rem;
+  height: 2.225rem;
+}
+
+@keyframes listing-pin-halo {
+  0% {
+    transform: scale(0.82);
+    opacity: 0.4;
+  }
+  70%,
+  100% {
+    transform: scale(1.3);
+    opacity: 0;
+  }
 }
 
 /* Heat-only mode keeps hit targets so the surface stays interrogable. */
@@ -355,6 +452,11 @@
   outline: 2px solid hsl(var(--primary));
   outline-offset: 3px;
   border-radius: 9999px;
+}
+
+/* The teardrop is taller than it is wide, so a pill outline would bow around it. */
+.leaflet-container .listing-pin--pin:focus-visible {
+  border-radius: 0.9rem;
 }
 
 /* --- Clusters ---------------------------------------------------------- */
@@ -460,6 +562,25 @@
   background: hsl(var(--destructive));
 }
 
+/* Property-type key — the same glyph the pins carry, at legend scale. */
+.listings-glyph-swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 0.9375rem;
+  height: 0.9375rem;
+  border-radius: 9999px;
+  background: hsl(var(--foreground) / 0.08);
+  border: 1px solid hsl(var(--border) / 0.7);
+}
+
+.listings-glyph-swatch svg {
+  width: 0.625rem;
+  height: 0.625rem;
+  fill: hsl(var(--foreground) / 0.75);
+}
+
 /* Dark basemaps need a touch more separation from the tiles. */
 .listings-map--dark-tiles .listing-pin--ghost .listing-pin__dot {
   border-color: hsl(var(--primary) / 0.65);
@@ -472,15 +593,23 @@
 @media (prefers-reduced-motion: reduce) {
   .listing-pin__chip,
   .listing-pin__dot,
+  .listing-pin__marker,
   .listings-cluster__ring,
   .listings-cluster__count {
     transition: none;
   }
 
   .listing-pin--chip:hover .listing-pin__chip,
-  .listing-pin--dot:hover .listing-pin__dot,
+  .listing-pin--pin:hover .listing-pin__marker,
   .listings-cluster:hover .listings-cluster__ring {
     transform: none;
+  }
+
+  /* The selection still has to be findable, so keep the halo — just hold it at
+     a steady ring instead of pulsing it. */
+  .listing-pin__halo {
+    animation: none;
+    opacity: 0.32;
   }
 }
 

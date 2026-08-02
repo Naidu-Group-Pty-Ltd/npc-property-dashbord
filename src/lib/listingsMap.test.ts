@@ -13,6 +13,8 @@ import {
   listingSetSignature,
   listingTimestamp,
   priceTier,
+  propertyGlyph,
+  PROPERTY_GLYPHS,
   quantile,
   type WeightedListing,
 } from '@/lib/listingsMap';
@@ -95,6 +97,46 @@ describe('price tiers', () => {
   it('ignores zero and negative prices when banding', () => {
     const tiers = computePriceTiers([0, -5, 100, 200, 300, 400]);
     expect(tiers?.q1).toBeGreaterThan(0);
+  });
+});
+
+describe('propertyGlyph', () => {
+  it('maps the common portal vocabularies onto a glyph', () => {
+    expect(propertyGlyph('House')).toBe('house');
+    expect(propertyGlyph('Townhouse')).toBe('house');
+    expect(propertyGlyph('Villa')).toBe('house');
+    expect(propertyGlyph('Apartment')).toBe('apartment');
+    expect(propertyGlyph('Unit/Apartment')).toBe('apartment');
+    expect(propertyGlyph('Vacant Land')).toBe('land');
+    expect(propertyGlyph('Semi-Rural Acreage')).toBe('land');
+    expect(propertyGlyph('Retail')).toBe('commercial');
+  });
+
+  it('falls back to the generic glyph when the type says nothing', () => {
+    expect(propertyGlyph('Unknown')).toBe('property');
+    expect(propertyGlyph('')).toBe('property');
+    expect(propertyGlyph(null)).toBe('property');
+    expect(propertyGlyph(undefined)).toBe('property');
+    expect(propertyGlyph('Retirement Living')).toBe('property');
+  });
+
+  it('resolves mixed types by specificity rather than word order', () => {
+    // A strata word beats a structure word, a trade word beats both, and a
+    // structure beats a bare parcel.
+    expect(propertyGlyph('Apartment Block')).toBe('apartment');
+    expect(propertyGlyph('Commercial Land')).toBe('commercial');
+    expect(propertyGlyph('House and Land')).toBe('house');
+    expect(propertyGlyph('Residential Land')).toBe('land');
+  });
+
+  it('does not match a vocabulary word buried inside another word', () => {
+    expect(propertyGlyph('Landscaped Estate')).toBe('property');
+  });
+
+  it('only ever returns a glyph the pin renderer knows about', () => {
+    for (const type of ['House', 'Unit', 'Land', 'Office', 'Gibberish', '']) {
+      expect(PROPERTY_GLYPHS).toContain(propertyGlyph(type));
+    }
   });
 });
 

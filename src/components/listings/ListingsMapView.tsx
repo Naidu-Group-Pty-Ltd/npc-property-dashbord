@@ -56,6 +56,8 @@ import {
   isMapMode,
   listingSetSignature,
   priceTier,
+  propertyGlyph,
+  PROPERTY_GLYPHS,
   type BasemapId,
   type GeoPoint,
   type HeatFocus,
@@ -63,7 +65,9 @@ import {
   type MapMode,
   type PriceTier,
   type PriceTiers,
+  type PropertyGlyph,
 } from '@/lib/listingsMap';
+import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
 
 export type { GeoPoint } from '@/lib/listingsMap';
 
@@ -99,7 +103,7 @@ interface ListingMarker {
   point: GeoPoint;
 }
 
-type PinVariant = 'chip' | 'dot' | 'ghost';
+type PinVariant = 'chip' | 'pin' | 'ghost';
 
 /* -------------------------------------------------------------------------- */
 /* Basemaps                                                                    */
@@ -161,10 +165,39 @@ function resolveBasemap(preference: BasemapId, isDark: boolean): BasemapDefiniti
 /* Marker icons                                                                */
 /* -------------------------------------------------------------------------- */
 
-const CHIP_HEIGHT = 24;
-const STEM_HEIGHT = 7;
-const DOT_SIZE = 16;
+const CHIP_HEIGHT = 26;
+const STEM_HEIGHT = 8;
+const PIN_WIDTH = 28;
+const PIN_HEIGHT = 36;
 const GHOST_SIZE = 22;
+
+/**
+ * Teardrop outline on a 28×36 grid: a 10.8r head centred at (14, 12.8) drawn
+ * with a single half-circle arc, tapering to a point at (14, 34.6). The 1.4
+ * units of slack under the tip leave room for the stroke.
+ */
+const TEARDROP_PATH =
+  'M14 34.6c0 0 10.8-13.3 10.8-21.8a10.8 10.8 0 1 0-21.6 0C3.2 21.3 14 34.6 14 34.6Z';
+
+/** Where the drawn tip sits, so the anchor lands on the coordinate, not the box. */
+const PIN_TIP_Y = 34.6;
+
+/** Glyph box inside the pin head, sized to sit inside the 7.6r face disc. */
+const PIN_SYMBOL_SCALE = 10.5 / 24;
+const PIN_SYMBOL_OFFSET = 14 - 10.5 / 2;
+
+function teardropSvg(glyph: PropertyGlyph): string {
+  return (
+    `<svg class="listing-pin__marker" viewBox="0 0 ${PIN_WIDTH} ${PIN_HEIGHT}" aria-hidden="true" focusable="false">` +
+    `<path class="listing-pin__body" d="${TEARDROP_PATH}"/>` +
+    '<circle class="listing-pin__face" cx="14" cy="12.8" r="7.6"/>' +
+    `<g class="listing-pin__symbol" transform="translate(${PIN_SYMBOL_OFFSET} ${12.8 - 10.5 / 2}) scale(${PIN_SYMBOL_SCALE})">` +
+    `<path fill-rule="evenodd" d="${PIN_GLYPH_PATHS[glyph]}"/>` +
+    '</g></svg>'
+  );
+}
+
+const HALO_HTML = '<span class="listing-pin__halo" aria-hidden="true"></span>';
 
 const iconCache = new Map<string, L.DivIcon>();
 
@@ -178,11 +211,19 @@ function cacheIcon(key: string, factory: () => L.DivIcon): L.DivIcon {
   return icon;
 }
 
-function pinIcon(variant: PinVariant, tier: PriceTier, label: string | null): L.DivIcon {
+function pinIcon(
+  variant: PinVariant,
+  tier: PriceTier,
+  glyph: PropertyGlyph,
+  label: string | null,
+  active: boolean,
+): L.DivIcon {
+  const state = active ? ' listing-pin--active' : '';
+
   if (variant === 'ghost') {
-    return cacheIcon('ghost', () =>
+    return cacheIcon(`ghost|${active}`, () =>
       L.divIcon({
-        className: 'listing-pin listing-pin--ghost',
+        className: `listing-pin listing-pin--ghost${state}`,
         html: '<span class="listing-pin__dot"></span>',
         iconSize: [GHOST_SIZE, GHOST_SIZE],
         iconAnchor: [GHOST_SIZE / 2, GHOST_SIZE / 2],
@@ -191,27 +232,35 @@ function pinIcon(variant: PinVariant, tier: PriceTier, label: string | null): L.
     );
   }
 
-  if (variant === 'dot' || !label) {
-    return cacheIcon(`dot|${tier}`, () =>
+  if (variant === 'pin' || !label) {
+    return cacheIcon(`pin|${tier}|${glyph}|${active}`, () =>
       L.divIcon({
-        className: `listing-pin listing-pin--dot listing-pin--${tier}`,
-        html: '<span class="listing-pin__dot"></span>',
-        iconSize: [DOT_SIZE, DOT_SIZE],
-        iconAnchor: [DOT_SIZE / 2, DOT_SIZE / 2],
-        popupAnchor: [0, -DOT_SIZE / 2],
+        className: `listing-pin listing-pin--pin listing-pin--${tier}${state}`,
+        html: (active ? HALO_HTML : '') + teardropSvg(glyph),
+        iconSize: [PIN_WIDTH, PIN_HEIGHT],
+        // The teardrop points at the coordinate, so the anchor is the drawn tip.
+        iconAnchor: [PIN_WIDTH / 2, PIN_TIP_Y],
+        // Clear the head, which reaches y≈2 — i.e. 32.6 above the anchor.
+        popupAnchor: [0, -(PIN_TIP_Y - 2)],
       }),
     );
   }
 
-  return cacheIcon(`chip|${tier}|${label}`, () => {
+  return cacheIcon(`chip|${tier}|${glyph}|${label}|${active}`, () => {
     // Estimated so the icon box matches the rendered chip: Leaflet needs real
     // dimensions for hit-testing, anchoring, and cluster spiderfy geometry.
-    const width = Math.max(40, Math.round(22 + label.length * 7.2));
+    // 40 covers the glyph disc, gutters and border; 7 is a generous per-character
+    // width for 11px bold tabular digits, so the box never crops the label.
+    const width = Math.max(58, Math.round(40 + label.length * 7));
     const height = CHIP_HEIGHT + STEM_HEIGHT;
     return L.divIcon({
-      className: `listing-pin listing-pin--chip listing-pin--${tier}`,
+      className: `listing-pin listing-pin--chip listing-pin--${tier}${state}`,
       html:
-        `<span class="listing-pin__chip">${escapeHtml(label)}</span>` +
+        (active ? HALO_HTML : '') +
+        '<span class="listing-pin__chip">' +
+        `<span class="listing-pin__glyph">${pinGlyphSvg(glyph, 'listing-pin__glyph-svg')}</span>` +
+        `<span class="listing-pin__label">${escapeHtml(label)}</span>` +
+        '</span>' +
         '<span class="listing-pin__stem" aria-hidden="true"></span>',
       iconSize: [width, height],
       iconAnchor: [width / 2, height],
@@ -406,6 +455,54 @@ const PIN_TIER_LEGEND: Array<{ tier: PriceTier; label: string }> = [
   { tier: 'top', label: 'Top quartile' },
 ];
 
+const LEGEND_HEADING = 'text-[10px] font-semibold uppercase tracking-wide text-muted-foreground';
+
+/** The same glyph the pins carry, so the key is read as the map is read. */
+function PinGlyphSwatch({ glyph }: { glyph: PropertyGlyph }) {
+  return (
+    <span className="listings-glyph-swatch" aria-hidden="true">
+      <svg viewBox="0 0 24 24" focusable="false">
+        <path fillRule="evenodd" d={PIN_GLYPH_PATHS[glyph]} />
+      </svg>
+    </span>
+  );
+}
+
+function PinLegend({ tiers }: { tiers: PriceTiers | null }) {
+  return (
+    <div className="space-y-2.5">
+      {tiers && (
+        <div className="space-y-1.5">
+          <p className={LEGEND_HEADING}>Pin colour · price band</p>
+          <ul className="grid grid-cols-2 gap-x-3 gap-y-1">
+            {PIN_TIER_LEGEND.map(({ tier, label }) => (
+              <li key={tier} className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <span
+                  className={`listings-tier-swatch listings-tier-swatch--${tier}`}
+                  aria-hidden="true"
+                />
+                {label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="space-y-1.5">
+        <p className={LEGEND_HEADING}>Pin icon · property type</p>
+        <ul className="flex flex-wrap gap-x-3 gap-y-1.5">
+          {PROPERTY_GLYPHS.map((glyph) => (
+            <li key={glyph} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <PinGlyphSwatch glyph={glyph} />
+              {PIN_GLYPH_LABELS[glyph]}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /* Markers layer                                                               */
 /* -------------------------------------------------------------------------- */
@@ -414,6 +511,7 @@ interface ListingMarkersProps {
   markers: ListingMarker[];
   tiers: PriceTiers | null;
   variant: PinVariant;
+  selectedId: string | null;
   onSelect: (id: string) => void;
 }
 
@@ -421,6 +519,7 @@ const ListingMarkers = memo(function ListingMarkers({
   markers,
   tiers,
   variant,
+  selectedId,
   onSelect,
 }: ListingMarkersProps) {
   const ghost = variant === 'ghost';
@@ -445,14 +544,23 @@ const ListingMarkers = memo(function ListingMarkers({
       {markers.map(({ listing, point }) => {
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
-        const title = [listing.address || listing.suburb || 'Listing', formatFullAud(listing.price)]
+        const glyph = propertyGlyph(listing.propertyType);
+        const active = listing.id === selectedId;
+        const title = [
+          listing.address || listing.suburb || 'Listing',
+          listing.propertyType,
+          formatFullAud(listing.price),
+        ]
           .filter(Boolean)
           .join(' · ');
         return (
           <Marker
             key={listing.id}
             position={[point.lat, point.lng]}
-            icon={pinIcon(variant, tier, label)}
+            icon={pinIcon(variant, tier, glyph, label, active)}
+            // Lift the open listing clear of its neighbours so the popup's
+            // owner is obvious in a dense cluster.
+            zIndexOffset={active ? 1200 : 0}
             title={title}
             alt={title}
             riseOnHover
@@ -614,7 +722,9 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
     ? 'ghost'
     : zoom >= CHIP_ZOOM_THRESHOLD
       ? 'chip'
-      : 'dot';
+      : 'pin';
+
+  const heatLegendVisible = showHeat && heatModel.points.length > 0;
 
   const basemap = resolveBasemap(basemapPref, isDark);
   const selected = useMemo(
@@ -842,6 +952,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
             markers={markers}
             tiers={tiers}
             variant={pinVariant}
+            selectedId={selectedId}
             onSelect={handleSelect}
           />
 
@@ -993,7 +1104,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
       </div>
 
       {/* Heat legend ------------------------------------------------------ */}
-      {showHeat && heatModel.points.length > 0 && (
+      {heatLegendVisible && (
         <div className="pointer-events-auto absolute left-3 top-16 z-[500] w-[min(19rem,calc(100%-1.5rem))] rounded-xl border border-border/60 bg-background/90 shadow-md backdrop-blur">
           <button
             type="button"
@@ -1054,27 +1165,41 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
                 />
               </div>
 
-              {showPins && tiers && (
-                <div className="space-y-1.5 border-t border-border/50 pt-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Pin price band
-                  </p>
-                  <ul className="grid grid-cols-2 gap-x-3 gap-y-1">
-                    {PIN_TIER_LEGEND.map(({ tier, label }) => (
-                      <li
-                        key={tier}
-                        className="flex items-center gap-1.5 text-[10px] text-muted-foreground"
-                      >
-                        <span
-                          className={`listings-tier-swatch listings-tier-swatch--${tier}`}
-                          aria-hidden="true"
-                        />
-                        {label}
-                      </li>
-                    ))}
-                  </ul>
+              {showPins && (
+                <div className="border-t border-border/50 pt-2">
+                  <PinLegend tiers={tiers} />
                 </div>
               )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Pin legend (pins-only mode, where the heat card is absent) --------- */}
+      {showPins && !heatLegendVisible && markers.length > 0 && (
+        <div className="pointer-events-auto absolute left-3 top-16 z-[500] w-[min(19rem,calc(100%-1.5rem))] rounded-xl border border-border/60 bg-background/90 shadow-md backdrop-blur">
+          <button
+            type="button"
+            onClick={() => setLegendOpen((open) => !open)}
+            aria-expanded={legendOpen}
+            className="flex w-full items-center justify-between gap-2 rounded-xl px-3 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50"
+          >
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              <MapPin className="h-3.5 w-3.5 text-primary" />
+              Pin legend
+            </span>
+            <ChevronDown
+              className={cn(
+                'h-3.5 w-3.5 text-muted-foreground transition-transform motion-reduce:transition-none',
+                legendOpen && 'rotate-180',
+              )}
+              aria-hidden="true"
+            />
+          </button>
+
+          {legendOpen && (
+            <div className="px-3 pb-3">
+              <PinLegend tiers={tiers} />
             </div>
           )}
         </div>
