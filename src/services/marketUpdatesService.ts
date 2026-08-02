@@ -156,6 +156,10 @@ export async function setMarketUpdateHidden(updateId: string, hidden: boolean): 
 }
 
 export async function archiveMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
+  // Dedicated archive function first (single-purpose, deploys cleanly); the
+  // multiplexed curate function stays as the fallback.
+  const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'archive', id:updateId });
+  if (!direct.error && (direct.data?.outcome === 'archived' || direct.data?.outcome === 'already_archived')) return direct.data.outcome;
   try {
     const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'archive', updateId });
     if (error) throw error;
@@ -181,6 +185,8 @@ export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdat
 
 /** Promotes a held candidate into the published feed. Server-authoritative. */
 export async function publishMarketUpdate(updateId: string): Promise<'published' | 'already_published'> {
+  const direct = await invokeSecureFunction<{ outcome?:string }>('market-updates-archive', { action:'publish', id:updateId });
+  if (!direct.error && (direct.data?.outcome === 'published' || direct.data?.outcome === 'already_published')) return direct.data.outcome as 'published' | 'already_published';
   try {
     const { data, error } = await invokeSecureFunction<{ outcome?:string }>('market-updates-curate', { action:'publish', updateId });
     if (error) throw error;
@@ -189,6 +195,7 @@ export async function publishMarketUpdate(updateId: string): Promise<'published'
     return outcome;
   } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
 }
+
 
 
 const mapArchivePage = (archive: any): MarketUpdateArchivePage => ({
