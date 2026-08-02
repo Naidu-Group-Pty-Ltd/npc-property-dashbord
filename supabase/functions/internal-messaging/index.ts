@@ -622,12 +622,6 @@ Deno.serve(async (req) => {
           return json({ success: false, error: 'file_data_not_base64' }, 400, corsHeaders);
         }
         const contentType = String(body.content_type ?? 'application/octet-stream');
-        const screened = await screenAttachments([
-          { file_name: fileName, mime_type: contentType, size: bytes.byteLength, head: bytes.slice(0, 32) },
-        ]);
-        if (!screened.ok) {
-          return json({ success: false, error: screened.error ?? 'attachment_rejected' }, 400, corsHeaders);
-        }
         const path = `${threadId}/${crypto.randomUUID()}-${fileName}`;
         const { error } = await sb.storage
           .from(ATTACHMENT_BUCKET)
@@ -635,11 +629,19 @@ Deno.serve(async (req) => {
         if (error) {
           return json({ success: false, error: error.message ?? 'upload_failed' }, 500, corsHeaders);
         }
-        return json(
-          { success: true, path, file_name: fileName, size: bytes.byteLength, content_type: contentType },
-          200,
-          corsHeaders,
-        );
+        // Screen the stored object with the same server-side rules the signed
+        // path uses, and delete it again if it turns out to be executable.
+        const { safe, blocked } = await screenAttachments(sb, [
+          { name: fileName, path, mime: contentType, size: bytes.byteLength } as Attachment,
+        ]);
+        if (blocked.length || !safe.length) {
+          await sb.storage.from(ATTACHMENT_BUCKET).remove([path]);
+          return json({ success: false, error: 'attachment_blocked' }, 400, corsHeaders);
+        }
+        return json({ success: true, path, file_name: fileName, attachment: safe[0] }, 200, corsHeaders);
+      }
+
+
 
       const path = String(body.path ?? '');
       if (!path.startsWith(`${threadId}/`)) {
