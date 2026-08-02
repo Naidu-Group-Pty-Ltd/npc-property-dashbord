@@ -674,7 +674,20 @@ export function InternalMessageToasts() {
           key={t.thread_id}
           thread={t}
           typingNow={!!typing[t.thread_id]}
-          onExpand={() => setActiveId(t.thread_id)}
+          onExpand={() => {
+            setMinimised((prev) => {
+              if (!prev[t.thread_id]) return prev;
+              const next = { ...prev };
+              delete next[t.thread_id];
+              return next;
+            });
+            setActiveId(t.thread_id);
+            // Opening the conversation is what marks it read.
+            setThreads((prev) =>
+              prev.map((x) => (x.thread_id === t.thread_id ? { ...x, unread: 0 } : x)),
+            );
+            loadMessages(t.thread_id, true);
+          }}
           onDismiss={() => dismiss(t.thread_id)}
         />
       ))}
