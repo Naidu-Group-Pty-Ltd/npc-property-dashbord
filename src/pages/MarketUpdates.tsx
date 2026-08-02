@@ -104,6 +104,8 @@ export default function MarketUpdates() {
   const [archivePendingIds,setArchivePendingIds]=useState<Set<string>>(()=>new Set());
   const archivePendingRef=useRef(new Set<string>());
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
+  /** Which update the retained dialog thread belongs to. */
+  const [qaThreadUpdateId, setQaThreadUpdateId] = useState<string | null>(null);
   const [question, setQuestion] = useState('');
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
   const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null }>>([]);
@@ -398,7 +400,7 @@ export default function MarketUpdates() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <CardTitle className="flex items-center gap-2 text-lg">
-              <Sparkles className="h-4 w-4 text-primary" />Ask AI
+              <Sparkles className="h-4 w-4 text-primary" />Ask Aurixa
             </CardTitle>
             <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market news. Threaded — follow-ups keep prior context.</p>
           </div>
@@ -408,7 +410,7 @@ export default function MarketUpdates() {
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-        <div aria-label="Ask AI conversation" className="min-h-[320px] flex-1 space-y-3 overflow-y-auto overflow-x-hidden rounded-xl border border-border/60 bg-background/40 p-3">
+        <div aria-label="Ask Aurixa conversation" className="min-h-[320px] flex-1 space-y-3 overflow-y-auto overflow-x-hidden rounded-xl border border-border/60 bg-background/40 p-3">
           {qaThread.length === 0 ? (
             <div className="flex h-full min-h-[280px] flex-col items-center justify-center text-center">
               <Sparkles className="mb-3 h-8 w-8 text-primary/70" />
@@ -460,7 +462,7 @@ export default function MarketUpdates() {
             </div>
           )}
         </div>
-        <div className="flex-none space-y-2" aria-label="Ask AI composer">
+        <div className="flex-none space-y-2" aria-label="Ask Aurixa composer">
           <Textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -724,7 +726,7 @@ export default function MarketUpdates() {
           <Tabs value={workspaceTab} onValueChange={(v) => setWorkspaceTab(v as 'updates' | 'ask-ai')} className="min-w-0 space-y-4">
             <TabsList aria-label="Market updates workspace" className="w-full justify-start sm:w-auto">
               <TabsTrigger value="updates">Latest Updates</TabsTrigger>
-              <TabsTrigger value="ask-ai">Ask AI</TabsTrigger>
+              <TabsTrigger value="ask-ai">Ask Aurixa</TabsTrigger>
             </TabsList>
             <TabsContent value="updates" className="mt-0 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -881,7 +883,18 @@ export default function MarketUpdates() {
 
                     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
                       <Button size="sm" onClick={() => setSelectedUpdate(update)}>Open Analysis</Button>
-                      <Button size="sm" variant="outline" onClick={() => { setQaUpdate(update); setQaMessage(null); setQaThread([]); setQuestion(''); setDialogConversationId(crypto.randomUUID()); }}>Ask AI</Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        setQaUpdate(update);
+                        setQaMessage(null);
+                        setQuestion('');
+                        // Retain the prior conversation when re-opening the same
+                        // update; only start a fresh thread for a different one.
+                        if (qaThreadUpdateId !== update.id) {
+                          setQaThread([]);
+                          setDialogConversationId(crypto.randomUUID());
+                          setQaThreadUpdateId(update.id);
+                        }
+                      }}><Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />Ask Aurixa</Button>
                       {canEditMarketUpdates && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" disabled={archivePendingIds.has(update.id)||!update.id} onClick={(event:MouseEvent<HTMLButtonElement>)=>{event.preventDefault();event.stopPropagation();void archiveUpdate(update);}} aria-label={`Archive ${update.title}`}>
                         {archivePendingIds.has(update.id) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}{archivePendingIds.has(update.id)?'Archiving…':'Archive'}
                       </Button>}
@@ -990,15 +1003,25 @@ export default function MarketUpdates() {
         </Dialog>
 
         {/* Q&A Dialog */}
-        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); setQaThread([]); setDialogConversationId(crypto.randomUUID()); } }}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Ask AI about this update</DialogTitle>
-              <p className="text-xs text-muted-foreground">{qaUpdate?.title}</p>
+        <Dialog open={Boolean(qaUpdate)} onOpenChange={(open) => { if (!open) { cancelAsk(); setQaUpdate(null); setQaMessage(null); } }}>
+          <DialogContent className="flex h-[90vh] max-w-4xl flex-col gap-0 p-0 sm:max-w-4xl">
+            <DialogHeader className="flex-none border-b border-border/60 p-5 pb-4">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <DialogTitle className="flex items-center gap-2 text-lg">
+                    <Sparkles className="h-4 w-4 text-primary" aria-hidden />Ask Aurixa about this update
+                  </DialogTitle>
+                  <p className="mt-1 text-sm text-muted-foreground">{qaUpdate?.title}</p>
+                </div>
+                {qaThread.length > 0 && (
+                  <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setDialogConversationId(crypto.randomUUID()); }}>New thread</Button>
+                )}
+              </div>
             </DialogHeader>
-            <div className="space-y-3">
+            <div className="flex min-h-0 flex-1 flex-col gap-3 p-5">
               {qaThread.length > 0 && (
-                <div className="max-h-72 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-background/40 p-2">
+                <div aria-label="Ask Aurixa conversation" className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-lg border border-border/60 bg-background/40 p-3">
+
                   {qaThread.map((turn, i) => (
                     <div key={i} className={cn('rounded-md p-2 text-sm', turn.role === 'user' ? 'bg-primary/10' : 'bg-background/70 border border-border/60')}>
                       <div className="mb-0.5 flex flex-wrap items-center gap-1 text-[10px] font-semibold uppercase text-muted-foreground">
@@ -1040,8 +1063,15 @@ export default function MarketUpdates() {
                   {asking && <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background/70 p-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Thinking…</div>}
                 </div>
               )}
-              <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[100px]" />
-              <div className="flex gap-2">
+              {qaThread.length === 0 && (
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-border/60 bg-background/40 p-6 text-center">
+                  <Sparkles className="mb-3 h-8 w-8 text-primary/70" aria-hidden />
+                  <h3 className="text-base font-semibold">Ask a source-grounded question</h3>
+                  <p className="mt-2 max-w-md text-sm text-muted-foreground">Answers are grounded in this update and related published market news. Your questions stay in this thread.</p>
+                </div>
+              )}
+              <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[120px] flex-none text-sm" />
+              <div className="flex flex-none gap-2">
                 <MarketQAVoiceButton onTranscript={(t) => setQuestion((q) => (q ? `${q.trim()} ${t}` : t))} disabled={asking} />
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>
                   {asking ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Asking…</> : <><Sparkles className="mr-2 h-4 w-4" />Ask safely</>}
