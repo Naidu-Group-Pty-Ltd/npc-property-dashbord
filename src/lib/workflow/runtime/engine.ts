@@ -13,6 +13,7 @@
  */
 
 import { getCatalogNode } from '../catalog';
+import { sampleOutput } from './sampleData';
 import { incoming, topologicalOrder } from '../graph';
 import type { CatalogNode, WorkflowGraph, WorkflowNode } from '../types';
 import {
@@ -106,6 +107,11 @@ const NATIVE = new Set([
   'core.dedupe',
   'core.batch',
   'core.loop',
+  // Both declare branches, and only the engine can choose one: `perform` returns
+  // a PerformOutcome, which has no way to name a branch. Delegating them left
+  // every step downstream of an approval or a retry permanently unreachable.
+  'core.approval',
+  'core.retry',
 ]);
 
 export async function runWorkflow(graph: WorkflowGraph, options: RunOptions): Promise<RunResult> {
@@ -208,12 +214,23 @@ export async function runWorkflow(graph: WorkflowGraph, options: RunOptions): Pr
     const { config, missing } = resolveConfig(node.config, scope);
 
     // Triggers do not execute; they seed the scope with their payload.
+    //
+    // With no payload the scope starts empty, so every `{{trigger.…}}` in the
+    // workflow resolves to nothing and the run reads as broken when it is only
+    // unfed. Falling back to the trigger's declared outputs means a test run
+    // shows the shape of a real one — marked as sample, so it cannot be
+    // mistaken for live data.
     if (definition.kind === 'trigger') {
+      const supplied = options.triggerPayload;
+      const seeded = supplied && Object.keys(supplied).length > 0;
       record({
         status: 'succeeded',
         resolvedConfig: config,
-        output: options.triggerPayload ?? {},
+        output: seeded ? supplied : sampleOutput(definition),
         missingReferences: [],
+        simulationNote: seeded
+          ? undefined
+          : 'No trigger data supplied, so this run used sample values.',
       });
       continue;
     }
@@ -349,6 +366,37 @@ function runNative(
     case 'core.merge': {
       const combined = Object.assign({}, ...context.incomingScopes);
       return { status: 'succeeded', output: { combined } };
+    }
+
+    case 'core.approval': {
+      // Nobody is standing by to approve during a run the engine drives, so it
+      // takes the approved path and says so. Stopping instead would make every
+      // workflow with a review step untestable past that point, which is the
+      // half people most want to see.
+      const approver = String(config.approver ?? 'the approver');
+      return {
+        status: 'succeeded',
+        output: {
+          decision: 'approved',
+          decidedBy: `[sample ${approver}]`,
+          comment: '',
+          decidedAt: new Date().toISOString(),
+        },
+        branchTaken: 'approved',
+        simulationNote: `Waits for ${approver}. This run assumed approval so the rest of the workflow could be checked.`,
+      };
+    }
+
+    case 'core.retry': {
+      // The retry envelope only matters when the step it guards fails; on the
+      // first pass it succeeds, which is the path worth showing.
+      const maxAttempts = Math.max(1, Number(config.maxAttempts) || 3);
+      return {
+        status: 'succeeded',
+        output: { attempts: 1, lastError: null },
+        branchTaken: 'success',
+        simulationNote: `Would retry up to ${maxAttempts} times before taking the exhausted path.`,
+      };
     }
 
     case 'core.dedupe':

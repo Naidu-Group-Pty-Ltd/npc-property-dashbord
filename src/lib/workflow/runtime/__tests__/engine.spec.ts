@@ -341,3 +341,77 @@ describe('integration steps', () => {
     expect(result.steps[1].error).toContain('not in the step library');
   });
 });
+
+describe('steps that choose a branch', () => {
+  // core.approval and core.retry declare branches, but `perform` returns a
+  // PerformOutcome, which cannot name one. While they were delegated, every
+  // step past an approval or a retry was permanently unreachable.
+  const twoWay = (type: string, taken: string, other: string, config = {}): WorkflowGraph => ({
+    nodes: [
+      node('t', 'core.manual'),
+      node('gate', type, config),
+      node('yes', 'core.template', { template: 'went ' + taken }),
+      node('no', 'core.template', { template: 'went ' + other }),
+    ],
+    edges: [
+      { id: 'e1', source: 't', target: 'gate' },
+      { id: 'e2', source: 'gate', target: 'yes', sourceBranch: taken },
+      { id: 'e3', source: 'gate', target: 'no', sourceBranch: other },
+    ],
+  });
+
+  it('carries an approval through its approved path', async () => {
+    const result = await run(twoWay('core.approval', 'approved', 'rejected', { approver: 'Finance' }));
+
+    expect(statusOf(result, 'gate')).toBe('succeeded');
+    expect(result.steps.find((s) => s.nodeId === 'gate')?.branchTaken).toBe('approved');
+    expect(statusOf(result, 'yes')).toBe('succeeded');
+    expect(statusOf(result, 'no')).toBe('skipped');
+  });
+
+  it('says an approval was assumed rather than obtained', async () => {
+    const result = await run(twoWay('core.approval', 'approved', 'rejected', { approver: 'Finance' }));
+    expect(result.steps.find((s) => s.nodeId === 'gate')?.simulationNote).toMatch(/Finance/);
+  });
+
+  it('carries a retry through its success path', async () => {
+    const result = await run(twoWay('core.retry', 'success', 'exhausted', { maxAttempts: 5 }));
+
+    expect(result.steps.find((s) => s.nodeId === 'gate')?.branchTaken).toBe('success');
+    expect(statusOf(result, 'yes')).toBe('succeeded');
+    expect(statusOf(result, 'no')).toBe('skipped');
+  });
+});
+
+describe('an unfed trigger', () => {
+  const graph: WorkflowGraph = {
+    nodes: [
+      node('t', 'platform.client_created', { source: 'any' }),
+      node('greet', 'core.template', { template: 'Hi {{t.firstName}}' }),
+    ],
+    edges: [{ id: 'e1', source: 't', target: 'greet' }],
+  };
+
+  it('stands in for missing trigger data so the run is readable', async () => {
+    // With an empty payload every {{trigger.…}} resolved to nothing, and a run
+    // that was merely unfed read as a broken one.
+    const result = await run(graph);
+
+    expect(result.steps[0].output.firstName).toBe('[sample firstName]');
+    expect(result.steps[1].output.text).toBe('Hi [sample firstName]');
+    expect(result.steps[1].missingReferences).toEqual([]);
+  });
+
+  it('says the values were stand-ins', async () => {
+    const result = await run(graph);
+    expect(result.steps[0].simulationNote).toMatch(/sample values/i);
+  });
+
+  it('prefers real trigger data whenever it is given', async () => {
+    const result = await run(graph, { triggerPayload: { firstName: 'Rae' } });
+
+    expect(result.steps[0].output.firstName).toBe('Rae');
+    expect(result.steps[1].output.text).toBe('Hi Rae');
+    expect(result.steps[0].simulationNote).toBeUndefined();
+  });
+});
