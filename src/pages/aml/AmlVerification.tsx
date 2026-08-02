@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { amlCasesApi, type AmlCase } from "@/lib/aml/amlCasesApi";
 import { amlVerificationApi, type IdentityCheck, type IdvStatus } from "@/lib/aml/amlVerificationApi";
 import { LegacyAliasBanner } from "@/components/aml/LegacyAliasBanner";
+import { SanctionsListHealth } from "@/components/aml/SanctionsListHealth";
 
 const STATUS_TONE: Record<IdvStatus, string> = {
   pending: "bg-muted text-muted-foreground",
@@ -141,6 +142,26 @@ export default function AmlVerification() {
           </Button>
         </CardContent>
       </Card>
+
+      {/*
+        Two verification paths exist and they are easy to confuse. This page
+        runs staff-initiated IDV against the configured provider. The
+        portal-captured, per-party checks — the ones with the three-attempt
+        ceiling and the retained biometric — are adjudicated in the case
+        workspace, so say so rather than letting this page read as the whole
+        picture.
+      */}
+      <Alert>
+        <HelpCircle className="h-4 w-4" aria-hidden="true" />
+        <AlertDescription>
+          Identity checks captured by clients in the portal are adjudicated per party in
+          the case workspace, under <span className="font-medium">Verification</span> —
+          including document sightings, retained facial images and the three-attempt limit.
+          This page covers staff-initiated runs only.
+        </AlertDescription>
+      </Alert>
+
+      <SanctionsListHealth />
 
       {kpis.total > 0 && (
         <Alert>

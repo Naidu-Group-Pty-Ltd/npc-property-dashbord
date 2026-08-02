@@ -1118,6 +1118,21 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
     ],
   },
   {
+    id: 'npc_aml_verification',
+    name: 'NPC Verification Service (self-hosted)',
+    description:
+      'Our own face-match, liveness and MRZ service — the zero-cost KYC stack. '
+      + 'Both values must be set before AML › Configuration › Providers can move IDV to live.',
+    category: 'compliance',
+    tags: ['kyc', 'aml', 'identity', 'biometric', 'liveness', 'self-hosted', 'face match'],
+    docsUrl: 'https://github.com/lavan96/npc-property-dashbord/blob/main/docs/aml/kyc-go-live-runbook.md',
+    fallbackIcon: 'shield',
+    fields: [
+      { key: 'AML_VERIFICATION_SERVICE_URL', label: 'Service URL', placeholder: 'https://aml-verify.internal', type: 'text', required: true },
+      { key: 'AML_VERIFICATION_SERVICE_TOKEN', label: 'Service Token', placeholder: 'openssl rand -hex 32', type: 'password', required: true },
+    ],
+  },
+  {
     id: 'frankieone',
     name: 'FrankieOne',
     description: 'Orchestrated KYC/KYB, document verification and AML workflows.',

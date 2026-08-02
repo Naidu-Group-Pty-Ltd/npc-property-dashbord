@@ -280,6 +280,11 @@ describe("loader normalisation cannot drift from query normalisation", () => {
   // nothing fails loudly — so assert they stay identical.
   const loader = readFileSync(
     join(process.cwd(), "scripts/aml/load-sanctions-lists.mjs"), "utf8");
+  // Normalisation moved into the parser module when DFAT XLSX support was
+  // added, so the loader could stay I/O-only and the parsers become testable.
+  // The guarantee is unchanged — only its file moved.
+  const parsers = readFileSync(
+    join(process.cwd(), "scripts/aml/sanctionsParsers.mjs"), "utf8");
   const matcher = readFileSync(
     join(process.cwd(), "supabase/functions/_shared/aml/matching.ts"), "utf8");
 
@@ -291,7 +296,7 @@ describe("loader normalisation cannot drift from query normalisation", () => {
 
   it.each(["HONORIFICS", "ENTITY_SUFFIXES", "PARTICLES"])(
     "%s is identical on both sides", (name) => {
-      expect(extract(loader, name)).toBe(extract(matcher, name));
+      expect(extract(parsers, name)).toBe(extract(matcher, name));
     });
 
   it("loads from the publishers, not from the CC-BY-NC aggregator", () => {
@@ -304,6 +309,25 @@ describe("loader normalisation cannot drift from query normalisation", () => {
   it("refuses to record a successful sync with no entries", () => {
     // A silently-empty sanctions list is worse than an obviously absent one.
     expect(loader).toContain("refusing to publish an empty list");
-    expect(loader).toContain("Refusing to record a successful sync with no entries");
+    // Any list that throws is marked 'failed' — never 'succeeded' — so an
+    // empty or unparseable download can never present as a completed sync.
+    expect(loader).toContain("status: 'failed'");
+  });
+
+  it("refuses to guess at DFAT columns rather than load a partial list", () => {
+    // DFAT is downloaded and parsed directly now. The old manual CSV export
+    // step is gone, so the guard against a silently-wrong parse moved to
+    // header resolution: no recognisable name column means no load at all.
+    expect(parsers).toContain("Refusing to guess at column positions");
+    expect(loader).toContain("no .xlsx/.csv link found");
+  });
+
+  it("prunes entries that have left the list", () => {
+    // Upsert alone leaves a delisted party matching forever. Pruning is
+    // guarded by a shrink floor so a truncated download cannot wipe the list.
+    expect(loader).toContain("PRUNE_SHRINK_FLOOR");
+    // Must cover NULL sync_id too: `neq` against NULL is NULL, not true, so a
+    // row predating sync tracking would otherwise match forever.
+    expect(loader).toContain("sync_id.is.null,sync_id.neq.");
   });
 });

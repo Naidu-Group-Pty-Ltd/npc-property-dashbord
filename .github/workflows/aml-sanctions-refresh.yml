@@ -1,0 +1,84 @@
+name: AML sanctions refresh
+
+# Keeps aml.sanctions_entries current from the official primary sources
+# (DFAT / UN / OFAC). A stale sanctions list is a live compliance failure, not
+# a warning — the loader exits non-zero if any list fails, which fails this
+# workflow, which is the alert.
+#
+# Required repository secrets:
+#   SUPABASE_URL                  project URL
+#   SUPABASE_SERVICE_ROLE_KEY     service role key (writes aml.sanctions_entries)
+#
+# Without those secrets the job is skipped rather than failed, so a fork or a
+# freshly-cloned repo does not show a permanently red schedule.
+
+on:
+  schedule:
+    # 18:10 UTC daily ≈ 04:10 next-day Australia/Sydney (AEST/AEDT), i.e.
+    # overnight local time, after the publishers' usual update windows.
+    - cron: '10 18 * * *'
+  workflow_dispatch:
+    inputs:
+      lists:
+        description: 'Comma-separated lists to load'
+        required: false
+        default: 'un,ofac,dfat'
+      dry_run:
+        description: 'Parse and report without writing'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aml-sanctions-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # The parsers are what stand between an official file and a screening
+      # list that silently matches nothing. Run their tests before writing.
+      - name: Test sanctions parsers
+        run: npm run test:aml-sanctions
+
+      - name: Check credentials
+        id: creds
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_SERVICE_ROLE_KEY" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY not set — running a dry run only."
+          fi
+
+      - name: Load sanctions lists
+        if: steps.creds.outputs.configured == 'true' && github.event.inputs.dry_run != 'true'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: node scripts/aml/load-sanctions-lists.mjs --list "${{ github.event.inputs.lists || 'un,ofac,dfat' }}"
+
+      - name: Dry run (no credentials, or dry run requested)
+        if: steps.creds.outputs.configured != 'true' || github.event.inputs.dry_run == 'true'
+        run: node scripts/aml/load-sanctions-lists.mjs --dry-run --list "${{ github.event.inputs.lists || 'un,ofac' }}"
