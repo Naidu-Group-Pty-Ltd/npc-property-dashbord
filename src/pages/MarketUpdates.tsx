@@ -881,7 +881,18 @@ export default function MarketUpdates() {
 
                     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
                       <Button size="sm" onClick={() => setSelectedUpdate(update)}>Open Analysis</Button>
-                      <Button size="sm" variant="outline" onClick={() => { setQaUpdate(update); setQaMessage(null); setQaThread([]); setQuestion(''); setDialogConversationId(crypto.randomUUID()); }}>Ask AI</Button>
+                      <Button size="sm" variant="outline" onClick={() => {
+                        setQaUpdate(update);
+                        setQaMessage(null);
+                        setQuestion('');
+                        // Retain the prior conversation when re-opening the same
+                        // update; only start a fresh thread for a different one.
+                        if (qaThreadUpdateId !== update.id) {
+                          setQaThread([]);
+                          setDialogConversationId(crypto.randomUUID());
+                          setQaThreadUpdateId(update.id);
+                        }
+                      }}><Sparkles className="mr-1.5 h-3.5 w-3.5" aria-hidden />Ask Aurixa</Button>
                       {canEditMarketUpdates && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" disabled={archivePendingIds.has(update.id)||!update.id} onClick={(event:MouseEvent<HTMLButtonElement>)=>{event.preventDefault();event.stopPropagation();void archiveUpdate(update);}} aria-label={`Archive ${update.title}`}>
                         {archivePendingIds.has(update.id) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}{archivePendingIds.has(update.id)?'Archiving…':'Archive'}
                       </Button>}
