@@ -734,6 +734,11 @@ export function renderTemplateToHtml(
     (pageCtx as any)._cascadeDebug = !!options.cascadeDebug;
     (pageCtx as any)._editorMode = !!options.editorMode;
     (pageCtx as any)._showReferenceUnderlay = !!options.showReferenceUnderlay;
+    // pageCtx is built fresh rather than spread from ctxBase, so every private
+    // flag has to be re-set here. Missing this one meant `includeBookmarks:
+    // false` was read as `undefined` at paint time and the PDF outline metadata
+    // was emitted anyway — the option had no effect on output at all.
+    (pageCtx as any)._includeBookmarks = options.includeBookmarks !== false;
     // E7: runtime-only resolver mapping a region id → an ephemeral crop src
     // (signed/object/data URL). Never persisted; consumed only at paint time.
     if (options.regionCropSrc) (pageCtx as any)._pdfRegionCropSrc = options.regionCropSrc;

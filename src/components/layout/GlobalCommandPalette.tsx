@@ -54,6 +54,7 @@ import {
   Command as CommandIcon,
   ExternalLink,
   ArrowLeftRight,
+  Workflow,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAmlAccess } from '@/hooks/useAmlAccess';
@@ -126,6 +127,7 @@ const ADMIN_ENTRIES: NavEntry[] = [
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates', group: 'Admin' },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label', group: 'Admin' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations', group: 'Admin' },
+  { title: 'Workflow Playground', url: '/workflow-playground', icon: Workflow, moduleKey: 'integrations', group: 'Admin' },
   { title: 'Cloudflare', url: '/cloudflare', icon: Cloud, moduleKey: 'cloudflare', group: 'Admin' },
   { title: 'API Usage', url: '/api-usage', icon: Gauge, moduleKey: 'api_usage', group: 'Admin' },
   { title: 'Model Hub', url: '/model-hub', icon: Cpu, moduleKey: 'integrations', group: 'Admin' },

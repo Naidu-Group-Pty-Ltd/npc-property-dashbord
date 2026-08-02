@@ -364,6 +364,9 @@ request_timeout = 120
 [functions.estimate-property-expenses]
 verify_jwt = true
 
+[functions.execute-workflow-step]
+verify_jwt = true
+
 [functions.parse-property-pdf]
 verify_jwt = false
 request_timeout = 300

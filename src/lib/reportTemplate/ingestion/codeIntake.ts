@@ -121,7 +121,10 @@ export function formatBytes(bytes = 0): string {
   const units = ['B', 'KB', 'MB', 'GB'];
   const idx = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
   const value = bytes / (1024 ** idx);
-  return `${value >= 10 || idx === 0 ? Math.round(value) : value.toFixed(1)} ${units[idx]}`;
+  // A whole number reads as "2 MB", not "2.0 MB" — the decimal is there to
+  // distinguish 1.5 from 1, and carries nothing when there is no fraction.
+  const rounded = Number(value.toFixed(1));
+  return `${value >= 10 || idx === 0 || Number.isInteger(rounded) ? Math.round(value) : rounded} ${units[idx]}`;
 }
 
 function displayPath(file: CodeIntakeFileLike): string {

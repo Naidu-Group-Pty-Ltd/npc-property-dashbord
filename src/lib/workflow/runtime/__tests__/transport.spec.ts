@@ -1,0 +1,81 @@
+/**
+ * The browser's live performer is thin on purpose — the value it adds over
+ * calling the edge function directly is refusing early and normalising the
+ * answer, so those are what is tested.
+ */
+
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getCatalogNode } from '../../catalog';
+import type { PerformInput } from '../engine';
+import { createServerPerformer } from '../transport';
+
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/secureInvoke', () => ({ invokeSecureFunction: invoke }));
+
+const inputFor = (type: string, config: Record<string, unknown> = {}): PerformInput => {
+  const definition = getCatalogNode(type);
+  if (!definition) throw new Error(`${type} is not in the catalog`);
+  return {
+    definition,
+    node: { id: 'n1', type, position: { x: 0, y: 0 }, config },
+    config,
+    scope: {},
+  };
+};
+
+describe('server performer', () => {
+  beforeEach(() => invoke.mockReset());
+
+  it('refuses a step with no executor without calling the server', async () => {
+    const outcome = await createServerPerformer()(inputFor('resend.send_email'));
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toMatch(/no executor/i);
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('sends the resolved config, not the template', async () => {
+    invoke.mockResolvedValue({ data: { status: 'succeeded', output: { status: 200 } }, error: null });
+
+    await createServerPerformer()(
+      inputFor('core.http', { url: 'https://example.test/hook', method: 'POST' }),
+    );
+
+    expect(invoke).toHaveBeenCalledWith('execute-workflow-step', {
+      nodeType: 'core.http',
+      config: { url: 'https://example.test/hook', method: 'POST' },
+    });
+  });
+
+  it('passes the server outcome through', async () => {
+    invoke.mockResolvedValue({
+      data: { status: 'failed', output: { status: 500 }, error: 'The endpoint answered 500.' },
+      error: null,
+    });
+
+    const outcome = await createServerPerformer()(inputFor('core.http', { url: 'https://example.test' }));
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toBe('The endpoint answered 500.');
+    expect(outcome.output).toEqual({ status: 500 });
+  });
+
+  it('treats a status it does not recognise as a failure', async () => {
+    // A step that quietly reported success it did not have would be worse than
+    // one that admits it does not know.
+    invoke.mockResolvedValue({ data: { status: 'weird' }, error: null });
+
+    const outcome = await createServerPerformer()(inputFor('core.http', { url: 'https://example.test' }));
+
+    expect(outcome.status).toBe('failed');
+  });
+
+  it('reports a transport failure rather than throwing', async () => {
+    invoke.mockResolvedValue({ data: null, error: { message: 'Authentication required' } });
+
+    const outcome = await createServerPerformer()(inputFor('core.http', { url: 'https://example.test' }));
+
+    expect(outcome.status).toBe('failed');
+    expect(outcome.error).toBe('Authentication required');
+  });
+});

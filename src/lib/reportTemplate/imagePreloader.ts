@@ -11,18 +11,36 @@ import type { PdfImportRasterRef } from './pdfImport/docling/doclingTypes';
 
 const cache = new Map<string, string>();
 
+/**
+ * Base64 a response body without `FileReader`.
+ *
+ * `FileReader` only accepts a Blob from its own realm, so a response body read
+ * anywhere the fetch and DOM implementations differ (workers, SSR, the test
+ * environment) fails on a type check rather than on anything real. Reading the
+ * bytes directly works the same way everywhere, and skips FileReader's
+ * event-loop round trip on what are full-page rasters.
+ *
+ * Encoded in chunks because `String.fromCharCode(...bytes)` on a whole page
+ * image overflows the call stack.
+ */
+const CHUNK = 0x8000;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
 async function fetchAsDataUrl(url: string): Promise<string | null> {
   if (cache.has(url)) return cache.get(url)!;
   try {
     const res = await fetch(url, { mode: 'cors' });
     if (!res.ok) return null;
-    const blob = await res.blob();
-    const dataUrl: string = await new Promise((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = reject;
-      r.readAsDataURL(blob);
-    });
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const mime = res.headers.get('content-type')?.split(';')[0].trim() || 'application/octet-stream';
+    const dataUrl = `data:${mime};base64,${bytesToBase64(bytes)}`;
     cache.set(url, dataUrl);
     return dataUrl;
   } catch {
