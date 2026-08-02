@@ -30,7 +30,7 @@ export function ClientFactFindSectionNavigation({ value, onChange }: { value: Cl
     role="tablist"
     aria-label="Client Fact Find sections"
     onKeyDown={handleKeyDown}
-    className="grid grid-cols-2 gap-1.5 rounded-xl border border-border/80 bg-card p-1.5 shadow-md sm:grid-cols-3 lg:grid-cols-5"
+    className="grid grid-cols-2 gap-1.5 rounded-xl border border-border/55 bg-card/95 p-1.5 shadow-[0_18px_34px_-28px_hsl(var(--background))] sm:grid-cols-3 lg:grid-cols-5"
   >
     {SECTIONS.map(section => {
       const Icon = section.icon;
@@ -45,13 +45,15 @@ export function ClientFactFindSectionNavigation({ value, onChange }: { value: Cl
         aria-selected={selected}
         tabIndex={selected ? 0 : -1}
         onClick={() => onChange(section.value)}
-        className="group flex min-h-11 min-w-0 items-center gap-2 rounded-lg border border-transparent bg-muted/30 px-2.5 py-1.5 text-left text-foreground transition-[background-color,border-color,color,box-shadow,transform] duration-150 hover:border-brand-300/30 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card active:scale-[0.98] motion-reduce:transition-none aria-selected:border-brand-300/50 aria-selected:bg-primary/20 aria-selected:text-foreground aria-selected:shadow-sm"
+        className="group relative flex min-h-11 min-w-0 items-center gap-2.5 overflow-hidden rounded-lg border border-border/45 bg-background/45 px-2.5 py-1.5 text-left text-muted-foreground transition-[background-color,border-color,color] duration-150 hover:border-border hover:bg-background/75 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card motion-reduce:transition-none aria-selected:border-brand-300/45 aria-selected:bg-primary/12 aria-selected:text-foreground"
       >
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/70 bg-background text-muted-foreground shadow-inner group-hover:text-foreground group-aria-selected:border-brand-300/40 group-aria-selected:bg-primary/20 group-aria-selected:text-brand-200">
+        <span aria-hidden="true" className="absolute inset-y-1.5 left-0 w-[3px] rounded-full bg-brand-300 opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-aria-selected:opacity-100" />
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border/60 bg-card text-muted-foreground transition-colors duration-150 motion-reduce:transition-none group-hover:text-foreground group-aria-selected:border-brand-300/40 group-aria-selected:bg-primary/15 group-aria-selected:text-brand-200">
           <Icon className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
         <span className="min-w-0">
-          <span className="block break-words text-xs font-bold leading-4 sm:text-[13px]">{section.label}</span>
+          <span className="block break-words text-xs font-semibold leading-4 text-foreground sm:text-[13px]">{section.label}</span>
+          <span className="mt-px hidden truncate text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground lg:block">{section.description}</span>
         </span>
       </button>;
     })}
