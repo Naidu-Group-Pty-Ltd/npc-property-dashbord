@@ -236,7 +236,7 @@ Deno.serve(async (req) => {
     await sb.from('market_digests').update({ status:'failed', completed_at:new Date().toISOString(), error_code:'provider_unavailable', safe_error_message:'The configured digest route was unavailable.' }).eq('period',period).eq('period_key',periodKey);
     return json({ error:'The configured Market Updates digest route is unavailable.', code:providerCode, stage:'digest', correlation_id:correlationId, retryable:!['provider_unauthorised','provider_payment_required'].includes(providerCode) }, 503);
   }
-  const allowedIds = new Set(updates.map((update:any) => update.id));
+  const allowedIds = new Set(digestUpdates.map((update:any) => update.id));
   const body = synthesis.body;
   body.top_update_ids = Array.isArray(body.top_update_ids) ? body.top_update_ids.filter((id:unknown) => typeof id === 'string' && allowedIds.has(id)) : [];
 
@@ -245,7 +245,7 @@ Deno.serve(async (req) => {
     period_key:periodKey,
     period_start: start.toISOString(),
     period_end: end.toISOString(),
-    executive_summary: body.executive_summary,
+    executive_summary: carriedForward ? `No new source-backed items landed in this ${period} window. Carried forward from the most recent published intelligence: ${body.executive_summary}` : body.executive_summary,
     top_update_ids: body.top_update_ids ?? [],
     finance_lending_highlights: body.finance_lending_highlights ?? [],
     property_market_highlights: body.property_market_highlights ?? [],
@@ -261,14 +261,14 @@ Deno.serve(async (req) => {
     recommended_watchlist_for_tomorrow: body.recommended_watchlist_for_tomorrow ?? [],
     source_urls: [
       ...new Set(
-        updates.flatMap((u: any) =>
+        digestUpdates.flatMap((u: any) =>
           Array.isArray(u.citation_urls) && u.citation_urls.length ? u.citation_urls : [u.source_url],
         ),
       ),
     ],
     confidence_score: Number(body.confidence_score ?? 70),
     status: "published",
-    update_count:updates.length, candidate_count:candidateCount ?? 0, last_published_update_at:lastPublished?.source_published_at ?? lastPublished?.ingested_at ?? null, completed_at:new Date().toISOString(), error_code:null, safe_error_message:null,
+    update_count:digestUpdates.length, candidate_count:candidateCount ?? 0, last_published_update_at:lastPublished?.source_published_at ?? lastPublished?.ingested_at ?? null, completed_at:new Date().toISOString(), error_code:null, safe_error_message:null,
     ...synthesis.telemetry,
   };
 
@@ -280,7 +280,7 @@ Deno.serve(async (req) => {
     .single();
   if (insertError) return json({ error:'Generated digest could not be persisted.', code:'digest_persist_failed' }, 500);
 
-  logMarketEvent('info',{function:'market-updates-digest',stage:'digest',correlation_id:correlationId,status:'published',duration_ms:Date.now()-requestStartedAt,route:synthesis.telemetry.route_used,model_id:synthesis.telemetry.model_used,period_key:periodKey,update_count:updates.length});
+  logMarketEvent('info',{function:'market-updates-digest',stage:'digest',correlation_id:correlationId,status:'published',duration_ms:Date.now()-requestStartedAt,route:synthesis.telemetry.route_used,model_id:synthesis.telemetry.model_used,period_key:periodKey,update_count:digestUpdates.length});
   return json({
     digest: data,
     noData: false,
@@ -288,7 +288,7 @@ Deno.serve(async (req) => {
     period_key:periodKey,
     period_start: digest.period_start,
     period_end: digest.period_end,
-    update_count: updates.length,
-    message: `${period} market digest generated from ${updates.length} sourced update(s).`,
+    update_count: digestUpdates.length,
+    message: `${period} market digest generated from ${digestUpdates.length} sourced update(s).${carriedForward ? ' No new items landed in this window, so the most recent published intelligence was carried forward.' : ''}`,
   });
 });
