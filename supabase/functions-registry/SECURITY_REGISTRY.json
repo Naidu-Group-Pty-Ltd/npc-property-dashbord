@@ -768,6 +768,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "execute-workflow-step": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "workflow-playground",
+      "reviewed": true
+    },
     "feature-flags-admin": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
