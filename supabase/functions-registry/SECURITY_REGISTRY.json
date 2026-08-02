@@ -1554,6 +1554,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "internal-message-attachments": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true
+    },
     "internal-messaging": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
