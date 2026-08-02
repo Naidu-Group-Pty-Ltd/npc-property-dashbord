@@ -166,6 +166,10 @@ export async function archiveMarketUpdate(updateId: string): Promise<MarketUpdat
 }
 
 export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
+  // Dedicated archive function first — it is single-purpose and deploys cleanly;
+  // the multiplexed curate function stays as the fallback.
+  const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'restore', id:updateId });
+  if (!direct.error && (direct.data?.outcome === 'restored' || direct.data?.outcome === 'already_restored')) return direct.data.outcome;
   try {
     const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'restore', updateId });
     if (error) throw error;
@@ -175,15 +179,24 @@ export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdat
   } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
 }
 
+const mapArchivePage = (archive: any): MarketUpdateArchivePage => ({
+  items:safeArray<ArchivedMarketUpdate>(archive?.items).map(item => ({ ...mapUpdate(item), archived_at:item.archived_at, archived_by:item.archived_by, pre_archive_status:item.pre_archive_status })),
+  count:Number(archive?.count ?? 0), page:Number(archive?.page ?? 1), pageSize:Number(archive?.pageSize ?? 20), hasMore:Boolean(archive?.hasMore),
+});
+
 export async function fetchMarketUpdateArchive(options: { search?:string; page?:number; pageSize?:number; sort?:'archived_desc'|'published_desc'; source?:string; category?:string; geography?:string; impact?:string; audience?:string } = {}): Promise<MarketUpdateArchivePage> {
+  // Primary: the dedicated Archived News function.
+  const direct = await invokeSecureFunction<{ archive?:MarketUpdateArchivePage }>('market-updates-archive', { action:'list', ...options });
+  if (!direct.error && direct.data?.archive) return mapArchivePage(direct.data.archive);
+  if (direct.error) console.warn('[Market Updates] archive function unavailable, falling back', direct.error.message);
+
+  // Fallback: the legacy `archive` action on the status function.
   const payload = await invokeMarketRead<{ archive?:MarketUpdateArchivePage }>({ action:'archive', ...options });
   const archive = payload.archive;
   if (!archive) throw operationalError('database', new Error('Market News Feed archive was missing.'), 'market-updates-status');
-  return {
-    items:safeArray<ArchivedMarketUpdate>(archive.items).map(item => ({ ...mapUpdate(item), archived_at:item.archived_at, archived_by:item.archived_by, pre_archive_status:item.pre_archive_status })),
-    count:Number(archive.count ?? 0), page:Number(archive.page ?? 1), pageSize:Number(archive.pageSize ?? 20), hasMore:Boolean(archive.hasMore),
-  };
+  return mapArchivePage(archive);
 }
+
 
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
   const payload = await invokeMarketRead<{ status?: MarketSourceHealth }>({ action:'status' });
