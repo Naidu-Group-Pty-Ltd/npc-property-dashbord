@@ -723,14 +723,55 @@ export default function MarketUpdates() {
               <TabsTrigger value="ask-ai">Ask AI</TabsTrigger>
             </TabsList>
             <TabsContent value="updates" className="mt-0 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">
-                  {filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span>
+                  {feedScope === 'held'
+                    ? <>{heldUpdates.length} {heldUpdates.length === 1 ? 'held item' : 'held items'}<span className="ml-2 text-sm font-normal text-muted-foreground">awaiting a publication decision</span></>
+                    : <>{filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}<span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span></>}
                 </h2>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Feed scope">
+                  <Button size="sm" variant={feedScope === 'published' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('published')} aria-pressed={feedScope === 'published'}>
+                    Published<Badge variant="secondary" className="ml-2">{updates.length}</Badge>
+                  </Button>
+                  <Button size="sm" variant={feedScope === 'held' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('held')} aria-pressed={feedScope === 'held'} title="Items fetched and classified but not published automatically.">
+                    Held<Badge variant="secondary" className="ml-2">{heldUpdates.length}</Badge>
+                  </Button>
+                </div>
               </div>
 
-              {loading ? (
+              {feedScope === 'held' ? (
+                heldUpdates.length ? heldUpdates.map(held => (
+                  <article key={held.id} className="min-w-0 rounded-2xl border border-warning/30 bg-card p-5">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="text-warning">Held</Badge>
+                      <span className="min-w-0 break-words text-xs text-muted-foreground" title={held.source_name}>{held.source_name}</span>
+                      {held.source_authority && <Badge variant="secondary">{titleCase(held.source_authority)}</Badge>}
+                      <span className="text-xs text-muted-foreground">Relevance {held.relevance_score}{typeof held.confidence_score === 'number' ? ` · Confidence ${held.confidence_score}` : ''}</span>
+                    </div>
+                    <h3 className="mt-2 break-words font-semibold leading-snug">{held.title}</h3>
+                    <p className="mt-2 break-words text-sm text-muted-foreground">{held.candidate_reason ? titleCase(held.candidate_reason) : 'Publication criteria were not met.'}</p>
+                    {held.ai_summary && <p className="mt-2 break-words text-sm">{held.ai_summary}</p>}
+                    <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                      <Button size="sm" onClick={() => void publishHeldUpdate(held)} disabled={publishingId === held.id}>
+                        {publishingId === held.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Publish to feed
+                      </Button>
+                      <a href={held.source_url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-2 rounded-md border border-primary/40 px-3 py-1.5 text-sm font-semibold text-primary hover:bg-primary/10" title={held.source_url}>
+                        <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />Open original source
+                      </a>
+                    </div>
+                  </article>
+                )) : (
+                  <Card className="border-dashed">
+                    <CardContent className="p-10 text-center">
+                      <Globe2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
+                      <h3 className="text-lg font-semibold">Nothing is being held</h3>
+                      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Every classified item from the latest runs met its tier's publication policy and is live in the feed.</p>
+                      <div className="mt-4 flex justify-center"><Button size="sm" variant="outline" onClick={() => setFeedScope('published')}>Back to published feed</Button></div>
+                    </CardContent>
+                  </Card>
+                )
+              ) : loading ? (
+
                 <div className="space-y-3">
                   {[1,2,3].map(i => <Card key={i} className="animate-pulse"><CardContent className="h-40 p-6" /></Card>)}
                 </div>
