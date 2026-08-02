@@ -26,8 +26,11 @@ dist-ssr
 # Local-only PDF import testing artifacts (Phase 7 baselines, private PDFs/screenshots)
 audit-output/
 
-# Phase 11D release gate generated reports (local-only)
-reports/
+# Phase 11D release gate generated reports (local-only).
+# ANCHORED with a leading slash: an unanchored `reports/` matches EVERY directory
+# of that name at any depth — it was silently untracking new files added under
+# src/components/reports/, src/lib/reports/ and docs/reports/.
+/reports/
 
 # C10 — Playwright (Tier 2) artifacts + the live-corpus (Tier 3) directory.
 # Client PDFs are NEVER committed; the live corpus lives in a local dir only.
