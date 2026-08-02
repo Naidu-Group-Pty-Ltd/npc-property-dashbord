@@ -764,7 +764,45 @@ export function InternalMessageToasts() {
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-info via-primary to-chart-5 opacity-90"
         />
+
+        {/* Resize grip — drag the bottom-left corner to size the conversation.
+            Arrow keys nudge it for keyboard users; double-click restores the
+            default size. */}
+        <span
+          {...panelResize.handleProps}
+          role="slider"
+          tabIndex={0}
+          aria-label="Resize conversation window"
+          aria-valuetext={
+            panelResize.size
+              ? `${Math.round(panelResize.size.width)} by ${Math.round(panelResize.size.height)} pixels`
+              : 'Default size'
+          }
+          title="Drag to resize · double-click to reset"
+          onDoubleClick={panelResize.reset}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 48 : 16;
+            if (e.key === 'ArrowLeft') panelResize.nudge(step, 0);
+            else if (e.key === 'ArrowRight') panelResize.nudge(-step, 0);
+            else if (e.key === 'ArrowDown') panelResize.nudge(0, step);
+            else if (e.key === 'ArrowUp') panelResize.nudge(0, -step);
+            else return;
+            e.preventDefault();
+          }}
+          className={cn(
+            'absolute bottom-0 left-0 z-10 flex h-6 w-6 cursor-nesw-resize items-end justify-start rounded-bl-3xl',
+            'text-muted-foreground/60 transition-colors hover:text-primary focus-visible:outline-none',
+            'focus-visible:ring-2 focus-visible:ring-ring',
+            panelResize.resizing && 'text-primary',
+          )}
+        >
+          <svg viewBox="0 0 12 12" aria-hidden className="h-3.5 w-3.5 translate-x-1 -translate-y-1">
+            <path d="M11 1 L1 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <path d="M11 5.5 L5.5 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </span>
         {dragActive && <AttachmentDropOverlay />}
+
 
 
         {/* Header */}
