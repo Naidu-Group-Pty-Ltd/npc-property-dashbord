@@ -123,7 +123,13 @@ export default function MarketUpdates() {
   // Shadow counters live on the ingestion response rather than the run row, so the
   // last run's validation result is held alongside it.
   const [runShadow, setRunShadow] = useState<{ sources:number; ingested:number; wouldPublish:number } | null>(null);
-  const [candidateReview, setCandidateReview] = useState<MarketUpdate[] | null>(null);
+  // Held items live in the main feed behind a scope chip rather than a modal —
+  // the tiered publication policy leaves far fewer of them, and the ones that
+  // remain are managed in place.
+  const [heldUpdates, setHeldUpdates] = useState<MarketUpdate[]>([]);
+  const [feedScope, setFeedScope] = useState<'published' | 'held'>('published');
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+
 
   const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
     ? error.issue
