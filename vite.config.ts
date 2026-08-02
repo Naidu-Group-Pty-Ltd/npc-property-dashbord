@@ -50,6 +50,7 @@ export default defineConfig(() => ({
     __BUILD_ID__: JSON.stringify(BUILD_ID),
   },
   plugins: [react(), mcpPlugin(), buildVersionManifest()],
+  assetsInclude: ["**/*.xlsx"],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
