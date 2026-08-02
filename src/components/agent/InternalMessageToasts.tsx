@@ -281,7 +281,7 @@ export function InternalMessageToasts() {
     writeBaselines(baselinesRef.current);
   }, []);
 
-  const loadMessages = useCallback(async (threadId: string) => {
+  const loadMessages = useCallback(async (threadId: string, clearUnread = true) => {
     try {
       const { data } = await invokeSecureFunction('internal-messaging', {
         action: 'get_thread',
@@ -293,7 +293,9 @@ export function InternalMessageToasts() {
       );
       setThreads((prev) =>
         prev.map((t) =>
-          t.thread_id === threadId ? { ...t, messages: msgs, loading: false, unread: 0 } : t,
+          t.thread_id === threadId
+            ? { ...t, messages: msgs, loading: false, unread: clearUnread ? 0 : t.unread }
+            : t,
         ),
       );
     } catch {
