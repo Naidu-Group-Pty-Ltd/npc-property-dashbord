@@ -208,26 +208,66 @@ producing evidence:
 The failure is not local. `GET /v1/projects/{ref}/functions` returns 200,
 `x-ratelimit-remaining` sits at 119/120, and the 409 is served by Supabase's own
 API (`x-powered-by: Express` behind Cloudflare) — so the token, the network path
-and the request shape are all fine. A 409 of `deployment already exists` that
-persists for hours across multiple functions points at a stuck deployment record
-on the project, which cannot be cleared from the client side.
+and the request shape are all fine.
+
+### It is creates that work and updates that fail
+
+Further probing on 2026-08-01 narrowed this from "deploys are broken" to
+something much more specific:
+
+| Request | Result |
+| --- | --- |
+| `deploy?slug=<slug-that-does-not-exist>`, full closure | 201, function created and ACTIVE |
+| `deploy?slug=<slug-that-does-not-exist>`, one file | 400 from the **bundler** (`Module not found`) — the request got all the way through |
+| `deploy?slug=<existing-slug>`, identical full closure | **409 `deployment already exists`** |
+
+So the endpoint, the payload shape and the credentials are all sound; this
+project's API simply refuses to replace an existing function from this client.
+Creating and deleting both work — verified end to end on a throwaway slug, which
+was removed afterwards.
+
+Two things worth knowing before anyone retries this:
+
+- **Never omit `?slug=`.** A `POST …/functions/deploy` without it does not fail —
+  it silently creates a *new* function with a generated UUID slug and leaves the
+  real one untouched. That is a confusing way to think you have deployed
+  something when you have not.
+- Other clients are unaffected. `internal-messaging` was updated to v10 at
+  16:03 UTC the same day, mid-way between two of these failure windows, so the
+  block follows the caller rather than the project.
 
 ### How to unblock it
 
-In rough order of effort:
-
-1. **Deploy from a different network.** The same commands from a local machine
-   are worth trying first — if the block turns out to be edge-specific rather
-   than account-state, this costs nothing to rule out:
+1. **Deploy from another machine.** This is the fix, not a workaround — the
+   asymmetry above shows the project accepts updates from other callers:
    ```
-   supabase functions deploy market-updates-ingest --project-ref dduzbchuswwbefdunfct --no-verify-jwt --use-api
+   supabase functions deploy <slug> --project-ref dduzbchuswwbefdunfct --no-verify-jwt --use-api
    ```
-   (repeat for `-status`, `-digest`, `-embed-backfill`)
 2. **Deploy from the Supabase dashboard** function editor.
-3. **Raise a Supabase support ticket** quoting the 409 body and the `cf-ray`
-   from a failing request, and ask them to clear the pending deployment for
-   project `dduzbchuswwbefdunfct`.
+3. **Delete and recreate at the same slug.** Works, because creates are
+   unaffected — but it drops the function for a few seconds, so it is a last
+   resort rather than a routine step.
+4. **Raise a Supabase support ticket** quoting the 409 body, the `cf-ray` from a
+   failing request, and the create-works/update-409 asymmetry.
 
 Once the functions are live, run one ingestion. Shadow evidence appears in
 `market_shadow_source_metrics` and in the workspace's **Source coverage** panel,
 which should then read 30 live / 7 shadow / 6 held.
+
+### The same staleness is breaking Archived News
+
+Independently of shadow mode, the deployed functions being behind `main` is what
+makes the Market News Feed **Archive** button fail with "Unable to archive this
+news item":
+
+- The client calls `market-updates-status` with `archive_write`, then falls back
+  to `market-updates-archive` with `set_archive_state`.
+- The **running** `market-updates-archive` is v3, built 2026-08-02 10:51 UTC, and
+  implements only `list` and `restore` — so both calls fall through to
+  `return json({ error: 'Unknown action' }, 400)`.
+- `main` already contains the fix ("Fix Market News Feed archive lifecycle",
+  2026-08-02 16:53 UTC), and its version passes all eight assertions in
+  `src/services/marketUpdatesArchiveBackend.contract.test.ts`.
+
+Deploying `market-updates-archive` and `market-updates-status` from `main`
+resolves it. No code change is required.
