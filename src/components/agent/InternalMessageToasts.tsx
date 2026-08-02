@@ -700,17 +700,25 @@ export function InternalMessageToasts() {
           addFilesFor(active.thread_id, dropped);
         }}
         className={cn(
-          'pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-3xl border bg-card/95 backdrop-blur-xl',
-          'shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
+          'pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-3xl border-2 bg-card/95 backdrop-blur-xl',
+          // Own identity: a lit primary edge plus a coloured halo so the panel
+          // never camouflages against the dark dashboard behind it.
+          'shadow-[0_0_0_1px_hsl(var(--primary)/0.22),0_24px_60px_-20px_hsl(var(--primary)/0.35),var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
           'animate-in slide-in-from-right-4 fade-in-0 motion-reduce:animate-none',
           active.priority === 'urgent'
-            ? 'border-destructive/60 ring-1 ring-destructive/30'
+            ? 'border-destructive/70 ring-2 ring-destructive/25'
             : active.priority === 'high'
-              ? 'border-warning/50'
-              : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
+              ? 'border-warning/70 ring-2 ring-warning/20'
+              : 'border-primary/55 ring-2 ring-primary/15',
         )}
       >
+        {/* Identity accent — blue · gold · purple, matching the typing signal */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-info via-primary to-chart-5 opacity-90"
+        />
         {dragActive && <AttachmentDropOverlay />}
+
 
         {/* Header */}
         <div className="flex items-center gap-2.5 border-b border-border/50 px-3.5 py-2.5">
