@@ -437,7 +437,7 @@ export function ClientReportsTab({
     const errors: string[] = [];
     for (const bucket of bucketCandidates(ref, 'client-files', 'investment-reports')) {
       try {
-        const result = await secureStorageDownload(bucket, ref.path);
+        const result = await secureStorageDownload(bucket as Parameters<typeof secureStorageDownload>[0], ref.path);
         if (result.success && result.blob) return result.blob;
         errors.push(`${bucket}: ${result.error || 'not found'}`);
       } catch (e: any) {
