@@ -93,8 +93,10 @@ Deno.serve(async (req) => {
     { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   );
 
-  const csrf = enforceCsrf(req);
-  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
+  const csrf = csrfCheck(req);
+  if (!csrf.ok) {
+    return json({ error: 'CSRF check failed', code: 'csrf_denied', reason: csrf.reason, origin: csrf.origin ?? null }, 403);
+  }
 
   try {
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};
