@@ -720,3 +720,52 @@ argument comes out and generator A goes with it.
 | **3** ✅ | Driven from a brand snapshot; the cover stops being a raster (F1, F7) |
 | **4** ✅ | The render path — route, auth, storage, signing; brand typefaces (F8); F12 decided (persist) |
 | **5** ✅ | Charts, golden diff against this capture, generator D deleted, the client caller built |
+
+---
+
+## 12. Why it still had not rendered once
+
+Phase 5 finished, the route was deployed and migration `20260814000000` applied —
+and `borrowing_capacity_renders` was **empty**. Reproducing the route's own
+pipeline against a real assessment row and the real `whitelabel_settings` found
+three defects that no test and no type checker could see.
+
+**F15 — `xmlns` read as a network reference.** `assertSafeRenderResources`
+matched `xmlns="http://www.w3.org/2000/svg"` with its URL token pattern and threw
+*"Remote render resources must be normalized into project storage"*, naming
+nothing. Every chart this format added in Phase 5 opens with that declaration, so
+the guard rejected the whole document on every request — before the render row was
+written, which is why the table stayed empty. A namespace URI is an identifier;
+WeasyPrint compares it as a string and never fetches it.
+
+**F16 — `//` inside a base64 payload read as a scheme-relative URL.** The base64
+alphabet contains `/`. A 240 KB inlined logo contains `//` essentially always, so
+the shape `assets.pure.ts` *requires* — a `data:` URI, never a URL — was the one
+shape that could not pass the guard. Only the opaque base64 form is skipped now; a
+non-base64 `data:` URI still carries percent-encoded text that can name a host.
+
+**F17 — `global_report_settings` read as though it had columns.** The route
+selected `contact_details, disclaimer`; the table is `(setting_key, setting_value
+jsonb)`. The select errored, the error was never read, and every Snapshot would
+have carried no ABN, no phone, no address and the house disclaimer instead of the
+firm's. `render-investment-report-pdf` has always read it correctly; the route now
+reads it the same way.
+
+**And the bytes behind the logo.** `assets.pure.ts` says "something else reads
+them" and nothing did — `whitelabel_settings.logo_config` holds storage URLs, so
+every asset arrived as `not-a-data-uri` and the document carried no company mark
+at all. `reportDesign/fetchBrandAssets.ts` is that reader: project-storage
+origins only, the same rule the render guard applies to finished HTML, one step
+earlier, and a failure is a note rather than a thrown request.
+
+With all four fixed the pipeline returns no brand gaps, passes the guard, and
+renders an 8-page A4 PDF with the tenant's own mark on the cover.
+
+### What this says about the phases
+
+Every one of these is a runtime fact about production data. Phases 1–5 were
+verified by rendering, but always against a fixture; the fixture had no tenant
+logo, no key/value settings table and — until Phase 5 — no SVG. The lesson is the
+one Phase 0 already recorded about `Rate NaN%` being a fixture artefact, pointed
+the other way: a fixture that is easier than production hides defects as reliably
+as one that is wrong invents them.
