@@ -410,7 +410,7 @@ export default function MarketUpdates() {
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col gap-3">
-        <div aria-label="Ask AI conversation" className="min-h-[320px] flex-1 space-y-3 overflow-y-auto overflow-x-hidden rounded-xl border border-border/60 bg-background/40 p-3">
+        <div aria-label="Ask Aurixa conversation" className="min-h-[320px] flex-1 space-y-3 overflow-y-auto overflow-x-hidden rounded-xl border border-border/60 bg-background/40 p-3">
           {qaThread.length === 0 ? (
             <div className="flex h-full min-h-[280px] flex-col items-center justify-center text-center">
               <Sparkles className="mb-3 h-8 w-8 text-primary/70" />
@@ -462,7 +462,7 @@ export default function MarketUpdates() {
             </div>
           )}
         </div>
-        <div className="flex-none space-y-2" aria-label="Ask AI composer">
+        <div className="flex-none space-y-2" aria-label="Ask Aurixa composer">
           <Textarea
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
@@ -726,7 +726,7 @@ export default function MarketUpdates() {
           <Tabs value={workspaceTab} onValueChange={(v) => setWorkspaceTab(v as 'updates' | 'ask-ai')} className="min-w-0 space-y-4">
             <TabsList aria-label="Market updates workspace" className="w-full justify-start sm:w-auto">
               <TabsTrigger value="updates">Latest Updates</TabsTrigger>
-              <TabsTrigger value="ask-ai">Ask AI</TabsTrigger>
+              <TabsTrigger value="ask-ai">Ask Aurixa</TabsTrigger>
             </TabsList>
             <TabsContent value="updates" className="mt-0 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
