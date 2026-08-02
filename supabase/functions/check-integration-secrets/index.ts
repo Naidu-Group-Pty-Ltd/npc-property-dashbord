@@ -61,6 +61,10 @@ const integrationSecretMap: Record<string, string[]> = {
   'google_document_ai': ['GOOGLE_DOCUMENT_AI_PROJECT_ID', 'GOOGLE_DOCUMENT_AI_PROCESSOR_ID', 'GOOGLE_DOCUMENT_AI_CREDENTIALS'],
   'cloudconvert': ['CLOUDCONVERT_API_KEY'],
   'canva': ['CANVA_CLIENT_ID', 'CANVA_CLIENT_SECRET'],
+  // Zero-cost KYC stack — docs/aml/kyc-go-live-runbook.md. The IDV provider
+  // throws rather than degrading if either is missing, so surfacing them here
+  // is what turns "verification is broken" into "the token was never set".
+  'npc_aml_verification': ['AML_VERIFICATION_SERVICE_URL', 'AML_VERIFICATION_SERVICE_TOKEN'],
   'frankieone': ['FRANKIEONE_API_KEY'],
   'illion': ['ILLION_API_KEY'],
   'equifax': ['EQUIFAX_CLIENT_ID', 'EQUIFAX_CLIENT_SECRET'],

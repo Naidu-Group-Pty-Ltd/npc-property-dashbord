@@ -57,7 +57,72 @@ const SCAN_SOURCES: Record<string, { table: string; timestampCol: string; refCol
   report:       { table: "reports",            timestampCol: "acknowledged_at", refCol: "reference_code", caseIdCol: "case_id" },
   alert:        { table: "alerts",             timestampCol: "resolved_at", caseIdCol: "case_id" },
   edd:          { table: "edd_cases",          timestampCol: "closed_at", caseIdCol: "case_id" },
+  // The retained facial image, not the verification record that references it.
+  // Disposal destroys the object in the aml-biometrics bucket and clears the
+  // pointer columns; the check itself is a compliance record and survives on
+  // its own clock. See disposeBiometric below.
+  biometric:    { table: "verification_checks", timestampCol: "completed_at", caseIdCol: "case_id" },
 };
+
+/**
+ * Destroy a retained biometric.
+ *
+ * The generic disposal path cannot serve this: a biometric is an object in a
+ * storage bucket, and deleting only the database row would leave the image
+ * behind with nothing left pointing at it — undiscoverable, undeletable, and
+ * still personal information under APP 11.
+ *
+ * Order matters. The object is removed FIRST and the pointer cleared second,
+ * so a failure between the two leaves a row that still knows what it must
+ * dispose of. The reverse order loses the path and orphans the image.
+ */
+async function disposeBiometric(
+  admin: any,
+  checkId: string,
+  ctx: { scanId: string; actorId: string; actorLabel: string | null },
+): Promise<{ action: string; detail: string }> {
+  const aml = admin.schema("aml");
+  const { data: check } = await aml.from("verification_checks")
+    .select("id, case_id, party_label, biometric_storage_path")
+    .eq("id", checkId).maybeSingle();
+
+  if (!check) {
+    return { action: "recorded_only", detail: "Verification check no longer exists" };
+  }
+  if (!check.biometric_storage_path) {
+    return { action: "recorded_only", detail: "No biometric retained on this check — nothing to destroy" };
+  }
+
+  const { error: rmErr } = await admin.storage
+    .from("aml-biometrics").remove([check.biometric_storage_path]);
+  if (rmErr) throw new Error(`biometric object not removed: ${rmErr.message}`);
+
+  const { error: updErr } = await aml.from("verification_checks").update({
+    biometric_storage_path: null,
+    biometric_kind: null,
+    biometric_captured_at: null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", checkId);
+  if (updErr) throw updErr;
+
+  // The access log is the APP 11 answer to "what happened to this image".
+  // A destruction that is not in the log is indistinguishable from a leak.
+  // biometric_consent_id is deliberately left in place: it evidences what
+  // authorised the collection and is not itself biometric information.
+  await aml.from("biometric_access_log").insert({
+    verification_check_id: checkId,
+    case_id: check.case_id,
+    actor_id: ctx.actorId,
+    actor_label: ctx.actorLabel,
+    action: "dispose",
+    reason: `Retention disposal executed under scan ${ctx.scanId}`,
+  });
+
+  return {
+    action: "biometric_destroyed",
+    detail: `Facial image destroyed from aml-biometrics; the verification record for ${check.party_label} is retained`,
+  };
+}
 
 // Phase 11 (§18): the retention clock starts at a recorded trigger event, not
 // at upload. A record with no operative trigger has not started its clock and
@@ -518,6 +583,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
         if (caseRow.relationship_ended_at) {
           await ensure("case", caseId, "relationship_end", caseRow.relationship_ended_at, "AML case file");
+
+          // Every retained facial image gets its own trigger. Without one the
+          // biometric has no clock at all: it is never enumerated, never
+          // approved, and never destroyed — the image simply stays.
+          const { data: bioChecks } = await aml.from("verification_checks")
+            .select("id").eq("case_id", caseId)
+            .not("biometric_storage_path", "is", null).limit(500);
+          for (const b of bioChecks ?? []) {
+            await ensure("biometric", b.id, "relationship_end",
+              caseRow.relationship_ended_at, "Biometric — retained facial image");
+          }
         }
         const { data: doneReports } = await aml.from("reports")
           .select("id, acknowledged_at").eq("case_id", caseId).not("acknowledged_at", "is", null).limit(50);
@@ -753,7 +829,14 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           let actionDetail = "No physical change — disposal recorded against the record only";
           if (!dryRun && src) {
             try {
-              if (it.disposal_method === "hard_delete") {
+              if (it.entity_type === "biometric") {
+                // Destroys the stored image, not the verification record.
+                const outcome = await disposeBiometric(admin, it.entity_id, {
+                  scanId: String(id), actorId: userId, actorLabel: userLabel,
+                });
+                action = outcome.action;
+                actionDetail = outcome.detail;
+              } else if (it.disposal_method === "hard_delete") {
                 const { error: delErr } = await aml.from(src.table).delete().eq("id", it.entity_id);
                 if (delErr) throw delErr;
                 action = "hard_delete";

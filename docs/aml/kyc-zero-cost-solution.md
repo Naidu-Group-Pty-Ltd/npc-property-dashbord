@@ -247,15 +247,30 @@ Built and shipped. What exists now:
 
 ### Operational prerequisites
 
-1. Deploy the container; set `AML_VERIFICATION_SERVICE_URL` and
-   `AML_VERIFICATION_SERVICE_TOKEN` on the edge functions.
-2. Set the tenant provider rows: `idv` → `selfhosted` (live),
-   `pep_sanctions` → `local_lists` (live). Until then both stay on the
-   simulator, which is the safe default.
-3. Load the lists: `node scripts/aml/load-sanctions-lists.mjs --list un,ofac`,
-   and export the DFAT XLSX to CSV for `--dfat-csv`.
-4. Schedule the loader. A stale sanctions list is a live compliance failure —
-   `sanctions_list_status` surfaces the last sync per list for that reason.
+**Full sequence: [`kyc-go-live-runbook.md`](./kyc-go-live-runbook.md).** In short:
+deploy the container somewhere the edge functions can actually reach (not
+loopback — that is the step people get wrong), set the two secrets, load the
+lists, run `npm run aml:kyc:preflight`, then switch the two providers to live.
+
+---
+
+## 8. Operational hardening (2026-08-02)
+
+The gap between "built" and "runnable" — everything except the infrastructure
+itself, which cannot be done from a code change.
+
+| Piece | Where | What changed |
+|---|---|---|
+| DFAT automated | `scripts/aml/sanctionsParsers.mjs` | Reads the published XLSX directly via the existing `xlsx` dependency. The manual CSV export step is gone, so the Australian list is no longer the one most likely to go stale. The download link is discovered from the DFAT page rather than hardcoded, because DFAT renames the file when it republishes |
+| DFAT alias grouping | same | DFAT publishes one row per name variant. Rows are now grouped by listing reference, so aliases become aliases. Previously each row was written as its own listing and they collided on `(list_code, external_id)` — whichever alias sorted last stood in as the person's primary name |
+| Stale entries pruned | `load-sanctions-lists.mjs` | Upsert alone left delisted parties matching forever. Pruning is guarded by a shrink floor: a list that halves is treated as a truncated download, not a mass delisting, and nothing is deleted |
+| Scheduled | `.github/workflows/aml-sanctions-refresh.yml` | Nightly. The workflow failing **is** the alert |
+| Parser tests | `tests/aml/sanctions-parsers.test.mjs` | 13 tests, including CSV↔XLSX parity and a guard that the loader's normalisation word lists stay identical to `matching.ts` |
+| Biometric disposal | `aml-records/index.ts` | The retention schedule existed with nothing behind it. Triggers are now derived at relationship end, biometrics are enumerated by retention scans, and disposal deletes the storage object, clears the pointer columns and writes a `dispose` row to the access log. The verification record survives — the image is what is being destroyed |
+| Preflight | `scripts/aml/kyc-preflight.mjs` | `npm run aml:kyc:preflight` — one read-only command answering "would this work if I switched it on" |
+| Provider rows seeded | `20260802120000_seed_selfhosted_kyc_providers.sql` | Both in **simulator** mode, priced after any existing provider, so behaviour is unchanged and go-live is a toggle |
+| Secrets visible | `check-integration-secrets`, `integrations/registry.ts` | The two service variables now appear under Identity & Compliance instead of being invisible until something failed |
+| List health in-product | `src/components/aml/SanctionsListHealth.tsx` | Staleness was only visible to whoever ran the script. Screening an empty list returns "clear" for everyone and looks exactly like screening that worked |
 
 ### Still not covered
 
@@ -263,3 +278,6 @@ DVS. Unchanged and unchangeable at zero cost — see §3. The compensating
 control is certified copies or in-person sighting for higher-risk matters,
 recorded through `record_document_sighting`, which now captures who certified
 the copy and in what capacity.
+
+Adverse media is not covered by list data either. The screening summary returns
+`scopes_not_covered` rather than letting a "clear" imply a check that never ran.
