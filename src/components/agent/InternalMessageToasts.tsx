@@ -329,6 +329,8 @@ export function InternalMessageToasts() {
         if (openIds.has(t.id)) {
           const current = threadsRef.current.find((x) => x.thread_id === t.id);
           const changed = !!lastAt && current?.lastAt !== lastAt;
+          const isMinimised = !!minimisedRef.current[t.id];
+          const isExpanded = activeRef.current === t.id && !isMinimised;
           if (current && (!current.messages.length || changed)) toRefresh.push(t.id);
           setThreads((prev) =>
             prev.map((x) =>
@@ -338,18 +340,16 @@ export function InternalMessageToasts() {
                     lastAt: lastAt ?? x.lastAt,
                     priority: (t.last_message_priority as Priority) ?? x.priority,
                     sender: senderName,
+                    // The chip carries the count; the expanded card is "read".
+                    unread: isExpanded ? 0 : (t.unread ?? x.unread),
                   }
                 : x,
             ),
           );
-          // A brand-new inbound message brings this conversation to the front.
-          if (changed && (t.unread ?? 0) > 0) {
-            setMinimised((prev) => {
-              if (!prev[t.id]) return prev;
-              const next = { ...prev };
-              delete next[t.id];
-              return next;
-            });
+          // A brand-new inbound message brings the conversation forward — unless
+          // the user deliberately minimised it, in which case the chip's unread
+          // badge is the notification and we never steal focus back.
+          if (changed && (t.unread ?? 0) > 0 && !isMinimised) {
             setActiveId(t.id);
           }
           continue;
@@ -389,9 +389,12 @@ export function InternalMessageToasts() {
         // Newest inbound conversation becomes the expanded pop-up.
         const newest = [...additions].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))[0];
         setActiveId(newest.thread_id);
-        additions.forEach((a) => loadMessages(a.thread_id));
+        additions.forEach((a) => loadMessages(a.thread_id, a.thread_id === newest.thread_id));
       }
-      toRefresh.forEach((id) => loadMessages(id));
+      // Refreshing a minimised conversation must not clear its unread badge.
+      toRefresh.forEach((id) =>
+        loadMessages(id, activeRef.current === id && !minimisedRef.current[id]),
+      );
     } catch {
       /* silent — badge/panel remain the source of truth */
     }
