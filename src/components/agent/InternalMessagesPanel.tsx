@@ -48,7 +48,7 @@ import { TypingPresence, type TypingPerson } from '@/components/messaging/Typing
 import {
   INTERNAL_ATTACHMENT_ACCEPT,
   filesFromDataTransfer,
-  ensureMessageAttachments,
+  sendInternalMessageWithAttachments,
   type InternalAttachment,
 } from '@/lib/internalMessageAttachments';
 import {
@@ -325,18 +325,9 @@ export function InternalMessagesPanel({
     try {
       const attachments = await uploadStaged(activeThread.id);
       if (!attachments) { setSending(false); return; }
-      const sent = await call({
-        action: 'send_message',
-        thread_id: activeThread.id,
-        body: text,
-        attachments,
-      });
-      await ensureMessageAttachments(
-        activeThread.id,
-        sent?.message?.id,
-        attachments,
-        sent?.message?.attachments,
-      );
+      await (attachments.length
+        ? await sendInternalMessageWithAttachments(activeThread.id, text, attachments)
+        : await call({ action: 'send_message', thread_id: activeThread.id, body: text }));
 
       setDraft('');
       attachmentQueue.clear();
@@ -401,15 +392,9 @@ export function InternalMessagesPanel({
       const payload = composeMode === 'broadcast'
         ? { action: 'send_message', broadcast: true, title: broadcastTitle.trim() || undefined, body: text }
         : { action: 'send_message', thread_id: threadId, body: text, attachments };
-      const data = await call(payload);
-      if (attachments.length && threadId) {
-        await ensureMessageAttachments(
-          threadId,
-          data?.message?.id,
-          attachments,
-          data?.message?.attachments,
-        );
-      }
+      const data = attachments.length && threadId
+        ? await sendInternalMessageWithAttachments(threadId, text, attachments)
+        : await call(payload);
       publishInternalMessage({ thread_id: data?.thread_id, sender_id: user?.id ?? null, sender_name: myName });
 
 

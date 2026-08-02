@@ -353,6 +353,29 @@ export async function ensureMessageAttachments(
   }
 }
 
+/**
+ * Create a message and persist its uploaded objects atomically through the
+ * attachment transport. This is the authoritative path whenever files exist;
+ * it removes the old cross-function upload → send → repair race entirely.
+ */
+export async function sendInternalMessageWithAttachments(
+  threadId: string,
+  messageBody: string,
+  attachments: InternalAttachment[],
+  priority = 'normal',
+) {
+  if (!attachments.length) throw new Error('At least one attachment is required');
+  const data = await call({
+    operation: 'send',
+    thread_id: threadId,
+    message_body: messageBody,
+    priority,
+    attachments,
+  });
+  if (!data?.message?.id) throw new Error('Attachment message was not created');
+  return data;
+}
+
 /** Open (or force-download) an attachment via a freshly signed URL. */
 
 export async function openInternalAttachment(
@@ -360,15 +383,40 @@ export async function openInternalAttachment(
   attachment: Pick<InternalAttachment, 'path' | 'name'>,
   download = false,
 ): Promise<void> {
-  const data = await call({
-    operation: 'download_ticket',
-    thread_id: threadId,
-    path: attachment.path,
-    download,
-  });
-  const url = data?.signed_url as string | undefined;
-  if (!url) throw new Error('Could not open attachment');
-  window.open(url, '_blank', 'noopener,noreferrer');
+  // Open during the original click gesture. Waiting for the signed-url request
+  // before calling window.open lets browser popup blockers discard the action,
+  // which looked like a broken download even when the backend succeeded.
+  const pending = window.open('', '_blank');
+  if (pending) {
+    pending.opener = null;
+    pending.document.title = `Preparing ${attachment.name}`;
+    pending.document.body.textContent = `Preparing ${attachment.name}…`;
+  }
+  try {
+    const data = await call({
+      operation: 'download_ticket',
+      thread_id: threadId,
+      path: attachment.path,
+      download,
+    });
+    const url = data?.signed_url as string | undefined;
+    if (!url) throw new Error('Could not open attachment');
+    if (pending) {
+      pending.location.replace(url);
+      return;
+    }
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.download = attachment.name;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } catch (error) {
+    pending?.close();
+    throw error;
+  }
 }
 
 export function isImageAttachment(a: InternalAttachment) {
