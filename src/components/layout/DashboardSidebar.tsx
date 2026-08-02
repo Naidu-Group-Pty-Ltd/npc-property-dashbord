@@ -133,6 +133,7 @@ const adminGroup = {
     'Templates',
     'Branding',
     'Integrations',
+    'Workflow Playground',
     'Cloudflare',
     'API Usage',
     'Model Hub',
