@@ -9,6 +9,7 @@
 
 import { INTEGRATIONS } from '@/lib/integrations/registry';
 import type { CatalogNode } from '../types';
+import { CONNECTIVITY_NODES } from './connectivity';
 import { CORE_NODES } from './core';
 import { INTELLIGENCE_NODES } from './intelligence';
 import { PROPERTY_NODES } from './property';
@@ -21,6 +22,7 @@ export const CATALOG: CatalogNode[] = [
   ...INTELLIGENCE_NODES,
   ...ENGAGEMENT_NODES,
   ...OPERATIONS_NODES,
+  ...CONNECTIVITY_NODES,
 ];
 
 const BY_ID = new Map(CATALOG.map((node) => [node.id, node]));
@@ -72,4 +74,11 @@ export function searchCatalog({ query, kind, category }: CatalogSearchOptions): 
   });
 }
 
-export { CORE_NODES, INTELLIGENCE_NODES, PROPERTY_NODES, ENGAGEMENT_NODES, OPERATIONS_NODES };
+export {
+  CORE_NODES,
+  INTELLIGENCE_NODES,
+  PROPERTY_NODES,
+  ENGAGEMENT_NODES,
+  OPERATIONS_NODES,
+  CONNECTIVITY_NODES,
+};

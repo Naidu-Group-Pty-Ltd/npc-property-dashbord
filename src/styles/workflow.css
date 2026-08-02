@@ -38,10 +38,22 @@
   background-image: radial-gradient(circle at 1px 1px, hsl(var(--foreground) / 0.09) 1px, transparent 0);
   background-repeat: repeat;
   touch-action: none;
+  /* Every gesture here is a drag, so text selection only ever produces stray
+     highlighted labels. Inputs opt back in below. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.wf-canvas input,
+.wf-canvas textarea,
+.wf-canvas [contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .wf-canvas[data-panning='true'] { cursor: grabbing; }
 .wf-canvas[data-connecting='true'] { cursor: crosshair; }
+.wf-canvas[data-marquee='true'] { cursor: crosshair; }
 
 /* The layer that pans and zooms. Children are positioned in canvas space. */
 .wf-viewport {
@@ -87,6 +99,14 @@
   border-style: dashed;
   border-color: hsl(var(--warning) / 0.75);
 }
+
+/* The primary of a multi-step selection reads slightly stronger, so it is clear
+   which step the inspector on the right is actually editing. */
+.wf-node[data-primary='true'] { box-shadow: var(--elevation-3), 0 0 0 2px hsl(var(--wf-accent) / 0.55); }
+
+/* Hovering a step traces what it can reach; everything else recedes rather than
+   disappearing, so the shape of the flow stays legible. */
+.wf-node[data-dimmed='true'] { opacity: 0.38; }
 
 .wf-node[data-disabled='true'] { opacity: 0.55; }
 .wf-node[data-disabled='true'] .wf-node-body { filter: grayscale(1); }
@@ -145,6 +165,79 @@
 .wf-edge-group:hover .wf-edge-path { stroke: hsl(var(--primary)); stroke-width: 2.5; }
 .wf-edge-group[data-selected='true'] .wf-edge-path { stroke: hsl(var(--primary)); stroke-width: 3; }
 .wf-edge-pending { stroke: hsl(var(--primary)); stroke-width: 2; stroke-dasharray: 6 6; fill: none; }
+
+/* The connection a dragged step will splice into. Deliberately loud — it is a
+   structural change, not a reposition, and it should be obvious before release. */
+.wf-edge-group[data-splice='true'] .wf-edge-path {
+  stroke: hsl(var(--success));
+  stroke-width: 3.5;
+  stroke-dasharray: 7 5;
+}
+
+.wf-edge-group[data-traced='true'] .wf-edge-path { stroke: hsl(var(--primary)); }
+
+/* Delete affordance at an edge's midpoint, revealed on hover. */
+.wf-edge-action { cursor: pointer; }
+.wf-edge-action circle {
+  fill: hsl(var(--card));
+  stroke: hsl(var(--destructive) / 0.6);
+  stroke-width: 1;
+}
+.wf-edge-action path { stroke: hsl(var(--destructive)); stroke-width: 1.6; stroke-linecap: round; }
+.wf-edge-action:hover circle { fill: hsl(var(--destructive) / 0.12); stroke: hsl(var(--destructive)); }
+
+/* Branch path names, sitting outside the step's right edge. The edge carries the
+   same name at its midpoint once connected; this one is what tells you which
+   port is which *before* anything is wired to it. */
+.wf-branch-label {
+  white-space: nowrap;
+  border-radius: var(--radius-sm);
+  padding: 0 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--surface-2) / 0.9);
+}
+
+/* --- Guides, marquee and minimap ----------------------------------------- */
+
+.wf-guides { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+
+.wf-guide {
+  stroke: hsl(var(--primary));
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  shape-rendering: crispEdges;
+}
+
+.wf-marquee {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: 1px solid hsl(var(--primary) / 0.7);
+  background: hsl(var(--primary) / 0.08);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
+.wf-minimap {
+  border-radius: var(--radius-md);
+  border: 1px solid hsl(var(--border) / 0.7);
+  background: hsl(var(--card) / 0.9);
+  box-shadow: var(--elevation-1);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.wf-minimap-edge { stroke: hsl(var(--border-strong)); stroke-width: 1; }
+.wf-minimap-node { fill: hsl(var(--muted-foreground) / 0.55); }
+.wf-minimap-node[data-trigger='true'] { fill: hsl(var(--primary) / 0.8); }
+.wf-minimap-node[data-selected='true'] { fill: hsl(var(--primary)); }
+.wf-minimap-view {
+  fill: hsl(var(--primary) / 0.1);
+  stroke: hsl(var(--primary) / 0.8);
+  stroke-width: 1;
+}
 
 .wf-edge-label {
   fill: hsl(var(--muted-foreground));
@@ -210,4 +303,7 @@
   .wf-edge-path,
   .wf-palette-item { transition: none; }
   .wf-node-enter { animation: none; }
+  /* Guides and the splice marker are state, not decoration, so they stay —
+     only their movement is removed. */
+  .wf-edge-group[data-splice='true'] .wf-edge-path { stroke-dasharray: none; }
 }

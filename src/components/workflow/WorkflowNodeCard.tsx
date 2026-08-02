@@ -26,7 +26,11 @@ import { NodeGlyph } from './nodeVisuals';
 export interface WorkflowNodeCardProps {
   node: WorkflowNode;
   selected: boolean;
+  /** The primary of a multi-step selection — the one the inspector edits. */
+  primary?: boolean;
   dragging: boolean;
+  /** Off the currently traced path, so it recedes rather than competing. */
+  dimmed?: boolean;
   flagged: boolean;
   /** False when the node's integration has no saved credential. */
   configured: boolean;
@@ -37,12 +41,15 @@ export interface WorkflowNodeCardProps {
   onDelete: (nodeId: string) => void;
   onDuplicate: (nodeId: string) => void;
   onToggleDisabled: (nodeId: string) => void;
+  onHoverChange?: (hovering: boolean) => void;
 }
 
 function WorkflowNodeCardImpl({
   node,
   selected,
+  primary = false,
   dragging,
+  dimmed = false,
   flagged,
   configured,
   onPointerDownCard,
@@ -52,6 +59,7 @@ function WorkflowNodeCardImpl({
   onDelete,
   onDuplicate,
   onToggleDisabled,
+  onHoverChange,
 }: WorkflowNodeCardProps) {
   const definition = getCatalogNode(node.type);
 
@@ -106,6 +114,8 @@ function WorkflowNodeCardImpl({
       className={cn('wf-node group', accentClass(definition.category))}
       style={position}
       data-selected={selected}
+      data-primary={primary}
+      data-dimmed={dimmed}
       data-dragging={dragging}
       data-flagged={flagged}
       data-disabled={node.disabled ?? false}
@@ -119,6 +129,8 @@ function WorkflowNodeCardImpl({
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => onPointerDownCard(event, node.id)}
       onPointerUp={() => onFinishConnection(node.id)}
+      onPointerEnter={() => onHoverChange?.(true)}
+      onPointerLeave={() => onHoverChange?.(false)}
     >
       <div className="wf-node-body wf-node-enter flex items-start gap-3 p-3">
         <span className="wf-node-icon shrink-0">
@@ -191,20 +203,20 @@ function WorkflowNodeCardImpl({
 
       {/* Outgoing ports. Branch nodes expose one per path, labelled. */}
       {definition.branches?.length ? (
-        <div className="absolute right-0 top-0 flex h-full translate-x-1/2 flex-col justify-center gap-3 pr-0">
+        // Labels hang outside the right edge; inside, they collide with the
+        // step's own summary text.
+        <div className="absolute right-0 top-0 flex h-full translate-x-1/2 flex-col justify-center gap-3">
           {definition.branches.map((branch) => (
             <span key={branch.id} className="flex items-center gap-1.5">
-              <span className="whitespace-nowrap rounded bg-card/90 px-1 text-[10px] font-medium text-muted-foreground">
-                {branch.label}
-              </span>
               <button
                 type="button"
                 aria-label={`Connect the ${branch.label.toLowerCase()} path of ${title}`}
-                className="wf-port"
+                className="wf-port shrink-0"
                 data-port="source"
                 data-branch={branch.id}
                 onPointerDown={(event) => onStartConnection(event, node.id, branch.id)}
               />
+              <span className="wf-branch-label">{branch.label}</span>
             </span>
           ))}
         </div>
