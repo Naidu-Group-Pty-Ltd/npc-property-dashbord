@@ -760,7 +760,7 @@ export default function MarketUpdates() {
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       {feedEmptyState.kind === 'filters' && <Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button>}
                       {['registry','disabled'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button>}
-                      {['candidates','classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={reviewCandidates}>Review held items</Button>}
+                      
                       {sourceHealth.latestRun && ['classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setRunSummary(sourceHealth.latestRun ?? null)}>View latest run</Button>}
                       {feedEmptyState.kind === 'classification' && <Button size="sm" variant="outline" onClick={() => setWorkspaceTab('ask-ai')}>Test AI route</Button>}
                     </div>
