@@ -39,7 +39,25 @@ function parseAllowedOrigins(): string[] {
   return [...new Set([...LEGACY_FALLBACK, ...fromEnv])];
 }
 
+// First-party Lovable preview/sandbox hosts for THIS project only. The project
+// id is part of every preview hostname Lovable mints for us, so matching on it
+// keeps enforcement exact-origin in spirit (no other tenant can satisfy it)
+// while surviving preview-host renames that previously produced csrf_denied.
+const LOVABLE_PROJECT_ID = '7976d60b-c277-4851-889b-c170285f4be2';
+const LOVABLE_HOST_SUFFIXES = ['.lovable.app', '.lovableproject.com', '.lovable.dev'];
+
+function lovableFirstPartyHost(origin: string): boolean {
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    if (!LOVABLE_HOST_SUFFIXES.some((s) => host.endsWith(s))) return false;
+    return host.includes(LOVABLE_PROJECT_ID);
+  } catch {
+    return false;
+  }
+}
+
 function lovablePreviewSuffixAllowed(origin: string): boolean {
+  if (lovableFirstPartyHost(origin)) return true;
   if (((globalThis as any).Deno?.env?.get?.('CORS_ALLOW_LOVABLE_PREVIEW') || '').trim().toLowerCase() !== 'true') return false;
   try {
     const host = new URL(origin).hostname;
