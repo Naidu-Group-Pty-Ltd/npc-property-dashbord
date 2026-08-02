@@ -59,6 +59,7 @@ import {
   filesFromDataTransfer,
   type InternalAttachment,
   sendInternalMessageWithAttachments,
+  hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -171,16 +172,17 @@ function MinimisedChip({
       ref={drag.nodeRef}
       style={drag.positionStyle}
       className={cn(
-        'pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border bg-card/95 px-2 py-1.5 backdrop-blur-xl',
-        'shadow-[var(--elevation-2,0_10px_24px_-14px_rgba(0,0,0,0.5))]',
+        'pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border-2 bg-card/95 px-2 py-1.5 backdrop-blur-xl',
+        'shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_12px_28px_-14px_hsl(var(--primary)/0.4)]',
         drag.dragging && 'z-[70] scale-[1.02] shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
         drag.position && 'z-[65]',
         thread.priority === 'urgent'
-          ? 'border-destructive/60'
+          ? 'border-destructive/70 ring-2 ring-destructive/20'
           : thread.priority === 'high'
-            ? 'border-warning/50'
-            : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
+            ? 'border-warning/70 ring-2 ring-warning/15'
+            : 'border-primary/55 ring-2 ring-primary/15',
       )}
+
     >
       <span
         {...drag.handleProps}
@@ -285,7 +287,10 @@ export function InternalMessageToasts() {
         action: 'get_thread',
         thread_id: threadId,
       });
-      const msgs: PopupMessage[] = (data?.messages ?? []).slice(-60);
+      const msgs: PopupMessage[] = await hydrateThreadAttachments(
+        threadId,
+        (data?.messages ?? []).slice(-60) as PopupMessage[],
+      );
       setThreads((prev) =>
         prev.map((t) =>
           t.thread_id === threadId ? { ...t, messages: msgs, loading: false, unread: 0 } : t,
@@ -696,17 +701,25 @@ export function InternalMessageToasts() {
           addFilesFor(active.thread_id, dropped);
         }}
         className={cn(
-          'pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-3xl border bg-card/95 backdrop-blur-xl',
-          'shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
+          'pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-3xl border-2 bg-card/95 backdrop-blur-xl',
+          // Own identity: a lit primary edge plus a coloured halo so the panel
+          // never camouflages against the dark dashboard behind it.
+          'shadow-[0_0_0_1px_hsl(var(--primary)/0.22),0_24px_60px_-20px_hsl(var(--primary)/0.35),var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
           'animate-in slide-in-from-right-4 fade-in-0 motion-reduce:animate-none',
           active.priority === 'urgent'
-            ? 'border-destructive/60 ring-1 ring-destructive/30'
+            ? 'border-destructive/70 ring-2 ring-destructive/25'
             : active.priority === 'high'
-              ? 'border-warning/50'
-              : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
+              ? 'border-warning/70 ring-2 ring-warning/20'
+              : 'border-primary/55 ring-2 ring-primary/15',
         )}
       >
+        {/* Identity accent — blue · gold · purple, matching the typing signal */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-info via-primary to-chart-5 opacity-90"
+        />
         {dragActive && <AttachmentDropOverlay />}
+
 
         {/* Header */}
         <div className="flex items-center gap-2.5 border-b border-border/50 px-3.5 py-2.5">
@@ -788,6 +801,9 @@ export function InternalMessageToasts() {
                     )}
                   >
                     {m.body}
+                    {!m.body?.trim() && !(m.attachments?.length) && (
+                      <span className="italic opacity-70">Attachment unavailable</span>
+                    )}
                     <InternalAttachmentList
                       threadId={active.thread_id}
                       attachments={m.attachments ?? []}

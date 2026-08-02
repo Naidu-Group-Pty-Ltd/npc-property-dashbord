@@ -376,6 +376,35 @@ export async function sendInternalMessageWithAttachments(
   return data;
 }
 
+/**
+ * Read-side delivery guarantee.
+ *
+ * The main messaging function's `get_thread` has shipped behind more than once
+ * and dropped the `attachments` projection, which rendered as an empty grey
+ * bubble. We re-hydrate every message's attachments from the dedicated
+ * transport so visibility never depends on that deployment.
+ */
+export async function hydrateThreadAttachments<T extends { id: string; attachments?: InternalAttachment[] | null }>(
+  threadId: string,
+  messages: T[],
+): Promise<T[]> {
+  if (!threadId || !messages.length) return messages;
+  try {
+    const data = await call({ operation: 'hydrate', thread_id: threadId });
+    const map = (data?.attachments_by_message ?? {}) as Record<string, InternalAttachment[]>;
+    if (!Object.keys(map).length) return messages;
+    return messages.map((m) =>
+      map[m.id]?.length && !(m.attachments?.length)
+        ? { ...m, attachments: map[m.id] }
+        : m,
+    );
+  } catch {
+    return messages;
+  }
+}
+
+
+
 /** Open (or force-download) an attachment via a freshly signed URL. */
 
 export async function openInternalAttachment(
