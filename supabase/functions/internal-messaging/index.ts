@@ -18,6 +18,7 @@
 //                { broadcast: true, body, title } → new broadcast to all active staff
 //   mark_read    { thread_id }                  → stamp last_read_at
 //   attachment_upload_url   { thread_id, file_name }  → short-lived signed PUT ticket
+//   attachment_upload_direct { thread_id, file_name, file_data } → server-side put
 //   attachment_download_url { thread_id, path }       → short-lived signed GET url
 //
 // DEPLOYMENT NOTE. Attachments live entirely in this function: the browser has
