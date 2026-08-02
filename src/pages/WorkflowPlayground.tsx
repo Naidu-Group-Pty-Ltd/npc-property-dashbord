@@ -9,6 +9,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  ChevronDown,
+  FlaskConical,
   Loader2,
   PanelRightClose,
   PanelRightOpen,
@@ -17,6 +19,7 @@ import {
   Redo2,
   Save,
   Undo2,
+  Zap,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,12 +44,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { useToast } from '@/hooks/use-toast';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useIntegrationCredentials } from '@/hooks/useIntegrationCredentials';
 import { useWorkflows } from '@/hooks/useWorkflows';
+import { useWorkflowRuns, type RunMode } from '@/hooks/useWorkflowRuns';
 import { getCatalogNode } from '@/lib/workflow/catalog';
 import { evaluateReadiness, isRunnable } from '@/lib/workflow/graph';
 import { useWorkflowStore } from '@/lib/workflow/store';
@@ -57,6 +69,7 @@ import { NodeInspector } from '@/components/workflow/NodeInspector';
 import { ReadinessRail } from '@/components/workflow/ReadinessRail';
 import { WorkflowCanvas } from '@/components/workflow/WorkflowCanvas';
 import { WorkflowLibrary } from '@/components/workflow/WorkflowLibrary';
+import { RunPanel } from '@/components/workflow/RunPanel';
 import { suggestedPosition } from '@/components/workflow/canvasGeometry';
 
 export default function WorkflowPlayground() {
@@ -74,6 +87,10 @@ export default function WorkflowPlayground() {
   const [draftDescription, setDraftDescription] = useState('');
   const [renameTarget, setRenameTarget] = useState<WorkflowRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkflowRecord | null>(null);
+  const [runPanelOpen, setRunPanelOpen] = useState(false);
+  const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
+
+  const runs = useWorkflowRuns(openWorkflow?.id ?? null);
 
   const graph = useWorkflowStore((s) => s.graph);
   const dirty = useWorkflowStore((s) => s.dirty);
@@ -109,10 +126,23 @@ export default function WorkflowPlayground() {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [dirty]);
 
-  const openOnCanvas = useCallback((workflow: WorkflowRecord) => {
-    useWorkflowStore.getState().loadGraph(workflow.graph);
-    setOpenWorkflow(workflow);
-  }, []);
+  /** Last run's outcome per node, so the canvas can show it in place. */
+  const runStepStatuses = useMemo(() => {
+    const statuses = new Map<string, string>();
+    for (const step of runs.result?.steps ?? []) statuses.set(step.nodeId, step.status);
+    return statuses;
+  }, [runs.result]);
+
+  const openOnCanvas = useCallback(
+    (workflow: WorkflowRecord) => {
+      useWorkflowStore.getState().loadGraph(workflow.graph);
+      setOpenWorkflow(workflow);
+      // A previous workflow's results next to this one's canvas would be a lie.
+      runs.clear();
+      setRunPanelOpen(false);
+    },
+    [runs.clear],
+  );
 
   const handleSave = useCallback(async () => {
     if (!openWorkflow) return;
@@ -180,6 +210,28 @@ export default function WorkflowPlayground() {
     useWorkflowStore.getState().markSaved();
     toast({ title: `Started from “${template.name}”` });
   };
+
+  const handleRun = useCallback(
+    async (mode: RunMode) => {
+      setRunPanelOpen(true);
+      const run = await runs.start(useWorkflowStore.getState().graph, mode);
+
+      // The panel carries the detail; the toast only says whether to look.
+      if (run.status === 'succeeded') {
+        toast({
+          title: mode === 'live' ? 'Live run finished' : 'Test run finished',
+          description: `${run.steps.length} step${run.steps.length === 1 ? '' : 's'} completed.`,
+        });
+      } else {
+        toast({
+          title: run.status === 'failed' ? 'The run failed' : 'The run stopped early',
+          description: run.haltReason ?? 'Open the run panel to see which step and why.',
+          variant: run.status === 'failed' ? 'destructive' : 'default',
+        });
+      }
+    },
+    [runs.start, toast],
+  );
 
   const handleAddNode = useCallback((catalogId: string) => {
     useWorkflowStore.getState().addNode(catalogId, suggestedPosition(useWorkflowStore.getState().graph));
@@ -309,8 +361,17 @@ export default function WorkflowPlayground() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <span>
-                  <Button size="sm" disabled={!runnable || !canEdit}>
-                    <Play className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                  <Button
+                    size="sm"
+                    className="rounded-r-none"
+                    disabled={!runnable || !canEdit || runs.running}
+                    onClick={() => void handleRun('test')}
+                  >
+                    {runs.running ? (
+                      <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden="true" />
+                    ) : (
+                      <Play className="mr-1.5 h-4 w-4" aria-hidden="true" />
+                    )}
                     Test run
                   </Button>
                 </span>
@@ -321,6 +382,41 @@ export default function WorkflowPlayground() {
                   : 'Fix the blocking items in the checks panel first.'}
               </TooltipContent>
             </Tooltip>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  className="h-8 w-7 rounded-l-none border-l border-primary-foreground/25"
+                  disabled={!runnable || !canEdit || runs.running}
+                  aria-label="More run options"
+                >
+                  <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Run this workflow</DropdownMenuLabel>
+                <DropdownMenuItem onSelect={() => void handleRun('test')}>
+                  <FlaskConical className="mr-2 h-4 w-4" aria-hidden="true" />
+                  <span className="flex-1">
+                    Test run
+                    <span className="block text-xs text-muted-foreground">
+                      Sample data. Nothing leaves the dashboard.
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setLiveConfirmOpen(true)}>
+                  <Zap className="mr-2 h-4 w-4" aria-hidden="true" />
+                  <span className="flex-1">
+                    Run live
+                    <span className="block text-xs text-muted-foreground">
+                      Performs real calls. This cannot be undone.
+                    </span>
+                  </span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
@@ -334,16 +430,33 @@ export default function WorkflowPlayground() {
             />
           </div>
 
-          <main className="relative min-w-0 flex-1">
-            <WorkflowCanvas
-              configuredIntegrations={configured}
-              credentialsLoaded={credentialsLoaded}
-              flaggedNodeIds={flaggedNodeIds}
-              onDropCatalogNode={(catalogId, position) =>
-                useWorkflowStore.getState().addNode(catalogId, position)
-              }
-            />
-          </main>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <main className="relative min-h-0 flex-1">
+              <WorkflowCanvas
+                configuredIntegrations={configured}
+                credentialsLoaded={credentialsLoaded}
+                flaggedNodeIds={flaggedNodeIds}
+                runStepStatuses={runStepStatuses}
+                onDropCatalogNode={(catalogId, position) =>
+                  useWorkflowStore.getState().addNode(catalogId, position)
+                }
+              />
+            </main>
+
+            {runPanelOpen && (
+              <div className="h-[19rem] shrink-0 border-t border-border/60">
+                <RunPanel
+                  result={runs.result}
+                  running={runs.running}
+                  history={runs.history}
+                  historyLoading={runs.historyLoading}
+                  persistenceWarning={runs.persistenceWarning}
+                  onClose={() => setRunPanelOpen(false)}
+                  onFocusNode={focusNode}
+                />
+              </div>
+            )}
+          </div>
 
           {inspectorOpen && (
             <div className="hidden w-80 shrink-0 flex-col border-l border-border/60 bg-card/40 xl:flex">
@@ -378,6 +491,30 @@ export default function WorkflowPlayground() {
             </div>
           )}
         </div>
+
+        <AlertDialog open={liveConfirmOpen} onOpenChange={setLiveConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Run this workflow for real?</AlertDialogTitle>
+              <AlertDialogDescription>
+                A live run performs the calls its steps describe — messages are sent, records are
+                written, and nothing here can take them back. A test run does the same walk without
+                sending anything.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  setLiveConfirmOpen(false);
+                  void handleRun('live');
+                }}
+              >
+                Run live
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     );
   }

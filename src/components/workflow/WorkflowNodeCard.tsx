@@ -7,7 +7,16 @@
  */
 
 import { memo, useCallback, type CSSProperties, type KeyboardEvent, type PointerEvent } from 'react';
-import { KeyRound, MoreVertical, PowerOff } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  CircleSlash,
+  FlaskConical,
+  KeyRound,
+  MoreVertical,
+  OctagonMinus,
+  PowerOff,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -32,6 +41,8 @@ export interface WorkflowNodeCardProps {
   /** Off the currently traced path, so it recedes rather than competing. */
   dimmed?: boolean;
   flagged: boolean;
+  /** This step's outcome in the last run, when there has been one. */
+  runStatus?: string;
   /** False when the node's integration has no saved credential. */
   configured: boolean;
   onPointerDownCard: (event: PointerEvent<HTMLDivElement>, nodeId: string) => void;
@@ -44,6 +55,66 @@ export interface WorkflowNodeCardProps {
   onHoverChange?: (hovering: boolean) => void;
 }
 
+/**
+ * The last run's verdict, shown on the step itself.
+ *
+ * Reading a run in a side panel means holding the graph in your head; putting
+ * the outcome on the node means the canvas answers "where did it go wrong"
+ * without being read at all.
+ */
+const RUN_STATUS_CHIPS: Record<
+  string,
+  { label: string; icon: typeof CheckCircle2; className: string; iconClassName: string }
+> = {
+  succeeded: {
+    label: 'Succeeded',
+    icon: CheckCircle2,
+    className: 'border-success/50 bg-success/15 text-foreground',
+    iconClassName: 'text-success',
+  },
+  failed: {
+    label: 'Failed',
+    icon: AlertTriangle,
+    className: 'border-destructive/50 bg-destructive/15 text-foreground',
+    iconClassName: 'text-destructive',
+  },
+  simulated: {
+    label: 'Simulated',
+    icon: FlaskConical,
+    className: 'border-primary/50 bg-primary/10 text-foreground',
+    iconClassName: 'text-primary',
+  },
+  halted: {
+    label: 'Stopped here',
+    icon: OctagonMinus,
+    className: 'border-warning/50 bg-warning/15 text-foreground',
+    iconClassName: 'text-warning',
+  },
+  skipped: {
+    label: 'Not reached',
+    icon: CircleSlash,
+    className: 'border-border bg-muted text-muted-foreground',
+    iconClassName: 'text-muted-foreground',
+  },
+};
+
+function RunStatusChip({ status }: { status: string }) {
+  const chip = RUN_STATUS_CHIPS[status];
+  if (!chip) return null;
+  const Icon = chip.icon;
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
+        chip.className,
+      )}
+    >
+      <Icon className={cn('h-3 w-3', chip.iconClassName)} aria-hidden="true" />
+      {chip.label}
+    </span>
+  );
+}
+
 function WorkflowNodeCardImpl({
   node,
   selected,
@@ -51,6 +122,7 @@ function WorkflowNodeCardImpl({
   dragging,
   dimmed = false,
   flagged,
+  runStatus,
   configured,
   onPointerDownCard,
   onStartConnection,
@@ -118,6 +190,7 @@ function WorkflowNodeCardImpl({
       data-dimmed={dimmed}
       data-dragging={dragging}
       data-flagged={flagged}
+      data-run-status={runStatus}
       data-disabled={node.disabled ?? false}
       data-unconfigured={needsCredential}
       data-kind={definition.kind}
@@ -166,8 +239,9 @@ function WorkflowNodeCardImpl({
 
           <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{definition.summary}</p>
 
-          {(needsCredential || node.disabled) && (
+          {(needsCredential || node.disabled || runStatus) && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {runStatus && <RunStatusChip status={runStatus} />}
               {needsCredential && (
                 <Tooltip>
                   <TooltipTrigger asChild>

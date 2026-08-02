@@ -57,6 +57,8 @@ interface WorkflowCanvasProps {
   credentialsLoaded: boolean;
   /** Node ids a readiness issue points at. */
   flaggedNodeIds: Set<string>;
+  /** Outcome of the last run, keyed by node id. Empty until one has been run. */
+  runStepStatuses?: Map<string, string>;
   onDropCatalogNode: (catalogId: string, position: Vec2) => void;
 }
 
@@ -90,6 +92,7 @@ export function WorkflowCanvas({
   configuredIntegrations,
   credentialsLoaded,
   flaggedNodeIds,
+  runStepStatuses,
   onDropCatalogNode,
 }: WorkflowCanvasProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -548,6 +551,7 @@ export function WorkflowCanvas({
                   dragging={dragKind === 'node' && selectionSet.has(node.id)}
                   dimmed={traced.size > 0 && !traced.has(node.id)}
                   flagged={flaggedNodeIds.has(node.id)}
+                  runStatus={runStepStatuses?.get(node.id)}
                   configured={isNodeConfigured(node.type, configuredIntegrations, credentialsLoaded)}
                   onPointerDownCard={handleNodePointerDown}
                   onStartConnection={handleStartConnection}
