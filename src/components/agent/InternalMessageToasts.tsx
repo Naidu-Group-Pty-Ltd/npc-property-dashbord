@@ -81,8 +81,8 @@ interface PopupMessage {
 
 interface PopupThread {
   thread_id: string;
-  kind: 'direct' | 'broadcast';
-  /** Counterparty / announcement title. */
+  kind: 'direct' | 'group' | 'broadcast';
+  /** Counterparty / group / announcement title. */
   title: string;
   /** Name of the person who sent the latest inbound message. */
   sender: string;
@@ -92,6 +92,12 @@ interface PopupThread {
   messages: PopupMessage[];
   loading: boolean;
 }
+
+/** Chip / header label: DMs read best as the person, everything else as its title. */
+function threadLabel(thread: PopupThread) {
+  return thread.kind === 'direct' ? thread.sender || thread.title : thread.title || thread.sender;
+}
+
 
 const POLL_MS = 15_000;
 /** Collapsed chips shown above the expanded card. */
