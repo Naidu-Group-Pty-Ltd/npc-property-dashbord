@@ -292,8 +292,13 @@ export async function answerMarketUpdateQuestion(
   conversation_id?: string | null,
 ): Promise<MarketQAMessage> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-qa', { body: { question, updateIds, history, segment, conversation_id } });
+    // Staff identity in this app lives in the custom-auth session (HttpOnly
+    // cookie + stored access token), NOT in supabase.auth — `db.functions.invoke`
+    // therefore sent the anon key and the function replied 401
+    // authentication_required. invokeSecureFunction carries the real credentials.
+    const { data, error } = await invokeSecureFunction<any>('market-updates-qa', { question, updateIds, history, segment, conversation_id }, { timeoutMs: 120000 });
     if (error) throw error;
+    if (!data) throw new Error('Market Q&A returned no answer.');
     return {
       id: crypto.randomUUID(),
       correlation_id:data.correlation_id,
