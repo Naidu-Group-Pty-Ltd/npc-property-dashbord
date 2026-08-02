@@ -191,10 +191,10 @@ describe('image dimensions', () => {
   it('refuses one that would print soft, and says how big it was', () => {
     const result = inlineAsset(png64);
     expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected rejection');
-    expect(result.reason).toBe('too-small');
-    expect(result.detail).toContain('64x64');
-    expect(result.detail).toContain(String(MIN_ASSET_EDGE_PX));
+    const rejected = result as { ok: false; reason: string; detail: string };
+    expect(rejected.reason).toBe('too-small');
+    expect(rejected.detail).toContain('64x64');
+    expect(rejected.detail).toContain(String(MIN_ASSET_EDGE_PX));
   });
 
   /**
