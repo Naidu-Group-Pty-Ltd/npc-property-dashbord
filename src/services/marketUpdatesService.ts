@@ -337,20 +337,29 @@ export async function streamMarketUpdateQuestion(
   } = {},
 ): Promise<MarketQAMessage> {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-qa`;
-  const session = (await supabase.auth.getSession()).data.session;
-  const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  // Custom-auth carriers: the staff session rides in the HttpOnly
+  // `__Host-session_token` cookie (`credentials: 'include'`) and the stored
+  // access token. supabase.auth has no session in this app, so relying on it
+  // sent the public anon key and the function answered 401.
+  let token: string | null = null;
+  try { token = sessionStorage.getItem('supabase_access_token') || localStorage.getItem('supabase_access_token'); } catch { /* storage may be blocked */ }
+  if (!token) {
+    try { token = (await supabase.auth.getSession()).data.session?.access_token ?? null; } catch { /* best effort */ }
+  }
+  const bearer = token || (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string);
   const correlationId=crypto.randomUUID();
   try {
     const res = await fetch(url, {
       method: 'POST',
       signal: opts.signal,
+      credentials: 'include',
       // `correlation_id` travels in the body, not a header: a custom header
       // would need every reachable edge function redeployed with it in
       // `Access-Control-Allow-Headers` before the browser would allow the
       // request at all. See src/lib/secureInvoke.ts for the full rationale.
       headers: {
         'content-type': 'application/json',
-        'authorization': `Bearer ${token}`,
+        'authorization': `Bearer ${bearer}`,
         'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
       },
       body: JSON.stringify({
