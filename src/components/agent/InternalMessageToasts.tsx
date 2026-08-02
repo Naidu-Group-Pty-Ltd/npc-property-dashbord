@@ -58,7 +58,6 @@ import {
   INTERNAL_ATTACHMENT_ACCEPT,
   filesFromDataTransfer,
   type InternalAttachment,
-  ensureMessageAttachments,
   sendInternalMessageWithAttachments,
 } from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
