@@ -581,6 +581,9 @@ export function InternalMessagesPanel({
                     m.mine ? 'bg-primary/15 text-foreground' : 'bg-muted/60 text-foreground',
                   )}>
                     {m.body}
+                    {!m.body?.trim() && !(m.attachments?.length) && (
+                      <span className="italic text-muted-foreground">Attachment unavailable</span>
+                    )}
                     <InternalAttachmentList
                       threadId={activeThread.id}
                       attachments={m.attachments ?? []}
