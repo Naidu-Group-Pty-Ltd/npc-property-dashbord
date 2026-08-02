@@ -6,11 +6,17 @@
  *  1. The invite token is looked up by HASH. Phase 1 stores
  *     `invite_token_hash` and has no plaintext column, so a database leak
  *     cannot yield a usable invite link.
- *  2. The Solicitor function references an undeclared `updatedUser` on the
- *     success path — a latent ReferenceError. Here the updated row is captured
- *     and checked.
+ *  2. The updated row is captured and checked, so a second concurrent
+ *     acceptance cannot be reported as a success.
  *  3. Password strength uses the shared validator rather than a bare length
  *     check.
+ *
+ * The organisation lookup happens twice, and the two are not interchangeable:
+ * `listInvitedOrganisations` reads memberships directly and is the only thing
+ * that works before the account is active, while `listAccessibleOrganisations`
+ * is the authoritative post-activation resolver the session is scoped to.
+ * Collapsing them into one `organisations` binding is what made this function
+ * fail to parse.
  *
  * Actions: `validate` (render the form) and accept (default).
  */
@@ -78,9 +84,10 @@ Deno.serve(async (req) => {
     }
 
     // An invite is only usable if the account still has somewhere to go.
-    const organisations = await listAccessibleOrganisations(supabase, portalUser.id);
-    const membershipsExist = organisations.length > 0 || await hasAnyPendingMembership(supabase, portalUser.id);
-    if (!membershipsExist) return json({ error: GENERIC_INVITE_ERROR, valid: false }, 400);
+    // This runs BEFORE activation, so it must not use
+    // `listAccessibleOrganisations` — see `listInvitedOrganisations`.
+    const invitedOrganisations = await listInvitedOrganisations(supabase, portalUser.id);
+    if (!invitedOrganisations.length) return json({ error: GENERIC_INVITE_ERROR, valid: false }, 400);
 
     if (action === 'validate') {
       return json({
@@ -88,7 +95,7 @@ Deno.serve(async (req) => {
         email: portalUser.email,
         name: portalUser.name,
         job_title: portalUser.job_title,
-        organisations: organisations.map((organisation) => ({
+        organisations: invitedOrganisations.map((organisation) => ({
           organisation_id: organisation.organisation_id,
           legal_name: organisation.legal_name,
           membership_role: organisation.membership_role,
@@ -138,9 +145,12 @@ Deno.serve(async (req) => {
 
     await supabase.rpc('builder_ensure_onboarding_steps', { _builder_user_id: portalUser.id });
 
-    const organisations = await listAccessibleOrganisations(supabase, portalUser.id);
-    const autoSelected = organisations.find((organisation) => organisation.is_primary)
-      ?? (organisations.length === 1 ? organisations[0] : null);
+    // Only now is the account active, so this is the first point at which
+    // `builder_accessible_organisations` can return anything. It is the
+    // authoritative post-activation list and the one the session is scoped to.
+    const accessibleOrganisations = await listAccessibleOrganisations(supabase, portalUser.id);
+    const autoSelected = accessibleOrganisations.find((organisation) => organisation.is_primary)
+      ?? (accessibleOrganisations.length === 1 ? accessibleOrganisations[0] : null);
 
     const issued = await issueBuilderSession(supabase, portalUser.id, req, {
       deviceLabel: req.headers.get('user-agent') || undefined,
@@ -171,7 +181,7 @@ Deno.serve(async (req) => {
         has_accepted_current_terms: false,
         has_completed_onboarding: false,
       },
-      organisations,
+      organisations: accessibleOrganisations,
       active_organisation: autoSelected,
       requires_organisation_selection: !autoSelected,
       session: {
@@ -187,13 +197,59 @@ Deno.serve(async (req) => {
 });
 
 /**
- * A newly invited user may hold a membership of an organisation that is still
- * pending activation, which `builder_accessible_organisations` correctly
- * excludes. The invite is still legitimate, so it is accepted and the rollout
- * and organisation gates apply at login instead.
+ * The organisations an invited user is bound to, read BEFORE activation.
+ *
+ * `builder_accessible_organisations` filters on `u.is_active AND u.status =
+ * 'active'`, so for an account that is still `invited` it returns nothing. Using
+ * it here answered "has this user any access?" with a permanent no, which both
+ * blocked the eligibility gate from doing its job and left the acceptance form
+ * unable to name the organisation being joined. Reading the memberships
+ * directly is the only correct pre-activation source.
+ *
+ * A membership of an organisation that is still `pending_activation` counts: the
+ * invite is legitimately issued ahead of the organisation going live, and the
+ * organisation gate applies at login. A `closed` organisation does not count —
+ * there is nowhere for the account to land.
  */
-async function hasAnyPendingMembership(supabase: any, userId: string): Promise<boolean> {
-  const { data } = await supabase.from('builder_organisation_memberships')
-    .select('id').eq('builder_user_id', userId).is('revoked_at', null).limit(1);
-  return Array.isArray(data) && data.length > 0;
+interface InvitedOrganisation {
+  organisation_id: string;
+  legal_name: string;
+  membership_role: string;
+}
+
+async function listInvitedOrganisations(
+  supabase: any,
+  userId: string,
+): Promise<InvitedOrganisation[]> {
+  const { data: memberships } = await supabase
+    .from('builder_organisation_memberships')
+    .select('organisation_id, membership_role')
+    .eq('builder_user_id', userId)
+    .is('revoked_at', null);
+  if (!Array.isArray(memberships) || !memberships.length) return [];
+
+  const ids = memberships.map((membership: any) => membership.organisation_id);
+  const { data: organisations } = await supabase
+    .from('builder_organisations')
+    .select('id, legal_name, status')
+    .in('id', ids)
+    .neq('status', 'closed');
+
+  // Explicitly typed for the same reason as the shared resolver: the PostgREST
+  // row type erases to `{}` and would hide every field read below.
+  const detailBy = new Map<string, { legal_name: string }>(
+    (organisations ?? []).map((organisation: any) => [organisation.id, organisation]),
+  );
+
+  const invited: InvitedOrganisation[] = [];
+  for (const membership of memberships) {
+    const detail = detailBy.get(membership.organisation_id);
+    if (!detail) continue;
+    invited.push({
+      organisation_id: membership.organisation_id,
+      legal_name: detail.legal_name,
+      membership_role: membership.membership_role,
+    });
+  }
+  return invited;
 }

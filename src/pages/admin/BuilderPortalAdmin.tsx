@@ -21,7 +21,7 @@ import { AdminBuilderDeliveryPanel } from '@/components/admin/builder-portal/Adm
 import { AdminBuilderCollaborationPanel } from '@/components/admin/builder-portal/AdminBuilderCollaborationPanel';
 import { AdminBuilderWorkspacePanel } from '@/components/admin/builder-portal/AdminBuilderWorkspacePanel';
 import { toast } from 'sonner';
-import { HardHat, Loader2, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
+import { Copy, HardHat, Loader2, Mail, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 
 /**
  * Builder / Developer Portal administration — Phase 1 shell.
@@ -57,13 +57,6 @@ const ORG_STATUS_META: Record<string, { label: string; variant: 'default' | 'sec
   closed: { label: 'Closed', variant: 'destructive' },
 };
 
-const USER_STATUS_META: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
-  active: { label: 'Active', variant: 'default' },
-  invited: { label: 'Invited', variant: 'secondary' },
-  suspended: { label: 'Suspended', variant: 'outline' },
-  revoked: { label: 'Revoked', variant: 'destructive' },
-};
-
 interface BuilderOrganisation {
   id: string;
   legal_name: string;
@@ -84,7 +77,72 @@ interface BuilderUser {
   job_title: string | null;
   status: string;
   is_active: boolean;
+  invited_at: string | null;
+  invite_token_expires_at: string | null;
+  invite_accepted_at: string | null;
+  last_login_at: string | null;
+  /** Derived server-side: the invite was accepted and a password exists. */
+  has_completed_account_setup: boolean;
   row_version: number;
+}
+
+/**
+ * Where a user sits in the Builder access lifecycle:
+ *
+ *   create user -> grant membership -> send invite -> user accepts -> active
+ *
+ * Membership comes before the invitation deliberately. An invitation to an
+ * account with no membership leads nowhere, and `builder-portal-invite` rejects
+ * it with 409 `no_membership`, so the interface must not offer it.
+ */
+type AccessStage =
+  | 'revoked' | 'no_membership' | 'not_invited'
+  | 'invite_pending' | 'invite_expired' | 'active' | 'suspended';
+
+const ACCESS_STAGE_META: Record<AccessStage, {
+  label: string;
+  variant: 'default' | 'secondary' | 'outline' | 'destructive';
+  hint: string;
+}> = {
+  revoked: {
+    label: 'Revoked', variant: 'destructive',
+    hint: 'Access has been revoked. Restore to suspended before activating.',
+  },
+  no_membership: {
+    label: 'No access', variant: 'destructive',
+    hint: 'Step 2 of 5 — grant an organisation membership. Until then this user cannot be invited.',
+  },
+  not_invited: {
+    label: 'Awaiting invitation', variant: 'secondary',
+    hint: 'Step 3 of 5 — send the invitation so the user can set a password.',
+  },
+  invite_pending: {
+    label: 'Invitation sent', variant: 'secondary',
+    hint: 'Step 4 of 5 — waiting for the user to accept and set a password.',
+  },
+  invite_expired: {
+    label: 'Invitation expired', variant: 'outline',
+    hint: 'The invitation lapsed before it was accepted. Resend it.',
+  },
+  active: {
+    label: 'Active', variant: 'default',
+    hint: 'Step 5 of 5 — the account is active and can sign in.',
+  },
+  suspended: {
+    label: 'Suspended', variant: 'outline',
+    hint: 'Sign-in is blocked and sessions were ended. Restore to return access.',
+  },
+};
+
+/** The stage is read from server-provided state only; nothing here is guessed. */
+function accessStageFor(user: BuilderUser, hasMembership: boolean): AccessStage {
+  if (user.status === 'revoked') return 'revoked';
+  if (!hasMembership) return 'no_membership';
+  if (user.has_completed_account_setup) {
+    return user.status === 'suspended' ? 'suspended' : 'active';
+  }
+  if (!user.invite_token_expires_at) return 'not_invited';
+  return new Date(user.invite_token_expires_at) > new Date() ? 'invite_pending' : 'invite_expired';
 }
 
 interface BuilderMembership {
@@ -115,11 +173,30 @@ export default function BuilderPortalAdmin() {
   const [membershipDialogOpen, setMembershipDialogOpen] = useState(false);
   const [membershipForm, setMembershipForm] = useState({ builder_user_id: '', organisation_id: '', membership_role: 'member' });
 
+  // Surfaced only when the invite function reports that email delivery did not
+  // happen. The link is one-time and is never persisted anywhere in the browser.
+  const [inviteLink, setInviteLink] = useState<{ email: string; url: string } | null>(null);
+
   const call = useCallback(async (operation: string, payload: Record<string, unknown> = {}) => {
     const { data, error } = await invokeSecureFunction('builder-portal-admin', { operation, ...payload });
     if (error) throw new Error(error.message);
     if (data?.error) throw new Error(data.error);
     return data;
+  }, []);
+
+  /**
+   * Invitations are issued by the existing `builder-portal-invite` function.
+   * The browser never generates, hashes or stores a token: it asks the server
+   * to issue one and, when mail is not configured, relays the link the server
+   * hands back.
+   */
+  const callInvite = useCallback(async (action: 'invite' | 'resend' | 'revoke_invite', user: BuilderUser) => {
+    const { data, error } = await invokeSecureFunction('builder-portal-invite', {
+      action, builder_user_id: user.id,
+    });
+    if (error) throw new Error(error.message);
+    if (data?.error) throw new Error(data.error);
+    return data as { email_sent?: boolean; invite_url?: string; expires_at?: string };
   }, []);
 
   const load = useCallback(async () => {
@@ -156,6 +233,41 @@ export default function BuilderPortalAdmin() {
       setBusy(false);
     }
   }, [call, load]);
+
+  const sendInvite = useCallback(async (user: BuilderUser, action: 'invite' | 'resend') => {
+    setBusy(true);
+    try {
+      const result = await callInvite(action, user);
+      if (result?.email_sent) {
+        toast.success(`Invitation emailed to ${user.email}`);
+      } else if (result?.invite_url) {
+        // Mail is not configured in this environment. The administrator has to
+        // pass the link on, so it is shown once, here, and nowhere else.
+        setInviteLink({ email: user.email, url: result.invite_url });
+        toast.warning('Email delivery is unavailable — copy the invitation link.');
+      } else {
+        toast.success('Invitation issued');
+      }
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to issue the invitation');
+    } finally {
+      setBusy(false);
+    }
+  }, [callInvite, load]);
+
+  const revokeInvite = useCallback(async (user: BuilderUser) => {
+    setBusy(true);
+    try {
+      await callInvite('revoke_invite', user);
+      toast.success('Pending invitation revoked');
+      await load();
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to revoke the invitation');
+    } finally {
+      setBusy(false);
+    }
+  }, [callInvite, load]);
 
   const organisationName = useCallback(
     (id: string) => organisations.find((o) => o.id === id)?.legal_name ?? 'Unknown organisation',
@@ -350,8 +462,13 @@ export default function BuilderPortalAdmin() {
               <div>
                 <CardTitle>Portal users</CardTitle>
                 <CardDescription>
-                  A user needs an active organisation membership before they have any portal access.
-                  Job title is descriptive and grants nothing.
+                  Access is granted in order: <strong>1.</strong> create the user →
+                  {' '}<strong>2.</strong> grant an organisation membership →
+                  {' '}<strong>3.</strong> send the invitation →
+                  {' '}<strong>4.</strong> the user accepts and sets a password →
+                  {' '}<strong>5.</strong> the account becomes active. An account cannot be
+                  activated by hand; it becomes active only by the user accepting their
+                  invitation. Job title is descriptive and grants nothing.
                 </CardDescription>
               </div>
               <Button size="sm" disabled={!canEdit || busy} onClick={() => setUserDialogOpen(true)}>
@@ -381,42 +498,102 @@ export default function BuilderPortalAdmin() {
                       </TableRow>
                     )}
                     {filteredUsers.map((user) => {
-                      const meta = USER_STATUS_META[user.status] ?? USER_STATUS_META.invited;
                       const memberOf = liveMemberships.filter((m) => m.builder_user_id === user.id);
+                      const stage = accessStageFor(user, memberOf.length > 0);
+                      const meta = ACCESS_STAGE_META[stage];
+                      const canInvite = stage === 'not_invited';
+                      const canResend = stage === 'invite_pending' || stage === 'invite_expired';
                       return (
                         <TableRow key={user.id}>
                           <TableCell className="font-medium">{user.name}</TableCell>
                           <TableCell className="text-sm text-muted-foreground">{user.email}</TableCell>
                           <TableCell className="text-sm text-muted-foreground">{user.job_title ?? '—'}</TableCell>
-                          <TableCell><Badge variant={meta.variant}>{meta.label}</Badge></TableCell>
+                          <TableCell>
+                            <Badge variant={meta.variant}>{meta.label}</Badge>
+                            <span className="mt-1 block max-w-[18rem] text-xs text-muted-foreground">
+                              {meta.hint}
+                            </span>
+                          </TableCell>
                           <TableCell className="text-sm text-muted-foreground">
                             {memberOf.length === 0
                               ? <span className="text-destructive">No access</span>
                               : memberOf.map((m) => organisationName(m.organisation_id)).join(', ')}
                           </TableCell>
-                          <TableCell className="space-x-2 text-right">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={!canEdit || busy}
-                              onClick={() => void mutate('set_user_status', {
-                                builder_user_id: user.id,
-                                expected_version: user.row_version,
-                                status: user.is_active ? 'suspended' : 'active',
-                              }, user.is_active ? 'User suspended' : 'User activated')}
-                            >
-                              {user.is_active ? 'Suspend' : 'Activate'}
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={!canEdit || busy}
-                              onClick={() => void mutate('revoke_user_sessions', {
-                                builder_user_id: user.id, reason: 'revoked by administrator',
-                              }, 'Sessions revoked')}
-                            >
-                              Revoke sessions
-                            </Button>
+                          <TableCell className="text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              {stage === 'no_membership' && (
+                                <span className="text-xs text-muted-foreground">
+                                  Grant a membership before inviting
+                                </span>
+                              )}
+
+                              {(canInvite || canResend) && (
+                                <Button
+                                  size="sm"
+                                  disabled={!canEdit || busy}
+                                  onClick={() => void sendInvite(user, canInvite ? 'invite' : 'resend')}
+                                >
+                                  <Mail className="mr-2 h-4 w-4" aria-hidden />
+                                  {canInvite ? 'Send invite' : 'Resend invite'}
+                                </Button>
+                              )}
+
+                              {canResend && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!canEdit || busy}
+                                  onClick={() => void revokeInvite(user)}
+                                >
+                                  Revoke invite
+                                </Button>
+                              )}
+
+                              {stage === 'active' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!canEdit || busy}
+                                  onClick={() => void mutate('set_user_status', {
+                                    builder_user_id: user.id,
+                                    expected_version: user.row_version,
+                                    status: 'suspended',
+                                    reason: 'Suspended by administrator',
+                                  }, 'User suspended')}
+                                >
+                                  Suspend
+                                </Button>
+                              )}
+
+                              {/* Restore is offered only for an account that
+                                  actually completed setup. The server enforces
+                                  the same rule and answers 409 otherwise. */}
+                              {stage === 'suspended' && user.has_completed_account_setup && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!canEdit || busy}
+                                  onClick={() => void mutate('set_user_status', {
+                                    builder_user_id: user.id,
+                                    expected_version: user.row_version,
+                                    status: 'active',
+                                  }, 'User restored')}
+                                >
+                                  Restore
+                                </Button>
+                              )}
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!canEdit || busy}
+                                onClick={() => void mutate('revoke_user_sessions', {
+                                  builder_user_id: user.id, reason: 'revoked by administrator',
+                                }, 'Sessions revoked')}
+                              >
+                                Revoke sessions
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -627,6 +804,42 @@ export default function BuilderPortalAdmin() {
               }}
             >
               Create
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Shown only when the server reports that the invitation email could not
+          be sent. The link is one-time; it is not stored and cannot be shown
+          again once this dialog is closed. */}
+      <Dialog open={!!inviteLink} onOpenChange={(open) => { if (!open) setInviteLink(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Copy the invitation link</DialogTitle>
+            <DialogDescription>
+              Email delivery is not configured, so the invitation for {inviteLink?.email} was not
+              sent. Pass this one-time link to them over a channel you trust. It cannot be shown
+              again — issue a new invitation if it is lost.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="invite-link">Invitation link</Label>
+            <Input id="invite-link" readOnly value={inviteLink?.url ?? ''} onFocus={(event) => event.target.select()} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInviteLink(null)}>Close</Button>
+            <Button
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(inviteLink?.url ?? '');
+                  toast.success('Invitation link copied');
+                } catch {
+                  toast.error('Could not copy — select the link and copy it manually.');
+                }
+              }}
+            >
+              <Copy className="mr-2 h-4 w-4" aria-hidden />
+              Copy link
             </Button>
           </DialogFooter>
         </DialogContent>
