@@ -11,6 +11,7 @@ import {
   BedDouble,
   Building2,
   CalendarClock,
+  Camera,
   Car,
   ChevronDown,
   Crosshair,
@@ -865,6 +866,114 @@ function MetaChip({ icon: Icon, value }: { icon: typeof BedDouble; value: string
   );
 }
 
+/**
+ * The popup's imagery slot: the property's own photo and Street View, in one
+ * frame with a toggle between them.
+ *
+ * Both matter and neither replaces the other — a photo shows the property, a
+ * panorama shows the street it stands on — but stacking them made the card
+ * taller than the map frame, and Leaflet's auto-pan then shoved the marker off
+ * the bottom of the viewport to fit it. Sharing one slot keeps both a click
+ * away at a fixed height. Street View is always reachable; the photo simply
+ * leads when there is one.
+ */
+function PopupImagery({
+  photo,
+  isResolving,
+  point,
+  label,
+}: {
+  photo: string | null;
+  isResolving: boolean;
+  point: GeoPoint;
+  label?: string;
+}) {
+  const [view, setView] = useState<'photo' | 'street'>(photo ? 'photo' : 'street');
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const chosenRef = useRef(false);
+  const usablePhoto = photoFailed ? null : photo;
+
+  // A photo arriving after the popup opened should take the lead, and one that
+  // fails to load must not leave the toggle pointing at an empty frame — but
+  // once the reader has picked a side, stop moving it under them.
+  useEffect(() => {
+    if (chosenRef.current) return;
+    setView(usablePhoto ? 'photo' : 'street');
+  }, [usablePhoto]);
+
+  const choose = (next: 'photo' | 'street') => {
+    chosenRef.current = true;
+    setView(next);
+  };
+
+  const showing = usablePhoto && view === 'photo' ? 'photo' : 'street';
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          {showing === 'photo' ? 'Listing photo' : 'Street View'}
+        </span>
+        {usablePhoto ? (
+          <div
+            role="group"
+            aria-label="Imagery source"
+            className="flex items-center gap-0.5 rounded-full border border-border/60 p-0.5"
+          >
+            {(
+              [
+                ['photo', 'Photo', Camera],
+                ['street', 'Street', MapPin],
+              ] as const
+            ).map(([value, text, Icon]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => choose(value)}
+                aria-pressed={showing === value}
+                title={value === 'photo' ? 'Show the listing photo' : 'Show Street View'}
+                className={cn(
+                  'flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium transition-colors',
+                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
+                  showing === value
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+                )}
+              >
+                <Icon className="h-2.5 w-2.5" />
+                {text}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {showing === 'photo' && usablePhoto ? (
+        <img
+          src={usablePhoto}
+          alt={label ? `${label} — listing photo` : 'Listing photo'}
+          className="h-28 w-full rounded-lg border border-border/60 object-cover"
+          loading="lazy"
+          onError={() => setPhotoFailed(true)}
+        />
+      ) : isResolving && !usablePhoto ? (
+        <div
+          className="h-28 w-full animate-pulse rounded-lg border border-border/60 bg-muted/50 motion-reduce:animate-none"
+          aria-hidden="true"
+        />
+      ) : (
+        <StreetViewPanel
+          lat={point.lat}
+          lng={point.lng}
+          label={label}
+          variant="inline"
+          frameClassName="h-28"
+        />
+      )}
+    </div>
+  );
+}
+
 function ListingPopupCard({
   listing,
   point,
@@ -879,34 +988,76 @@ function ListingPopupCard({
   const beds = listing.beds ?? listing.bedrooms;
   const baths = listing.baths ?? listing.bathrooms;
 
-  // The listing's own photo leads the card when we have a durable copy of one.
   // Never the raw field: an Airtable attachment is an object whose signed `url`
   // has usually expired by the time anyone clicks, so rendering it straight
   // produces a broken image. `useListingImages` returns signed URLs into our
   // own bucket instead — see src/lib/listingImages.ts.
   const forImages = useMemo(() => [listing], [listing]);
   const { images, isResolving: imagesResolving } = useListingImages(forImages);
-  const [photoFailed, setPhotoFailed] = useState(false);
   const hero = pickHeroImage(images[listing.id] ?? []);
-  const photo = photoFailed ? null : (hero?.url ?? null);
-  useEffect(() => setPhotoFailed(false), [listing.id]);
+
+  /**
+   * Keep clicks inside the card away from the map.
+   *
+   * Leaflet treats a click anywhere in its container as a map click, and with
+   * `closePopupOnClick` on by default that tears the popup down — so pressing a
+   * control in the popup closed the popup instead of operating the control.
+   * Leaflet's own `disableClickPropagation` covers mousedown, which is what the
+   * map's drag/click detection keys off. `click` itself must NOT be stopped
+   * here: React 18 listens at the app root, so swallowing the click below that
+   * point means no handler inside the popup ever runs.
+   */
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const node = cardRef.current;
+    if (!node) return;
+    L.DomEvent.disableClickPropagation(node);
+    L.DomEvent.disableScrollPropagation(node);
+
+    // Inside a Leaflet popup the browser delivers `mousedown` and `mouseup` to a
+    // control but never synthesises the `click` between them, so every button in
+    // this card was dead to the mouse while still working from the keyboard —
+    // including "Open details", which predates this change. Re-issue the
+    // activation ourselves, and only when the browser genuinely did not.
+    let pressed: HTMLElement | null = null;
+    let sawClick = false;
+    const control = (event: Event) =>
+      (event.target as HTMLElement | null)?.closest<HTMLElement>('button, [role="button"]') ?? null;
+
+    const onDown = (event: Event) => {
+      pressed = control(event);
+      sawClick = false;
+    };
+    const onClick = () => {
+      sawClick = true;
+    };
+    const onUp = (event: Event) => {
+      const target = pressed;
+      pressed = null;
+      if (!target || target !== control(event)) return;
+      window.setTimeout(() => {
+        if (!sawClick && target.isConnected) target.click();
+      }, 0);
+    };
+
+    node.addEventListener('mousedown', onDown, true);
+    node.addEventListener('click', onClick, true);
+    node.addEventListener('mouseup', onUp, true);
+    return () => {
+      node.removeEventListener('mousedown', onDown, true);
+      node.removeEventListener('click', onClick, true);
+      node.removeEventListener('mouseup', onUp, true);
+    };
+  }, []);
 
   return (
-    <div className="min-w-[248px] max-w-[280px] space-y-2.5">
-      {photo ? (
-        <img
-          src={photo}
-          alt={`${listing.address || listing.title || 'This listing'} — listing photo`}
-          className="h-28 w-full rounded-lg border border-border/60 object-cover"
-          loading="lazy"
-          onError={() => setPhotoFailed(true)}
-        />
-      ) : imagesResolving ? (
-        <div
-          className="h-28 w-full animate-pulse rounded-lg border border-border/60 bg-muted/50 motion-reduce:animate-none"
-          aria-hidden="true"
-        />
-      ) : null}
+    <div ref={cardRef} className="min-w-[248px] max-w-[280px] space-y-2.5">
+      <PopupImagery
+        photo={hero?.url ?? null}
+        isResolving={imagesResolving}
+        point={point}
+        label={listing.address || listing.suburb || undefined}
+      />
 
       <div>
         <h3 className="text-sm font-semibold leading-snug text-foreground">
@@ -938,19 +1089,6 @@ function ListingPopupCard({
           ) : null}
         </div>
       )}
-
-      {/* One frame, not two. Street View is the *fallback* for a listing with
-          no usable photo, so it only loads when there is nothing better —
-          which also saves an edge-function call per popup. Showing both made
-          the card taller than the map itself, and Leaflet's auto-pan then
-          shoved the marker off the bottom of the viewport to fit it. */}
-      {!photo && !imagesResolving ? (
-        <StreetViewPanel
-          lat={point.lat}
-          lng={point.lng}
-          label={listing.address || listing.suburb || undefined}
-        />
-      ) : null}
 
       <Button size="sm" className="w-full" onClick={onOpenDetails}>
         Open details
