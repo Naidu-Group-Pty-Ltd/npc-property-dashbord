@@ -32054,6 +32054,51 @@ export type Database = {
           },
         ]
       }
+      workflow_trigger_events: {
+        Row: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          created_at: string
+          dedupe_key: string
+          id: string
+          last_error: string | null
+          occurred_at: string
+          payload: Json
+          processed_at: string | null
+          status: string
+          trigger_type: string
+        }
+        Insert: {
+          attempts?: number
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string
+          dedupe_key: string
+          id?: string
+          last_error?: string | null
+          occurred_at?: string
+          payload?: Json
+          processed_at?: string | null
+          status?: string
+          trigger_type: string
+        }
+        Update: {
+          attempts?: number
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string
+          dedupe_key?: string
+          id?: string
+          last_error?: string | null
+          occurred_at?: string
+          payload?: Json
+          processed_at?: string | null
+          status?: string
+          trigger_type?: string
+        }
+        Relationships: []
+      }
       workflows: {
         Row: {
           created_at: string
@@ -35018,6 +35063,10 @@ export type Database = {
         }
         Returns: string
       }
+      enqueue_workflow_trigger_event: {
+        Args: { p_dedupe_key: string; p_payload: Json; p_trigger_type: string }
+        Returns: undefined
+      }
       ensure_case_conversation: {
         Args: {
           _actor_id: string
@@ -36051,6 +36100,10 @@ export type Database = {
       verify_legal_audit_chain_strict: {
         Args: { _matter_id: string }
         Returns: Json
+      }
+      workflow_trigger_is_live: {
+        Args: { p_trigger_type: string }
+        Returns: boolean
       }
     }
     Enums: {
