@@ -98,12 +98,12 @@ Deno.serve(async (req) => {
   }
   if (!data) {
     // Resolve a concurrent duplicate into an idempotent outcome. If the row was
-    // purged between the initial read and this re-read, restoration reports that
-    // explicitly instead of a generic state conflict.
+    // removed by an exceptional administrative operation between the initial
+    // read and this re-read, restoration reports that explicitly.
     const { data:current, error:currentError } = await sb.from('market_updates')
       .select(UPDATE_COLUMNS).eq('id', updateId).maybeSingle();
     if (currentError) return json({ error:'Market update state could not be confirmed.', code:'market_updates_read_failed', correlation_id:correlationId, retryable:true }, 500, cors, correlationId);
-    if (!current) return json({ error:'Market update was not found or has completed archive retention.', code:'not_found_or_purged', correlation_id:correlationId, retryable:false }, 404, cors, correlationId);
+    if (!current) return json({ error:'Market update was not found.', code:'not_found_or_purged', correlation_id:correlationId, retryable:false }, 404, cors, correlationId);
     if (action === 'archive' && current.archived_at) return json({ update:current, action, outcome:'already_archived', correlation_id:correlationId }, 200, cors, correlationId);
     if (action === 'restore' && !current.archived_at && current.status === 'published') return json({ update:current, action, outcome:'already_restored', correlation_id:correlationId }, 200, cors, correlationId);
     return json({ error:'Market update changed before the request completed.', code:'invalid_state_transition', correlation_id:correlationId, retryable:false }, 409, cors, correlationId);

@@ -20,7 +20,6 @@ import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSour
 import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
-import { MarketArchiveDialog } from '@/components/market-updates/MarketArchiveDialog';
 import type { MarketQARetrievedItem } from '@/types/marketUpdates';
 import { LiveModelBadge } from '@/components/agentModels';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
@@ -125,7 +124,6 @@ export default function MarketUpdates() {
   // last run's validation result is held alongside it.
   const [runShadow, setRunShadow] = useState<{ sources:number; ingested:number; wouldPublish:number } | null>(null);
   const [candidateReview, setCandidateReview] = useState<MarketUpdate[] | null>(null);
-  const [archiveOpen,setArchiveOpen] = useState(false);
 
   const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
     ? error.issue
@@ -291,7 +289,7 @@ export default function MarketUpdates() {
       setUpdates(current => current.filter(u => u.id !== update.id));
       setSourceHealth(current => ({ ...current, archivedUpdates:(current.archivedUpdates ?? 0)+1 }));
       toast.success(`Archived “${update.title}”.`,{
-        description:'This update will be retained for 30 days.',
+        description:'This update remains available in Archived News until it is restored.',
         action:{label:'Undo',onClick:() => { void restoreArchived(update.id,update.title); }},
       });
     } catch (error) {
@@ -500,7 +498,7 @@ export default function MarketUpdates() {
               <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
               <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
               {(sourceHealth.candidates ?? 0) > 0 && <Button variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
-              {canEditMarketUpdates && <Button variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="mr-2 h-4 w-4" aria-hidden />Archive{typeof sourceHealth.archivedUpdates === 'number' && <Badge variant="secondary" className="ml-2">{sourceHealth.archivedUpdates}</Badge>}</Button>}
+              <Button variant="outline" onClick={() => navigate('/market-updates/archived')} aria-label="Open Archived News"><Archive className="mr-2 h-4 w-4" aria-hidden />Archived{typeof sourceHealth.archivedUpdates === 'number' && <Badge variant="secondary" className="ml-2">{sourceHealth.archivedUpdates}</Badge>}</Button>
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
           </div>
@@ -1009,7 +1007,6 @@ export default function MarketUpdates() {
         </Dialog>
 
         <MarketSourcesAdminDialog open={sourcesAdminOpen} onOpenChange={setSourcesAdminOpen} onChanged={loadUpdates} />
-        {canEditMarketUpdates && <MarketArchiveDialog open={archiveOpen} onOpenChange={setArchiveOpen} onRestore={restoreArchived} onCountChange={count => setSourceHealth(current => ({...current,archivedUpdates:count}))} />}
       </div>
     </main>
   );

@@ -29,6 +29,7 @@ import Overview from "./pages/Overview";
 import Listings from "./pages/Listings";
 import Calendar from "./pages/Calendar";
 import MarketUpdates from "./pages/MarketUpdates";
+import { MarketArchivePage } from "./components/market-updates/MarketArchivePage";
 import Sources from "./pages/Sources";
 import Reports from "./pages/Reports";
 import QuantitativeReports from "./pages/QuantitativeReports";
@@ -474,6 +475,7 @@ const App = () => (
                 <Route path="dashboard" element={<Overview />} />
                 <Route path="listings" element={<ModuleGuard moduleKey="listings"><Listings /></ModuleGuard>} />
                 <Route path="market-updates" element={<MarketUpdates />} />
+                <Route path="market-updates/archived" element={<MarketArchivePage />} />
                 <Route
                   path="calendar"
                   element={
