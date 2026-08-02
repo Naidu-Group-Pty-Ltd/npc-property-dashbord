@@ -9,6 +9,8 @@ const functions = [
   'market-updates-source-admin',
   'market-updates-feed',
   'market-updates-status',
+  'market-updates-archive',
+  'market-news-archive-v2',
 ];
 const migrations = [
   '20260726150000_market_source_registry_reconciliation.sql',

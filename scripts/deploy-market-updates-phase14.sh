@@ -12,6 +12,8 @@ readonly FUNCTIONS=(
   market-updates-source-admin
   market-updates-feed
   market-updates-status
+  market-updates-archive
+  market-news-archive-v2
 )
 
 fail() { printf 'Phase 14 deployment refused: %s\n' "$*" >&2; exit 1; }

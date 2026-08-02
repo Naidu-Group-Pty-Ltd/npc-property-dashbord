@@ -1871,6 +1871,20 @@
       "owner": "security-remediation-program",
       "reviewed": true
     },
+    "market-news-archive-v2": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-news-archive-versioned-transport"
+    },
+    "market-updates-archive": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "market-intelligence",
+      "reviewed": true,
+      "reviewed_in": "market-news-archive-versioned-transport"
+    },
     "market-updates-qa": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",
