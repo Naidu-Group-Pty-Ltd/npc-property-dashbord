@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import { execSync } from "node:child_process";
 import { mcpPlugin } from "@lovable.dev/mcp-js/stacks/supabase/vite";
+import { inlineXlsxPlugin } from "./vite-inline-xlsx";
 
 // Identifies the deployed build. `version.json` carries the same value, so a
 // tab can tell whether it is running the current bundle or a cached older one
@@ -49,7 +50,7 @@ export default defineConfig(() => ({
   define: {
     __BUILD_ID__: JSON.stringify(BUILD_ID),
   },
-  plugins: [react(), mcpPlugin(), buildVersionManifest()],
+  plugins: [inlineXlsxPlugin(), react(), mcpPlugin(), buildVersionManifest()],
   assetsInclude: ["**/*.xlsx"],
   resolve: {
     alias: {
