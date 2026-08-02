@@ -68,6 +68,7 @@ export type ReportArchetypeId =
   | 'investment-compass'
   | 'financial-analysis'
   | 'cash-flow-projection'
+  | 'cash-flow-comparison'
   | 'market-intelligence'
   | 'borrowing-capacity'
   | 'portfolio-performance'
@@ -123,6 +124,38 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     contents: false,
     note: 'A matrix document. The projection table is the artefact; the narrative '
       + 'exists to frame it.',
+  },
+  'cash-flow-comparison': {
+    id: 'cash-flow-comparison',
+    documentName: 'Cash Flow Comparison Analysis',
+    chapterLabel: 'Section',
+    slots: FULL_SLOTS,
+    // Bounded twice over, which is why the band is the tightest of the long
+    // formats. `compare-cash-flow-reports/index.ts:47` accepts two to five
+    // properties, so the subject cannot run away the way a portfolio's can; and
+    // the prose half is eight blocks written under a 4,000-token ceiling, a
+    // third of what the Property Comparison's producer is given.
+    //
+    // Length therefore varies with the property count and with how many of the
+    // eight model blocks arrived, both of which are small ranges.
+    //
+    // Measured, not estimated. Four documents rendered through WeasyPrint from
+    // real production figures: two properties without an analysis is 17 pages,
+    // five without is 20, two with is 25, five with is 27. The first attempt at
+    // this band was [10, 26] and every one of those four would have been outside
+    // it or inside it by accident — the wide sections each cost a chapter-header
+    // page plus two landscape matrices, which the estimate had at one page.
+    //
+    // The floor sits under the shortest real document rather than at it: it
+    // exists to catch a spine that collapsed, not to predict a page count.
+    pageBudget: [15, 34],
+    // Ten sections. `cash-flow-projection` carries no contents page for four
+    // and is right not to; this is not that document.
+    contents: true,
+    note: 'Two to five 10 Year Cash Flow Analyses read side by side. The first '
+      + 'comparison format whose figures are arithmetic rather than model output, '
+      + 'so the tables are the document and the analysis — which the adviser may '
+      + 'never have asked for — is a suffix.',
   },
   'market-intelligence': {
     id: 'market-intelligence',
