@@ -542,11 +542,16 @@ Deno.serve(async (req) => {
         : { data: [] as any[] };
       const nameById = new Map((users ?? []).map((u: any) => [u.id, u.username]));
 
-      await sb
-        .from('internal_thread_participants')
-        .update({ last_read_at: new Date().toISOString() })
-        .eq('thread_id', threadId)
-        .eq('user_id', me);
+      // Reading a transcript only counts as "reviewed" when the caller says so.
+      // Background refreshes (minimised chips, polling) pass mark_read:false so
+      // the unread badge survives until the user actually opens the chat.
+      if (body.mark_read !== false) {
+        await sb
+          .from('internal_thread_participants')
+          .update({ last_read_at: new Date().toISOString() })
+          .eq('thread_id', threadId)
+          .eq('user_id', me);
+      }
 
       return json(
         {
