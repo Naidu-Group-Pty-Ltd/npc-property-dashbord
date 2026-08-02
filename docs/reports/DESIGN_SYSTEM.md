@@ -10,7 +10,7 @@ Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
 snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
 delivered. The design system is complete.
 
-**Formats migrated:** five, each with its own contract document, payload,
+**Formats migrated:** six, each with its own contract document, payload,
 document, brand snapshot, server-side render route and tests, and each keeping
 its legacy generator reachable rather than retiring it.
 
@@ -33,6 +33,12 @@ its legacy generator reachable rather than retiring it.
    first comparison with real deterministic figures, the only format with
    *nothing* persisted about its subject, and the first migration to edit the
    legacy path it sits beside rather than only leaving it reachable.
+6. The Client Details report — [`CLIENT_DETAILS.md`](./CLIENT_DETAILS.md). The
+   only format whose subject is a person rather than a transaction, the only one
+   where the ordinary record has most of its sections empty (26 of 771 clients
+   hold any property), and the only one replacing a generator that rasterised
+   every page with html2canvas — so it is also the only migration whose headline
+   result is simply that the document is text.
 
 Each new route needs its function deployed and its migration applied before its
 call sites do anything; both are manual.
