@@ -536,7 +536,16 @@ export function InternalMessageToasts() {
           attachments,
         });
         const msg = data?.message;
+        if (attachments.length) {
+          attachments = await ensureMessageAttachments(
+            thread.thread_id,
+            msg?.id,
+            attachments,
+            msg?.attachments,
+          );
+        }
         const createdAt = msg?.created_at ?? new Date().toISOString();
+
         setDrafts((p) => ({ ...p, [thread.thread_id]: '' }));
         setBaseline(thread.thread_id, createdAt);
         setThreads((prev) =>
