@@ -471,6 +471,18 @@ export default function Overview() {
 
   }, [allListings, filters, safeParseDate, extractState, extractPostcode]);
 
+  // Adopt background revalidations.
+  //
+  // `fetchAllListings` now answers from the persistent cache the moment there is
+  // something usable to draw and revalidates behind the render, so the first
+  // paint on a repeat visit costs no network at all. This is how the fresh set
+  // reaches the page once it lands.
+  useEffect(() => {
+    return propertyDataService.subscribe(undefined, (result) => {
+      setAllListings(result.listings);
+    });
+  }, []);
+
   // ─── STEP 3: Initial data fetch (only once) ───
   const { startAutoRefresh, stopAutoRefresh } = useAutoRefresh(fetchData);
 

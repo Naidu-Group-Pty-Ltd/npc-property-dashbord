@@ -232,7 +232,24 @@ import PartnerReferralInbox from "./pages/finance-portal/PartnerReferralInbox";
 import AmlCaseSnapshot from "./pages/finance-portal/AmlCaseSnapshot";
 
 
-const queryClient = new QueryClient();
+/**
+ * The listing queries behind Overview and Listings are expensive — a cold read
+ * is one sequential request per 100 records. React Query's defaults are
+ * `staleTime: 0` plus refetch-on-mount and refetch-on-focus, which meant every
+ * navigation between the two pages, and every alt-tab back to the window, threw
+ * the whole set away and asked for it again. `propertyDataService` now holds the
+ * durable cache; these defaults stop the query layer fighting it.
+ */
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      gcTime: 30 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      retry: 1,
+    },
+  },
+});
 
 const CalendarErrorFallback = () => (
   <div className="p-6">
