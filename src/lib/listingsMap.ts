@@ -164,6 +164,144 @@ export function priceTier(price: number | null | undefined, tiers: PriceTiers | 
 }
 
 /* -------------------------------------------------------------------------- */
+/* Cluster summaries                                                           */
+/* -------------------------------------------------------------------------- */
+
+/** Ramp order — cheapest band first, then the band for listings with no price. */
+export const PRICE_TIER_ORDER: PriceTier[] = ['low', 'mid', 'high', 'top', 'unknown'];
+
+export interface ClusterMember {
+  price: number | null;
+  tier: PriceTier;
+}
+
+export interface TierShare {
+  tier: PriceTier;
+  /** Fraction of the cluster sitting in this band, 0–1. */
+  share: number;
+}
+
+export interface ClusterSummary {
+  count: number;
+  /** Median of the priced members, or null when nothing in the cluster has a price. */
+  median: number | null;
+  /** Band of the member at the median, so the colour and the number always agree. */
+  medianTier: PriceTier;
+  /** Bands present, in ramp order, each with its share of the cluster. */
+  mix: TierShare[];
+  /** Members carrying no usable price. */
+  unpriced: number;
+}
+
+/**
+ * What a cluster is worth, not just how many listings it hides.
+ *
+ * A count alone answers "how much stock is here" and nothing else, which is the
+ * less interesting half of the question on a property map. The mix drives a
+ * band-coloured ring and the median drives a price label, so a collapsed
+ * cluster still reads as "twelve listings, mostly upper-mid, around $1.2M".
+ */
+export function summariseCluster(members: ClusterMember[]): ClusterSummary {
+  const count = members.length;
+  if (count === 0) {
+    return { count: 0, median: null, medianTier: 'unknown', mix: [], unpriced: 0 };
+  }
+
+  const priced = members
+    .filter(
+      (m): m is ClusterMember & { price: number } =>
+        typeof m.price === 'number' && Number.isFinite(m.price) && m.price > 0,
+    )
+    .sort((a, b) => a.price - b.price);
+
+  const median = priced.length ? quantile(priced.map((m) => m.price), 0.5) : null;
+  // Take the lower-middle member on an even split, matching how `priceTier`
+  // resolves a price sitting exactly on a band boundary.
+  const medianTier = priced.length ? priced[Math.floor((priced.length - 1) / 2)].tier : 'unknown';
+
+  const counts = new Map<PriceTier, number>();
+  for (const m of members) counts.set(m.tier, (counts.get(m.tier) ?? 0) + 1);
+
+  const mix = PRICE_TIER_ORDER.map((tier) => ({
+    tier,
+    share: (counts.get(tier) ?? 0) / count,
+  })).filter((entry) => entry.share > 0);
+
+  return { count, median, medianTier, mix, unpriced: count - priced.length };
+}
+
+/**
+ * Conic-gradient stops describing a cluster's band mix.
+ *
+ * Colours are emitted as `var(--tier-*)` rather than values, so the ramp stays
+ * in the stylesheet and re-themes with the tenant brand — nothing here names a
+ * colour. The last stop is pinned to 100% because accumulated floats otherwise
+ * leave a hairline of backdrop showing through the ring.
+ */
+export function tierMixGradientStops(mix: TierShare[]): string {
+  if (mix.length === 0) return 'var(--tier-unknown) 0% 100%';
+  const round = (n: number) => Math.round(n * 10) / 10;
+  const parts: string[] = [];
+  let at = 0;
+  mix.forEach(({ tier, share }, index) => {
+    const end = index === mix.length - 1 ? 100 : Math.min(100, at + share * 100);
+    parts.push(`var(--tier-${tier}) ${round(at)}% ${round(end)}%`);
+    at = end;
+  });
+  return parts.join(',');
+}
+
+/* -------------------------------------------------------------------------- */
+/* Property type glyphs (pin iconography)                                      */
+/* -------------------------------------------------------------------------- */
+
+export type PropertyGlyph = 'house' | 'apartment' | 'land' | 'commercial' | 'property';
+
+export const PROPERTY_GLYPHS: PropertyGlyph[] = [
+  'house',
+  'apartment',
+  'land',
+  'commercial',
+  'property',
+];
+
+/**
+ * `propertyType` is free text copied from whichever portal supplied the listing
+ * ("Unit/Apartment", "Vacant Land", "Semi-Rural Acreage"), so this matches on
+ * vocabulary rather than an enum.
+ *
+ * First match wins, and the order encodes the tie-breaks: a strata word beats a
+ * structure word ("Apartment Block" is an apartment), a trade word beats both
+ * ("Commercial Land" is commercial), and a structure beats a parcel so a
+ * "House and Land" package reads as a house while "Residential Land" stays land.
+ */
+const GLYPH_MATCHERS: Array<[PropertyGlyph, RegExp]> = [
+  ['apartment', /\b(apartment|apartments|unit|units|flat|flats|studio|penthouse|condo)\b/],
+  [
+    'commercial',
+    /\b(commercial|office|offices|retail|industrial|warehouse|shop|showroom|medical|hotel|motel)\b/,
+  ],
+  [
+    // "semi" only as the full phrase: "Semi-Rural Acreage" is a parcel, not a
+    // semi-detached dwelling.
+    'house',
+    /\b(house|houses|home|homes|cottage|villa|villas|duplex|townhouse|townhouses|terrace|semi detached)\b/,
+  ],
+  ['land', /\b(land|block|blocks|vacant|acreage|rural|farm|lot|allotment)\b/],
+];
+
+export function propertyGlyph(propertyType: string | null | undefined): PropertyGlyph {
+  if (typeof propertyType !== 'string') return 'property';
+  // Portals join types with slashes, dashes and underscores; \b needs separators.
+  const normalised = propertyType.toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  if (!normalised || normalised === 'unknown') return 'property';
+  for (const [glyph, pattern] of GLYPH_MATCHERS) {
+    if (pattern.test(normalised)) return glyph;
+  }
+  return 'property';
+}
+
+/* -------------------------------------------------------------------------- */
 /* Heat weighting                                                              */
 /* -------------------------------------------------------------------------- */
 

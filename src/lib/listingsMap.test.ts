@@ -13,7 +13,13 @@ import {
   listingSetSignature,
   listingTimestamp,
   priceTier,
+  propertyGlyph,
+  PROPERTY_GLYPHS,
   quantile,
+  summariseCluster,
+  tierMixGradientStops,
+  type ClusterMember,
+  type PriceTier,
   type WeightedListing,
 } from '@/lib/listingsMap';
 
@@ -95,6 +101,149 @@ describe('price tiers', () => {
   it('ignores zero and negative prices when banding', () => {
     const tiers = computePriceTiers([0, -5, 100, 200, 300, 400]);
     expect(tiers?.q1).toBeGreaterThan(0);
+  });
+});
+
+describe('summariseCluster', () => {
+  const member = (price: number | null, tier: PriceTier): ClusterMember => ({ price, tier });
+
+  it('reports the median price and the band the median sits in', () => {
+    const summary = summariseCluster([
+      member(400_000, 'low'),
+      member(800_000, 'mid'),
+      member(1_200_000, 'high'),
+    ]);
+    expect(summary.count).toBe(3);
+    expect(summary.median).toBe(800_000);
+    expect(summary.medianTier).toBe('mid');
+    expect(summary.unpriced).toBe(0);
+  });
+
+  it('takes the cheaper of the two middle members on an even split', () => {
+    const summary = summariseCluster([
+      member(400_000, 'low'),
+      member(600_000, 'low'),
+      member(1_000_000, 'high'),
+      member(1_400_000, 'top'),
+    ]);
+    expect(summary.median).toBe(800_000);
+    expect(summary.medianTier).toBe('low');
+  });
+
+  it('ignores unpriced members in the median but still counts them', () => {
+    const summary = summariseCluster([
+      member(500_000, 'low'),
+      member(null, 'unknown'),
+      member(900_000, 'mid'),
+      member(0, 'unknown'),
+    ]);
+    expect(summary.count).toBe(4);
+    expect(summary.unpriced).toBe(2);
+    expect(summary.median).toBe(700_000);
+  });
+
+  it('has no median at all when nothing in the cluster carries a price', () => {
+    const summary = summariseCluster([member(null, 'unknown'), member(null, 'unknown')]);
+    expect(summary.median).toBeNull();
+    expect(summary.medianTier).toBe('unknown');
+    expect(summary.unpriced).toBe(2);
+  });
+
+  it('returns the band mix in ramp order, omitting empty bands', () => {
+    const summary = summariseCluster([
+      member(1_500_000, 'top'),
+      member(400_000, 'low'),
+      member(420_000, 'low'),
+      member(1_600_000, 'top'),
+    ]);
+    expect(summary.mix.map((m) => m.tier)).toEqual(['low', 'top']);
+    expect(summary.mix.map((m) => m.share)).toEqual([0.5, 0.5]);
+  });
+
+  it('survives an empty cluster', () => {
+    expect(summariseCluster([])).toEqual({
+      count: 0,
+      median: null,
+      medianTier: 'unknown',
+      mix: [],
+      unpriced: 0,
+    });
+  });
+});
+
+describe('tierMixGradientStops', () => {
+  it('lays the bands out end to end and closes exactly on 100%', () => {
+    const stops = tierMixGradientStops([
+      { tier: 'low', share: 0.25 },
+      { tier: 'mid', share: 0.25 },
+      { tier: 'top', share: 0.5 },
+    ]);
+    expect(stops).toBe(
+      'var(--tier-low) 0% 25%,var(--tier-mid) 25% 50%,var(--tier-top) 50% 100%',
+    );
+  });
+
+  it('pins the final stop to 100% even when the shares do not add up cleanly', () => {
+    const third = 1 / 3;
+    const stops = tierMixGradientStops([
+      { tier: 'low', share: third },
+      { tier: 'mid', share: third },
+      { tier: 'high', share: third },
+    ]);
+    expect(stops.endsWith('100%')).toBe(true);
+    // No gap: each band starts where the previous one ended.
+    const bounds = [...stops.matchAll(/([\d.]+)% ([\d.]+)%/g)].map((m) => [+m[1], +m[2]]);
+    expect(bounds[0][0]).toBe(0);
+    for (let i = 1; i < bounds.length; i += 1) expect(bounds[i][0]).toBe(bounds[i - 1][1]);
+  });
+
+  it('falls back to a single neutral ring for an empty mix', () => {
+    expect(tierMixGradientStops([])).toBe('var(--tier-unknown) 0% 100%');
+  });
+
+  it('never names a colour, so the ring re-themes with the brand', () => {
+    const stops = tierMixGradientStops([{ tier: 'high', share: 1 }]);
+    expect(stops).not.toMatch(/#|hsl|rgb/);
+  });
+});
+
+describe('propertyGlyph', () => {
+  it('maps the common portal vocabularies onto a glyph', () => {
+    expect(propertyGlyph('House')).toBe('house');
+    expect(propertyGlyph('Townhouse')).toBe('house');
+    expect(propertyGlyph('Villa')).toBe('house');
+    expect(propertyGlyph('Apartment')).toBe('apartment');
+    expect(propertyGlyph('Unit/Apartment')).toBe('apartment');
+    expect(propertyGlyph('Vacant Land')).toBe('land');
+    expect(propertyGlyph('Semi-Rural Acreage')).toBe('land');
+    expect(propertyGlyph('Retail')).toBe('commercial');
+  });
+
+  it('falls back to the generic glyph when the type says nothing', () => {
+    expect(propertyGlyph('Unknown')).toBe('property');
+    expect(propertyGlyph('')).toBe('property');
+    expect(propertyGlyph(null)).toBe('property');
+    expect(propertyGlyph(undefined)).toBe('property');
+    expect(propertyGlyph('Retirement Living')).toBe('property');
+  });
+
+  it('resolves mixed types by specificity rather than word order', () => {
+    // A strata word beats a structure word, a trade word beats both, and a
+    // structure beats a bare parcel.
+    expect(propertyGlyph('Apartment Block')).toBe('apartment');
+    expect(propertyGlyph('Commercial Land')).toBe('commercial');
+    expect(propertyGlyph('House and Land')).toBe('house');
+    expect(propertyGlyph('Residential Land')).toBe('land');
+  });
+
+  it('does not match a vocabulary word buried inside another word', () => {
+    expect(propertyGlyph('Landscaped Estate')).toBe('property');
+  });
+
+  it('only ever returns a glyph the pin renderer knows about', () => {
+    for (const type of ['House', 'Unit', 'Land', 'Office', 'Gibberish', '']) {
+      expect(PROPERTY_GLYPHS).toContain(propertyGlyph(type));
+    }
   });
 });
 
