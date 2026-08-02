@@ -20,7 +20,10 @@ import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSour
 import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
-import type { MarketQARetrievedItem } from '@/types/marketUpdates';
+import { MarketQAAnswer } from '@/components/market-updates/MarketQAAnswer';
+import { MarketQAProgress } from '@/components/market-updates/MarketQAProgress';
+import { MarketQADepthSelector, type DepthChoice } from '@/components/market-updates/MarketQADepthSelector';
+import type { MarketQAImplications, MarketQARetrievedItem, MarketQAStage, MarketQATimelineEntry } from '@/types/marketUpdates';
 import { LiveModelBadge } from '@/components/agentModels';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { clearMarketUpdateArticleFilters, DEFAULT_MARKET_UPDATE_ARTICLE_FILTERS, hasClearableMarketUpdateFilters } from '@/lib/marketUpdateFilters';
@@ -108,7 +111,11 @@ export default function MarketUpdates() {
   const [qaThreadUpdateId, setQaThreadUpdateId] = useState<string | null>(null);
   const [question, setQuestion] = useState('');
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
-  const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null }>>([]);
+  const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null; implications?: MarketQAImplications; timeline?: MarketQATimelineEntry[]; watch_items?: string[]; contrarian_view?: string; depth_mode?: string; context_size?: number; retrieval_mode?: string }>>([]);
+  /** 'auto' lets the endpoint infer depth from the question. */
+  const [qaDepth, setQaDepth] = useState<DepthChoice>('auto');
+  /** Live pipeline progress for the turn currently being researched. */
+  const [qaStage, setQaStage] = useState<MarketQAStage | null>(null);
   const [asking, setAsking] = useState(false);
   const qaAbortRef = useRef<AbortController | null>(null);
   const qaRequestRef = useRef(0);
@@ -326,6 +333,7 @@ export default function MarketUpdates() {
     const requestId = ++qaRequestRef.current;
     setQaThread((t) => [...t, { role: 'user', content: q }, { role: 'assistant', content: '', streaming: true }]);
     setQuestion('');
+    setQaStage(null);
     try {
       const seg = activeSegment !== 'all' ? activeSegment : undefined;
       const answer = await streamMarketUpdateQuestion(q, {
@@ -333,7 +341,12 @@ export default function MarketUpdates() {
         history: priorHistory,
         segment: seg,
         conversation_id: convId,
+        depth: qaDepth === 'auto' ? undefined : qaDepth,
         signal: controller.signal,
+        onStage: (stage) => {
+          if (qaRequestRef.current !== requestId) return;
+          setQaStage(stage);
+        },
         onDelta: (acc) => {
           if (qaRequestRef.current !== requestId) return;
           setQaThread((t) => {
@@ -359,6 +372,13 @@ export default function MarketUpdates() {
           sentiment: answer?.sentiment,
           retrieved: answer?.retrieved ?? [],
           question_id: answer?.question_id ?? null,
+          implications: answer?.implications,
+          timeline: answer?.timeline ?? [],
+          watch_items: answer?.watch_items ?? [],
+          contrarian_view: answer?.contrarian_view,
+          depth_mode: answer?.depth_mode,
+          context_size: answer?.context_size,
+          retrieval_mode: answer?.retrieval_mode,
           streaming: false,
         };
         return next;
@@ -371,7 +391,7 @@ export default function MarketUpdates() {
         return next;
       });
     } finally {
-      if (qaRequestRef.current === requestId) { setAsking(false); qaAbortRef.current = null; }
+      if (qaRequestRef.current === requestId) { setAsking(false); setQaStage(null); qaAbortRef.current = null; }
     }
   };
 
@@ -380,6 +400,7 @@ export default function MarketUpdates() {
     qaAbortRef.current?.abort();
     qaAbortRef.current = null;
     setAsking(false);
+    setQaStage(null);
     setQaThread((thread) => thread.filter((turn) => !turn.streaming));
   };
 
@@ -424,17 +445,22 @@ export default function MarketUpdates() {
                 <span>{turn.role === 'user' ? 'You' : 'AI'}</span>
                 {turn.role === 'assistant' && turn.sentiment && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.sentiment}</Badge>}
                 {turn.role === 'assistant' && turn.time_horizon && turn.time_horizon !== 'unclear' && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.time_horizon.replace('_',' ')}</Badge>}
+                {turn.role === 'assistant' && turn.depth_mode && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.depth_mode === 'deep' ? 'deep dive' : turn.depth_mode}</Badge>}
+                {turn.role === 'assistant' && typeof turn.context_size === 'number' && turn.context_size > 0 && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.context_size} sources read</Badge>}
               </div>
-              <p className="whitespace-pre-wrap break-words">{turn.content}</p>
-              {turn.key_figures && turn.key_figures.length > 0 && (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {turn.key_figures.map((k, j) => (
-                    <div key={j} className="rounded border border-border/60 bg-background/50 px-2 py-1.5">
-                      <div className="text-[10px] uppercase text-muted-foreground">{k.label}</div>
-                      <div className="text-sm font-semibold text-primary">{k.value}</div>
-                    </div>
-                  ))}
-                </div>
+              {turn.role === 'assistant' ? (
+                <MarketQAAnswer
+                  content={turn.content}
+                  retrieved={turn.retrieved}
+                  keyFigures={turn.key_figures}
+                  implications={turn.implications}
+                  timeline={turn.timeline}
+                  watchItems={turn.watch_items}
+                  contrarianView={turn.contrarian_view}
+                  streaming={turn.streaming}
+                />
+              ) : (
+                <p className="whitespace-pre-wrap break-words">{turn.content}</p>
               )}
               {turn.citations && turn.citations.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
@@ -456,11 +482,7 @@ export default function MarketUpdates() {
               )}
             </div>
           ))}
-          {asking && (
-            <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background/70 p-3 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Thinking…
-            </div>
-          )}
+          {asking && <MarketQAProgress stage={qaStage} />}
         </div>
         <div className="flex-none space-y-2" aria-label="Ask Aurixa composer">
           <Textarea
@@ -470,6 +492,7 @@ export default function MarketUpdates() {
             placeholder="Ask anything — e.g. What's the RBA signalling this month?"
             className="min-h-[96px] text-sm"
           />
+          <MarketQADepthSelector value={qaDepth} onChange={setQaDepth} disabled={asking} />
           <div className="flex gap-2">
             <MarketQAVoiceButton onTranscript={(t) => setQuestion((q) => (q ? `${q.trim()} ${t}` : t))} disabled={asking} />
             <Button className="flex-1" onClick={() => handleAsk()} disabled={asking || !question.trim()}>
@@ -1028,17 +1051,22 @@ export default function MarketUpdates() {
                         <span>{turn.role === 'user' ? 'You' : 'AI'}</span>
                         {turn.role === 'assistant' && turn.sentiment && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.sentiment}</Badge>}
                         {turn.role === 'assistant' && turn.time_horizon && turn.time_horizon !== 'unclear' && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.time_horizon.replace('_',' ')}</Badge>}
+                        {turn.role === 'assistant' && turn.depth_mode && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.depth_mode === 'deep' ? 'deep dive' : turn.depth_mode}</Badge>}
+                        {turn.role === 'assistant' && typeof turn.context_size === 'number' && turn.context_size > 0 && <Badge variant="outline" className="h-4 px-1 py-0 text-[9px]">{turn.context_size} sources read</Badge>}
                       </div>
-                      <p className="whitespace-pre-wrap">{turn.content}</p>
-                      {turn.key_figures && turn.key_figures.length > 0 && (
-                        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                          {turn.key_figures.map((k, j) => (
-                            <div key={j} className="rounded border border-border/60 bg-background/50 px-2 py-1">
-                              <div className="text-[9px] uppercase text-muted-foreground">{k.label}</div>
-                              <div className="text-sm font-semibold text-primary">{k.value}</div>
-                            </div>
-                          ))}
-                        </div>
+                      {turn.role === 'assistant' ? (
+                        <MarketQAAnswer
+                          content={turn.content}
+                          retrieved={turn.retrieved}
+                          keyFigures={turn.key_figures}
+                          implications={turn.implications}
+                          timeline={turn.timeline}
+                          watchItems={turn.watch_items}
+                          contrarianView={turn.contrarian_view}
+                          streaming={turn.streaming}
+                        />
+                      ) : (
+                        <p className="whitespace-pre-wrap">{turn.content}</p>
                       )}
                       {turn.citations && turn.citations.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
@@ -1060,17 +1088,19 @@ export default function MarketUpdates() {
                       )}
                     </div>
                   ))}
-                  {asking && <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background/70 p-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Thinking…</div>}
+                  {asking && <MarketQAProgress stage={qaStage} />}
                 </div>
               )}
               {qaThread.length === 0 && (
                 <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-border/60 bg-background/40 p-6 text-center">
                   <Sparkles className="mb-3 h-8 w-8 text-primary/70" aria-hidden />
                   <h3 className="text-base font-semibold">Ask a source-grounded question</h3>
-                  <p className="mt-2 max-w-md text-sm text-muted-foreground">Answers are grounded in this update and related published market news. Your questions stay in this thread.</p>
+                  <p className="mt-2 max-w-md text-sm text-muted-foreground">Aurixa searches this update and the related published market news around it — prior coverage, the policy behind it and corroborating reports — then answers from what it finds. Your questions stay in this thread.</p>
+                  {asking && <MarketQAProgress stage={qaStage} className="mt-4 w-full max-w-md text-left" />}
                 </div>
               )}
               <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[120px] flex-none text-sm" />
+              <MarketQADepthSelector value={qaDepth} onChange={setQaDepth} disabled={asking} />
               <div className="flex flex-none gap-2">
                 <MarketQAVoiceButton onTranscript={(t) => setQuestion((q) => (q ? `${q.trim()} ${t}` : t))} disabled={asking} />
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>

@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue, SetMarketNewsArchiveStateInput, SetMarketNewsArchiveStateResult } from '@/types/marketUpdates';
+import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQADepth, MarketQAMessage, MarketQAStage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue, SetMarketNewsArchiveStateInput, SetMarketNewsArchiveStateResult } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -290,13 +290,14 @@ export async function answerMarketUpdateQuestion(
   history?: Array<{ role: 'user' | 'assistant'; content: string }>,
   segment?: string,
   conversation_id?: string | null,
+  depth?: MarketQADepth,
 ): Promise<MarketQAMessage> {
   try {
     // Staff identity in this app lives in the custom-auth session (HttpOnly
     // cookie + stored access token), NOT in supabase.auth — `db.functions.invoke`
     // therefore sent the anon key and the function replied 401
     // authentication_required. invokeSecureFunction carries the real credentials.
-    const { data, error } = await invokeSecureFunction<any>('market-updates-qa', { question, updateIds, history, segment, conversation_id }, { timeoutMs: 120000 });
+    const { data, error } = await invokeSecureFunction<any>('market-updates-qa', { question, updateIds, history, segment, conversation_id, depth }, { timeoutMs: 180000 });
     if (error) throw error;
     if (!data) throw new Error('Market Q&A returned no answer.');
     return {
@@ -319,8 +320,25 @@ export async function answerMarketUpdateQuestion(
       retrieved: Array.isArray(data.retrieved) ? data.retrieved : [],
       question_id: data.question_id ?? null,
       rate_limited: Boolean(data.rate_limited),
+      ...researchFields(data),
     };
   } catch (e) { throw operationalError('qa', e, 'market-updates-qa'); }
+}
+
+/** Deep-research fields the Q&A endpoint returns alongside the answer. Shared
+ *  by the streaming and non-streaming paths so they cannot drift apart. */
+function researchFields(source: any): Partial<MarketQAMessage> {
+  return {
+    depth_mode: ['brief','standard','deep'].includes(source?.depth_mode) ? source.depth_mode : undefined,
+    implications: source?.implications && typeof source.implications === 'object' ? source.implications : undefined,
+    timeline: Array.isArray(source?.timeline) ? source.timeline : [],
+    watch_items: safeArray(source?.watch_items),
+    contrarian_view: typeof source?.contrarian_view === 'string' ? source.contrarian_view : undefined,
+    retrieval_mode: source?.retrieval_mode,
+    context_size: typeof source?.context_size === 'number' ? source.context_size : undefined,
+    strategies: safeArray(source?.strategies),
+    research_plan: source?.research_plan && typeof source.research_plan === 'object' ? source.research_plan : undefined,
+  };
 }
 
 /** SSE-streaming variant. `onDelta` receives the accumulated answer text as it streams.
@@ -332,7 +350,10 @@ export async function streamMarketUpdateQuestion(
     history?: Array<{ role: 'user' | 'assistant'; content: string }>;
     segment?: string;
     conversation_id?: string | null;
+    depth?: MarketQADepth;
     onDelta?: (acc: string) => void;
+    /** Live retrieval progress, so a deeper answer does not read as a hang. */
+    onStage?: (stage: MarketQAStage) => void;
     signal?: AbortSignal;
   } = {},
 ): Promise<MarketQAMessage> {
@@ -369,6 +390,7 @@ export async function streamMarketUpdateQuestion(
         history: opts.history,
         segment: opts.segment,
         conversation_id: opts.conversation_id,
+        depth: opts.depth,
         stream: true,
       }),
     });
@@ -401,6 +423,8 @@ export async function streamMarketUpdateQuestion(
             opts.onDelta?.(acc);
           } else if (event === 'metadata') {
             metadata = parsed;
+          } else if (event === 'stage') {
+            opts.onStage?.(parsed as MarketQAStage);
           } else if (event === 'error') {
             streamError = typeof parsed.message === 'string' ? parsed.message : 'Market Q&A stream failed.';
           }
@@ -428,10 +452,11 @@ export async function streamMarketUpdateQuestion(
       retrieved: Array.isArray(metadata?.retrieved) ? metadata.retrieved : [],
       question_id: metadata?.question_id ?? null,
       rate_limited: Boolean(metadata?.rate_limited),
+      ...researchFields(metadata),
     };
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') throw e;
     warnMissing('Market Q&A streaming failed; falling back to non-streaming.', e);
-    return answerMarketUpdateQuestion(question, opts.updateIds, opts.history, opts.segment, opts.conversation_id);
+    return answerMarketUpdateQuestion(question, opts.updateIds, opts.history, opts.segment, opts.conversation_id, opts.depth);
   }
 }
