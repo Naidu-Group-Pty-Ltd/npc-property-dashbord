@@ -297,6 +297,15 @@ const RISK_AXES: ReadonlyArray<[string, string]> = [
 ];
 
 /**
+ * Axes where being named is bad news.
+ *
+ * Only one, and it is worth the machinery: `highestRisk` sits in the same block
+ * as `lowestRisk`, so a scorecard that ticks both is asserting that a property
+ * won the category of being riskiest.
+ */
+const NEGATIVE_AXES = new Set(['highestRisk']);
+
+/**
  * One axis, or null when the record does not hold it.
  *
  * A winner naming nobody is still an axis — "no clear winner" is what the
@@ -310,17 +319,18 @@ function toWinner(
   properties: readonly PropertyRef[],
 ): AxisWinner | null {
   const raw = source[key];
+  const polarity = NEGATIVE_AXES.has(key) ? 'negative' as const : 'positive' as const;
   // Some axes are plain prose rather than a winner object.
   if (typeof raw === 'string') {
     const reason = text(raw);
-    return reason ? { key, label, property: null, value: '', reason } : null;
+    return reason ? { key, label, property: null, value: '', reason, polarity } : null;
   }
   if (!isRecord(raw)) return null;
   const reason = text(raw.reason);
   const value = text(raw.value, 80);
   const property = propertyAt(raw.propertyNumber, properties);
   if (!reason && !value && !property) return null;
-  return { key, label, property, value, reason };
+  return { key, label, property, value, reason, polarity };
 }
 
 function toAxisGroup(

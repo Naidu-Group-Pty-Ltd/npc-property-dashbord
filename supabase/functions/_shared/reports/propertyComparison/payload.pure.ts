@@ -178,6 +178,17 @@ export interface AxisWinner {
   value: string;
   /** Why, in the source's own words. */
   reason: string;
+  /**
+   * Whether being named on this axis is good.
+   *
+   * `highestRisk` names the property that came off **worst**, and it sits in the
+   * same block as `lowestRisk`. In a scorecard where a tick means "won this
+   * category", a tick against *highest risk* asserts the opposite of what it
+   * means — so the scorecard prints only the positive axes, and the negative one
+   * keeps its own row in the risk section where the word "highest" is right
+   * there beside it.
+   */
+  polarity: 'positive' | 'negative';
 }
 
 /** A named group of axes — the money ones, the location ones, the risk ones. */
