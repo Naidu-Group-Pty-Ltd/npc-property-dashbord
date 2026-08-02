@@ -15,6 +15,8 @@ import {
   FileText,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { toast } from 'sonner';
+import { requestBorrowingCapacitySnapshot } from '@/lib/reports/borrowingCapacity/requestSnapshot';
 import { fetchAndGenerateBorrowingCapacityPDF } from './BorrowingCapacityPDFReport';
 import { BorrowingCapacitySegmentCard } from './BorrowingCapacitySegmentCard';
 
@@ -121,6 +123,40 @@ export function BorrowingCapacityCard({ clientId, clientName, onOpenCalculator }
   const bandConfig = getBandConfig(result.band);
   const BandIcon = bandConfig.icon;
 
+
+  /**
+   * The Borrowing Capacity Snapshot.
+   *
+   * Server-side when `render-borrowing-capacity-pdf` is deployed, and the
+   * in-browser generator when it is not — the legacy path is the fallback, not
+   * a deprecation, and it is still exactly what shipped yesterday.
+   */
+  const downloadSnapshot = async () => {
+    try {
+      const result = await requestBorrowingCapacitySnapshot(
+        { clientId: clientId!, clientName: clientName || 'Client' },
+        async () => {
+          const legacy = await fetchAndGenerateBorrowingCapacityPDF(clientId, clientName || 'Client', undefined, { returnBlob: true });
+          if (!legacy?.blob) return null;
+          return { url: URL.createObjectURL(legacy.blob), fileName: legacy.fileName, bytes: legacy.blob.size };
+        },
+      );
+      const a = document.createElement('a');
+      a.href = result.url;
+      a.download = result.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      if (result.source === 'legacy') URL.revokeObjectURL(result.url);
+      if (result.brandGaps.length) {
+        toast.warning(`Report generated with gaps: ${result.brandGaps.join('; ')}`);
+      }
+    } catch (e: any) {
+      console.error('[downloadSnapshot]', e);
+      toast.error(e?.message || 'Could not generate the snapshot');
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -138,7 +174,7 @@ export function BorrowingCapacityCard({ clientId, clientName, onOpenCalculator }
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      onClick={() => fetchAndGenerateBorrowingCapacityPDF(clientId, clientName || 'Client')}
+                      onClick={() => downloadSnapshot()}
                     >
                       <FileText className="h-4 w-4" />
                     </Button>
