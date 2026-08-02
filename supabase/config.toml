@@ -1145,3 +1145,13 @@ verify_jwt = true
 
 [functions.internal-message-attachments]
 verify_jwt = false
+
+# Both are module-gated rather than JWT-gated: they authenticate the caller
+# themselves (cookie or bearer) and then require the `listings` module
+# permission, and both also expose a service-role-only cron op that carries no
+# user JWT at all. `verify_jwt = true` would reject the cron call outright.
+[functions.listing-images]
+verify_jwt = false
+
+[functions.listings-cache]
+verify_jwt = false

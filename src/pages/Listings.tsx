@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, Suspense } from 'react';
 import type { ElementType, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
@@ -271,12 +271,21 @@ export default function Listings() {
   const queryClient = useQueryClient();
 
   // Use React Query for caching and efficient data fetching
+  // Set by the Refresh button so the next fetch goes all the way to Airtable
+  // rather than being answered by the server cache, which is at most one sync
+  // interval behind. A ref rather than state: it must not re-trigger the query
+  // by changing, only alter the fetch already on its way.
+  const forceUpstream = useRef(false);
+
   const { data: listings = [], isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['listings', selectedTable],
     queryFn: async () => {
+      const bypassCache = forceUpstream.current;
+      forceUpstream.current = false;
       const result = await propertyDataService.fetchAllListings({
         includeDebugInfo: true,
         tableName: selectedTable,
+        bypassCache,
       });
       return result.listings;
     },
@@ -361,7 +370,10 @@ export default function Listings() {
 
   // Refresh function — bypass cache for explicit user refresh
   const loadListings = useCallback(() => {
-    propertyDataService.clearCache();
+    // Scoped to this table. Clearing everything also reset Overview to cold,
+    // which then paid for a full walk nobody had asked for.
+    propertyDataService.clearCache(PROPERTY_INTAKE_TABLE);
+    forceUpstream.current = true;
     refetch();
   }, [refetch]);
 
