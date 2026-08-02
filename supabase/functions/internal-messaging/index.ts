@@ -33,6 +33,7 @@
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 
 const MAX_BODY = 4000;
 const ATTACHMENT_BUCKET = 'internal-message-attachments';
@@ -189,6 +190,8 @@ function preview(body: string) {
 Deno.serve(async (req) => {
   const corsHeaders = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(corsHeaders, csrf);
 
   try {
     const body = req.method === 'POST' ? await req.json().catch(() => ({})) : {};

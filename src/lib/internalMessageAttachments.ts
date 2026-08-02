@@ -3,11 +3,10 @@
  *
  * Upload path
  * -----------
- * Files go straight from the browser to Supabase Storage using a short-lived
- * signed upload URL minted by the `internal-messaging` edge function (which
- * re-verifies thread participation). Because the edge function is never in the
- * data path there is no payload ceiling — large files stream directly to
- * storage and every MIME type is accepted.
+ * Small and medium files go through the dedicated
+ * `internal-message-attachments` function, avoiding browser-to-Storage CORS
+ * and proxy failures. Large files use a short-lived signed upload URL minted by
+ * that same function and stream directly to Storage.
  *
  * Uploads are performed with XHR so we get real byte-level progress, an abort
  * signal, and — critically — a *retry* loop. Every retry mints a **fresh**
@@ -64,7 +63,9 @@ export function formatAttachmentSize(bytes?: number | null): string {
 }
 
 const call = async (payload: Record<string, unknown>) => {
-  const { data, error } = await invokeSecureFunction('internal-messaging', payload);
+  const { data, error } = await invokeSecureFunction('internal-message-attachments', payload, {
+    timeoutMs: 120_000,
+  });
   if (error) throw new Error(error.message || 'Request failed');
   if (data && (data as any).success === false) {
     throw new Error((data as any).error || 'Request failed');
@@ -182,6 +183,9 @@ function fatalTicketError(error: unknown): Error | null {
   if (m.includes('unknown action')) {
     return new Error('Attachment service is out of date — redeploy internal-messaging');
   }
+  if (m.includes('unknown operation')) {
+    return new Error('Attachment transport is out of date — redeploy internal-message-attachments');
+  }
   if (m.includes('not_a_participant')) {
     return new Error('You are no longer a participant in this conversation');
   }
@@ -208,12 +212,44 @@ export async function uploadInternalAttachment(
   const attempts = Math.max(1, options.attempts ?? UPLOAD_ATTEMPTS);
   let lastError: unknown = null;
 
+  // Prefer a server-mediated upload for files that fit safely inside an Edge
+  // request. This avoids browser-to-Storage CORS/proxy failures altogether and
+  // uses a dedicated function that cannot be shadowed by stale messaging code.
+  // Keep raw bytes below the Edge request ceiling after base64/JSON expansion.
+  const DIRECT_MAX_BYTES = 3 * 1024 * 1024;
+  if (!options.signal?.aborted && file.size <= DIRECT_MAX_BYTES) {
+    try {
+      options.onAttempt?.(1, 1);
+      options.onProgress?.(0.05);
+      const fileData = await fileToBase64(file);
+      options.onProgress?.(0.45);
+      const result = await call({
+        operation: 'upload_direct',
+        thread_id: threadId,
+        file_name: file.name,
+        content_type: file.type || 'application/octet-stream',
+        file_data: fileData,
+      });
+      const attachment = result?.attachment as InternalAttachment | undefined;
+      if (attachment?.path) {
+        options.onProgress?.(1);
+        return { ...attachment, name: file.name, size: file.size };
+      }
+      throw new Error('Attachment service returned no stored file');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      lastError = error;
+      // Continue into signed streaming; this remains useful during a transient
+      // Edge outage and is required for files above the direct request ceiling.
+    }
+  }
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (options.signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
     options.onAttempt?.(attempt, attempts);
     try {
       const ticket = (await call({
-        action: 'attachment_upload_url',
+        operation: 'upload_ticket',
         thread_id: threadId,
         file_name: file.name,
         file_size: file.size,
@@ -259,39 +295,6 @@ export async function uploadInternalAttachment(
 
   }
 
-  // Last resort: hand the bytes to the edge function and let it write to
-  // storage with service credentials. This covers every environment where the
-  // browser cannot reach the signed storage URL at all (corporate proxy, CORS
-  // interception, blocked host). Capped because the function body has a payload
-  // ceiling — beyond it the direct-to-storage path is the only option.
-  const DIRECT_MAX_BYTES = 12 * 1024 * 1024;
-  if (!options.signal?.aborted && file.size <= DIRECT_MAX_BYTES) {
-    try {
-      options.onProgress?.(0.05);
-      const fileData = await fileToBase64(file);
-      options.onProgress?.(0.6);
-      const result = await call({
-        action: 'attachment_upload_direct',
-        thread_id: threadId,
-        file_name: file.name,
-        content_type: file.type || 'application/octet-stream',
-        file_data: fileData,
-      });
-      if (result?.path) {
-        options.onProgress?.(1);
-        return {
-          name: file.name,
-          path: result.path as string,
-          mime: file.type || 'application/octet-stream',
-          size: file.size,
-          ...(result.attachment?.scan ? { scan: result.attachment.scan } : {}),
-        };
-      }
-    } catch (directError) {
-      lastError = directError instanceof Error ? directError : lastError;
-    }
-  }
-
   throw new Error(
     lastError instanceof Error
       ? `${file.name}: ${lastError.message}`
@@ -321,7 +324,7 @@ export async function openInternalAttachment(
   download = false,
 ): Promise<void> {
   const data = await call({
-    action: 'attachment_download_url',
+    operation: 'download_ticket',
     thread_id: threadId,
     path: attachment.path,
     download,
