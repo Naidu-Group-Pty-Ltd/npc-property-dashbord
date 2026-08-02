@@ -4,6 +4,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, ExternalLink, AlertTriangle } from 'lucide-react';
+import { MarketQAAnswer } from '@/components/market-updates/MarketQAAnswer';
+import type { MarketQARetrievedItem } from '@/types/marketUpdates';
 
 interface Source { id: string; title: string; summary?: string; source_url?: string; source_name?: string; published_at?: string; impact_level?: string; }
 interface Question { id: string; question: string; answer: string; used_ids?: string[]; confidence?: number; model?: string; created_at?: string; meta?: any; }
@@ -45,6 +47,15 @@ export default function SharedMarketQAAnswer() {
   }
 
   const q = state.question!;
+  const citationSources: MarketQARetrievedItem[] = (state.sources ?? []).map((source) => ({
+    id: source.id,
+    title: source.title,
+    source_name: source.source_name ?? '',
+    source_url: source.source_url ?? '',
+    source_published_at: source.published_at ?? null,
+    impact_level: source.impact_level ?? null,
+    used: true,
+  }));
   return (
     <div className="min-h-screen bg-background py-10 px-4">
       <div className="max-w-3xl mx-auto space-y-6">
@@ -57,7 +68,13 @@ export default function SharedMarketQAAnswer() {
         </div>
         <Card>
           <CardHeader><CardTitle>Answer</CardTitle></CardHeader>
-          <CardContent><div className="prose prose-sm max-w-none whitespace-pre-wrap">{q.answer}</div></CardContent>
+          <CardContent>
+            {/* Answers are sectioned markdown carrying inline [[id]] citation
+                markers, so they need the same renderer as the dashboard —
+                rendered raw they would show the markers and literal "##". The
+                numbers on the citation chips index the Sources card below. */}
+            <MarketQAAnswer content={q.answer} retrieved={citationSources} />
+          </CardContent>
         </Card>
         {state.sources && state.sources.length > 0 && (
           <Card>
