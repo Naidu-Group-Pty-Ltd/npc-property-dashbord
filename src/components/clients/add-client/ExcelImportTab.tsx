@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { EXCEL_ACCEPT, MAX_EXCEL_FILE_BYTES, parseAdvancedClientWorkbookFile, validateExcelFile, type ParsedExcelImport } from '@/lib/client-fact-find/excelImport';
 import { advEyebrow, advPanelHeader, advSurface } from './advancedTheme';
-import advancedClientTemplateUrl from '../../../../docs/reference/Aurixa Systems - White Label Client Fact Find Template.xlsx?url';
+import advancedClientTemplateUrl from '../../../../docs/reference/Aurixa Systems - White Label Client Fact Find Template.xlsx?inline';
 
 export function ExcelImportTab({file,onFileChange,hasFormValues,onApply}:{file:File|null;onFileChange:(file:File|null)=>void;hasFormValues:boolean;onApply:(parsed:ParsedExcelImport)=>void}){
   const [parsed,setParsed]=useState<ParsedExcelImport|null>(null),[error,setError]=useState(''),[parsing,setParsing]=useState(false),[confirm,setConfirm]=useState(false);
