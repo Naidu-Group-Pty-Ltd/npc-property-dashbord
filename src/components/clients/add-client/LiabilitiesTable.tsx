@@ -1,40 +1,50 @@
-import { memo, useMemo } from 'react';
-import { useFormContext, useWatch, type UseFormRegister } from 'react-hook-form';
-import { CreditCard } from 'lucide-react';
+import { memo, useMemo, useState } from 'react';
+import { useFieldArray, useFormContext, useWatch, type UseFormRegister } from 'react-hook-form';
+import { CreditCard, Plus, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { LIABILITY_COLUMNS } from '@/lib/client-fact-find/fieldDefinitions';
 import { calculateOtherLiabilitiesCents, centsToDisplay } from '@/lib/client-fact-find/calculations';
-import type { AdvancedClientCreationPayload } from '@/lib/client-fact-find/types';
+import type { AdvancedClientCreationPayload, FactFindLiability } from '@/lib/client-fact-find/types';
 import { AdvancedSectionHeader, premiumSectionClass } from './AdvancedSectionHeader';
-import { LIABILITY_BALANCE_NAMES, LIABILITY_ROW_INDEXES } from './factFindWatchers';
+import { createEmptyLiability } from './defaults';
 
 const names = ['liabilityType', 'lender', 'accountOrDescription', 'owner', 'limitOrOriginalAmount', 'currentBalance', 'monthlyRepayment', 'interestRate', 'remainingTerm', 'notes'] as const;
 const numericNames = new Set<string>(['limitOrOriginalAmount', 'currentBalance', 'monthlyRepayment', 'interestRate']);
-const doubleNames = new Set<string>(['lender', 'accountOrDescription']);
+const wideNames = new Set<string>(['lender', 'accountOrDescription']);
+const isBlankLiability = (liability: FactFindLiability) => names.every(name => liability[name] === '' || liability[name] === null || liability[name] === 0);
 
 export function LiabilitiesTable() {
-  const { register } = useFormContext<AdvancedClientCreationPayload>();
+  const { control, getValues, register, setValue } = useFormContext<AdvancedClientCreationPayload>();
+  const { fields, append, remove, replace } = useFieldArray({ control, name: 'liabilities' });
+  const [pendingRemoval, setPendingRemoval] = useState<number | null>(null);
+  const addLiability = () => append(createEmptyLiability(fields.length), { shouldFocus: true, focusName: `liabilities.${fields.length}.liabilityType` });
+  const removeLiability = (index: number) => {
+    if (fields.length === 1) replace([createEmptyLiability(0)]);
+    else {
+      remove(index);
+      for (let next = index; next < fields.length - 1; next += 1) setValue(`liabilities.${next}.displayOrder`, next, { shouldDirty: true });
+    }
+    setPendingRemoval(null);
+  };
+  const requestRemoval = (index: number) => isBlankLiability(getValues(`liabilities.${index}`)) ? removeLiability(index) : setPendingRemoval(index);
   return <section data-testid="liabilities-table" className={`${premiumSectionClass} min-w-0 max-w-full`}>
-    <AdvancedSectionHeader icon={CreditCard} title="Other Liabilities" description="8 fixed workbook positions for non-asset-linked debt." trailing={<LiabilityTotals />} />
+    <AdvancedSectionHeader icon={CreditCard} title="Liabilities" description="Add each non-asset-linked debt or credit facility held by the applicants." trailing={<div className="flex flex-wrap items-center justify-end gap-2"><LiabilityTotals /><Button type="button" variant="outline" size="sm" className="border-warning/30 text-warning hover:bg-warning/10 hover:text-warning focus-visible:ring-warning/40" onClick={addLiability}><Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />Add Liability</Button></div>} />
     <div className="grid min-w-0 gap-4 p-3 sm:p-5">
-      {LIABILITY_ROW_INDEXES.map(row => <LiabilityRow key={row} row={row} register={register} />)}
+      {fields.map((field, row) => <LiabilityRow key={field.id} row={row} register={register} onRemove={() => requestRemoval(row)} />)}
+      <Button type="button" variant="ghost" size="sm" className="justify-self-start text-warning hover:bg-warning/10 hover:text-warning" onClick={addLiability}><Plus className="mr-1.5 h-4 w-4" aria-hidden="true" />Add another liability</Button>
     </div>
+    <AlertDialog open={pendingRemoval !== null} onOpenChange={open => !open && setPendingRemoval(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Remove Liability?</AlertDialogTitle><AlertDialogDescription>Remove this liability and all information entered for it?</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancel</AlertDialogCancel><AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={() => pendingRemoval !== null && removeLiability(pendingRemoval)}>Remove</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
   </section>;
 }
 
-const LiabilityRow = memo(function LiabilityRow({ row, register }: { row: number; register: UseFormRegister<AdvancedClientCreationPayload> }) {
+const LiabilityRow = memo(function LiabilityRow({ row, register, onRemove }: { row: number; register: UseFormRegister<AdvancedClientCreationPayload>; onRemove: () => void }) {
   return <fieldset data-testid="liability-card" className="group w-full min-w-0 max-w-full rounded-xl border border-border/70 border-l-2 border-l-warning/40 bg-background/45 p-3 transition-[border-color,background-color] duration-150 focus-within:border-warning/45 focus-within:bg-muted/20 motion-reduce:transition-none sm:p-4">
-    <legend className="rounded-full border border-warning/25 bg-card px-3 py-1 text-xs font-bold uppercase tracking-wider text-warning">Liability {row + 1}</legend>
-    <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
-      {names.map((name, column) => {
-        const label = LIABILITY_COLUMNS[column].label;
-        const span = name === 'notes' ? 'sm:col-span-2 lg:col-span-3 2xl:col-span-5' : doubleNames.has(name) ? 'sm:col-span-2' : '';
-        return <label key={name} className={`min-w-0 space-y-1.5 text-sm ${span}`}>
-          <span className="block break-words text-xs font-semibold text-foreground/90">{label}</span>
-          <input aria-label={`Liability ${row + 1} ${label}`} type={numericNames.has(name) ? 'number' : 'text'} min={numericNames.has(name) ? 0 : undefined} step={name === 'interestRate' ? '0.0001' : numericNames.has(name) ? '0.01' : undefined} className="h-11 w-full min-w-0 max-w-full rounded-lg border border-input bg-background/80 px-3 text-sm transition-[border-color,box-shadow] duration-150 focus-visible:border-brand-300/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none" {...register(`liabilities.${row}.${name}` as const, { setValueAs: value => numericNames.has(name) ? (value === '' ? 0 : Number(value)) : value })} />
-        </label>;
-      })}
-    </div>
+    <legend className="ml-1 px-1"><span className="inline-flex rounded-full border border-warning/25 bg-card px-3 py-1 text-xs font-bold uppercase tracking-wider text-warning">Liability {row + 1}</span></legend>
+    <div className="mb-3 flex justify-end"><Button type="button" variant="ghost" size="sm" aria-label={`Remove Liability ${row + 1}`} className="h-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/40" onClick={onRemove}><Trash2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />Remove Liability</Button></div>
+    <input type="hidden" {...register(`liabilities.${row}.displayOrder`)} />
+    <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">{names.map((name, column) => { const label = LIABILITY_COLUMNS[column].label; return <label key={name} className={`min-w-0 space-y-1.5 text-sm ${wideNames.has(name) ? 'sm:col-span-2' : ''}`}><span className="block break-words text-xs font-semibold text-foreground/90">{label}</span><input aria-label={`Liability ${row + 1} ${label}`} type={numericNames.has(name) ? 'number' : 'text'} min={numericNames.has(name) ? 0 : undefined} step={name === 'interestRate' ? '0.0001' : numericNames.has(name) ? '0.01' : undefined} className="h-11 w-full min-w-0 max-w-full rounded-lg border border-input bg-background/80 px-3 text-sm transition-[border-color,box-shadow] duration-150 focus-visible:border-brand-300/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none" {...register(`liabilities.${row}.${name}` as const, { setValueAs: value => numericNames.has(name) ? (value === '' ? 0 : Number(value)) : value })} /></label>; })}</div>
   </fieldset>;
 });
 
-function LiabilityTotals() { const { control } = useFormContext<AdvancedClientCreationPayload>(); const balances = useWatch({ control, name: LIABILITY_BALANCE_NAMES }); const total = useMemo(() => calculateOtherLiabilitiesCents(balances.map(currentBalance => ({ currentBalance }))), [balances]); return <div data-testid="liability-totals" className="rounded-xl border border-border bg-muted/30 px-4 py-2 text-right"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Other Liabilities</p><strong className="text-sm">{centsToDisplay(total)}</strong></div>; }
+function LiabilityTotals() { const { control } = useFormContext<AdvancedClientCreationPayload>(); const liabilities = useWatch({ control, name: 'liabilities' }) ?? []; const total = useMemo(() => calculateOtherLiabilitiesCents(liabilities), [liabilities]); return <div data-testid="liability-totals" className="rounded-xl border border-border bg-muted/30 px-3 py-2 text-right"><p className="text-[10px] uppercase tracking-wider text-muted-foreground">Other Liabilities</p><strong className="text-sm">{centsToDisplay(total)}</strong></div>; }
