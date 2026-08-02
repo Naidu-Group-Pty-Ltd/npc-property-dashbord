@@ -4,6 +4,34 @@ Self-hosted Python service that renders the premium investment-report HTML to
 PDF using WeasyPrint. Replaces the Api2PDF (Headless Chrome) path so we keep
 full control over typography, page layout, and engine version.
 
+## Fonts
+
+The font list in the `Dockerfile` is a **contract** with
+`supabase/functions/_shared/reportDesign/typography.pure.ts`, asserted by
+`src/lib/reportDesign/__tests__/reportTypography.spec.ts` and by a Docker build
+in CI. A face a report names must be installed here, or WeasyPrint substitutes
+silently: the PDF renders, the tests pass, and the defect is visible only to
+whoever opens the document.
+
+Two routes in:
+
+- **Debian packages** — Inter, IBM Plex, Roboto, Lato and the
+  DejaVu/Liberation/Noto fallbacks. Every one is verified present in bookworm
+  and trixie.
+- **`fonts/*.ttf`, COPY-ed and `fc-cache`-d** — Cinzel and Playfair Display
+  (upright and italic), the two brand faces. No distribution packages them.
+  They live in this directory rather than `public/fonts/` because Docker cannot
+  `COPY` from outside its build context. SIL OFL 1.1; the licence files ship
+  beside them, which redistribution inside an image requires.
+
+The `RUN fc-cache` layer asserts each brand family resolves and fails the build
+if one does not — a missing face must break the build, not the document.
+
+> This previously installed `fonts-playfair-display`,
+> `fonts-cormorant-garamond` and `fonts-fraunces`. **None of the three exists in
+> Debian.** `apt-get install -y` exits non-zero on an unknown package, so the
+> image could not be built at all.
+
 ## Endpoints
 
 - `GET  /healthz` — liveness probe.
@@ -60,8 +88,15 @@ Any container host that runs the Dockerfile works. Set the same two env vars
 
 ## Edge function wiring
 
-`supabase/functions/render-investment-report-pdf/index.ts` automatically
-prefers WeasyPrint when both secrets are set, uploads the returned bytes to
-the `investment-reports` storage bucket, and returns a signed URL to the
-client. If the secrets are missing or the service errors out, it falls back
-to the legacy Api2PDF path so generation never breaks during cutover.
+`supabase/functions/render-investment-report-pdf/index.ts` prefers WeasyPrint
+when both secrets are set, uploads the returned bytes to the
+`investment-reports` storage bucket, and returns a signed URL to the client.
+
+**There is no fallback once WeasyPrint is configured.** `index.ts:5567` catches a
+render failure and re-throws — deliberately, so a failed render cannot silently
+return a Chrome-rendered PDF that looks like the old design. Api2PDF is used only
+when `WEASYPRINT_SERVICE_URL`/`WEASYPRINT_SERVICE_TOKEN` are absent entirely.
+
+The practical consequence: **this service is critical infrastructure.** If it is
+down or the image is broken, report generation returns a user-visible error. An
+earlier version of this file claimed the opposite.
