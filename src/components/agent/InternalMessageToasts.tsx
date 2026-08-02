@@ -215,8 +215,11 @@ function MinimisedChip({
         </span>
         <span className="truncate text-xs font-semibold text-foreground">{label}</span>
         {thread.unread > 0 && (
-          <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">
-            {thread.unread > 9 ? '9+' : thread.unread}
+          <span
+            aria-label={`${thread.unread} unread message${thread.unread === 1 ? '' : 's'}`}
+            className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold tabular-nums text-primary-foreground shadow-[0_0_0_2px_hsl(var(--card)),0_0_12px_hsl(var(--primary)/0.6)]"
+          >
+            {thread.unread > 99 ? '99+' : thread.unread}
           </span>
         )}
         {typingNow && <TypingDots className="shrink-0" />}
