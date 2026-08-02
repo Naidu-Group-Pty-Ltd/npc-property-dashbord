@@ -1991,6 +1991,31 @@ Deno.serve(async (req) => {
         console.log(`[calculate-borrowing-capacity] Saved assessment: ${assessmentId}`);
       }
 
+      // The audit trail and the explanation, kept.
+      //
+      // Both are built above and returned in the response, and until migration
+      // 20260814000000 there was nowhere to store them — so every report that
+      // read them off the stored row got `undefined`, and the two pages that
+      // explain a lending decision to the client have never appeared in a
+      // document anyone received (docs/reports/BORROWING_CAPACITY.md F12).
+      //
+      // A separate UPDATE rather than two more fields on the INSERT above, so
+      // that deploy order does not matter: run this function against a project
+      // that has not had the migration applied yet and it warns instead of
+      // failing every capacity calculation.
+      if (assessmentId) {
+        const { error: keepError } = await supabase
+          .from("borrowing_capacity_assessments")
+          .update({ audit_trail: auditTrail, explanation })
+          .eq("id", assessmentId);
+        if (keepError) {
+          console.warn(
+            `[calculate-borrowing-capacity] could not store audit trail/explanation `
+            + `(migration 20260814000000 applied?): ${keepError.message}`,
+          );
+        }
+      }
+
       // Update client's borrowing_capacity field
       await supabase
         .from("clients")

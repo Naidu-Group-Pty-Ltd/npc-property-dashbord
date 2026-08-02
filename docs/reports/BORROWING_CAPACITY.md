@@ -538,7 +538,82 @@ upload. WebP returns "cannot measure" rather than a guess, and an unmeasurable
 asset is accepted: refusing to print a logo whose header would not parse is
 worse than printing one that might be small.
 
-## 9. Phase map
+## 9. The render path (Phase 4)
+
+`render-borrowing-capacity-pdf` generates the document server-side. The caller
+sends a client id; everything the document says is read here.
+
+That is the whole difference from `render-template-pdf`, which accepts HTML. For
+a document that tells someone how much they can borrow, the contents are not the
+browser's to decide — and a test asserts the route ignores a `clientName`, an
+`html` or a `capacity` a caller tries to send.
+
+| | |
+|---|---|
+| **Auth** | `verifyAuthOrNativeUser` establishes a human — the gateway JWT check is off across this project for the custom session flow, and the service-role identity is refused because it is not a person. Then `canAccessClient` establishes *this* human against *this* client. Authentication is not authorisation: every staff member is authenticated. |
+| **Brand** | `buildReportBrandSnapshot` from the tenant's settings, then `upsert_report_brand_snapshot`, which dedupes by content fingerprint — a tenant rebrands a few times a year and renders thousands of reports. |
+| **Resources** | `assertSafeRenderResources` runs on HTML this function built itself. The assets in it came from a tenant's settings form; the guard belongs on the boundary, not on the trust. |
+| **Render** | `_shared/weasyprintClient.ts`. No fallback: if WeasyPrint fails, this fails. A silent downgrade ships a client a document nobody approved. |
+| **Storage** | `client-files/borrowing-capacity/<clientId>/<day>/<uuid>-<file>.pdf`, `upsert: false`. The random segment is why: without it a second render on the same day overwrites a file someone may already hold a link to. |
+| **Signing** | 24 hours — long enough to email, short enough to expire. |
+| **Record** | Every attempt writes a `borrowing_capacity_renders` row, including failures with their reason. That is the difference between "the client says the PDF never arrived" and an answer. |
+
+The filename is unchanged, byte for byte:
+`Borrowing_Capacity_Snapshot_A____J__Sample_2026-08-01.pdf`. Four underscores,
+one per non-alphanumeric — the existing rule, kept exactly, because five call
+sites and a client's downloads folder depend on it.
+
+### F12, decided: persist
+
+`calculate-borrowing-capacity` now writes `audit_trail` and `explanation` to the
+row it already inserts (migration `20260814000000`). The alternative was to
+recompute them at render time, and that is worse: a recomputation runs against
+today's policy and today's HEM benchmark, so the audit trail could disagree with
+the headline figures printed beside it on the same page. **A report must explain
+the numbers it is showing, not different ones.**
+
+The write is a separate `UPDATE` rather than two more fields on the `INSERT`, so
+deploy order does not matter — run the function against a project that has not
+had the migration applied and it warns instead of failing every capacity
+calculation.
+
+### F8, closed and measured
+
+`pdffonts` on the real document, rendered by the same code the route runs:
+
+| Face | Embedded |
+|---|---|
+| Cinzel Bold | yes |
+| Playfair Display · SemiBold · Italic | yes |
+| Inter · Medium · SemiBold | yes |
+| IBM Plex Mono · Medium · Bold | yes |
+
+Ten faces, **zero base-14 substitutions**, every one embedded. The shipping
+generator sets the entire document in Helvetica — 64 `setFont` calls in
+generator A alone.
+
+CI asserts it rather than trusting it: the `render-container` job now builds the
+Snapshot, POSTs it to the container it just built, and fails if any of the four
+families is missing from `pdffonts` — a substituted face still yields a valid
+PDF, so the bytes prove nothing. The same step asserts the page count, because a
+migration that drops the audit trail changes nothing a unit test sees.
+
+### One thing that moved outside this format
+
+`render-template-pdf` carried its own WeasyPrint call, its own timeout, its own
+handling of the two environment variable names the token can live under, and its
+own idea of what a non-200 means. A second render path needed all four.
+`_shared/weasyprintClient.ts` is now the one place, and both paths use it.
+
+### To deploy
+
+1. Apply `20260814000000_borrowing_capacity_render_path.sql`.
+2. Deploy `calculate-borrowing-capacity` (it starts storing the audit trail) and
+   `render-borrowing-capacity-pdf`.
+3. Nothing calls the new route yet. Phase 5 switches the call sites over, after
+   the golden diff.
+
+## 10. Phase map
 
 | Phase | Delivers |
 |---|---|
@@ -546,5 +621,5 @@ worse than printing one that might be small.
 | **1** ✅ | One payload contract — pure, typed, tested; units and direction carried on values (F2, F9, F10, F13, F14) |
 | **2** ✅ | The document through the design system — structure, primitives, spine (F3, F4, F5, F6) |
 | **3** ✅ | Driven from a brand snapshot; the cover stops being a raster (F1, F7) |
-| 4 | The render path — route, auth, storage, signing; brand typefaces (F8). **F12 is decided here**: the audit trail and the explanation are computed on every assessment and discarded, so the render path has to either persist them or recompute them |
+| **4** ✅ | The render path — route, auth, storage, signing; brand typefaces (F8); F12 decided (persist) |
 | 5 | Charts, golden diff against this capture, and deletion of D and the superseded packs |

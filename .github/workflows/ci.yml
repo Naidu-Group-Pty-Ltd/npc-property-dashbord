@@ -242,6 +242,60 @@ jobs:
           pdffonts /tmp/out.pdf | grep -qi playfair || { echo "Playfair not embedded"; exit 1; }
           pdffonts /tmp/out.pdf | grep -qi inter || { echo "Inter not embedded"; exit 1; }
 
+      # A smoke document proves the image. This proves the *report*: the real
+      # Borrowing Capacity Snapshot, built by the same code the render path
+      # runs, rendered by the same container, with its brand faces embedded.
+      # F8 in docs/reports/BORROWING_CAPACITY.md is 599 `setFont('helvetica')`
+      # calls across the legacy generators; this is what closes it for the
+      # first migrated format.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Writes reports/html/borrowing-capacity-snapshot.html as a side effect.
+      - name: Build the Borrowing Capacity Snapshot
+        run: npx vitest run src/lib/reports/borrowingCapacity/__tests__/render.spec.ts
+
+      - name: Render it in the container and assert its typography
+        run: |
+          docker run -d --name wp2 -p 8081:8080 \
+            -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8081/healthz >/dev/null && break
+            sleep 2
+          done
+          node -e '
+            const fs = require("node:fs");
+            const html = fs.readFileSync("reports/html/borrowing-capacity-snapshot.html", "utf8");
+            fs.writeFileSync("/tmp/bc.json", JSON.stringify({ html, pdf_variant: "pdf/a-2b", tagged: true }));
+          '
+          curl -sf -X POST http://localhost:8081/render \
+            -H "Authorization: Bearer ci-token" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/bc.json -o /tmp/bc.pdf
+          docker logs wp2
+          docker rm -f wp2
+          head -c 5 /tmp/bc.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          pdffonts /tmp/bc.pdf
+          # Cinzel sets the cover title, Playfair the chapter headings and the
+          # running head, Inter the body, IBM Plex Mono every figure and label.
+          # A substituted face still yields a valid PDF, so the fonts are the
+          # assertion, not the bytes.
+          for face in Cinzel Playfair Inter IBMPlex; do
+            pdffonts /tmp/bc.pdf | grep -qi "$face" || { echo "$face not embedded in the report"; exit 1; }
+          done
+          # The document the fixture describes is ten pages. A migration that
+          # drops the audit trail changes nothing a unit test sees, and changes
+          # this.
+          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +10$' || {
+            echo "unexpected page count:"; pdfinfo /tmp/bc.pdf | grep Pages; exit 1;
+          }
+
   # Security Remediation Phase 11 (SUPPLY-001): supply-chain visibility.
   # Fails on unaccepted high/critical dependency vulnerabilities and publishes a
   # CycloneDX SBOM artifact for each build.
