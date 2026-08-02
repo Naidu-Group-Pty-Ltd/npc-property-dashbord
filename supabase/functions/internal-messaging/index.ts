@@ -571,7 +571,11 @@ Deno.serve(async (req) => {
     }
 
     // ── Attachments: signed upload / download URLs ───────────────────
-    if (action === 'attachment_upload_url' || action === 'attachment_download_url') {
+    if (
+      action === 'attachment_upload_url' ||
+      action === 'attachment_upload_direct' ||
+      action === 'attachment_download_url'
+    ) {
       const threadId = String(body.thread_id ?? '');
       if (!threadId) return json({ success: false, error: 'thread_id required' }, 400, corsHeaders);
 
