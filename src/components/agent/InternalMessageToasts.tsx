@@ -293,6 +293,8 @@ export function InternalMessageToasts() {
       const { data } = await invokeSecureFunction('internal-messaging', {
         action: 'get_thread',
         thread_id: threadId,
+        // Only an explicit open marks the conversation reviewed server-side.
+        mark_read: clearUnread,
       });
       const msgs: PopupMessage[] = await hydrateThreadAttachments(
         threadId,
@@ -311,6 +313,7 @@ export function InternalMessageToasts() {
       );
     }
   }, []);
+
 
   /** Poll thread list: opens new pop-ups and refreshes already-open ones. */
   const check = useCallback(async () => {
