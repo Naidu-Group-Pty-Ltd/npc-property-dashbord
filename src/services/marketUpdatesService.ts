@@ -175,12 +175,12 @@ export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdat
   } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
 }
 
-export async function fetchMarketUpdateArchive(options: { search?:string; page?:number; pageSize?:number; sort?:'archived_desc'|'deletion_asc' } = {}): Promise<MarketUpdateArchivePage> {
+export async function fetchMarketUpdateArchive(options: { search?:string; page?:number; pageSize?:number; sort?:'archived_desc'|'published_desc'; source?:string; category?:string; geography?:string; impact?:string; audience?:string } = {}): Promise<MarketUpdateArchivePage> {
   const payload = await invokeMarketRead<{ archive?:MarketUpdateArchivePage }>({ action:'archive', ...options });
   const archive = payload.archive;
   if (!archive) throw operationalError('database', new Error('Market News Feed archive was missing.'), 'market-updates-status');
   return {
-    items:safeArray<ArchivedMarketUpdate>(archive.items).map(item => ({ ...item, geography:safeArray(item.geography), days_remaining:Number(item.days_remaining ?? 0) })),
+    items:safeArray<ArchivedMarketUpdate>(archive.items).map(item => ({ ...mapUpdate(item), archived_at:item.archived_at, archived_by:item.archived_by, pre_archive_status:item.pre_archive_status })),
     count:Number(archive.count ?? 0), page:Number(archive.page ?? 1), pageSize:Number(archive.pageSize ?? 20), hasMore:Boolean(archive.hasMore),
   };
 }

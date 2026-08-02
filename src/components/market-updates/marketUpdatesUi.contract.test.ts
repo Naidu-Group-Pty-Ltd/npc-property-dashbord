@@ -3,7 +3,7 @@ import { describe,expect,it } from 'vitest';
 
 const read = (path:string) => readFileSync(path,'utf8');
 const page = read('src/pages/MarketUpdates.tsx');
-const archive = read('src/components/market-updates/MarketArchiveDialog.tsx');
+const archive = read('src/components/market-updates/MarketArchivePage.tsx');
 const sources = read('src/components/market-updates/MarketSourcesAdminDialog.tsx');
 const coverage = read('src/components/market-updates/MarketSourceCoveragePanel.tsx');
 const desktopNavigation = read('src/components/layout/DashboardSidebar.tsx');
@@ -39,13 +39,17 @@ describe('Market Updates Phase 4 UI contract',()=>{
     expect(page).not.toMatch(/const clearFilters = \(\) => \{[^}]*setActiveFreshness/s);
   });
 
-  it('uses the archive API, fixed Sonner toast Undo, and permission-gated controls',()=>{
+  it('uses a deep-linkable archive page, fixed Sonner toast Undo, and permission-gated mutations',()=>{
     expect(page).toContain('archiveMarketUpdate(update.id)');
     expect(page).toContain('restoreMarketUpdate(updateId)');
     expect(page).toContain("action:{label:'Undo'");
     expect(page).toContain('canEditMarketUpdates && <Button');
     expect(archive).toContain('fetchMarketUpdateArchive');
-    expect(archive).toContain('Archived news will remain here for 30 days');
+    expect(page).toContain("navigate('/market-updates/archived')");
+    expect(routes).toContain('<Route path="market-updates/archived" element={<MarketArchivePage />} />');
+    expect(archive).toContain('Articles archived from the Market News Feed will appear here.');
+    expect(archive).toContain('Clear All');
+    expect(archive).toContain('Recently archived');
     expect(archive).toContain('aria-label={`Restore ${item.title}`}');
   });
 
