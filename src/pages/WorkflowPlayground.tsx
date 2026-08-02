@@ -59,6 +59,7 @@ import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useIntegrationCredentials } from '@/hooks/useIntegrationCredentials';
 import { useWorkflows } from '@/hooks/useWorkflows';
 import { useWorkflowRuns, type RunMode } from '@/hooks/useWorkflowRuns';
+import { useTriggerEvents } from '@/hooks/useTriggerEvents';
 import { getCatalogNode } from '@/lib/workflow/catalog';
 import { evaluateReadiness, isRunnable } from '@/lib/workflow/graph';
 import { useWorkflowStore } from '@/lib/workflow/store';
@@ -99,6 +100,8 @@ export default function WorkflowPlayground() {
   const selectedNodeId = useWorkflowStore((s) => s.selectedNodeId);
   const canUndo = useWorkflowStore((s) => s.past.length > 0);
   const canRedo = useWorkflowStore((s) => s.future.length > 0);
+
+  const triggerEvents = useTriggerEvents(graph, openWorkflow?.status ?? 'draft');
 
   const selectedNode = useMemo(
     () => graph.nodes.find((n) => n.id === selectedNodeId) ?? null,
@@ -485,6 +488,10 @@ export default function WorkflowPlayground() {
                 <RunPanel
                   result={runs.result}
                   running={runs.running}
+                  events={triggerEvents.events}
+                  eventsLoading={triggerEvents.loading}
+                  totalCaptured={triggerEvents.totalCaptured}
+                  workflowIsLive={openWorkflow.status === 'live'}
                   history={runs.history}
                   historyLoading={runs.historyLoading}
                   persistenceWarning={runs.persistenceWarning}

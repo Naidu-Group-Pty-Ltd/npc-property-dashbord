@@ -20,6 +20,7 @@ import {
   CircleSlash,
   FlaskConical,
   History,
+  Inbox,
   Loader2,
   OctagonMinus,
   X,
@@ -31,10 +32,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import type { RunResult, StepResult, StepStatus } from '@/lib/workflow/runtime/engine';
 import type { RunSummary } from '@/hooks/useWorkflowRuns';
+import type { CapturedEvent } from '@/hooks/useTriggerEvents';
 
 interface RunPanelProps {
   result: RunResult | null;
   running: boolean;
+  /** Captured platform events this workflow's triggers would accept. */
+  events: CapturedEvent[];
+  eventsLoading: boolean;
+  /** Everything captured platform-wide, for context when `events` is empty. */
+  totalCaptured: number;
+  workflowIsLive: boolean;
   history: RunSummary[];
   historyLoading: boolean;
   persistenceWarning: string | null;
@@ -173,6 +181,10 @@ function StepRow({ step, onFocusNode }: { step: StepResult; onFocusNode: (id: st
 export function RunPanel({
   result,
   running,
+  events,
+  eventsLoading,
+  totalCaptured,
+  workflowIsLive,
   history,
   historyLoading,
   persistenceWarning,
@@ -236,13 +248,20 @@ export function RunPanel({
       )}
 
       <Tabs defaultValue="current" className="flex min-h-0 flex-1 flex-col">
-        <TabsList className="mx-3 mt-2 grid w-fit grid-cols-2">
+        <TabsList className="mx-3 mt-2 grid w-fit grid-cols-3">
           <TabsTrigger value="current" className="text-xs">
             This run
           </TabsTrigger>
           <TabsTrigger value="history" className="text-xs">
             <History className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
             History
+          </TabsTrigger>
+          <TabsTrigger value="events" className="text-xs">
+            <Inbox className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            Events
+            {events.length > 0 && (
+              <span className="ml-1.5 tabular-nums text-muted-foreground">{events.length}</span>
+            )}
           </TabsTrigger>
         </TabsList>
 
@@ -304,6 +323,55 @@ export function RunPanel({
                     <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
                       {duration(run.durationMs)}
                     </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="events" className="mt-2 min-h-0 flex-1">
+          <ScrollArea className="wf-scroll h-full">
+            {eventsLoading ? (
+              <p className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                Checking for captured events…
+              </p>
+            ) : events.length === 0 ? (
+              <div className="space-y-2 px-3 py-6 text-center">
+                <p className="text-xs font-medium text-foreground">
+                  {workflowIsLive ? 'Nothing has matched this trigger yet' : 'This workflow is not live'}
+                </p>
+                <p className="mx-auto max-w-sm text-[11px] leading-relaxed text-muted-foreground">
+                  {workflowIsLive
+                    ? totalCaptured > 0
+                      ? `${totalCaptured} event${totalCaptured === 1 ? '' : 's'} captured across all workflows, but none this trigger accepts — check the filters on the trigger step.`
+                      : 'Events are captured the moment a matching record changes. Nothing has happened yet.'
+                    : 'Events are only captured for live workflows. Set the status to Live to start recording them.'}
+                </p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-border/50">
+                {events.map((event) => (
+                  <li key={event.id} className="px-3 py-2">
+                    <div className="flex items-center gap-2">
+                      <Inbox className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                        {event.triggerType.replace(/^platform\./, '').replace(/_/g, ' ')}
+                      </span>
+                      <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[10px]">
+                        {event.status}
+                      </Badge>
+                      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                        {new Date(event.occurredAt).toLocaleString()}
+                      </span>
+                    </div>
+                    {event.lastError && (
+                      <p className="mt-1 pl-5 text-[11px] text-destructive">{event.lastError}</p>
+                    )}
+                    <pre className="mt-1 ml-5 max-h-24 overflow-auto rounded-md bg-muted/60 p-2 font-mono text-[11px] text-foreground">
+                      {preview(event.payload)}
+                    </pre>
                   </li>
                 ))}
               </ul>
