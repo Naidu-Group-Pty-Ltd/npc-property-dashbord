@@ -22,7 +22,7 @@ const TARGET = resolve(root, 'supabase/functions/_shared/integrationSecrets.ts')
  * The registry is TypeScript with `satisfies`-free plain literals, so a regex read is
  * enough and avoids pulling a TS loader into a plain node script.
  */
-export function readSecretNames(source = readFileSync(REGISTRY, 'utf8')) {
+export function readRegistry(source = readFileSync(REGISTRY, 'utf8')) {
   const arrayStart = source.indexOf('export const INTEGRATIONS');
   const aliasStart = source.indexOf('export const SUPABASE_SECRET_ALIASES');
   if (arrayStart === -1 || aliasStart === -1) {
@@ -33,15 +33,26 @@ export function readSecretNames(source = readFileSync(REGISTRY, 'utf8')) {
     [...source.slice(aliasStart).matchAll(/^ {2}([A-Z0-9_]+): '([^']+)',$/gm)].map((m) => [m[1], m[2]]),
   );
 
-  const fieldKeys = [...source.slice(arrayStart, aliasStart).matchAll(/\bkey: '([^']+)'/g)].map((m) => m[1]);
-  if (fieldKeys.length === 0) throw new Error('registry.ts: no credential fields found');
+  // Each integration literal starts at a two-space indent inside the array.
+  const blocks = source.slice(arrayStart, aliasStart).split(/\n {2}\{\n/).slice(1);
+  const integrations = blocks.map((block) => {
+    const id = block.match(/^ {4}id: '([^']+)',$/m)?.[1];
+    if (!id) throw new Error('registry.ts: integration literal without an id');
+    const secrets = [...block.matchAll(/\bkey: '([^']+)'/g)].map((m) => aliases[m[1]] ?? m[1]);
+    if (secrets.length === 0) throw new Error(`registry.ts: ${id} declares no credential fields`);
+    return { id, secrets };
+  });
 
-  return [...new Set(fieldKeys.map((key) => aliases[key] ?? key))].sort();
+  if (integrations.length === 0) throw new Error('registry.ts: no integrations found');
+
+  // Field order is preserved per integration; the flat allowlist is sorted for stable diffs.
+  const names = [...new Set(integrations.flatMap((i) => i.secrets))].sort();
+  return { integrations, names };
 }
 
-export function renderModule(names) {
+export function renderModule({ integrations, names }) {
   return `/**
- * Every Supabase secret name the Integrations page is allowed to write.
+ * The Supabase secret names behind the Integrations page.
  *
  * GENERATED from \`src/lib/integrations/registry.ts\` — one entry per credential field,
  * with \`SUPABASE_SECRET_ALIASES\` already applied (the page syncs the aliased name via
@@ -49,28 +60,42 @@ export function renderModule(names) {
  *
  * Do not hand-edit. Add the field to the registry instead and re-run
  * \`npm run integrations:secrets:generate\`. \`allowedSecrets.test.ts\` fails the build
- * if this list drifts from the registry.
+ * if either export drifts from the registry.
  */
+
+/** Secret names \`update-integration-secret\` will accept a write for. */
 export const ALLOWED_INTEGRATION_SECRETS = new Set<string>([
 ${names.map((n) => `  '${n}',`).join('\n')}
 ]);
+
+/** Integration id → its secret names, in registry field order. Drives the page's status badges. */
+export const INTEGRATION_SECRET_MAP: Record<string, string[]> = {
+${integrations.map((i) => `  '${i.id}': [${i.secrets.map((s) => `'${s}'`).join(', ')}],`).join('\n')}
+};
 `;
 }
 
-const names = readSecretNames();
-const rendered = renderModule(names);
+const registry = readRegistry();
+const { integrations, names } = registry;
+const rendered = renderModule(registry);
 
 if (process.argv.includes('--check')) {
   const current = readFileSync(TARGET, 'utf8');
   if (current !== rendered) {
     console.error(
-      `integrationSecrets.ts is out of date (${names.length} secrets in the registry).\n` +
+      `integrationSecrets.ts is out of date (${integrations.length} integrations, ` +
+        `${names.length} secrets in the registry).\n` +
         'Run: npm run integrations:secrets:generate',
     );
     process.exit(1);
   }
-  console.log(`integrationSecrets.ts is up to date (${names.length} secrets).`);
+  console.log(
+    `integrationSecrets.ts is up to date (${integrations.length} integrations, ${names.length} secrets).`,
+  );
 } else {
   writeFileSync(TARGET, rendered);
-  console.log(`Wrote ${names.length} secret names to supabase/functions/_shared/integrationSecrets.ts`);
+  console.log(
+    `Wrote ${integrations.length} integrations / ${names.length} secret names to ` +
+      'supabase/functions/_shared/integrationSecrets.ts',
+  );
 }

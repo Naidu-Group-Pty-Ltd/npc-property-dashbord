@@ -14,10 +14,26 @@ const GENERATED = resolve(
   '../../../supabase/functions/_shared/integrationSecrets.ts',
 );
 
+const source = () => readFileSync(GENERATED, 'utf8');
+
 const generatedNames = (): string[] => {
-  const source = readFileSync(GENERATED, 'utf8');
-  const body = source.slice(source.indexOf('ALLOWED_INTEGRATION_SECRETS'));
+  const text = source();
+  const body = text.slice(
+    text.indexOf('ALLOWED_INTEGRATION_SECRETS'),
+    text.indexOf('INTEGRATION_SECRET_MAP'),
+  );
   return [...body.matchAll(/^ {2}'([A-Z0-9_]+)',$/gm)].map((m) => m[1]);
+};
+
+const generatedMap = (): Record<string, string[]> => {
+  const text = source();
+  const body = text.slice(text.indexOf('export const INTEGRATION_SECRET_MAP'));
+  return Object.fromEntries(
+    [...body.matchAll(/^ {2}'([a-z0-9_]+)': \[([^\]]*)\],$/gm)].map((m) => [
+      m[1],
+      [...m[2].matchAll(/'([A-Z0-9_]+)'/g)].map((s) => s[1]),
+    ]),
+  );
 };
 
 const registryNames = (): string[] => [
@@ -57,5 +73,28 @@ describe('update-integration-secret allowlist', () => {
     const rejected = generatedNames().filter((name) => !SECRET_NAME_REGEX.test(name));
 
     expect(rejected).toEqual([]);
+  });
+});
+
+describe('check-integration-secrets map', () => {
+  it('lists every integration exactly once', () => {
+    expect(Object.keys(generatedMap()).sort()).toEqual(INTEGRATIONS.map((i) => i.id).sort());
+  });
+
+  it('lists each integration’s secrets in registry field order', () => {
+    const map = generatedMap();
+    const drifted = INTEGRATIONS.map((integration) => ({
+      id: integration.id,
+      registry: integration.fields.map((f) => getSupabaseSecretName(f.key)),
+      generated: map[integration.id],
+    })).filter(({ registry, generated }) => JSON.stringify(registry) !== JSON.stringify(generated));
+
+    expect(drifted, 'run: npm run integrations:secrets:generate').toEqual([]);
+  });
+
+  it('agrees with the flat allowlist', () => {
+    const fromMap = [...new Set(Object.values(generatedMap()).flat())].sort();
+
+    expect(fromMap).toEqual([...generatedNames()].sort());
   });
 });

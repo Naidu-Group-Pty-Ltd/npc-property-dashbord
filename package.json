@@ -13,6 +13,8 @@
     "audit:style": "node scripts/audit-style-tokens.cjs",
     "integrations:secrets:generate": "node scripts/generate-integration-secrets.mjs",
     "integrations:secrets:check": "node scripts/generate-integration-secrets.mjs --check",
+    "integrations:secrets:seed": "node scripts/create-integration-secrets.mjs",
+    "integrations:secrets:audit": "node scripts/create-integration-secrets.mjs --audit-fallbacks",
     "audit:style:report": "node scripts/audit-style-tokens.cjs --report",
     "templates:finance-portal": "python3 scripts/finance-portal-templates/build_all.py",
     "templates:finance-portal:verify": "python3 scripts/finance-portal-templates/verify_templates.py",
