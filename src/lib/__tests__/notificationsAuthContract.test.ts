@@ -42,7 +42,8 @@ describe('the bell no longer depends on the browser-held JWT', () => {
   const feed = read('supabase/functions/notifications-feed/index.ts');
 
   it('reads through the session-authenticated function, not PostgREST', () => {
-    expect(context).toMatch(/invokeSecureFunction[\s\S]{0,200}'notifications-feed(-v2)?'/);
+    expect(context).toMatch(/const NOTIFICATIONS_FN = 'notifications-feed(-v2)?'/);
+    expect(context).toMatch(/invokeSecureFunction[\s\S]{0,200}NOTIFICATIONS_FN/);
     // The direct query is what silently returned 200 [].
     expect(context).not.toMatch(/\.from\('notifications'\)\s*\n?\s*\.select/);
   });
