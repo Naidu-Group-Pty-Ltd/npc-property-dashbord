@@ -437,17 +437,34 @@ Deno.serve(async (req) => {
         const confidence = Number(ai.confidence_score ?? 0);
         const citation_urls = [canonicalUrl];
         const validationFailures = Array.isArray(ai.validation_failures) ? ai.validation_failures : [];
-        const publishable = aiStatus === 'routed' && confidence >= AI_CONFIDENCE_THRESHOLD && citation_urls.length > 0 && !validationFailures.includes('summary_missing');
+        const policy = publicationPolicy(source);
+        // A usable summary and a real citation are non-negotiable at every tier —
+        // without them the card has nothing to render and nothing to attribute.
+        const hasSummary = !validationFailures.includes('summary_missing');
+        const classifierAcceptable = aiStatus === 'routed' || policy.allowHeuristic;
+        const publishable = classifierAcceptable
+          && hasSummary
+          && citation_urls.length > 0
+          && relevance >= policy.relevanceFloor
+          && confidence >= policy.confidenceFloor;
         // `publishable` is the verdict on the item's own merits. A shadow source
         // records that verdict and then holds the item regardless — that gap is the
         // measurement shadow mode exists to produce.
         const status = publishable && !isShadow ? 'published' : 'candidate';
-        const publicationReason = publishable && !isShadow ? 'validated_ai_classification_meets_threshold' : null;
+        const publicationReason = publishable && !isShadow
+          ? (policy.tier === 1
+            ? 'tier_1_authoritative_source_auto_published'
+            : policy.tier === 2
+              ? 'tier_2_source_meets_tiered_thresholds'
+              : 'validated_ai_classification_meets_threshold')
+          : null;
         const candidateReason = status === 'published' ? null
           : isShadow ? 'shadow_mode_validation'
-          : aiStatus !== 'routed' ? 'ai_fallback_requires_human_review'
-          : validationFailures.includes('summary_missing') ? 'classification_validation_failed'
-          : confidence < AI_CONFIDENCE_THRESHOLD ? 'confidence_below_publication_threshold'
+          : !hasSummary ? 'classification_validation_failed'
+          : !classifierAcceptable ? 'ai_fallback_requires_human_review'
+          : relevance < policy.relevanceFloor ? 'relevance_below_tier_publication_floor'
+          : confidence < policy.confidenceFloor ? 'confidence_below_publication_threshold'
+
           : 'publication_criteria_not_met';
 
         const row = {
