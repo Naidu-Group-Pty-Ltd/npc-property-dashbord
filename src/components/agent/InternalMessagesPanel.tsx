@@ -50,6 +50,7 @@ import {
   filesFromDataTransfer,
   sendInternalMessageWithAttachments,
   type InternalAttachment,
+  hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
 import {
   onInternalMessage,
@@ -197,7 +198,7 @@ export function InternalMessagesPanel({
     setRenaming(false);
     try {
       const data = await call({ action: 'get_thread', thread_id: thread.id });
-      setMessages(data?.messages ?? []);
+      setMessages(await hydrateThreadAttachments(thread.id, data?.messages ?? []));
       if (data?.thread) {
         setActiveThread(prev => (prev && prev.id === thread.id
           ? { ...prev, title: data.thread.title ?? prev.title, participants: data.thread.participants ?? prev.participants }
@@ -230,7 +231,7 @@ export function InternalMessagesPanel({
     loadThreads(showArchived);
     if (activeThread) {
       call({ action: 'get_thread', thread_id: activeThread.id })
-        .then(d => setMessages(d?.messages ?? []))
+        .then(async d => setMessages(await hydrateThreadAttachments(activeThread.id, d?.messages ?? [])))
         .catch(() => {});
     }
   }, [loadThreads, showArchived, activeThread]);
@@ -337,7 +338,7 @@ export function InternalMessagesPanel({
         sender_name: myName,
       });
       const data = await call({ action: 'get_thread', thread_id: activeThread.id });
-      setMessages(data?.messages ?? []);
+      setMessages(await hydrateThreadAttachments(activeThread.id, data?.messages ?? []));
       loadThreads(showArchived);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Message failed to send');
@@ -445,7 +446,7 @@ export function InternalMessagesPanel({
       setRenaming(false);
       await loadThreads(showArchived);
       const data = await call({ action: 'get_thread', thread_id: activeThread.id });
-      setMessages(data?.messages ?? []);
+      setMessages(await hydrateThreadAttachments(activeThread.id, data?.messages ?? []));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not rename group');
     }
