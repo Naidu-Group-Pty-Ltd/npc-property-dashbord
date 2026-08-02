@@ -1,4 +1,8 @@
+import { useQuery } from '@tanstack/react-query';
+import { format } from 'date-fns';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { PortfolioReportDownloadButton } from '@/components/clients/PortfolioReportDownloadButton';
 import { Badge } from '@/components/ui/badge';
 import { PortfolioAnalysisPDFGenerator } from '../PortfolioAnalysisPDFGenerator';
 import { Label } from '@/components/ui/label';
@@ -18,7 +22,8 @@ import {
   Building2,
   Info,
   Landmark,
-  MessageSquareText
+  MessageSquareText,
+  Sparkles
 } from 'lucide-react';
 import {
   Tooltip,
@@ -371,6 +376,89 @@ export function GenerateReportStep({
         </CardContent>
       </Card>
 
+      {/*
+        The typeset review, as a sibling card rather than a second button inside
+        the generator's own dialog.
+
+        It belongs here and not there because of when the row exists. Inside that
+        dialog the analysis is still only in component state — the
+        `portfolio_analysis_reports` row is not inserted until *Download & Save*
+        runs — so a server route that reads the persisted row would have nothing
+        to read. This card typesets the most recent saved report, which is the
+        one the generator above has just written.
+      */}
+      <TypesetReviewCard clientId={clientId} />
+
     </div>
+  );
+}
+
+/**
+ * The server-rendered Portfolio Performance Review for this client's most
+ * recent saved report.
+ *
+ * Its own component so the query it needs does not run on every render of the
+ * step around it, and so the "no saved report yet" state is one branch rather
+ * than three conditionals in the middle of a form.
+ */
+function TypesetReviewCard({ clientId }: { clientId: string }) {
+  const { data: latest, isLoading } = useQuery({
+    queryKey: ['portfolio-analysis-reports', clientId, 'latest'],
+    queryFn: async () => {
+      const { data, error } = await invokeSecureFunction('get-client-data', {
+        listMode: true,
+        listOptions: {
+          table: 'portfolio_analysis_reports',
+          select: 'id, created_at, pdf_file_path',
+          orderBy: 'created_at',
+          order_asc: false,
+          filters: { client_id: clientId },
+        },
+      });
+      if (error) throw new Error(error.message);
+      return ((data?.records ?? []) as Array<{
+        id: string;
+        created_at: string;
+        pdf_file_path: string | null;
+      }>)[0] ?? null;
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Sparkles className="h-5 w-5" />
+          Typeset Review
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <p className="text-sm text-muted-foreground">
+          The same analysis, typeset server-side on your branding — a generated
+          contents page, the full holdings matrix in landscape, and every figure
+          the record holds. Reads the most recently saved report, so generate one
+          above first if there is none.
+        </p>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Looking for a saved report…</p>
+        ) : latest ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <PortfolioReportDownloadButton
+              reportId={latest.id}
+              storedPath={latest.pdf_file_path}
+              storedFileName={`Portfolio_Analysis_${format(new Date(latest.created_at), 'yyyy-MM-dd')}.pdf`}
+            />
+            <span className="text-xs text-muted-foreground">
+              From the report of {format(new Date(latest.created_at), 'dd MMM yyyy')}
+            </span>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No saved report for this client yet. Generate one above, and it will
+            appear here.
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }

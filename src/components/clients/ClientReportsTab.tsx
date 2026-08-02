@@ -45,6 +45,7 @@ import {
   SortAsc,
   Landmark,
   Send,
+  Sparkles,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { PropertyReportGenerator } from './PropertyReportGenerator';
@@ -54,6 +55,7 @@ import { cn } from '@/lib/utils';
 import { fetchAndGenerateBorrowingCapacityPDF, generateBorrowingCapacityPDF } from '@/components/borrowing-capacity/BorrowingCapacityPDFReport';
 import { bucketCandidates, isExternalUrl, parseStorageRef } from '@/lib/reports/storageRef';
 import { SnapshotDownloadButton } from '@/components/borrowing-capacity/SnapshotDownloadButton';
+import { PortfolioReportDownloadButton } from '@/components/clients/PortfolioReportDownloadButton';
 import { snapshotBlob } from '@/lib/reports/borrowingCapacity/deliverSnapshot';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
 import { useAuth } from '@/hooks/useAuth';
@@ -876,6 +878,33 @@ export function ClientReportsTab({
                       clientId, clientName, undefined, undefined, { returnBlob: true },
                     )}
                     label="Download PDF"
+                  />
+                )}
+
+                {/*
+                  The typeset Portfolio Performance Review.
+
+                  Offered on every portfolio row, including the ones with no
+                  `pdf_file_path` — 7 of the 21 stored reports are in that state
+                  and show no download button at all below, because the block
+                  under this one is gated on `report.fileUrl`. This path reads
+                  `report_data` rather than the file, so it works for them.
+
+                  The stored PDF stays reachable through the same control's
+                  second item, and through the View / Download buttons below
+                  wherever there is one.
+                */}
+                {report.type === 'portfolio' && report.source === 'portfolio_report' && (
+                  <PortfolioReportDownloadButton
+                    appearance="menu"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 sm:h-8 sm:w-8"
+                    icon={<Sparkles className="h-4 w-4" />}
+                    triggerLabel="Download the portfolio review"
+                    reportId={report.id}
+                    storedPath={report.fileUrl}
+                    storedFileName={`${report.name.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`}
                   />
                 )}
 

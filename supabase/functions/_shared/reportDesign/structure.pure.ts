@@ -158,12 +158,15 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     // guard: with `MAX_HOLDINGS` properties and the per-property commentary
     // capped at `DETAIL_CAP`, the spine tops out in the low forties.
     //
-    // The floor is 10 because `report_data.analysis` is stored model output and
-    // a thin response is a real state. A portfolio whose analysis carried only
-    // an executive summary spines to 11, and refusing to render a client's
-    // report because the model wrote fewer blocks would turn a content problem
-    // into an outage.
-    pageBudget: [10, 46],
+    // The floor is the arithmetic minimum, not a preference: cover, contents,
+    // where-the-portfolio-stands, one page of holdings matrix and the closing
+    // page is seven, and that is what a report whose `report_data.analysis` came
+    // back empty produces. That is a real state — the analysis is stored model
+    // output parsed out of a fenced code block — and such a document is still
+    // worth sending, because the figures in it are the deterministic half.
+    // Refusing to render a client's report because the model wrote fewer blocks
+    // would turn a content problem into an outage. Found by rendering one.
+    pageBudget: [7, 46],
     // The first migrated format long enough to need one. Borrowing Capacity
     // refuses a contents page for four pages and is right to; this document
     // runs to nine sections and the legacy generator built one by hand.
