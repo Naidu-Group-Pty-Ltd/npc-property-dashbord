@@ -1,4 +1,7 @@
 import type { AdvancedClientCreationPayload, FactFindAsset } from './types';
+import { normalizeEmploymentType } from './schema';
+
+export { normalizeEmploymentType } from './schema';
 
 export type SecureInvoke = (name: string, body: Record<string, unknown>) => Promise<{ data?: any; error?: any }>;
 export interface AdvancedSaveFailure { key: string; label: string; reason: string }
@@ -12,18 +15,6 @@ const present = (row: object) => Object.entries(row).some(([key, value]) =>
 const propertyPattern = /\b(property|real estate|owner occupied|principal place of residence|investment property|rental property|smsf property)\b/i;
 
 export const isPropertyAsset = (asset: FactFindAsset) => propertyPattern.test(`${asset.assetType} ${asset.descriptionOrAddress}`);
-
-export function normalizeEmploymentType(value: string): string | null {
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, '_');
-  if (!normalized) return null;
-  if (['permanent', 'full_time', 'fulltime'].includes(normalized)) return 'permanent';
-  if (['part_time', 'parttime'].includes(normalized)) return 'part_time';
-  if (['self_employed', 'selfemployed'].includes(normalized)) return 'self_employed';
-  if (['contract', 'contractor'].includes(normalized)) return 'contract';
-  if (normalized === 'casual') return 'casual';
-  if (normalized === 'other') return 'other';
-  return null;
-}
 
 export function normalizePropertyType(asset: FactFindAsset): 'owner_occupied' | 'investment' | 'smsf' | null {
   const value = `${asset.assetType} ${asset.descriptionOrAddress}`;
@@ -63,7 +54,9 @@ export function mapAdvancedToViewClient(payload: AdvancedClientCreationPayload) 
 }
 
 const safeReason = (result: { data?: any; error?: any }) => {
-  const raw = result.error?.message || result.data?.error || result.data?.message;
+  const generic=/^Failed to (?:create|update) record\.?$/i;
+  const candidates=[result.error?.message,result.data?.details,result.data?.message,result.data?.error];
+  const raw=candidates.find(value=>typeof value==='string'&&value.trim()&&!generic.test(value.trim()))||candidates.find(value=>typeof value==='string'&&value.trim());
   if (typeof raw !== 'string' || !raw.trim()) return 'the saved information was not accepted';
   const clean = raw.replace(/\b(?:Bearer|token|authorization|apikey|password|secret)\b[^,;]*/gi, '[redacted]').replace(/\s+/g, ' ').trim();
   return clean.length > 180 ? `${clean.slice(0, 177)}…` : clean;
@@ -81,7 +74,10 @@ export async function saveAdvancedViewClientData(clientId: string, payload: Adva
     const key = `${table}:${index}`;
     if (completed.has(key)) continue;
     try {
-      const result = await invoke('manage-client-data', { operation: table === 'clients' ? 'update' : 'create', table, clientId, data: { ...data, ...(table === 'clients' ? {} : { client_id: clientId }) } });
+      // manage-client-data owns client scoping. In particular, the working manual
+      // Employment contract passes clientId beside data and does not submit it as a column.
+      const submittedData=table==='client_employment'||table==='clients'?data:{...data,client_id:clientId};
+      const result = await invoke('manage-client-data', { operation: table === 'clients' ? 'update' : 'create', table, clientId, data: submittedData });
       if (result.error || !result.data?.success) failures.push({ key, label, reason: safeReason(result) });
       else completed.add(key);
     } catch (error) {

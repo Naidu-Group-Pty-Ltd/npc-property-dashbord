@@ -34,7 +34,7 @@ export function AdvancedClientForm({ onCancel }: { active: boolean; onCancel: ()
   const createClient=async()=>{
     if(creating)return;
     const validation=advancedClientCreationSchema.safeParse(methods.getValues());
-    if(!validation.success){await methods.trigger();const path=validation.error.issues[0]?.path,area=String(path?.[0]??'applicants');if(area==='applicants'){setTab('fact-find');setFactFindSection('applicants');const name=path?.join('.');if(name)requestAnimationFrame(()=>methods.setFocus(name as never))}else if(['addresses','employment','assets','liabilities'].includes(area)){setTab('fact-find');setFactFindSection(area==='addresses'?'addresses':area==='employment'?'employment':area==='assets'?'assets':'liabilities')}else if(area==='expenses')setTab('expenses');else {setTab('fact-find');setFactFindSection('applicants')};toast.error('Review the highlighted Advanced form fields.');return}
+    if(!validation.success){await methods.trigger();const issue=validation.error.issues[0],path=issue?.path,area=String(path?.[0]??'applicants');if(area==='applicants'){setTab('fact-find');setFactFindSection('applicants');const name=path?.join('.');if(name)requestAnimationFrame(()=>methods.setFocus(name as never))}else if(['addresses','employment','assets','liabilities'].includes(area)){setTab('fact-find');setFactFindSection(area==='addresses'?'addresses':area==='employment'?'employment':area==='assets'?'assets':'liabilities')}else if(area==='expenses')setTab('expenses');else {setTab('fact-find');setFactFindSection('applicants')};toast.error(area==='employment'&&issue?.message?issue.message:'Review the highlighted Advanced form fields.');return}
     setCreating(true);
     try{
       const payload=methods.getValues();
