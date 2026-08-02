@@ -517,7 +517,7 @@ export default function MarketUpdates() {
               <Button onClick={loadUpdates} variant="outline"><RefreshCw className="mr-2 h-4 w-4" />Refresh View</Button>
               <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
               <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
-              {(sourceHealth.candidates ?? 0) > 0 && <Button variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
+              {heldUpdates.length > 0 && <Button variant="outline" onClick={reviewCandidates}>Held<Badge variant="secondary" className="ml-2">{heldUpdates.length}</Badge></Button>}
               <Button variant="outline" onClick={() => navigate('/market-updates/archived')} aria-label="Open Archived News"><Archive className="mr-2 h-4 w-4" aria-hidden />Archived{typeof sourceHealth.archivedUpdates === 'number' && <Badge variant="secondary" className="ml-2">{sourceHealth.archivedUpdates}</Badge>}</Button>
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
@@ -786,7 +786,7 @@ export default function MarketUpdates() {
                       <Button size="sm" variant="outline" onClick={loadUpdates}><RefreshCw className="mr-2 h-4 w-4" />Retry page data</Button>
                       <Button size="sm" onClick={handleIngest} disabled={ingesting}>{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
                       {['registry','disabled'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button>}
-                      {['candidates','classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
+                      {['candidates','classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={reviewCandidates}>Review held items</Button>}
                       {sourceHealth.latestRun && ['classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setRunSummary(sourceHealth.latestRun ?? null)}>View latest run</Button>}
                       {feedEmptyState.kind === 'classification' && <Button size="sm" variant="outline" onClick={() => setWorkspaceTab('ask-ai')}>Test AI route</Button>}
                     </div>
