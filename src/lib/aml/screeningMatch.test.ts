@@ -326,6 +326,8 @@ describe("loader normalisation cannot drift from query normalisation", () => {
     // Upsert alone leaves a delisted party matching forever. Pruning is
     // guarded by a shrink floor so a truncated download cannot wipe the list.
     expect(loader).toContain("PRUNE_SHRINK_FLOOR");
-    expect(loader).toContain(".neq('sync_id', sync.id)");
+    // Must cover NULL sync_id too: `neq` against NULL is NULL, not true, so a
+    // row predating sync tracking would otherwise match forever.
+    expect(loader).toContain("sync_id.is.null,sync_id.neq.");
   });
 });

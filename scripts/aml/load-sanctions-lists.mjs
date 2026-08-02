@@ -195,8 +195,12 @@ async function main() {
           );
           process.exitCode = 1;
         } else {
+          // `neq` alone would never match a NULL sync_id — SQL inequality
+          // against NULL is NULL, not true — so any row that predates sync
+          // tracking would match forever and never be prunable.
           const { data: removed, error: pruneErr } = await admin.schema('aml').from('sanctions_entries')
-            .delete().eq('list_code', list).neq('sync_id', sync.id).select('id');
+            .delete().eq('list_code', list)
+            .or(`sync_id.is.null,sync_id.neq.${sync.id}`).select('id');
           if (pruneErr) throw pruneErr;
           pruned = (removed ?? []).length;
           if (pruned) console.log(`  pruned ${pruned} entr${pruned === 1 ? 'y' : 'ies'} no longer on the list`);
