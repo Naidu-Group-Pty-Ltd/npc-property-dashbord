@@ -119,7 +119,69 @@ Deno.serve(async (req) => {
       return response({ success: true, path, token: data.token, signed_url: signedUrl, file_name: fileName }, 200, cors);
     }
 
+    // Bind already-uploaded objects to a message row. This is the delivery
+    // guarantee: even if the main messaging deployment is behind and drops the
+    // `attachments` payload, the transport can still persist them so both the
+    // sender and every recipient see and download the files.
+    if (operation === 'attach') {
+      const messageId = String(body.message_id ?? '');
+      if (!messageId) return response({ success: false, error: 'message_id_required' }, 400, cors);
+      const incoming = Array.isArray(body.attachments) ? body.attachments : [];
+
+      const cleaned: Record<string, unknown>[] = [];
+      for (const raw of incoming.slice(0, 25)) {
+        const item = (raw ?? {}) as Record<string, unknown>;
+        const path = String(item.path ?? '');
+        if (!path.startsWith(`${threadId}/`)) continue;
+        const name = safeFileName(item.name);
+        const extension = (name.split('.').pop() ?? '').toLowerCase();
+        if (BLOCKED_EXTENSIONS.has(extension)) continue;
+        // Confirm the object actually exists before advertising it.
+        const { data: probe } = await db.storage.from(BUCKET).createSignedUrl(path, 30);
+        if (!probe?.signedUrl) continue;
+        cleaned.push({
+          name,
+          path,
+          mime: String(item.mime ?? 'application/octet-stream').slice(0, 200),
+          size: Number(item.size ?? 0) || 0,
+          scan: item.scan ?? { status: 'unscanned', engine: 'transport-gate', at: new Date().toISOString() },
+        });
+      }
+      if (!cleaned.length) return response({ success: false, error: 'no_valid_attachments' }, 400, cors);
+
+      const { data: message } = await db
+        .from('internal_messages')
+        .select('id, thread_id, sender_id, attachments')
+        .eq('id', messageId)
+        .maybeSingle();
+      if (!message || message.thread_id !== threadId) {
+        return response({ success: false, error: 'message_not_found' }, 404, cors);
+      }
+      if (message.sender_id !== auth.userId) {
+        return response({ success: false, error: 'not_message_sender' }, 403, cors);
+      }
+
+      const existing = Array.isArray(message.attachments) ? message.attachments : [];
+      const byPath = new Map<string, Record<string, unknown>>();
+      for (const item of [...existing, ...cleaned] as Record<string, unknown>[]) {
+        const key = String(item?.path ?? '');
+        if (key) byPath.set(key, item);
+      }
+      const merged = [...byPath.values()];
+
+      const { data: updated, error: updateError } = await db
+        .from('internal_messages')
+        .update({ attachments: merged })
+        .eq('id', messageId)
+        .select('id, thread_id, sender_id, body, created_at, priority, attachments')
+        .single();
+      if (updateError) return response({ success: false, error: updateError.message }, 500, cors);
+
+      return response({ success: true, message: updated, attachments: merged }, 200, cors);
+    }
+
     if (operation === 'download_ticket') {
+
       const path = String(body.path ?? '');
       if (!path.startsWith(`${threadId}/`)) return response({ success: false, error: 'invalid_path' }, 400, cors);
       const options = body.download === true ? { download: true } : undefined;

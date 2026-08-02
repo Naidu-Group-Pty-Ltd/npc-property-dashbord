@@ -317,7 +317,44 @@ export async function uploadInternalAttachments(
   return out;
 }
 
+/**
+ * Delivery guarantee for attachments.
+ *
+ * `send_message` is supposed to persist the attachment list, but if that
+ * deployment is behind (or drops an item for any reason) the files exist in
+ * storage while nobody can see them. This binds the uploaded objects to the
+ * message row through the dedicated transport, which re-verifies participation,
+ * sender ownership and object existence server-side.
+ *
+ * Returns the authoritative attachment list stored on the message.
+ */
+export async function ensureMessageAttachments(
+  threadId: string,
+  messageId: string | null | undefined,
+  attachments: InternalAttachment[],
+  persisted?: unknown,
+): Promise<InternalAttachment[]> {
+  if (!attachments.length) return [];
+  const already = Array.isArray(persisted) ? (persisted as InternalAttachment[]) : [];
+  if (already.length >= attachments.length) return already;
+  if (!messageId) return already.length ? already : attachments;
+  try {
+    const data = await call({
+      operation: 'attach',
+      thread_id: threadId,
+      message_id: messageId,
+      attachments,
+    });
+    const out = data?.attachments;
+    return Array.isArray(out) && out.length ? (out as InternalAttachment[]) : attachments;
+  } catch (error) {
+    console.warn('[internal-attachments] could not bind attachments to message', error);
+    return already.length ? already : attachments;
+  }
+}
+
 /** Open (or force-download) an attachment via a freshly signed URL. */
+
 export async function openInternalAttachment(
   threadId: string,
   attachment: Pick<InternalAttachment, 'path' | 'name'>,
