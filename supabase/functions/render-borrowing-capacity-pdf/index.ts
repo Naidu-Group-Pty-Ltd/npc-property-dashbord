@@ -31,6 +31,8 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { canAccessClient } from '../_shared/clientAccess.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
+
 import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
@@ -133,10 +135,15 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const request = parsed.request;
 
     // …and then this person against this client. Authentication is not
-    // authorisation: every staff member is authenticated.
-    if (!await canAccessClient(supabase, { userId: auth.userId, authMethod: auth.authMethod }, request.clientId)) {
-      return json({ error: 'not found' }, 404);
+    // authorisation: every staff member is authenticated. Ownership is the fast
+    // path; staff who hold view permission on the Clients module are also
+    // entitled to render for a client they neither created nor were assigned.
+    const actor = { userId: auth.userId, authMethod: auth.authMethod };
+    if (!await canAccessClient(supabase, actor, request.clientId)) {
+      const staff = await requireModulePermission(supabase, actor, 'clients', 'can_view');
+      if (!staff.ok) return json({ error: 'not found' }, 404);
     }
+
 
     const weasyprint = weasyPrintConfig((key) => Deno.env.get(key));
     if (!weasyprint) {
