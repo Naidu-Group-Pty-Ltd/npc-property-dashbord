@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import type { ElementType, ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
@@ -268,6 +268,8 @@ export default function Listings() {
   }, []);
   const selectedTable = PROPERTY_INTAKE_TABLE;
 
+  const queryClient = useQueryClient();
+
   // Use React Query for caching and efficient data fetching
   const { data: listings = [], isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['listings', selectedTable],
@@ -280,7 +282,21 @@ export default function Listings() {
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+    // The service answers from its persistent cache first and revalidates behind
+    // the render, so what lands here may already be a cached set. `placeholderData`
+    // keeps the previous table's rows on screen while a new one resolves rather
+    // than flashing the empty state.
+    placeholderData: (previous) => previous,
   });
+
+  // Adopt the background revalidation. Without this the page would sit on the
+  // cached set until something else invalidated the query — the whole point of
+  // serving stale data first is that the fresh set replaces it a moment later.
+  useEffect(() => {
+    return propertyDataService.subscribe(selectedTable, (result) => {
+      queryClient.setQueryData(['listings', selectedTable], result.listings);
+    });
+  }, [queryClient, selectedTable]);
 
 
   
