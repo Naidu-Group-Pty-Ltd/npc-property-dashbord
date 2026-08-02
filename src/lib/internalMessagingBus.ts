@@ -132,3 +132,36 @@ export function requestOpenInternalMessages(threadId?: string) {
   );
 }
 
+/**
+ * Window event used to detach a conversation from the Aurixa widget into a
+ * free-floating, draggable, resizable pop-out chat window.
+ */
+export const POP_OUT_INTERNAL_THREAD_EVENT = 'aurixa:pop-out-internal-thread';
+
+export interface PopOutThreadHint {
+  thread_id: string;
+  kind?: 'direct' | 'group' | 'broadcast';
+  /** Best-known display title so the pop-out renders instantly. */
+  title?: string | null;
+}
+
+/** Ask the floating pop-out layer to open (and expand) this conversation. */
+export function requestPopOutInternalThread(hint: PopOutThreadHint) {
+  window.dispatchEvent(
+    new CustomEvent(POP_OUT_INTERNAL_THREAD_EVENT, { detail: hint }),
+  );
+}
+
+/** Subscribe to pop-out requests. Returns an unsubscribe fn. */
+export function onInternalThreadPopOut(
+  handler: (hint: PopOutThreadHint) => void,
+): () => void {
+  const listener = (e: Event) => {
+    const detail = (e as CustomEvent).detail as PopOutThreadHint | undefined;
+    if (detail?.thread_id) handler(detail);
+  };
+  window.addEventListener(POP_OUT_INTERNAL_THREAD_EVENT, listener);
+  return () => window.removeEventListener(POP_OUT_INTERNAL_THREAD_EVENT, listener);
+}
+
+
