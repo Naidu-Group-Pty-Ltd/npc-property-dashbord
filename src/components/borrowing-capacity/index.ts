@@ -11,7 +11,6 @@ export { IncomeSection } from './sections/IncomeSection';
 export { ExpensesSection } from './sections/ExpensesSection';
 export { LiabilitiesSection } from './sections/LiabilitiesSection';
 export { ProposedLoanSection } from './sections/ProposedLoanSection';
-export * from './BorrowingCapacityPDFSection';
 export { generateBorrowingCapacityPDF, fetchAndGenerateBorrowingCapacityPDF } from './BorrowingCapacityPDFReport';
 export type { ThreeOutputAssessment, CurrentCapacityResult, ProposedLoanCheckResult, ScenarioCapacityResult, ScenarioDelta } from '@/utils/borrowingCapacityTypes';
 // Phase 4: Scenario Delta Engine

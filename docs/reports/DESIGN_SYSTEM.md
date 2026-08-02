@@ -8,8 +8,14 @@ the brand rules themselves are in the
 **Status:** Phase 0 (this document + the skill), Phase 1 (the Kit foundation),
 Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
 snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
-delivered. The design system is complete; the per-format migrations are next,
-and no shipping render path has been switched over yet.
+delivered. The design system is complete.
+
+**First format migrated:** the Borrowing Capacity Snapshot, its own six phases
+delivered — see [`BORROWING_CAPACITY.md`](./BORROWING_CAPACITY.md). It has a
+payload contract, a document, a brand snapshot, a server-side render path with
+its own edge function, charts and a golden diff against the capture of what
+shipped before it. Its call sites still use the in-browser generator: switching
+them needs the function deployed and its migration applied, which are manual.
 Scope is the report/PDF layer. The Template Library catalogue and the Template
 Builder editor are out of scope, but the shared **block renderers** in
 `src/lib/reportTemplate/blocks/*.html.ts` are in scope as reusable infrastructure.

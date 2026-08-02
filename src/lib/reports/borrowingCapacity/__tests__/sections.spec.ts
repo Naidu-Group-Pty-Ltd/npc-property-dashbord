@@ -88,12 +88,12 @@ describe('spine', () => {
 
   /**
    * The budgets are not decoration: a real render of the full fixture through
-   * WeasyPrint is ten pages, and the spine claims ten. Phase 5's golden diff
+   * WeasyPrint is eleven pages, and the spine claims eleven. The golden diff
    * pins the actual count; this pins the claim, so the two can disagree
    * loudly rather than silently.
    */
-  it('claims the ten pages the full fixture actually renders', () => {
-    expect(spinePageBudget(snapshotSpine(full))).toBe(10);
+  it('claims the eleven pages the full fixture actually renders', () => {
+    expect(spinePageBudget(snapshotSpine(full))).toBe(11);
   });
 
   it('reports a problem rather than throwing on a spine that breaks its archetype', () => {

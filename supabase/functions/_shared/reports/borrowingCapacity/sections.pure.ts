@@ -56,7 +56,9 @@ export function snapshotSections(payload: BorrowingCapacitySnapshot): SnapshotSe
     {
       id: 'ledger',
       title: 'How the capacity is built',
-      pageBudget: 1,
+      // Two since the headroom chart joined it: the chart and the ledger fill
+      // the first, the recommendations and warnings open the second.
+      pageBudget: 2,
       note: 'The arithmetic from gross income to maximum capacity.',
     },
   ];

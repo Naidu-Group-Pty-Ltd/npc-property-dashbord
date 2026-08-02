@@ -23,7 +23,7 @@ a claim comes from a rendered page, the page is named.
 | **A** | `src/components/borrowing-capacity/BorrowingCapacityPDFReport.tsx` | 1325 | jsPDF | **This is the Snapshot.** Live, 4 call sites |
 | **B** | `src/utils/borrowingCapacityPdfSections.ts` | 1369 | jsPDF | Live — section pack for the Formara report |
 | **C** | `src/utils/borrowingCapacityPdfLibSections.ts` | 940 | pdf-lib | Live — section pack for the Portfolio report |
-| **D** | `src/components/borrowing-capacity/BorrowingCapacityPDFSection.tsx` | 401 | pdf-lib | **Orphaned** — re-exported by the barrel, zero consumers |
+| ~~**D**~~ | ~~`src/components/borrowing-capacity/BorrowingCapacityPDFSection.tsx`~~ | ~~401~~ | ~~pdf-lib~~ | **Deleted in Phase 5** — was orphaned, re-exported by the barrel, zero consumers |
 | **E** | `src/components/borrowing-capacity/scenarios/StrategyRationalePDF.ts` | 718 | jsPDF | Live — the Strategy Rationale Brief |
 
 4753 lines drawing one subject in two engines.
@@ -613,7 +613,104 @@ own idea of what a non-200 means. A second render path needed all four.
 3. Nothing calls the new route yet. Phase 5 switches the call sites over, after
    the golden diff.
 
-## 10. Phase map
+## 10. Charts, the diff, and what was deleted (Phase 5)
+
+### Three charts, and two that were drawn and removed
+
+| | Where | What it shows the table cannot |
+|---|---|---|
+| **Utilisation bullet** | Capacity at a glance | Position against a limit. The bar is the proposed loan, the marker is the capacity — so over-limit reads as the bar crossing the line. The shipping report draws a red bar at 97% directly above a sentence saying the loan falls *within* the limit (F6). |
+| **Income donut** | Income and commitments | Proportion, after shading. A component the lender counts none of does not appear, because it carries none of the serviceability. |
+| **Headroom bars** | How the capacity is built | Assessed capacity, stress-tested capacity and the proposed loan on one axis — a comparison the reader currently makes in their head across two pages. |
+
+The two that were removed are the more useful half of this phase:
+
+**A waterfall of the monthly build-up.** Assessed income $14,283/mo, less
+expenses, less commitments — a total of about **$8,150** against the **$1,840**
+surplus printed directly under it. The engine's surplus is after tax and after
+property cashflow, and the payload does not carry those as monthly steps. There
+is no version of that chart built from figures that reconcile, so there is no
+chart. A picture that disagrees with the number beside it is worse than no
+picture, and this one was drawn, rendered and read before that was obvious.
+
+**Bars of the scenario capacities.** The scenario table already sorts and
+compares exactly those three numbers. Bars of them beside it are decoration, and
+they cost a page.
+
+Captions are labels, not sentences — `figcaption` is uppercase mono micro, which
+is a caption face. The first charted render set a two-line sentence in it.
+
+### The colour assertion got stronger, not weaker
+
+Charts carry colour in the markup: an SVG `fill` cannot be a class. So the F5
+test is no longer "no colour" but the property that actually matters — **every
+hex and every `rgba` in the document traces to a palette value**. A colour the
+format chose for itself is exactly what put three golds and two ambers in the
+shipping generators (F7), and that is what this catches.
+
+### The golden diff
+
+`goldenDiff.spec.ts` renders the replacement from the same fixture the Phase 0
+capture used and asserts both halves of a migration:
+
+- **Nothing was dropped.** Every section, every headline figure, and each
+  subject the golden's byte stream contains.
+- **The defects are gone.** Each assertion checks the golden *still exhibits*
+  the defect before checking the replacement does not — so if the capture ever
+  stops exhibiting one, the comparison fails loudly rather than becoming
+  vacuous.
+
+Skipped rather than failed when the golden is absent: a missing artefact on a
+fresh clone is a missing artefact, not a regression, and failing on it trains
+people to ignore the suite.
+
+The full fixture is **11 pages**, and the spine claims 11. CI renders it inside
+the container it just built and asserts both the page count and the embedded
+faces.
+
+### Deleted
+
+`BorrowingCapacityPDFSection.tsx` — 401 lines, six exported functions, **zero
+references** outside its own file. It was re-exported by the barrel, which is
+what kept it looking alive. It was a copy of generator C that was never wired
+up. Gone, with its barrel line.
+
+Generators B and C stay: they are section packs inside the Formara and Portfolio
+reports, and retiring them means migrating those formats, which is their own
+work and not this one.
+
+### Deliberately not done: the call sites still use the old generator
+
+`requestBorrowingCapacitySnapshot` is built and tested — one call behind every
+button, with a fallback that triggers **only** when the function is missing, and
+says so.
+
+The switch itself is not in this phase, and that is a deliberate call rather
+than an omission: `render-borrowing-capacity-pdf` has to be deployed and
+migration `20260814000000` applied before it can answer, and both are manual.
+Merging the switch first would break every download button in the product until
+those two steps happen.
+
+The fallback's boundary is the part worth reading before switching. It fires on
+a missing *function* and on nothing else — not on a bare 404, because the route
+answers `404 not found` for a client the caller may not see, and a rule that
+read "404 means not deployed" would hand that caller the legacy document for a
+client they were just refused, generated in their own browser from data they
+were refused.
+
+**After deploying**, each call site becomes:
+
+```ts
+const { url, fileName, source } = await requestBorrowingCapacitySnapshot(
+  { clientId, clientName, scenarioPresets },
+  () => fetchAndGenerateBorrowingCapacityPDF(clientId, clientName, scenarioPresets, undefined, { returnBlob: true }),
+);
+```
+
+and once every site is switched and the function is confirmed live, the fallback
+argument comes out and generator A goes with it.
+
+## 11. Phase map
 
 | Phase | Delivers |
 |---|---|
@@ -622,4 +719,4 @@ own idea of what a non-200 means. A second render path needed all four.
 | **2** ✅ | The document through the design system — structure, primitives, spine (F3, F4, F5, F6) |
 | **3** ✅ | Driven from a brand snapshot; the cover stops being a raster (F1, F7) |
 | **4** ✅ | The render path — route, auth, storage, signing; brand typefaces (F8); F12 decided (persist) |
-| 5 | Charts, golden diff against this capture, and deletion of D and the superseded packs |
+| **5** ✅ | Charts, golden diff against this capture, generator D deleted, the client caller built |

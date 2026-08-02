@@ -59,6 +59,7 @@ import type {
   ScenarioRow,
 } from './payload.pure.ts';
 import { snapshotSections, validateSnapshotSpine } from './sections.pure.ts';
+import { headroomChart, incomeMixChart, utilisationChart } from './charts.pure.ts';
 
 const ARCHETYPE = REPORT_ARCHETYPES['borrowing-capacity'];
 
@@ -150,7 +151,7 @@ function renderList(items: readonly string[]): string {
   return `<ul>${items.map((i) => `<li>${escapeHtml(i)}</li>`).join('')}</ul>`;
 }
 
-function capacitySection(s: BorrowingCapacitySnapshot): string {
+function capacitySection(s: BorrowingCapacitySnapshot, palette: ResolvedReportPalette): string {
   const band = BAND[s.headline.band];
 
   const kpis: KpiCell[] = [
@@ -231,13 +232,14 @@ function capacitySection(s: BorrowingCapacitySnapshot): string {
   // the assessment terms on the page after the sidenote they were beside.
   return renderLede(s.narrative)
     + renderKpiStrip(kpis)
+    + utilisationChart(s, palette)
     + termsTable
     + utilisation
     + lmi
     + assumptions;
 }
 
-function incomeSection(s: BorrowingCapacitySnapshot): string {
+function incomeSection(s: BorrowingCapacitySnapshot, palette: ResolvedReportPalette): string {
   // The period belongs in the header, once, rather than repeated down every
   // row — but only because the header states it. A bare `$124,000` beside a
   // bare `$4,820` with no period anywhere is the ambiguity `Measure` exists to
@@ -297,6 +299,7 @@ function incomeSection(s: BorrowingCapacitySnapshot): string {
     : '';
 
   return renderDataTable(incomeCols, incomeRows, { caption: 'Income, before and after shading' })
+    + incomeMixChart(s, palette)
     + shadingNote
     + h3('Expenses and commitments')
     // Short labels on purpose. A KPI label that wraps to two lines pushes its
@@ -310,7 +313,7 @@ function incomeSection(s: BorrowingCapacitySnapshot): string {
     + renderDataTable(liabilityCols, liabilityRows, { caption: 'Existing liabilities' });
 }
 
-function ledgerSection(s: BorrowingCapacitySnapshot): string {
+function ledgerSection(s: BorrowingCapacitySnapshot, palette: ResolvedReportPalette): string {
   const rows: TableRow[] = s.ledger.map((r: LedgerRow) => ({
     line: r.label,
     amount: formatMeasure(r.amount),
@@ -324,11 +327,14 @@ function ledgerSection(s: BorrowingCapacitySnapshot): string {
     ? renderCallout('caution', 'Worth knowing', renderList(s.warnings))
     : '';
 
-  return renderDataTable(
-    [{ key: 'line', label: 'Line', align: 'left' }, { key: 'amount', label: 'Value', align: 'right' }],
-    rows,
-    { caption: 'From gross income to maximum capacity', signedKeys: ['amount'] },
-  ) + recommendations + warnings;
+  return headroomChart(s, palette)
+    + renderDataTable(
+      [{ key: 'line', label: 'Line', align: 'left' }, { key: 'amount', label: 'Value', align: 'right' }],
+      rows,
+      { caption: 'From gross income to maximum capacity', signedKeys: ['amount'] },
+    )
+    + recommendations
+    + warnings;
 }
 
 function explanationSection(s: BorrowingCapacitySnapshot): string {
@@ -448,7 +454,10 @@ function scenarioSection(s: BorrowingCapacitySnapshot): string {
     );
 }
 
-const SECTION_BODY: Record<string, (s: BorrowingCapacitySnapshot) => string> = {
+const SECTION_BODY: Record<
+  string,
+  (s: BorrowingCapacitySnapshot, palette: ResolvedReportPalette) => string
+> = {
   capacity: capacitySection,
   income: incomeSection,
   ledger: ledgerSection,
@@ -490,7 +499,7 @@ export function renderSnapshotBody(input: RenderSnapshotInput): string {
   });
 
   const sections = snapshotSections(payload).map((section, index) => {
-    const body = SECTION_BODY[section.id]?.(payload) ?? '';
+    const body = SECTION_BODY[section.id]?.(payload, input.palette) ?? '';
     const number = String(index + 1).padStart(2, '0');
     // The running head's eyebrow is the document, not `Section 01` — the page
     // prints that immediately below in the chapter header, and the two sat

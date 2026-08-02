@@ -123,16 +123,37 @@ describe('the findings, in the output', () => {
 
   /**
    * F5. Every colour comes from the resolved palette, which is contrast-audited
-   * as a whole. The body markup names none of its own — the one `style`
-   * attribute the document carries is the cover's background image.
+   * as a whole.
+   *
+   * Charts do carry colour in the markup — an SVG `fill` cannot be a class —
+   * so the assertion is not "no colour" but the property that actually
+   * matters: **every colour in the document traces to the palette.** A hex the
+   * format chose for itself is exactly what put three golds and two ambers in
+   * the shipping generators (F7), and it is what this catches.
    */
-  it('names no colour of its own (F5)', () => {
+  it('names no colour the palette did not give it (F5)', () => {
+    const { palette } = input();
+    const allowedHex = new Set(Object.values(palette).map((c) => c.toUpperCase()));
+    const allowedRgb = new Set(
+      [...allowedHex].map((hex) => {
+        const n = Number.parseInt(hex.slice(1), 16);
+        return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+      }),
+    );
+
     const html = body();
-    expect(html).not.toMatch(/#[0-9a-fA-F]{6}\b/);
-    expect(html).not.toMatch(/\brgba?\(/);
-    for (const attr of html.match(/style="[^"]*"/g) ?? []) {
-      expect(attr, 'the only inline style the body may carry is the cover hero')
-        .toMatch(/background-image|font-size/);
+    for (const hex of html.match(/#[0-9a-fA-F]{6}\b/g) ?? []) {
+      expect(allowedHex, `${hex} is not a palette colour`).toContain(hex.toUpperCase());
+    }
+    for (const rgba of html.match(/rgba?\(([^)]*)\)/g) ?? []) {
+      const [r, g, b] = rgba.replace(/^rgba?\(|\)$/g, '').split(',').map((v) => v.trim());
+      expect(allowedRgb, `${rgba} is not a palette colour`).toContain(`${r},${g},${b}`);
+    }
+  });
+
+  it('carries no inline style but the cover hero and the disclaimer size', () => {
+    for (const attr of body().match(/style="[^"]*"/g) ?? []) {
+      expect(attr).toMatch(/background-image|font-size|font-variant-numeric/);
     }
   });
 

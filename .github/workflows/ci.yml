@@ -289,10 +289,10 @@ jobs:
           for face in Cinzel Playfair Inter IBMPlex; do
             pdffonts /tmp/bc.pdf | grep -qi "$face" || { echo "$face not embedded in the report"; exit 1; }
           done
-          # The document the fixture describes is ten pages. A migration that
-          # drops the audit trail changes nothing a unit test sees, and changes
-          # this.
-          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +10$' || {
+          # The document the fixture describes is eleven pages. A migration
+          # that drops the audit trail changes nothing a unit test sees, and
+          # changes this.
+          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +11$' || {
             echo "unexpected page count:"; pdfinfo /tmp/bc.pdf | grep Pages; exit 1;
           }
 
