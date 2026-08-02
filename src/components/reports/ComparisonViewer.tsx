@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Trophy, TrendingUp, MapPin, AlertTriangle, Target } from 'lucide-react';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
+import { ComparisonDownloadButton } from './ComparisonDownloadButton';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 
 interface ComparisonViewerProps {
@@ -127,7 +128,15 @@ export function ComparisonViewer({ isOpen, onClose, comparison }: ComparisonView
                 </p>
               )}
             </div>
-            <ComparisonPDFGenerator comparison={comparison} />
+            <div className="flex items-center gap-2">
+              {/*
+                Beside the AI-written report, never instead of it. The typeset
+                path reads the saved row and costs nothing; the one to its right
+                re-writes the document with a model on every press.
+              */}
+              <ComparisonDownloadButton comparisonId={comparison.id} />
+              <ComparisonPDFGenerator comparison={comparison} />
+            </div>
           </DialogTitle>
         </DialogHeader>
 

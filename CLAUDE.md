@@ -31,12 +31,13 @@ rules from screen, and most of the repo's "logo" files are email-signature banne
 carrying the director's personal mobile number. Architecture and the migration
 programme: [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
-Three formats have been migrated onto it, and each carries its own contract:
+Four formats have been migrated onto it, and each carries its own contract:
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
-[`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md) and
-[`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md). Read the relevant one before
-touching that format — all three record defects that only a render against
-production data revealed, and all three name the legacy generators that must stay.
+[`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md),
+[`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md) and
+[`COMPARISON.md`](./docs/reports/COMPARISON.md). Read the relevant one before
+touching that format — all four record defects that only a render against
+production data revealed, and all four name the legacy generators that must stay.
 
 ## Report templates
 The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look

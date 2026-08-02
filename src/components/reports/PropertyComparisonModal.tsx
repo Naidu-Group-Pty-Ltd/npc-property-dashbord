@@ -27,6 +27,7 @@ import { useNotifications } from '@/contexts/NotificationsContext';
 import { useAuth } from '@/hooks/useAuth';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { ComparisonPDFGenerator } from './ComparisonPDFGenerator';
+import { ComparisonDownloadButton } from './ComparisonDownloadButton';
 import { ComparisonWeights, DEFAULT_COMPARISON_SETTINGS, DEFAULT_COMPARISON_WEIGHTS, cloneComparisonWeights, comparisonWeightsEqual, parseComparisonTemplateSettings, validateComparisonWeights } from './comparisonConfiguration';
 
 interface PropertyComparisonModalProps {
@@ -844,7 +845,16 @@ Reason: ${analysis.finalRecommendation?.bestOverall?.reason || 'N/A'}
                     {isCopied ? 'Copied' : 'Copy'}
                   </Button>
                   {getComparisonDataForPDF() && (
-                    <ComparisonPDFGenerator comparison={getComparisonDataForPDF()!} />
+                    <>
+                      {/*
+                        The row is already persisted at this point — the gate above
+                        requires `comparisonId` — so the server route has something
+                        to read. That is a real difference from the Portfolio
+                        generator, whose row is not inserted until download.
+                      */}
+                      <ComparisonDownloadButton comparisonId={getComparisonDataForPDF()!.id} />
+                      <ComparisonPDFGenerator comparison={getComparisonDataForPDF()!} />
+                    </>
                   )}
                   <Button 
                     variant="default" 

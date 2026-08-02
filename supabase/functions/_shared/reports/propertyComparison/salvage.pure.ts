@@ -118,7 +118,7 @@ export function looksLikeRawJson(raw: string | null | undefined): boolean {
  * that was otherwise fine.
  */
 function stripFence(raw: string): string {
-  let s = raw.replace(/^﻿/, '').trim();
+  let s = raw.replace(/^\uFEFF/, '').trim();
   s = s.replace(/^```[ \t]*(?:json)?[ \t]*\r?\n/, '');
   s = s.replace(/\r?\n[ \t]*```[ \t]*$/, '');
   return s.trim();

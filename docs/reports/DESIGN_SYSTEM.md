@@ -10,7 +10,7 @@ Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
 snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
 delivered. The design system is complete.
 
-**Formats migrated:** three, each with its own contract document, payload,
+**Formats migrated:** four, each with its own contract document, payload,
 document, brand snapshot, server-side render route and tests, and each keeping
 its legacy generator reachable rather than retiring it.
 
@@ -22,6 +22,11 @@ its legacy generator reachable rather than retiring it.
 3. The Portfolio Performance Review — [`PORTFOLIO.md`](./PORTFOLIO.md). The first
    long enough to need a contents page, the first whose length scales with its
    subject, and the only one that reads a second, optional table.
+4. The Property Comparison Analysis — [`COMPARISON.md`](./COMPARISON.md). The only
+   format with no deterministic figures at all, the only one that reads part of
+   its content back out of a model response that was cut off mid-write, and the
+   only one whose migration makes downloading a saved document *free* — the path
+   it sits beside asks a model to rewrite the report on every download.
 
 Each new route needs its function deployed and its migration applied before its
 call sites do anything; both are manual.

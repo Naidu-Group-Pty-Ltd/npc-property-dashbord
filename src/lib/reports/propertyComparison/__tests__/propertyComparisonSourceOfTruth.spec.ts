@@ -18,20 +18,20 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REPO = resolve(__dirname, '../../../../..');
-const CANONICAL_DIR = resolve(REPO, 'supabase/functions/_shared/reports/portfolio');
-const BRIDGE_DIR = resolve(REPO, 'src/lib/reports/portfolio');
+const CANONICAL_DIR = resolve(REPO, 'supabase/functions/_shared/reports/propertyComparison');
+const BRIDGE_DIR = resolve(REPO, 'src/lib/reports/propertyComparison');
 
 const pureModules = (dir: string) =>
   readdirSync(dir).filter((f) => f.endsWith('.pure.ts')).sort();
 
 /** An optional block comment, then exactly one `export * from '…'`. */
 const BRIDGE_SHAPE =
-  /^(?:\/\*\*[\s\S]*?\*\/\s*)?export \* from '\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/reports\/portfolio\/([\w.]+)\.pure\.ts';\s*$/;
+  /^(?:\/\*\*[\s\S]*?\*\/\s*)?export \* from '\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/reports\/propertyComparison\/([\w.]+)\.pure\.ts';\s*$/;
 
 /** Siblings, or the design system next door. Nothing else. */
 const ALLOWED_IMPORT = /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts)$/;
 
-describe('portfolio performance review — single source of truth', () => {
+describe('property comparison — single source of truth', () => {
   it('has at least one canonical module', () => {
     expect(pureModules(CANONICAL_DIR).length).toBeGreaterThan(0);
   });
