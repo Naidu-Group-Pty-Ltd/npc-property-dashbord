@@ -3,11 +3,10 @@
  *
  * Upload path
  * -----------
- * Files go straight from the browser to Supabase Storage using a short-lived
- * signed upload URL minted by the `internal-messaging` edge function (which
- * re-verifies thread participation). Because the edge function is never in the
- * data path there is no payload ceiling — large files stream directly to
- * storage and every MIME type is accepted.
+ * Small and medium files go through the dedicated
+ * `internal-message-attachments` function, avoiding browser-to-Storage CORS
+ * and proxy failures. Large files use a short-lived signed upload URL minted by
+ * that same function and stream directly to Storage.
  *
  * Uploads are performed with XHR so we get real byte-level progress, an abort
  * signal, and — critically — a *retry* loop. Every retry mints a **fresh**
@@ -183,6 +182,9 @@ function fatalTicketError(error: unknown): Error | null {
   const m = msg.toLowerCase();
   if (m.includes('unknown action')) {
     return new Error('Attachment service is out of date — redeploy internal-messaging');
+  }
+  if (m.includes('unknown operation')) {
+    return new Error('Attachment transport is out of date — redeploy internal-message-attachments');
   }
   if (m.includes('not_a_participant')) {
     return new Error('You are no longer a participant in this conversation');
