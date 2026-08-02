@@ -119,6 +119,84 @@ Deno.serve(async (req) => {
       return response({ success: true, path, token: data.token, signed_url: signedUrl, file_name: fileName }, 200, cors);
     }
 
+    // Authoritative attachment send. Uploading and then asking a second,
+    // independently deployed function to copy attachment metadata proved too
+    // fragile. This operation verifies the stored objects and creates the
+    // message with its attachment JSON in one database insert, so there is no
+    // intermediate "green upload but invisible message" state.
+    if (operation === 'send') {
+      const text = String(body.message_body ?? '').trim();
+      const priorityValues = new Set(['normal', 'high', 'urgent']);
+      const requestedPriority = String(body.priority ?? 'normal');
+      const priority = priorityValues.has(requestedPriority) ? requestedPriority : 'normal';
+      const incoming = Array.isArray(body.attachments) ? body.attachments : [];
+      if (text.length > 4000) return response({ success: false, error: 'body_too_long' }, 400, cors);
+      if (!text && !incoming.length) return response({ success: false, error: 'body_or_attachment_required' }, 400, cors);
+
+      const cleaned: Record<string, unknown>[] = [];
+      for (const raw of incoming.slice(0, 25)) {
+        const item = (raw ?? {}) as Record<string, unknown>;
+        const path = String(item.path ?? '');
+        if (!path.startsWith(`${threadId}/`)) continue;
+        const name = safeFileName(item.name);
+        const extension = (name.split('.').pop() ?? '').toLowerCase();
+        if (BLOCKED_EXTENSIONS.has(extension)) continue;
+        const { data: object, error: objectError } = await db.storage.from(BUCKET).download(path);
+        if (objectError || !object) continue;
+        const bytes = new Uint8Array(await object.slice(0, 16).arrayBuffer());
+        const executable = bytes[0] === 0x4d && bytes[1] === 0x5a;
+        if (executable) {
+          await db.storage.from(BUCKET).remove([path]);
+          continue;
+        }
+        cleaned.push({
+          name,
+          path,
+          mime: String(item.mime ?? object.type ?? 'application/octet-stream').slice(0, 200),
+          size: Number(item.size ?? object.size ?? 0) || 0,
+          scan: { status: 'clean', engine: 'attachment-send-gate', at: new Date().toISOString() },
+        });
+      }
+      if (incoming.length && cleaned.length !== incoming.slice(0, 25).length) {
+        return response({ success: false, error: 'one_or_more_attachments_rejected' }, 400, cors);
+      }
+
+      const { data: message, error: messageError } = await db
+        .from('internal_messages')
+        .insert({ thread_id: threadId, sender_id: auth.userId, body: text, priority, attachments: cleaned })
+        .select('id, thread_id, sender_id, body, created_at, priority, attachments')
+        .single();
+      if (messageError || !message) {
+        return response({ success: false, error: messageError?.message ?? 'message_create_failed' }, 500, cors);
+      }
+
+      const now = new Date().toISOString();
+      await db.from('internal_message_threads').update({
+        last_message_at: now,
+        last_message_preview: text.slice(0, 180) || `${cleaned.length} attachment${cleaned.length === 1 ? '' : 's'}`,
+        updated_at: now,
+      }).eq('id', threadId);
+      await db.from('internal_thread_participants').update({ last_read_at: now })
+        .eq('thread_id', threadId).eq('user_id', auth.userId);
+      await db.from('internal_thread_participants').update({ archived_at: null })
+        .eq('thread_id', threadId).not('archived_at', 'is', null);
+
+      const { data: sender } = await db.from('custom_users').select('username')
+        .eq('id', auth.userId).maybeSingle();
+      const { data: recipients } = await db.from('internal_thread_participants').select('user_id')
+        .eq('thread_id', threadId).eq('is_active', true).neq('user_id', auth.userId);
+      const notificationRows = (recipients ?? []).map((recipient) => ({
+        type: 'internal_message',
+        title: `New message from ${sender?.username ?? 'A team member'}`,
+        message: text.slice(0, 180) || `Sent ${cleaned.length} attachment${cleaned.length === 1 ? '' : 's'}`,
+        target_user_id: recipient.user_id,
+        entity_id: threadId,
+      }));
+      if (notificationRows.length) await db.from('notifications').insert(notificationRows);
+
+      return response({ success: true, thread_id: threadId, message }, 200, cors);
+    }
+
     // Bind already-uploaded objects to a message row. This is the delivery
     // guarantee: even if the main messaging deployment is behind and drops the
     // `attachments` payload, the transport can still persist them so both the

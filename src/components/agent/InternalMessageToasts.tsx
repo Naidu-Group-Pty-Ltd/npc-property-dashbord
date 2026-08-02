@@ -59,6 +59,7 @@ import {
   filesFromDataTransfer,
   type InternalAttachment,
   ensureMessageAttachments,
+  sendInternalMessageWithAttachments,
 } from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -528,22 +529,16 @@ export function InternalMessageToasts() {
           queuedForRef.current = null;
         }
 
-        const { data } = await invokeSecureFunction('internal-messaging', {
-          action: 'send_message',
-          thread_id: thread.thread_id,
-          body: text,
-          priority,
-          attachments,
-        });
+        const data = attachments.length
+          ? await sendInternalMessageWithAttachments(thread.thread_id, text, attachments, priority)
+          : (await invokeSecureFunction('internal-messaging', {
+              action: 'send_message',
+              thread_id: thread.thread_id,
+              body: text,
+              priority,
+            })).data;
         const msg = data?.message;
-        if (attachments.length) {
-          attachments = await ensureMessageAttachments(
-            thread.thread_id,
-            msg?.id,
-            attachments,
-            msg?.attachments,
-          );
-        }
+        if (Array.isArray(msg?.attachments)) attachments = msg.attachments;
         const createdAt = msg?.created_at ?? new Date().toISOString();
 
         setDrafts((p) => ({ ...p, [thread.thread_id]: '' }));

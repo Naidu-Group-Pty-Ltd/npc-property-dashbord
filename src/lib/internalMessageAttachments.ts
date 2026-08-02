@@ -353,6 +353,29 @@ export async function ensureMessageAttachments(
   }
 }
 
+/**
+ * Create a message and persist its uploaded objects atomically through the
+ * attachment transport. This is the authoritative path whenever files exist;
+ * it removes the old cross-function upload → send → repair race entirely.
+ */
+export async function sendInternalMessageWithAttachments(
+  threadId: string,
+  messageBody: string,
+  attachments: InternalAttachment[],
+  priority = 'normal',
+) {
+  if (!attachments.length) throw new Error('At least one attachment is required');
+  const data = await call({
+    operation: 'send',
+    thread_id: threadId,
+    message_body: messageBody,
+    priority,
+    attachments,
+  });
+  if (!data?.message?.id) throw new Error('Attachment message was not created');
+  return data;
+}
+
 /** Open (or force-download) an attachment via a freshly signed URL. */
 
 export async function openInternalAttachment(
