@@ -61,6 +61,8 @@ function buildStructuredConfig(settings: WhiteLabelSettings) {
     sidebar: settings.sidebarLogo,
     sidebarIcon: settings.sidebarIcon,
     favicon: settings.favicon,
+    report: settings.reportLogo,
+    reportMono: settings.reportMonoLogo,
   });
 
   return {
@@ -110,6 +112,11 @@ function mapDatabaseSettings(data: Record<string, unknown>): WhiteLabelSettings 
     sidebar: rawLogoConfig?.sidebar ?? (data.sidebar_logo as string) ?? null,
     sidebarIcon: rawLogoConfig?.sidebarIcon ?? (data.sidebar_icon as string) ?? null,
     favicon: rawLogoConfig?.favicon ?? (data.favicon as string) ?? null,
+    // Report marks live only in the JSONB — there is no legacy flat column, and
+    // no `theme_version` gate: they are additive, so a tenant on version 1 keeps
+    // saving without being forced to upload one.
+    report: rawLogoConfig?.report ?? null,
+    reportMono: rawLogoConfig?.reportMono ?? null,
   };
 
   return {
@@ -118,6 +125,8 @@ function mapDatabaseSettings(data: Record<string, unknown>): WhiteLabelSettings 
     sidebarLogo: logoConfig.sidebar,
     sidebarIcon: logoConfig.sidebarIcon,
     favicon: logoConfig.favicon,
+    reportLogo: logoConfig.report,
+    reportMonoLogo: logoConfig.reportMono,
     companyName: (data.company_name as string) || defaultBrandConfig.companyName,
     primaryColor: themeConfig.primaryColor,
     accentColor: themeConfig.accentColor,

@@ -42,6 +42,8 @@ export const defaultBrandLogoConfig: BrandLogoConfig = {
   sidebar: null,
   sidebarIcon: null,
   favicon: null,
+  report: null,
+  reportMono: null,
 };
 
 export const defaultBrandConfig: BrandConfig = {
@@ -49,6 +51,8 @@ export const defaultBrandConfig: BrandConfig = {
   sidebarLogo: null,
   sidebarIcon: null,
   favicon: null,
+  reportLogo: null,
+  reportMonoLogo: null,
   companyName: 'Dashboard',
   primaryColor: null,
   accentColor: null,

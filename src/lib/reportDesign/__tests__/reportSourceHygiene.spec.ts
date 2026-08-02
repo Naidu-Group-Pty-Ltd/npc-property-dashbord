@@ -65,6 +65,17 @@ describe('report design system — source hygiene', () => {
     });
   });
 
+  it('no design module embeds a house asset', () => {
+    // `defaultAssets.generated.ts` carries NPC's monogram and a cover with our
+    // company name in its pixels. A design module that imports it hands every
+    // white-label tenant our identity — the same defect as the hardcoded
+    // masthead, in a form that is harder to see.
+    for (const file of modules) {
+      const code = codeOnly(readFileSync(resolve(CANONICAL_DIR, file), 'utf8'));
+      expect(code, `${file} imports a house asset`).not.toMatch(/defaultAssets\.generated/);
+    }
+  });
+
   it('tokens.pure.ts is the only module holding literals', () => {
     const tokens = codeOnly(readFileSync(resolve(CANONICAL_DIR, TOKEN_FILE), 'utf8'));
     expect((tokens.match(/#[0-9A-Fa-f]{6}\b/g) ?? []).length).toBeGreaterThan(0);

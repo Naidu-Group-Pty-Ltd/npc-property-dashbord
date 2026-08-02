@@ -11,6 +11,7 @@ import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
+import { NPC_HOUSE_COVER_ART } from "../_shared/reportDesign/defaultAssets.generated.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -3073,13 +3074,20 @@ export async function buildHtml(
       <rect width='210' height='297' fill='url(%23sheen)'/>
       <rect width='210' height='297' filter='url(%23nz)'/>
     </svg>`)}`;
+  // Inlined, not fetched. This used to be an absolute `lovable.app` URL — a
+  // preview host — on a client-facing premium PDF: every render made an
+  // outbound fetch the SSRF guard had to allow, a 404 printed a blank cover
+  // with nothing raised, and re-issuing an old report depended on that host
+  // still serving that path. Same bytes, no network. See
+  // `scripts/reportDesign/buildDefaultAssets.ts`.
+  const coverArtSrc = NPC_HOUSE_COVER_ART;
   const coverHtml = design.coverStyle === "image"
     ? `<section class="cover cover-clean">
-        <img class="cover-bg" src="https://npc-property-dashbord.lovable.app/templates/npc-portfolio-cover-new.jpg" alt="" />
+        <img class="cover-bg" src="${coverArtSrc}" alt="" />
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
       </section>`
     : `<section class="cover cover-${design.coverStyle}">
-        <img class="cover-bg" src="https://npc-property-dashbord.lovable.app/templates/npc-portfolio-cover-new.jpg" alt="" />
+        <img class="cover-bg" src="${coverArtSrc}" alt="" />
         <div class="cover-scrim"></div>
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
         <div class="cover-masthead">${esc(String(brandName).toUpperCase())}</div>
