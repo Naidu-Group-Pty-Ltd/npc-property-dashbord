@@ -2458,6 +2458,7 @@ export type Database = {
         Row: {
           assessment_rate: number | null
           assumptions: Json | null
+          audit_trail: Json | null
           borrowing_capacity: number
           buffer_rate: number | null
           calculated_by: string | null
@@ -2468,6 +2469,7 @@ export type Database = {
           existing_commitments_monthly: number
           expense_breakdown: Json | null
           expense_method: string | null
+          explanation: Json | null
           gross_annual_income: number
           id: string
           income_breakdown: Json | null
@@ -2493,6 +2495,7 @@ export type Database = {
         Insert: {
           assessment_rate?: number | null
           assumptions?: Json | null
+          audit_trail?: Json | null
           borrowing_capacity?: number
           buffer_rate?: number | null
           calculated_by?: string | null
@@ -2503,6 +2506,7 @@ export type Database = {
           existing_commitments_monthly?: number
           expense_breakdown?: Json | null
           expense_method?: string | null
+          explanation?: Json | null
           gross_annual_income?: number
           id?: string
           income_breakdown?: Json | null
@@ -2528,6 +2532,7 @@ export type Database = {
         Update: {
           assessment_rate?: number | null
           assumptions?: Json | null
+          audit_trail?: Json | null
           borrowing_capacity?: number
           buffer_rate?: number | null
           calculated_by?: string | null
@@ -2538,6 +2543,7 @@ export type Database = {
           existing_commitments_monthly?: number
           expense_breakdown?: Json | null
           expense_method?: string | null
+          explanation?: Json | null
           gross_annual_income?: number
           id?: string
           income_breakdown?: Json | null
@@ -2573,6 +2579,86 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      borrowing_capacity_renders: {
+        Row: {
+          assessment_id: string | null
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          client_id: string
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          assessment_id?: string | null
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          assessment_id?: string | null
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "borrowing_capacity_renders_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "borrowing_capacity_assessments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "borrowing_capacity_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "borrowing_capacity_renders_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "borrowing_capacity_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
             referencedColumns: ["id"]
           },
         ]
