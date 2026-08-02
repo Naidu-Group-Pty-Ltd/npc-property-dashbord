@@ -260,23 +260,26 @@
    in this palette's dark theme `--primary` and `--warning` are the same colour
    — with `mid` on the brand, two of the four bands were indistinguishable for
    every dark-theme user. These four are Category B, fixed by design. */
-.listing-pin--unknown {
+/* Scoped to match the base rule above. An unscoped `.listing-pin--top` loses to
+   `.listings-map .listing-pin`, and every pin on the map silently falls back to
+   the default brand colour — the price bands stop existing. */
+.listings-map .listing-pin--unknown {
   --pin-bg: hsl(var(--muted-foreground));
   --pin-fg: hsl(var(--background));
 }
-.listing-pin--low {
+.listings-map .listing-pin--low {
   --pin-bg: hsl(var(--info));
   --pin-fg: hsl(var(--info-foreground));
 }
-.listing-pin--mid {
+.listings-map .listing-pin--mid {
   --pin-bg: hsl(var(--success));
   --pin-fg: hsl(var(--success-foreground));
 }
-.listing-pin--high {
+.listings-map .listing-pin--high {
   --pin-bg: hsl(var(--warning));
   --pin-fg: hsl(var(--warning-foreground));
 }
-.listing-pin--top {
+.listings-map .listing-pin--top {
   --pin-bg: hsl(var(--destructive));
   --pin-fg: hsl(var(--destructive-foreground));
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -12,6 +12,7 @@ import { getFullStateName } from '@/lib/states';
 import { buildFullAddress } from '@/lib/addressUtils';
 import { PropertyListing } from '@/lib/airtable';
 import { useToast } from '@/hooks/use-toast';
+import { useListingImages } from '@/hooks/useListingImages';
 
 interface ListingDetailsModalProps {
   listing: PropertyListing | null;
@@ -23,7 +24,20 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
   const { toast } = useToast();
   const [investmentModalOpen, setInvestmentModalOpen] = useState(false);
 
+  // Resolved before the `!listing` bail-out because hooks cannot be conditional.
+  //
+  // The gallery deliberately does not render `listing.images` directly. An
+  // Airtable attachment field holds objects, not strings, so `src={image}`
+  // rendered `[object Object]` and the gallery silently showed nothing for
+  // every base whose photos are attachments — which is most of them. These are
+  // signed URLs for our own stored copies instead.
+  const galleryInput = useMemo(() => (listing ? [listing] : []), [listing]);
+  const { images: galleryByListing, isResolving: galleryResolving } =
+    useListingImages(galleryInput);
+
   if (!listing) return null;
+
+  const galleryImages = galleryByListing[listing.id] ?? [];
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-AU', {
@@ -309,23 +323,32 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
           )}
 
           {/* Images */}
-          {listing.images && listing.images.length > 0 && (
+          {(galleryImages.length > 0 || galleryResolving) && (
             <div>
               <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Images</h3>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {listing.images.slice(0, 6).map((image, index) => (
-                  <div key={index} className="group aspect-video bg-muted rounded-lg overflow-hidden border border-border/60 hover:border-primary/50 transition-colors">
-                    <img
-                      src={image}
-                      alt={`Property image ${index + 1}`}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform cursor-pointer"
-                      onClick={() => window.open(image, '_blank')}
-                    />
-                  </div>
-                ))}
+                {galleryResolving && galleryImages.length === 0
+                  ? Array.from({ length: 3 }, (_, index) => (
+                      <div
+                        key={`skeleton-${index}`}
+                        className="aspect-video animate-pulse rounded-lg border border-border/60 bg-muted motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ))
+                  : galleryImages.slice(0, 6).map((image, index) => (
+                      <div key={image.url} className="group aspect-video bg-muted rounded-lg overflow-hidden border border-border/60 hover:border-primary/50 transition-colors">
+                        <img
+                          src={image.url}
+                          alt={`Property image ${index + 1}`}
+                          className="w-full h-full object-cover group-hover:scale-105 transition-transform cursor-pointer"
+                          loading="lazy"
+                          onClick={() => window.open(image.url, '_blank', 'noopener,noreferrer')}
+                        />
+                      </div>
+                    ))}
               </div>
-              {listing.images.length > 6 && (
-                <p className="text-xs text-muted-foreground mt-2">+{listing.images.length - 6} more images available on source</p>
+              {galleryImages.length > 6 && (
+                <p className="text-xs text-muted-foreground mt-2">+{galleryImages.length - 6} more images available on source</p>
               )}
             </div>
           )}

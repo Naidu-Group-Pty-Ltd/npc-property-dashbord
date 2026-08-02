@@ -76,6 +76,8 @@ import {
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
 import { useToast } from '@/hooks/use-toast';
+import { useListingImages } from '@/hooks/useListingImages';
+import { pickHeroImage } from '@/lib/listingImages';
 
 /**
  * Leaflet copies unknown constructor options straight onto `marker.options`, and
@@ -877,11 +879,16 @@ function ListingPopupCard({
   const beds = listing.beds ?? listing.bedrooms;
   const baths = listing.baths ?? listing.bathrooms;
 
-  // The listing's own photo beats a Street View frame when there is one, so it
-  // leads the card. Source URLs rot, so a broken one retires the whole block
-  // rather than leaving a torn-image placeholder in the popup.
+  // The listing's own photo leads the card when we have a durable copy of one.
+  // Never the raw field: an Airtable attachment is an object whose signed `url`
+  // has usually expired by the time anyone clicks, so rendering it straight
+  // produces a broken image. `useListingImages` returns signed URLs into our
+  // own bucket instead — see src/lib/listingImages.ts.
+  const forImages = useMemo(() => [listing], [listing]);
+  const { images, isResolving: imagesResolving } = useListingImages(forImages);
   const [photoFailed, setPhotoFailed] = useState(false);
-  const photo = !photoFailed ? listing.images?.find((src) => typeof src === 'string' && src) : null;
+  const hero = pickHeroImage(images[listing.id] ?? []);
+  const photo = photoFailed ? null : (hero?.url ?? null);
   useEffect(() => setPhotoFailed(false), [listing.id]);
 
   return (
@@ -893,6 +900,11 @@ function ListingPopupCard({
           className="h-28 w-full rounded-lg border border-border/60 object-cover"
           loading="lazy"
           onError={() => setPhotoFailed(true)}
+        />
+      ) : imagesResolving ? (
+        <div
+          className="h-28 w-full animate-pulse rounded-lg border border-border/60 bg-muted/50 motion-reduce:animate-none"
+          aria-hidden="true"
         />
       ) : null}
 
@@ -932,7 +944,7 @@ function ListingPopupCard({
           which also saves an edge-function call per popup. Showing both made
           the card taller than the map itself, and Leaflet's auto-pan then
           shoved the marker off the bottom of the viewport to fit it. */}
-      {!photo ? (
+      {!photo && !imagesResolving ? (
         <StreetViewPanel
           lat={point.lat}
           lng={point.lng}
