@@ -262,6 +262,9 @@ export function InternalMessageToasts() {
   threadsRef.current = threads;
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeId;
+  /** Minimised map, read inside the poll loop without re-creating it. */
+  const minimisedRef = useRef<Record<string, true>>({});
+  minimisedRef.current = minimised;
 
   /** Baselines: thread_id → ISO timestamp of the newest message already handled. */
   const baselinesRef = useRef<Record<string, string>>(readBaselines());
