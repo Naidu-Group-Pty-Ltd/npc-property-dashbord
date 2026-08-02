@@ -136,7 +136,7 @@ export function BorrowingCapacityCard({ clientId, clientName, onOpenCalculator }
       const result = await requestBorrowingCapacitySnapshot(
         { clientId: clientId!, clientName: clientName || 'Client' },
         async () => {
-          const legacy = await fetchAndGenerateBorrowingCapacityPDF(clientId, clientName || 'Client', undefined, { returnBlob: true });
+          const legacy = await fetchAndGenerateBorrowingCapacityPDF(clientId, clientName || 'Client', undefined, undefined, { returnBlob: true });
           if (!legacy?.blob) return null;
           return { url: URL.createObjectURL(legacy.blob), fileName: legacy.fileName, bytes: legacy.blob.size };
         },
