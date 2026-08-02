@@ -73,6 +73,20 @@ jobs:
       - name: Unit tests (report design system)
         run: npx vitest run src/lib/reportDesign
 
+      # The first migrated format. Its payload contract is single-sourced the
+      # same way the design system is, and `audit.spec.ts` reads
+      # calculate-borrowing-capacity to check that every audit entry the engine
+      # emits has a known unit and polarity — a table keyed on strings written
+      # elsewhere goes stale silently.
+      - name: Unit tests (borrowing capacity payload)
+        run: npx vitest run src/lib/reports/borrowingCapacity
+
+      # Renders the shipping generator and pins page count, sections, typeface
+      # and the cover's identity. This is the reference the migration is
+      # measured against; if it stops running, the diff stops meaning anything.
+      - name: Golden capture (borrowing capacity snapshot)
+        run: npx vitest run src/components/borrowing-capacity/__tests__
+
       - name: Build
         run: npm run build
 
@@ -126,6 +140,11 @@ jobs:
       # into src/. If Deno cannot resolve it, the render path breaks at deploy.
       - name: Deno type-check the report design system
         run: deno check supabase/functions/_shared/reportDesign/*.pure.ts
+
+      # Same reasoning for the per-format payload modules: they are built inside
+      # an Edge Function and re-exported into src/.
+      - name: Deno type-check the borrowing capacity payload
+        run: deno check supabase/functions/_shared/reports/borrowingCapacity/*.pure.ts
 
       # WP-14: type-check every Edge Function entry point, not only shared modules.
       - name: Deno type-check every Edge Function entry point (WP-14)
