@@ -26,7 +26,7 @@ describe('Market Updates Phase 4 UI contract',()=>{
   it('surfaces published and held scopes inline in the feed rather than a separate candidate review modal',()=>{
     expect(page).toContain('Published');
     expect(page).toContain('Held');
-    expect(page).toContain('setActiveScope');
+    expect(page).toContain('setFeedScope');
     expect(page).not.toContain('max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl');
     expect(page).not.toContain('reviewCandidates');
   });
