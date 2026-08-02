@@ -161,6 +161,11 @@ Explicitly, and under test. `render.spec.ts` asserts that
 `handleExportExcel` are all still present in `CashFlowAnalysisModal`, that it
 still imports jsPDF, and that the legacy item is still in the export menu.
 
+The Borrowing Capacity Snapshot carries the same commitment, in the shape its own
+surfaces need — see [`BORROWING_CAPACITY.md` §13](./BORROWING_CAPACITY.md). The
+difference is only that this format has one export menu and that one has five
+separate buttons, so there the choice lives in a shared control.
+
 The comparison PDF and the AI analysis PDF are **not** migrated. They are
 derivative documents built from the same modal, and neither is the artefact the
 business sends. If they are migrated later, they get their own archetypes rather
