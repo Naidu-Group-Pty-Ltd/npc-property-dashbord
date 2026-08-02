@@ -31,6 +31,12 @@ rules from screen, and most of the repo's "logo" files are email-signature banne
 carrying the director's personal mobile number. Architecture and the migration
 programme: [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
+Two formats have been migrated onto it, and each carries its own contract:
+[`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md) and
+[`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md). Read the relevant one before
+touching that format — both record defects that only a render against production
+data revealed, and both name the legacy generators that must stay.
+
 ## Report templates
 The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look
 comes from `scripts/template-library/designSystem.ts` — five voices keyed to the

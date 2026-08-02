@@ -138,6 +138,17 @@ function pageRules(
     .map((p) => `  .page-${p} { page: ${p}; }`)
     .join('\n');
 
+  // Two sections claiming the *same* named page are two pages, not one flow.
+  //
+  // `page:` only forces a break when the name changes, so a second landscape
+  // matrix placed after a first one simply continued it — the ten-year cash
+  // flow projection rendered as one full landscape page and a second holding
+  // four orphaned rows. Each `.page-*` section is a page by definition; this
+  // says so for the adjacent-siblings case the property does not cover.
+  const adjacency = (Object.keys(NAMED_PAGES) as NamedPage[])
+    .map((p) => `  .page-${p} + .page-${p}`)
+    .join(',\n') + ' { break-before: page; }';
+
   return `
   @page {
     size: ${PAGE_SIZE.name};
@@ -185,7 +196,9 @@ function pageRules(
 
 ${named}
 
-${selectors}`;
+${selectors}
+
+${adjacency}`;
 }
 
 /**

@@ -1,58 +1,57 @@
 /**
- * render-borrowing-capacity-pdf
+ * render-cash-flow-pdf
  *
- * The Borrowing Capacity Snapshot, generated server-side.
+ * The 10 Year Cash Flow Analysis, rendered server-side through WeasyPrint.
  *
- * The caller sends a client id. Everything the document says is read here — the
- * assessment row, the client's name, the tenant's branding, the disclaimer —
- * and the HTML is built here. That is the whole difference from
- * `render-template-pdf`, which accepts HTML: for a document that tells someone
- * how much they can borrow, the contents are not the browser's to decide.
+ * ## What this route owns, and what it does not
  *
- * The five things that make this a *path* rather than a renderer:
+ * It does **not** own the arithmetic. `CashFlowAnalysisModal` lets an adviser
+ * override any of ten fields in any of ten years and does not persist those
+ * overrides until they save, so a server that recomputed from
+ * `investment_reports.financial_calculations` would render a different ten years
+ * from the one the adviser just reviewed. The browser sends the projection it is
+ * showing; `normalise.pure.ts` refuses anything that is not one.
  *
- *  1. **Auth is a human, then that human and this client.** The gateway JWT
- *     check is off across this project to support the custom session flow, so
- *     `verifyAuthOrNativeUser` establishes the identity and `canAccessClient`
- *     establishes the relationship. Neither implies the other.
- *  2. **The brand is snapshotted, then referenced.** `upsert_report_brand_snapshot`
- *     dedupes by content fingerprint, so re-rendering an unchanged brand reuses
- *     the row rather than writing thousands of identical ones.
- *  3. **Resources are checked before the POST.** `assertSafeRenderResources`
- *     runs even though this function built the HTML itself: an asset arrives
- *     from a tenant's settings, and the guard is on the boundary, not on trust.
- *  4. **There is no fallback.** If WeasyPrint fails, this fails. A silent
- *     downgrade ships a client a document nobody approved.
- *  5. **Every attempt leaves a row.** A failure writes its reason to
- *     `borrowing_capacity_renders`, which is the difference between "the client
- *     says the PDF never arrived" and an answer.
+ * It owns everything else, and everything else is where the legacy generator
+ * goes wrong: the brand (a raster cover with our company name on a white-label
+ * tenant's report), the colours (`#c9a55a` written into the source), the layout
+ * (a twelve-column matrix squeezed into portrait), the typography, the
+ * disclaimer's point size, storage, signing, and a row per attempt.
+ *
+ * ## The legacy generator stays
+ *
+ * This is a second path. `exportSingleReportPDF`, `exportComparisonPDF` and
+ * `exportAiAnalysisPDF` are untouched in the modal, and the UI offers this one
+ * beside them rather than instead of them.
+ *
+ * ## No fallback
+ *
+ * If WeasyPrint fails, this fails. A silent downgrade ships a client a document
+ * nobody approved — the same rule `render-borrowing-capacity-pdf` and
+ * `render-investment-report-pdf` hold to.
  */
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
-import { canAccessClient } from '../_shared/clientAccess.ts';
+import { requireModulePermission } from '../_shared/authz.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
-import {
-  countPdfPages,
-  renderPdf,
-  weasyPrintConfig,
-} from '../_shared/weasyprintClient.ts';
+import { countPdfPages, renderPdf, weasyPrintConfig } from '../_shared/weasyprintClient.ts';
 import {
   buildReportBrandSnapshot,
   REPORT_SNAPSHOT_VERSION,
 } from '../_shared/reportDesign/snapshot.pure.ts';
 import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
-import { buildSnapshot } from '../_shared/reports/borrowingCapacity/normalise.pure.ts';
-import { renderSnapshotFromBrand } from '../_shared/reports/borrowingCapacity/render.pure.ts';
+import { buildProjection, CashFlowPayloadError } from '../_shared/reports/cashFlow/normalise.pure.ts';
+import { renderCashFlowFromBrand } from '../_shared/reports/cashFlow/render.pure.ts';
 import {
+  cashFlowFileName,
+  cashFlowStoragePath,
   parseRenderRequest,
   SIGNED_URL_TTL_SECONDS,
-  snapshotFileName,
-  snapshotStoragePath,
-  type SnapshotRenderResponse,
-} from '../_shared/reports/borrowingCapacity/route.pure.ts';
+  type CashFlowRenderResponse,
+} from '../_shared/reports/cashFlow/route.pure.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -71,16 +70,15 @@ const json = (body: unknown, status = 200) =>
   });
 
 /**
- * The tenant's display name, cased for print.
+ * The client's name, cased for print.
  *
- * The rule is the one `smartCapitalize` uses on the client: a name that is
- * already mixed case is left alone, and one that is all upper or all lower is
- * title-cased. Someone entered "JOHN & MARY SMITH" in a form, and the cover of
- * their report should not shout.
+ * The same rule `smartCapitalize` uses on the client: a name already in mixed
+ * case is left alone, one that is all upper or all lower is title-cased.
+ * Someone typed "JOHN & MARY SMITH" into a form; the cover should not shout.
  */
 function displayName(raw: string): string {
   const name = (raw || '').trim();
-  if (!name) return 'Client';
+  if (!name) return '';
   if (name !== name.toLowerCase() && name !== name.toUpperCase()) return name;
   return name
     .toLowerCase()
@@ -88,24 +86,18 @@ function displayName(raw: string): string {
 }
 
 /**
- * The company block, out of the key/value table it actually lives in.
+ * The company block, out of the key/value table it lives in.
  *
- * `global_report_settings` is `(setting_key, setting_value jsonb)` — there is no
- * `contact_details` column and no `disclaimer` column. Selecting them by name
- * returned an error rather than a row, and because the error was never read,
- * every Snapshot went out with no ABN, no phone, no address and the house
- * disclaimer instead of the firm's. `render-investment-report-pdf` has always
- * read it the way below; this is the same read.
- *
- * A failure here is reported, not thrown: a document with a thinner closing page
- * is worth having, and `brandGaps` already tells the caller what is missing.
+ * `global_report_settings` is `(setting_key, setting_value jsonb)`. Reading it
+ * as though it had `contact_details` and `disclaimer` columns is the mistake
+ * that shipped every Borrowing Capacity Snapshot without an ABN.
  */
 function readReportSettings(
   rows: unknown,
   queryError: string | null,
 ): { contact: Record<string, unknown> | null; disclaimer: Record<string, unknown> | null } {
   if (queryError) {
-    console.warn(`[render-borrowing-capacity-pdf] global_report_settings unreadable: ${queryError}`);
+    console.warn(`[render-cash-flow-pdf] global_report_settings unreadable: ${queryError}`);
   }
   let contact: Record<string, unknown> | null = null;
   let disclaimer: Record<string, unknown> | null = null;
@@ -148,33 +140,35 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (!parsed.ok) return json({ error: parsed.error }, 400);
     const request = parsed.request;
 
-    // …and then this person against this client. Authentication is not
-    // authorisation: every staff member is authenticated.
-    if (!await canAccessClient(supabase, { userId: auth.userId, authMethod: auth.authMethod }, request.clientId)) {
-      return json({ error: 'not found' }, 404);
+    // The same gate `render-investment-report-pdf` applies to the same report.
+    // Authentication is not authorisation: every staff member is authenticated.
+    const permission = await requireModulePermission(
+      supabase,
+      { userId: auth.userId, authMethod: auth.authMethod },
+      'reports',
+      'can_view',
+    );
+    if (!permission.ok) {
+      return json({ error: permission.error || 'Report view permission required' }, 403);
     }
 
     const weasyprint = weasyPrintConfig((key) => Deno.env.get(key));
     if (!weasyprint) {
       // Checked before the reads: a misconfigured environment should say so,
-      // not after four queries and a document build.
+      // not after three queries and a document build.
       return json({
         error: 'WeasyPrint is not configured (WEASYPRINT_SERVICE_URL + WEASYPRINT_SERVICE_TOKEN)',
       }, 503);
     }
 
-    // ── Read everything the document says ───────────────────────────────────
+    // ── Read what the caller may not state ──────────────────────────────────
 
-    const assessmentQuery = supabase
-      .from('borrowing_capacity_assessments')
-      .select('*')
-      .eq('client_id', request.clientId);
-
-    const [clientRes, assessmentRes, whitelabelRes, settingsRes] = await Promise.all([
-      supabase.from('clients').select('id, first_name, surname, company_name').eq('id', request.clientId).maybeSingle(),
-      request.assessmentId
-        ? assessmentQuery.eq('id', request.assessmentId).maybeSingle()
-        : assessmentQuery.order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    const [reportRes, whitelabelRes, settingsRes] = await Promise.all([
+      supabase
+        .from('investment_reports')
+        .select('id, property_address, client_property_id')
+        .eq('id', request.reportId)
+        .maybeSingle(),
       supabase.from('whitelabel_settings').select('*').limit(1).maybeSingle(),
       supabase
         .from('global_report_settings')
@@ -182,17 +176,33 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         .in('setting_key', ['contact_details', 'professional_disclaimer']),
     ]);
 
-    if (!clientRes.data) return json({ error: 'not found' }, 404);
-    if (!assessmentRes.data) {
-      return json({ error: 'no borrowing capacity assessment for this client' }, 409);
-    }
+    if (!reportRes.data) return json({ error: 'not found' }, 404);
+    const report = reportRes.data as Record<string, unknown>;
 
-    const assessment = assessmentRes.data as Record<string, unknown>;
-    const client = clientRes.data as Record<string, unknown>;
-    const clientName = displayName(
-      [client.first_name, client.surname].filter(Boolean).join(' ')
-      || String(client.company_name ?? ''),
-    );
+    // The client's name is a nicety on the cover, not an access decision — the
+    // permission check above is the access decision. A report with no client
+    // attached renders without a "prepared for" line rather than failing.
+    let clientName = '';
+    if (report.client_property_id) {
+      const { data: property } = await supabase
+        .from('client_properties')
+        .select('client_id')
+        .eq('id', report.client_property_id)
+        .maybeSingle();
+      if (property?.client_id) {
+        const { data: client } = await supabase
+          .from('clients')
+          .select('first_name, surname, company_name')
+          .eq('id', property.client_id)
+          .maybeSingle();
+        if (client) {
+          clientName = displayName(
+            [client.first_name, client.surname].filter(Boolean).join(' ')
+            || String(client.company_name ?? ''),
+          );
+        }
+      }
+    }
 
     // ── The brand, frozen ───────────────────────────────────────────────────
 
@@ -201,16 +211,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     const storedLogos = (whitelabel?.logo_config ?? {}) as Record<string, string | null>;
     const themeConfig = (whitelabel?.theme_config ?? {}) as Record<string, unknown>;
 
-    // The branding form stores URLs; the snapshot builder only accepts bytes.
-    // Without this step every asset is rejected as `not-a-data-uri` and the
-    // document carries no company mark at all.
     const { assets: logoConfig, notes: assetNotes } = await inlineBrandAssets(storedLogos, {
       supabaseUrl: Deno.env.get('SUPABASE_URL') || '',
     });
     for (const note of assetNotes) {
-      console.warn(
-        `[render-borrowing-capacity-pdf] asset ${note.key} not inlined (${note.reason}): ${note.detail}`,
-      );
+      console.warn(`[render-cash-flow-pdf] asset ${note.key} not inlined (${note.reason}): ${note.detail}`);
     }
 
     const { snapshot, skippedAssets } = buildReportBrandSnapshot({
@@ -235,10 +240,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     });
 
     for (const skipped of skippedAssets) {
-      // Surfaced, not swallowed: "the logo did not appear" is a support ticket,
-      // and *too large* / *too small* / *wrong format* are different answers.
       console.warn(
-        `[render-borrowing-capacity-pdf] asset ${skipped.source} skipped (${skipped.reason}): ${skipped.detail}`,
+        `[render-cash-flow-pdf] asset ${skipped.source} skipped (${skipped.reason}): ${skipped.detail}`,
       );
     }
 
@@ -253,48 +256,40 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     // ── Build the document ──────────────────────────────────────────────────
 
-    const payload = buildSnapshot({
+    const now = new Date().toISOString();
+    const projection = buildProjection({
+      source: request.projection,
+      propertyAddress: String(report.property_address ?? ''),
       clientName,
-      assessment,
-      // Persisted since migration 20260814000000. Before it, both are null and
-      // the two pages they drive are simply absent — which is what every
-      // shipping Snapshot has looked like until now (F12).
-      auditTrail: assessment.audit_trail ?? null,
-      explanation: assessment.explanation ?? null,
-      scenarioPresets: request.scenarioPresets,
-      now: new Date().toISOString(),
+      now,
     });
 
     // Cover art comes from the tenant's own `cover` asset and nowhere else.
-    // `NPC_HOUSE_COVER_ART` is a finished NPC cover with our name burned into
-    // the pixels; reaching for it here is the defect this format is removing.
     const coverArt = inlineAsset(logoConfig.cover ?? null);
 
-    const { html, gaps } = renderSnapshotFromBrand({
-      payload,
+    const { html, gaps } = renderCashFlowFromBrand({
+      projection,
       snapshot,
       disclaimer: settings.disclaimer as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       edition: request.edition,
-      reference: String(assessment.id ?? '').slice(0, 8).toUpperCase() || null,
+      reference: request.reportId.slice(0, 8).toUpperCase(),
     });
 
-    // The guard runs on HTML this function built, deliberately. The assets in
-    // it came from a tenant's settings form; the boundary is where the check
-    // belongs, not where the trust is.
+    // The guard runs on HTML this function built, deliberately: the assets in
+    // it came from a tenant's settings form, and the boundary is where the
+    // check belongs, not where the trust is.
     assertSafeRenderResources(html, Deno.env.get('SUPABASE_URL') || '');
 
     // ── Render, store, sign ─────────────────────────────────────────────────
 
-    const now = new Date().toISOString();
-    const fileName = snapshotFileName(clientName, now);
-    const path = snapshotStoragePath(request.clientId, fileName, now, crypto.randomUUID());
+    const fileName = cashFlowFileName(String(report.property_address ?? ''), now);
+    const path = cashFlowStoragePath(request.reportId, fileName, now, crypto.randomUUID());
 
     const { data: renderRow } = await supabase
-      .from('borrowing_capacity_renders')
+      .from('cash_flow_renders')
       .insert({
-        assessment_id: assessment.id ?? null,
-        client_id: request.clientId,
+        report_id: request.reportId,
         requested_by: auth.userId,
         status: 'running',
         file_name: fileName,
@@ -302,6 +297,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         storage_path: path,
         brand_snapshot_id: brandSnapshotId ?? null,
         brand_gaps: gaps,
+        term_years: projection.meta.termYears,
       })
       .select('id')
       .maybeSingle();
@@ -330,12 +326,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     if (renderId) {
       await supabase
-        .from('borrowing_capacity_renders')
+        .from('cash_flow_renders')
         .update({ status: 'succeeded', bytes: pdf.length, duration_ms: durationMs })
         .eq('id', renderId);
     }
 
-    const response: SnapshotRenderResponse = {
+    const response: CashFlowRenderResponse = {
       url: signed.signedUrl,
       fileName,
       bytes: pdf.length,
@@ -348,20 +344,18 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     return json(response);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
-    console.error('[render-borrowing-capacity-pdf]', message);
+    console.error('[render-cash-flow-pdf]', message);
     if (renderId) {
       await supabase
-        .from('borrowing_capacity_renders')
-        .update({
-          status: 'failed',
-          error: message.slice(0, 2000),
-          duration_ms: Date.now() - started,
-        })
+        .from('cash_flow_renders')
+        .update({ status: 'failed', error: message.slice(0, 2000), duration_ms: Date.now() - started })
         .eq('id', renderId);
     }
-    // The message is the service's own where there is one. A 500 that says only
-    // "render failed" costs an hour that a quoted upstream error does not.
-    return json({ error: message, renderId }, 500);
+    // A malformed projection is the caller's fault and says so with a 400; the
+    // message names the field, because "invalid payload" costs an hour that
+    // "years[3].rentalIncome must be a finite number" does not.
+    const status = e instanceof CashFlowPayloadError ? 400 : 500;
+    return json({ error: message, renderId }, status);
   }
 });
 

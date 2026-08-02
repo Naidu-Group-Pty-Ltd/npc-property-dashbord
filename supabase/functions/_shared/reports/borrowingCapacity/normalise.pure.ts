@@ -16,7 +16,7 @@
  * document without rendering one.
  */
 
-import type { Measure } from './measure.pure.ts';
+import type { Measure } from '../../reportDesign/measure.pure.ts';
 import {
   aud,
   audPerMonth,
@@ -27,7 +27,7 @@ import {
   rate,
   ratio,
   years,
-} from './measure.pure.ts';
+} from '../../reportDesign/measure.pure.ts';
 import type { AuditCategory, RawAuditEntry } from './audit.pure.ts';
 import { auditDelta, auditDirection, auditMeasures, isKnownAuditAction } from './audit.pure.ts';
 import type {

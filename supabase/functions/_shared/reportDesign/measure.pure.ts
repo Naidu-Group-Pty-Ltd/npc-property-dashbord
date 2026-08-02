@@ -26,6 +26,14 @@ export type Unit =
   /** A dollar amount per year: gross income, shaded income, tax. */
   | 'aud/year'
   /**
+   * A dollar amount per week.
+   *
+   * The Cash Flow projection's headline: an Australian investor asks what a
+   * property costs them a week, and the legacy generator prints that figure
+   * beside an annual one with nothing to tell them apart.
+   */
+  | 'aud/week'
+  /**
    * A percentage **already scaled**: `8.65` renders `8.65%`. Interest rates,
    * buffer rates and LVRs are stored this way.
    */
@@ -66,6 +74,7 @@ export const DEFAULT_PRECISION: Readonly<Record<Unit, number>> = {
   aud: 0,
   'aud/month': 0,
   'aud/year': 0,
+  'aud/week': 0,
   percent: 2,
   rate: 0,
   ratio: 1,
@@ -81,6 +90,7 @@ export const DEFAULT_PRECISION: Readonly<Record<Unit, number>> = {
 export const aud = (value: number, precision?: number): Measure => ({ value, unit: 'aud', precision });
 export const audPerMonth = (value: number, precision?: number): Measure => ({ value, unit: 'aud/month', precision });
 export const audPerYear = (value: number, precision?: number): Measure => ({ value, unit: 'aud/year', precision });
+export const audPerWeek = (value: number, precision?: number): Measure => ({ value, unit: 'aud/week', precision });
 export const percent = (value: number, precision?: number): Measure => ({ value, unit: 'percent', precision });
 export const rate = (value: number, precision?: number): Measure => ({ value, unit: 'rate', precision });
 export const ratio = (value: number, precision?: number): Measure => ({ value, unit: 'ratio', precision });
@@ -90,7 +100,7 @@ export const NO_MEASURE: Measure = { value: 0, unit: 'none' };
 
 /** True for every unit that is money, whatever its period. */
 export const isMoney = (unit: Unit): boolean =>
-  unit === 'aud' || unit === 'aud/month' || unit === 'aud/year';
+  unit === 'aud' || unit === 'aud/month' || unit === 'aud/year' || unit === 'aud/week';
 
 /**
  * Two measures can be compared — subtracted, shown as a before/after pair —
@@ -151,12 +161,17 @@ export function formatMeasure(m: Measure, emDash = '—'): string {
   switch (m.unit) {
     case 'aud':
     case 'aud/month':
-    case 'aud/year': {
+    case 'aud/year':
+    case 'aud/week': {
       const { sign, body } = fixed(m.value, p);
       // The space before `pa` is non-breaking: in a narrow table column a
       // normal space lets the line break between the figure and its period, so
       // `$20,000` lands on one line and `pa` on the next.
-      const suffix = m.unit === 'aud/month' ? '/mo' : m.unit === 'aud/year' ? '\u00A0pa' : '';
+      const suffix = m.unit === 'aud/month'
+        ? '/mo'
+        : m.unit === 'aud/week'
+          ? '/wk'
+          : m.unit === 'aud/year' ? '\u00A0pa' : '';
       return `${sign}$${body}${suffix}`;
     }
     case 'percent': {
@@ -191,6 +206,7 @@ export function formatMeasure(m: Measure, emDash = '—'): string {
  */
 export function periodLabel(unit: Unit): string {
   if (unit === 'aud/month') return 'per month';
+  if (unit === 'aud/week') return 'per week';
   if (unit === 'aud/year') return 'per year';
   return '';
 }
@@ -207,7 +223,8 @@ export function formatAmount(m: Measure, emDash = '—'): string {
   const period = periodLabel(m.unit);
   const rendered = formatMeasure(m, emDash);
   if (!period) return rendered;
-  return rendered.replace(m.unit === 'aud/month' ? '/mo' : '\u00A0pa', '');
+  const suffix = m.unit === 'aud/month' ? '/mo' : m.unit === 'aud/week' ? '/wk' : '\u00A0pa';
+  return rendered.replace(suffix, '');
 }
 
 /**

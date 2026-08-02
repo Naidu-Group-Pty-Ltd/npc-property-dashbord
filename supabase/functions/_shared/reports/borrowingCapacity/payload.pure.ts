@@ -18,7 +18,7 @@
  * types here say nothing about how it should look.
  */
 
-import type { Measure } from './measure.pure.ts';
+import type { Measure } from '../../reportDesign/measure.pure.ts';
 import type { AuditCategory, Direction } from './audit.pure.ts';
 
 /**

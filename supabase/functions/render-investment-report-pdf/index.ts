@@ -11,6 +11,15 @@ import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
+// Both are called by `wrapInsightSections` below and neither was imported, so
+// every call to `buildHtml` threw `ReferenceError: wrapInsightHeadingSections is
+// not defined` before WeasyPrint was ever reached. The modules exist and are
+// covered by `insightHeadingSections.test.ts` and
+// `src/security/renderInvestmentReportPdf.security.test.ts` — those import them
+// directly, which is why the tests kept passing while the function could not
+// produce a single PDF.
+import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
+import { wrapInlineInsightParagraphs } from "./insightSections.ts";
 import { NPC_HOUSE_COVER_ART } from "../_shared/reportDesign/defaultAssets.generated.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;

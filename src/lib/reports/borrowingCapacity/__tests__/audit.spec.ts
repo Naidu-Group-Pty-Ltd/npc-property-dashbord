@@ -22,7 +22,7 @@ import {
   KNOWN_AUDIT_ACTIONS,
   type RawAuditEntry,
 } from '../audit.pure';
-import { formatDelta, formatMeasure } from '../measure.pure';
+import { formatDelta, formatMeasure } from '@/lib/reportDesign/measure.pure';
 
 const REPO = resolve(__dirname, '../../../../..');
 const ENGINE = resolve(REPO, 'supabase/functions/calculate-borrowing-capacity/index.ts');

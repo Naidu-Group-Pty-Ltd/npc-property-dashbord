@@ -23,8 +23,8 @@
  * grey row in a client's report.
  */
 
-import type { Measure, Unit } from './measure.pure.ts';
-import { NO_MEASURE, subtract } from './measure.pure.ts';
+import type { Measure, Unit } from '../../reportDesign/measure.pure.ts';
+import { NO_MEASURE, subtract } from '../../reportDesign/measure.pure.ts';
 
 export type AuditCategory =
   | 'income'

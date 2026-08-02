@@ -18,12 +18,12 @@ import { buildReportBrandSnapshot } from '@/lib/reportDesign/snapshot.pure';
 import {
   NPC_HOUSE_COVER_ART,
   NPC_HOUSE_MARK,
-} from '../../../../../supabase/functions/_shared/reportDesign/defaultAssets.generated';
+} from '../../../../supabase/functions/_shared/reportDesign/defaultAssets.generated';
 import { auditPaletteContrast } from '@/lib/reportDesign/brandResolve.pure';
 
-import { DEFAULT_CONFIDENTIALITY, resolveSnapshotBrand } from '../brand.pure';
-import { buildSnapshot } from '../normalise.pure';
-import { renderSnapshotFromBrand } from '../render.pure';
+import { DEFAULT_CONFIDENTIALITY, resolveSnapshotBrand } from '../documentBrand.pure';
+import { buildSnapshot } from '@/lib/reports/borrowingCapacity/normalise.pure';
+import { renderSnapshotFromBrand } from '@/lib/reports/borrowingCapacity/render.pure';
 import {
   SAMPLE_ASSESSMENT,
   SAMPLE_AUDIT_TRAIL,
@@ -31,7 +31,7 @@ import {
   SAMPLE_EXPLANATION,
   SAMPLE_GLOBAL_SETTINGS,
   SAMPLE_SCENARIO_PRESETS,
-} from './fixtures/sampleAssessment';
+} from '../../reports/borrowingCapacity/__tests__/fixtures/sampleAssessment';
 
 const CAPTURED_AT = '2026-08-01T00:00:00.000Z';
 
@@ -248,7 +248,7 @@ describe('the last hardcoded gold in this format', () => {
    * contrast-checks for brand type on a dark ground.
    */
   it('is gone from the borrowing capacity generators', () => {
-    const REPO = resolve(__dirname, '../../../../..');
+    const REPO = resolve(__dirname, '../../../..');
     for (const file of [
       'src/components/borrowing-capacity/BorrowingCapacityPDFReport.tsx',
       'src/utils/borrowingCapacityPdfSections.ts',
