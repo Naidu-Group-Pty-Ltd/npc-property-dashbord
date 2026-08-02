@@ -115,7 +115,13 @@ Deno.serve(async (req) => {
     }
 
     const hashedPassword = await hashPassword(password)
-    const { error: updateError } = await supabase
+    // The selected row must be captured: it is the only evidence that the
+    // single-use WHERE clause below (still unaccepted, still carrying this exact
+    // token) matched a row. Referencing `updatedUser` without binding it threw a
+    // ReferenceError on every successful acceptance, which the outer catch then
+    // reported as "Internal server error" — after the password had already been
+    // written but before the session was issued.
+    const { data: updatedUser, error: updateError } = await supabase
       .from('solicitor_portal_users')
       .update({
         password_hash: hashedPassword,

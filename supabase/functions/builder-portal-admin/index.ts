@@ -54,6 +54,80 @@ function requiredPermFor(operation: string): ModulePerm {
   return READ_OPERATIONS.has(operation) ? 'can_view' : 'can_edit';
 }
 
+/**
+ * Why this user may not be moved to `status = active`, or null if they may.
+ *
+ * Activation is the end of the invitation flow, never a shortcut around it. The
+ * database command `builder_admin_set_user_status` will happily flip any row to
+ * active, so without this an administrator could mark an invited, passwordless
+ * account active: it would then satisfy `builder_accessible_organisations` and
+ * appear to have access while having no credential to sign in with, and no
+ * audit record of ever having accepted anything.
+ *
+ * Restoring a genuinely suspended user passes every check here, which is the
+ * point — the same guard that blocks a fake activation permits a real one.
+ */
+async function activationBlocker(
+  supabase: any,
+  userId: string,
+  user: { status?: string; revoked_at?: string | null; invite_accepted_at?: string | null; password_hash?: string | null },
+): Promise<{ error: string; code: string } | null> {
+  if (user.revoked_at || user.status === 'revoked') {
+    return {
+      error: 'This user has been revoked. Restore them to suspended first, then activate.',
+      code: 'user_revoked',
+    };
+  }
+  if (!user.invite_accepted_at || !user.password_hash) {
+    return {
+      error: 'This user has not accepted their invitation and set a password yet. '
+        + 'Send an invitation instead of activating the account manually.',
+      code: 'invitation_not_accepted',
+    };
+  }
+
+  const { data: memberships } = await supabase
+    .from('builder_organisation_memberships')
+    .select('organisation_id, status, valid_from, valid_until')
+    .eq('builder_user_id', userId).is('revoked_at', null);
+  if (!Array.isArray(memberships) || !memberships.length) {
+    return {
+      error: 'This user has no organisation membership and would have no access. '
+        + 'Grant a membership first.',
+      code: 'no_membership',
+    };
+  }
+
+  // Mirrors builder_accessible_organisations, minus the user-active predicate
+  // this call is about to satisfy.
+  const now = Date.now();
+  const current = memberships.filter((membership: any) =>
+    membership.status === 'active'
+    && (!membership.valid_from || new Date(membership.valid_from).getTime() <= now)
+    && (!membership.valid_until || new Date(membership.valid_until).getTime() > now));
+  if (!current.length) {
+    return {
+      error: 'This user has no currently valid organisation membership. '
+        + 'Grant or reinstate a membership first.',
+      code: 'no_membership',
+    };
+  }
+
+  const { data: organisations } = await supabase
+    .from('builder_organisations').select('id, status')
+    .in('id', current.map((membership: any) => membership.organisation_id));
+  const open = (organisations ?? []).filter((organisation: any) => organisation.status !== 'closed');
+  if (!open.length) {
+    return {
+      error: 'Every organisation this user belongs to is closed. '
+        + 'Grant a membership of an open organisation first.',
+      code: 'organisation_closed',
+    };
+  }
+
+  return null;
+}
+
 const json = (body: unknown, status: number, cors: Record<string, string>) =>
   new Response(JSON.stringify(body), {
     status, headers: { ...cors, 'Content-Type': 'application/json' },
@@ -76,10 +150,58 @@ const ORG_SELECT = `id, legal_name, trading_name, org_type, abn, acn, contact_em
   status, is_active, activated_at, suspended_at, suspension_reason, notes,
   row_version, created_at, updated_at`;
 
+/**
+ * The only portal-user fields that may leave this function. `projectUser` picks
+ * from exactly this list, so the guarantee is structural rather than a
+ * blacklist that a new column could slip past.
+ *
+ * Deliberately absent: `password_hash`, `invite_token_hash`, `reset_token_hash`
+ * and every session token hash. An administrator has no use for them and a
+ * leaked hash is a replayable credential.
+ */
+const SAFE_USER_FIELDS = [
+  'id', 'email', 'name', 'phone', 'job_title', 'status', 'is_active',
+  'must_change_password', 'has_accepted_current_terms', 'has_completed_onboarding',
+  'invite_accepted_at', 'invited_at', 'invite_token_expires_at', 'last_login_at',
+  'last_seen_at', 'revoked_at', 'revoked_reason',
+  'row_version', 'created_at', 'updated_at',
+] as const;
+
+/**
+ * Spelled out rather than joined from `SAFE_USER_FIELDS`: PostgREST infers the
+ * row type from a literal select string, and a computed one erases it to
+ * `GenericStringError`. A contract test asserts the two stay in step.
+ */
 const USER_SELECT = `id, email, name, phone, job_title, status, is_active,
   must_change_password, has_accepted_current_terms, has_completed_onboarding,
-  invite_accepted_at, invited_at, last_seen_at, revoked_at, revoked_reason,
+  invite_accepted_at, invited_at, invite_token_expires_at, last_login_at,
+  last_seen_at, revoked_at, revoked_reason,
   row_version, created_at, updated_at`;
+
+/**
+ * `password_hash` is read only so the server can answer "has this account
+ * finished setup?"; `projectUser` drops it before anything is returned.
+ */
+const USER_SELECT_INTERNAL = `${USER_SELECT}, password_hash`;
+
+/**
+ * The only shape a portal user leaves this function in.
+ *
+ * The derived `has_completed_account_setup` tells the Command Centre whether the
+ * user has actually been through the invitation flow, without exposing the hash
+ * that proves it. `builder_admin_set_user_status` returns the whole
+ * `builder_portal_users` row — token hashes included — so its result must be
+ * projected too, not just the rows this function selects itself.
+ */
+const projectUser = (row: Record<string, any> | null | undefined) => {
+  if (!row) return row;
+  const safe: Record<string, unknown> = {};
+  for (const field of SAFE_USER_FIELDS) {
+    if (field in row) safe[field] = row[field];
+  }
+  safe.has_completed_account_setup = !!row.password_hash && !!row.invite_accepted_at;
+  return safe;
+};
 
 const MEMBERSHIP_SELECT = `id, builder_user_id, organisation_id, membership_role,
   is_primary, status, valid_from, valid_until, revoked_at, revoked_reason,
@@ -321,14 +443,14 @@ Deno.serve(async (req) => {
           const ids = (memberships ?? []).map((m: any) => m.builder_user_id);
           if (!ids.length) return json({ users: [] }, 200, cors);
           const { data, error } = await supabase.from('builder_portal_users')
-            .select(USER_SELECT).in('id', ids).order('name');
+            .select(USER_SELECT_INTERNAL).in('id', ids).order('name');
           if (error) throw error;
-          return json({ users: data ?? [] }, 200, cors);
+          return json({ users: (data ?? []).map(projectUser) }, 200, cors);
         }
         const { data, error } = await supabase.from('builder_portal_users')
-          .select(USER_SELECT).order('name');
+          .select(USER_SELECT_INTERNAL).order('name');
         if (error) throw error;
-        return json({ users: data ?? [] }, 200, cors);
+        return json({ users: (data ?? []).map(projectUser) }, 200, cors);
       }
 
       case 'create_user': {
@@ -347,7 +469,7 @@ Deno.serve(async (req) => {
           must_change_password: true,
           invited_by: adminUserId, invited_at: new Date().toISOString(),
           created_by: adminUserId,
-        }).select(USER_SELECT).single();
+        }).select(USER_SELECT_INTERNAL).single();
         if (error) {
           if ((error as any).code === '23505') {
             return json({ error: 'A portal user with that email already exists' }, 409, cors);
@@ -355,7 +477,7 @@ Deno.serve(async (req) => {
           throw error;
         }
         auditRows.push({ action: 'builder_user_created', entity_id: data.id });
-        return json({ user: data }, 200, cors);
+        return json({ user: projectUser(data) }, 200, cors);
       }
 
       case 'update_user': {
@@ -379,11 +501,11 @@ Deno.serve(async (req) => {
           phone: trimmed(body.phone),
           job_title: trimmed(body.job_title),
           updated_by: adminUserId,
-        }).eq('id', userId).eq('row_version', expectedVersion).select(USER_SELECT).maybeSingle();
+        }).eq('id', userId).eq('row_version', expectedVersion).select(USER_SELECT_INTERNAL).maybeSingle();
         if (error) throw error;
         if (!data) return json({ error: 'Concurrent update detected', code: 'stale_write' }, 409, cors);
         auditRows.push({ action: 'builder_user_updated', entity_id: userId });
-        return json({ user: data }, 200, cors);
+        return json({ user: projectUser(data) }, 200, cors);
       }
 
       case 'set_user_status': {
@@ -395,7 +517,8 @@ Deno.serve(async (req) => {
         }
 
         const { data: existing } = await supabase.from('builder_portal_users')
-          .select('id, row_version').eq('id', userId).maybeSingle();
+          .select('id, row_version, status, revoked_at, invite_accepted_at, password_hash')
+          .eq('id', userId).maybeSingle();
         if (!existing) return json({ error: 'User not found' }, 404, cors);
 
         const expectedVersion = Number(body.expected_version);
@@ -404,6 +527,15 @@ Deno.serve(async (req) => {
             error: 'This user changed since you loaded them. Reload and try again.',
             code: 'stale_write', current_version: existing.row_version,
           }, 409, cors);
+        }
+
+        // An account only becomes active by completing the invitation flow.
+        // Enforced here, server-side, because a disabled button is a hint and
+        // not a control: this function is reachable directly by any caller
+        // holding the module permission.
+        if (status === 'active') {
+          const blocked = await activationBlocker(supabase, userId, existing);
+          if (blocked) return json(blocked, 409, cors);
         }
 
         const { data, error } = await supabase.rpc('builder_admin_set_user_status', {
@@ -417,7 +549,7 @@ Deno.serve(async (req) => {
         if (error) return rpcFailure(error);
 
         auditRows.push({ action: `builder_user_${status}`, entity_id: userId });
-        return json({ user: data }, 200, cors);
+        return json({ user: projectUser(data as Record<string, any>) }, 200, cors);
       }
 
       // --------------------------------------------------------- memberships
