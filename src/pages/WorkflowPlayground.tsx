@@ -70,6 +70,7 @@ import { ReadinessRail } from '@/components/workflow/ReadinessRail';
 import { WorkflowCanvas } from '@/components/workflow/WorkflowCanvas';
 import { WorkflowLibrary } from '@/components/workflow/WorkflowLibrary';
 import { RunPanel } from '@/components/workflow/RunPanel';
+import { WorkflowStatusControl } from '@/components/workflow/WorkflowStatusControl';
 import { suggestedPosition } from '@/components/workflow/canvasGeometry';
 
 export default function WorkflowPlayground() {
@@ -89,6 +90,7 @@ export default function WorkflowPlayground() {
   const [deleteTarget, setDeleteTarget] = useState<WorkflowRecord | null>(null);
   const [runPanelOpen, setRunPanelOpen] = useState(false);
   const [liveConfirmOpen, setLiveConfirmOpen] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
 
   const runs = useWorkflowRuns(openWorkflow?.id ?? null);
 
@@ -233,6 +235,34 @@ export default function WorkflowPlayground() {
     [runs.start, toast],
   );
 
+  const handleStatusChange = useCallback(
+    async (next: WorkflowRecord['status']) => {
+      if (!openWorkflow || next === openWorkflow.status) return;
+      setStatusSaving(true);
+      const ok = await save(openWorkflow.id, { status: next });
+      setStatusSaving(false);
+      if (!ok) {
+        toast({ title: 'Could not change the status', variant: 'destructive' });
+        return;
+      }
+      // The header reads its status from the open record, so it has to move too.
+      setOpenWorkflow((current) => (current ? { ...current, status: next } : current));
+      toast({
+        title:
+          next === 'live'
+            ? 'Workflow is live'
+            : next === 'paused'
+              ? 'Workflow paused'
+              : 'Workflow set back to draft',
+        description:
+          next === 'live'
+            ? 'Marked ready. Triggers are not dispatched automatically yet, so start it with Test run or Run live.'
+            : undefined,
+      });
+    },
+    [openWorkflow, save, toast],
+  );
+
   const handleAddNode = useCallback((catalogId: string) => {
     useWorkflowStore.getState().addNode(catalogId, suggestedPosition(useWorkflowStore.getState().graph));
   }, []);
@@ -293,6 +323,13 @@ export default function WorkflowPlayground() {
                   Unsaved
                 </Badge>
               )}
+              <WorkflowStatusControl
+                status={openWorkflow.status}
+                disabled={!canEdit || statusSaving}
+                saving={statusSaving}
+                runnable={runnable}
+                onChange={handleStatusChange}
+              />
             </div>
           </div>
 

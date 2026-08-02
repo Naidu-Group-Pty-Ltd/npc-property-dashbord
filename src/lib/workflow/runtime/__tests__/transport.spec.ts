@@ -79,3 +79,19 @@ describe('server performer', () => {
     expect(outcome.error).toBe('Authentication required');
   });
 });
+
+describe('locally handled steps', () => {
+  beforeEach(() => invoke.mockReset());
+
+  it('answers a webhook without calling the executor', async () => {
+    // The endpoint's allow-list has no entry for this step, so sending it there
+    // failed a live run over something that needs neither network nor secret.
+    const outcome = await createServerPerformer()(
+      inputFor('core.webhook_respond', { status: 201, body: { ok: true } }),
+    );
+
+    expect(outcome.status).toBe('succeeded');
+    expect(outcome.output).toEqual({ status: 201, body: { ok: true } });
+    expect(invoke).not.toHaveBeenCalled();
+  });
+});

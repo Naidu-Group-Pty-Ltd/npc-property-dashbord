@@ -17,6 +17,7 @@
 
 import type { CatalogNode } from '../types';
 import type { Perform, PerformInput, PerformOutcome } from './engine';
+import { sampleOutput } from './sampleData';
 
 /**
  * Steps live mode can genuinely execute. Everything here is either a generic
@@ -42,36 +43,6 @@ export function describeIntent(definition: CatalogNode, config: Record<string, u
   if (target) return `${definition.name} → ${String(target)}`;
   if (definition.integrationId) return `${definition.name} via ${definition.integrationId}`;
   return definition.name;
-}
-
-/**
- * Plausible output for a simulated step, derived from the catalog's declared
- * outputs so downstream `{{…}}` references resolve to something of the right
- * shape rather than to nothing.
- */
-export function sampleOutput(definition: CatalogNode): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
-  for (const declared of definition.outputs) {
-    switch (declared.type) {
-      case 'number':
-        output[declared.key] = 0;
-        break;
-      case 'boolean':
-        output[declared.key] = false;
-        break;
-      case 'array':
-        output[declared.key] = [];
-        break;
-      case 'object':
-        output[declared.key] = {};
-        break;
-      default:
-        // Marked so a simulated value is never mistaken for a real one if it
-        // ends up in a message body during a test run.
-        output[declared.key] = `[sample ${declared.key}]`;
-    }
-  }
-  return output;
 }
 
 /** Test-run performer: resolves and reports, never sends. */

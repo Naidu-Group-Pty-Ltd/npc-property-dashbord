@@ -32,8 +32,26 @@ const isOutcomeStatus = (value: string): value is PerformOutcome['status'] =>
  * Refuses locally rather than calling for steps the server would reject anyway,
  * so an unsupported step gives a useful message instead of a 400.
  */
+/**
+ * Steps that live mode performs without leaving the browser.
+ *
+ * `core.webhook_respond` shapes the response the *caller* of an inbound webhook
+ * receives; there is no outbound call and no credential involved, so sending it
+ * to the executor gained nothing and cost correctness — the endpoint's allow-list
+ * does not include it, so a live run containing one failed with "no server-side
+ * executor" for a step that never needed one.
+ */
+const HANDLED_LOCALLY = new Set(['core.webhook_respond']);
+
 export function createServerPerformer(): Perform {
   return async ({ definition, node, config }: PerformInput): Promise<PerformOutcome> => {
+    if (HANDLED_LOCALLY.has(node.type)) {
+      return {
+        status: 'succeeded',
+        output: { status: Number(config.status ?? 200), body: config.body ?? null },
+      };
+    }
+
     if (!LIVE_CAPABLE.has(node.type)) {
       return {
         status: 'failed',
