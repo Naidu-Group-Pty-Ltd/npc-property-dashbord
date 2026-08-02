@@ -147,6 +147,7 @@ const adminGroup = {
     'User Management',
     'Finance Portal',
     'Solicitor Portal',
+    'Builder / Developer Portal',
     'Client Portal',
     'Token Audit Log',
     'PDF Import Engine',
