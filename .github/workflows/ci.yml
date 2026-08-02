@@ -48,6 +48,13 @@ jobs:
       - name: Integration secrets — registry drift
         run: npm run integrations:secrets:check && npx vitest run src/lib/integrations
 
+      # The Workflow Playground's step catalog is derived from the same registry,
+      # and its templates reference catalog ids by hand — both rot silently when an
+      # integration or an operation is renamed. Ordered here for the same reason as
+      # the step above: after the report suites it would never run while they are red.
+      - name: Workflow Playground — catalog, graph and canvas
+        run: npx vitest run src/lib/workflow src/components/workflow
+
       # Golden-render isolation guard, run as its own step so a renderer
       # regression (anything that changes the WeasyPrint/jsPDF output, incl. the
       # reconstruction primitives: vector/table/runs/numeric-weight/@font-face)

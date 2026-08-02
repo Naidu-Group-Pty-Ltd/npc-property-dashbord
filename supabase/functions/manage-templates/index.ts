@@ -264,15 +264,16 @@ async function assertTemplatePermission(
   corsHeaders: Record<string, string>,
 ): Promise<Response | null> {
   if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
+  // A workflow can invoke any configured integration, so editing one is the same
+  // privilege as editing the integrations themselves. Note that a table absent
+  // from this map skips the permission check entirely — see the early return.
   const moduleKey = table.startsWith('checklist_')
     ? 'checklists'
-    // A workflow can invoke any configured integration, so editing one is the
-    // same privilege as editing the integrations themselves.
     : table === 'workflows'
       ? 'integrations'
-    : table === 'report_templates' || table === 'report_template_versions'
-      ? 'templates'
-      : null;
+      : table === 'report_templates' || table === 'report_template_versions'
+        ? 'templates'
+        : null;
   if (!moduleKey) return null;
 
   const permissions = await getModulePermissionContext(supabase, userId, moduleKey);
