@@ -53,7 +53,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { fetchAndGenerateBorrowingCapacityPDF, generateBorrowingCapacityPDF } from '@/components/borrowing-capacity/BorrowingCapacityPDFReport';
 import { bucketCandidates, isExternalUrl, parseStorageRef } from '@/lib/reports/storageRef';
-import { requestBorrowingCapacitySnapshot } from '@/lib/reports/borrowingCapacity/requestSnapshot';
+import { SnapshotDownloadButton } from '@/components/borrowing-capacity/SnapshotDownloadButton';
+import { snapshotBlob } from '@/lib/reports/borrowingCapacity/deliverSnapshot';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -544,52 +545,6 @@ export function ClientReportsTab({
     }
   };
 
-  /**
-   * The Borrowing Capacity Snapshot.
-   *
-   * Prefers the server-side renderer and falls back to the in-browser
-   * generator when that function is not deployed — see
-   * `requestBorrowingCapacitySnapshot` for why the fallback is as narrow as it
-   * is. The legacy generator is not deprecated: it is the fallback, and it is
-   * still what the other call sites use.
-   */
-  const handleDownloadBorrowingCapacity = async () => {
-    try {
-      const result = await requestBorrowingCapacitySnapshot(
-        { clientId, clientName },
-        async () => {
-          const legacy = await fetchAndGenerateBorrowingCapacityPDF(
-            clientId, clientName, undefined, undefined, { returnBlob: true },
-          );
-          if (!legacy?.blob) return null;
-          return {
-            url: URL.createObjectURL(legacy.blob),
-            fileName: legacy.fileName,
-            bytes: legacy.blob.size,
-          };
-        },
-      );
-
-      const a = document.createElement('a');
-      a.href = result.url;
-      a.download = result.fileName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      if (result.source === 'legacy') URL.revokeObjectURL(result.url);
-
-      if (result.brandGaps.length) {
-        // Said at the moment someone is about to send it, not buried in a log.
-        toast.warning(`Report generated with gaps: ${result.brandGaps.join('; ')}`);
-      } else {
-        toast.success('Borrowing Capacity Snapshot ready');
-      }
-    } catch (e: any) {
-      console.error('[handleDownloadBorrowingCapacity]', e);
-      toast.error(e?.message || 'Could not generate the snapshot');
-    }
-  };
-
   const handleEmailReport = async (report: UnifiedReport) => {
     if (!report.fileUrl) {
       toast.error('No file available to attach');
@@ -625,21 +580,34 @@ export function ClientReportsTab({
           return;
         }
 
-        const result = await generateBorrowingCapacityPDF({
-          clientId,
-          clientName,
-          assessment: latestAssessment,
-          incomeSources,
-          liabilities,
-          expenses,
-          properties,
-          client,
-          returnBlob: true,
+        // The only path that does not hand the file to the browser: it uploads
+        // to the portal prefix instead. `snapshotBlob` keeps that contract — a
+        // blob and a filename, produced with no download side effect — while
+        // giving this path the same renderer as every button beside it. The
+        // in-browser generator remains the fallback, and it is the one that
+        // knows this client's income, liabilities and expenses as loaded here.
+        const result = await snapshotBlob({
+          variant: 'server',
+          request: { clientId, clientName },
+          legacy: () => generateBorrowingCapacityPDF({
+            clientId,
+            clientName,
+            assessment: latestAssessment,
+            incomeSources,
+            liabilities,
+            expenses,
+            properties,
+            client,
+            returnBlob: true,
+          }),
         });
 
         if (!result?.blob) {
           toast.error('PDF generation failed', { id: 'portal-bc' });
           return;
+        }
+        if (result.brandGaps.length) {
+          toast.warning(`Publishing with gaps: ${result.brandGaps.join('; ')}`, { id: 'portal-bc-gaps' });
         }
 
         // Upload to storage
@@ -896,17 +864,19 @@ export function ClientReportsTab({
 
                 {/* Download PDF for borrowing capacity assessments */}
                 {report.type === 'borrowing' && report.source === 'borrowing_assessment' && (
-                  <>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-10 w-10 sm:h-8 sm:w-8"
-                      onClick={() => handleDownloadBorrowingCapacity()}
-                      title="Download PDF"
-                    >
-                      <Download className="h-4 w-4" />
-                    </Button>
-                  </>
+                  <SnapshotDownloadButton
+                    appearance="menu"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 sm:h-8 sm:w-8"
+                    icon={<Download className="h-4 w-4" />}
+                    triggerLabel="Download PDF"
+                    request={{ clientId, clientName }}
+                    legacy={() => fetchAndGenerateBorrowingCapacityPDF(
+                      clientId, clientName, undefined, undefined, { returnBlob: true },
+                    )}
+                    label="Download PDF"
+                  />
                 )}
 
                 {/*

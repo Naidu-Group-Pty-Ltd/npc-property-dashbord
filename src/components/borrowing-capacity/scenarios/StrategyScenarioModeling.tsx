@@ -62,6 +62,7 @@ import { BindingConstraintBadge } from '../BindingConstraintBadge';
 import { computeBindingConstraint } from '@/utils/bindingConstraint';
 import { PurchasePowerHeadline, type LeverAttribution } from './PurchasePowerHeadline';
 import { StrategyRationalePanel } from './StrategyRationalePanel';
+import { SnapshotDownloadButton } from '../SnapshotDownloadButton';
 import { buildStrategyRationale } from '@/utils/strategyRationaleEngine';
 import { CapacityMathInspector } from './CapacityMathInspector';
 import { CapitalFlowCanvas, type CapitalAllocation } from './CapitalFlowCanvas';
@@ -1227,6 +1228,47 @@ export function StrategyScenarioModeling({
   );
 
   const blockingValidationIssues = validationIssues.filter(issue => issue.severity === 'error');
+  /**
+   * The scenarios this export carries.
+   *
+   * A transient preset reflecting the live strategy state is appended so the
+   * document shows the what-if the adviser is looking at, saved or not. Built
+   * on demand rather than memoised: it stamps a created-at and an id, and a
+   * memo would hand two different exports the same one.
+   *
+   * Both renderers are given this list. What they do differ on is the *base*:
+   * the server renders the saved assessment with these scenarios beside it,
+   * because `render-borrowing-capacity-pdf` reads the assessment from the
+   * database and will not take a capacity figure from a browser. The legacy
+   * generator draws the unsaved overrides as the base. Neither is wrong — they
+   * answer different questions — so the menu says which is which rather than
+   * picking for the adviser.
+   */
+  const buildScenarioPresetsForExport = (): ScenarioPreset[] => {
+    const transientName = scenarioName.trim() || 'Current What-If Scenario';
+    const transientCreatedAt = new Date().toISOString();
+    const transient: ScenarioPreset = {
+      id: `transient-${Date.now()}`,
+      name: transientName,
+      isBase: false,
+      createdAt: transientCreatedAt,
+      adjustedInputs: { ...scenarioInputs },
+      result: scenarioResult,
+      accessibleEquity: totalAccessibleEquity,
+      acquisitionCapacity: acquisition.enabled ? acquisitionCapacity : null,
+      scenarioDeltas: appliedDeltas,
+      validationIssues,
+      capitalLedger,
+      capitalAllocations: [...capitalAllocations],
+      acquisition,
+      replayAudit: buildReplayAudit(transientName, transientCreatedAt),
+      incomeComponents,
+      currentLenderProfileId,
+      hemBenchmark,
+    };
+    return [...presets, ...(presets.some((p) => p.id === transient.id) ? [] : [transient])];
+  };
+
   const hasBlockingValidationIssues = blockingValidationIssues.length > 0;
 
   const hasAnyStrategy = strategy.consolidatedLiabilities.size > 0 ||
@@ -2941,64 +2983,34 @@ export function StrategyScenarioModeling({
                     </Button>
                   )}
                   {clientId && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
+                    <SnapshotDownloadButton
                       className="flex-1"
+                      variant="secondary"
+                      size="sm"
                       disabled={hasBlockingValidationIssues}
-                      onClick={async () => {
-                        if (hasBlockingValidationIssues) {
-                          toast.error('Resolve blocking scenario validation errors before exporting.');
-                          return;
-                        }
-                        try {
-                          // Build a transient preset reflecting the current
-                          // strategy state so the PDF shows live what-if numbers
-                          // even before the user clicks Save.
-                          const transientName = scenarioName.trim() || 'Current What-If Scenario';
-                          const transientCreatedAt = new Date().toISOString();
-                          const transient: ScenarioPreset = {
-                            id: `transient-${Date.now()}`,
-                            name: transientName,
-                            isBase: false,
-                            createdAt: transientCreatedAt,
-                            adjustedInputs: { ...scenarioInputs },
-                            result: scenarioResult,
-                            accessibleEquity: totalAccessibleEquity,
-                            acquisitionCapacity: acquisition.enabled ? acquisitionCapacity : null,
-                            scenarioDeltas: appliedDeltas,
-                            validationIssues,
-                            capitalLedger,
-                            capitalAllocations: [...capitalAllocations],
-                            acquisition,
-                            replayAudit: buildReplayAudit(transientName, transientCreatedAt),
-                            incomeComponents,
-                            currentLenderProfileId,
-                            hemBenchmark,
-                          };
-                          const merged = [
-                            ...presets,
-                            ...(presets.some(p => p.id === transient.id) ? [] : [transient]),
-                          ];
-                          toast.info('Generating What-If PDF…');
-                          await fetchAndGenerateBorrowingCapacityPDF(
-                            clientId,
-                            clientName || 'Client',
-                            merged,
-                            {
-                              assessment: buildPdfOverrideAssessment(scenarioInputs, scenarioResult),
-                              liabilities,
-                              properties,
-                            },
-                          );
-                        } catch (err: any) {
-                          toast.error(`PDF export failed: ${err?.message || 'Unknown error'}`);
-                        }
+                      label="Export PDF"
+                      legacyLabel="Export PDF (live what-if)"
+                      legacyHint="Draws the unsaved inputs as the base assessment"
+                      request={() => ({
+                        clientId: clientId!,
+                        clientName: clientName || 'Client',
+                        scenarioPresets: buildScenarioPresetsForExport(),
+                      })}
+                      legacy={async () => {
+                        const result = await fetchAndGenerateBorrowingCapacityPDF(
+                          clientId,
+                          clientName || 'Client',
+                          buildScenarioPresetsForExport(),
+                          {
+                            assessment: buildPdfOverrideAssessment(scenarioInputs, scenarioResult),
+                            liabilities,
+                            properties,
+                          },
+                          { returnBlob: true },
+                        );
+                        return result;
                       }}
-                    >
-                      <FileDown className="h-3.5 w-3.5 mr-1.5" />
-                      Export PDF
-                    </Button>
+                    />
                   )}
                 </div>
               )}

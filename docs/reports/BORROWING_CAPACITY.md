@@ -38,17 +38,20 @@ copy of C that was never wired up. Phase 5 deletes it.
 
 | Call site | Path |
 |---|---|
-| Results panel "Download PDF" | `ResultsPanel.tsx:229` |
-| Scenario modelling export | `StrategyScenarioModeling.tsx:2984` |
-| Client card quick action | `BorrowingCapacityCard.tsx:141` |
-| Client reports tab — download | `ClientReportsTab.tsx:835` |
-| Client reports tab — **publish to portal** | `ClientReportsTab.tsx:559` |
+| Results panel "Download PDF" | `ResultsPanel.tsx` |
+| Scenario modelling export | `StrategyScenarioModeling.tsx` |
+| Client card quick action | `BorrowingCapacityCard.tsx` |
+| Client reports tab — download | `ClientReportsTab.tsx` |
+| Client reports tab — **publish to portal** | `ClientReportsTab.tsx` |
 
 The last one matters for Phase 4: it is the only path that does not hand the
 file to the browser. It calls `generateBorrowingCapacityPDF({ returnBlob: true })`
 and uploads the blob to `client-files/portal-reports/<clientId>/…`. Any
 replacement must keep that contract — a blob and a filename, generated without a
 download side effect.
+
+All five now go through `SnapshotDownloadButton` or `snapshotBlob`, and A is
+still what runs when someone asks for it — see §13.
 
 ---
 
@@ -769,3 +772,81 @@ logo, no key/value settings table and — until Phase 5 — no SVG. The lesson i
 one Phase 0 already recorded about `Rate NaN%` being a fixture artefact, pointed
 the other way: a fixture that is easier than production hides defects as reliably
 as one that is wrong invents them.
+
+---
+
+## 13. Both renderers ship
+
+The Snapshot has two renderers and the product offers both. This section is the
+contract for that, because it is the thing a future change is most likely to
+break by accident.
+
+### What went wrong the first time
+
+Phases 1–5 built the server-side path, and the front-end wiring that followed
+treated the in-browser generator as a **deployment fallback**: reached only when
+`render-borrowing-capacity-pdf` was absent, and never otherwise
+(`requestSnapshot.ts`, `looksUndeployed`). That was the right shape for landing
+the new path — it meant merging could not break a button — and the wrong one to
+leave in place. The moment the function was deployed, generator A became
+unreachable from every surface in the app. Nobody decided to retire it. It would
+simply have stopped happening, and the first anyone would have known is a client
+asking why their report looks different.
+
+### The shape now
+
+`deliverSnapshot({ variant })` takes the choice as a parameter:
+
+| Variant | What runs |
+|---|---|
+| `server` | `render-borrowing-capacity-pdf`, with the undeployed-function fallback still in place |
+| `legacy` | Generator A, directly. No request, no fallback logic |
+
+`SnapshotDownloadButton` is the one control that produces this document, and it
+offers both — as a split button where there is room for one and as a compact
+menu where there is not. It renders **one** `choices` block for both appearances,
+so the legacy item cannot be present on the panel and missing from the card.
+
+The narrow undeployed-function fallback stays on the `server` variant. It answers
+a different question — "the route is not there yet" — and it is deliberately
+strict: a 500 from a deployed route must surface as a failure, because falling
+back on it would hide a broken render behind a document that looks fine.
+
+### The one place the two documents genuinely differ
+
+The scenario modeller exports with `buildPdfOverrideAssessment(scenarioInputs,
+scenarioResult)` as the base — the adviser's **unsaved** what-if inputs. The
+server route reads the assessment from the database and will not take a capacity
+figure from a browser, which is the decision §1 of this document rests on and is
+not one to reverse for one button.
+
+So there, the two renderers answer different questions and the menu says so:
+
+- **Export PDF** — the saved assessment, with the live what-if beside it in the
+  scenarios table (the transient preset travels in `scenarioPresets`).
+- **Export PDF (live what-if)** — generator A, drawing the unsaved inputs as the
+  base.
+
+Both are correct; neither is a fallback for the other. Picking for the adviser
+would have meant picking wrong for half of them.
+
+### What holds it in place
+
+| Guard | Asserts |
+|---|---|
+| `legacyPathStays.spec.ts` | Generator A and the other three live implementations still exist; every one of the five surfaces routes through the shared control or helper and hands it a legacy generator; the control offers both choices in both appearances |
+| `SnapshotDownloadButton.spec.tsx` | Picking an option runs *that* renderer; the fallback is announced rather than reported as success; a request function is evaluated at click and not at render |
+| `deliverSnapshot.spec.ts` | `variant: 'legacy'` never reaches the server; a signed URL is fetched rather than followed; object URLs are revoked |
+
+The first of those was verified by deleting a `legacy` prop and watching it fail
+with the message a reader would need. A guard that has never failed is a guess.
+
+### The three other live implementations
+
+B (`borrowingCapacityPdfSections.ts`), C (`borrowingCapacityPdfLibSections.ts`)
+and E (`StrategyRationalePDF.ts`) are untouched by any of this. Two are section
+packs for other reports and one is the Strategy Rationale Brief; none is
+superseded by the Snapshot's render route, and deleting one because "the Snapshot
+moved" would take a different document down with it. `legacyPathStays.spec.ts`
+asserts all three are still present, which is the cheapest possible protection
+against exactly that mistake.
