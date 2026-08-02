@@ -404,11 +404,18 @@ export function InternalMessageToasts() {
           persist(next);
           return next;
         });
-        // Newest inbound conversation becomes the expanded pop-up.
-        const newest = [...additions].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))[0];
-        setActiveId(newest.thread_id);
-        additions.forEach((a) => loadMessages(a.thread_id, a.thread_id === newest.thread_id));
+        // Arrive minimised: the chip's unread badge is the notification. Nothing
+        // steals the screen, and no transcript is marked read behind the user.
+        setMinimised((prev) => {
+          const next = { ...prev };
+          additions.forEach((a) => {
+            next[a.thread_id] = true;
+          });
+          return next;
+        });
+        additions.forEach((a) => loadMessages(a.thread_id, false));
       }
+
       // Refreshing a minimised conversation must not clear its unread badge.
       toRefresh.forEach((id) =>
         loadMessages(id, activeRef.current === id && !minimisedRef.current[id]),
