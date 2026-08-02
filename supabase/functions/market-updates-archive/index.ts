@@ -113,7 +113,40 @@ Deno.serve(async (req) => {
       return json({ outcome: 'restored', id }, 200);
     }
 
+    // Archiving lives here too, so the operator flow does not depend on the
+    // multiplexed curate function staying in step with the frontend contract.
+    if (action === 'archive' || action === 'hide' || action === 'publish') {
+      const id = String(body.id ?? body.updateId ?? '');
+      if (!/^[0-9a-f-]{36}$/i.test(id)) return json({ error: 'id_required', code: 'invalid_request' }, 400);
+      const edit = await requireModulePermission(sb, { userId: auth.userId, authMethod: auth.authMethod }, 'market_updates', 'can_edit');
+      if (!edit.ok) return json({ error: 'Market Updates edit permission required', code: 'market_updates_edit_required' }, 403);
+      const { data: row, error: readError } = await sb.from('market_updates').select('id,status,archived_at,visibility').eq('id', id).maybeSingle();
+      if (readError) return json({ error: 'Market update could not be loaded', code: 'market_updates_read_failed' }, 500);
+      if (!row) return json({ error: 'not_found', code: 'not_found' }, 404);
+      const now = new Date().toISOString();
+
+      if (action === 'publish') {
+        if (row.status === 'published' && !row.archived_at) return json({ outcome: 'already_published', id }, 200);
+        if (row.status !== 'candidate' || row.archived_at || row.visibility !== 'public') {
+          return json({ error: 'Only a live held candidate can be published.', code: 'invalid_state_transition' }, 409);
+        }
+        const { error: publishError } = await sb.from('market_updates')
+          .update({ status: 'published', publication_reason: 'operator_manual_publication', candidate_reason: null, decisioned_at: now, updated_at: now })
+          .eq('id', id).eq('status', 'candidate').is('archived_at', null);
+        if (publishError) return json({ error: 'Market update could not be published.', code: 'market_updates_write_failed' }, 500);
+        return json({ outcome: 'published', id }, 200);
+      }
+
+      if (row.archived_at) return json({ outcome: 'already_archived', id }, 200);
+      const { error: archiveError } = await sb.from('market_updates')
+        .update({ archived_at: now, archived_by: auth.userId, pre_archive_status: row.status, decisioned_at: now, updated_at: now })
+        .eq('id', id).is('archived_at', null);
+      if (archiveError) return json({ error: 'Market update could not be archived.', code: 'market_updates_write_failed' }, 500);
+      return json({ outcome: 'archived', id }, 200);
+    }
+
     if (action !== 'list') return json({ error: 'Unknown action', code: 'invalid_request' }, 400);
+
 
     const page = Math.max(1, Math.floor(Number(body.page) || 1));
     const pageSize = Math.max(10, Math.min(50, Math.floor(Number(body.pageSize) || 20)));
