@@ -799,8 +799,13 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('[manage-templates] Error:', error);
+    // `error` is `unknown` in a catch binding, so reading `.message` off it was
+    // the file's only type error. Narrowing here keeps `deno check` clean, which
+    // matters because a deploy that type-checks the bundle refuses to ship
+    // otherwise — and this is the broker 38 call sites depend on.
+    const details = error instanceof Error ? error.message : String(error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      JSON.stringify({ error: 'Internal server error', details }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
