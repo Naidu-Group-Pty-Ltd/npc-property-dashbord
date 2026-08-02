@@ -405,46 +405,50 @@ export async function hydrateThreadAttachments<T extends { id: string; attachmen
 
 
 
-/** Open (or force-download) an attachment via a freshly signed URL. */
-
+/**
+ * Download an attachment straight to the user's device.
+ *
+ * No `window.open` — a blank tab is never spawned. We mint the signed URL,
+ * fetch the bytes, and hand a blob URL to a hidden anchor with `download`, so
+ * the browser writes the file and nothing navigates. If the fetch is blocked we
+ * fall back to a same-gesture anchor click on the signed URL itself (the server
+ * sets `Content-Disposition: attachment`), which also avoids a visible tab.
+ */
 export async function openInternalAttachment(
   threadId: string,
   attachment: Pick<InternalAttachment, 'path' | 'name'>,
-  download = false,
+  download = true,
 ): Promise<void> {
-  // Open during the original click gesture. Waiting for the signed-url request
-  // before calling window.open lets browser popup blockers discard the action,
-  // which looked like a broken download even when the backend succeeded.
-  const pending = window.open('', '_blank');
-  if (pending) {
-    pending.opener = null;
-    pending.document.title = `Preparing ${attachment.name}`;
-    pending.document.body.textContent = `Preparing ${attachment.name}…`;
-  }
-  try {
-    const data = await call({
-      operation: 'download_ticket',
-      thread_id: threadId,
-      path: attachment.path,
-      download,
-    });
-    const url = data?.signed_url as string | undefined;
-    if (!url) throw new Error('Could not open attachment');
-    if (pending) {
-      pending.location.replace(url);
-      return;
-    }
+  const data = await call({
+    operation: 'download_ticket',
+    thread_id: threadId,
+    path: attachment.path,
+    download,
+  });
+  const url = data?.signed_url as string | undefined;
+  if (!url) throw new Error('Could not open attachment');
+
+  const saveAs = (href: string, revoke?: () => void) => {
     const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.target = '_blank';
+    anchor.href = href;
+    anchor.download = attachment.name || 'attachment';
     anchor.rel = 'noopener noreferrer';
-    anchor.download = attachment.name;
+    anchor.style.display = 'none';
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-  } catch (error) {
-    pending?.close();
-    throw error;
+    if (revoke) setTimeout(revoke, 60_000);
+  };
+
+  try {
+    const res = await fetch(url, { credentials: 'omit', mode: 'cors' });
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    saveAs(objectUrl, () => URL.revokeObjectURL(objectUrl));
+  } catch {
+    // Signed URL already carries an attachment disposition — no tab needed.
+    saveAs(url);
   }
 }
 
