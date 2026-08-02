@@ -268,10 +268,23 @@ export default function MarketUpdates() {
     finally { setIngesting(false); }
   };
 
-  const reviewCandidates = async () => {
-    try { setActionIssue(null); setCandidateReview(await fetchMarketUpdates({ status:'candidate', limit:100 })); }
-    catch (error) { setActionIssue(issueFrom(error)); }
+  const reviewCandidates = () => { setActionIssue(null); setFeedScope('held'); setWorkspaceTab('updates'); };
+
+  const publishHeldUpdate = async (update: MarketUpdate) => {
+    if (publishingId) return;
+    setPublishingId(update.id);
+    setActionIssue(null);
+    try {
+      await publishMarketUpdate(update.id);
+      setHeldUpdates(current => current.filter(u => u.id !== update.id));
+      toast.success(`Published “${update.title}”.`);
+      await loadUpdates();
+    } catch (error) {
+      setActionIssue(issueFrom(error));
+      toast.error(`“${update.title}” could not be published.`, { description:'It remains held for review.' });
+    } finally { setPublishingId(null); }
   };
+
 
   const restoreArchived = async (updateId:string,title:string):Promise<boolean> => {
     if (hidingId) return false;
