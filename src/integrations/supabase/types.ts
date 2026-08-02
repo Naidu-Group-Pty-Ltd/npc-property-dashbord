@@ -25812,6 +25812,102 @@ export type Database = {
           },
         ]
       }
+      portfolio_review_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          client_id: string | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          holdings: number | null
+          id: string
+          pages: number | null
+          report_id: string
+          requested_by: string | null
+          review_id: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          holdings?: number | null
+          id?: string
+          pages?: number | null
+          report_id: string
+          requested_by?: string | null
+          review_id?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          holdings?: number | null
+          id?: string
+          pages?: number | null
+          report_id?: string
+          requested_by?: string | null
+          review_id?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portfolio_review_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "portfolio_analysis_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_review_id_fkey"
+            columns: ["review_id"]
+            isOneToOne: false
+            referencedRelation: "portfolio_reviews"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portfolio_reviews: {
         Row: {
           action_items: Json | null
