@@ -70,6 +70,7 @@ export type ReportArchetypeId =
   | 'cash-flow-projection'
   | 'market-intelligence'
   | 'borrowing-capacity'
+  | 'portfolio-performance'
   | 'snapshot';
 
 export interface ReportArchetype {
@@ -140,6 +141,37 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     contents: false,
     note: 'Serviceability and capacity. Implemented three times in the codebase '
       + 'today; one archetype so the three converge rather than diverge further.',
+  },
+  'portfolio-performance': {
+    id: 'portfolio-performance',
+    documentName: 'Portfolio Performance Review',
+    chapterLabel: 'Section',
+    slots: FULL_SLOTS,
+    // Measured: all 21 stored reports rendered through WeasyPrint land between
+    // 18 and 26 pages.
+    //
+    // The band is far wider than that range, and deliberately so — it is the
+    // one archetype whose length scales with its subject. A portfolio is
+    // between one and sixty properties, and the sections that describe them
+    // grow with the count, so a band tight enough to be a page prediction would
+    // refuse to render a legitimate large portfolio. This ceiling is a runaway
+    // guard: with `MAX_HOLDINGS` properties and the per-property commentary
+    // capped at `DETAIL_CAP`, the spine tops out in the low forties.
+    //
+    // The floor is 10 because `report_data.analysis` is stored model output and
+    // a thin response is a real state. A portfolio whose analysis carried only
+    // an executive summary spines to 11, and refusing to render a client's
+    // report because the model wrote fewer blocks would turn a content problem
+    // into an outage.
+    pageBudget: [10, 46],
+    // The first migrated format long enough to need one. Borrowing Capacity
+    // refuses a contents page for four pages and is right to; this document
+    // runs to nine sections and the legacy generator built one by hand.
+    contents: true,
+    note: 'The whole-of-portfolio document: every holding in one landscape '
+      + 'matrix, then what the portfolio is, how it performs, and what to do '
+      + 'about it. The only format that reads a second, optional table — a '
+      + 'portfolio review — to enrich a report it can already write without it.',
   },
   snapshot: {
     id: 'snapshot',
