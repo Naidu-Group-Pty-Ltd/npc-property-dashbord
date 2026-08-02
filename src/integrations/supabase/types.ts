@@ -8247,6 +8247,12 @@ export type Database = {
           salary_frequency: string | null
           start_date: string | null
           updated_at: string
+          work_arrangement: string | null
+          workplace_address_line_1: string | null
+          workplace_country: string | null
+          workplace_postcode: string | null
+          workplace_state: string | null
+          workplace_suburb: string | null
         }
         Insert: {
           additional_contact_id?: string | null
@@ -8269,6 +8275,12 @@ export type Database = {
           salary_frequency?: string | null
           start_date?: string | null
           updated_at?: string
+          work_arrangement?: string | null
+          workplace_address_line_1?: string | null
+          workplace_country?: string | null
+          workplace_postcode?: string | null
+          workplace_state?: string | null
+          workplace_suburb?: string | null
         }
         Update: {
           additional_contact_id?: string | null
@@ -8291,6 +8303,12 @@ export type Database = {
           salary_frequency?: string | null
           start_date?: string | null
           updated_at?: string
+          work_arrangement?: string | null
+          workplace_address_line_1?: string | null
+          workplace_country?: string | null
+          workplace_postcode?: string | null
+          workplace_state?: string | null
+          workplace_suburb?: string | null
         }
         Relationships: [
           {
