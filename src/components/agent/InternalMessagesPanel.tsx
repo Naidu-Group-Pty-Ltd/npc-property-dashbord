@@ -324,12 +324,19 @@ export function InternalMessagesPanel({
     try {
       const attachments = await uploadStaged(activeThread.id);
       if (!attachments) { setSending(false); return; }
-      await call({
+      const sent = await call({
         action: 'send_message',
         thread_id: activeThread.id,
         body: text,
         attachments,
       });
+      await ensureMessageAttachments(
+        activeThread.id,
+        sent?.message?.id,
+        attachments,
+        sent?.message?.attachments,
+      );
+
       setDraft('');
       attachmentQueue.clear();
       publishInternalMessage({
