@@ -31711,6 +31711,154 @@ export type Database = {
         }
         Relationships: []
       }
+      workflow_run_steps: {
+        Row: {
+          branch_taken: string | null
+          duration_ms: number
+          error: string | null
+          id: string
+          label: string
+          missing_references: string[]
+          node_id: string
+          node_type: string
+          output: Json
+          resolved_config: Json
+          run_id: string
+          sequence: number
+          simulation_note: string | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          branch_taken?: string | null
+          duration_ms?: number
+          error?: string | null
+          id?: string
+          label: string
+          missing_references?: string[]
+          node_id: string
+          node_type: string
+          output?: Json
+          resolved_config?: Json
+          run_id: string
+          sequence: number
+          simulation_note?: string | null
+          started_at?: string
+          status: string
+        }
+        Update: {
+          branch_taken?: string | null
+          duration_ms?: number
+          error?: string | null
+          id?: string
+          label?: string
+          missing_references?: string[]
+          node_id?: string
+          node_type?: string
+          output?: Json
+          resolved_config?: Json
+          run_id?: string
+          sequence?: number
+          simulation_note?: string | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workflow_run_steps_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "workflow_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workflow_runs: {
+        Row: {
+          duration_ms: number | null
+          failed_step_count: number
+          finished_at: string | null
+          halt_reason: string | null
+          id: string
+          mode: string
+          started_at: string
+          started_by: string | null
+          status: string
+          step_count: number
+          trigger_payload: Json
+          workflow_id: string
+        }
+        Insert: {
+          duration_ms?: number | null
+          failed_step_count?: number
+          finished_at?: string | null
+          halt_reason?: string | null
+          id?: string
+          mode?: string
+          started_at?: string
+          started_by?: string | null
+          status?: string
+          step_count?: number
+          trigger_payload?: Json
+          workflow_id: string
+        }
+        Update: {
+          duration_ms?: number | null
+          failed_step_count?: number
+          finished_at?: string | null
+          halt_reason?: string | null
+          id?: string
+          mode?: string
+          started_at?: string
+          started_by?: string | null
+          status?: string
+          step_count?: number
+          trigger_payload?: Json
+          workflow_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workflow_runs_workflow_id_fkey"
+            columns: ["workflow_id"]
+            isOneToOne: false
+            referencedRelation: "workflows"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workflows: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          graph: Json
+          id: string
+          name: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          graph?: Json
+          id?: string
+          name: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          graph?: Json
+          id?: string
+          name?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       activity_logs_with_user: {

@@ -1125,3 +1125,6 @@ verify_jwt = true
 
 [functions.create-advanced-client]
 verify_jwt = true
+
+[functions.internal-message-attachments]
+verify_jwt = false
