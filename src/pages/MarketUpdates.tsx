@@ -137,12 +137,15 @@ export default function MarketUpdates() {
 
   const loadUpdates = async () => {
     setLoading(true);
-    const [updatesResult, healthResult] = await Promise.allSettled([
+    const [updatesResult, healthResult, heldResult] = await Promise.allSettled([
       fetchMarketUpdates({ limit:200 }),
       fetchMarketSourceHealth(),
+      fetchMarketUpdates({ status:'candidate', limit:100 }),
     ]);
     if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
     if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    // Held items are supplementary: a failure there must not blank the feed.
+    if (heldResult.status === 'fulfilled') setHeldUpdates(heldResult.value);
     const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
     setDataIssue(failure ? issueFrom(failure.reason) : null);
     setLoading(false);
@@ -151,6 +154,7 @@ export default function MarketUpdates() {
       health: healthResult.status === 'fulfilled' ? healthResult.value : null,
     };
   };
+
   const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
     try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
     catch (error) { setDigestIssue(issueFrom(error)); }
