@@ -122,6 +122,19 @@ function writeOpenIds(ids: string[]) {
   }
 }
 
+/**
+ * Every conversation restored from localStorage starts life as a minimised
+ * chip. Expanding is a deliberate click, so a reload or a fresh sign-in never
+ * throws a full transcript over the dashboard.
+ */
+function bootMinimised(): Record<string, true> {
+  const next: Record<string, true> = {};
+  readOpenIds().forEach((id) => {
+    next[id] = true;
+  });
+  return next;
+}
+
 /** Per-thread "already handled up to this message time" markers. */
 function readBaselines(): Record<string, string> {
   try {
