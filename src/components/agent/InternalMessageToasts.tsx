@@ -32,6 +32,7 @@ import {
   Loader2,
   GripVertical,
   RotateCcw,
+  UsersRound,
 } from 'lucide-react';
 import { useDraggablePosition } from '@/hooks/useDraggablePosition';
 import { useResizablePanel } from '@/hooks/useResizablePanel';
@@ -43,10 +44,12 @@ import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
   isInternalMessagesPanelOpen,
   onInternalMessage,
+  onInternalThreadPopOut,
   onInternalTyping,
   publishInternalMessage,
   publishInternalTyping,
 } from '@/lib/internalMessagingBus';
+
 import {
   AttachmentDropOverlay,
   InternalAttachmentQueue,
