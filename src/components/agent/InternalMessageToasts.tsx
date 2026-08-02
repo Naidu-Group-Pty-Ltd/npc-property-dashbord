@@ -630,6 +630,18 @@ export function InternalMessageToasts() {
   /** The whole minimised stack can be dragged anywhere on the page. */
   const dock = useDraggablePosition('aurixa.internalMessages.dockPos');
 
+  /**
+   * The expanded conversation can be resized by dragging its bottom-left grip.
+   * The dock is right-anchored, so dragging left grows the panel (`invertX`).
+   */
+  const panelResize = useResizablePanel('aurixa.internalMessages.panelSize', {
+    invertX: true,
+    minWidth: 288,
+    minHeight: 260,
+    maxWidth: 780,
+    maxHeight: 820,
+  });
+
   const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
 
   const typer = active ? typing[active.thread_id] : undefined;
