@@ -7065,6 +7065,79 @@ export type Database = {
           },
         ]
       }
+      cash_flow_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          report_id: string
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          term_years: number | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          report_id: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          report_id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_flow_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "investment_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chart_analysis: {
         Row: {
           analysis_text: string
