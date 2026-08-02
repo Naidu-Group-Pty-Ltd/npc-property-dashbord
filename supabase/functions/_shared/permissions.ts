@@ -43,6 +43,12 @@ const TABLE_TO_MODULE_MAP: Record<string, string> = {
   // `checkPermission` today, so mapping it changes no behaviour — it stops the
   // day something does from falling through to `unmapped_table`.
   property_comparisons: 'reports',
+  // The saved form of a cash flow comparison — a derived view of two to five
+  // investment reports, so governed by the same module they are. Mapping it
+  // changes no behaviour today: the table holds zero rows and nothing writes it
+  // through `checkPermission`. It stops the day something does from falling
+  // through to `unmapped_table`.
+  cash_flow_analyses: 'reports',
 
   // Reminders
   client_reminders: 'reminders',
