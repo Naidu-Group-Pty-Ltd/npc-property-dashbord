@@ -432,25 +432,14 @@ export function InternalMessageToasts() {
     };
   }, [user, check]);
 
-  // Keep an expanded card whenever pop-ups exist — unless the user has just
-  // deliberately minimised the active card, in which case every chat stays as a
-  // chip so the unread badge on the chip is the only notification.
+  // Pop-ups never auto-expand. A conversation is only ever rendered as a full
+  // card when the user clicks its chip, so signing in with ten live threads
+  // shows ten compact chips instead of ten stacked chat windows.
   useEffect(() => {
-    if (skipAutoExpandRef.current) return;
-    if (!threads.length) {
-      if (activeId) setActiveId(null);
-      return;
-    }
-    if (!activeId || !threads.some((t) => t.thread_id === activeId)) {
-      const candidates = threads.filter((t) => !minimised[t.thread_id]);
-      if (!candidates.length) {
-        if (activeId) setActiveId(null);
-        return;
-      }
-      const next = [...candidates].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))[0];
-      setActiveId(next.thread_id);
-    }
-  }, [threads, activeId, minimised]);
+    if (!activeId) return;
+    if (!threads.some((t) => t.thread_id === activeId)) setActiveId(null);
+  }, [threads, activeId]);
+
 
 
   // Typing hints for threads with an open pop-up.
