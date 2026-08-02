@@ -71,6 +71,7 @@ export type ReportArchetypeId =
   | 'cash-flow-comparison'
   | 'market-intelligence'
   | 'borrowing-capacity'
+  | 'client-details'
   | 'portfolio-performance'
   | 'property-comparison'
   | 'snapshot';
@@ -175,6 +176,32 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     contents: false,
     note: 'Serviceability and capacity. Implemented three times in the codebase '
       + 'today; one archetype so the three converge rather than diverge further.',
+  },
+  'client-details': {
+    id: 'client-details',
+    documentName: 'Client Details',
+    chapterLabel: 'Section',
+    slots: FULL_SLOTS,
+    // The widest band in the programme, because this format's subject varies
+    // more than any other's. Measured: 771 clients, of whom **26 have any
+    // property at all**. The ordinary document is a household, some financial
+    // rows and a position; the largest is that plus a portfolio.
+    //
+    // So the floor is genuinely a client with a name and an address — cover,
+    // contents, who this is about, where they stand, closing — and it has to be
+    // low enough to let that render. Refusing to produce a document because a
+    // client has recorded little is refusing 97% of the record.
+    //
+    // That is not hypothetical. The first estimate here was `[6, 30]` and the
+    // very first render refused a name-only client at five pages, which is the
+    // ordinary case for this format. Four leaves a page of slack under the
+    // arithmetic minimum rather than sitting on it.
+    pageBudget: [4, 34],
+    contents: true,
+    note: 'The client\'s own record: who they are, what they earn, own, owe and '
+      + 'spend, and any property held. The only format whose subject is a person '
+      + 'rather than a transaction, and the only one where the ordinary case is a '
+      + 'record with most of its sections empty.',
   },
   'portfolio-performance': {
     id: 'portfolio-performance',
