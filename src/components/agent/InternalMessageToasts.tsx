@@ -653,10 +653,14 @@ export function InternalMessageToasts() {
   return (
     <div
       ref={dock.nodeRef}
-      style={dock.positionStyle}
+      style={{
+        ...dock.positionStyle,
+        ...(panelResize.size ? { width: panelResize.size.width } : {}),
+      }}
       className={cn(
-        'pointer-events-none fixed right-4 top-20 z-[60] flex w-[min(26rem,calc(100vw-2rem))] flex-col items-end gap-2',
-        dock.dragging && 'z-[70]',
+        'pointer-events-none fixed right-4 top-20 z-[60] flex flex-col items-end gap-2',
+        !panelResize.size && 'w-[min(26rem,calc(100vw-2rem))]',
+        (dock.dragging || panelResize.resizing) && 'z-[70]',
       )}
     >
       {/* Dock handle — drag the whole stack anywhere on the page */}
@@ -671,12 +675,15 @@ export function InternalMessageToasts() {
         >
           <GripVertical className="h-3.5 w-3.5" />
         </span>
-        {dock.position && (
+        {(dock.position || panelResize.size) && (
           <button
             type="button"
-            onClick={dock.reset}
-            aria-label="Snap dock back to the corner"
-            title="Snap back to the corner"
+            onClick={() => {
+              dock.reset();
+              panelResize.reset();
+            }}
+            aria-label="Reset chat position and size"
+            title="Reset position & size"
             className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <RotateCcw className="h-3 w-3" />
