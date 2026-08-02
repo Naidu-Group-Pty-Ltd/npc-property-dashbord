@@ -399,13 +399,100 @@ and every pair known here is still emitted. It found the 15 that exist.
 Phase 0 golden (`src/lib/reports/borrowingCapacity/__tests__/fixtures/`), so the
 payload and the capture cannot drift apart.
 
-## 7. Phase map
+## 7. The document (Phase 2)
+
+`sections.pure.ts` decides the structure; `render.pure.ts` turns the payload
+into HTML through the design system. Nothing else was added — every element on
+the page is a design-system primitive, so the format has no stylesheet, no
+colour and no geometry of its own.
+
+**Structure is checkable before it is drawn.** `snapshotSpine` builds a
+`borrowing-capacity` spine from the payload, and `validateSnapshotSpine`
+reports a section with no title, a non-positive budget, a slot the archetype
+does not permit, or a total outside its [4, 12] band. `renderBorrowingCapacityDocument`
+throws on a bad spine rather than emitting a document — there is no fallback
+renderer on this path, so an error whose message names the problem beats a PDF
+a client opens.
+
+**F3 and F4 stop being possible rather than being fixed.** They were both
+consequences of drawing at hard-coded millimetre offsets. A table declares its
+columns and the engine measures them; a test asserts the output contains no
+`position:`, `left:` or `top:`.
+
+**F5 likewise.** The body markup names no colour — asserted, with the one
+permitted `style` attribute being the cover's background image.
+
+**F6 is answered in words, not colour.** The audit table carries an **Effect**
+column that reads "Reduces" or "Increases", under a sentence saying what that
+means. Colour was carrying that meaning and carrying it wrong; words also
+survive a monochrome printer and a reader who cannot separate red from green,
+which on a document about someone's borrowing is not a small consideration. The
+one table that still colours by sign is the capacity ledger, and a test asserts
+the invariant that makes it safe there: every `adverse` line is also negative.
+
+### What the first real render found
+
+Rendered through WeasyPrint and read page by page — which is the only way most
+of this surfaces.
+
+1. **A direction bug in Phase 1's own module.** The audit page said a credit
+   card *increases* borrowing capacity. `auditDirection` trusted the engine's
+   `impact`, and for a liability row `impact` is the sign of a monthly repayment
+   minus a balance (F13) — meaningless, and negative. Fixed: when the two sides
+   are not comparable there is no movement to read, and the action's polarity
+   answers on its own. A cost is adverse.
+2. **A two-column grid tore across a page break.** `renderGrid12` lays out as a
+   CSS table and a table cell cannot split, so the left column moved whole to
+   the next page while the right column stayed. The assessment terms printed a
+   page after the sidenote they were beside. The grid is gone from that section.
+3. **Two contradictory rules in the shared stylesheet.** `table.data` carried
+   `page-break-inside: avoid` *and* `thead { display: table-header-group }` —
+   the second exists so a table can repeat its head when it breaks, which the
+   first made impossible. Consequences: a table that did not fit moved whole and
+   left a hole, and **a table longer than one page could not break at all**, so
+   a client with thirty liabilities would lose rows off the bottom. Now tables
+   break, rows do not split, and a caption never strands from its first row.
+4. **Figures wrapped mid-number.** `-$10,600 pa` rendered as `-` on one line and
+   `$10,600 pa` on the next: line-breaking treats the minus and the space before
+   a period suffix as break opportunities. Numeric cells are now `nowrap`, and
+   the space before `pa` is non-breaking.
+5. **Five tables where one belonged.** One table per audit category repeated a
+   six-column header five times in half a page, and each block broke
+   independently. One table now, with the category in the item label.
+6. **Repeating a period on every row.** A column of `$124,000 pa`, `$42,000 pa`
+   … states the period forty times. `periodLabel` puts it in the header once and
+   `formatAmount` leaves it off the cells — but only under a header that says
+   it. The audit table mixes annual and monthly rows in one column, so there
+   every value still carries its own.
+7. **KPI labels that wrapped dropped their own values.** A two-line label pushes
+   its value down while its neighbours stay put and the strip's baselines stop
+   lining up. Labels are short now.
+8. **`hem_benchmark` title-cased to "Hem Benchmark"**, which reads as a surname.
+   `titleCase` knows the acronyms.
+9. **The company name printed twice on the cover** — once as the masthead, once
+   as "Prepared by". And the running head's eyebrow said `Section 01`, 150px
+   above a chapter header saying `SECTION 01`.
+10. **"over a 30 years loan term"** in the executive summary.
+
+The full fixture renders **10 pages**, and the spine claims 10 — a test asserts
+the claim, so the two can disagree loudly rather than silently.
+
+### Deliberately not done here
+
+- **No charts.** `charts.pure.ts` has the bullet, waterfall and donut this
+  document wants — the utilisation bar, the capacity ledger, the income mix.
+  They arrive in Phase 5 with the golden diff.
+- **No brand snapshot.** The palette, the company block and the cover art are
+  inputs. Phase 3 resolves them from a snapshot so a re-issued report reproduces
+  the brand it was issued under.
+
+## 8. Phase map
 
 | Phase | Delivers |
 |---|---|
 | **0** ✅ | This document, the golden capture, and the audit above |
 | **1** ✅ | One payload contract — pure, typed, tested; units and direction carried on values (F2, F9, F10, F13, F14) |
-| 2 | The document through the design system — stylesheet, primitives, spine (F3, F4, F5, F6) |
+| **2** ✅ | The document through the design system — structure, primitives, spine (F3, F4, F5, F6) |
 | 3 | Driven from a brand snapshot; the cover stops being a raster (F1, F7) |
 | 4 | The render path — route, auth, storage, signing; brand typefaces (F8). **F12 is decided here**: the audit trail and the explanation are computed on every assessment and discarded, so the render path has to either persist them or recompute them |
 | 5 | Charts, golden diff against this capture, and deletion of D and the superseded packs |

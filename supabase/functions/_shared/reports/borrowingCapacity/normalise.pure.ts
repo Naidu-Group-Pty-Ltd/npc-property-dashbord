@@ -93,9 +93,23 @@ const asStringList = (v: unknown): string[] =>
     })
     .filter((s) => s.length > 0);
 
-/** `credit_card` / `credit-card` → `Credit Card`. */
+/**
+ * Terms that are acronyms, not words.
+ *
+ * Without this, `hem_benchmark` title-cases to "Hem Benchmark" — which is what
+ * the first render of this document printed, and it reads as a surname.
+ */
+const ACRONYMS = new Set(['hem', 'lvr', 'lmi', 'dti', 'payg', 'hecs', 'abn', 'apra', 'p&i', 'io', 'ppr']);
+
+/** `credit_card` → `Credit Card`; `hem_benchmark` → `HEM Benchmark`. */
 export function titleCase(s: string): string {
-  return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+  return s
+    .replace(/[_-]+/g, ' ')
+    .split(' ')
+    .map((word) => (ACRONYMS.has(word.toLowerCase())
+      ? word.toUpperCase()
+      : word.replace(/^\w/, (c) => c.toUpperCase())))
+    .join(' ');
 }
 
 // ── Inputs ──────────────────────────────────────────────────────────────────
@@ -589,7 +603,7 @@ function buildNarrative(p: {
     `Based on the financial information provided, ${p.clientName} has an estimated maximum `
       + `borrowing capacity of ${formatMeasure(aud(p.capacity))}.`,
     `This assessment was conducted using an assessment rate of ${formatMeasure(percent(p.assessmentRate))} `
-      + `over a ${formatMeasure(years(p.loanTermYears))} loan term, resulting in a monthly surplus of `
+      + `over a ${p.loanTermYears}-year loan term, resulting in a monthly surplus of `
       + `${formatMeasure(audPerMonth(p.surplus))}`
       + (p.dti === null ? '.' : ` and a debt-to-income ratio of ${formatMeasure(ratio(p.dti))}.`),
     `The overall serviceability position is assessed as ${bandWord}.`,

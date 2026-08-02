@@ -153,7 +153,10 @@ export function formatMeasure(m: Measure, emDash = '—'): string {
     case 'aud/month':
     case 'aud/year': {
       const { sign, body } = fixed(m.value, p);
-      const suffix = m.unit === 'aud/month' ? '/mo' : m.unit === 'aud/year' ? ' pa' : '';
+      // The space before `pa` is non-breaking: in a narrow table column a
+      // normal space lets the line break between the figure and its period, so
+      // `$20,000` lands on one line and `pa` on the next.
+      const suffix = m.unit === 'aud/month' ? '/mo' : m.unit === 'aud/year' ? '\u00A0pa' : '';
       return `${sign}$${body}${suffix}`;
     }
     case 'percent': {
@@ -177,6 +180,34 @@ export function formatMeasure(m: Measure, emDash = '—'): string {
       return `${sign}${body}`;
     }
   }
+}
+
+/**
+ * The period a unit carries, as a column header would say it.
+ *
+ * Empty for everything that has no period. Pairs with `formatAmount`: a column
+ * of annual figures should say "per year" once in its header rather than
+ * repeating " pa" down forty rows.
+ */
+export function periodLabel(unit: Unit): string {
+  if (unit === 'aud/month') return 'per month';
+  if (unit === 'aud/year') return 'per year';
+  return '';
+}
+
+/**
+ * Render a measure **without** its period suffix.
+ *
+ * Only for a column whose header already states the period. Anywhere the value
+ * stands alone — a KPI, a sentence, a callout — use `formatMeasure`, because a
+ * bare `$4,820` next to a bare `$186,000` is exactly the ambiguity this module
+ * exists to remove.
+ */
+export function formatAmount(m: Measure, emDash = '—'): string {
+  const period = periodLabel(m.unit);
+  const rendered = formatMeasure(m, emDash);
+  if (!period) return rendered;
+  return rendered.replace(m.unit === 'aud/month' ? '/mo' : '\u00A0pa', '');
 }
 
 /**

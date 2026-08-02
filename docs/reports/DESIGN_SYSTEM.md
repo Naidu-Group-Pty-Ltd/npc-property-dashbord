@@ -353,6 +353,24 @@ numbered findings against the shipping output — is
 [`BORROWING_CAPACITY.md`](./BORROWING_CAPACITY.md). Phases 1–5 of that migration
 cite those findings by number.
 
+#### What the first format's render found in the design system
+
+Two rules in `css.pure.ts` contradicted each other, and neither shows up until
+a format with long tables is actually rendered. `table.data` carried
+`page-break-inside: avoid` alongside `thead { display: table-header-group }` —
+the latter exists precisely so a table can repeat its head across a break, which
+the former made impossible. A table that did not fit at the foot of a page moved
+whole and left a hole; **a table longer than one page could not break at all**,
+so a client with thirty liabilities would lose rows off the bottom of it.
+
+Tables now break, `tr` still never splits, and `caption { break-after: avoid }`
+keeps a caption with its first row. Numeric cells gained `white-space: nowrap`,
+because line-breaking treats the minus sign and the space before a period suffix
+as break opportunities — `-$10,600 pa` was rendering as `-` on one line and the
+figure on the next.
+
+Both are asserted in `reportCss.spec.ts`.
+
 Target B is already in production for Compass via
 `routeReportThroughTemplate.ts` → `render-template-pdf`, with auth, resource-safety
 (`assertSafeRenderResources`), upload and an audit row all solved. Both targets share

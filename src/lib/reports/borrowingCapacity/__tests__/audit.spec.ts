@@ -131,8 +131,8 @@ describe('units', () => {
       impact: 'increase',
       delta: 3_720,
     });
-    expect(formatMeasure(auditMeasures(e).raw)).toBe('$0 pa');
-    expect(formatDelta(auditDelta(e)!)).toBe('+$3,720 pa');
+    expect(formatMeasure(auditMeasures(e).raw)).toBe(`$0\u00A0pa`);
+    expect(formatDelta(auditDelta(e)!)).toBe(`+$3,720\u00A0pa`);
   });
 });
 

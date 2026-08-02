@@ -187,16 +187,27 @@ export function auditDelta(entry: RawAuditEntry): Measure | null {
 /**
  * Whether the entry helped or hurt the client.
  *
- * Derived from `impact` — which the Edge Function computes from the sign of its
- * own delta — combined with the action's polarity. `impact` is used rather than
- * a locally-computed sign because for the liability rows there is no local
- * delta to take a sign from, and `impact` at least records the direction the
- * engine intended.
+ * For an entry whose two sides share a unit, this is `impact` — the direction
+ * the engine recorded — read through the action's polarity.
+ *
+ * For an entry whose sides do **not** share a unit, `impact` is worthless.
+ * `AuditTrailBuilder.add` sets it from the sign of `assessedValue - rawValue`,
+ * and for a liability row that subtraction is a monthly repayment minus a
+ * balance (F13): $240 − $8,000 is negative, so the engine records `decrease`,
+ * so a naive reading concludes that adding a credit card **increases** the
+ * client's capacity. The first real render of this document said exactly that.
+ *
+ * When there is no comparable delta the entry states a level rather than a
+ * movement, and the polarity alone answers the question: a liability's assessed
+ * servicing is a cost, and a cost is adverse.
  */
 export function auditDirection(entry: RawAuditEntry): Direction {
-  if (entry.impact === 'neutral') return 'neutral';
   const polarity = POLARITY[key(entry.category, entry.action)] ?? 0;
   if (polarity === 0) return 'neutral';
+
+  if (auditDelta(entry) === null) return polarity > 0 ? 'favourable' : 'adverse';
+
+  if (entry.impact === 'neutral') return 'neutral';
   const increased = entry.impact === 'increase';
   return (polarity > 0) === increased ? 'favourable' : 'adverse';
 }

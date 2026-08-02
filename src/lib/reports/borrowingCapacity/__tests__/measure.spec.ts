@@ -29,7 +29,7 @@ describe('formatMeasure', () => {
   it.each([
     ['a capacity', aud(785_000), '$785,000'],
     ['a monthly repayment', audPerMonth(2_480), '$2,480/mo'],
-    ['an annual income', audPerYear(186_000), '$186,000 pa'],
+    ['an annual income', audPerYear(186_000), `$186,000\u00A0pa`],
     ['an interest rate', percent(8.65), '8.65%'],
     ['a shading fraction', rate(0.8), '80%'],
     ['a DTI', ratio(5.4), '5.4x'],
@@ -110,7 +110,7 @@ describe('formatMeasure', () => {
 describe('formatDelta', () => {
   it('always signs a change', () => {
     expect(formatDelta(audPerMonth(700))).toBe('+$700/mo');
-    expect(formatDelta(audPerYear(-4_000))).toBe('-$4,000 pa');
+    expect(formatDelta(audPerYear(-4_000))).toBe(`-$4,000\u00A0pa`);
     expect(formatDelta(percent(2.5))).toBe('+2.50%');
   });
 

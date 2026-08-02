@@ -49,7 +49,7 @@ describe('income rows', () => {
   it('keeps a shading rate of zero (F10)', () => {
     const row = toIncomeRow({ component: 'Unbanked cash', grossAmount: 9_000, shadingRate: 0, shadedAmount: 0 })!;
     expect(formatMeasure(row.shading)).toBe('0%');
-    expect(formatMeasure(row.shaded)).toBe('$0 pa');
+    expect(formatMeasure(row.shaded)).toBe(`$0\u00A0pa`);
 
     // And the same value through the `||` chain the shipping code uses:
     const wrong = ({ shadingRate: 0 } as { shadingRate: number }).shadingRate || 1;
@@ -59,21 +59,21 @@ describe('income rows', () => {
   it('reads the shape the engine writes', () => {
     const row = toIncomeRow({ component: 'Rental income', grossAmount: 20_000, shadingRate: 0.8, shadedAmount: 16_000 })!;
     expect(row.label).toBe('Rental income');
-    expect(formatMeasure(row.gross)).toBe('$20,000 pa');
+    expect(formatMeasure(row.gross)).toBe(`$20,000\u00A0pa`);
     expect(formatMeasure(row.shading)).toBe('80%');
-    expect(formatMeasure(row.shaded)).toBe('$16,000 pa');
+    expect(formatMeasure(row.shaded)).toBe(`$16,000\u00A0pa`);
   });
 
   it('reads the older client_income_sources shape too', () => {
     const row = toIncomeRow({ source_name: 'PAYG salary', gross_annual_amount: 124_000, custom_shading_rate: 1 })!;
     expect(row.label).toBe('PAYG salary');
-    expect(formatMeasure(row.gross)).toBe('$124,000 pa');
-    expect(formatMeasure(row.shaded)).toBe('$124,000 pa');
+    expect(formatMeasure(row.gross)).toBe(`$124,000\u00A0pa`);
+    expect(formatMeasure(row.shaded)).toBe(`$124,000\u00A0pa`);
   });
 
   it('derives the shaded amount when only the rate is recorded', () => {
     expect(formatMeasure(toIncomeRow({ component: 'Bonus', grossAmount: 21_200, shadingRate: 0.5 })!.shaded))
-      .toBe('$10,600 pa');
+      .toBe(`$10,600\u00A0pa`);
   });
 
   it('drops a row with no gross amount rather than inventing a zero', () => {
@@ -211,7 +211,7 @@ describe('scenario rows', () => {
 describe('assumptions', () => {
   it('reads both shapes the column has held', () => {
     expect(toAssumptions([{ key: 'hem_benchmark', value: '$4,820' }])).toEqual([
-      { label: 'Hem Benchmark', value: '$4,820' },
+      { label: 'HEM Benchmark', value: '$4,820' },
     ]);
     expect(toAssumptions({ items: [{ key: 'loan_term', value: '30 years' }] })).toEqual([
       { label: 'Loan Term', value: '30 years' },
@@ -236,8 +236,8 @@ describe('the whole snapshot', () => {
    * disagree, one of them is lying about what this assessment says.
    */
   it('agrees with the golden capture on every figure it shares', () => {
-    expect(formatMeasure(s.income.gross)).toBe('$186,000 pa');
-    expect(formatMeasure(s.income.shaded)).toBe('$171,400 pa');
+    expect(formatMeasure(s.income.gross)).toBe(`$186,000\u00A0pa`);
+    expect(formatMeasure(s.income.shaded)).toBe(`$171,400\u00A0pa`);
     expect(formatMeasure(s.expenses.monthlyLiving)).toBe('$4,820/mo');
     expect(formatMeasure(s.expenses.monthlyCommitments)).toBe('$1,310/mo');
     expect(formatMeasure(s.headline.stressTested!)).toBe('$712,000');

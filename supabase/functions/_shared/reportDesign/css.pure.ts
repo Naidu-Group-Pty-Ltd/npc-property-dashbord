@@ -211,12 +211,23 @@ function tableRules(
   const padY = pt(d.cellPadPt);
 
   const shared = `
+  /*
+   * A table may break across pages, and its head repeats when it does — that is
+   * what \`display: table-header-group\` below is for.
+   *
+   * It used to say \`page-break-inside: avoid\` here, which contradicted that
+   * and had two consequences. A table that did not fit at the foot of a page
+   * moved whole and left a hole; and a table longer than one page could not
+   * break at all, so a client with thirty liabilities would lose rows off the
+   * bottom. Found by the first render of a data-heavy format.
+   *
+   * Rows still never split, and a caption never strands from its first row.
+   */
   table.data {
     width: 100%;
     border-collapse: collapse;
     margin: ${pt(d.blockGapPt)} 0;
     font-size: ${pt(type.caption + 1)};
-    page-break-inside: avoid;
   }
   table.data caption {
     caption-side: top;
@@ -257,13 +268,21 @@ function tableRules(
   /* A caption is a separate box from the table it belongs to, and WeasyPrint
      will happily leave it on the previous page while the table moves. The
      wrapper is what actually keeps them together. */
-  .table-block { page-break-inside: avoid; margin: ${pt(d.blockGapPt)} 0; }
+  .table-block { margin: ${pt(d.blockGapPt)} 0; }
   .table-block table.data { margin: 0; }
-  table.data td.num, table.data th.num { text-align: right; }
+  /*
+   * A figure never wraps. Line-breaking treats the minus sign and the space
+   * before a period suffix as break opportunities, so a narrow column renders
+   * "-" on one line and "$10,600 pa" on the next, and the reader has to
+   * reassemble the number. With auto table layout the column widens instead,
+   * which is the right trade in a financial table.
+   */
+  table.data td.num, table.data th.num { text-align: right; white-space: nowrap; }
   table.data td.pos { color: ${palette.positive}; }
   table.data td.neg { color: ${palette.negative}; }
   table.data thead { display: table-header-group; }
-  table.data tr { page-break-inside: avoid; }`;
+  table.data tr { page-break-inside: avoid; }
+  table.data caption { break-after: avoid; }`;
 
   if (options.tableStyle === 'ledger') {
     return `${shared}
