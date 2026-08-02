@@ -83,7 +83,7 @@ export const AGENT_SURFACES = {
   },
   marketQa: {
     id: 'market_qa',
-    label: 'Market Updates Q&A',
+    label: 'Market News Feed Q&A',
     category: 'marketing',
     slots: [{ key: 'market_qa', slotLabel: 'Primary' }],
   },

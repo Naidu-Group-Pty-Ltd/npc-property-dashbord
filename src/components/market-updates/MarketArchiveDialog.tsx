@@ -72,7 +72,7 @@ export function MarketArchiveDialog({ open, onOpenChange, onRestore, onCountChan
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-6xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-6xl">
         <DialogHeader className="shrink-0 space-y-2 border-b border-border/60 px-5 py-4 pr-14 text-left sm:px-6">
-          <DialogTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-primary" aria-hidden />Market Updates Archive</DialogTitle>
+          <DialogTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-primary" aria-hidden />Market News Feed Archive</DialogTitle>
           <p className="max-w-3xl text-sm text-muted-foreground">Archived news remains available for 30 days before automatic deletion. Review or restore an update without leaving this page.</p>
         </DialogHeader>
 
@@ -80,18 +80,18 @@ export function MarketArchiveDialog({ open, onOpenChange, onRestore, onCountChan
           <form className="flex flex-col gap-2 sm:flex-row" onSubmit={event => { event.preventDefault(); applySearch(); }}>
             <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" aria-hidden />
-              <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search archived title, source or summary…" aria-label="Search archived market updates" className="pl-9" />
+              <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Search archived title, source or summary…" aria-label="Search archived market news" className="pl-9" />
             </div>
             <Button type="submit" variant="outline" disabled={loading}>Search</Button>
             <Button type="button" variant="ghost" onClick={clearSearch} disabled={loading || (!search && !appliedSearch)}>Clear</Button>
-            <Button type="button" variant="ghost" size="icon" onClick={() => void load(archive.page)} disabled={loading} aria-label="Refresh archived market updates">
+            <Button type="button" variant="ghost" size="icon" onClick={() => void load(archive.page)} disabled={loading} aria-label="Refresh archived market news">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             </Button>
           </form>
           <p className="mt-2 text-xs text-muted-foreground">{archive.count} archived {archive.count === 1 ? 'update' : 'updates'}{appliedSearch ? ` matching “${appliedSearch}”` : ''}</p>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 pb-8 sm:px-6" tabIndex={0} aria-label="Archived market updates">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 pb-8 sm:px-6" tabIndex={0} aria-label="Archived market news">
           {error && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm"><p className="font-semibold text-destructive">Archive could not be loaded</p><p className="mt-1 text-muted-foreground">{error}</p><Button className="mt-3" size="sm" variant="outline" onClick={() => void load(archive.page)}>Retry</Button></div>}
           {loading && archive.items.length === 0 ? <div className="flex min-h-64 items-center justify-center text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading archived updates…</div>
           : archive.items.length === 0 && !error ? <div className="flex min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center"><Archive className="h-9 w-9 text-muted-foreground" aria-hidden /><p className="mt-3 font-medium">No archived updates</p><p className="mt-1 max-w-lg text-sm text-muted-foreground">Archived news will remain here for 30 days before being automatically deleted.</p></div>

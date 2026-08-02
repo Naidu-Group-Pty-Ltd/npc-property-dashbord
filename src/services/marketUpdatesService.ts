@@ -23,16 +23,16 @@ function operationalError(stage: MarketUpdatesOperationalIssue['stage'], error: 
     : raw.includes('does not exist') || raw.includes('schema cache') || raw.includes('pgrst205') || raw.includes('42p01') ? 'migration_missing'
     : status && status >= 500 ? 'server_error' : 'unknown');
   const messages: Record<string, string> = {
-    network_error: 'The Market Updates service could not be reached.', unauthorised: 'Your sign-in session is missing or expired.',
-    rls_denied: 'Your account is not authorised to access this Market Updates operation.', function_missing: `The ${functionName ?? 'required'} Edge Function is not deployed.`,
-    migration_missing: 'The Market Updates database migration has not been applied in this environment.', server_error: 'The Market Updates service returned an internal error.', unknown: 'Market Updates could not complete this operation.',
-    session_expired:'Your sign-in session has expired.', provider_not_configured:'The assigned Market Updates AI route is not configured.', provider_unauthorised:'The assigned AI provider rejected its credentials.', provider_payment_required:'The assigned AI provider requires billing attention.', provider_rate_limited:'The assigned AI provider is rate limited.', provider_timeout:'The assigned AI provider timed out.', source_fetch_failed:'A configured market source could not be fetched.', source_parse_failed:'A market source response could not be parsed.', source_validation_failed:'A market source response failed validation.', database_insert_failed:'A Market Updates item could not be persisted.', digest_failed:'The Market Updates digest failed.', cron_missing:'Market Updates automation is not configured.', cron_stale:'Market Updates automation is stale.',
+    network_error: 'The Market News Feed service could not be reached.', unauthorised: 'Your sign-in session is missing or expired.',
+    rls_denied: 'Your account is not authorised to access this Market News Feed operation.', function_missing: `The ${functionName ?? 'required'} Edge Function is not deployed.`,
+    migration_missing: 'The Market News Feed database migration has not been applied in this environment.', server_error: 'The Market News Feed service returned an internal error.', unknown: 'Market News Feed could not complete this operation.',
+    session_expired:'Your sign-in session has expired.', provider_not_configured:'The assigned Market News Feed AI route is not configured.', provider_unauthorised:'The assigned AI provider rejected its credentials.', provider_payment_required:'The assigned AI provider requires billing attention.', provider_rate_limited:'The assigned AI provider is rate limited.', provider_timeout:'The assigned AI provider timed out.', source_fetch_failed:'A configured market source could not be fetched.', source_parse_failed:'A market source response could not be parsed.', source_validation_failed:'A market source response failed validation.', database_insert_failed:'A Market News Feed item could not be persisted.', digest_failed:'The Market News Feed digest failed.', cron_missing:'Market News Feed automation is not configured.', cron_stale:'Market News Feed automation is stale.',
   };
   const remediation: Record<string, string> = {
-    network_error: 'Check connectivity and retry.', unauthorised: 'Sign in again, then retry.', rls_denied: 'Ask an administrator to verify your role and Market Updates policies.',
-    function_missing: 'Deploy the Market Updates Edge Functions to the frontend project.', migration_missing: 'Apply the pending Market Updates migrations and seed migration.',
+    network_error: 'Check connectivity and retry.', unauthorised: 'Sign in again, then retry.', rls_denied: 'Ask an administrator to verify your role and Market News Feed policies.',
+    function_missing: 'Deploy the Market News Feed Edge Functions to the frontend project.', migration_missing: 'Apply the pending Market News Feed migrations and seed migration.',
     server_error: 'Review the function log and latest ingestion run, then retry.', unknown: 'Retry; if it persists, review the connected project and function logs.',
-    session_expired:'Sign in again, then retry.', provider_not_configured:'Configure and test the Market Updates agent in Model Hub.', provider_unauthorised:'An administrator must verify the provider credential.', provider_payment_required:'An administrator must review provider billing.', provider_rate_limited:'Wait briefly and retry; the configured fallback may be used.', provider_timeout:'Retry; if this persists, test the fallback chain.', source_fetch_failed:'Open Sources, test the affected source, and retry.', source_parse_failed:'Open Sources and review the adapter result.', source_validation_failed:'Review the source URL and adapter security validation.', database_insert_failed:'Review the ingestion run and database function logs.', digest_failed:'Retry digest generation and review the digest agent route.', cron_missing:'Apply the automation migration and verify scheduled jobs.', cron_stale:'Inspect cron history and the latest automation dispatch.',
+    session_expired:'Sign in again, then retry.', provider_not_configured:'Configure and test the Market News Feed agent in Model Hub.', provider_unauthorised:'An administrator must verify the provider credential.', provider_payment_required:'An administrator must review provider billing.', provider_rate_limited:'Wait briefly and retry; the configured fallback may be used.', provider_timeout:'Retry; if this persists, test the fallback chain.', source_fetch_failed:'Open Sources, test the affected source, and retry.', source_parse_failed:'Open Sources and review the adapter result.', source_validation_failed:'Review the source URL and adapter security validation.', database_insert_failed:'Review the ingestion run and database function logs.', digest_failed:'Retry digest generation and review the digest agent route.', cron_missing:'Apply the automation migration and verify scheduled jobs.', cron_stale:'Inspect cron history and the latest automation dispatch.',
   };
   return new MarketUpdatesOperationalError({ stage:(error?.stage as MarketUpdatesOperationalIssue['stage']) ?? stage, code: code as MarketUpdatesOperationalIssue['code'], message: messages[code] ?? messages.unknown, remediation: remediation[code] ?? remediation.unknown, httpStatus: status, functionName, correlationId:error?.correlationId, retryable:typeof error?.retryable === 'boolean' ? error.retryable : !['rls_denied','provider_unauthorised','provider_payment_required'].includes(code) }, { cause: error });
 }
@@ -68,7 +68,7 @@ const mapDigest = (r: any): MarketDigest24h => ({
 async function invokeMarketRead<T>(body: Record<string, any>, stage: MarketUpdatesOperationalIssue['stage'] = 'database'): Promise<T> {
   const { data, error } = await invokeSecureFunction<T>('market-updates-status', body);
   if (error) throw operationalError(stage, error, 'market-updates-status');
-  if (!data) throw operationalError(stage, new Error('Market Updates read returned no data.'), 'market-updates-status');
+  if (!data) throw operationalError(stage, new Error('Market News Feed read returned no data.'), 'market-updates-status');
   return data;
 }
 
@@ -178,7 +178,7 @@ export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdat
 export async function fetchMarketUpdateArchive(options: { search?:string; page?:number; pageSize?:number; sort?:'archived_desc'|'deletion_asc' } = {}): Promise<MarketUpdateArchivePage> {
   const payload = await invokeMarketRead<{ archive?:MarketUpdateArchivePage }>({ action:'archive', ...options });
   const archive = payload.archive;
-  if (!archive) throw operationalError('database', new Error('Market Updates archive was missing.'), 'market-updates-status');
+  if (!archive) throw operationalError('database', new Error('Market News Feed archive was missing.'), 'market-updates-status');
   return {
     items:safeArray<ArchivedMarketUpdate>(archive.items).map(item => ({ ...item, geography:safeArray(item.geography), days_remaining:Number(item.days_remaining ?? 0) })),
     count:Number(archive.count ?? 0), page:Number(archive.page ?? 1), pageSize:Number(archive.pageSize ?? 20), hasMore:Boolean(archive.hasMore),
@@ -187,7 +187,7 @@ export async function fetchMarketUpdateArchive(options: { search?:string; page?:
 
 export async function fetchMarketSourceHealth(): Promise<MarketSourceHealth> {
   const payload = await invokeMarketRead<{ status?: MarketSourceHealth }>({ action:'status' });
-  if (!payload.status) throw operationalError('database', new Error('Market Updates status was missing.'), 'market-updates-status');
+  if (!payload.status) throw operationalError('database', new Error('Market News Feed status was missing.'), 'market-updates-status');
   return payload.status;
 }
 
@@ -207,12 +207,12 @@ export async function followMarketIngestionRun(runId: string, timeoutMs = 190_00
     if (!payload.run) throw operationalError('database', new Error('Ingestion run was not found.'), 'market-updates-status');
     const run = payload.run;
     if (!['queued', 'running'].includes(run.status)) {
-      if (run.status === 'failed') throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'source_failed', message:run.error_summary || 'The Market Updates ingestion run failed.', remediation:'Open Sources to review source health, then retry.', functionName:'market-updates-ingest', retryable:true });
+      if (run.status === 'failed') throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'source_failed', message:run.error_summary || 'The Market News Feed ingestion run failed.', remediation:'Open Sources to review source health, then retry.', functionName:'market-updates-ingest', retryable:true });
       return { runId:run.id, status:run.status, active:false, sourcesConsidered:run.sources_considered, sourcesProcessed:run.sources_processed, sourcesSucceeded:run.sources_succeeded, sourcesFailed:run.sources_failed, discovered:run.items_discovered, classified:run.items_classified ?? 0, ingested:run.items_discovered, published:run.items_published, candidates:run.items_candidate ?? 0, ignored:run.items_ignored ?? 0, rejected:run.items_rejected ?? 0, persistenceFailed:run.items_failed ?? 0, failed:run.sources_failed, skippedDuplicates:run.items_deduplicated ?? 0, sourceErrors:[], message:`Market ingestion ${run.status}.` };
     }
     await new Promise(resolve => setTimeout(resolve, 2_000));
   }
-  throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'server_error', message:'The active Market Updates ingestion did not finish before the polling timeout.', remediation:'Refresh the view to inspect the latest run before retrying.', functionName:'market-updates-ingest', retryable:true });
+  throw new MarketUpdatesOperationalError({ stage:'ingestion', code:'server_error', message:'The active Market News Feed ingestion did not finish before the polling timeout.', remediation:'Refresh the view to inspect the latest run before retrying.', functionName:'market-updates-ingest', retryable:true });
 }
 
 const FRESH_GUARD='market-updates-ensure-fresh';

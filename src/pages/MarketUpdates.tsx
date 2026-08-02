@@ -129,7 +129,7 @@ export default function MarketUpdates() {
 
   const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
     ? error.issue
-    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
+    : { stage:'database', code:'unknown', message:'Some Market News Feed data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
   const loadUpdates = async () => {
     setLoading(true);
@@ -223,13 +223,13 @@ export default function MarketUpdates() {
     if (loading) return null;
     if (updates.length > 0 && filteredUpdates.length === 0 && hasActiveFilters) return { title:'Published updates hidden by filters', description:'Clear the active filters to restore the complete published feed.', kind:'filters' as const };
     if (updates.length > 0) return null;
-    if (dataIssue && sourceHealth.totalSources === 0) return { title:'Market Updates data is unavailable', description:'Previously loaded content is not available in this session. Retry the authoritative status and feed requests.', kind:'failure' as const };
+    if (dataIssue && sourceHealth.totalSources === 0) return { title:'Market News Feed data is unavailable', description:'Previously loaded content is not available in this session. Retry the authoritative status and feed requests.', kind:'failure' as const };
     if (sourceHealth.totalSources === 0) return { title:'No canonical source registry', description:'Apply the canonical registry migration, then open Sources to verify the approved feeds.', kind:'registry' as const };
     if (sourceHealth.enabledSources === 0) return { title:'Sources are configured but none are enabled', description:'Open Sources and enable at least one approved canonical source.', kind:'disabled' as const };
     if (sourceHealth.activeRun) return { title:'Ingestion is running', description:'The active run is discovering and classifying source-backed items. Progress is shown above.', kind:'running' as const };
     if ((sourceHealth.candidates ?? 0) > 0) return { title:'Items are awaiting review', description:`${sourceHealth.candidates} candidate item(s) were discovered but did not meet automatic publication criteria.`, kind:'candidates' as const };
     if (!sourceHealth.latestRun) return { title:'Sources are enabled and ready for their first run', description:'Sync the latest news to retrieve, classify and publish eligible source-backed updates.', kind:'never-run' as const };
-    if ((sourceHealth.latestRun.items_discovered ?? 0) > 0 && (sourceHealth.latestRun.items_classified ?? 0) < sourceHealth.latestRun.items_discovered) return { title:'Discovered items are awaiting AI classification', description:'Review the latest run and test the configured Market Updates classifier route.', kind:'classification' as const };
+    if ((sourceHealth.latestRun.items_discovered ?? 0) > 0 && (sourceHealth.latestRun.items_classified ?? 0) < sourceHealth.latestRun.items_discovered) return { title:'Discovered items are awaiting AI classification', description:'Review the latest run and test the configured Market News Feed classifier route.', kind:'classification' as const };
     return { title:'No published updates yet', description:'The latest run completed without an eligible publication. Review candidates, source health and AI readiness.', kind:'no-published' as const };
   }, [loading, updates.length, filteredUpdates.length, hasActiveFilters, dataIssue, sourceHealth]);
 
@@ -390,7 +390,7 @@ export default function MarketUpdates() {
             <CardTitle className="flex items-center gap-2 text-lg">
               <Sparkles className="h-4 w-4 text-primary" />Ask AI
             </CardTitle>
-            <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market updates. Threaded — follow-ups keep prior context.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market news. Threaded — follow-ups keep prior context.</p>
           </div>
           {qaThread.length > 0 && (
             <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
@@ -403,7 +403,7 @@ export default function MarketUpdates() {
             <div className="flex h-full min-h-[280px] flex-col items-center justify-center text-center">
               <Sparkles className="mb-3 h-8 w-8 text-primary/70" />
               <h3 className="text-base font-semibold">Ask a source-grounded market question</h3>
-              <p className="mt-2 max-w-xl text-sm text-muted-foreground">Answers use published market updates and may refuse if there are no grounded sources available.</p>
+              <p className="mt-2 max-w-xl text-sm text-muted-foreground">Answers use published market news and may refuse if there are no grounded sources available.</p>
               {!updates.length && <p className="mt-2 text-xs text-muted-foreground">No published updates loaded yet — the AI may refuse if it has no grounded sources.</p>}
             </div>
           ) : qaThread.map((turn, i) => (
@@ -483,7 +483,7 @@ export default function MarketUpdates() {
                 <LiveModelBadge agentKey="market_updates_classifier" size="sm" showSlot={false} />
                 <LiveModelBadge agentKey="market_updates_digest" size="sm" showSlot={false} />
               </div>
-              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market Updates</h1>
+              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market News Feed</h1>
               <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
                 Australian property, lending, economic and regulatory intelligence
               </p>
@@ -519,7 +519,7 @@ export default function MarketUpdates() {
           <Card role="alert" className="border-destructive/30 bg-destructive/5">
             <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1">
-                <p className="font-semibold text-destructive">Market Updates requires attention</p>
+                <p className="font-semibold text-destructive">Market News Feed requires attention</p>
                 <p className="text-sm text-foreground">{operationalIssue.message}</p>
                 <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}{operationalIssue.correlationId ? ` · Correlation: ${operationalIssue.correlationId}` : ''} · {operationalIssue.retryable ? 'Retryable' : 'Administrator action required'}</p>
                 <p className="text-sm text-muted-foreground">{operationalIssue.remediation}</p>
@@ -1002,7 +1002,7 @@ export default function MarketUpdates() {
         <Dialog open={candidateReview !== null} onOpenChange={(open) => { if (!open) setCandidateReview(null); }}>
           <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-4xl">
             <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-4 pr-14 text-left"><DialogTitle>Candidate review</DialogTitle><p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">Admin-only items awaiting a publication decision. Reasons and source links remain visible for review.</p></DialogHeader>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 pb-8" tabIndex={0} aria-label="Candidate market updates">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 pb-8" tabIndex={0} aria-label="Candidate market news items">
               {candidateReview?.length ? candidateReview.map(candidate => <article key={candidate.id} className="min-w-0 rounded-lg border border-border/60 p-4"><div className="flex min-w-0 flex-wrap items-center gap-2"><Badge variant="outline">Candidate</Badge><span className="min-w-0 break-words text-xs text-muted-foreground" title={candidate.source_name}>{candidate.source_name}</span></div><h3 className="mt-2 break-words font-semibold leading-snug">{candidate.title}</h3><p className="mt-2 break-words text-sm text-muted-foreground">{candidate.candidate_reason ? titleCase(candidate.candidate_reason) : 'Publication criteria were not met.'}</p><div className="mt-3 flex min-w-0 flex-wrap items-center gap-2"><a href={candidate.source_url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1 break-all text-xs text-primary hover:underline" title={candidate.source_url}><ExternalLink className="h-3 w-3 shrink-0" aria-hidden />Open source</a>{candidate.model_used && <Badge variant="secondary" className="max-w-full whitespace-normal break-words text-left">{candidate.route_used ?? 'route'} · {candidate.model_used}</Badge>}</div></article>) : <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No candidate items require review.</div>}
             </div>
           </DialogContent>

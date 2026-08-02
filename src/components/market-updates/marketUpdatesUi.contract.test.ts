@@ -6,8 +6,23 @@ const page = read('src/pages/MarketUpdates.tsx');
 const archive = read('src/components/market-updates/MarketArchiveDialog.tsx');
 const sources = read('src/components/market-updates/MarketSourcesAdminDialog.tsx');
 const coverage = read('src/components/market-updates/MarketSourceCoveragePanel.tsx');
+const desktopNavigation = read('src/components/layout/DashboardSidebar.tsx');
+const mobileNavigation = read('src/components/layout/MobileSidebar.tsx');
+const commandPalette = read('src/components/layout/GlobalCommandPalette.tsx');
+const breadcrumbs = read('src/components/aurixa/BreadcrumbRail.tsx');
+const routes = read('src/App.tsx');
 
 describe('Market Updates Phase 4 UI contract',()=>{
+  it('uses the Market News Feed display name while retaining the compatible route and permission key',()=>{
+    expect(page).toContain('>Market News Feed</h1>');
+    expect(desktopNavigation).toContain("title: 'Market News Feed', url: '/market-updates'");
+    expect(mobileNavigation).toContain("title: 'Market News Feed', url: '/market-updates'");
+    expect(commandPalette).toContain("title: 'Market News Feed', url: '/market-updates'");
+    expect(breadcrumbs).toContain("'market-updates': 'Market News Feed'");
+    expect(routes).toContain('<Route path="market-updates" element={<MarketUpdates />} />');
+    expect(page).toContain("useModulePermissions('market_updates')");
+  });
+
   it('contains Candidate Review in one viewport-relative flex scroller',()=>{
     expect(page).toContain('max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl');
     expect(page).toContain('min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain');
