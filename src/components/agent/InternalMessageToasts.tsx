@@ -802,7 +802,10 @@ export function InternalMessageToasts() {
         {/* Conversation — native scroll so the newest bubble is never clipped */}
         <div
           ref={scrollRef}
-          className="h-64 overflow-y-auto overscroll-contain px-3 py-2.5"
+          className={cn(
+            'overflow-y-auto overscroll-contain px-3 py-2.5',
+            panelResize.size ? 'min-h-0 flex-1' : 'h-64',
+          )}
           aria-live="polite"
         >
           {active.loading ? (
