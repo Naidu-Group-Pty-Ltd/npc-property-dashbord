@@ -104,6 +104,8 @@ export default function MarketUpdates() {
   const [archivePendingIds,setArchivePendingIds]=useState<Set<string>>(()=>new Set());
   const archivePendingRef=useRef(new Set<string>());
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
+  /** Which update the retained dialog thread belongs to. */
+  const [qaThreadUpdateId, setQaThreadUpdateId] = useState<string | null>(null);
   const [question, setQuestion] = useState('');
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
   const [qaThread, setQaThread] = useState<Array<{ role: 'user' | 'assistant'; content: string; citations?: string[]; limitations?: string[]; follow_up_questions?: string[]; key_figures?: Array<{ label: string; value: string; source_id?: string }>; time_horizon?: string; sentiment?: string; streaming?: boolean; retrieved?: MarketQARetrievedItem[]; question_id?: string | null }>>([]);
