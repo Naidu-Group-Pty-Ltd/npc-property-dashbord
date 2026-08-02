@@ -90,7 +90,7 @@ describe('inlineAsset', () => {
   it('refuses an oversized asset and says by how much', () => {
     const result = inlineAsset(pngOf(MAX_ASSET_BYTES + 1024));
     expect(result).toMatchObject({ ok: false, reason: 'too-large' });
-    if (!result.ok) expect(result.detail).toContain(String(MAX_ASSET_BYTES));
+    expect(String((result as { detail?: string }).detail ?? '')).toContain(String(MAX_ASSET_BYTES));
   });
 
   it('honours a caller-supplied cap', () => {
@@ -107,7 +107,7 @@ describe('inlineAsset', () => {
     for (const value of [null, 'https://x/y.png', 'data:image/svg+xml;base64,QQ==', pngOf(9e6)]) {
       const result = inlineAsset(value);
       expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.detail.length).toBeGreaterThan(10);
+      expect(String((result as { detail?: string }).detail ?? '').length).toBeGreaterThan(10);
     }
   });
 });

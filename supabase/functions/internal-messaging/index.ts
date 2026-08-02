@@ -18,6 +18,7 @@
 //                { broadcast: true, body, title } → new broadcast to all active staff
 //   mark_read    { thread_id }                  → stamp last_read_at
 //   attachment_upload_url   { thread_id, file_name }  → short-lived signed PUT ticket
+//   attachment_upload_direct { thread_id, file_name, file_data } → server-side put
 //   attachment_download_url { thread_id, path }       → short-lived signed GET url
 //
 // DEPLOYMENT NOTE. Attachments live entirely in this function: the browser has
@@ -570,7 +571,11 @@ Deno.serve(async (req) => {
     }
 
     // ── Attachments: signed upload / download URLs ───────────────────
-    if (action === 'attachment_upload_url' || action === 'attachment_download_url') {
+    if (
+      action === 'attachment_upload_url' ||
+      action === 'attachment_upload_direct' ||
+      action === 'attachment_download_url'
+    ) {
       const threadId = String(body.thread_id ?? '');
       if (!threadId) return json({ success: false, error: 'thread_id required' }, 400, corsHeaders);
 
@@ -598,6 +603,45 @@ Deno.serve(async (req) => {
           corsHeaders,
         );
       }
+
+      // Server-side upload fallback: the browser hands us the bytes (base64)
+      // and we put them in the bucket with service credentials. Used when the
+      // signed PUT cannot be reached (proxy, CORS, or an unroutable host), so
+      // an upload never silently disappears.
+      if (action === 'attachment_upload_direct') {
+        const fileName = safeFileName(String(body.file_name ?? 'file'));
+        const raw = String(body.file_data ?? '');
+        if (!raw) return json({ success: false, error: 'file_data required' }, 400, corsHeaders);
+        const base64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw;
+        let bytes: Uint8Array;
+        try {
+          const binary = atob(base64);
+          bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        } catch {
+          return json({ success: false, error: 'file_data_not_base64' }, 400, corsHeaders);
+        }
+        const contentType = String(body.content_type ?? 'application/octet-stream');
+        const path = `${threadId}/${crypto.randomUUID()}-${fileName}`;
+        const { error } = await sb.storage
+          .from(ATTACHMENT_BUCKET)
+          .upload(path, bytes, { contentType, upsert: false });
+        if (error) {
+          return json({ success: false, error: error.message ?? 'upload_failed' }, 500, corsHeaders);
+        }
+        // Screen the stored object with the same server-side rules the signed
+        // path uses, and delete it again if it turns out to be executable.
+        const { safe, blocked } = await screenAttachments(sb, [
+          { name: fileName, path, mime: contentType, size: bytes.byteLength } as Attachment,
+        ]);
+        if (blocked.length || !safe.length) {
+          await sb.storage.from(ATTACHMENT_BUCKET).remove([path]);
+          return json({ success: false, error: 'attachment_blocked' }, 400, corsHeaders);
+        }
+        return json({ success: true, path, file_name: fileName, attachment: safe[0] }, 200, corsHeaders);
+      }
+
+
 
       const path = String(body.path ?? '');
       if (!path.startsWith(`${threadId}/`)) {
