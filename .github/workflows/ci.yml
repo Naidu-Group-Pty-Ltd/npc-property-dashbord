@@ -67,6 +67,14 @@ jobs:
       - name: Unit tests (report design system)
         run: npx vitest run src/lib/reportDesign
 
+      # The edge-function secret allowlist and status map are generated from
+      # src/lib/integrations/registry.ts. Both live under supabase/functions/, which
+      # no test path above reaches, so without this step the generated module can
+      # drift from the registry and nothing catches it until an integration
+      # silently fails to sync.
+      - name: Integration secrets — registry drift
+        run: npm run integrations:secrets:check && npx vitest run src/lib/integrations
+
       - name: Build
         run: npm run build
 
