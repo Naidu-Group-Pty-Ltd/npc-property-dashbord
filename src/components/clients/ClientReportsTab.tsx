@@ -52,6 +52,8 @@ import { toast } from 'sonner';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { cn } from '@/lib/utils';
 import { fetchAndGenerateBorrowingCapacityPDF, generateBorrowingCapacityPDF } from '@/components/borrowing-capacity/BorrowingCapacityPDFReport';
+import { bucketCandidates, isExternalUrl, parseStorageRef } from '@/lib/reports/storageRef';
+import { requestBorrowingCapacitySnapshot } from '@/lib/reports/borrowingCapacity/requestSnapshot';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -106,6 +108,8 @@ export function ClientReportsTab({
   const [activeFilter, setActiveFilter] = useState<ReportType>('all');
   const [sortMode, setSortMode] = useState<SortMode>('newest');
   const [reportToDelete, setReportToDelete] = useState<UnifiedReport | null>(null);
+  /** The report currently being rendered, so its button can show progress. */
+  const [generatingReportId, setGeneratingReportId] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const { user, loading: authLoading } = useAuth();
   const canFetchReports = !authLoading && !!user;
@@ -413,31 +417,40 @@ export function ClientReportsTab({
     }
   };
 
-  // Legacy rows accidentally stored the entire `secureStorageUpload` response
-  // object (JSON-stringified) as `file_path`. Normalize before passing to storage.
-  const normalizeStoragePath = (raw: string): string => {
-    if (!raw) return raw;
-    const trimmed = raw.trim();
-    if (!trimmed.startsWith('{')) return trimmed;
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object') {
-        if (typeof parsed.path === 'string' && parsed.path) return parsed.path;
-        if (typeof parsed.fullPath === 'string' && parsed.fullPath) {
-          return parsed.fullPath.replace(/^client-files\//, '');
-        }
+  /**
+   * Fetch a stored report, whatever shape its reference is in.
+   *
+   * The old version of this only unwrapped a stringified upload result, so a
+   * `pdf_url` holding a full storage URL — which is what 263 investment report
+   * rows hold — was handed to the storage client as if it were an object key.
+   * Both the primary call and its fallback failed, every time, for every one
+   * of those reports. `parseStorageRef` takes the key out of the URL; the
+   * bucket it names is then the only one worth trying.
+   */
+  const fetchStoredReport = async (reference: string): Promise<Blob> => {
+    const ref = parseStorageRef(reference);
+    if (!ref.path) throw new Error('This report has no file attached.');
+    if (isExternalUrl(reference)) {
+      throw new Error('This report is stored outside the app and cannot be downloaded here.');
+    }
+
+    const errors: string[] = [];
+    for (const bucket of bucketCandidates(ref, 'client-files', 'investment-reports')) {
+      try {
+        const result = await secureStorageDownload(bucket, ref.path);
+        if (result.success && result.blob) return result.blob;
+        errors.push(`${bucket}: ${result.error || 'not found'}`);
+      } catch (e: any) {
+        errors.push(`${bucket}: ${e?.message || 'failed'}`);
       }
-    } catch {}
-    return trimmed;
+    }
+    throw new Error(errors.join('; ') || 'Download failed');
   };
 
   const handleDownloadFile = async (fileUrl: string, fileName: string) => {
-    const normalized = normalizeStoragePath(fileUrl);
     try {
-      const result = await secureStorageDownload('client-files', normalized);
-      if (!result.success || !result.blob) throw new Error(result.error || 'Download failed');
-
-      const url = URL.createObjectURL(result.blob);
+      const blob = await fetchStoredReport(fileUrl);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = fileName;
@@ -447,28 +460,14 @@ export function ClientReportsTab({
       URL.revokeObjectURL(url);
       toast.success('Report downloaded');
     } catch (error: any) {
-      console.error('Download error:', error);
-      // Fallback to investment-reports bucket for older files
-      try {
-        const fallbackResult = await secureStorageDownload('investment-reports', normalized);
-        if (!fallbackResult.success || !fallbackResult.blob) throw new Error('Fallback download failed');
-        const url = URL.createObjectURL(fallbackResult.blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        toast.success('Report downloaded');
-      } catch {
-        toast.error('Failed to download report');
-      }
+      // The message names which buckets were tried and why each said no. The
+      // old version reported "Failed to download report" for every cause.
+      console.error('[handleDownloadFile]', error, 'reference=', fileUrl);
+      toast.error(error?.message || 'Failed to download report');
     }
   };
 
   const handleViewFile = async (fileUrl: string) => {
-    const normalized = normalizeStoragePath(fileUrl);
     // Open the tab synchronously inside the click handler so popup blockers
     // (Chrome/Safari) don't kill it after the async storage download.
     const viewer = window.open('', '_blank');
@@ -497,24 +496,97 @@ export function ClientReportsTab({
     };
 
     try {
-      const result = await secureStorageDownload('client-files', normalized);
-      if (result.success && result.blob) {
-        openBlob(result.blob);
-        return;
-      }
-      throw new Error(result.error || 'Failed');
-    } catch (err) {
-      // Fallback: try the investment-reports bucket via the same secure path.
-      try {
-        const fallback = await secureStorageDownload('investment-reports', normalized);
-        if (fallback.success && fallback.blob) {
-          openBlob(fallback.blob);
-          return;
-        }
-      } catch {}
+      openBlob(await fetchStoredReport(fileUrl));
+    } catch (err: any) {
       if (viewer) viewer.close();
-      console.error('[handleViewFile] failed', err, 'raw=', fileUrl, 'normalized=', normalized);
-      toast.error('Failed to open PDF');
+      console.error('[handleViewFile]', err, 'reference=', fileUrl);
+      toast.error(err?.message || 'Failed to open PDF');
+    }
+  };
+
+  /**
+   * Render an investment report that has no stored file, and download it.
+   *
+   * The same edge function the Premium PDF button uses. It now records the
+   * storage path on the row, so the next visit finds the file instead of
+   * rendering it again.
+   */
+  const handleGenerateInvestmentPdf = async (report: UnifiedReport) => {
+    setGeneratingReportId(report.id);
+    try {
+      const { data, error } = await invokeSecureFunction<{ fileUrl: string; fileName: string }>(
+        'render-investment-report-pdf',
+        { reportId: report.id },
+        { timeoutMs: 240_000 },
+      );
+      if (error || !data?.fileUrl) throw new Error(error?.message || 'PDF generation failed');
+
+      const res = await fetch(data.fileUrl);
+      if (!res.ok) throw new Error(`Download failed (${res.status})`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = data.fileName || `${report.name}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      toast.success('Report generated');
+      // The row now carries a path, so the View / Email actions appear on the
+      // next render rather than after a page reload.
+      queryClient.invalidateQueries({ queryKey: ['client-investment-reports', clientId] });
+    } catch (e: any) {
+      console.error('[handleGenerateInvestmentPdf]', e);
+      toast.error(e?.message || 'Could not generate the report');
+    } finally {
+      setGeneratingReportId(null);
+    }
+  };
+
+  /**
+   * The Borrowing Capacity Snapshot.
+   *
+   * Prefers the server-side renderer and falls back to the in-browser
+   * generator when that function is not deployed — see
+   * `requestBorrowingCapacitySnapshot` for why the fallback is as narrow as it
+   * is. The legacy generator is not deprecated: it is the fallback, and it is
+   * still what the other call sites use.
+   */
+  const handleDownloadBorrowingCapacity = async () => {
+    try {
+      const result = await requestBorrowingCapacitySnapshot(
+        { clientId, clientName },
+        async () => {
+          const legacy = await fetchAndGenerateBorrowingCapacityPDF(
+            clientId, clientName, undefined, undefined, { returnBlob: true },
+          );
+          if (!legacy?.blob) return null;
+          return {
+            url: URL.createObjectURL(legacy.blob),
+            fileName: legacy.fileName,
+            bytes: legacy.blob.size,
+          };
+        },
+      );
+
+      const a = document.createElement('a');
+      a.href = result.url;
+      a.download = result.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      if (result.source === 'legacy') URL.revokeObjectURL(result.url);
+
+      if (result.brandGaps.length) {
+        // Said at the moment someone is about to send it, not buried in a log.
+        toast.warning(`Report generated with gaps: ${result.brandGaps.join('; ')}`);
+      } else {
+        toast.success('Borrowing Capacity Snapshot ready');
+      }
+    } catch (e: any) {
+      console.error('[handleDownloadBorrowingCapacity]', e);
+      toast.error(e?.message || 'Could not generate the snapshot');
     }
   };
 
@@ -523,11 +595,8 @@ export function ClientReportsTab({
       toast.error('No file available to attach');
       return;
     }
-    const normalized = normalizeStoragePath(report.fileUrl);
     try {
-      const result = await secureStorageDownload('client-files', normalized);
-      if (!result.success || !result.blob) throw new Error('Download failed');
-      onEmailClick(result.blob, report.name);
+      onEmailClick(await fetchStoredReport(report.fileUrl), report.name);
     } catch {
       toast.error('Failed to prepare report for email');
     }
@@ -832,12 +901,34 @@ export function ClientReportsTab({
                       variant="ghost"
                       size="icon"
                       className="h-10 w-10 sm:h-8 sm:w-8"
-                      onClick={() => fetchAndGenerateBorrowingCapacityPDF(clientId, clientName)}
+                      onClick={() => handleDownloadBorrowingCapacity()}
                       title="Download PDF"
                     >
                       <Download className="h-4 w-4" />
                     </Button>
                   </>
+                )}
+
+                {/*
+                  An investment report whose row has no file reference.
+                  899 of 1,157 completed reports are in this state, because the
+                  renderer returned a signed URL and never recorded where the
+                  file went — so every button below was hidden and the report
+                  looked undownloadable. It is not: it can be rendered again.
+                */}
+                {report.type === 'investment' && !report.fileUrl && report.status === 'completed' && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 sm:h-8 sm:w-8"
+                    disabled={generatingReportId === report.id}
+                    onClick={() => handleGenerateInvestmentPdf(report)}
+                    title="Generate PDF"
+                  >
+                    {generatingReportId === report.id
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <Download className="h-4 w-4" />}
+                  </Button>
                 )}
 
                 {report.fileUrl && (

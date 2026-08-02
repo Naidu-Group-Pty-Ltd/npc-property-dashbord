@@ -5437,11 +5437,18 @@ async function callWeasyPrint(html: string): Promise<Uint8Array> {
   }
 }
 
+/**
+ * Upload, sign, and hand back both.
+ *
+ * The **path** is the durable half and the signed URL is not: the URL expires
+ * in seven days, so a column holding one is a column that is wrong most of the
+ * time. The caller stores the path and re-signs on demand.
+ */
 async function uploadPdfAndSign(
   supabase: ReturnType<typeof createClient>,
   bytes: Uint8Array,
   fileName: string,
-): Promise<string> {
+): Promise<{ path: string; signedUrl: string }> {
   const path = `generated/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${fileName}`;
   const { error: upErr } = await supabase.storage.from(PDF_BUCKET).upload(path, bytes, {
     contentType: "application/pdf",
@@ -5458,7 +5465,38 @@ async function uploadPdfAndSign(
     // URL would not resolve. Consumers re-sign on demand.
     throw new Error(`signed URL failed: ${signErr?.message || "unknown"}`);
   }
-  return signed.signedUrl;
+  return { path, signedUrl: signed.signedUrl };
+}
+
+/**
+ * Record where the file went, so the report can be found again.
+ *
+ * Until now this function returned a signed URL and wrote nothing back, so
+ * `investment_reports.pdf_url` was only ever populated by an older writer that
+ * has since stopped: 899 of 1,157 completed reports carry no file reference at
+ * all, and the Reports tab hides View / Download / Email entirely when there is
+ * none. The report was generated; the row just never remembered it.
+ *
+ * The **path** is stored, not the signed URL — a seven-day URL in a column read
+ * months later is a broken link with extra steps. `parseStorageRef` on the
+ * client reads either shape, so the 263 rows already holding a URL keep working.
+ *
+ * Best-effort: a report that rendered is a success even if the bookkeeping
+ * write fails, and failing the request here would throw away a PDF the caller
+ * already has a link to.
+ */
+async function rememberPdfPath(
+  supabase: ReturnType<typeof createClient>,
+  reportId: string,
+  path: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("investment_reports")
+    .update({ pdf_url: path })
+    .eq("id", reportId);
+  if (error) {
+    console.warn(`[render-investment-report-pdf] could not record pdf_url: ${error.message}`);
+  }
 }
 
 
@@ -5562,7 +5600,9 @@ if (import.meta.main) Deno.serve(async (req) => {
     if (weasyConfigured) {
       try {
         const pdfBytes = await callWeasyPrint(html);
-        fileUrl = await uploadPdfAndSign(supabase, pdfBytes, fileName);
+        const stored = await uploadPdfAndSign(supabase, pdfBytes, fileName);
+        fileUrl = stored.signedUrl;
+        await rememberPdfPath(supabase, reportId, stored.path);
         renderer = "weasyprint";
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
