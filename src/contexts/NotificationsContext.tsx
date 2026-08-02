@@ -157,7 +157,13 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         );
       }
 
-      const data = feed.notifications ?? [];
+      // Internal staff chat has its own surfaces — an unread count on the
+      // minimised chat chip and on the Aurixa team icon. Keeping those rows out
+      // of the global bell stops one busy conversation from burying operational
+      // alerts (141 rows landed in a single day).
+      const data = (feed.notifications ?? []).filter(
+        (n: any) => n?.type !== 'internal_message',
+      );
 
       if (data) {
         const notificationsWithDates = data.map((n: any) => ({
