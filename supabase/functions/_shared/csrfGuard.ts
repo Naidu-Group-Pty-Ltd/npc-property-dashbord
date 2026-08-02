@@ -24,6 +24,7 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const LEGACY_FALLBACK = [
   'https://command-centre.npcservices.com.au',
   'https://npc-property-dashbord.lovable.app',
+  'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
 ];
 
 function parseAllowedOrigins(): string[] {

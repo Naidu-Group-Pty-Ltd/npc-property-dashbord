@@ -215,7 +215,8 @@ export async function uploadInternalAttachment(
   // Prefer a server-mediated upload for files that fit safely inside an Edge
   // request. This avoids browser-to-Storage CORS/proxy failures altogether and
   // uses a dedicated function that cannot be shadowed by stale messaging code.
-  const DIRECT_MAX_BYTES = 12 * 1024 * 1024;
+  // Keep raw bytes below the Edge request ceiling after base64/JSON expansion.
+  const DIRECT_MAX_BYTES = 3 * 1024 * 1024;
   if (!options.signal?.aborted && file.size <= DIRECT_MAX_BYTES) {
     try {
       options.onAttempt?.(1, 1);

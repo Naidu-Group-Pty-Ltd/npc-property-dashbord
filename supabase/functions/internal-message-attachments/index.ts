@@ -3,9 +3,12 @@
 // shadowed by a stale deployment of the main messaging function.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.0';
 import { createCorsHeaders, createUnauthorizedResponse, verifyAuth } from '../_shared/auth.ts';
+import { csrfDenied, enforceCsrf } from '../_shared/csrfGuard.ts';
 
 const BUCKET = 'internal-message-attachments';
-const DIRECT_MAX_BYTES = 12 * 1024 * 1024;
+// JSON/base64 adds about 33% overhead and Edge requests have a platform body
+// ceiling. Stay comfortably below it; larger files use signed streaming.
+const DIRECT_MAX_BYTES = 3 * 1024 * 1024;
 const BLOCKED_EXTENSIONS = new Set([
   'exe', 'dll', 'com', 'scr', 'pif', 'msi', 'msp', 'cpl', 'jar', 'app',
   'bat', 'cmd', 'sh', 'ps1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh', 'hta',
@@ -40,6 +43,8 @@ Deno.serve(async (req) => {
   const cors = createCorsHeaders(req.headers.get('origin'));
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors });
   if (req.method !== 'POST') return response({ success: false, error: 'method_not_allowed' }, 405, cors);
+  const csrf = enforceCsrf(req);
+  if (!csrf.ok) return csrfDenied(cors, csrf);
 
   try {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
