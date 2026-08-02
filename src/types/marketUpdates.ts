@@ -31,6 +31,14 @@ export interface MarketUpdate { id: string; correlation_id?:string|null; source_
 export interface ArchivedMarketUpdate extends MarketUpdate { archived_at:string; archived_by?:string|null; pre_archive_status:MarketUpdateStatus; }
 export interface MarketUpdateArchivePage { items:ArchivedMarketUpdate[]; count:number; page:number; pageSize:number; hasMore:boolean; }
 export type MarketUpdateArchiveOutcome = 'archived' | 'already_archived' | 'restored' | 'already_restored';
+export interface SetMarketNewsArchiveStateInput { updateId:string; archived:boolean; }
+export interface SetMarketNewsArchiveStateResult {
+  id:string;
+  isArchived:boolean;
+  archivedAt:string|null;
+  outcome:MarketUpdateArchiveOutcome;
+  correlationId:string;
+}
 export interface MarketDigest24h { id: string; correlation_id?:string|null; period: MarketDigestPeriod; period_key?:string; generated_at: string; period_start: string; period_end: string; queued_at?:string|null; started_at?:string|null; completed_at?:string|null; executive_summary: string; top_update_ids: string[]; finance_lending_highlights: string[]; property_market_highlights: string[]; construction_supply_highlights: string[]; policy_regulation_highlights: string[]; political_economic_watchpoints: string[]; social_watchpoints: string[]; /** The digest tool schema emits a plain narrative string per segment; older rows used the structured shape. */
   segment_breakdown: Record<string, string | { headline?: string; highlights?: string[]; implications?: string }>; buyer_implications?: string | null; investor_implications?: string | null; broker_adviser_implications?: string | null; client_advisory_implications: string[]; recommended_watchlist_for_tomorrow: string[]; source_urls: string[]; confidence_score?: number | null; status: 'queued' | 'generating' | 'published' | 'draft' | 'failed' | 'no_data'; update_count?:number; candidate_count?:number; last_published_update_at?:string|null; error_code?:string|null; safe_error_message?:string|null; model_used?:string|null; route_used?:string|null; fallback_used?:boolean; ai_latency_ms?:number|null; ai_failure_reason?:string|null; }
 export interface MarketQAKeyFigure { label: string; value: string; source_id?: string }
