@@ -440,6 +440,26 @@ export function InternalMessagesPanel({
     }
   };
 
+  /**
+   * Detach a conversation into the free-floating pop-out chat window so it can
+   * be dragged, resized and used anywhere in the Command Centre while the
+   * Aurixa widget itself is closed. Direct, group and announcement threads are
+   * all supported. The panel falls back to the thread list so the same
+   * conversation is never rendered twice.
+   */
+  const popOut = (thread: InternalThread) => {
+    requestPopOutInternalThread({
+      thread_id: thread.id,
+      kind: thread.kind,
+      title: thread.title || thread.display_title,
+    });
+    setView('threads');
+    setActiveThread(null);
+    setRenaming(false);
+    toast.success('Chat popped out — drag or resize it anywhere');
+  };
+
+
   const commitRename = async () => {
     if (!activeThread) return;
     const title = renameDraft.trim();
