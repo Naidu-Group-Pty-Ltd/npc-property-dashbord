@@ -179,6 +179,18 @@ export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdat
   } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
 }
 
+/** Promotes a held candidate into the published feed. Server-authoritative. */
+export async function publishMarketUpdate(updateId: string): Promise<'published' | 'already_published'> {
+  try {
+    const { data, error } = await invokeSecureFunction<{ outcome?:string }>('market-updates-curate', { action:'publish', updateId });
+    if (error) throw error;
+    const outcome = data?.outcome;
+    if (outcome !== 'published' && outcome !== 'already_published') throw new Error('Publish operation returned an invalid outcome.');
+    return outcome;
+  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+}
+
+
 const mapArchivePage = (archive: any): MarketUpdateArchivePage => ({
   items:safeArray<ArchivedMarketUpdate>(archive?.items).map(item => ({ ...mapUpdate(item), archived_at:item.archived_at, archived_by:item.archived_by, pre_archive_status:item.pre_archive_status })),
   count:Number(archive?.count ?? 0), page:Number(archive?.page ?? 1), pageSize:Number(archive?.pageSize ?? 20), hasMore:Boolean(archive?.hasMore),
