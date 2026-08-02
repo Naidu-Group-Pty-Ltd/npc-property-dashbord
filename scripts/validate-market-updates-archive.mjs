@@ -47,6 +47,8 @@ requireTokens(status, [
   "action === 'archive'", 'pageSize', 'hasMore',
   'ARCHIVE_COLUMNS', "not('archived_at', 'is', null)",
   "is('archived_at', null)", 'archivedUpdates', 'archiveSearch',
+  "action === 'archive_write'", "action === 'restore_write'", "action === 'publish_write'",
+  "'market_updates'", "'can_edit'", 'pre_archive_status:existing.status',
 ], 'status function');
 assert.ok(!status.match(/ARCHIVE_COLUMNS[^\n]*confidence_score/), 'archive response must not expose confidence_score');
 
@@ -62,7 +64,7 @@ const dedupeBlock = ingest.slice(ingest.indexOf('const lookups = ['), ingest.ind
 requireTokens(dedupeBlock, [".eq('dedupe_hash',dedupe_hash)", ".eq('canonical_url',canonicalUrl)", ".eq('external_id',item.externalId)"], 'ingestion dedupe');
 assert.ok(!dedupeBlock.includes('archived_at'), 'ingestion dedupe must include retained archived rows');
 
-requireTokens(service, ['archiveMarketUpdate', 'restoreMarketUpdate', 'fetchMarketUpdateArchive'], 'frontend service contract');
+requireTokens(service, ['archiveMarketUpdate', 'restoreMarketUpdate', 'fetchMarketUpdateArchive', "action:'archive_write'", "action:'restore_write'"], 'frontend service contract');
 requireTokens(archivePage, ['Archived News', 'Clear All', 'Recently archived', 'Newest publication', 'Restore', 'canRestore'], 'archive page');
 requireTokens(routes, ['path="market-updates/archived"', '<MarketArchivePage />'], 'archive route');
 requireTokens(types, ['ArchivedMarketUpdate', 'MarketUpdateArchivePage', 'archivedUpdates'], 'application types');

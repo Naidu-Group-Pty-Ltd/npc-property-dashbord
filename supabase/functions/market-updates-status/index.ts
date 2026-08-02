@@ -18,6 +18,7 @@ const AGENT_KEYS = ['market_updates_classifier', 'market_updates_digest', 'marke
 const PERIODS = new Set(['24h', 'weekly', 'biweekly', 'monthly', 'quarterly', 'annual']);
 const UPDATE_STATUSES = new Set(['published', 'candidate', 'ignored', 'rejected', 'failed']);
 const MAX_REQUEST_BYTES = 16_384;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function archiveSearch(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -62,6 +63,72 @@ Deno.serve(async (req) => {
 
   const action = String(body.action ?? 'status');
   try {
+    // Keep archive mutations on the same proven transport as feed/archive reads.
+    // This avoids depending on separately deployed mutation functions whose
+    // auth/CORS bundles can drift from the status function used by this page.
+    if (action === 'archive_write' || action === 'restore_write' || action === 'publish_write') {
+      const updateId = typeof body.updateId === 'string'
+        ? body.updateId
+        : typeof body.id === 'string' ? body.id : '';
+      if (!UUID.test(updateId)) return json({ error:'Invalid update ID', code:'invalid_request', correlation_id:correlationId, retryable:false }, 400, cors, correlationId);
+
+      const editPermission = await requireModulePermission(
+        sb,
+        { userId:auth.userId, authMethod:auth.authMethod },
+        'market_updates',
+        'can_edit',
+      );
+      if (!editPermission.ok) return json({ error:'Market Updates edit permission required', code:'market_updates_edit_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
+
+      const { data:existing, error:readError } = await sb.from('market_updates')
+        .select('id,status,archived_at,pre_archive_status,visibility')
+        .eq('id', updateId)
+        .maybeSingle();
+      if (readError) return json({ error:'Market update could not be loaded.', code:'market_updates_read_failed', correlation_id:correlationId, retryable:true }, 500, cors, correlationId);
+      if (!existing) return json({ error:'Market update not found.', code:'not_found', correlation_id:correlationId, retryable:false }, 404, cors, correlationId);
+
+      const now = new Date().toISOString();
+      if (action === 'archive_write') {
+        if (existing.archived_at) return json({ outcome:'already_archived', id:updateId, correlation_id:correlationId }, 200, cors, correlationId);
+        const { data:archived, error:writeError } = await sb.from('market_updates')
+          .update({ archived_at:now, archived_by:auth.userId, pre_archive_status:existing.status, decisioned_at:now, updated_at:now })
+          .eq('id', updateId)
+          .is('archived_at', null)
+          .select('id,archived_at')
+          .maybeSingle();
+        if (writeError) return json({ error:'Market update could not be archived.', code:'market_updates_write_failed', correlation_id:correlationId, retryable:true }, 500, cors, correlationId);
+        if (!archived) return json({ error:'Market update changed before archiving completed.', code:'invalid_state_transition', correlation_id:correlationId, retryable:true }, 409, cors, correlationId);
+        return json({ outcome:'archived', id:updateId, archived_at:archived.archived_at, correlation_id:correlationId }, 200, cors, correlationId);
+      }
+
+      if (action === 'restore_write') {
+        if (!existing.archived_at) return json({ outcome:'already_restored', id:updateId, correlation_id:correlationId }, 200, cors, correlationId);
+        const restoredStatus = existing.pre_archive_status ?? existing.status ?? 'published';
+        const { data:restored, error:writeError } = await sb.from('market_updates')
+          .update({ archived_at:null, archived_by:null, pre_archive_status:null, status:restoredStatus, decisioned_at:now, updated_at:now })
+          .eq('id', updateId)
+          .not('archived_at', 'is', null)
+          .select('id')
+          .maybeSingle();
+        if (writeError) return json({ error:'Market update could not be restored.', code:'market_updates_write_failed', correlation_id:correlationId, retryable:true }, 500, cors, correlationId);
+        if (!restored) return json({ error:'Market update changed before restoration completed.', code:'invalid_state_transition', correlation_id:correlationId, retryable:true }, 409, cors, correlationId);
+        return json({ outcome:'restored', id:updateId, correlation_id:correlationId }, 200, cors, correlationId);
+      }
+
+      if (existing.status === 'published' && !existing.archived_at) return json({ outcome:'already_published', id:updateId, correlation_id:correlationId }, 200, cors, correlationId);
+      if (existing.status !== 'candidate' || existing.archived_at || existing.visibility !== 'public') {
+        return json({ error:'Only a live held candidate can be published.', code:'invalid_state_transition', correlation_id:correlationId, retryable:false }, 409, cors, correlationId);
+      }
+      const { data:published, error:writeError } = await sb.from('market_updates')
+        .update({ status:'published', publication_reason:'operator_manual_publication', candidate_reason:null, decisioned_at:now, updated_at:now })
+        .eq('id', updateId).eq('status', 'candidate').eq('visibility', 'public').is('archived_at', null)
+        .select('id')
+        .maybeSingle();
+      if (writeError) return json({ error:'Market update could not be published.', code:'market_updates_write_failed', correlation_id:correlationId, retryable:true }, 500, cors, correlationId);
+      if (!published) return json({ error:'Market update changed before publication completed.', code:'invalid_state_transition', correlation_id:correlationId, retryable:true }, 409, cors, correlationId);
+      return json({ outcome:'published', id:updateId, correlation_id:correlationId }, 200, cors, correlationId);
+    }
+
     if (action === 'archive') {
       const page = Math.max(1, Math.floor(Number(body.page) || 1));
       const pageSize = Math.max(10, Math.min(50, Math.floor(Number(body.pageSize) || 20)));
