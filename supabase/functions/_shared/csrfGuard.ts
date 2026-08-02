@@ -25,6 +25,12 @@ const LEGACY_FALLBACK = [
   'https://command-centre.npcservices.com.au',
   'https://npc-property-dashbord.lovable.app',
   'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
+  // Exact first-party preview/sandbox origins for THIS project (belt-and-braces
+  // alongside lovableFirstPartyHost, which can be missed if a deployed bundle
+  // ships a stale copy of this module).
+  'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com',
+  'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com',
+  'https://7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
 ];
 
 function parseAllowedOrigins(): string[] {
