@@ -525,16 +525,35 @@ export default function MarketUpdates() {
 
         {(runSummary || sourceHealth.activeRun) && (() => { const run = runSummary ?? sourceHealth.activeRun!; return <Card aria-live="polite" className="border-primary/20"><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">Ingestion run <span className="font-mono text-xs">{run.id.slice(0,8)}</span></p><p className="text-xs text-muted-foreground">{titleCase(run.status)} · {run.sources_processed}/{run.sources_considered} sources processed</p></div>{['queued','running'].includes(run.status) && <Loader2 className="h-4 w-4 animate-spin text-primary" />}</div><div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{[['Discovered',run.items_discovered],['Deduplicated',run.items_deduplicated ?? 0],['Classified',run.items_classified ?? 0],['Published',run.items_published],['Candidates',run.items_candidate ?? 0],['Ignored',run.items_ignored ?? 0],['Failed items',run.items_failed ?? 0],['Failed sources',run.sources_failed]].map(([label,value]) => <div key={String(label)} className="rounded border border-border/60 p-2"><span className="block text-muted-foreground">{label}</span><strong>{value}</strong></div>)}</div>{runShadow && <p className="text-xs text-muted-foreground">Shadow validation: {runShadow.sources} source(s) sampled {runShadow.ingested} item(s); {runShadow.wouldPublish} would have been published had they been live. None reached the feed.</p>}</CardContent></Card>; })()}
 
-        {/* KPIs */}
-        <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {kpis.map(k => (
-            <button key={k.label} type="button" onClick={() => { if(k.label==='Breaking Now')setActiveFreshness('breaking'); else if(k.label==='Today')setActiveFreshness('today'); else if(k.label==='High Impact')setFilters(f=>({...f,impact:'high'})); else setActiveSegment(k.label==='Policy'?'policy_regulation':k.label.toLowerCase() as MarketSegment); }} className="rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Card className="h-full border-border/60 hover:border-primary/40"><CardContent className="p-4">
-                <k.icon className={cn('mb-3 h-5 w-5', k.tone)} />
-                <div className="text-2xl font-semibold tabular-nums">{k.value}</div>
-                <p className="mt-1 text-xs text-muted-foreground">{k.label}</p>
-              </CardContent></Card></button>
-          ))}
-        </section>
+        {/* KPIs — presented as one panel so it reads at the same weight and
+            rhythm as the Source coverage panel directly beneath it. */}
+        <Card className="border-border/60">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Feed at a glance</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">Live composition of the published feed. Select a tile to filter the updates below.</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              {kpis.map(k => (
+                <button
+                  key={k.label}
+                  type="button"
+                  onClick={() => { if(k.label==='Breaking Now')setActiveFreshness('breaking'); else if(k.label==='Today')setActiveFreshness('today'); else if(k.label==='High Impact')setFilters(f=>({...f,impact:'high'})); else setActiveSegment(k.label==='Policy'?'policy_regulation':k.label.toLowerCase() as MarketSegment); }}
+                  className="flex items-center gap-3 rounded-xl border border-border/60 bg-background/20 p-2 text-left transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60">
+                    <k.icon className={cn('h-4 w-4', k.tone)} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-lg font-semibold leading-none tabular-nums text-foreground">{k.value}</p>
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{k.label}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
 
         {/* Where the feed comes from: all canonical sources, split by what the
             pipeline does with each. Collapsed to three tiles until asked to expand. */}
@@ -724,7 +743,7 @@ export default function MarketUpdates() {
                       {held.source_authority && <Badge variant="secondary">{titleCase(held.source_authority)}</Badge>}
                       <span className="text-xs text-muted-foreground">Relevance {held.relevance_score}{typeof held.confidence_score === 'number' ? ` · Confidence ${held.confidence_score}` : ''}</span>
                     </div>
-                    <h3 className="mt-2 break-words font-semibold leading-snug">{held.title}</h3>
+                    <h3 className="mt-2 break-words text-xl font-semibold leading-snug tracking-tight lg:text-2xl">{held.title}</h3>
                     <p className="mt-2 break-words text-sm text-muted-foreground">{held.candidate_reason ? titleCase(held.candidate_reason) : 'Publication criteria were not met.'}</p>
                     {held.ai_summary && <p className="mt-2 break-words text-sm">{held.ai_summary}</p>}
                     <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
@@ -783,7 +802,7 @@ export default function MarketUpdates() {
                       {update.geography.slice(0, 2).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
                     </div>
 
-                    <h3 className="mt-3 text-lg font-semibold leading-snug">
+                    <h3 className="mt-3 text-xl font-semibold leading-snug tracking-tight lg:text-2xl">
                       <a
                         href={update.source_url}
                         target="_blank"
