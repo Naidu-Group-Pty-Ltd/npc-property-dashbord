@@ -5,15 +5,14 @@
  *
  * Behaviour contract:
  *  • One pop-up per thread. New messages cascade inside that same bubble stack.
- *  • Only ONE pop-up is expanded at a time (the newest / highest ranked). Every
- *    other open conversation collapses to a small name-only chip above it — the
- *    older transcript disappears but the person (or "Announcement") stays
- *    visible and one click brings it back to the front.
+ *  • Nothing ever auto-expands. Reloads, sign-ins and new inbound messages all
+ *    surface as minimised name-only chips carrying an unread badge; at most ONE
+ *    conversation is expanded at a time and only after the user clicks a chip.
  *  • Every new message pops: dismissal is recorded per-thread against the
  *    message timestamp, so a later message re-opens that conversation.
  *  • No auto-dismiss — the user closes each pop-up manually.
- *  • Open pop-ups persist in localStorage, so they survive reloads, session
- *    timeouts and re-logins.
+ *  • Open conversations persist in localStorage so they survive reloads,
+ *    session timeouts and re-logins — always restored as minimised chips.
  *  • Replies can be flagged Normal / High / Urgent; pop-ups are ranked with
  *    urgent first, then high, then most recent.
  *
@@ -263,7 +262,7 @@ export function InternalMessageToasts() {
    * Threads the user explicitly minimised. They stay open as side chips (like
    * the Going Live dock) instead of jumping into the Aurixa agent.
    */
-  const [minimised, setMinimised] = useState<Record<string, true>>({});
+  const [minimised, setMinimised] = useState<Record<string, true>>(bootMinimised);
   /**
    * One upload queue serves the expanded card (only one card is expanded at a
    * time). It tracks per-file progress, retries and errors.
@@ -481,9 +480,14 @@ export function InternalMessageToasts() {
     };
   }, [user]);
 
+  /**
+   * A conversation is expanded only while it is the active thread AND not
+   * minimised. Threads restored on boot are always minimised, so the card can
+   * never reappear on reload or re-login.
+   */
   const active = useMemo(
-    () => threads.find((t) => t.thread_id === activeId) ?? null,
-    [threads, activeId],
+    () => threads.find((t) => t.thread_id === activeId && !minimised[t.thread_id]) ?? null,
+    [threads, activeId, minimised],
   );
 
   // Pin the transcript to the newest message (or the typing bubble) so nothing
@@ -641,7 +645,7 @@ export function InternalMessageToasts() {
   const chips = useMemo(
     () =>
       threads
-        .filter((t) => t.thread_id !== activeId)
+        .filter((t) => t.thread_id !== active?.thread_id)
         .sort((a, b) => {
           const p = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
           if (p !== 0) return p;
