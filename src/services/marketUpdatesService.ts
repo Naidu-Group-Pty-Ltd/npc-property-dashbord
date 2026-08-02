@@ -292,8 +292,13 @@ export async function answerMarketUpdateQuestion(
   conversation_id?: string | null,
 ): Promise<MarketQAMessage> {
   try {
-    const { data, error } = await db.functions.invoke('market-updates-qa', { body: { question, updateIds, history, segment, conversation_id } });
+    // Staff identity in this app lives in the custom-auth session (HttpOnly
+    // cookie + stored access token), NOT in supabase.auth — `db.functions.invoke`
+    // therefore sent the anon key and the function replied 401
+    // authentication_required. invokeSecureFunction carries the real credentials.
+    const { data, error } = await invokeSecureFunction<any>('market-updates-qa', { question, updateIds, history, segment, conversation_id }, { timeoutMs: 120000 });
     if (error) throw error;
+    if (!data) throw new Error('Market Q&A returned no answer.');
     return {
       id: crypto.randomUUID(),
       correlation_id:data.correlation_id,
@@ -332,20 +337,29 @@ export async function streamMarketUpdateQuestion(
   } = {},
 ): Promise<MarketQAMessage> {
   const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/market-updates-qa`;
-  const session = (await supabase.auth.getSession()).data.session;
-  const token = session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  // Custom-auth carriers: the staff session rides in the HttpOnly
+  // `__Host-session_token` cookie (`credentials: 'include'`) and the stored
+  // access token. supabase.auth has no session in this app, so relying on it
+  // sent the public anon key and the function answered 401.
+  let token: string | null = null;
+  try { token = sessionStorage.getItem('supabase_access_token') || localStorage.getItem('supabase_access_token'); } catch { /* storage may be blocked */ }
+  if (!token) {
+    try { token = (await supabase.auth.getSession()).data.session?.access_token ?? null; } catch { /* best effort */ }
+  }
+  const bearer = token || (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string);
   const correlationId=crypto.randomUUID();
   try {
     const res = await fetch(url, {
       method: 'POST',
       signal: opts.signal,
+      credentials: 'include',
       // `correlation_id` travels in the body, not a header: a custom header
       // would need every reachable edge function redeployed with it in
       // `Access-Control-Allow-Headers` before the browser would allow the
       // request at all. See src/lib/secureInvoke.ts for the full rationale.
       headers: {
         'content-type': 'application/json',
-        'authorization': `Bearer ${token}`,
+        'authorization': `Bearer ${bearer}`,
         'apikey': import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string,
       },
       body: JSON.stringify({
