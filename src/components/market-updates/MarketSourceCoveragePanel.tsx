@@ -160,19 +160,20 @@ export function MarketSourceCoveragePanel({ shadowMetrics }: { shadowMetrics?: M
           </p>
         )}
 
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div class="grid gap-3 sm:grid-cols-3">
           {INGEST_MODES.map((mode) => {
             const descriptor = INGEST_MODE_DESCRIPTORS[mode];
             const Icon = MODE_ICON[mode];
             const count = coverage.byMode[mode].length;
             return (
-              <div key={mode} className={cn('rounded-xl border p-3', MODE_ACCENT[mode])}>
-                <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide">
-                  <Icon className="h-3.5 w-3.5" />
-                  {descriptor.label}
-                </p>
-                <p className="mt-1 text-2xl font-semibold tabular-nums text-foreground">{count}</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">{descriptor.description}</p>
+              <div key={mode} className={cn('flex items-center gap-3 rounded-xl border p-2', MODE_ACCENT[mode])}>
+                <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border', MODE_ACCENT[mode])}>
+                  <Icon className="h-4 w-4" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-foreground text-lg font-semibold tabular-nums leading-none">{count}</p>
+                  <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{descriptor.label}</p>
+                </div>
               </div>
             );
           })}
