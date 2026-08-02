@@ -119,6 +119,8 @@
     "test:solicitor-phase15-migration": "node scripts/solicitor-portal/phase-15-migration-check.mjs",
     "templates:library:seed": "tsx scripts/template-library/buildSeedCatalogue.ts",
     "templates:library:cards": "tsx scripts/template-library/buildDesignSystemCards.ts",
+    "reportkit:tokens": "tsx scripts/reportDesign/buildTokens.ts",
+    "reportkit:tokens:check": "tsx scripts/reportDesign/buildTokens.ts --check",
     "templates:library:verify": "vitest run src/lib/templateLibrary"
   },
   "dependencies": {
