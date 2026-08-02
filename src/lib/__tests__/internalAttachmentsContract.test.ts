@@ -31,7 +31,11 @@ const fn = read('supabase/functions/internal-messaging/index.ts');
 
 describe('client and function agree on the attachment protocol', () => {
   it('uses the same action names on both sides', () => {
-    for (const action of ['attachment_upload_url', 'attachment_download_url']) {
+    for (const action of [
+      'attachment_upload_url',
+      'attachment_upload_direct',
+      'attachment_download_url',
+    ]) {
       expect(client, `client never calls ${action}`).toContain(action);
       expect(fn, `function does not implement ${action}`).toContain(action);
     }
@@ -48,6 +52,7 @@ describe('client and function agree on the attachment protocol', () => {
     // it listed seven actions and omitted these two.
     const header = fn.slice(0, fn.indexOf('import '));
     expect(header).toContain('attachment_upload_url');
+    expect(header).toContain('attachment_upload_direct');
     expect(header).toContain('attachment_download_url');
   });
 });
