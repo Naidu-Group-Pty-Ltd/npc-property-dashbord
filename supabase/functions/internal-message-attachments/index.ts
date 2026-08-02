@@ -258,6 +258,26 @@ Deno.serve(async (req) => {
       return response({ success: true, message: updated, attachments: merged }, 200, cors);
     }
 
+    // Read-side delivery guarantee. `get_thread` on the main messaging function
+    // has repeatedly shipped behind, dropping the `attachments` column from its
+    // projection — which rendered as an empty grey bubble. The client hydrates
+    // from here instead, so attachment visibility never depends on that deploy.
+    if (operation === 'hydrate') {
+      const { data: rows, error: rowsError } = await db
+        .from('internal_messages')
+        .select('id, attachments')
+        .eq('thread_id', threadId)
+        .order('created_at', { ascending: true })
+        .limit(500);
+      if (rowsError) return response({ success: false, error: rowsError.message }, 500, cors);
+      const map: Record<string, unknown[]> = {};
+      for (const row of rows ?? []) {
+        const list = Array.isArray(row.attachments) ? row.attachments : [];
+        if (list.length) map[row.id as string] = list;
+      }
+      return response({ success: true, attachments_by_message: map }, 200, cors);
+    }
+
     if (operation === 'download_ticket') {
 
       const path = String(body.path ?? '');
