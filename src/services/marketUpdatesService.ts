@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
-import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchiveOutcome, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
+import type { ArchivedMarketUpdate, MarketDigest24h, MarketDigestGenerationResult, MarketDigestPeriod, MarketIngestionRun, MarketIngestionSummary, MarketQAMessage, MarketSource, MarketSourceHealth, MarketSourceRegistrySummary, MarketUpdate, MarketUpdateArchivePage, MarketUpdateFilters, MarketUpdatesOperationalIssue, SetMarketNewsArchiveStateInput, SetMarketNewsArchiveStateResult } from '@/types/marketUpdates';
 
 const safeArray = <T>(v: unknown): T[] => Array.isArray(v) ? v as T[] : [];
 const safeObject = <T extends Record<string, any>>(v: unknown): T => (v && typeof v === 'object' && !Array.isArray(v)) ? v as T : {} as T;
@@ -155,34 +155,25 @@ export async function setMarketUpdateHidden(updateId: string, hidden: boolean): 
   } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
 }
 
-export async function archiveMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
-  // Use the same authoritative transport that already loads the visible feed.
-  // The dedicated archive endpoint remains a deployment-safe fallback.
-  const primary = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-status', { action:'archive_write', updateId });
-  if (!primary.error && (primary.data?.outcome === 'archived' || primary.data?.outcome === 'already_archived')) return primary.data.outcome;
-  const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'archive', id:updateId });
-  if (!direct.error && (direct.data?.outcome === 'archived' || direct.data?.outcome === 'already_archived')) return direct.data.outcome;
+export async function setMarketNewsArchiveState(input:SetMarketNewsArchiveStateInput):Promise<SetMarketNewsArchiveStateResult> {
   try {
-    const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'archive', updateId });
-    if (error) throw error;
-    const outcome = data?.outcome;
-    if (outcome !== 'archived' && outcome !== 'already_archived') throw new Error('Archive operation returned an invalid outcome.');
-    return outcome;
-  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+    const {data,error}=await invokeSecureFunction<{ok?:boolean;data?:Omit<SetMarketNewsArchiveStateResult,'correlationId'>;correlationId?:string}>('market-updates-archive',{
+      action:'set_archive_state',
+      updateId:input.updateId,
+      archived:input.archived,
+    });
+    if(error)throw error;
+    if(!data?.ok||!data.data||typeof data.correlationId!=='string')throw new Error('Archive operation returned an invalid response.');
+    return {...data.data,correlationId:data.correlationId};
+  } catch(e) { throw operationalError('function',e,'market-updates-archive'); }
 }
 
-export async function restoreMarketUpdate(updateId: string): Promise<MarketUpdateArchiveOutcome> {
-  const primary = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-status', { action:'restore_write', updateId });
-  if (!primary.error && (primary.data?.outcome === 'restored' || primary.data?.outcome === 'already_restored')) return primary.data.outcome;
-  const direct = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-archive', { action:'restore', id:updateId });
-  if (!direct.error && (direct.data?.outcome === 'restored' || direct.data?.outcome === 'already_restored')) return direct.data.outcome;
-  try {
-    const { data, error } = await invokeSecureFunction<{ outcome?:MarketUpdateArchiveOutcome }>('market-updates-curate', { action:'restore', updateId });
-    if (error) throw error;
-    const outcome = data?.outcome;
-    if (outcome !== 'restored' && outcome !== 'already_restored') throw new Error('Restore operation returned an invalid outcome.');
-    return outcome;
-  } catch (e) { throw operationalError('function', e, 'market-updates-curate'); }
+export async function archiveMarketUpdate(updateId:string):Promise<SetMarketNewsArchiveStateResult> {
+  return setMarketNewsArchiveState({updateId,archived:true});
+}
+
+export async function restoreMarketUpdate(updateId:string):Promise<SetMarketNewsArchiveStateResult> {
+  return setMarketNewsArchiveState({updateId,archived:false});
 }
 
 /** Promotes a held candidate into the published feed. Server-authoritative. */

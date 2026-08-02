@@ -190,7 +190,7 @@ export async function invokeSecureFunction<T = any>(
     clearTimeout(timeoutId);
 
     const data = await response.json().catch(() => ({}));
-    const responseCorrelationId = response.headers.get('x-correlation-id') || data?.correlation_id || correlationId;
+    const responseCorrelationId = response.headers.get('x-correlation-id') || data?.correlationId || data?.correlation_id || correlationId;
     
     if (!response.ok) {
       // Mission Control insufficient_funds → surface global banner.
@@ -250,7 +250,7 @@ export async function invokeSecureFunction<T = any>(
 
       return { 
         data: data as T, 
-        error: { message: String(errorMessage), status: response.status, functionName, code:data?.code, stage:data?.stage, correlationId:responseCorrelationId, retryable:data?.retryable }
+        error: { message: String(errorMessage), status: response.status, functionName, code:data?.error?.code ?? data?.code, stage:data?.stage, correlationId:responseCorrelationId, retryable:data?.retryable }
       };
     }
     

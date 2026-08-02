@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import { Activity, AlertTriangle, Archive, BarChart3, Building2, ExternalLink, Eye, FileText, Globe2, Loader2, Newspaper, Radio, RotateCcw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -101,7 +101,8 @@ export default function MarketUpdates() {
   const [actionIssue, setActionIssue] = useState<MarketUpdatesOperationalIssue | null>(null);
   const operationalIssue = actionIssue ?? dataIssue ?? digestIssue;
   const [selectedUpdate, setSelectedUpdate] = useState<MarketUpdate | null>(null);
-  const [hidingId, setHidingId] = useState<string | null>(null);
+  const [archivePendingIds,setArchivePendingIds]=useState<Set<string>>(()=>new Set());
+  const archivePendingRef=useRef(new Set<string>());
   const [qaUpdate, setQaUpdate] = useState<MarketUpdate | null>(null);
   const [question, setQuestion] = useState('');
   const [qaMessage, setQaMessage] = useState<MarketQAMessage | null>(null);
@@ -267,39 +268,47 @@ export default function MarketUpdates() {
 
 
   const restoreArchived = async (updateId:string,title:string):Promise<boolean> => {
-    if (hidingId) return false;
-    setHidingId(updateId);
+    if(archivePendingRef.current.has(updateId))return false;
+    archivePendingRef.current.add(updateId);
+    setArchivePendingIds(current=>new Set(current).add(updateId));
     try {
       setActionIssue(null);
       await restoreMarketUpdate(updateId);
       setSourceHealth(current => ({ ...current, archivedUpdates:Math.max(0,(current.archivedUpdates ?? 1)-1) }));
       await loadUpdates();
-      toast.success(`Restored “${title}”.`);
+      toast.success('News item restored.',{description:`“${title}” is active in the Market News Feed.`});
       return true;
     } catch (error) {
       setActionIssue(issueFrom(error));
-      toast.error(`“${title}” could not be restored.`,{description:'The active feed was not changed. Retry from the Archive.'});
+      toast.error('Unable to restore this news item. Please try again.',{description:'The active feed was not changed. Retry from Archived News.'});
       return false;
-    } finally { setHidingId(null); }
+    } finally {
+      archivePendingRef.current.delete(updateId);
+      setArchivePendingIds(current=>{const next=new Set(current);next.delete(updateId);return next;});
+    }
   };
 
   const archiveUpdate = async (update: MarketUpdate) => {
-    if (hidingId) return;
-    setHidingId(update.id);
+    if(archivePendingRef.current.has(update.id))return;
+    archivePendingRef.current.add(update.id);
+    setArchivePendingIds(current=>new Set(current).add(update.id));
     setActionIssue(null);
     try {
       await archiveMarketUpdate(update.id);
       setUpdates(current => current.filter(u => u.id !== update.id));
       setSourceHealth(current => ({ ...current, archivedUpdates:(current.archivedUpdates ?? 0)+1 }));
-      toast.success(`Archived “${update.title}”.`,{
+      toast.success('News item archived.',{
         description:'This update remains available in Archived News until it is restored.',
         action:{label:'Undo',onClick:() => { void restoreArchived(update.id,update.title); }},
       });
     } catch (error) {
       setActionIssue(issueFrom(error));
-      toast.error(`“${update.title}” could not be archived.`,{description:'The update remains in the active feed.'});
+      toast.error('Unable to archive this news item. Please try again.',{description:'The update remains in the active feed.'});
     }
-    finally { setHidingId(null); }
+    finally {
+      archivePendingRef.current.delete(update.id);
+      setArchivePendingIds(current=>{const next=new Set(current);next.delete(update.id);return next;});
+    }
   };
 
   const handleAsk = async (overrideQuestion?: string) => {
@@ -873,8 +882,8 @@ export default function MarketUpdates() {
                     <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
                       <Button size="sm" onClick={() => setSelectedUpdate(update)}>Open Analysis</Button>
                       <Button size="sm" variant="outline" onClick={() => { setQaUpdate(update); setQaMessage(null); setQaThread([]); setQuestion(''); setDialogConversationId(crypto.randomUUID()); }}>Ask AI</Button>
-                      {canEditMarketUpdates && <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" disabled={hidingId === update.id} onClick={() => archiveUpdate(update)} aria-label={`Archive ${update.title}`}>
-                        {hidingId === update.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive
+                      {canEditMarketUpdates && <Button type="button" size="sm" variant="ghost" className="text-muted-foreground hover:text-foreground" disabled={archivePendingIds.has(update.id)||!update.id} onClick={(event:MouseEvent<HTMLButtonElement>)=>{event.preventDefault();event.stopPropagation();void archiveUpdate(update);}} aria-label={`Archive ${update.title}`}>
+                        {archivePendingIds.has(update.id) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}{archivePendingIds.has(update.id)?'Archiving…':'Archive'}
                       </Button>}
                       <div className="ml-auto flex flex-wrap items-center gap-1">
                         <a href={update.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/20">
@@ -971,8 +980,8 @@ export default function MarketUpdates() {
                 {selectedUpdate.risk_flags.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-destructive">Risk Flags</h4><div className="mt-1.5 flex flex-wrap gap-1.5">{selectedUpdate.risk_flags.map(r => <Badge key={r} variant="outline" className="border-destructive/30 text-destructive">{r}</Badge>)}</div></div>}
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
                   <a href={selectedUpdate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
-                  {canEditMarketUpdates && <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-foreground" disabled={hidingId === selectedUpdate.id} onClick={() => { const target = selectedUpdate; setSelectedUpdate(null); archiveUpdate(target); }} aria-label={`Archive ${selectedUpdate.title}`}>
-                    {hidingId === selectedUpdate.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive update
+                  {canEditMarketUpdates && <Button type="button" size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-foreground" disabled={archivePendingIds.has(selectedUpdate.id)||!selectedUpdate.id} onClick={(event:MouseEvent<HTMLButtonElement>) => {event.preventDefault();event.stopPropagation();const target=selectedUpdate;setSelectedUpdate(null);void archiveUpdate(target);}} aria-label={`Archive ${selectedUpdate.title}`}>
+                    {archivePendingIds.has(selectedUpdate.id) ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}{archivePendingIds.has(selectedUpdate.id)?'Archiving…':'Archive update'}
                   </Button>}
                 </div>
               </div>

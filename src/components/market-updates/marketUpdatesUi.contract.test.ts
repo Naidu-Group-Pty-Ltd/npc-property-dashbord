@@ -51,6 +51,17 @@ describe('Market Updates Phase 4 UI contract',()=>{
     expect(archive).toContain('Clear All');
     expect(archive).toContain('Recently archived');
     expect(archive).toContain('aria-label={`Restore ${item.title}`}');
+    expect(page).toContain('event.stopPropagation()');
+    expect(page).toContain('archivePendingRef.current.has(update.id)');
+    expect(archive).toContain('restoringRef.current.has(item.id)');
+    expect(archive).toContain('disabled={restoring||!item.id}');
+    expect(archive).not.toContain('disabled={Boolean(restoringId)}');
+  });
+
+  it('keeps archive actions independent of page-data warnings',()=>{
+    expect(page).toContain('const operationalIssue = actionIssue ?? dataIssue ?? digestIssue');
+    expect(page).toContain('disabled={archivePendingIds.has(update.id)||!update.id}');
+    expect(page).not.toMatch(/disabled=\{[^}]*operationalIssue/);
   });
 
   it('does not render numerical intelligence confidence on Market Updates surfaces',()=>{
