@@ -36,6 +36,18 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # The edge-function secret allowlist and status map are generated from
+      # src/lib/integrations/registry.ts. Both live under supabase/functions/, which
+      # none of the test paths below reach, so without this step the generated module
+      # can drift from the registry and nothing catches it until an integration
+      # silently fails to sync.
+      #
+      # Ordered ahead of the report suites deliberately: it has no dependency on them,
+      # runs in ~2s, and a step placed after them would never execute while they are
+      # red — steps stop at the first failure.
+      - name: Integration secrets — registry drift
+        run: npm run integrations:secrets:check && npx vitest run src/lib/integrations
+
       # Golden-render isolation guard, run as its own step so a renderer
       # regression (anything that changes the WeasyPrint/jsPDF output, incl. the
       # reconstruction primitives: vector/table/runs/numeric-weight/@font-face)
@@ -66,14 +78,6 @@ jobs:
       # the print contrast floors for every preset x tenant-brand combination.
       - name: Unit tests (report design system)
         run: npx vitest run src/lib/reportDesign
-
-      # The edge-function secret allowlist and status map are generated from
-      # src/lib/integrations/registry.ts. Both live under supabase/functions/, which
-      # no test path above reaches, so without this step the generated module can
-      # drift from the registry and nothing catches it until an integration
-      # silently fails to sync.
-      - name: Integration secrets — registry drift
-        run: npm run integrations:secrets:check && npx vitest run src/lib/integrations
 
       - name: Build
         run: npm run build
