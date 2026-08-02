@@ -208,16 +208,14 @@ const mapArchivePage = (archive: any): MarketUpdateArchivePage => ({
 });
 
 export async function fetchMarketUpdateArchive(options: { search?:string; page?:number; pageSize?:number; sort?:'archived_desc'|'published_desc'; source?:string; category?:string; geography?:string; impact?:string; audience?:string } = {}): Promise<MarketUpdateArchivePage> {
-  // Primary: the dedicated Archived News function.
+  // Primary: the same authoritative function used by the active feed and
+  // archive mutations. Keep the dedicated function only as rollback coverage.
+  const primary = await invokeSecureFunction<{ archive?:MarketUpdateArchivePage }>('market-updates-status', { action:'archive', ...options });
+  if (!primary.error && primary.data?.archive) return mapArchivePage(primary.data.archive);
+
   const direct = await invokeSecureFunction<{ archive?:MarketUpdateArchivePage }>('market-updates-archive', { action:'list', ...options });
   if (!direct.error && direct.data?.archive) return mapArchivePage(direct.data.archive);
-  if (direct.error) console.warn('[Market Updates] archive function unavailable, falling back', direct.error.message);
-
-  // Fallback: the legacy `archive` action on the status function.
-  const payload = await invokeMarketRead<{ archive?:MarketUpdateArchivePage }>({ action:'archive', ...options });
-  const archive = payload.archive;
-  if (!archive) throw operationalError('database', new Error('Market News Feed archive was missing.'), 'market-updates-status');
-  return mapArchivePage(archive);
+  throw operationalError('database', primary.error ?? direct.error ?? new Error('Market News Feed archive was missing.'), 'market-updates-status');
 }
 
 
