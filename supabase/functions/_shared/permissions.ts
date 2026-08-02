@@ -38,6 +38,11 @@ const TABLE_TO_MODULE_MAP: Record<string, string> = {
   report_qa_conversations: 'report_qa',
   portfolio_reviews: 'portfolio_reports',
   portfolio_analysis_reports: 'portfolio_reports',
+  // A comparison is a derived view of two to five investment reports, so it is
+  // governed by the same module they are. Nothing writes this table through
+  // `checkPermission` today, so mapping it changes no behaviour — it stops the
+  // day something does from falling through to `unmapped_table`.
+  property_comparisons: 'reports',
 
   // Reminders
   client_reminders: 'reminders',

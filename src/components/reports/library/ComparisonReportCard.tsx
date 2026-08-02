@@ -3,6 +3,7 @@ import { Archive, ArchiveRestore, Calendar, Crown, Eye, MapPin, Scale, Trophy, U
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card';
+import { ComparisonDownloadButton } from '@/components/reports/ComparisonDownloadButton';
 import type { ComparisonAnalysis } from './types';
 
 interface ComparisonReportCardProps {
@@ -63,6 +64,21 @@ export function ComparisonReportCard({ comparison, generatorLabel, onView, onTog
           <Eye className="h-3.5 w-3.5" />
           View Analysis
         </Button>
+        {/*
+          The download this card has never had. Every saved comparison shows here,
+          and until now the only way to get a PDF of one was to open the viewer —
+          which fires a metered AI call before it will show you a button. The
+          second item in this menu opens that viewer, and says what it costs.
+        */}
+        <ComparisonDownloadButton
+          appearance="menu"
+          variant="outline"
+          size="sm"
+          className="rounded-xl px-3"
+          comparisonId={comparison.id}
+          onOpenLegacy={() => onView(comparison)}
+          triggerLabel="Download this comparison"
+        />
         <Button
           variant="outline"
           size="sm"

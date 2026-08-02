@@ -71,6 +71,7 @@ export type ReportArchetypeId =
   | 'market-intelligence'
   | 'borrowing-capacity'
   | 'portfolio-performance'
+  | 'property-comparison'
   | 'snapshot';
 
 export interface ReportArchetype {
@@ -175,6 +176,33 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
       + 'matrix, then what the portfolio is, how it performs, and what to do '
       + 'about it. The only format that reads a second, optional table — a '
       + 'portfolio review — to enrich a report it can already write without it.',
+  },
+  'property-comparison': {
+    id: 'property-comparison',
+    documentName: 'Property Comparison Analysis',
+    chapterLabel: 'Section',
+    slots: FULL_SLOTS,
+    // Bounded, unlike the Portfolio's, and that is the whole difference:
+    // `compare-investment-reports` accepts 2 to 5 properties, so this format's
+    // subject cannot run away and its length varies with how much prose a model
+    // wrote rather than with how many things it was given.
+    //
+    // Measured: all 50 stored comparisons rendered through WeasyPrint land
+    // between 16 and 26 pages — the two-property ones at the bottom, the
+    // five-property salvaged ones at the top.
+    //
+    // The floor is the arithmetic minimum rather than the observed one: cover,
+    // contents, the verdict, the scorecard, the basis and the closing page is
+    // eight, and that is what a record truncated before it wrote anything but
+    // its ranking would produce. The ceiling carries headroom over the observed
+    // maximum, because a five-property comparison with every section *and* a
+    // placeholder for each one the record lost is longer than any row has been.
+    pageBudget: [8, 32],
+    contents: true,
+    note: 'A ranked comparison of two to five properties. The only format whose '
+      + 'source is stored model output with no deterministic figures at all, and '
+      + 'the only one that reads part of its content back out of a response that '
+      + 'was cut off while it was being written.',
   },
   snapshot: {
     id: 'snapshot',
