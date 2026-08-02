@@ -81,6 +81,12 @@ jobs:
       - name: Report design system — token drift
         run: npm run reportkit:tokens:check
 
+      # The inlined default report assets must match the files they came from.
+      # Without this, editing public/templates/… silently has no effect on a
+      # render — the module keeps shipping the old bytes.
+      - name: Report asset drift check
+        run: npm run reportkit:assets:check
+
       # Enforces the single-source contract (bridges are re-exports only) and
       # the print contrast floors for every preset x tenant-brand combination.
       - name: Unit tests (report design system)
@@ -178,6 +184,63 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The render container is the only place a report font can come from, and a
+  # missing face substitutes silently — the PDF renders, every test passes, and
+  # only the client sees it. Worse: the image previously named three Debian
+  # packages that do not exist, so `apt-get install -y` failed the layer and the
+  # image could not be built at all. Nothing caught that, because nothing built
+  # it. This does.
+  render-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The build itself is the assertion: the Dockerfile's `fc-cache` layer
+      # exits non-zero if any brand family fails to resolve.
+      - name: Build the WeasyPrint image
+        run: docker build -t weasyprint-service:ci ./weasyprint-service
+
+      # Belt and braces — prove the faces are present in the built image rather
+      # than trusting the build-time check alone.
+      - name: Every declared font family resolves inside the image
+        run: |
+          docker run --rm --entrypoint sh weasyprint-service:ci -c '
+            set -e
+            for family in "Cinzel" "Playfair Display" "Inter" "IBM Plex Mono"; do
+              fc-list : family | grep -qi "$family" || { echo "MISSING: $family"; exit 1; }
+              echo "ok: $family"
+            done
+            fc-match "Playfair Display:italic" | grep -qi playfair
+            echo "ok: Playfair Display italic"
+          '
+
+      # A render is the only thing that proves the engine, the fonts and the
+      # service agree. Assert the bytes are a PDF and that the brand faces are
+      # embedded in it — a substituted face still produces a valid PDF.
+      - name: Render a smoke document and assert the fonts are embedded
+        run: |
+          docker run -d --name wp -p 8080:8080 \
+            -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/healthz >/dev/null && break
+            sleep 2
+          done
+          printf '%s' '{"html":"<html><body><h1 style=\"font-family:Cinzel\">NPC</h1><p style=\"font-family:Inter\">body</p><em style=\"font-family:\u0027Playfair Display\u0027;font-style:italic\">accent</em></body></html>"}' > /tmp/render.json
+          curl -sf -X POST http://localhost:8080/render \
+            -H "Authorization: Bearer ci-token" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/render.json -o /tmp/out.pdf
+          docker logs wp
+          docker rm -f wp
+          head -c 5 /tmp/out.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+          pdffonts /tmp/out.pdf
+          pdffonts /tmp/out.pdf | grep -qi cinzel || { echo "Cinzel not embedded"; exit 1; }
+          pdffonts /tmp/out.pdf | grep -qi playfair || { echo "Playfair not embedded"; exit 1; }
+          pdffonts /tmp/out.pdf | grep -qi inter || { echo "Inter not embedded"; exit 1; }
 
   # Security Remediation Phase 11 (SUPPLY-001): supply-chain visibility.
   # Fails on unaccepted high/critical dependency vulnerabilities and publishes a

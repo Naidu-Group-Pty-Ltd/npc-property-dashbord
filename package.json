@@ -122,7 +122,9 @@
     "reportkit:tokens": "tsx scripts/reportDesign/buildTokens.ts",
     "reportkit:tokens:check": "tsx scripts/reportDesign/buildTokens.ts --check",
     "templates:library:verify": "vitest run src/lib/templateLibrary",
-    "reportkit:specimen": "tsx scripts/reportDesign/buildSpecimen.ts"
+    "reportkit:specimen": "tsx scripts/reportDesign/buildSpecimen.ts",
+    "reportkit:assets": "tsx scripts/reportDesign/buildDefaultAssets.ts",
+    "reportkit:assets:check": "tsx scripts/reportDesign/buildDefaultAssets.ts --check"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

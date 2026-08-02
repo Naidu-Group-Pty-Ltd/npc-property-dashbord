@@ -1,0 +1,1029 @@
+/**
+ * Server-side SVG charts.
+ *
+ * ## Reuse, not rebuild
+ *
+ * `render-investment-report-pdf/index.ts` already carried fifteen chart
+ * renderers and two sparklines, written for Deno and deliberately local so a
+ * render makes no network calls. They are good drawings. This is that work
+ * promoted into the design system rather than replaced — the geometry is
+ * ported faithfully, so a migrated report draws the same shapes.
+ *
+ * Three things changed, and each was a defect:
+ *
+ *  1. **Eleven more hardcoded colours.** `VIZ_GOLD #D4A843`, `VIZ_NAVY
+ *     #0A2540`, `VIZ_GOOD #4F7A33`, `VIZ_RISK #A8401C` and seven others were a
+ *     twelfth palette in this codebase, unreachable from any tenant and
+ *     unaudited for contrast. Every one is now a role. The semantic three are
+ *     Category B, so a tenant cannot make risk green in a chart either.
+ *  2. **Chart text was too small to read in print.** Sizes were set in viewBox
+ *     units, which say nothing about the printed size. A 9.5-unit label in a
+ *     760-unit viewBox printed across a 174mm measure is **6.2pt** — below the
+ *     product's own micro floor. Sizes here are declared in points and
+ *     converted, so what the code says is what the reader gets.
+ *  3. **A fixed gradient id.** Two gauges on one page both defined
+ *     `id="gauge-fill"`; the second reference resolved to the first definition.
+ *     Ids are now derived from the chart's own content.
+ *
+ * Pure: sibling `.pure` imports only, no I/O, no clock, no randomness — so the
+ * same data draws the same bytes, which is what makes a golden PDF meaningful.
+ */
+import { hexToRgb01 } from './color.pure.ts';
+import type { ResolvedReportPalette } from './roles.pure.ts';
+import { PRINT_SCALE } from './tokens.pure.ts';
+import { PRINT_STACK } from './typography.pure.ts';
+import { contentWidthMm, spanWidthMm, type GridSpan } from './page.pure.ts';
+
+// ── Geometry and the size problem ───────────────────────────────────────────
+
+/**
+ * viewBox widths. A chart is drawn once at these units and scaled to the
+ * measure; the units are arbitrary, which is exactly why the type sizes below
+ * cannot be.
+ */
+export const CHART_WIDTH = {
+  /** Full measure — waterfall, marimekko, bars, timeline. */
+  wide: 760,
+  /** Two-thirds — quadrant. */
+  standard: 560,
+  /** Half measure or a sidebar — gauge, wheel, donut, micro-map. */
+  compact: 460,
+  /** A bullet row. */
+  bullet: 520,
+  /** Flows inside a line of text. */
+  inline: 64,
+  /** A margin note. */
+  margin: 180,
+} as const;
+
+/** The measure a chart is printed across, unless the caller says otherwise. */
+export const CHART_TARGET_WIDTH_MM = contentWidthMm('body');
+
+const MM_PER_PT = 25.4 / 72;
+
+/**
+ * Points → viewBox units, for a chart printed across `widthMm`.
+ *
+ * The whole reason this module declares type in points. A number written
+ * directly into `font-size` is a unit of the drawing, not of the page, and the
+ * relationship between the two is the scale factor — which differs per chart.
+ */
+export function ptToUnits(
+  pt: number,
+  viewBoxWidth: number,
+  widthMm: number = CHART_TARGET_WIDTH_MM,
+): number {
+  const unitsPerMm = viewBoxWidth / widthMm;
+  return Math.round(pt * MM_PER_PT * unitsPerMm * 100) / 100;
+}
+
+/** viewBox units → printed points. The inverse, for the contrast/size checks. */
+export function unitsToPt(
+  units: number,
+  viewBoxWidth: number,
+  widthMm: number = CHART_TARGET_WIDTH_MM,
+): number {
+  const unitsPerMm = viewBoxWidth / widthMm;
+  return Math.round((units / unitsPerMm / MM_PER_PT) * 100) / 100;
+}
+
+/**
+ * Chart type sizes, in points.
+ *
+ * Anchored to `PRINT_SCALE` so a chart label and a table caption are the same
+ * size on the page — which is the thing that makes a chart look like part of
+ * the document rather than an import.
+ */
+export const CHART_TEXT_PT = {
+  /** Axis ticks, cell values, neighbour names. The floor. */
+  micro: PRINT_SCALE.micro,
+  /** Series labels, legends, quadrant names. */
+  caption: PRINT_SCALE.caption,
+  /** Row labels and figures inside a chart. */
+  label: PRINT_SCALE.body,
+  /** The number a chart exists to show. */
+  value: PRINT_SCALE.h3,
+  /** Chart titles. */
+  title: PRINT_SCALE.bodyLg,
+  /** A gauge's or donut's centred figure. */
+  hero: PRINT_SCALE.h2,
+} as const;
+
+// ── Palette ─────────────────────────────────────────────────────────────────
+
+/**
+ * The colours a chart may use.
+ *
+ * A projection of `ResolvedReportPalette`, so charts cannot reach a colour the
+ * contrast audit has not seen. `series` is the categorical ramp for donuts and
+ * marimekkos: brand first, then ink and semantics — deliberately *not* six
+ * arbitrary hues, because a printed report is often photocopied and a
+ * hue-encoded chart does not survive that.
+ */
+export interface ChartPalette {
+  ground: string;
+  groundAlt: string;
+  rule: string;
+  ink: string;
+  inkMuted: string;
+  accent: string;
+  accentDeep: string;
+  positive: string;
+  caution: string;
+  negative: string;
+  informative: string;
+  series: readonly string[];
+}
+
+export function chartPalette(p: ResolvedReportPalette): ChartPalette {
+  return {
+    ground: p.paperBright,
+    groundAlt: p.paperAlt,
+    rule: p.rule,
+    ink: p.bodyInk,
+    inkMuted: p.mutedInk,
+    accent: p.accentFill,
+    /** For strokes and small type on the ground — the contrast-corrected brand. */
+    accentDeep: p.accentOnPaper,
+    positive: p.positive,
+    caution: p.caution,
+    negative: p.negative,
+    informative: p.informative,
+    // Ordered by how far apart they read in greyscale, not by hue.
+    series: [p.accentFill, p.bodyInk, p.accentOnPaper, p.mutedInk, p.informative, p.rule],
+  };
+}
+
+/** Everything a renderer needs besides its data. */
+export interface ChartContext {
+  palette: ChartPalette;
+  /** Printed width, for the point conversion. Defaults to the body measure. */
+  widthMm: number;
+}
+
+export function chartContext(
+  palette: ResolvedReportPalette,
+  widthMm: number = CHART_TARGET_WIDTH_MM,
+): ChartContext {
+  return { palette: chartPalette(palette), widthMm };
+}
+
+/**
+ * A context for a chart placed in a grid column.
+ *
+ * The reason this exists: a chart built for the full measure and dropped into a
+ * 38% column prints every label at 38% of the size the code asked for. The
+ * first render of a charted page showed exactly that — a waterfall whose axis
+ * labels were about 4pt. Sizing is the caller's decision, so the caller is
+ * given a way to state it that is shorter than getting it wrong.
+ */
+export function chartContextForSpan(
+  palette: ResolvedReportPalette,
+  span: GridSpan,
+): ChartContext {
+  return { palette: chartPalette(palette), widthMm: spanWidthMm(span) };
+}
+
+// ── Guards ──────────────────────────────────────────────────────────────────
+//
+// Report content is model-generated and, on the shared-report path,
+// attacker-influenced. These caps keep the render cost of a shortcode bounded;
+// they are carried over from the original module unchanged, because the reason
+// for each is still true.
+
+export const MAX_WATERFALL_ITEMS = 50;
+export const MAX_HEATMAP_ROWS = 50;
+export const MAX_HEATMAP_COLS = 50;
+export const MAX_HEATMAP_CELLS = 400;
+export const MAX_WHEEL_SCORES = 24;
+export const MAX_PICTOGRAPH_UNITS = 100;
+
+// ── Primitives ──────────────────────────────────────────────────────────────
+
+/** XML text escape. Attributes here are always double-quoted. */
+export function svgEscape(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** `#RRGGBB` + alpha → `rgba()`, for tints inside a drawing. */
+export function withAlpha(hex: string, alpha: number): string {
+  const [r, g, b] = hexToRgb01(hex);
+  const to255 = (v: number) => Math.round(v * 255);
+  return `rgba(${to255(r)},${to255(g)},${to255(b)},${Math.min(1, Math.max(0, alpha)).toFixed(2)})`;
+}
+
+/**
+ * A document-unique id derived from the chart's own content.
+ *
+ * `<defs>` ids are global to the document. The original module hardcoded
+ * `id="gauge-fill"`, so a second gauge on the same page redefined it and both
+ * references resolved to whichever the parser saw first. Deterministic, because
+ * a random id would make every render of the same data a different file.
+ */
+export function stableId(prefix: string, ...parts: unknown[]): string {
+  const input = parts.map((p) => String(p)).join('|');
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return `${prefix}-${hash.toString(36)}`;
+}
+
+/**
+ * Collapse whitespace inside an SVG.
+ *
+ * Not cosmetic: report bodies pass through `marked`, and an indented line in
+ * the middle of inline SVG is parsed as a code block — which leaks raw markup
+ * into the document.
+ */
+export function minifySvg(svg: string): string {
+  return String(svg)
+    .replace(/>\s+</g, '><')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\n+/g, '')
+    .trim();
+}
+
+export type AxisMode = 'money' | 'percent' | 'plain';
+
+/** Compact axis labels — `$1.2m`, `4.5%`, `12k`. */
+export function formatAxisValue(value: number, mode: AxisMode): string {
+  if (mode === 'percent') return `${value.toFixed(Math.abs(value) < 10 ? 1 : 0)}%`;
+  if (mode === 'money') {
+    const abs = Math.abs(value);
+    if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}m`;
+    if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}k`;
+    return `$${value.toFixed(0)}`;
+  }
+  return Math.abs(value) >= 1000 ? `${(value / 1000).toFixed(0)}k` : value.toFixed(0);
+}
+
+/** Wrap a chart into a print-ready figure. */
+export function chartFigure(svg: string, caption = ''): string {
+  if (!svg) return '';
+  return `<figure class="chart-figure">${minifySvg(svg)}`
+    + `${caption ? `<figcaption>${svgEscape(caption)}</figcaption>` : ''}</figure>`;
+}
+
+/** Shared `<text>` builder — every label in this module routes through it. */
+function text(
+  ctx: ChartContext,
+  vb: number,
+  opts: {
+    x: number; y: number; pt: keyof typeof CHART_TEXT_PT; fill: string;
+    anchor?: 'start' | 'middle' | 'end';
+    stack?: keyof typeof PRINT_STACK;
+    weight?: number; tracking?: number; tabular?: boolean; transform?: string;
+  },
+  content: string,
+): string {
+  const size = ptToUnits(CHART_TEXT_PT[opts.pt], vb, ctx.widthMm);
+  const attrs = [
+    `x="${opts.x.toFixed(1)}"`,
+    `y="${opts.y.toFixed(1)}"`,
+    opts.anchor ? `text-anchor="${opts.anchor}"` : '',
+    `font-family="${PRINT_STACK[opts.stack ?? 'body']}"`,
+    `font-size="${size}"`,
+    opts.weight ? `font-weight="${opts.weight}"` : '',
+    opts.tracking ? `letter-spacing="${ptToUnits(opts.tracking, vb, ctx.widthMm)}"` : '',
+    `fill="${opts.fill}"`,
+    opts.tabular ? 'style="font-variant-numeric:lining-nums tabular-nums;"' : '',
+    opts.transform ? `transform="${opts.transform}"` : '',
+  ].filter(Boolean).join(' ');
+  return `<text ${attrs}>${content}</text>`;
+}
+
+const svgOpen = (w: number, h: number, extra = '') =>
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" `
+  + `preserveAspectRatio="xMidYMid meet"${extra ? ` ${extra}` : ''}>`;
+
+// ── Charts ──────────────────────────────────────────────────────────────────
+
+/** Half-circle gauge — a single score against a maximum. */
+export function renderGauge(
+  ctx: ChartContext,
+  value: number,
+  opts: { max?: number; label?: string; caption?: string } = {},
+): string {
+  const max = opts.max ?? 100;
+  const v = Math.max(0, Math.min(max, Number(value) || 0));
+  const pct = max > 0 ? v / max : 0;
+  const w = CHART_WIDTH.compact, h = 260;
+  const cx = w / 2, cy = 180, r = 130;
+  const polarX = (a: number) => cx + r * Math.cos(a);
+  const polarY = (a: number) => cy + r * Math.sin(a);
+  const endA = Math.PI + Math.PI * pct;
+  // Always 0. The value arc sweeps `pct` of a half circle, so it is never more
+  // than 180 degrees and the large-arc flag is never set. The original set it
+  // whenever `pct > 0.5`, which drew the arc the long way round — visible in a
+  // render as two disconnected segments at the ends of the track.
+  const largeArc = 0;
+  const gradId = stableId('gauge', v, max, opts.label ?? '');
+
+  const trackPath = `M ${polarX(Math.PI).toFixed(1)} ${polarY(Math.PI).toFixed(1)} `
+    + `A ${r} ${r} 0 1 1 ${polarX(2 * Math.PI - 0.0001).toFixed(1)} ${polarY(2 * Math.PI - 0.0001).toFixed(1)}`;
+  const valuePath = pct > 0
+    ? `M ${polarX(Math.PI).toFixed(1)} ${polarY(Math.PI).toFixed(1)} `
+      + `A ${r} ${r} 0 ${largeArc} 1 ${polarX(endA).toFixed(1)} ${polarY(endA).toFixed(1)}`
+    : '';
+
+  const ticks = Array.from({ length: 11 }, (_, i) => {
+    const a = Math.PI + (i / 10) * Math.PI;
+    const x1 = cx + (r - 10) * Math.cos(a), y1 = cy + (r - 10) * Math.sin(a);
+    const x2 = cx + (r + 2) * Math.cos(a), y2 = cy + (r + 2) * Math.sin(a);
+    return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" `
+      + `stroke="${ctx.palette.rule}" stroke-width="${i % 5 === 0 ? 1.4 : 0.6}"/>`;
+  }).join('');
+
+  const band = pct >= 0.8 ? 'Strong' : pct >= 0.65 ? 'Solid' : pct >= 0.5 ? 'Mixed' : 'Cautious';
+  const bandColor = pct >= 0.65 ? ctx.palette.positive
+    : pct >= 0.5 ? ctx.palette.caution : ctx.palette.negative;
+
+  return `${svgOpen(w, h)}
+    <defs>
+      <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="${ctx.palette.accentDeep}"/>
+        <stop offset="1" stop-color="${ctx.palette.accent}"/>
+      </linearGradient>
+    </defs>
+    <path d="${trackPath}" stroke="${ctx.palette.groundAlt}" stroke-width="22" fill="none" stroke-linecap="round"/>
+    ${valuePath ? `<path d="${valuePath}" stroke="url(#${gradId})" stroke-width="22" fill="none" stroke-linecap="round"/>` : ''}
+    <g>${ticks}</g>
+    ${text(ctx, w, { x: cx, y: cy - 6, pt: 'hero', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true }, String(Math.round(v)))}
+    ${text(ctx, w, { x: cx, y: cy + 20, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.6 }, svgEscape(`/${max}  ·  ${band}`.toUpperCase()))}
+    <rect x="${cx - 38}" y="${cy + 30}" width="76" height="3" fill="${bandColor}" rx="1.5"/>
+    ${opts.label ? text(ctx, w, { x: cx, y: 42, pt: 'title', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700 }, svgEscape(opts.label)) : ''}
+    ${opts.caption ? text(ctx, w, { x: cx, y: 62, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 0.9 }, svgEscape(opts.caption.toUpperCase())) : ''}
+  </svg>`;
+}
+
+export interface WaterfallItem { label: string; value: number; total?: boolean }
+
+/** Waterfall — cumulative build-up, positive and negative steps. */
+export function renderWaterfall(
+  ctx: ChartContext,
+  items: WaterfallItem[],
+  opts: { mode?: AxisMode } = {},
+): string {
+  if (!items.length || items.length > MAX_WATERFALL_ITEMS) return '';
+  const mode = opts.mode ?? 'money';
+  const w = CHART_WIDTH.wide, h = 360;
+  const padL = 70, padR = 24, padT = 30, padB = 70;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+
+  let running = 0;
+  const bars = items.map((it) => {
+    const start = it.total ? 0 : running;
+    const end = it.total ? it.value : running + it.value;
+    running = it.total ? it.value : running + it.value;
+    return { ...it, start, end };
+  });
+
+  const allY = bars.flatMap((b) => [b.start, b.end, 0]);
+  const yMin = Math.min(...allY), yMax = Math.max(...allY);
+  const span = (yMax - yMin) || 1;
+  const yOf = (v: number) => padT + plotH - ((v - yMin) / span) * plotH;
+  const groupW = plotW / bars.length;
+  const barW = Math.max(18, Math.min(58, groupW * 0.62));
+
+  const grid = Array.from({ length: 5 }, (_, i) => {
+    const t = i / 4;
+    const y = padT + t * plotH;
+    return `<line x1="${padL}" x2="${w - padR}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}" `
+      + `stroke="${ctx.palette.rule}" stroke-opacity="0.5" stroke-width="0.5"/>`
+      + text(ctx, w, { x: padL - 8, y: y + 3.5, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'end', tabular: true },
+        svgEscape(formatAxisValue(yMax - t * span, mode)));
+  }).join('');
+
+  let connectors = '';
+  const rects = bars.map((b, i) => {
+    const cx = padL + i * groupW + groupW / 2;
+    const x = cx - barW / 2;
+    const yTop = yOf(Math.max(b.start, b.end));
+    const yBot = yOf(Math.min(b.start, b.end));
+    const isUp = b.end >= b.start;
+    const color = b.total ? ctx.palette.ink : isUp ? ctx.palette.positive : ctx.palette.negative;
+    if (i < bars.length - 1) {
+      connectors += `<line x1="${(x + barW).toFixed(1)}" y1="${yOf(b.end).toFixed(1)}" `
+        + `x2="${(padL + (i + 1) * groupW + groupW / 2 - barW / 2).toFixed(1)}" y2="${yOf(bars[i + 1].start).toFixed(1)}" `
+        + `stroke="${ctx.palette.rule}" stroke-dasharray="3 3" stroke-width="0.7"/>`;
+    }
+    return `<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" `
+      + `height="${Math.max(2, yBot - yTop).toFixed(1)}" fill="${color}" fill-opacity="0.92" rx="2"/>`
+      + text(ctx, w, { x: cx, y: yTop - 8, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: 600, tabular: true },
+        svgEscape(formatAxisValue(b.end - b.start, mode)))
+      + text(ctx, w, { x: cx, y: h - padB + 18, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle' },
+        svgEscape(b.label.length > 16 ? `${b.label.slice(0, 14)}…` : b.label));
+  }).join('');
+
+  return `${svgOpen(w, h)}
+    <rect x="0" y="0" width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>
+    <g>${grid}</g>
+    <line x1="${padL}" x2="${w - padR}" y1="${yOf(0).toFixed(1)}" y2="${yOf(0).toFixed(1)}" stroke="${ctx.palette.inkMuted}" stroke-width="0.8"/>
+    ${connectors}${rects}
+  </svg>`;
+}
+
+/** Heatmap — an m×n grid, cells tinted by value. */
+export function renderHeatmap(
+  ctx: ChartContext,
+  grid: number[][],
+  opts: { rowLabels?: string[]; colLabels?: string[]; title?: string } = {},
+): string {
+  if (!grid.length || !grid[0]?.length) return '';
+  const rows = grid.length, cols = grid[0].length;
+  if (
+    rows > MAX_HEATMAP_ROWS || cols > MAX_HEATMAP_COLS
+    || rows * cols > MAX_HEATMAP_CELLS
+    || grid.some((row) => row.length !== cols)
+  ) return '';
+
+  const rowLabels = opts.rowLabels ?? [];
+  const colLabels = opts.colLabels ?? [];
+  const flat = grid.flat();
+  const lo = Math.min(...flat), hi = Math.max(...flat);
+  const span = (hi - lo) || 1;
+
+  // Approximate advance width per character at the label size.
+  const charPx = 5.4;
+  const maxRowLabel = rowLabels.reduce((m, l) => Math.max(m, String(l ?? '').length), 0);
+  const maxColLabel = colLabels.reduce((m, l) => Math.max(m, String(l ?? '').length), 0);
+  const cellText = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(1));
+  const maxCellLen = Math.max(...flat.map((v) => cellText(v).length), 3);
+
+  const padL = Math.max(110, Math.ceil(maxRowLabel * charPx) + 24);
+  const padT = opts.title ? 56 : 36;
+  const padR = 22, padB = 28;
+  const cellW = Math.max(64, Math.ceil(maxColLabel * charPx) + 18, Math.ceil(maxCellLen * charPx) + 22);
+  const cellH = 38;
+  const w = padL + padR + cols * cellW;
+  const h = padT + padB + rows * cellH;
+
+  let cells = '';
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const v = grid[r][c];
+      const x = padL + c * cellW, y = padT + r * cellH;
+      const t = (v - lo) / span;
+      cells += `<rect x="${x}" y="${y}" width="${cellW - 2}" height="${cellH - 2}" rx="1.5" `
+        + `fill="${withAlpha(ctx.palette.accent, 0.08 + t * 0.82)}" stroke="${ctx.palette.ground}" stroke-width="1"/>`
+        + text(ctx, w, { x: x + cellW / 2, y: y + cellH / 2 + 3.5, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: 600, tabular: true },
+          svgEscape(cellText(v)));
+    }
+  }
+
+  const rowL = rowLabels.map((lbl, r) => text(ctx, w,
+    { x: padL - 10, y: padT + r * cellH + cellH / 2 + 3.5, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'end' },
+    svgEscape(lbl))).join('');
+  const colL = colLabels.map((lbl, c) => text(ctx, w,
+    { x: padL + c * cellW + cellW / 2, y: padT - 10, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle' },
+    svgEscape(lbl))).join('');
+  const title = opts.title
+    ? text(ctx, w, { x: padL, y: 22, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+    : '';
+
+  return `${svgOpen(w, h)}<rect width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>`
+    + `${title}${colL}${rowL}${cells}</svg>`;
+}
+
+/** Score wheel — a radar over three or more dimensions. */
+export function renderScoreWheel(
+  ctx: ChartContext,
+  scores: number[],
+  opts: { labels?: string[]; max?: number } = {},
+): string {
+  if (scores.length < 3 || scores.length > MAX_WHEEL_SCORES) return '';
+  const max = opts.max ?? 100;
+  const labels = opts.labels ?? [];
+  const w = CHART_WIDTH.compact, h = 360;
+  const cx = w / 2, cy = h / 2 + 8, R = 130;
+  const n = scores.length;
+  const angle = (i: number) => -Math.PI / 2 + (i / n) * Math.PI * 2;
+  const pt = (i: number, r: number) =>
+    `${(cx + r * Math.cos(angle(i))).toFixed(1)},${(cy + r * Math.sin(angle(i))).toFixed(1)}`;
+
+  const rings = [0.25, 0.5, 0.75, 1].map((t) =>
+    `<polygon points="${Array.from({ length: n }, (_, i) => pt(i, R * t)).join(' ')}" fill="none" `
+    + `stroke="${ctx.palette.rule}" stroke-opacity="${(0.4 + t * 0.2).toFixed(2)}" stroke-width="0.6"/>`).join('');
+  const spokes = Array.from({ length: n }, (_, i) =>
+    `<line x1="${cx}" y1="${cy}" x2="${(cx + R * Math.cos(angle(i))).toFixed(1)}" `
+    + `y2="${(cy + R * Math.sin(angle(i))).toFixed(1)}" stroke="${ctx.palette.rule}" stroke-width="0.5"/>`).join('');
+
+  const clamp01 = (s: number) => Math.max(0, Math.min(1, (Number(s) || 0) / max));
+  const polyPts = scores.map((s, i) => pt(i, R * clamp01(s))).join(' ');
+  const dots = scores.map((s, i) => {
+    const r = R * clamp01(s);
+    return `<circle cx="${(cx + r * Math.cos(angle(i))).toFixed(1)}" cy="${(cy + r * Math.sin(angle(i))).toFixed(1)}" `
+      + `r="3" fill="${ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="1"/>`;
+  }).join('');
+
+  const lbls = (labels.length ? labels : scores.map((_, i) => `D${i + 1}`)).map((lbl, i) => {
+    const a = angle(i);
+    const lx = cx + (R + 22) * Math.cos(a);
+    const ly = cy + (R + 22) * Math.sin(a);
+    const anchor = Math.abs(Math.cos(a)) < 0.2 ? 'middle' : Math.cos(a) > 0 ? 'start' : 'end';
+    return text(ctx, w, { x: lx, y: ly + 3.5, pt: 'micro', fill: ctx.palette.inkMuted, anchor, tracking: 0.3 },
+      svgEscape(lbl.toUpperCase()))
+      + text(ctx, w, { x: lx, y: ly + 16, pt: 'caption', fill: ctx.palette.ink, anchor, stack: 'display', weight: 700, tabular: true },
+        String(Math.round(Number(scores[i]) || 0)));
+  }).join('');
+
+  return `${svgOpen(w, h)}
+    <rect width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>
+    ${rings}${spokes}
+    <polygon points="${polyPts}" fill="${withAlpha(ctx.palette.accent, 0.18)}" stroke="${ctx.palette.accentDeep}" stroke-width="1.6" stroke-linejoin="round"/>
+    ${dots}${lbls}
+  </svg>`;
+}
+
+/** Bullet — a KPI against a target and qualitative bands. */
+export function renderBullet(
+  ctx: ChartContext,
+  opts: { value: number; target?: number; max?: number; ranges?: number[]; label?: string; sub?: string },
+): string {
+  const max = opts.max ?? Math.max(opts.value, opts.target ?? 0, ...(opts.ranges ?? []), 1);
+  const w = CHART_WIDTH.bullet, h = 78;
+  const padL = 150, padR = 14, padT = 26, padB = 14;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const xOf = (v: number) => padL + (Math.max(0, Math.min(max, v)) / max) * plotW;
+
+  const ranges = (opts.ranges?.length ? [...opts.ranges] : [max * 0.4, max * 0.7, max]).sort((a, b) => a - b);
+  const bands = ranges.map((r, i) => {
+    const prev = i === 0 ? 0 : ranges[i - 1];
+    const alpha = 0.18 + (i / Math.max(1, ranges.length - 1)) * 0.42;
+    return `<rect x="${xOf(prev).toFixed(1)}" y="${padT}" width="${(xOf(r) - xOf(prev)).toFixed(1)}" `
+      + `height="${plotH}" fill="${withAlpha(ctx.palette.accent, alpha)}"/>`;
+  }).join('');
+
+  const barH = plotH * 0.42;
+  const barY = padT + (plotH - barH) / 2;
+  return `${svgOpen(w, h)}
+    <rect width="${w}" height="${h}" fill="${ctx.palette.ground}" rx="4"/>${bands}
+    <rect x="${padL}" y="${barY.toFixed(1)}" width="${(xOf(opts.value) - padL).toFixed(1)}" height="${barH.toFixed(1)}" fill="${ctx.palette.ink}" rx="1"/>
+    ${opts.target != null
+      ? `<line x1="${xOf(opts.target).toFixed(1)}" x2="${xOf(opts.target).toFixed(1)}" y1="${padT + 2}" y2="${padT + plotH - 2}" stroke="${ctx.palette.negative}" stroke-width="3"/>`
+      : ''}
+    ${opts.label ? text(ctx, w, { x: padL - 12, y: padT + plotH / 2 - 2, pt: 'caption', fill: ctx.palette.ink, anchor: 'end', stack: 'display', weight: 700 }, svgEscape(opts.label)) : ''}
+    ${opts.sub ? text(ctx, w, { x: padL - 12, y: padT + plotH / 2 + 13, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'end', tracking: 0.4 }, svgEscape(opts.sub.toUpperCase())) : ''}
+  </svg>`;
+}
+
+export interface MarimekkoRow { label: string; weight: number; segments: number[] }
+
+/** Marimekko — variable-width stacked bars: composition and magnitude at once. */
+export function renderMarimekko(
+  ctx: ChartContext,
+  rows: MarimekkoRow[],
+  opts: { segmentLabels?: string[] } = {},
+): string {
+  if (!rows.length) return '';
+  const w = CHART_WIDTH.wide, h = 360;
+  const padL = 90, padR = 20, padT = 32, padB = 50;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const totalWeight = rows.reduce((a, r) => a + (r.weight || 0), 0) || 1;
+  const series = ctx.palette.series;
+
+  let x = padL;
+  const groups = rows.map((row) => {
+    const colW = ((row.weight || 0) / totalWeight) * plotW;
+    const sum = row.segments.reduce((a, b) => a + b, 0) || 1;
+    let y = padT;
+    const segs = row.segments.map((v, i) => {
+      const segH = (v / sum) * plotH;
+      const rect = `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${Math.max(0, colW - 1).toFixed(1)}" `
+        + `height="${segH.toFixed(1)}" fill="${series[i % series.length]}" fill-opacity="0.85"/>`
+        + (segH > 16
+          ? text(ctx, w, { x: x + colW / 2, y: y + segH / 2 + 3.5, pt: 'micro', fill: ctx.palette.ground, anchor: 'middle', weight: 700 },
+            `${Math.round((v / sum) * 100)}%`)
+          : '');
+      y += segH;
+      return rect;
+    }).join('');
+    const label = text(ctx, w, { x: x + colW / 2, y: h - padB + 18, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle' },
+      svgEscape(row.label));
+    x += colW;
+    return segs + label;
+  }).join('');
+
+  const legend = (opts.segmentLabels ?? []).map((lbl, i) => {
+    const lx = padL + i * 110;
+    return `<rect x="${lx}" y="10" width="10" height="10" fill="${series[i % series.length]}"/>`
+      + text(ctx, w, { x: lx + 14, y: 19, pt: 'micro', fill: ctx.palette.inkMuted, tracking: 0.4 }, svgEscape(lbl.toUpperCase()));
+  }).join('');
+
+  return `${svgOpen(w, h)}<rect width="${w}" height="${h}" fill="${ctx.palette.ground}" rx="6"/>${legend}${groups}</svg>`;
+}
+
+/** Micro-map — an abstract locator, not a real map. No tiles, no network. */
+export function renderMicroMap(
+  ctx: ChartContext,
+  opts: { suburb: string; state?: string; postcode?: string; neighbours?: string[] },
+): string {
+  const w = CHART_WIDTH.compact, h = 320;
+  const cx = w / 2, cy = h / 2 + 6;
+  const rings = [120, 84, 50].map((r, i) =>
+    `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${i === 2 ? withAlpha(ctx.palette.accent, 0.18) : 'none'}" `
+    + `stroke="${ctx.palette.rule}" stroke-width="0.7" stroke-dasharray="${i === 0 ? '3 4' : '1 2'}"/>`).join('');
+
+  const compass = [
+    { x: cx, y: cy - 128, a: 'middle' as const, t: 'N' },
+    { x: cx, y: cy + 138, a: 'middle' as const, t: 'S' },
+    { x: cx + 132, y: cy + 4, a: 'start' as const, t: 'E' },
+    { x: cx - 132, y: cy + 4, a: 'end' as const, t: 'W' },
+  ].map((c) => text(ctx, w, { x: c.x, y: c.y, pt: 'micro', fill: ctx.palette.inkMuted, anchor: c.a, tracking: 1.2 }, c.t)).join('');
+
+  const neighbours = (opts.neighbours ?? []).slice(0, 6);
+  const nbDots = neighbours.map((nb, i) => {
+    const a = -Math.PI / 2 + (i / Math.max(1, neighbours.length)) * Math.PI * 2;
+    const nx = cx + 100 * Math.cos(a), ny = cy + 100 * Math.sin(a);
+    const anchor = Math.cos(a) > 0.1 ? 'start' as const : Math.cos(a) < -0.1 ? 'end' as const : 'middle' as const;
+    return `<circle cx="${nx.toFixed(1)}" cy="${ny.toFixed(1)}" r="3" fill="${ctx.palette.inkMuted}"/>`
+      + text(ctx, w, { x: nx + (Math.cos(a) > 0 ? 6 : -6), y: ny + 3.5, pt: 'micro', fill: ctx.palette.inkMuted, anchor }, svgEscape(nb));
+  }).join('');
+
+  const pin = `<path d="M ${cx} ${cy - 18} C ${cx - 14} ${cy - 18} ${cx - 14} ${cy + 2} ${cx} ${cy + 14} `
+    + `C ${cx + 14} ${cy + 2} ${cx + 14} ${cy - 18} ${cx} ${cy - 18} Z" fill="${ctx.palette.accent}" stroke="${ctx.palette.ink}" stroke-width="1.2"/>`
+    + `<circle cx="${cx}" cy="${cy - 8}" r="4.5" fill="${ctx.palette.ground}"/>`;
+
+  const title = text(ctx, w, { x: cx, y: 28, pt: 'title', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700 }, svgEscape(opts.suburb))
+    + text(ctx, w, { x: cx, y: 46, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.5 },
+      svgEscape([opts.state, opts.postcode].filter(Boolean).join(' · ').toUpperCase()));
+
+  return `${svgOpen(w, h)}<rect width="${w}" height="${h}" fill="${ctx.palette.ground}" rx="6"/>`
+    + `${title}${rings}${compass}${nbDots}${pin}</svg>`;
+}
+
+/** Calendar heatmap — a twelve-cell year, or any run of periods. */
+export function renderCalendarHeatmap(
+  ctx: ChartContext,
+  values: number[],
+  opts: { title?: string; periodLabels?: string[] } = {},
+): string {
+  if (!values.length) return '';
+  const months = opts.periodLabels?.length === values.length
+    ? opts.periodLabels
+    : ['J', 'F', 'M', 'A', 'M', 'J', 'J', 'A', 'S', 'O', 'N', 'D'].slice(0, values.length);
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const span = (hi - lo) || 1;
+  const cellW = 44, cellH = 44, gap = 4;
+  const cols = Math.min(12, values.length);
+  const rows = Math.ceil(values.length / cols);
+  const padL = 16, padT = opts.title ? 40 : 18, padR = 16, padB = 22;
+  const w = padL + padR + cols * (cellW + gap) - gap;
+  const h = padT + padB + rows * (cellH + gap) - gap;
+
+  const cells = values.map((v, i) => {
+    const r = Math.floor(i / cols), c = i % cols;
+    const x = padL + c * (cellW + gap), y = padT + r * (cellH + gap);
+    const t = (v - lo) / span;
+    return `<rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" rx="3" `
+      + `fill="${withAlpha(ctx.palette.accent, 0.12 + t * 0.78)}" stroke="${ctx.palette.rule}" stroke-width="0.4"/>`
+      + text(ctx, w, { x: x + cellW / 2, y: y + 16, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 0.4 },
+        svgEscape(months[i] ?? ''))
+      + text(ctx, w, { x: x + cellW / 2, y: y + cellH - 10, pt: 'caption', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true },
+        svgEscape(Number.isInteger(v) ? String(v) : v.toFixed(1)));
+  }).join('');
+
+  const title = opts.title
+    ? text(ctx, w, { x: padL, y: 22, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+    : '';
+  return `${svgOpen(w, h)}<rect width="${w}" height="${h}" fill="${ctx.palette.ground}" rx="6"/>${title}${cells}</svg>`;
+}
+
+export interface BarItem { label: string; value: number; display?: string; tone?: 'positive' | 'caution' | 'negative' | 'accent' }
+
+/** Horizontal comparator bars — label, bar, figure. */
+export function renderBars(
+  ctx: ChartContext,
+  items: BarItem[],
+  opts: { title?: string; max?: number; unit?: string } = {},
+): string {
+  if (!items.length) return '';
+  const w = CHART_WIDTH.wide;
+  const rowH = 28;
+  const padT = opts.title ? 36 : 14;
+  const padB = 14;
+  const labelW = 180, valueW = 76;
+  const barX = labelW + 12;
+  const barW = w - barX - valueW - 16;
+  const h = padT + items.length * rowH + padB;
+  const max = (opts.max ?? Math.max(...items.map((i) => Math.abs(i.value)))) || 1;
+
+  const toneColour = (tone: BarItem['tone'], pct: number) => {
+    if (tone === 'positive') return ctx.palette.positive;
+    if (tone === 'caution') return ctx.palette.caution;
+    if (tone === 'negative') return ctx.palette.negative;
+    if (tone === 'accent') return ctx.palette.accent;
+    // Unspecified: magnitude reads as strength, which is the original behaviour.
+    return pct >= 0.66 ? ctx.palette.positive
+      : pct >= 0.4 ? ctx.palette.accent
+        : pct >= 0.2 ? ctx.palette.caution : ctx.palette.negative;
+  };
+
+  const rows = items.map((it, i) => {
+    const y = padT + i * rowH;
+    const pct = Math.max(0, Math.min(1, Math.abs(it.value) / max));
+    const bw = Math.max(2, pct * barW);
+    const display = it.display
+      ?? `${Number.isInteger(it.value) ? String(it.value) : it.value.toFixed(1)}${opts.unit ?? ''}`;
+    return text(ctx, w, { x: labelW, y: y + 17, pt: 'micro', fill: ctx.palette.ink, anchor: 'end' }, svgEscape(it.label))
+      + `<rect x="${barX}" y="${y + 8}" width="${barW}" height="12" fill="${ctx.palette.groundAlt}" rx="2"/>`
+      + `<rect x="${barX}" y="${y + 8}" width="${bw.toFixed(1)}" height="12" fill="${toneColour(it.tone, pct)}" rx="2"/>`
+      + text(ctx, w, { x: barX + barW + 10, y: y + 17, pt: 'micro', fill: ctx.palette.ink, weight: 700, tabular: true }, svgEscape(display));
+  }).join('');
+
+  const title = opts.title
+    ? text(ctx, w, { x: 0, y: 22, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+      + `<line x1="0" x2="${w}" y1="30" y2="30" stroke="${ctx.palette.rule}" stroke-width="0.6"/>`
+    : '';
+  return `${svgOpen(w, h)}${title}${rows}</svg>`;
+}
+
+export interface QuadrantPoint { x: number; y: number; label: string; highlight?: boolean }
+
+/** 2×2 matrix — risk against return, growth against yield. */
+export function renderQuadrant(
+  ctx: ChartContext,
+  points: QuadrantPoint[],
+  opts: {
+    xLabel?: string; yLabel?: string; xMax?: number; yMax?: number; title?: string;
+    q1?: string; q2?: string; q3?: string; q4?: string;
+  } = {},
+): string {
+  const w = CHART_WIDTH.standard, h = 420;
+  const padT = opts.title ? 50 : 24, padB = 56, padL = 60, padR = 20;
+  const plotW = w - padL - padR, plotH = h - padT - padB;
+  const xMax = opts.xMax ?? Math.max(...points.map((p) => p.x), 10);
+  const yMax = opts.yMax ?? Math.max(...points.map((p) => p.y), 10);
+  const xOf = (v: number) => padL + (v / xMax) * plotW;
+  const yOf = (v: number) => padT + plotH - (v / yMax) * plotH;
+  const midX = padL + plotW / 2, midY = padT + plotH / 2;
+
+  const quadLabels = [
+    { x: midX + plotW / 4, y: padT + 16, t: opts.q1 },
+    { x: midX - plotW / 4, y: padT + 16, t: opts.q2 },
+    { x: midX - plotW / 4, y: padT + plotH - 8, t: opts.q3 },
+    { x: midX + plotW / 4, y: padT + plotH - 8, t: opts.q4 },
+  ].filter((q) => q.t).map((q) => text(ctx, w,
+    { x: q.x, y: q.y, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', weight: 700, tracking: 1.2 },
+    svgEscape(q.t!.toUpperCase()))).join('');
+
+  const dots = points.map((p) => {
+    const cx = xOf(p.x), cy = yOf(p.y);
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${p.highlight ? 7.5 : 5}" `
+      + `fill="${p.highlight ? ctx.palette.accent : ctx.palette.ink}" stroke="${ctx.palette.ground}" stroke-width="2"/>`
+      + text(ctx, w, { x: cx + 10, y: cy + 4, pt: 'micro', fill: ctx.palette.ink, weight: p.highlight ? 700 : 500 }, svgEscape(p.label));
+  }).join('');
+
+  return `${svgOpen(w, h)}
+    ${opts.title ? text(ctx, w, { x: padL, y: 24, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title)) : ''}
+    <rect x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="${ctx.palette.ground}" stroke="${ctx.palette.rule}" stroke-width="0.5"/>
+    <line x1="${midX}" x2="${midX}" y1="${padT}" y2="${padT + plotH}" stroke="${ctx.palette.rule}" stroke-dasharray="3 3" stroke-width="0.6"/>
+    <line x1="${padL}" x2="${padL + plotW}" y1="${midY}" y2="${midY}" stroke="${ctx.palette.rule}" stroke-dasharray="3 3" stroke-width="0.6"/>
+    ${quadLabels}${dots}
+    ${text(ctx, w, { x: padL + plotW / 2, y: h - 18, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.2 }, `${svgEscape((opts.xLabel ?? '').toUpperCase())} →`)}
+    ${text(ctx, w, { x: 20, y: padT + plotH / 2, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1.2, transform: `rotate(-90 20 ${(padT + plotH / 2).toFixed(1)})` }, `${svgEscape((opts.yLabel ?? '').toUpperCase())} →`)}
+  </svg>`;
+}
+
+/** Pictograph — an icon array, first K filled. */
+export function renderPictograph(
+  ctx: ChartContext,
+  filled: number,
+  total: number,
+  opts: { icon?: 'person' | 'house' | 'dollar'; label?: string; sub?: string; cols?: number } = {},
+): string {
+  const t = Math.max(1, Math.min(MAX_PICTOGRAPH_UNITS, Math.floor(total)));
+  const f = Math.max(0, Math.min(t, Math.floor(filled)));
+  const cols = Math.min(opts.cols ?? Math.min(t, 10), 20);
+  const rows = Math.ceil(t / cols);
+  const cell = 38;
+  const padT = opts.label ? 40 : 14;
+  const padB = opts.sub ? 26 : 12;
+  const w = cols * cell + 24;
+  const h = padT + rows * cell + padB;
+
+  const glyphs: Record<string, string> = {
+    person: '<path d="M14 6 a4 4 0 1 1 0 8 a4 4 0 1 1 0 -8 z M6 26 q0 -8 8 -8 q8 0 8 8 z"/>',
+    house: '<path d="M14 4 L25 13 L25 26 L17 26 L17 19 L11 19 L11 26 L3 26 L3 13 z"/>',
+    dollar: '<path d="M14 4 L14 26 M19 9 q-1 -3 -5 -3 q-5 0 -5 4 q0 4 5 4 q5 0 5 4 q0 4 -5 4 q-4 0 -5 -3" '
+      + 'stroke-width="2.5" stroke-linecap="round" fill="none" stroke="currentColor"/>',
+  };
+  const icon = opts.icon ?? 'house';
+  const isStroke = icon === 'dollar';
+  const tiles = Array.from({ length: t }, (_, i) => {
+    const r = Math.floor(i / cols), c = i % cols;
+    const x = 12 + c * cell, y = padT + r * cell;
+    const color = i < f ? ctx.palette.accent : ctx.palette.rule;
+    return `<g transform="translate(${x} ${y})" ${isStroke ? `stroke="${color}"` : `fill="${color}"`} color="${color}">${glyphs[icon]}</g>`;
+  }).join('');
+
+  const label = opts.label
+    ? text(ctx, w, { x: 12, y: 22, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.label))
+      + text(ctx, w, { x: w - 12, y: 22, pt: 'caption', fill: ctx.palette.accentDeep, anchor: 'end', weight: 700, tabular: true }, `${f} / ${t}`)
+    : '';
+  const sub = opts.sub
+    ? text(ctx, w, { x: 12, y: h - 8, pt: 'micro', fill: ctx.palette.inkMuted, tracking: 0.4 }, svgEscape(opts.sub))
+    : '';
+  return `${svgOpen(w, h)}${label}${tiles}${sub}</svg>`;
+}
+
+/** Sparkline that flows inside a line of text. */
+export function renderInlineSpark(ctx: ChartContext, values: number[]): string {
+  if (values.length < 2) return '';
+  const w = CHART_WIDTH.inline, h = 16;
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const span = (hi - lo) || 1;
+  const pts = values.map((v, i) =>
+    `${((i / (values.length - 1)) * (w - 2) + 1).toFixed(1)},${(h - 2 - ((v - lo) / span) * (h - 4)).toFixed(1)}`).join(' ');
+  const last = values[values.length - 1];
+  const lastY = h - 2 - ((last - lo) / span) * (h - 4);
+  const trend = last >= values[0] ? ctx.palette.positive : ctx.palette.negative;
+  return `<svg class="spark-inline" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" `
+    + `width="${w}" height="${h}" style="vertical-align:-2px;margin:0 2px;">`
+    + `<polyline points="${pts}" fill="none" stroke="${trend}" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${(w - 2).toFixed(1)}" cy="${lastY.toFixed(1)}" r="1.6" fill="${trend}"/></svg>`;
+}
+
+/** Sparkline sized for a margin note. */
+export function renderMarginSpark(ctx: ChartContext, values: number[]): string {
+  if (values.length < 2) return '';
+  const w = CHART_WIDTH.margin, h = 38;
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const span = (hi - lo) || 1;
+  const pts = values.map((v, i) =>
+    `${((i / (values.length - 1)) * (w - 4) + 2).toFixed(1)},${(h - 4 - ((v - lo) / span) * (h - 8)).toFixed(1)}`).join(' ');
+  const trend = values[values.length - 1] >= values[0] ? ctx.palette.positive : ctx.palette.negative;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" preserveAspectRatio="none">`
+    + `<polygon points="${pts} ${(w - 2).toFixed(1)},${h - 2} 2,${h - 2}" fill="${trend}" fill-opacity="0.12"/>`
+    + `<polyline points="${pts}" fill="none" stroke="${trend}" stroke-width="1.4" stroke-linejoin="round"/></svg>`;
+}
+
+export interface DonutSegment { label: string; value: number }
+
+export type DonutLayout = 'side' | 'stacked';
+
+/**
+ * Below this printed width the legend moves beneath the ring.
+ *
+ * A legend row is a swatch, a label and a percentage — around 30mm of type at
+ * the sizes this module enforces. Beside a ring, that needs a measure this
+ * chart does not have in a narrow column.
+ */
+export const DONUT_STACK_BELOW_MM = 90;
+
+/**
+ * Donut — a composition with a headline figure in the hole.
+ *
+ * The legend sits beside the ring at full measure and beneath it in a narrow
+ * column. Not a flourish: at the printed sizes this module enforces, a legend
+ * row is around 30mm of type, and a 66mm column has no room for both. The first
+ * charted render showed the label running straight through the percentage.
+ */
+export function renderDonut(
+  ctx: ChartContext,
+  segments: DonutSegment[],
+  opts: { title?: string; centerLabel?: string; centerSub?: string; layout?: DonutLayout } = {},
+): string {
+  if (!segments.length) return '';
+  const total = segments.reduce((s, x) => s + Math.max(0, x.value), 0) || 1;
+  const series = ctx.palette.series;
+  const layout: DonutLayout = opts.layout
+    ?? (ctx.widthMm < DONUT_STACK_BELOW_MM ? 'stacked' : 'side');
+
+  const stacked = layout === 'stacked';
+  const w = CHART_WIDTH.compact;
+  const R = stacked ? 74 : 92, r = stacked ? 44 : 56;
+  const cx = stacked ? w / 2 : 120;
+  const ringTop = opts.title ? 40 : 12;
+  const cy = ringTop + R;
+  const rowH = 26;
+  const h = stacked
+    ? cy + R + 14 + segments.length * rowH
+    : 240;
+  const TAU = Math.PI * 2;
+
+  let a0 = -Math.PI / 2;
+  const arcs = segments.map((s, i) => {
+    const frac = Math.max(0, s.value) / total;
+    if (frac <= 0) return '';
+    const a1 = a0 + frac * TAU;
+    const large = frac > 0.5 ? 1 : 0;
+    const p = (radius: number, a: number) =>
+      `${(cx + radius * Math.cos(a)).toFixed(1)} ${(cy + radius * Math.sin(a)).toFixed(1)}`;
+    const d = `M ${p(R, a0)} A ${R} ${R} 0 ${large} 1 ${p(R, a1)} L ${p(r, a1)} A ${r} ${r} 0 ${large} 0 ${p(r, a0)} Z`;
+    a0 = a1;
+    return `<path d="${d}" fill="${series[i % series.length]}" stroke="${ctx.palette.ground}" stroke-width="1.2"/>`;
+  }).join('');
+
+  const legendX = stacked ? 16 : 250;
+  const legendTop = stacked ? cy + R + 26 : 48;
+  const legend = segments.map((s, i) => {
+    const pct = Math.round((Math.max(0, s.value) / total) * 100);
+    const y = legendTop + i * (stacked ? rowH : 22);
+    return `<rect x="${legendX}" y="${y - 9}" width="10" height="10" rx="2" fill="${series[i % series.length]}"/>`
+      + text(ctx, w, { x: legendX + 16, y, pt: 'micro', fill: ctx.palette.ink }, svgEscape(s.label))
+      + text(ctx, w, { x: w - 12, y, pt: 'micro', fill: ctx.palette.ink, anchor: 'end', weight: 700, tabular: true }, `${pct}%`);
+  }).join('');
+
+  const title = opts.title
+    ? text(ctx, w, { x: stacked ? 16 : 250, y: 26, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+      + `<line x1="${stacked ? 16 : 250}" x2="${w - 12}" y1="32" y2="32" stroke="${ctx.palette.rule}" stroke-width="0.5"/>`
+    : '';
+
+  const centerVal = opts.centerLabel ?? `${Math.round(((segments[0]?.value ?? 0) / total) * 100)}%`;
+  // The sub-label only fits inside the hole at full size; in the stacked
+  // layout the ring is smaller and it would overlap the figure.
+  const centerSub = stacked ? '' : text(ctx, w,
+    { x: cx, y: cy + 20, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', tracking: 1 },
+    svgEscape((opts.centerSub ?? segments[0]?.label ?? '').toUpperCase()));
+
+  return `${svgOpen(w, h)}${title}${arcs}
+    ${text(ctx, w, { x: cx, y: cy + (stacked ? 6 : -2), pt: 'hero', fill: ctx.palette.ink, anchor: 'middle', stack: 'display', weight: 700, tabular: true }, svgEscape(centerVal))}
+    ${centerSub}${legend}</svg>`;
+}
+
+export interface TileItem { label: string; value: string; sub?: string; intensity?: number }
+
+/** Tiles — small multiples that read like a faux-choropleth. */
+export function renderTiles(
+  ctx: ChartContext,
+  tiles: TileItem[],
+  opts: { title?: string; cols?: number } = {},
+): string {
+  if (!tiles.length) return '';
+  const cols = Math.min(opts.cols ?? Math.min(tiles.length, 4), 6);
+  const rows = Math.ceil(tiles.length / cols);
+  const cellW = 130, cellH = 88, gap = 8;
+  const padL = 12, padT = opts.title ? 38 : 12, padB = 12;
+  const w = padL * 2 + cols * cellW + (cols - 1) * gap;
+  const h = padT + rows * cellH + (rows - 1) * gap + padB;
+
+  const cells = tiles.map((t, i) => {
+    const r = Math.floor(i / cols), c = i % cols;
+    const x = padL + c * (cellW + gap), y = padT + r * (cellH + gap);
+    const alpha = 0.08 + Math.max(0, Math.min(1, t.intensity ?? 0.5)) * 0.42;
+    return `<rect x="${x}" y="${y}" width="${cellW}" height="${cellH}" rx="4" `
+      + `fill="${withAlpha(ctx.palette.accent, alpha)}" stroke="${ctx.palette.rule}" stroke-width="0.6"/>`
+      + text(ctx, w, { x: x + 12, y: y + 20, pt: 'micro', fill: ctx.palette.inkMuted, tracking: 0.9 }, svgEscape((t.label ?? '').toUpperCase()))
+      + text(ctx, w, { x: x + 12, y: y + 52, pt: 'value', fill: ctx.palette.ink, stack: 'display', weight: 700, tabular: true }, svgEscape(t.value))
+      + (t.sub ? text(ctx, w, { x: x + 12, y: y + cellH - 12, pt: 'micro', fill: ctx.palette.inkMuted }, svgEscape(t.sub)) : '');
+  }).join('');
+
+  const title = opts.title
+    ? text(ctx, w, { x: padL, y: 24, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title))
+      + `<line x1="${padL}" x2="${w - padL}" y1="30" y2="30" stroke="${ctx.palette.rule}" stroke-width="0.5"/>`
+    : '';
+  return `${svgOpen(w, h)}${title}${cells}</svg>`;
+}
+
+export interface TimelineItem { phase: string; label: string }
+
+/** Infrastructure ribbon — Existing → 0-2y → 3-5y → 5y+. */
+export function renderTimelineRibbon(
+  ctx: ChartContext,
+  items: TimelineItem[],
+  opts: { title?: string } = {},
+): string {
+  const phases = ['Existing', '0-2y', '3-5y', '5y+'];
+  const w = CHART_WIDTH.wide, h = 176, padX = 44, axisY = 86;
+  const step = (w - padX * 2) / (phases.length - 1);
+
+  const phaseOf = (p: string) => {
+    const s = p.toLowerCase();
+    if (/existing|now|current/.test(s)) return 'Existing';
+    if (/0\s*-?\s*2|short/.test(s)) return '0-2y';
+    if (/3\s*-?\s*5|medium/.test(s)) return '3-5y';
+    return '5y+';
+  };
+  const grouped = new Map<string, TimelineItem[]>(phases.map((p) => [p, []]));
+  for (const it of items) grouped.get(phaseOf(it.phase))?.push(it);
+
+  const markers = phases.map((phase, i) => {
+    const x = padX + i * step;
+    const list = (grouped.get(phase) ?? []).slice(0, 2);
+    const labels = list.map((it, j) => text(ctx, w,
+      { x, y: axisY + 36 + j * 15, pt: 'micro', fill: ctx.palette.ink, anchor: 'middle', weight: j === 0 ? 700 : 500 },
+      svgEscape(it.label.length > 28 ? `${it.label.slice(0, 26)}…` : it.label))).join('');
+    return `<circle cx="${x.toFixed(1)}" cy="${axisY}" r="8" fill="${i === 0 ? ctx.palette.ink : ctx.palette.accent}" stroke="${ctx.palette.ground}" stroke-width="2"/>`
+      + text(ctx, w, { x, y: axisY - 24, pt: 'micro', fill: ctx.palette.inkMuted, anchor: 'middle', weight: 700, tracking: 1 }, svgEscape(phase.toUpperCase()))
+      + labels;
+  }).join('');
+
+  const ribbon = `M ${padX} ${axisY} C ${padX + step * 0.5} ${axisY - 18}, ${padX + step * 0.5} ${axisY + 18}, ${padX + step} ${axisY} `
+    + `S ${padX + step * 1.5} ${axisY + 18}, ${padX + step * 2} ${axisY} `
+    + `S ${padX + step * 2.5} ${axisY - 18}, ${padX + step * 3} ${axisY}`;
+
+  return `${svgOpen(w, h)}
+    <rect width="${w}" height="${h}" rx="6" fill="${ctx.palette.ground}"/>
+    ${text(ctx, w, { x: 24, y: 26, pt: 'title', fill: ctx.palette.ink, stack: 'display', weight: 700 }, svgEscape(opts.title ?? 'Infrastructure pipeline'))}
+    <path d="${ribbon}" fill="none" stroke="${ctx.palette.rule}" stroke-width="8" stroke-linecap="round"/>
+    <path d="${ribbon}" fill="none" stroke="${ctx.palette.accent}" stroke-width="3" stroke-linecap="round"/>
+    ${markers}
+  </svg>`;
+}

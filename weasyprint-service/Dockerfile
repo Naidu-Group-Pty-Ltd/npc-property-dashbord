@@ -8,14 +8,39 @@
 #     --region australia-southeast1 \
 #     --memory 2Gi --cpu 2 --concurrency 4 --timeout 600 \
 #     --set-env-vars WEASYPRINT_SERVICE_TOKEN=<long-random-string>
+#
+# ── Fonts ────────────────────────────────────────────────────────────────────
+# The font list below is a CONTRACT with
+# `supabase/functions/_shared/reportDesign/typography.pure.ts`, asserted by
+# `src/lib/reportDesign/__tests__/reportTypography.spec.ts`, which reads this
+# file. A face a report names must be installed here, or it silently falls back
+# to the engine default — invisible in review, obvious in a client's hands.
+#
+# This previously installed `fonts-playfair-display`, `fonts-cormorant-garamond`,
+# `fonts-fraunces` and `fonts-ibm-plex`. **None of the four exists as a binary
+# package in Debian**, bookworm or trixie. `apt-get install -y` exits non-zero on
+# an unknown package, so this layer failed and the image could not be built.
+#
+# `fonts-ibm-plex` is the subtle one: it is a Debian *source* package name, so
+# packages.debian.org serves a page for it and it reads as available. Only the
+# binary index says otherwise. Verify against
+# `deb.debian.org/debian/dists/<release>/main/binary-amd64/Packages.gz`, not the
+# website — the CI `render-container` job is what caught this.
+#
+# Playfair Display and IBM Plex Mono now arrive as COPY-ed TTFs; Cormorant and
+# Fraunces are gone from the type stacks entirely.
 
-FROM python:3.12-slim
+# Pinned to the distribution, not just the Python version. The font contract
+# above is only checkable against a known Debian release, and an unpinned
+# `-slim` silently moves from bookworm to trixie when the tag is rebuilt.
+FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8080
 
-# WeasyPrint native deps + a broad font stack for editorial typography.
+# WeasyPrint native deps + the packaged half of the font stack.
+# Every package here is verified present in bookworm AND trixie.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential \
       libpango-1.0-0 libpangoft2-1.0-0 \
@@ -24,10 +49,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fontconfig \
       fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
       fonts-inter fonts-roboto fonts-lato \
-      fonts-cormorant-garamond fonts-fraunces fonts-ibm-plex \
-      fonts-playfair-display \
       ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# The brand faces. None is packaged by Debian, so they travel with the
+# service — which is also why they live here rather than in `public/fonts/`:
+# Docker cannot COPY from outside its build context, and the documented build
+# context is this directory. SIL OFL 1.1; the licence files ship beside them,
+# which redistribution inside an image requires.
+COPY fonts/ /usr/local/share/fonts/npc/
+RUN fc-cache -f \
+    # Fail the build rather than the render. A missing brand face produces a
+    # document set in the engine's default serif, and nothing detects that until
+    # a client opens it.
+    && for family in "Cinzel" "Playfair Display" "Inter" "IBM Plex Mono"; do \
+         fc-list : family | grep -qi "$family" \
+           || { echo "FATAL: font family '$family' is not installed"; exit 1; }; \
+       done \
+    && fc-match "Playfair Display:italic" | grep -qi "playfair" \
+       || { echo "FATAL: Playfair Display italic is not installed"; exit 1; }
 
 WORKDIR /app
 COPY requirements.txt .

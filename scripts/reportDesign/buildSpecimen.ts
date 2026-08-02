@@ -25,10 +25,30 @@ import { buildReportCss } from '../../src/lib/reportDesign/css.pure';
 import { normalizeReportDesignOptions, type ReportDesignOptions } from '../../src/lib/reportDesign/options.pure';
 import { resolveCompanyBlock, mastheadFor } from '../../src/lib/reportDesign/companyBlock.pure';
 import {
+  buildReportBrandSnapshot,
+  companyContactFor,
+  lockupFor,
+  paletteInputFor,
+} from '../../src/lib/reportDesign/snapshot.pure';
+import {
+  NPC_HOUSE_COVER_ART,
+  NPC_HOUSE_MARK,
+} from '../../supabase/functions/_shared/reportDesign/defaultAssets.generated';
+import {
   buildSpine,
   contentsEntriesFor,
   REPORT_ARCHETYPES,
 } from '../../src/lib/reportDesign/structure.pure';
+import {
+  chartContext,
+  chartContextForSpan,
+  chartFigure,
+  renderBars,
+  renderDonut,
+  renderGauge,
+  renderInlineSpark,
+  renderWaterfall,
+} from '../../src/lib/reportDesign/charts.pure';
 import {
   closeChapter,
   openChapter,
@@ -57,6 +77,14 @@ for (const arg of process.argv.slice(2)) {
 }
 
 const brandHex = args.get('brand') ?? null;
+// `--logo=none` renders the wordmark-only lockup; anything else uses the house
+// mark, so the specimen exercises the path a tenant with no upload takes.
+const useMark = args.get('logo') !== 'none';
+// `--cover-art` uses the HOUSE cover, which carries NPC's company name and
+// tagline in its pixels. Off by default and never a tenant fallback: the
+// specimen's issuer is a fictional firm, and printing our name on their cover is
+// precisely the defect this programme is removing.
+const useCoverArt = args.get('cover-art') === 'true';
 const outPath = resolve(process.cwd(), args.get('out') ?? 'reports/specimen.html');
 const options: ReportDesignOptions = normalizeReportDesignOptions({
   preset: args.get('preset') as ReportPreset | undefined,
@@ -123,8 +151,33 @@ const YEARS = Array.from({ length: 10 }, (_, i) => `Yr ${i + 1}`);
 const money = (n: number) =>
   `${n < 0 ? '-' : ''}$${Math.abs(Math.round(n)).toLocaleString('en-AU')}`;
 
-const palette = resolveReportPalette({ preset: options.preset, brandHex });
-const masthead = mastheadFor(CONTACT);
+// Everything below is driven by one snapshot — the same object the render path
+// will read from `report_brand_snapshots`. Nothing here reaches around it to the
+// settings tables, which is the property Phase 3 exists to establish.
+const { snapshot, skippedAssets } = buildReportBrandSnapshot({
+  whitelabel: {
+    id: '00000000-0000-4000-8000-000000000000',
+    themeVersion: 2,
+    companyName: CONTACT.company_name,
+    tradingName: 'Meridian',
+    brandColour: brandHex,
+    preset: options.preset,
+    assets: useMark ? { report: NPC_HOUSE_MARK } : {},
+  },
+  contact: CONTACT,
+  document: { confidentiality: 'Confidential · Strategic advisory', preparedBy: CONTACT.company_name },
+  // Fixed, not `new Date()` — a specimen that changes every run cannot be diffed.
+  capturedAt: '2026-08-02T00:00:00.000Z',
+});
+
+const palette = resolveReportPalette(paletteInputFor(snapshot));
+// A chart drawn for the full measure and dropped into a 38% column prints its
+// labels at 38% of the size the code asked for. One context per width.
+const charts = chartContext(palette);
+const chartsCol7 = chartContextForSpan(palette, 7);
+const chartsCol5 = chartContextForSpan(palette, 5);
+const contact = companyContactFor(snapshot);
+const masthead = mastheadFor(contact);
 const spine = buildSpine({ archetype: 'financial-analysis', chapters: CHAPTERS });
 
 const positionChapter = `
@@ -183,6 +236,50 @@ const positionChapter = `
     ],
     { caption: 'Funds required at settlement' },
   )}
+  ${renderGrid12([
+    {
+      span: 7,
+      html: chartFigure(
+        renderWaterfall(chartsCol7, [
+          { label: 'Gross rent', value: 42_400 },
+          { label: 'Operating', value: -11_900 },
+          { label: 'Interest', value: -38_600 },
+          { label: 'Net year 1', value: -8_100, total: true },
+        ]),
+        'Year-one cash flow build-up',
+      ),
+    },
+    {
+      span: 5,
+      html: chartFigure(
+        renderGauge(chartsCol5, 72, { label: 'Investment score', caption: 'weighted composite' }),
+        'Composite score',
+      ),
+    },
+  ])}
+  ${renderGrid12([
+    {
+      span: 7,
+      html: chartFigure(
+        renderBars(chartsCol7, [
+          { label: 'Schools within 5km', value: 8 },
+          { label: 'Transport access', value: 6 },
+          { label: 'Employment depth', value: 4, tone: 'caution' },
+          { label: 'Vacancy pressure', value: 2, tone: 'negative' },
+        ], { title: 'Locality scorecard', max: 10, unit: '/10' }),
+      ),
+    },
+    {
+      span: 5,
+      html: chartFigure(
+        renderDonut(chartsCol5, [
+          { label: 'Owner-occupied', value: 62 },
+          { label: 'Rented', value: 31 },
+          { label: 'Other', value: 7 },
+        ], { title: 'Tenure mix', centerSub: 'owner-occupied' }),
+      ),
+    },
+  ])}
   ${renderCallout(
     'caution',
     'Watch',
@@ -226,6 +323,8 @@ const verdictChapter = `
     label: archetype.chapterLabel,
   })}
   <div class="chapter-body">
+  <p>Rent has moved ${renderInlineSpark(charts, [38_200, 39_100, 40_400, 41_000, 42_400])}
+  steadily over five years, and the model carries that forward at 3.0%.</p>
   <p>On the stated assumptions the asset is serviceable from the outset and
   self-supporting from year six. The exposure is concentrated in the rate path
   rather than in the rent: the locality has carried sub-2% vacancy for eleven
@@ -259,26 +358,31 @@ const bodyHtml = [
     title: '13 Bean Street',
     subtitle: 'Blackwater, QLD 4717',
     eyebrow: archetype.documentName,
-    masthead: CONTACT.company_name,
+    masthead: snapshot.company.name,
     edition: 'VOL. 2026 · ED. 08',
+    lockup: lockupFor(snapshot, 'field'),
+    heroDataUri: useCoverArt ? NPC_HOUSE_COVER_ART : null,
     meta: [
       { label: 'Prepared for', value: 'A. & J. Sample' },
       { label: 'Prepared by', value: 'Meridian Property Partners' },
       { label: 'Issued', value: '1 August 2026' },
     ],
-    footerLeft: 'Confidential · Strategic advisory',
+    footerLeft: snapshot.document.confidentiality,
     footerRight: 'REF MPP-2026-0814',
   }),
   renderContentsPage(archetype.documentName, contentsEntriesFor(spine)),
   positionChapter,
   projectionChapter,
   verdictChapter,
-  renderCompanyPage({ block: resolveCompanyBlock(CONTACT, DISCLAIMER) }),
+  renderCompanyPage({
+    block: resolveCompanyBlock(contact, DISCLAIMER),
+    lockup: lockupFor(snapshot, 'field'),
+  }),
 ].join('\n');
 
 const html = renderDocument({
   title: `${archetype.documentName} — 13 Bean Street`,
-  author: CONTACT.company_name,
+  author: snapshot.company.name,
   subject: '13 Bean Street, Blackwater QLD 4717',
   css: buildReportCss({ palette, options, masthead }),
   bodyHtml,
@@ -292,3 +396,7 @@ console.log(`✓ specimen written to ${outPath}`);
 console.log(`  preset=${options.preset} density=${options.density} `
   + `table=${options.tableStyle} cover=${options.coverStyle} brand=${brandHex ?? 'default'}`);
 console.log(`  ${spine.length} spine entries, ${pages} pages budgeted`);
+console.log(`  brand snapshot ${snapshot.fingerprint} · mark ${snapshot.logo.report ? 'inlined' : 'none'}`);
+for (const skipped of skippedAssets) {
+  console.warn(`  ! ${skipped.source} skipped: ${skipped.reason} — ${skipped.detail}`);
+}
