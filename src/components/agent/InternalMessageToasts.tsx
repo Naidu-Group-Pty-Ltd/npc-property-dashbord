@@ -728,7 +728,7 @@ export function InternalMessageToasts() {
   const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
 
   const typer = active ? typing[active.thread_id] : undefined;
-  const headline = active ? (active.kind === 'broadcast' ? active.title : active.sender) : '';
+  const headline = active ? threadLabel(active) : '';
 
   if (!user || (!active && !chips.length)) return null;
 
