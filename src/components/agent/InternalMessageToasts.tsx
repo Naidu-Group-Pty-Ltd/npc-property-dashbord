@@ -908,6 +908,8 @@ export function InternalMessageToasts() {
           >
             {active.kind === 'broadcast' ? (
               <Megaphone className="h-4 w-4" />
+            ) : active.kind === 'group' ? (
+              <UsersRound className="h-4 w-4" />
             ) : (
               active.sender?.trim()?.[0] ?? <MessageSquare className="h-4 w-4" />
             )}
@@ -915,10 +917,15 @@ export function InternalMessageToasts() {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-foreground">{headline}</p>
             <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground/80">
-              {active.kind === 'broadcast' ? 'Announcement' : 'Direct message'}
+              {active.kind === 'broadcast'
+                ? 'Announcement'
+                : active.kind === 'group'
+                  ? 'Group chat'
+                  : 'Direct message'}
               {active.priority !== 'normal' && ` · ${PRIORITY_LABEL[active.priority]}`}
             </p>
           </div>
+
           {active.priority === 'urgent' && (
             <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" aria-hidden />
           )}
