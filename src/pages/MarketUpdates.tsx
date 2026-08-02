@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { normaliseSegmentBreakdown } from '@/lib/marketDigestSegments';
 import { interleaveBySource } from '@/lib/marketFeedOrder';
-import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, followMarketIngestionRun, generateMarketDigest, publishMarketUpdate, restoreMarketUpdate, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
+import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, generateMarketDigest, publishMarketUpdate, restoreMarketUpdate, streamMarketUpdateQuestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
