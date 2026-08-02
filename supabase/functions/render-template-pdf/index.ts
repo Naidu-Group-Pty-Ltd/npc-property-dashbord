@@ -11,6 +11,13 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
+import {
+  MAX_HTML_BYTES,
+  renderPdf,
+  toPdfVariant,
+  weasyPrintConfig,
+  type PdfVariant,
+} from "../_shared/weasyprintClient.ts";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,51 +28,24 @@ const corsHeaders = {
 };
 
 const PDF_BUCKET = 'investment-reports';
-const MAX_HTML_BYTES = 25 * 1024 * 1024;
-const WEASYPRINT_TIMEOUT_MS = 600_000;
 
-type PdfVariant = 'pdf/a-2b' | 'pdf/a-3b' | 'pdf-1.7';
-const ALLOWED_VARIANTS: PdfVariant[] = ['pdf/a-2b', 'pdf/a-3b', 'pdf-1.7'];
-
+/**
+ * The renderer call, the timeout, the two token variable names and the
+ * no-fallback rule now live in `_shared/weasyprintClient.ts`, because a second
+ * render path needed all four and a second copy of them is how two paths come
+ * to disagree about what a 504 means.
+ */
 async function callWeasyPrint(
   html: string,
   variant: PdfVariant,
   tagged: boolean,
   optimizeImages: boolean,
 ): Promise<Uint8Array> {
-  const serviceUrl = (Deno.env.get('WEASYPRINT_SERVICE_URL') || '').trim().replace(/\/$/, '');
-  const serviceToken = (Deno.env.get('WEASYPRINT_SERVICE_TOKEN') || Deno.env.get('WEASYPRINT_API_KEY') || '')
-    .trim()
-    .replace(/^["']|["']$/g, '');
-  if (!serviceUrl || !serviceToken) {
+  const config = weasyPrintConfig((key) => Deno.env.get(key));
+  if (!config) {
     throw new Error('WeasyPrint service not configured (set WEASYPRINT_SERVICE_URL + WEASYPRINT_SERVICE_TOKEN)');
   }
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), WEASYPRINT_TIMEOUT_MS);
-  try {
-    const res = await fetch(`${serviceUrl}/render`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${serviceToken}`,
-        Accept: 'application/pdf',
-      },
-      body: JSON.stringify({
-        html,
-        pdf_variant: variant,
-        tagged,
-        optimize_images: optimizeImages,
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`WeasyPrint render failed (${res.status}): ${body.slice(0, 400)}`);
-    }
-    return new Uint8Array(await res.arrayBuffer());
-  } finally {
-    clearTimeout(timeout);
-  }
+  return renderPdf(config, html, { variant, tagged, optimizeImages });
 }
 
 const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
@@ -130,10 +110,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     templateId = payload.templateId ? String(payload.templateId) : null;
     const templateName: string | null = payload.templateName ? String(payload.templateName).slice(0, 200) : null;
     const mode: string = payload.mode === 'final' ? 'final' : 'preview';
-    const variantRaw = String(payload.pdfVariant || 'pdf/a-2b').toLowerCase();
-    const variant: PdfVariant = (ALLOWED_VARIANTS as string[]).includes(variantRaw)
-      ? (variantRaw as PdfVariant)
-      : 'pdf/a-2b';
+    const variant: PdfVariant = toPdfVariant(payload.pdfVariant);
     const tagged: boolean = payload.tagged !== false;
     const optimizeImages: boolean = payload.optimizeImages !== false;
     const themeId: string | null = payload.themeId ? String(payload.themeId).slice(0, 80) : null;

@@ -8,8 +8,14 @@ the brand rules themselves are in the
 **Status:** Phase 0 (this document + the skill), Phase 1 (the Kit foundation),
 Phase 2 (stylesheet, primitives, document spine), Phase 3 (brand, logo and
 snapshotting), Phase 4 (fonts and the render container) and **Phase 5 (charts)**
-delivered. The design system is complete; the per-format migrations are next,
-and no shipping render path has been switched over yet.
+delivered. The design system is complete.
+
+**First format migrated:** the Borrowing Capacity Snapshot, its own six phases
+delivered — see [`BORROWING_CAPACITY.md`](./BORROWING_CAPACITY.md). It has a
+payload contract, a document, a brand snapshot, a server-side render path with
+its own edge function, charts and a golden diff against the capture of what
+shipped before it. Its call sites still use the in-browser generator: switching
+them needs the function deployed and its migration applied, which are manual.
 Scope is the report/PDF layer. The Template Library catalogue and the Template
 Builder editor are out of scope, but the shared **block renderers** in
 `src/lib/reportTemplate/blocks/*.html.ts` are in scope as reusable infrastructure.
@@ -344,6 +350,47 @@ PDFs from live form state; there is no row for a server to read.
 | --- | --- | --- |
 | **A** — server-side | data already persisted: investment, market intelligence, portfolio, borrowing capacity | edge function reads the row → builds HTML → WeasyPrint |
 | **B** — client-side HTML | data that exists only in browser state: cash flow, Formara, Q&A | client imports the same design system via the bridge → POSTs HTML to `render-template-pdf` |
+
+### The first format: Borrowing Capacity Snapshot
+
+The Snapshot is a Target A format and the first one being migrated. Its ground
+truth — the five competing implementations, the captured golden, and eleven
+numbered findings against the shipping output — is
+[`BORROWING_CAPACITY.md`](./BORROWING_CAPACITY.md). Phases 1–5 of that migration
+cite those findings by number.
+
+#### What the first format's render found in the design system
+
+Two rules in `css.pure.ts` contradicted each other, and neither shows up until
+a format with long tables is actually rendered. `table.data` carried
+`page-break-inside: avoid` alongside `thead { display: table-header-group }` —
+the latter exists precisely so a table can repeat its head across a break, which
+the former made impossible. A table that did not fit at the foot of a page moved
+whole and left a hole; **a table longer than one page could not break at all**,
+so a client with thirty liabilities would lose rows off the bottom of it.
+
+Tables now break, `tr` still never splits, and `caption { break-after: avoid }`
+keeps a caption with its first row. Numeric cells gained `white-space: nowrap`,
+because line-breaking treats the minus sign and the space before a period suffix
+as break opportunities — `-$10,600 pa` was rendering as `-` on one line and the
+figure on the next.
+
+Both are asserted in `reportCss.spec.ts`.
+
+#### And what the first tenant-branded render found
+
+`assets.pure.ts` capped bytes, restricted MIME and refused URLs and SVG — and
+never looked at how big the picture was. A 1×1 PNG passed every check and
+printed on the cover as a 22mm block. `logo_config` accepts whatever a tenant
+uploads, so a favicon-as-report-mark is a real case, not a contrived one.
+
+The module now reads pixel dimensions from the header — PNG from `IHDR`, JPEG by
+walking the marker chain past EXIF or ICC to the first frame header — and
+rejects below `MIN_ASSET_EDGE_PX` (96) with the measured size in the reason, so
+`resolveReportAsset` walks on to the next mark in the chain. WebP reports "cannot
+measure" rather than guessing across its three containers, and an unmeasurable
+asset is accepted: refusing to print a logo whose header would not parse is worse
+than printing one that might be small.
 
 Target B is already in production for Compass via
 `routeReportThroughTemplate.ts` → `render-template-pdf`, with auth, resource-safety

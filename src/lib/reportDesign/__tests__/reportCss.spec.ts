@@ -131,6 +131,40 @@ describe('buildReportCss — print legality', () => {
   });
 });
 
+/**
+ * Long tables are the point of a financial report, and the rules that govern
+ * how one breaks were contradicting each other until the first render of a
+ * data-heavy format made it visible.
+ */
+describe('buildReportCss — a table may break, a row and a figure may not', () => {
+  const sheet = css();
+
+  it('lets a table break across pages, so a long one cannot lose rows', () => {
+    // `page-break-inside: avoid` on the table itself made two things happen: a
+    // table that did not fit at the foot of a page moved whole and left a hole,
+    // and a table longer than one page could not break at all.
+    const tableRule = sheet.slice(sheet.indexOf('table.data {'), sheet.indexOf('table.data caption'));
+    expect(tableRule).not.toMatch(/page-break-inside:\s*avoid/);
+    expect(sheet).not.toMatch(/\.table-block\s*\{[^}]*page-break-inside:\s*avoid/);
+  });
+
+  it('repeats the head on every page the table reaches', () => {
+    expect(sheet).toMatch(/table\.data thead\s*\{\s*display:\s*table-header-group/);
+  });
+
+  it('never splits a row, and never strands a caption from its first row', () => {
+    expect(sheet).toMatch(/table\.data tr\s*\{\s*page-break-inside:\s*avoid/);
+    expect(sheet).toMatch(/table\.data caption\s*\{\s*break-after:\s*avoid/);
+  });
+
+  it('never wraps a figure', () => {
+    // Line-breaking treats the minus sign and the space before a period suffix
+    // as break opportunities, so a narrow column renders "-" on one line and
+    // "$10,600 pa" on the next.
+    expect(sheet).toMatch(/td\.num[^{]*\{[^}]*white-space:\s*nowrap/);
+  });
+});
+
 describe('buildReportCss — options actually change the output', () => {
   it('scales the body size with bodyScale', () => {
     expect(css({ bodyScale: 100 })).toContain('font-size: 10.5pt;');

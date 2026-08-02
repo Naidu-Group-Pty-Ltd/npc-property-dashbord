@@ -91,13 +91,38 @@ export type AssetRejection =
   | 'not-a-data-uri'
   | 'unsupported-mime'
   | 'not-base64'
-  | 'too-large';
+  | 'too-large'
+  | 'too-small';
+
+/**
+ * The shortest edge a brand mark may have, in pixels.
+ *
+ * The lockup prints the mark at 13mm on paper and 22mm on the cover. 22mm at a
+ * modest 150dpi is 130 device pixels, and at 300dpi it is 260 — so a 64px mark
+ * is soft at any print resolution and a favicon-sized one is a blurred square.
+ * That is a real thing a tenant does: `logo_config` accepts whatever they
+ * upload, and the byte cap says nothing about how big the picture is.
+ *
+ * 96 is deliberately below what looks good rather than at it. This is a floor
+ * that catches the icon-uploaded-as-a-logo case, not a quality bar.
+ */
+export const MIN_ASSET_EDGE_PX = 96;
 
 export interface InlineAsset {
   dataUri: string;
   mime: InlineMime;
   /** Decoded size. */
   bytes: number;
+  /**
+   * Pixel dimensions, when they could be read from the header.
+   *
+   * `null` for a format this module cannot measure — today that is WebP, whose
+   * three container variants each store the size differently. An asset that
+   * cannot be measured is **not** rejected: refusing to print a logo because we
+   * could not read its header is worse than printing a logo that might be
+   * small.
+   */
+  dimensions: { width: number; height: number } | null;
 }
 
 export type InlineResult =
@@ -117,6 +142,87 @@ export function base64ByteLength(base64: string): number {
   return Math.floor((clean.length * 3) / 4);
 }
 
+
+// ── Reading a picture's size from its header ────────────────────────────────
+
+/**
+ * Decode the first `maxBytes` of a base64 payload.
+ *
+ * A JPEG's size marker can sit behind an EXIF block, so a fixed prefix rather
+ * than the first few bytes — but never the whole asset, because decoding 3 MB
+ * to read eight bytes is the cost this avoids.
+ */
+function decodePrefix(base64: string, maxBytes: number): Uint8Array {
+  // base64 decodes 4 characters to 3 bytes; slicing on a multiple of 4 keeps
+  // the prefix decodable on its own.
+  const chars = Math.min(base64.length, Math.ceil(maxBytes / 3) * 4);
+  const binary = atob(base64.slice(0, chars - (chars % 4)));
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
+const be32 = (b: Uint8Array, at: number) =>
+  (b[at] << 24 | b[at + 1] << 16 | b[at + 2] << 8 | b[at + 3]) >>> 0;
+const be16 = (b: Uint8Array, at: number) => (b[at] << 8 | b[at + 1]);
+
+/** PNG: the IHDR chunk is first by specification, so the size is at a fixed offset. */
+function pngSize(b: Uint8Array): { width: number; height: number } | null {
+  if (b.length < 24) return null;
+  const signature = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+  if (signature.some((byte, i) => b[i] !== byte)) return null;
+  if (String.fromCharCode(b[12], b[13], b[14], b[15]) !== 'IHDR') return null;
+  return { width: be32(b, 16), height: be32(b, 20) };
+}
+
+/**
+ * JPEG: walk the marker chain to the first Start Of Frame.
+ *
+ * The size is not at a fixed offset — an EXIF or ICC block can precede it, and
+ * a progressive JPEG uses a different SOF marker from a baseline one. The four
+ * markers skipped below are not frame headers: DHT, JPG, DAC and the restart
+ * markers share the SOF numeric range.
+ */
+function jpegSize(b: Uint8Array): { width: number; height: number } | null {
+  if (b.length < 4 || b[0] !== 0xFF || b[1] !== 0xD8) return null;
+  let at = 2;
+  while (at + 9 < b.length) {
+    if (b[at] !== 0xFF) { at++; continue; }
+    const marker = b[at + 1];
+    if (marker === 0xD8 || marker === 0x01 || (marker >= 0xD0 && marker <= 0xD7)) { at += 2; continue; }
+    if (marker === 0xD9 || marker === 0xDA) return null;
+    const length = be16(b, at + 2);
+    const isFrame = marker >= 0xC0 && marker <= 0xCF
+      && marker !== 0xC4 && marker !== 0xC8 && marker !== 0xCC;
+    if (isFrame) return { height: be16(b, at + 5), width: be16(b, at + 7) };
+    if (length < 2) return null;
+    at += 2 + length;
+  }
+  return null;
+}
+
+/**
+ * Pixel dimensions, or `null` when they cannot be read.
+ *
+ * WebP is `null` on purpose: its lossy, lossless and extended containers each
+ * store the size differently, and guessing wrong is worse than not knowing.
+ */
+export function readImageDimensions(
+  mime: string,
+  base64: string,
+): { width: number; height: number } | null {
+  try {
+    const header = decodePrefix(base64, 65_536);
+    if (mime === 'image/png') return pngSize(header);
+    if (mime === 'image/jpeg') return jpegSize(header);
+    return null;
+  } catch {
+    // A payload that will not decode is already caught by the base64 check; if
+    // something else throws here, an unmeasured asset is the safe answer.
+    return null;
+  }
+}
+
 /**
  * Validate a `data:` URI against the inline policy.
  *
@@ -126,7 +232,7 @@ export function base64ByteLength(base64: string): number {
  */
 export function inlineAsset(
   value: string | null | undefined,
-  opts: { maxBytes?: number } = {},
+  opts: { maxBytes?: number; minEdgePx?: number } = {},
 ): InlineResult {
   const raw = typeof value === 'string' ? value.trim() : '';
   if (!raw) return { ok: false, reason: 'empty', detail: 'no asset configured' };
@@ -164,7 +270,19 @@ export function inlineAsset(
     };
   }
 
-  return { ok: true, asset: { dataUri: raw, mime: mime as InlineMime, bytes } };
+  const dimensions = readImageDimensions(mime, match[3]);
+  const shortest = dimensions ? Math.min(dimensions.width, dimensions.height) : null;
+  const floor = opts.minEdgePx ?? MIN_ASSET_EDGE_PX;
+  if (shortest !== null && shortest < floor) {
+    return {
+      ok: false,
+      reason: 'too-small',
+      detail: `${dimensions!.width}x${dimensions!.height} is below the ${floor}px floor; `
+        + 'the mark prints at 22mm on the cover and would be visibly soft',
+    };
+  }
+
+  return { ok: true, asset: { dataUri: raw, mime: mime as InlineMime, bytes, dimensions } };
 }
 
 /** What a slot resolved to, and which key it came from. */

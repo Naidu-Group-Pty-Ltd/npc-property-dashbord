@@ -18,6 +18,8 @@ import jsPDF from 'jspdf';
 import { toast } from 'sonner';
 import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
+import { hexToRgb01 } from '@/lib/reportDesign/color.pure';
+import { resolveReportPalette } from '@/lib/reportDesign/brandResolve.pure';
 import { fetchLatestBorrowingCapacity } from '@/lib/fetchLatestBorrowingCapacity';
 import { format } from 'date-fns';
 import { smartCapitalize } from '@/utils/nameFormatting';
@@ -237,10 +239,19 @@ export async function generateBorrowingCapacityPDF(data: BorrowingCapacityExport
       throw new Error('Cover image not found');
     }
   } catch (e) {
-    // Fallback: simple dark branded cover
+    // Fallback: simple dark branded cover.
+    //
+    // The gold here used to be a hardcoded literal that appeared nowhere else —
+    // one of three across this format's five implementations, and not the brand
+    // (docs/reports/BORROWING_CAPACITY.md F7 names it). It now comes from the
+    // resolved report palette, so a white-label tenant's fallback cover carries
+    // their colour rather than one nobody chose.
+    // `accentOnField` is the role for brand type on a dark ground; it is the
+    // one the design system contrast-checks for exactly this placement.
     setFill(doc, DARK_BG);
     doc.rect(0, 0, PAGE_W, PAGE_H, 'F');
-    const goldColor = { r: 201, g: 165, b: 90 };
+    const [gr, gg, gb] = hexToRgb01(resolveReportPalette().accentOnField);
+    const goldColor = { r: Math.round(gr * 255), g: Math.round(gg * 255), b: Math.round(gb * 255) };
     setFill(doc, goldColor);
     doc.rect(0, 0, PAGE_W, 8, 'F');
     doc.setFontSize(28);
@@ -248,9 +259,6 @@ export async function generateBorrowingCapacityPDF(data: BorrowingCapacityExport
     setColor(doc, goldColor);
     doc.text(__brandLine1, PAGE_W / 2, 100, { align: 'center' });
     if (__brandLine2) doc.text(__brandLine2, PAGE_W / 2, 115, { align: 'center' });
-    doc.setFontSize(12);
-    doc.setFont('helvetica', 'normal');
-    doc.text('YOUR DEDICATED PROPERTY PARTNER', PAGE_W / 2, 135, { align: 'center' });
     setFill(doc, goldColor);
     doc.rect(0, PAGE_H - 8, PAGE_W, 8, 'F');
   }
