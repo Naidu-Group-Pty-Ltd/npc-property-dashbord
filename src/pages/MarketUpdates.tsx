@@ -1063,7 +1063,14 @@ export default function MarketUpdates() {
                   {asking && <div className="flex items-center gap-2 rounded-md border border-border/60 bg-background/70 p-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" /> Thinking…</div>}
                 </div>
               )}
-              <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[100px]" />
+              {qaThread.length === 0 && (
+                <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-border/60 bg-background/40 p-6 text-center">
+                  <Sparkles className="mb-3 h-8 w-8 text-primary/70" aria-hidden />
+                  <h3 className="text-base font-semibold">Ask a source-grounded question</h3>
+                  <p className="mt-2 max-w-md text-sm text-muted-foreground">Answers are grounded in this update and related published market news. Your questions stay in this thread.</p>
+                </div>
+              )}
+              <Textarea value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={handleQuestionKeyDown} placeholder="Ask a source-grounded question…" className="min-h-[120px] flex-none text-sm" />
               <div className="flex gap-2">
                 <MarketQAVoiceButton onTranscript={(t) => setQuestion((q) => (q ? `${q.trim()} ${t}` : t))} disabled={asking} />
                 <Button onClick={() => handleAsk()} className="flex-1" disabled={asking || !question.trim()}>
