@@ -48,7 +48,9 @@ import { TypingPresence, type TypingPerson } from '@/components/messaging/Typing
 import {
   INTERNAL_ATTACHMENT_ACCEPT,
   filesFromDataTransfer,
+  sendInternalMessageWithAttachments,
   type InternalAttachment,
+  hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
 import {
   onInternalMessage,
@@ -196,7 +198,7 @@ export function InternalMessagesPanel({
     setRenaming(false);
     try {
       const data = await call({ action: 'get_thread', thread_id: thread.id });
-      setMessages(data?.messages ?? []);
+      setMessages(await hydrateThreadAttachments(thread.id, data?.messages ?? []));
       if (data?.thread) {
         setActiveThread(prev => (prev && prev.id === thread.id
           ? { ...prev, title: data.thread.title ?? prev.title, participants: data.thread.participants ?? prev.participants }
@@ -229,7 +231,7 @@ export function InternalMessagesPanel({
     loadThreads(showArchived);
     if (activeThread) {
       call({ action: 'get_thread', thread_id: activeThread.id })
-        .then(d => setMessages(d?.messages ?? []))
+        .then(async d => setMessages(await hydrateThreadAttachments(activeThread.id, d?.messages ?? [])))
         .catch(() => {});
     }
   }, [loadThreads, showArchived, activeThread]);
@@ -324,12 +326,10 @@ export function InternalMessagesPanel({
     try {
       const attachments = await uploadStaged(activeThread.id);
       if (!attachments) { setSending(false); return; }
-      await call({
-        action: 'send_message',
-        thread_id: activeThread.id,
-        body: text,
-        attachments,
-      });
+      await (attachments.length
+        ? await sendInternalMessageWithAttachments(activeThread.id, text, attachments)
+        : await call({ action: 'send_message', thread_id: activeThread.id, body: text }));
+
       setDraft('');
       attachmentQueue.clear();
       publishInternalMessage({
@@ -338,7 +338,7 @@ export function InternalMessagesPanel({
         sender_name: myName,
       });
       const data = await call({ action: 'get_thread', thread_id: activeThread.id });
-      setMessages(data?.messages ?? []);
+      setMessages(await hydrateThreadAttachments(activeThread.id, data?.messages ?? []));
       loadThreads(showArchived);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Message failed to send');
@@ -393,8 +393,11 @@ export function InternalMessagesPanel({
       const payload = composeMode === 'broadcast'
         ? { action: 'send_message', broadcast: true, title: broadcastTitle.trim() || undefined, body: text }
         : { action: 'send_message', thread_id: threadId, body: text, attachments };
-      const data = await call(payload);
+      const data = attachments.length && threadId
+        ? await sendInternalMessageWithAttachments(threadId, text, attachments)
+        : await call(payload);
       publishInternalMessage({ thread_id: data?.thread_id, sender_id: user?.id ?? null, sender_name: myName });
+
 
       setDraft('');
       setBroadcastTitle('');
@@ -443,7 +446,7 @@ export function InternalMessagesPanel({
       setRenaming(false);
       await loadThreads(showArchived);
       const data = await call({ action: 'get_thread', thread_id: activeThread.id });
-      setMessages(data?.messages ?? []);
+      setMessages(await hydrateThreadAttachments(activeThread.id, data?.messages ?? []));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not rename group');
     }
@@ -578,6 +581,9 @@ export function InternalMessagesPanel({
                     m.mine ? 'bg-primary/15 text-foreground' : 'bg-muted/60 text-foreground',
                   )}>
                     {m.body}
+                    {!m.body?.trim() && !(m.attachments?.length) && (
+                      <span className="italic text-muted-foreground">Attachment unavailable</span>
+                    )}
                     <InternalAttachmentList
                       threadId={activeThread.id}
                       attachments={m.attachments ?? []}

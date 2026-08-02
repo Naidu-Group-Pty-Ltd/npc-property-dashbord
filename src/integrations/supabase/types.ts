@@ -2458,6 +2458,7 @@ export type Database = {
         Row: {
           assessment_rate: number | null
           assumptions: Json | null
+          audit_trail: Json | null
           borrowing_capacity: number
           buffer_rate: number | null
           calculated_by: string | null
@@ -2468,6 +2469,7 @@ export type Database = {
           existing_commitments_monthly: number
           expense_breakdown: Json | null
           expense_method: string | null
+          explanation: Json | null
           gross_annual_income: number
           id: string
           income_breakdown: Json | null
@@ -2493,6 +2495,7 @@ export type Database = {
         Insert: {
           assessment_rate?: number | null
           assumptions?: Json | null
+          audit_trail?: Json | null
           borrowing_capacity?: number
           buffer_rate?: number | null
           calculated_by?: string | null
@@ -2503,6 +2506,7 @@ export type Database = {
           existing_commitments_monthly?: number
           expense_breakdown?: Json | null
           expense_method?: string | null
+          explanation?: Json | null
           gross_annual_income?: number
           id?: string
           income_breakdown?: Json | null
@@ -2528,6 +2532,7 @@ export type Database = {
         Update: {
           assessment_rate?: number | null
           assumptions?: Json | null
+          audit_trail?: Json | null
           borrowing_capacity?: number
           buffer_rate?: number | null
           calculated_by?: string | null
@@ -2538,6 +2543,7 @@ export type Database = {
           existing_commitments_monthly?: number
           expense_breakdown?: Json | null
           expense_method?: string | null
+          explanation?: Json | null
           gross_annual_income?: number
           id?: string
           income_breakdown?: Json | null
@@ -2573,6 +2579,86 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      borrowing_capacity_renders: {
+        Row: {
+          assessment_id: string | null
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          client_id: string
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          assessment_id?: string | null
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          assessment_id?: string | null
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "borrowing_capacity_renders_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "borrowing_capacity_assessments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "borrowing_capacity_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "borrowing_capacity_renders_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "borrowing_capacity_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
             referencedColumns: ["id"]
           },
         ]
@@ -6979,6 +7065,79 @@ export type Database = {
           },
         ]
       }
+      cash_flow_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          report_id: string
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          term_years: number | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          report_id: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          report_id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          term_years?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cash_flow_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "investment_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "cash_flow_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chart_analysis: {
         Row: {
           analysis_text: string
@@ -8088,6 +8247,12 @@ export type Database = {
           salary_frequency: string | null
           start_date: string | null
           updated_at: string
+          work_arrangement: string | null
+          workplace_address_line_1: string | null
+          workplace_country: string | null
+          workplace_postcode: string | null
+          workplace_state: string | null
+          workplace_suburb: string | null
         }
         Insert: {
           additional_contact_id?: string | null
@@ -8110,6 +8275,12 @@ export type Database = {
           salary_frequency?: string | null
           start_date?: string | null
           updated_at?: string
+          work_arrangement?: string | null
+          workplace_address_line_1?: string | null
+          workplace_country?: string | null
+          workplace_postcode?: string | null
+          workplace_state?: string | null
+          workplace_suburb?: string | null
         }
         Update: {
           additional_contact_id?: string | null
@@ -8132,6 +8303,12 @@ export type Database = {
           salary_frequency?: string | null
           start_date?: string | null
           updated_at?: string
+          work_arrangement?: string | null
+          workplace_address_line_1?: string | null
+          workplace_country?: string | null
+          workplace_postcode?: string | null
+          workplace_state?: string | null
+          workplace_suburb?: string | null
         }
         Relationships: [
           {
@@ -18320,6 +18497,7 @@ export type Database = {
       }
       investment_reports: {
         Row: {
+          brand_snapshot_id: string | null
           bulk_job_id: string | null
           calculation_version: string | null
           canonical_property_key: string | null
@@ -18358,6 +18536,7 @@ export type Database = {
           variant_generated_at: string | null
         }
         Insert: {
+          brand_snapshot_id?: string | null
           bulk_job_id?: string | null
           calculation_version?: string | null
           canonical_property_key?: string | null
@@ -18396,6 +18575,7 @@ export type Database = {
           variant_generated_at?: string | null
         }
         Update: {
+          brand_snapshot_id?: string | null
           bulk_job_id?: string | null
           calculation_version?: string | null
           canonical_property_key?: string | null
@@ -18434,6 +18614,13 @@ export type Database = {
           variant_generated_at?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "investment_reports_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "investment_reports_client_property_id_fkey"
             columns: ["client_property_id"]
@@ -25625,6 +25812,102 @@ export type Database = {
           },
         ]
       }
+      portfolio_review_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          client_id: string | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          holdings: number | null
+          id: string
+          pages: number | null
+          report_id: string
+          requested_by: string | null
+          review_id: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          holdings?: number | null
+          id?: string
+          pages?: number | null
+          report_id: string
+          requested_by?: string | null
+          review_id?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          holdings?: number | null
+          id?: string
+          pages?: number | null
+          report_id?: string
+          requested_by?: string | null
+          review_id?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portfolio_review_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "portfolio_analysis_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "portfolio_review_renders_review_id_fkey"
+            columns: ["review_id"]
+            isOneToOne: false
+            referencedRelation: "portfolio_reviews"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portfolio_reviews: {
         Row: {
           action_items: Json | null
@@ -27893,6 +28176,47 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      report_brand_snapshots: {
+        Row: {
+          brand_hex: string | null
+          company_name: string
+          created_at: string
+          fingerprint: string
+          id: string
+          payload: Json
+          snapshot_version: number
+          source_whitelabel_setting_id: string | null
+        }
+        Insert: {
+          brand_hex?: string | null
+          company_name?: string
+          created_at?: string
+          fingerprint: string
+          id?: string
+          payload: Json
+          snapshot_version: number
+          source_whitelabel_setting_id?: string | null
+        }
+        Update: {
+          brand_hex?: string | null
+          company_name?: string
+          created_at?: string
+          fingerprint?: string
+          id?: string
+          payload?: Json
+          snapshot_version?: number
+          source_whitelabel_setting_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_brand_snapshots_source_whitelabel_setting_id_fkey"
+            columns: ["source_whitelabel_setting_id"]
+            isOneToOne: false
+            referencedRelation: "whitelabel_settings"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       report_engine_audit: {
         Row: {
@@ -31711,6 +32035,199 @@ export type Database = {
         }
         Relationships: []
       }
+      workflow_run_steps: {
+        Row: {
+          branch_taken: string | null
+          duration_ms: number
+          error: string | null
+          id: string
+          label: string
+          missing_references: string[]
+          node_id: string
+          node_type: string
+          output: Json
+          resolved_config: Json
+          run_id: string
+          sequence: number
+          simulation_note: string | null
+          started_at: string
+          status: string
+        }
+        Insert: {
+          branch_taken?: string | null
+          duration_ms?: number
+          error?: string | null
+          id?: string
+          label: string
+          missing_references?: string[]
+          node_id: string
+          node_type: string
+          output?: Json
+          resolved_config?: Json
+          run_id: string
+          sequence: number
+          simulation_note?: string | null
+          started_at?: string
+          status: string
+        }
+        Update: {
+          branch_taken?: string | null
+          duration_ms?: number
+          error?: string | null
+          id?: string
+          label?: string
+          missing_references?: string[]
+          node_id?: string
+          node_type?: string
+          output?: Json
+          resolved_config?: Json
+          run_id?: string
+          sequence?: number
+          simulation_note?: string | null
+          started_at?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workflow_run_steps_run_id_fkey"
+            columns: ["run_id"]
+            isOneToOne: false
+            referencedRelation: "workflow_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workflow_runs: {
+        Row: {
+          duration_ms: number | null
+          failed_step_count: number
+          finished_at: string | null
+          halt_reason: string | null
+          id: string
+          mode: string
+          started_at: string
+          started_by: string | null
+          status: string
+          step_count: number
+          trigger_payload: Json
+          workflow_id: string
+        }
+        Insert: {
+          duration_ms?: number | null
+          failed_step_count?: number
+          finished_at?: string | null
+          halt_reason?: string | null
+          id?: string
+          mode?: string
+          started_at?: string
+          started_by?: string | null
+          status?: string
+          step_count?: number
+          trigger_payload?: Json
+          workflow_id: string
+        }
+        Update: {
+          duration_ms?: number | null
+          failed_step_count?: number
+          finished_at?: string | null
+          halt_reason?: string | null
+          id?: string
+          mode?: string
+          started_at?: string
+          started_by?: string | null
+          status?: string
+          step_count?: number
+          trigger_payload?: Json
+          workflow_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workflow_runs_workflow_id_fkey"
+            columns: ["workflow_id"]
+            isOneToOne: false
+            referencedRelation: "workflows"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      workflow_trigger_events: {
+        Row: {
+          attempts: number
+          claimed_at: string | null
+          claimed_by: string | null
+          created_at: string
+          dedupe_key: string
+          id: string
+          last_error: string | null
+          occurred_at: string
+          payload: Json
+          processed_at: string | null
+          status: string
+          trigger_type: string
+        }
+        Insert: {
+          attempts?: number
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string
+          dedupe_key: string
+          id?: string
+          last_error?: string | null
+          occurred_at?: string
+          payload?: Json
+          processed_at?: string | null
+          status?: string
+          trigger_type: string
+        }
+        Update: {
+          attempts?: number
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string
+          dedupe_key?: string
+          id?: string
+          last_error?: string | null
+          occurred_at?: string
+          payload?: Json
+          processed_at?: string | null
+          status?: string
+          trigger_type?: string
+        }
+        Relationships: []
+      }
+      workflows: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          graph: Json
+          id: string
+          name: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          graph?: Json
+          id?: string
+          name: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          graph?: Json
+          id?: string
+          name?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       activity_logs_with_user: {
@@ -34642,6 +35159,10 @@ export type Database = {
         }
         Returns: string
       }
+      enqueue_workflow_trigger_event: {
+        Args: { p_dedupe_key: string; p_payload: Json; p_trigger_type: string }
+        Returns: undefined
+      }
       ensure_case_conversation: {
         Args: {
           _actor_id: string
@@ -35654,6 +36175,17 @@ export type Database = {
         }
         Returns: Json
       }
+      upsert_report_brand_snapshot: {
+        Args: {
+          _brand_hex?: string
+          _company_name?: string
+          _fingerprint: string
+          _payload: Json
+          _snapshot_version: number
+          _source_whitelabel_setting_id?: string
+        }
+        Returns: string
+      }
       validate_property_specs: {
         Args: { specs: Json }
         Returns: {
@@ -35664,6 +36196,10 @@ export type Database = {
       verify_legal_audit_chain_strict: {
         Args: { _matter_id: string }
         Returns: Json
+      }
+      workflow_trigger_is_live: {
+        Args: { p_trigger_type: string }
+        Returns: boolean
       }
     }
     Enums: {

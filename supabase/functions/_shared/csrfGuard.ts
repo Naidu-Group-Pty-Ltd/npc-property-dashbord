@@ -24,6 +24,13 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const LEGACY_FALLBACK = [
   'https://command-centre.npcservices.com.au',
   'https://npc-property-dashbord.lovable.app',
+  'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
+  // Exact first-party preview/sandbox origins for THIS project (belt-and-braces
+  // alongside lovableFirstPartyHost, which can be missed if a deployed bundle
+  // ships a stale copy of this module).
+  'https://7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com',
+  'https://id-preview--7976d60b-c277-4851-889b-c170285f4be2.lovableproject.com',
+  'https://7976d60b-c277-4851-889b-c170285f4be2.lovable.app',
 ];
 
 function parseAllowedOrigins(): string[] {
@@ -32,10 +39,31 @@ function parseAllowedOrigins(): string[] {
     .split(',')
     .map((s: string) => s.trim())
     .filter((s: string) => s.length > 0);
-  return fromEnv.length > 0 ? fromEnv : LEGACY_FALLBACK;
+  // Environment configuration extends the known first-party origins rather
+  // than replacing them. Replacing the list caused preview releases to become
+  // CSRF-denied whenever production configured only the custom domain.
+  return [...new Set([...LEGACY_FALLBACK, ...fromEnv])];
+}
+
+// First-party Lovable preview/sandbox hosts for THIS project only. The project
+// id is part of every preview hostname Lovable mints for us, so matching on it
+// keeps enforcement exact-origin in spirit (no other tenant can satisfy it)
+// while surviving preview-host renames that previously produced csrf_denied.
+const LOVABLE_PROJECT_ID = '7976d60b-c277-4851-889b-c170285f4be2';
+const LOVABLE_HOST_SUFFIXES = ['.lovable.app', '.lovableproject.com', '.lovable.dev'];
+
+function lovableFirstPartyHost(origin: string): boolean {
+  try {
+    const host = new URL(origin).hostname.toLowerCase();
+    if (!LOVABLE_HOST_SUFFIXES.some((s) => host.endsWith(s))) return false;
+    return host.includes(LOVABLE_PROJECT_ID);
+  } catch {
+    return false;
+  }
 }
 
 function lovablePreviewSuffixAllowed(origin: string): boolean {
+  if (lovableFirstPartyHost(origin)) return true;
   if (((globalThis as any).Deno?.env?.get?.('CORS_ALLOW_LOVABLE_PREVIEW') || '').trim().toLowerCase() !== 'true') return false;
   try {
     const host = new URL(origin).hostname;
@@ -98,7 +126,7 @@ export function enforceCsrf(req: Request): CsrfCheckResult {
 /** Convenience 403 factory used by handlers that want a canned response. */
 export function csrfDenied(cors: Record<string, string>, detail: CsrfCheckResult): Response {
   return new Response(
-    JSON.stringify({ error: 'CSRF check failed', code: 'csrf_denied', reason: detail.reason }),
+    JSON.stringify({ error: 'CSRF check failed', code: 'csrf_denied', reason: detail.reason, origin: detail.origin ?? null, guard: 'v2' }),
     { status: 403, headers: { ...cors, 'Content-Type': 'application/json' } },
   );
 }

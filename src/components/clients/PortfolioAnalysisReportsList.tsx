@@ -4,6 +4,7 @@ import { smartCapitalize } from '@/lib/nameUtils';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageDownload } from '@/hooks/useSecureStorage';
 import { FlattenPdfMenuItem } from '@/components/common/FlattenPdfMenuItem';
+import { deliverPortfolioReview } from '@/lib/reports/portfolio/deliverPortfolioReview';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -22,6 +23,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -49,6 +51,7 @@ import {
   Building2,
   Eye,
   AlertCircle,
+  Sparkles,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -128,6 +131,9 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
   const [searchQuery, setSearchQuery] = useState('');
   const [reportToDelete, setReportToDelete] = useState<PortfolioAnalysisReport | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Which row is being typeset. Per-row rather than a single boolean: the menu
+  // is inside a table and two rows can be opened in sequence.
+  const [typesetting, setTypesetting] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   // Fetch portfolio analysis reports via secure function
@@ -230,6 +236,37 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
       toast.success('Opening report...');
     } catch (error: any) {
       toast.error('Failed to open PDF: ' + error.message);
+    }
+  };
+
+  /**
+   * The typeset review, rendered server-side from `report_data`.
+   *
+   * Beside the two handlers below rather than instead of them. Those read
+   * `pdf_file_path` — the file the legacy generator saved — and this reads the
+   * stored analysis, so it works on the reports that have no file.
+   */
+  const handleTypesetDownload = async (report: PortfolioAnalysisReport) => {
+    if (typesetting) return;
+    setTypesetting(report.id);
+    try {
+      const result = await deliverPortfolioReview({
+        variant: 'server',
+        request: { reportId: report.id },
+      });
+      if (result.brandGaps.length) {
+        toast.warning(`Review ready, with gaps: ${result.brandGaps.join('; ')}`);
+      } else {
+        toast.success(
+          result.reviewIncluded
+            ? 'Portfolio Performance Review ready, including the latest review'
+            : 'Portfolio Performance Review ready',
+        );
+      }
+    } catch (e: any) {
+      toast.error(e?.message || 'Could not produce the review');
+    } finally {
+      setTypesetting(null);
     }
   };
 
@@ -504,6 +541,23 @@ export function PortfolioAnalysisReportsList({ clientId, showHeader = true }: Po
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" sideOffset={8} collisionPadding={16} className="min-w-[210px] rounded-2xl border-border dark:border-white/10 bg-background dark:bg-background/95 p-1.5 text-foreground dark:text-foreground shadow-2xl shadow-sm dark:shadow-black/45 backdrop-blur-xl">
+                            {/*
+                              First, and never disabled. Every other item here
+                              needs `pdf_file_path`, and 7 of the 21 stored
+                              reports have none — this one reads `report_data`,
+                              so those become downloadable for the first time.
+                            */}
+                            <DropdownMenuItem
+                              className="rounded-xl transition-colors focus:bg-brand-400/10 focus:text-brand-100"
+                              disabled={typesetting === report.id}
+                              onSelect={(e) => { e.preventDefault(); handleTypesetDownload(report); }}
+                            >
+                              {typesetting === report.id
+                                ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                : <Sparkles className="h-4 w-4 mr-2" />}
+                              Download review (typeset)
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator className="my-1 bg-border dark:bg-white/10" />
                             <DropdownMenuItem
                               className="rounded-xl transition-colors focus:bg-brand-400/10 focus:text-brand-100"
                               disabled={!report.pdf_file_path}

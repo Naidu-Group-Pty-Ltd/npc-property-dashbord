@@ -33,6 +33,21 @@ export interface BrandLogoConfig {
   sidebar: string | null;
   sidebarIcon: string | null;
   favicon: string | null;
+  /**
+   * The mark generated reports carry, on paper grounds.
+   *
+   * Separate from `sidebar` because the constraints are different: a report
+   * mark is inlined as a `data:` URI into the render, is printed at ~13mm on
+   * a 300dpi sheet, and must be a raster format the WeasyPrint container will
+   * accept. See `reportDesign/assets.pure.ts`.
+   */
+  report: string | null;
+  /**
+   * The knockout mark for the dark cover and closing grounds. Falls back to
+   * `report`; a colour lockup on obsidian usually survives, a white one on
+   * ivory never does.
+   */
+  reportMono: string | null;
 }
 
 export interface BrandConfig {
@@ -41,6 +56,10 @@ export interface BrandConfig {
   sidebarLogo: string | null;
   sidebarIcon: string | null;
   favicon: string | null;
+  /** The report mark. See `BrandLogoConfig.report`. */
+  reportLogo: string | null;
+  /** The knockout report mark. See `BrandLogoConfig.reportMono`. */
+  reportMonoLogo: string | null;
   companyName: string;
   primaryColor: string | null;
   accentColor: string | null;

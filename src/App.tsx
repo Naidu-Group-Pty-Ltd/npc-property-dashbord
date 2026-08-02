@@ -29,6 +29,7 @@ import Overview from "./pages/Overview";
 import Listings from "./pages/Listings";
 import Calendar from "./pages/Calendar";
 import MarketUpdates from "./pages/MarketUpdates";
+import { MarketArchivePage } from "./components/market-updates/MarketArchivePage";
 import Sources from "./pages/Sources";
 import Reports from "./pages/Reports";
 import QuantitativeReports from "./pages/QuantitativeReports";
@@ -106,6 +107,7 @@ import MarketQASubscriptions from "./pages/qa/MarketQASubscriptions";
 import MarketQADigests from "./pages/qa/MarketQADigests";
 
 import Integrations from "./pages/Integrations";
+import WorkflowPlayground from "./pages/WorkflowPlayground";
 import MarketingAnalytics from "./pages/MarketingAnalytics";
 import CloudflareManagement from "./pages/CloudflareManagement";
 import ClientManagement from "./pages/ClientManagement";
@@ -473,6 +475,7 @@ const App = () => (
                 <Route path="dashboard" element={<Overview />} />
                 <Route path="listings" element={<ModuleGuard moduleKey="listings"><Listings /></ModuleGuard>} />
                 <Route path="market-updates" element={<MarketUpdates />} />
+                <Route path="market-updates/archived" element={<MarketArchivePage />} />
                 <Route
                   path="calendar"
                   element={
@@ -561,6 +564,7 @@ const App = () => (
 
                 <Route path="integrations" element={<ModuleGuard moduleKey="integrations"><Integrations /></ModuleGuard>} />
                 <Route path="integrations/ghl-migration" element={<GhlMigration />} />
+                <Route path="workflow-playground" element={<ModuleGuard moduleKey="integrations"><WorkflowPlayground /></ModuleGuard>} />
                 <Route path="cloudflare" element={<ModuleGuard moduleKey="cloudflare"><CloudflareManagement /></ModuleGuard>} />
                 <Route path="api-usage" element={<ModuleGuard moduleKey="api_usage"><ApiUsage /></ModuleGuard>} />
                 <Route path="clients" element={<ModuleGuard moduleKey="clients"><ClientManagement /></ModuleGuard>} />

@@ -10,7 +10,7 @@ import { enforceJsonBodyLimit } from '../_shared/requestSecurity.ts';
 import { marketCorrelationId } from '../_shared/marketUpdatesObservability.ts';
 
 const UPDATE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,confidence_score,citation_urls,relevance_score,status,failure_reason,publication_reason,candidate_reason,ai_status,ai_failure_code,validation_failures,decisioned_at,model_used,route_used,fallback_used,ai_latency_ms,ai_failure_reason,dedupe_hash,visibility,shadow_would_publish,created_at,updated_at';
-const ARCHIVE_COLUMNS = 'id,title,source_name,source_url,category,geography,ai_summary,public_excerpt,source_published_at,archived_at,archived_by,pre_archive_status';
+const ARCHIVE_COLUMNS = 'id,correlation_id,source_id,source_name,source_url,canonical_url,original_url,source_authority,source_perspective,author,public_excerpt,source_published_at,ingested_at,title,slug,category,segments,freshness_tier,geography,impact_level,audience_tags,ai_summary,key_points,why_it_matters,property_implications,finance_implications,policy_implications,risk_flags,lending_criteria_tags,legal_topics,economic_topics,legal_status,effective_date,citation_urls,status,publication_reason,ai_status,dedupe_hash,visibility,created_at,updated_at,archived_at,archived_by,pre_archive_status';
 const SOURCE_COLUMNS = 'id,source_key,name,description,source_type,adapter_type,url,primary_url,feed_urls,listing_urls,source_authority,perspective,copyright_mode,legal_storage_policy,category,geography,reliability_tier,enabled,ingest_mode,shadow_since,shadow_promotion_notes,refresh_frequency_hours,refresh_frequency_minutes,consecutive_failures,health_status,registry_status,disabled_reason,last_http_status,last_latency_ms,last_items_discovered,last_items_published,last_fetched_at,last_success_at,created_at,updated_at';
 const SHADOW_METRIC_COLUMNS = 'source_id,source_key,name,ingest_mode,shadow_since,shadow_promotion_notes,health_status,source_authority,shadow_items,would_publish,below_relevance,rejected,avg_relevance,avg_confidence,last_shadow_item_at';
 const DIGEST_COLUMNS = 'id,period,generated_at,period_start,period_end,executive_summary,top_update_ids,finance_lending_highlights,property_market_highlights,construction_supply_highlights,policy_regulation_highlights,political_economic_watchpoints,social_watchpoints,segment_breakdown,buyer_implications,investor_implications,broker_adviser_implications,client_advisory_implications,recommended_watchlist_for_tomorrow,source_urls,confidence_score,status,created_at,updated_at';
@@ -63,24 +63,23 @@ Deno.serve(async (req) => {
   const action = String(body.action ?? 'status');
   try {
     if (action === 'archive') {
-      const editPermission = await requireModulePermission(sb, { userId:auth.userId, authMethod:auth.authMethod }, 'market_updates', 'can_edit');
-      if (!editPermission.ok) return json({ error:'Market Updates edit permission required to review the archive', code:'market_updates_edit_required', correlation_id:correlationId, retryable:false }, 403, cors, correlationId);
       const page = Math.max(1, Math.floor(Number(body.page) || 1));
       const pageSize = Math.max(10, Math.min(50, Math.floor(Number(body.pageSize) || 20)));
       const from = (page - 1) * pageSize;
       const to = from + pageSize - 1;
       const search = archiveSearch(body.search);
-      const sort = body.sort === 'deletion_asc' ? 'deletion_asc' : 'archived_desc';
+      const sort = body.sort === 'published_desc' ? 'published_desc' : 'archived_desc';
       let query = sb.from('market_updates').select(ARCHIVE_COLUMNS, { count:'exact' }).not('archived_at', 'is', null);
       if (search) query = query.or(`title.ilike.%${search}%,source_name.ilike.%${search}%,ai_summary.ilike.%${search}%`);
-      query = query.order('archived_at', { ascending:sort === 'deletion_asc' }).order('id', { ascending:false }).range(from, to);
+      if (typeof body.source === 'string' && body.source !== 'all') query = query.eq('source_name', body.source);
+      if (typeof body.category === 'string' && body.category !== 'all') query = query.eq('category', body.category);
+      if (typeof body.impact === 'string' && body.impact !== 'all') query = query.eq('impact_level', body.impact);
+      if (typeof body.geography === 'string' && body.geography !== 'all') query = query.contains('geography', [body.geography]);
+      if (typeof body.audience === 'string' && body.audience !== 'all') query = query.contains('audience_tags', [body.audience]);
+      query = query.order(sort === 'published_desc' ? 'source_published_at' : 'archived_at', { ascending:false, nullsFirst:false }).order('id', { ascending:false }).range(from, to);
       const { data, count, error } = await query;
       if (error) throw Object.assign(new Error('archive query failed'), { stage:'archive' });
-      const now = Date.now();
-      const items = (data ?? []).map((row:any) => {
-        const deletesAt = new Date(new Date(row.archived_at).getTime() + 30 * 86_400_000).toISOString();
-        return { ...row, deletes_at:deletesAt, days_remaining:Math.max(0, Math.ceil((new Date(deletesAt).getTime() - now) / 86_400_000)) };
-      });
+      const items = data ?? [];
       return json({ archive:{ items, count:count ?? 0, page, pageSize, hasMore:to + 1 < (count ?? 0) }, correlation_id:correlationId }, 200, cors, correlationId);
     }
 
@@ -180,11 +179,8 @@ Deno.serve(async (req) => {
       : new Date().toISOString()).sort()[0] ?? null;
     const assignments = assignmentsResult.error ? [] : assignmentsResult.data ?? [];
     const adminPermission = await requireAdmin(sb,{ userId:auth.userId, authMethod:auth.authMethod });
-    const editPermission = await requireModulePermission(sb,{ userId:auth.userId, authMethod:auth.authMethod },'market_updates','can_edit');
-    const archivedCount = editPermission.ok
-      ? await countArchivedRows(sb)
-      : null;
-    if (editPermission.ok && archivedCount === null) warnings.push('archive_count_unavailable');
+    const archivedCount = await countArchivedRows(sb);
+    if (archivedCount === null) warnings.push('archive_count_unavailable');
     const automation = automationResult.error ? null : automationResult.data;
     if (adminPermission.ok && automationResult.error) warnings.push('automation_status_unavailable');
     if (adminPermission.ok && automation?.cron_stale) warnings.push('cron_stale');

@@ -20,6 +20,8 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
+import { requestCashFlowPdf } from '@/lib/reports/cashFlow/requestCashFlowPdf';
+import { toWireProjection } from '@/lib/reports/cashFlow/toWireProjection';
 import { SendToClientModal } from '@/components/reports/SendToClientModal';
 import { Calculator, Download, TrendingUp, DollarSign, Percent, Home, Save, RotateCcw, BarChart3, Image, GitCompare, X, FileText, Target, Zap, Building, Award, Printer, ChevronDown, ChevronRight, Send, Search, Check } from 'lucide-react';
 import { ComposedChart, LineChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
@@ -214,6 +216,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const { toast } = useToast();
   const isMobile = useIsMobile();
   const [isSaving, setIsSaving] = useState(false);
+  /** The typeset PDF is a round trip to a render service; the menu says so. */
+  const [isExportingServerPdf, setIsExportingServerPdf] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [editingCell, setEditingCell] = useState<{ year: number; field: EditableFieldKey } | null>(null);
@@ -3551,6 +3555,96 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
     }
   }, [report, baseFinancialData, exportSingleReportPDF]);
 
+  /**
+   * The typeset PDF — built here, rendered by WeasyPrint, stored and signed.
+   *
+   * The projection that crosses the wire is the one on screen, unsaved
+   * overrides included, because that is the ten years the adviser just
+   * reviewed. See `requestCashFlowPdf` for why the server does not recompute
+   * it.
+   *
+   * `exportSingleReportPDF` is passed as the fallback and is *only* reached
+   * when the route is not deployed. It stays in the menu in its own right.
+   */
+  const exportServerCashFlowPDF = useCallback(async () => {
+    if (!report || !baseFinancialData || !projections.length) return;
+    if (isExportingServerPdf) return;
+
+    setIsExportingServerPdf(true);
+    try {
+      const wire = toWireProjection({
+        projections,
+        base: baseFinancialData,
+        firstCalendarYear: new Date().getFullYear() + 1,
+        notes: baseFinancialData.includeDepreciationInCashFlow
+          ? []
+          : ['Depreciation is excluded from this projection at the adviser\'s direction.'],
+      });
+
+      const result = await requestCashFlowPdf(
+        { reportId: report.id, projection: wire },
+        async () => {
+          const blob = await exportSingleReportPDF({ returnBlob: true });
+          if (!blob || !(blob instanceof Blob)) return null;
+          // The legacy generator hands back bytes rather than a link, so the
+          // download happens here and the caller is told which one it got.
+          const url = URL.createObjectURL(blob);
+          const fileName = `Cash_Flow_Analysis_${(report.property_address || 'report').replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = fileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          return { url, fileName, bytes: blob.size };
+        },
+      );
+
+      if (result.source === 'server') {
+        // A signed link, so the file is fetched and saved rather than opened —
+        // a PDF that opens in a tab is a PDF the client has to find again.
+        const res = await fetch(result.url);
+        if (!res.ok) throw new Error(`Download failed (${res.status})`);
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objectUrl;
+        a.download = result.fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+
+      logActivityDirect({
+        actionType: 'report_pdf_downloaded',
+        entityType: 'investment_report',
+        entityId: report.id,
+        entityName: report.property_address,
+        metadata: { format: 'pdf', source: `cash_flow_${result.source}`, pages: result.pageCount },
+      });
+
+      toast({
+        title: result.source === 'server' ? 'Cash Flow Analysis ready' : 'Generated with the legacy layout',
+        description: result.source === 'server'
+          ? (result.brandGaps.length
+            ? `Your download should begin shortly. Note: ${result.brandGaps.join('; ')}.`
+            : 'Your download should begin shortly.')
+          : 'The server renderer is not deployed yet, so the in-browser generator was used.',
+      });
+    } catch (error) {
+      console.error('[CashFlowAnalysisModal] server PDF failed', error);
+      toast({
+        title: 'Could not generate the PDF',
+        description: error instanceof Error ? error.message : 'Try the legacy layout, or retry shortly.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsExportingServerPdf(false);
+    }
+  }, [report, baseFinancialData, projections, isExportingServerPdf, exportSingleReportPDF, toast]);
+
   // Print-friendly view in new window
   const openPrintView = useCallback(() => {
     if (!report || !baseFinancialData) return;
@@ -3989,6 +4083,8 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
                 onGlobalChartsToggle={handleGlobalChartsToggle}
                 onChartToggle={handleChartToggle}
                 onExportExcel={handleExportExcel}
+                onExportServerPdf={exportServerCashFlowPDF}
+                isExportingServerPdf={isExportingServerPdf}
                 onExportPdf={exportSingleReportPDF}
                 onPrintView={openPrintView}
                 onSendToClient={() => setSendToClientOpen(true)}

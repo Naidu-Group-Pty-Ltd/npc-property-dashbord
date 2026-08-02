@@ -147,6 +147,27 @@ export function dimensionsFor(page: NamedPage): { widthMm: number; heightMm: num
     : { widthMm: PAGE_SIZE.widthMm, heightMm: PAGE_SIZE.heightMm };
 }
 
+/**
+ * The asymmetric editorial grid, as percentages of the text block.
+ *
+ * Four spans, not twelve tracks: WeasyPrint has no CSS Grid, and these are the
+ * only ratios the layouts use. Declared here rather than in the stylesheet
+ * because a chart drawn into one of these columns has to know how wide it will
+ * print — a chart sized for the full measure and placed in a 38% column prints
+ * its labels at 38% of the size the code asked for, which is the defect that
+ * put this table here.
+ */
+export const GRID_SPANS = { 4: 30, 5: 38, 7: 58, 8: 66 } as const;
+export type GridSpan = keyof typeof GRID_SPANS;
+
+/** Gutter between grid columns, in mm. */
+export const GRID_GUTTER_MM = 4;
+
+/** Printed width of a grid column, in mm. */
+export function spanWidthMm(span: GridSpan, page: NamedPage = 'body'): number {
+  return Math.round(contentWidthMm(page) * (GRID_SPANS[span] / 100) * 10) / 10;
+}
+
 /** Usable content width in mm for a named page. */
 export function contentWidthMm(page: NamedPage): number {
   const m = marginsFor(page);

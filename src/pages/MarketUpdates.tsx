@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { Activity, AlertTriangle, Archive, BarChart3, Building2, ExternalLink, Eye, FileText, Globe2, Loader2, Newspaper, RefreshCw, RotateCcw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, Radio, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, Archive, BarChart3, Building2, ExternalLink, Eye, FileText, Globe2, Loader2, Newspaper, Radio, RotateCcw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, Zap, Clock, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -14,13 +14,12 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { normaliseSegmentBreakdown } from '@/lib/marketDigestSegments';
 import { interleaveBySource } from '@/lib/marketFeedOrder';
-import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, followMarketIngestionRun, generateMarketDigest, restoreMarketUpdate, streamMarketUpdateQuestion, triggerMarketIngestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
+import { answerMarketUpdateQuestion, archiveMarketUpdate, fetchLatestMarketDigest, fetchMarketSourceHealth, fetchMarketUpdates, generateMarketDigest, publishMarketUpdate, restoreMarketUpdate, streamMarketUpdateQuestion, ensureMarketUpdatesFresh, MarketUpdatesOperationalError } from '@/services/marketUpdatesService';
 import type { MarketAudienceTag, MarketDigest24h, MarketDigestPeriod, MarketFreshnessTier, MarketGeography, MarketImpactLevel, MarketIngestionRun, MarketQAMessage, MarketSegment, MarketSourceHealth, MarketUpdate, MarketUpdateCategory, MarketUpdatesOperationalIssue } from '@/types/marketUpdates';
 import { MarketSourcesAdminDialog } from '@/components/market-updates/MarketSourcesAdminDialog';
 import { MarketSourceCoveragePanel } from '@/components/market-updates/MarketSourceCoveragePanel';
 import { MarketQAVoiceButton } from '@/components/market-updates/MarketQAVoiceButton';
 import { MarketQAAnswerActions } from '@/components/market-updates/MarketQAAnswerActions';
-import { MarketArchiveDialog } from '@/components/market-updates/MarketArchiveDialog';
 import type { MarketQARetrievedItem } from '@/types/marketUpdates';
 import { LiveModelBadge } from '@/components/agentModels';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
@@ -93,7 +92,6 @@ export default function MarketUpdates() {
   const [updates, setUpdates] = useState<MarketUpdate[]>([]);
   const [sourceHealth, setSourceHealth] = useState<MarketSourceHealth>({ totalSources:0, enabledSources:0, healthySources:0, degradedSources:0, failedSources:0 });
   const [loading, setLoading] = useState(true);
-  const [ingesting, setIngesting] = useState(false);
   const [digestLoading, setDigestLoading] = useState(false);
   const [period, setPeriod] = useState<MarketDigestPeriod>('24h');
   const [digest, setDigest] = useState<MarketDigest24h | null>(null);
@@ -124,21 +122,29 @@ export default function MarketUpdates() {
   // Shadow counters live on the ingestion response rather than the run row, so the
   // last run's validation result is held alongside it.
   const [runShadow, setRunShadow] = useState<{ sources:number; ingested:number; wouldPublish:number } | null>(null);
-  const [candidateReview, setCandidateReview] = useState<MarketUpdate[] | null>(null);
-  const [archiveOpen,setArchiveOpen] = useState(false);
+  // Held items live in the main feed behind a scope chip rather than a modal —
+  // the tiered publication policy leaves far fewer of them, and the ones that
+  // remain are managed in place.
+  const [heldUpdates, setHeldUpdates] = useState<MarketUpdate[]>([]);
+  const [feedScope, setFeedScope] = useState<'published' | 'held'>('published');
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+
 
   const issueFrom = (error: unknown): MarketUpdatesOperationalIssue => error instanceof MarketUpdatesOperationalError
     ? error.issue
-    : { stage:'database', code:'unknown', message:'Some Market Updates data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
+    : { stage:'database', code:'unknown', message:'Some Market News Feed data could not be refreshed.', remediation:'Previously loaded information remains visible. Retry; if the warning persists, ask an administrator to review the status function.', functionName:'market-updates-status', retryable:true };
 
   const loadUpdates = async () => {
     setLoading(true);
-    const [updatesResult, healthResult] = await Promise.allSettled([
+    const [updatesResult, healthResult, heldResult] = await Promise.allSettled([
       fetchMarketUpdates({ limit:200 }),
       fetchMarketSourceHealth(),
+      fetchMarketUpdates({ status:'candidate', limit:100 }),
     ]);
     if (updatesResult.status === 'fulfilled') setUpdates(updatesResult.value);
     if (healthResult.status === 'fulfilled') setSourceHealth(healthResult.value);
+    // Held items are supplementary: a failure there must not blank the feed.
+    if (heldResult.status === 'fulfilled') setHeldUpdates(heldResult.value);
     const failure = [updatesResult, healthResult].find((result) => result.status === 'rejected') as PromiseRejectedResult | undefined;
     setDataIssue(failure ? issueFrom(failure.reason) : null);
     setLoading(false);
@@ -147,6 +153,7 @@ export default function MarketUpdates() {
       health: healthResult.status === 'fulfilled' ? healthResult.value : null,
     };
   };
+
   const loadDigest = async (selectedPeriod:MarketDigestPeriod) => {
     try { setDigest(await fetchLatestMarketDigest(selectedPeriod)); setDigestIssue(null); }
     catch (error) { setDigestIssue(issueFrom(error)); }
@@ -223,13 +230,13 @@ export default function MarketUpdates() {
     if (loading) return null;
     if (updates.length > 0 && filteredUpdates.length === 0 && hasActiveFilters) return { title:'Published updates hidden by filters', description:'Clear the active filters to restore the complete published feed.', kind:'filters' as const };
     if (updates.length > 0) return null;
-    if (dataIssue && sourceHealth.totalSources === 0) return { title:'Market Updates data is unavailable', description:'Previously loaded content is not available in this session. Retry the authoritative status and feed requests.', kind:'failure' as const };
+    if (dataIssue && sourceHealth.totalSources === 0) return { title:'Market News Feed data is unavailable', description:'Previously loaded content is not available in this session. Retry the authoritative status and feed requests.', kind:'failure' as const };
     if (sourceHealth.totalSources === 0) return { title:'No canonical source registry', description:'Apply the canonical registry migration, then open Sources to verify the approved feeds.', kind:'registry' as const };
     if (sourceHealth.enabledSources === 0) return { title:'Sources are configured but none are enabled', description:'Open Sources and enable at least one approved canonical source.', kind:'disabled' as const };
     if (sourceHealth.activeRun) return { title:'Ingestion is running', description:'The active run is discovering and classifying source-backed items. Progress is shown above.', kind:'running' as const };
     if ((sourceHealth.candidates ?? 0) > 0) return { title:'Items are awaiting review', description:`${sourceHealth.candidates} candidate item(s) were discovered but did not meet automatic publication criteria.`, kind:'candidates' as const };
     if (!sourceHealth.latestRun) return { title:'Sources are enabled and ready for their first run', description:'Sync the latest news to retrieve, classify and publish eligible source-backed updates.', kind:'never-run' as const };
-    if ((sourceHealth.latestRun.items_discovered ?? 0) > 0 && (sourceHealth.latestRun.items_classified ?? 0) < sourceHealth.latestRun.items_discovered) return { title:'Discovered items are awaiting AI classification', description:'Review the latest run and test the configured Market Updates classifier route.', kind:'classification' as const };
+    if ((sourceHealth.latestRun.items_discovered ?? 0) > 0 && (sourceHealth.latestRun.items_classified ?? 0) < sourceHealth.latestRun.items_discovered) return { title:'Discovered items are awaiting AI classification', description:'Review the latest run and test the configured Market News Feed classifier route.', kind:'classification' as const };
     return { title:'No published updates yet', description:'The latest run completed without an eligible publication. Review candidates, source health and AI readiness.', kind:'no-published' as const };
   }, [loading, updates.length, filteredUpdates.length, hasActiveFilters, dataIssue, sourceHealth]);
 
@@ -240,30 +247,24 @@ export default function MarketUpdates() {
     finally { setDigestLoading(false); }
   };
 
-  const handleIngest = async () => {
-    setIngesting(true);
+
+  // legacy helper kept for a graceful transition from the old candidate-review modal
+
+  const publishHeldUpdate = async (update: MarketUpdate) => {
+    if (publishingId) return;
+    setPublishingId(update.id);
+    setActionIssue(null);
     try {
-      setActionIssue(null);
-      let summary = await triggerMarketIngestion({ force: true, trigger_type: 'manual' });
-      if (summary.runId) {
-        setRunSummary({ id:summary.runId, trigger_type:'manual', started_at:new Date().toISOString(), status:summary.active ? 'running' : summary.status ?? 'completed', sources_considered:summary.sourcesConsidered ?? 0, sources_processed:summary.sourcesProcessed ?? 0, sources_succeeded:summary.sourcesSucceeded ?? 0, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored });
-        if (summary.active) summary = await followMarketIngestionRun(summary.runId);
-      }
-      setMessage(summary.message ?? `Ingested ${summary.ingested} · Published ${summary.published} · Candidates ${summary.candidates}`);
-      setRunShadow(summary.shadowSources
-        ? { sources:summary.shadowSources, ingested:summary.shadowIngested ?? 0, wouldPublish:summary.shadowWouldPublish ?? 0 }
-        : null);
+      await publishMarketUpdate(update.id);
+      setHeldUpdates(current => current.filter(u => u.id !== update.id));
+      toast.success(`Published “${update.title}”.`);
       await loadUpdates();
-      setRunSummary((current) => current ? { ...current, status:summary.status ?? 'completed', completed_at:new Date().toISOString(), sources_processed:summary.sourcesProcessed ?? current.sources_processed, sources_succeeded:summary.sourcesSucceeded ?? current.sources_succeeded, sources_failed:summary.sourcesFailed ?? summary.failed, items_discovered:summary.discovered ?? summary.ingested, items_deduplicated:summary.skippedDuplicates, items_classified:summary.classified ?? 0, items_published:summary.published, items_candidate:summary.candidates, items_ignored:summary.ignored, items_rejected:summary.rejected ?? 0, items_failed:summary.persistenceFailed ?? 0 } : current);
-    }
-    catch(error) { setActionIssue(issueFrom(error)); }
-    finally { setIngesting(false); }
+    } catch (error) {
+      setActionIssue(issueFrom(error));
+      toast.error(`“${update.title}” could not be published.`, { description:'It remains held for review.' });
+    } finally { setPublishingId(null); }
   };
 
-  const reviewCandidates = async () => {
-    try { setActionIssue(null); setCandidateReview(await fetchMarketUpdates({ status:'candidate', limit:100 })); }
-    catch (error) { setActionIssue(issueFrom(error)); }
-  };
 
   const restoreArchived = async (updateId:string,title:string):Promise<boolean> => {
     if (hidingId) return false;
@@ -291,7 +292,7 @@ export default function MarketUpdates() {
       setUpdates(current => current.filter(u => u.id !== update.id));
       setSourceHealth(current => ({ ...current, archivedUpdates:(current.archivedUpdates ?? 0)+1 }));
       toast.success(`Archived “${update.title}”.`,{
-        description:'This update will be retained for 30 days.',
+        description:'This update remains available in Archived News until it is restored.',
         action:{label:'Undo',onClick:() => { void restoreArchived(update.id,update.title); }},
       });
     } catch (error) {
@@ -390,7 +391,7 @@ export default function MarketUpdates() {
             <CardTitle className="flex items-center gap-2 text-lg">
               <Sparkles className="h-4 w-4 text-primary" />Ask AI
             </CardTitle>
-            <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market updates. Threaded — follow-ups keep prior context.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Source-grounded, streaming answers from published market news. Threaded — follow-ups keep prior context.</p>
           </div>
           {qaThread.length > 0 && (
             <Button size="sm" variant="ghost" onClick={() => { cancelAsk(); setQaThread([]); setQaMessage(null); setConversationId(crypto.randomUUID()); }}>New thread</Button>
@@ -403,7 +404,7 @@ export default function MarketUpdates() {
             <div className="flex h-full min-h-[280px] flex-col items-center justify-center text-center">
               <Sparkles className="mb-3 h-8 w-8 text-primary/70" />
               <h3 className="text-base font-semibold">Ask a source-grounded market question</h3>
-              <p className="mt-2 max-w-xl text-sm text-muted-foreground">Answers use published market updates and may refuse if there are no grounded sources available.</p>
+              <p className="mt-2 max-w-xl text-sm text-muted-foreground">Answers use published market news and may refuse if there are no grounded sources available.</p>
               {!updates.length && <p className="mt-2 text-xs text-muted-foreground">No published updates loaded yet — the AI may refuse if it has no grounded sources.</p>}
             </div>
           ) : qaThread.map((turn, i) => (
@@ -427,7 +428,7 @@ export default function MarketUpdates() {
               {turn.citations && turn.citations.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {turn.citations.map((url, j) => (
-                    <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:border-primary/40 hover:text-primary"><ExternalLink className="h-3 w-3" />Cite {j + 1}</a>
+                    <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
                   ))}
                 </div>
               )}
@@ -478,12 +479,9 @@ export default function MarketUpdates() {
           <div className="flex flex-col gap-6 xl:flex-row xl:items-center xl:justify-between">
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge className="bg-primary/15 text-primary hover:bg-primary/20">AI Market Intelligence</Badge>
-                <Badge variant="outline">Australia · RBA · APRA · Treasury</Badge>
-                <LiveModelBadge agentKey="market_updates_classifier" size="sm" showSlot={false} />
-                <LiveModelBadge agentKey="market_updates_digest" size="sm" showSlot={false} />
+                <Badge className="bg-primary/15 text-primary hover:bg-primary/20">Aurixa Market News Intelligence</Badge>
               </div>
-              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market Updates</h1>
+              <h1 className="text-3xl font-bold tracking-tight md:text-4xl">Market News Feed</h1>
               <p className="max-w-3xl text-sm text-muted-foreground md:text-base">
                 Australian property, lending, economic and regulatory intelligence
               </p>
@@ -496,11 +494,7 @@ export default function MarketUpdates() {
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={loadUpdates} variant="outline"><RefreshCw className="mr-2 h-4 w-4" />Refresh View</Button>
-              <Button onClick={handleIngest} disabled={ingesting} variant="outline">{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
-              <Button onClick={handleGenerateDigest} disabled={digestLoading}>{digestLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Sparkles className="mr-2 h-4 w-4" />}Generate {PERIODS.find(p => p.id === period)?.label} Digest</Button>
-              {(sourceHealth.candidates ?? 0) > 0 && <Button variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
-              {canEditMarketUpdates && <Button variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="mr-2 h-4 w-4" aria-hidden />Archive{typeof sourceHealth.archivedUpdates === 'number' && <Badge variant="secondary" className="ml-2">{sourceHealth.archivedUpdates}</Badge>}</Button>}
+              <Button variant="outline" onClick={() => navigate('/market-updates/archived')} aria-label="Open Archived News"><Archive className="mr-2 h-4 w-4" aria-hidden />Archived{typeof sourceHealth.archivedUpdates === 'number' && <Badge variant="secondary" className="ml-2">{sourceHealth.archivedUpdates}</Badge>}</Button>
               <Button variant="ghost" onClick={() => setSourcesAdminOpen(true)}><Settings className="mr-2 h-4 w-4" />Sources</Button>
             </div>
           </div>
@@ -519,7 +513,7 @@ export default function MarketUpdates() {
           <Card role="alert" className="border-destructive/30 bg-destructive/5">
             <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1">
-                <p className="font-semibold text-destructive">Market Updates requires attention</p>
+                <p className="font-semibold text-destructive">Market News Feed requires attention</p>
                 <p className="text-sm text-foreground">{operationalIssue.message}</p>
                 <p className="text-xs text-muted-foreground">Stage: {titleCase(operationalIssue.stage)}{operationalIssue.functionName ? ` · Function: ${operationalIssue.functionName}` : ''}{operationalIssue.httpStatus ? ` · HTTP ${operationalIssue.httpStatus}` : ''}{operationalIssue.correlationId ? ` · Correlation: ${operationalIssue.correlationId}` : ''} · {operationalIssue.retryable ? 'Retryable' : 'Administrator action required'}</p>
                 <p className="text-sm text-muted-foreground">{operationalIssue.remediation}</p>
@@ -531,16 +525,35 @@ export default function MarketUpdates() {
 
         {(runSummary || sourceHealth.activeRun) && (() => { const run = runSummary ?? sourceHealth.activeRun!; return <Card aria-live="polite" className="border-primary/20"><CardContent className="space-y-3 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-semibold">Ingestion run <span className="font-mono text-xs">{run.id.slice(0,8)}</span></p><p className="text-xs text-muted-foreground">{titleCase(run.status)} · {run.sources_processed}/{run.sources_considered} sources processed</p></div>{['queued','running'].includes(run.status) && <Loader2 className="h-4 w-4 animate-spin text-primary" />}</div><div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4 lg:grid-cols-8">{[['Discovered',run.items_discovered],['Deduplicated',run.items_deduplicated ?? 0],['Classified',run.items_classified ?? 0],['Published',run.items_published],['Candidates',run.items_candidate ?? 0],['Ignored',run.items_ignored ?? 0],['Failed items',run.items_failed ?? 0],['Failed sources',run.sources_failed]].map(([label,value]) => <div key={String(label)} className="rounded border border-border/60 p-2"><span className="block text-muted-foreground">{label}</span><strong>{value}</strong></div>)}</div>{runShadow && <p className="text-xs text-muted-foreground">Shadow validation: {runShadow.sources} source(s) sampled {runShadow.ingested} item(s); {runShadow.wouldPublish} would have been published had they been live. None reached the feed.</p>}</CardContent></Card>; })()}
 
-        {/* KPIs */}
-        <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
-          {kpis.map(k => (
-            <button key={k.label} type="button" onClick={() => { if(k.label==='Breaking Now')setActiveFreshness('breaking'); else if(k.label==='Today')setActiveFreshness('today'); else if(k.label==='High Impact')setFilters(f=>({...f,impact:'high'})); else setActiveSegment(k.label==='Policy'?'policy_regulation':k.label.toLowerCase() as MarketSegment); }} className="rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Card className="h-full border-border/60 hover:border-primary/40"><CardContent className="p-4">
-                <k.icon className={cn('mb-3 h-5 w-5', k.tone)} />
-                <div className="text-2xl font-semibold tabular-nums">{k.value}</div>
-                <p className="mt-1 text-xs text-muted-foreground">{k.label}</p>
-              </CardContent></Card></button>
-          ))}
-        </section>
+        {/* KPIs — presented as one panel so it reads at the same weight and
+            rhythm as the Source coverage panel directly beneath it. */}
+        <Card className="border-border/60">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Feed at a glance</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">Live composition of the published feed. Select a tile to filter the updates below.</p>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              {kpis.map(k => (
+                <button
+                  key={k.label}
+                  type="button"
+                  onClick={() => { if(k.label==='Breaking Now')setActiveFreshness('breaking'); else if(k.label==='Today')setActiveFreshness('today'); else if(k.label==='High Impact')setFilters(f=>({...f,impact:'high'})); else setActiveSegment(k.label==='Policy'?'policy_regulation':k.label.toLowerCase() as MarketSegment); }}
+                  className="flex items-center gap-3 rounded-xl border border-border/60 bg-background/20 p-2 text-left transition-colors hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border/60">
+                    <k.icon className={cn('h-4 w-4', k.tone)} />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-lg font-semibold leading-none tabular-nums text-foreground">{k.value}</p>
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{k.label}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+
 
         {/* Where the feed comes from: all canonical sources, split by what the
             pipeline does with each. Collapsed to three tiles until asked to expand. */}
@@ -705,14 +718,55 @@ export default function MarketUpdates() {
               <TabsTrigger value="ask-ai">Ask AI</TabsTrigger>
             </TabsList>
             <TabsContent value="updates" className="mt-0 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">
-                  {filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}
-                  <span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span>
+                  {feedScope === 'held'
+                    ? <>{heldUpdates.length} {heldUpdates.length === 1 ? 'held item' : 'held items'}<span className="ml-2 text-sm font-normal text-muted-foreground">awaiting a publication decision</span></>
+                    : <>{filteredUpdates.length} {filteredUpdates.length === 1 ? 'update' : 'updates'}<span className="ml-2 text-sm font-normal text-muted-foreground">of {updates.length} published</span></>}
                 </h2>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Feed scope">
+                  <Button size="sm" variant={feedScope === 'published' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('published')} aria-pressed={feedScope === 'published'}>
+                    Published<Badge variant="secondary" className="ml-2">{updates.length}</Badge>
+                  </Button>
+                  <Button size="sm" variant={feedScope === 'held' ? 'default' : 'outline'} className="rounded-full" onClick={() => setFeedScope('held')} aria-pressed={feedScope === 'held'} title="Items fetched and classified but not published automatically.">
+                    Held<Badge variant="secondary" className="ml-2">{heldUpdates.length}</Badge>
+                  </Button>
+                </div>
               </div>
 
-              {loading ? (
+              {feedScope === 'held' ? (
+                heldUpdates.length ? heldUpdates.map(held => (
+                  <article key={held.id} className="min-w-0 rounded-2xl border border-warning/30 bg-card p-5">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="text-warning">Held</Badge>
+                      <span className="min-w-0 break-words text-xs text-muted-foreground" title={held.source_name}>{held.source_name}</span>
+                      {held.source_authority && <Badge variant="secondary">{titleCase(held.source_authority)}</Badge>}
+                      <span className="text-xs text-muted-foreground">Relevance {held.relevance_score}{typeof held.confidence_score === 'number' ? ` · Confidence ${held.confidence_score}` : ''}</span>
+                    </div>
+                    <h3 className="mt-2 break-words text-xl font-semibold leading-snug tracking-tight lg:text-2xl">{held.title}</h3>
+                    <p className="mt-2 break-words text-sm text-muted-foreground">{held.candidate_reason ? titleCase(held.candidate_reason) : 'Publication criteria were not met.'}</p>
+                    {held.ai_summary && <p className="mt-2 break-words text-sm">{held.ai_summary}</p>}
+                    <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                      <Button size="sm" onClick={() => void publishHeldUpdate(held)} disabled={publishingId === held.id}>
+                        {publishingId === held.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Publish to feed
+                      </Button>
+                      <a href={held.source_url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-2 rounded-md border border-primary/40 px-3 py-1.5 text-sm font-semibold text-primary hover:bg-primary/10" title={held.source_url}>
+                        <ExternalLink className="h-4 w-4 shrink-0" aria-hidden />Open original source
+                      </a>
+                    </div>
+                  </article>
+                )) : (
+                  <Card className="border-dashed">
+                    <CardContent className="p-10 text-center">
+                      <Globe2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
+                      <h3 className="text-lg font-semibold">Nothing is being held</h3>
+                      <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">Every classified item from the latest runs met its tier's publication policy and is live in the feed.</p>
+                      <div className="mt-4 flex justify-center"><Button size="sm" variant="outline" onClick={() => setFeedScope('published')}>Back to published feed</Button></div>
+                    </CardContent>
+                  </Card>
+                )
+              ) : loading ? (
+
                 <div className="space-y-3">
                   {[1,2,3].map(i => <Card key={i} className="animate-pulse"><CardContent className="h-40 p-6" /></Card>)}
                 </div>
@@ -724,10 +778,8 @@ export default function MarketUpdates() {
                     <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">{feedEmptyState.description}</p>
                     <div className="mt-4 flex flex-wrap justify-center gap-2">
                       {feedEmptyState.kind === 'filters' && <Button size="sm" variant="outline" onClick={clearFilters}>Clear filters</Button>}
-                      <Button size="sm" variant="outline" onClick={loadUpdates}><RefreshCw className="mr-2 h-4 w-4" />Retry page data</Button>
-                      <Button size="sm" onClick={handleIngest} disabled={ingesting}>{ingesting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Radio className="mr-2 h-4 w-4" />}Sync Latest News</Button>
                       {['registry','disabled'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setSourcesAdminOpen(true)}>Open Sources</Button>}
-                      {['candidates','classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={reviewCandidates}>Review candidates</Button>}
+                      
                       {sourceHealth.latestRun && ['classification','no-published'].includes(feedEmptyState.kind) && <Button size="sm" variant="outline" onClick={() => setRunSummary(sourceHealth.latestRun ?? null)}>View latest run</Button>}
                       {feedEmptyState.kind === 'classification' && <Button size="sm" variant="outline" onClick={() => setWorkspaceTab('ask-ai')}>Test AI route</Button>}
                     </div>
@@ -750,7 +802,7 @@ export default function MarketUpdates() {
                       {update.geography.slice(0, 2).map(g => <Badge key={g} variant="secondary" className="text-[10px]">{g}</Badge>)}
                     </div>
 
-                    <h3 className="mt-3 text-lg font-semibold leading-snug">
+                    <h3 className="mt-3 text-xl font-semibold leading-snug tracking-tight lg:text-2xl">
                       <a
                         href={update.source_url}
                         target="_blank"
@@ -825,13 +877,8 @@ export default function MarketUpdates() {
                         {hidingId === update.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive
                       </Button>}
                       <div className="ml-auto flex flex-wrap items-center gap-1">
-                        {update.citation_urls.slice(0, 3).map((url, i) => (
-                          <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/40 hover:text-primary">
-                            <ExternalLink className="h-2.5 w-2.5" />Cite {i + 1}
-                          </a>
-                        ))}
-                        <a href={update.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/20">
-                          <ExternalLink className="h-2.5 w-2.5" />Open original source
+                        <a href={update.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3.5 py-1.5 text-sm font-semibold text-primary transition-colors hover:bg-primary/20">
+                          <ExternalLink className="h-4 w-4" />Open original source
                         </a>
                       </div>
                     </div>
@@ -923,10 +970,7 @@ export default function MarketUpdates() {
                 </div>
                 {selectedUpdate.risk_flags.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-destructive">Risk Flags</h4><div className="mt-1.5 flex flex-wrap gap-1.5">{selectedUpdate.risk_flags.map(r => <Badge key={r} variant="outline" className="border-destructive/30 text-destructive">{r}</Badge>)}</div></div>}
                 <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-4">
-                  <a href={selectedUpdate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/20"><ExternalLink className="h-3 w-3" />Original source</a>
-                  {selectedUpdate.citation_urls.map((url, i) => (
-                    <a key={url} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-3 py-1 text-xs text-muted-foreground hover:border-primary/40 hover:text-primary"><ExternalLink className="h-3 w-3" />Citation {i + 1}</a>
-                  ))}
+                  <a href={selectedUpdate.source_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-4 py-2 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
                   {canEditMarketUpdates && <Button size="sm" variant="ghost" className="ml-auto text-muted-foreground hover:text-foreground" disabled={hidingId === selectedUpdate.id} onClick={() => { const target = selectedUpdate; setSelectedUpdate(null); archiveUpdate(target); }} aria-label={`Archive ${selectedUpdate.title}`}>
                     {hidingId === selectedUpdate.id ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Archive className="mr-1.5 h-3.5 w-3.5" aria-hidden />}Archive update
                   </Button>}
@@ -967,7 +1011,7 @@ export default function MarketUpdates() {
                       {turn.citations && turn.citations.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
                           {turn.citations.map((url, j) => (
-                            <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs hover:border-primary/40 hover:text-primary"><ExternalLink className="h-3 w-3" />Cite {j + 1}</a>
+                            <a key={url + j} href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-sm font-semibold text-primary transition-colors hover:bg-primary/20"><ExternalLink className="h-4 w-4" />Open original source</a>
                           ))}
                         </div>
                       )}
@@ -998,18 +1042,11 @@ export default function MarketUpdates() {
             </div>
           </DialogContent>
         </Dialog>
+        {/* The candidate-review modal was retired: held items are now managed
+            inline through the Held scope chip on the feed itself. */}
 
-        <Dialog open={candidateReview !== null} onOpenChange={(open) => { if (!open) setCandidateReview(null); }}>
-          <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:max-h-[calc(100dvh-2rem)] sm:max-w-4xl">
-            <DialogHeader className="shrink-0 border-b border-border/60 px-5 py-4 pr-14 text-left"><DialogTitle>Candidate review</DialogTitle><p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">Admin-only items awaiting a publication decision. Reasons and source links remain visible for review.</p></DialogHeader>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 pb-8" tabIndex={0} aria-label="Candidate market updates">
-              {candidateReview?.length ? candidateReview.map(candidate => <article key={candidate.id} className="min-w-0 rounded-lg border border-border/60 p-4"><div className="flex min-w-0 flex-wrap items-center gap-2"><Badge variant="outline">Candidate</Badge><span className="min-w-0 break-words text-xs text-muted-foreground" title={candidate.source_name}>{candidate.source_name}</span></div><h3 className="mt-2 break-words font-semibold leading-snug">{candidate.title}</h3><p className="mt-2 break-words text-sm text-muted-foreground">{candidate.candidate_reason ? titleCase(candidate.candidate_reason) : 'Publication criteria were not met.'}</p><div className="mt-3 flex min-w-0 flex-wrap items-center gap-2"><a href={candidate.source_url} target="_blank" rel="noreferrer" className="inline-flex max-w-full items-center gap-1 break-all text-xs text-primary hover:underline" title={candidate.source_url}><ExternalLink className="h-3 w-3 shrink-0" aria-hidden />Open source</a>{candidate.model_used && <Badge variant="secondary" className="max-w-full whitespace-normal break-words text-left">{candidate.route_used ?? 'route'} · {candidate.model_used}</Badge>}</div></article>) : <div className="rounded-lg border border-dashed border-border p-8 text-center text-sm text-muted-foreground">No candidate items require review.</div>}
-            </div>
-          </DialogContent>
-        </Dialog>
 
         <MarketSourcesAdminDialog open={sourcesAdminOpen} onOpenChange={setSourcesAdminOpen} onChanged={loadUpdates} />
-        {canEditMarketUpdates && <MarketArchiveDialog open={archiveOpen} onOpenChange={setArchiveOpen} onRestore={restoreArchived} onCountChange={count => setSourceHealth(current => ({...current,archivedUpdates:count}))} />}
       </div>
     </main>
   );

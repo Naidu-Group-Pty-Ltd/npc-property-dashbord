@@ -18,10 +18,9 @@ import {
   Lightbulb,
   Info,
   Receipt,
-  FileText,
   ShieldAlert,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { SnapshotDownloadButton } from './SnapshotDownloadButton';
 import { fetchAndGenerateBorrowingCapacityPDF } from './BorrowingCapacityPDFReport';
 import type { ScenarioPreset } from './scenarios/StrategyScenarioModeling';
 import { useState, useMemo } from 'react';
@@ -214,6 +213,7 @@ export function ResultsPanel({ result, isCalculating, calculationMode = 'bank', 
   const floorActive = result.borrowingCapacity <= 0 && result.monthlySurplus < 0;
   const displayedCapacity = floorActive && showAdvancedCapacity ? theoreticalCapacity : result.borrowingCapacity;
 
+
   return (
     <Card className="h-full">
       <CardHeader className="pb-4">
@@ -223,14 +223,13 @@ export function ResultsPanel({ result, isCalculating, calculationMode = 'bank', 
             Results
           </CardTitle>
           {clientId && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => fetchAndGenerateBorrowingCapacityPDF(clientId, clientName || 'Client', scenarioPresets)}
-            >
-              <FileText className="h-4 w-4 mr-1" />
-              Export PDF
-            </Button>
+            <SnapshotDownloadButton
+              request={{ clientId, clientName: clientName || 'Client', scenarioPresets }}
+              legacy={() => fetchAndGenerateBorrowingCapacityPDF(
+                clientId, clientName || 'Client', scenarioPresets, undefined, { returnBlob: true },
+              )}
+              label="Export PDF"
+            />
           )}
         </div>
 

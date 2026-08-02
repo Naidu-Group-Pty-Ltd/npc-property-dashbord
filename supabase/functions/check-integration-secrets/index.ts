@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse, createForbiddenResponse } from '../_shared/auth.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
+import { INTEGRATION_SECRET_MAP } from '../_shared/integrationSecrets.ts';
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-correlation-id, x-step-up-token',
@@ -210,8 +211,12 @@ Deno.serve(async (req) => {
     // If specific integration requested, return just that one with extra info
     if (body.integrationId) {
       const integrationId = body.integrationId;
-      const secretNames = integrationSecretMap[integrationId];
-      
+      // Own-property check only: a bare index would resolve inherited keys such as
+      // 'constructor' or 'toString' to a non-array and fall through to the loop below.
+      const secretNames = Object.hasOwn(integrationSecretMap, integrationId)
+        ? integrationSecretMap[integrationId]
+        : undefined;
+
       if (!secretNames) {
         return new Response(
           JSON.stringify({ success: false, error: 'Unknown integration' }),

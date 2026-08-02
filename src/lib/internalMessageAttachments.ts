@@ -3,11 +3,10 @@
  *
  * Upload path
  * -----------
- * Files go straight from the browser to Supabase Storage using a short-lived
- * signed upload URL minted by the `internal-messaging` edge function (which
- * re-verifies thread participation). Because the edge function is never in the
- * data path there is no payload ceiling — large files stream directly to
- * storage and every MIME type is accepted.
+ * Small and medium files go through the dedicated
+ * `internal-message-attachments` function, avoiding browser-to-Storage CORS
+ * and proxy failures. Large files use a short-lived signed upload URL minted by
+ * that same function and stream directly to Storage.
  *
  * Uploads are performed with XHR so we get real byte-level progress, an abort
  * signal, and — critically — a *retry* loop. Every retry mints a **fresh**
@@ -64,7 +63,9 @@ export function formatAttachmentSize(bytes?: number | null): string {
 }
 
 const call = async (payload: Record<string, unknown>) => {
-  const { data, error } = await invokeSecureFunction('internal-messaging', payload);
+  const { data, error } = await invokeSecureFunction('internal-message-attachments', payload, {
+    timeoutMs: 120_000,
+  });
   if (error) throw new Error(error.message || 'Request failed');
   if (data && (data as any).success === false) {
     throw new Error((data as any).error || 'Request failed');
@@ -73,6 +74,19 @@ const call = async (payload: Record<string, unknown>) => {
 };
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Base64 payload (no data-URI prefix) for the server-side upload fallback. */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? '');
+      resolve(result.includes(',') ? result.slice(result.indexOf(',') + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export interface UploadTicket {
   path: string;
@@ -169,6 +183,9 @@ function fatalTicketError(error: unknown): Error | null {
   if (m.includes('unknown action')) {
     return new Error('Attachment service is out of date — redeploy internal-messaging');
   }
+  if (m.includes('unknown operation')) {
+    return new Error('Attachment transport is out of date — redeploy internal-message-attachments');
+  }
   if (m.includes('not_a_participant')) {
     return new Error('You are no longer a participant in this conversation');
   }
@@ -195,12 +212,44 @@ export async function uploadInternalAttachment(
   const attempts = Math.max(1, options.attempts ?? UPLOAD_ATTEMPTS);
   let lastError: unknown = null;
 
+  // Prefer a server-mediated upload for files that fit safely inside an Edge
+  // request. This avoids browser-to-Storage CORS/proxy failures altogether and
+  // uses a dedicated function that cannot be shadowed by stale messaging code.
+  // Keep raw bytes below the Edge request ceiling after base64/JSON expansion.
+  const DIRECT_MAX_BYTES = 3 * 1024 * 1024;
+  if (!options.signal?.aborted && file.size <= DIRECT_MAX_BYTES) {
+    try {
+      options.onAttempt?.(1, 1);
+      options.onProgress?.(0.05);
+      const fileData = await fileToBase64(file);
+      options.onProgress?.(0.45);
+      const result = await call({
+        operation: 'upload_direct',
+        thread_id: threadId,
+        file_name: file.name,
+        content_type: file.type || 'application/octet-stream',
+        file_data: fileData,
+      });
+      const attachment = result?.attachment as InternalAttachment | undefined;
+      if (attachment?.path) {
+        options.onProgress?.(1);
+        return { ...attachment, name: file.name, size: file.size };
+      }
+      throw new Error('Attachment service returned no stored file');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      lastError = error;
+      // Continue into signed streaming; this remains useful during a transient
+      // Edge outage and is required for files above the direct request ceiling.
+    }
+  }
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     if (options.signal?.aborted) throw new DOMException('Upload cancelled', 'AbortError');
     options.onAttempt?.(attempt, attempts);
     try {
       const ticket = (await call({
-        action: 'attachment_upload_url',
+        operation: 'upload_ticket',
         thread_id: threadId,
         file_name: file.name,
         file_size: file.size,
@@ -268,21 +317,139 @@ export async function uploadInternalAttachments(
   return out;
 }
 
-/** Open (or force-download) an attachment via a freshly signed URL. */
+/**
+ * Delivery guarantee for attachments.
+ *
+ * `send_message` is supposed to persist the attachment list, but if that
+ * deployment is behind (or drops an item for any reason) the files exist in
+ * storage while nobody can see them. This binds the uploaded objects to the
+ * message row through the dedicated transport, which re-verifies participation,
+ * sender ownership and object existence server-side.
+ *
+ * Returns the authoritative attachment list stored on the message.
+ */
+export async function ensureMessageAttachments(
+  threadId: string,
+  messageId: string | null | undefined,
+  attachments: InternalAttachment[],
+  persisted?: unknown,
+): Promise<InternalAttachment[]> {
+  if (!attachments.length) return [];
+  const already = Array.isArray(persisted) ? (persisted as InternalAttachment[]) : [];
+  if (already.length >= attachments.length) return already;
+  if (!messageId) return already.length ? already : attachments;
+  try {
+    const data = await call({
+      operation: 'attach',
+      thread_id: threadId,
+      message_id: messageId,
+      attachments,
+    });
+    const out = data?.attachments;
+    return Array.isArray(out) && out.length ? (out as InternalAttachment[]) : attachments;
+  } catch (error) {
+    console.warn('[internal-attachments] could not bind attachments to message', error);
+    return already.length ? already : attachments;
+  }
+}
+
+/**
+ * Create a message and persist its uploaded objects atomically through the
+ * attachment transport. This is the authoritative path whenever files exist;
+ * it removes the old cross-function upload → send → repair race entirely.
+ */
+export async function sendInternalMessageWithAttachments(
+  threadId: string,
+  messageBody: string,
+  attachments: InternalAttachment[],
+  priority = 'normal',
+) {
+  if (!attachments.length) throw new Error('At least one attachment is required');
+  const data = await call({
+    operation: 'send',
+    thread_id: threadId,
+    message_body: messageBody,
+    priority,
+    attachments,
+  });
+  if (!data?.message?.id) throw new Error('Attachment message was not created');
+  return data;
+}
+
+/**
+ * Read-side delivery guarantee.
+ *
+ * The main messaging function's `get_thread` has shipped behind more than once
+ * and dropped the `attachments` projection, which rendered as an empty grey
+ * bubble. We re-hydrate every message's attachments from the dedicated
+ * transport so visibility never depends on that deployment.
+ */
+export async function hydrateThreadAttachments<T extends { id: string; attachments?: InternalAttachment[] | null }>(
+  threadId: string,
+  messages: T[],
+): Promise<T[]> {
+  if (!threadId || !messages.length) return messages;
+  try {
+    const data = await call({ operation: 'hydrate', thread_id: threadId });
+    const map = (data?.attachments_by_message ?? {}) as Record<string, InternalAttachment[]>;
+    if (!Object.keys(map).length) return messages;
+    return messages.map((m) =>
+      map[m.id]?.length && !(m.attachments?.length)
+        ? { ...m, attachments: map[m.id] }
+        : m,
+    );
+  } catch {
+    return messages;
+  }
+}
+
+
+
+/**
+ * Download an attachment straight to the user's device.
+ *
+ * No `window.open` — a blank tab is never spawned. We mint the signed URL,
+ * fetch the bytes, and hand a blob URL to a hidden anchor with `download`, so
+ * the browser writes the file and nothing navigates. If the fetch is blocked we
+ * fall back to a same-gesture anchor click on the signed URL itself (the server
+ * sets `Content-Disposition: attachment`), which also avoids a visible tab.
+ */
 export async function openInternalAttachment(
   threadId: string,
   attachment: Pick<InternalAttachment, 'path' | 'name'>,
-  download = false,
+  download = true,
 ): Promise<void> {
   const data = await call({
-    action: 'attachment_download_url',
+    operation: 'download_ticket',
     thread_id: threadId,
     path: attachment.path,
     download,
   });
   const url = data?.signed_url as string | undefined;
   if (!url) throw new Error('Could not open attachment');
-  window.open(url, '_blank', 'noopener,noreferrer');
+
+  const saveAs = (href: string, revoke?: () => void) => {
+    const anchor = document.createElement('a');
+    anchor.href = href;
+    anchor.download = attachment.name || 'attachment';
+    anchor.rel = 'noopener noreferrer';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    if (revoke) setTimeout(revoke, 60_000);
+  };
+
+  try {
+    const res = await fetch(url, { credentials: 'omit', mode: 'cors' });
+    if (!res.ok) throw new Error(`Download failed (${res.status})`);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    saveAs(objectUrl, () => URL.revokeObjectURL(objectUrl));
+  } catch {
+    // Signed URL already carries an attachment disposition — no tab needed.
+    saveAs(url);
+  }
 }
 
 export function isImageAttachment(a: InternalAttachment) {

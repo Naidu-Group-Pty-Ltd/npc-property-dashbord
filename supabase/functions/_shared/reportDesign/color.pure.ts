@@ -174,6 +174,24 @@ export function hexToRgb01(hex: string): [number, number, number] {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 }
 
+/**
+ * Blend two hex colours in sRGB. `t` is the weight of `b`; `0` returns `a`.
+ *
+ * This is how a tint is expressed on the vector PDF paths. HTML can say
+ * `rgba(ink, 0.72)` and let the compositor do it, but pdf-lib and jsPDF have no
+ * alpha channel for text — so a muted variant on a known ground has to be a
+ * pre-mixed opaque colour. Mixing against the actual ground is exact, not an
+ * approximation: the composite is what the alpha would have produced.
+ */
+export function mixHex(a: string, b: string, t: number): string {
+  const w = Math.min(1, Math.max(0, t));
+  const [ar, ag, ab] = hexToRgb01(a);
+  const [br, bg, bb] = hexToRgb01(b);
+  const ch = (x: number, y: number) => Math.round((x + (y - x) * w) * 255);
+  const pair = (n: number) => n.toString(16).padStart(2, '0');
+  return `#${pair(ch(ar, br))}${pair(ch(ag, bg))}${pair(ch(ab, bb))}`.toUpperCase();
+}
+
 // ─── Luminance and contrast ──────────────────────────────────────────────────
 
 function toLinear(channel: number): number {

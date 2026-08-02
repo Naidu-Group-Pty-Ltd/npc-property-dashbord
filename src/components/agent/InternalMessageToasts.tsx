@@ -5,15 +5,14 @@
  *
  * Behaviour contract:
  *  • One pop-up per thread. New messages cascade inside that same bubble stack.
- *  • Only ONE pop-up is expanded at a time (the newest / highest ranked). Every
- *    other open conversation collapses to a small name-only chip above it — the
- *    older transcript disappears but the person (or "Announcement") stays
- *    visible and one click brings it back to the front.
+ *  • Nothing ever auto-expands. Reloads, sign-ins and new inbound messages all
+ *    surface as minimised name-only chips carrying an unread badge; at most ONE
+ *    conversation is expanded at a time and only after the user clicks a chip.
  *  • Every new message pops: dismissal is recorded per-thread against the
  *    message timestamp, so a later message re-opens that conversation.
  *  • No auto-dismiss — the user closes each pop-up manually.
- *  • Open pop-ups persist in localStorage, so they survive reloads, session
- *    timeouts and re-logins.
+ *  • Open conversations persist in localStorage so they survive reloads,
+ *    session timeouts and re-logins — always restored as minimised chips.
  *  • Replies can be flagged Normal / High / Urgent; pop-ups are ranked with
  *    urgent first, then high, then most recent.
  *
@@ -35,6 +34,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { useDraggablePosition } from '@/hooks/useDraggablePosition';
+import { useResizablePanel } from '@/hooks/useResizablePanel';
 
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -58,6 +58,8 @@ import {
   INTERNAL_ATTACHMENT_ACCEPT,
   filesFromDataTransfer,
   type InternalAttachment,
+  sendInternalMessageWithAttachments,
+  hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -119,6 +121,19 @@ function writeOpenIds(ids: string[]) {
   }
 }
 
+/**
+ * Every conversation restored from localStorage starts life as a minimised
+ * chip. Expanding is a deliberate click, so a reload or a fresh sign-in never
+ * throws a full transcript over the dashboard.
+ */
+function bootMinimised(): Record<string, true> {
+  const next: Record<string, true> = {};
+  readOpenIds().forEach((id) => {
+    next[id] = true;
+  });
+  return next;
+}
+
 /** Per-thread "already handled up to this message time" markers. */
 function readBaselines(): Record<string, string> {
   try {
@@ -170,16 +185,17 @@ function MinimisedChip({
       ref={drag.nodeRef}
       style={drag.positionStyle}
       className={cn(
-        'pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border bg-card/95 px-2 py-1.5 backdrop-blur-xl',
-        'shadow-[var(--elevation-2,0_10px_24px_-14px_rgba(0,0,0,0.5))]',
+        'pointer-events-auto flex max-w-full items-center gap-1.5 rounded-full border-2 bg-card/95 px-2 py-1.5 backdrop-blur-xl',
+        'shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_12px_28px_-14px_hsl(var(--primary)/0.4)]',
         drag.dragging && 'z-[70] scale-[1.02] shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
         drag.position && 'z-[65]',
         thread.priority === 'urgent'
-          ? 'border-destructive/60'
+          ? 'border-destructive/70 ring-2 ring-destructive/20'
           : thread.priority === 'high'
-            ? 'border-warning/50'
-            : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
+            ? 'border-warning/70 ring-2 ring-warning/15'
+            : 'border-primary/55 ring-2 ring-primary/15',
       )}
+
     >
       <span
         {...drag.handleProps}
@@ -212,8 +228,11 @@ function MinimisedChip({
         </span>
         <span className="truncate text-xs font-semibold text-foreground">{label}</span>
         {thread.unread > 0 && (
-          <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold text-primary-foreground">
-            {thread.unread > 9 ? '9+' : thread.unread}
+          <span
+            aria-label={`${thread.unread} unread message${thread.unread === 1 ? '' : 's'}`}
+            className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-bold tabular-nums text-primary-foreground shadow-[0_0_0_2px_hsl(var(--card)),0_0_12px_hsl(var(--primary)/0.6)]"
+          >
+            {thread.unread > 99 ? '99+' : thread.unread}
           </span>
         )}
         {typingNow && <TypingDots className="shrink-0" />}
@@ -243,7 +262,7 @@ export function InternalMessageToasts() {
    * Threads the user explicitly minimised. They stay open as side chips (like
    * the Going Live dock) instead of jumping into the Aurixa agent.
    */
-  const [minimised, setMinimised] = useState<Record<string, true>>({});
+  const [minimised, setMinimised] = useState<Record<string, true>>(bootMinimised);
   /**
    * One upload queue serves the expanded card (only one card is expanded at a
    * time). It tracks per-file progress, retries and errors.
@@ -259,6 +278,12 @@ export function InternalMessageToasts() {
   threadsRef.current = threads;
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeId;
+  /** Minimised map, read inside the poll loop without re-creating it. */
+  const minimisedRef = useRef<Record<string, true>>({});
+  minimisedRef.current = minimised;
+
+
+
 
   /** Baselines: thread_id → ISO timestamp of the newest message already handled. */
   const baselinesRef = useRef<Record<string, string>>(readBaselines());
@@ -278,16 +303,23 @@ export function InternalMessageToasts() {
     writeBaselines(baselinesRef.current);
   }, []);
 
-  const loadMessages = useCallback(async (threadId: string) => {
+  const loadMessages = useCallback(async (threadId: string, clearUnread = true) => {
     try {
       const { data } = await invokeSecureFunction('internal-messaging', {
         action: 'get_thread',
         thread_id: threadId,
+        // Only an explicit open marks the conversation reviewed server-side.
+        mark_read: clearUnread,
       });
-      const msgs: PopupMessage[] = (data?.messages ?? []).slice(-60);
+      const msgs: PopupMessage[] = await hydrateThreadAttachments(
+        threadId,
+        (data?.messages ?? []).slice(-60) as PopupMessage[],
+      );
       setThreads((prev) =>
         prev.map((t) =>
-          t.thread_id === threadId ? { ...t, messages: msgs, loading: false, unread: 0 } : t,
+          t.thread_id === threadId
+            ? { ...t, messages: msgs, loading: false, unread: clearUnread ? 0 : t.unread }
+            : t,
         ),
       );
     } catch {
@@ -296,6 +328,7 @@ export function InternalMessageToasts() {
       );
     }
   }, []);
+
 
   /** Poll thread list: opens new pop-ups and refreshes already-open ones. */
   const check = useCallback(async () => {
@@ -321,6 +354,8 @@ export function InternalMessageToasts() {
         if (openIds.has(t.id)) {
           const current = threadsRef.current.find((x) => x.thread_id === t.id);
           const changed = !!lastAt && current?.lastAt !== lastAt;
+          const isMinimised = !!minimisedRef.current[t.id];
+          const isExpanded = activeRef.current === t.id && !isMinimised;
           if (current && (!current.messages.length || changed)) toRefresh.push(t.id);
           setThreads((prev) =>
             prev.map((x) =>
@@ -330,20 +365,20 @@ export function InternalMessageToasts() {
                     lastAt: lastAt ?? x.lastAt,
                     priority: (t.last_message_priority as Priority) ?? x.priority,
                     sender: senderName,
+                    // The chip carries the count; the expanded card is "read".
+                    // A background poll must never shrink a pending badge — it
+                    // only clears when the user opens (reviews) the chat.
+                    unread: isExpanded
+                      ? 0
+                      : Math.max(t.unread ?? 0, x.unread ?? 0),
                   }
                 : x,
             ),
           );
-          // A brand-new inbound message brings this conversation to the front.
-          if (changed && (t.unread ?? 0) > 0) {
-            setMinimised((prev) => {
-              if (!prev[t.id]) return prev;
-              const next = { ...prev };
-              delete next[t.id];
-              return next;
-            });
-            setActiveId(t.id);
-          }
+          // A new inbound message only bumps the chip's unread badge. It never
+          // promotes a conversation to a full card — expanding stays a
+          // deliberate user action.
+
           continue;
         }
 
@@ -378,12 +413,22 @@ export function InternalMessageToasts() {
           persist(next);
           return next;
         });
-        // Newest inbound conversation becomes the expanded pop-up.
-        const newest = [...additions].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))[0];
-        setActiveId(newest.thread_id);
-        additions.forEach((a) => loadMessages(a.thread_id));
+        // Arrive minimised: the chip's unread badge is the notification. Nothing
+        // steals the screen, and no transcript is marked read behind the user.
+        setMinimised((prev) => {
+          const next = { ...prev };
+          additions.forEach((a) => {
+            next[a.thread_id] = true;
+          });
+          return next;
+        });
+        additions.forEach((a) => loadMessages(a.thread_id, false));
       }
-      toRefresh.forEach((id) => loadMessages(id));
+
+      // Refreshing a minimised conversation must not clear its unread badge.
+      toRefresh.forEach((id) =>
+        loadMessages(id, activeRef.current === id && !minimisedRef.current[id]),
+      );
     } catch {
       /* silent — badge/panel remain the source of truth */
     }
@@ -403,22 +448,15 @@ export function InternalMessageToasts() {
     };
   }, [user, check]);
 
-  // Keep an expanded card whenever pop-ups exist.
+  // Pop-ups never auto-expand. A conversation is only ever rendered as a full
+  // card when the user clicks its chip, so signing in with ten live threads
+  // shows ten compact chips instead of ten stacked chat windows.
   useEffect(() => {
-    if (!threads.length) {
-      if (activeId) setActiveId(null);
-      return;
-    }
-    if (!activeId || !threads.some((t) => t.thread_id === activeId)) {
-      const candidates = threads.filter((t) => !minimised[t.thread_id]);
-      if (!candidates.length) {
-        if (activeId) setActiveId(null);
-        return;
-      }
-      const next = [...candidates].sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1))[0];
-      setActiveId(next.thread_id);
-    }
-  }, [threads, activeId, minimised]);
+    if (!activeId) return;
+    if (!threads.some((t) => t.thread_id === activeId)) setActiveId(null);
+  }, [threads, activeId]);
+
+
 
   // Typing hints for threads with an open pop-up.
   useEffect(() => {
@@ -442,9 +480,14 @@ export function InternalMessageToasts() {
     };
   }, [user]);
 
+  /**
+   * A conversation is expanded only while it is the active thread AND not
+   * minimised. Threads restored on boot are always minimised, so the card can
+   * never reappear on reload or re-login.
+   */
   const active = useMemo(
-    () => threads.find((t) => t.thread_id === activeId) ?? null,
-    [threads, activeId],
+    () => threads.find((t) => t.thread_id === activeId && !minimised[t.thread_id]) ?? null,
+    [threads, activeId, minimised],
   );
 
   // Pin the transcript to the newest message (or the typing bubble) so nothing
@@ -486,11 +529,13 @@ export function InternalMessageToasts() {
     [persist, setBaseline],
   );
 
-  /** Collapse the expanded card into a side chip (never opens the agent). */
+  /** Collapse the expanded card into a side chip (never opens another card). */
   const minimise = useCallback((threadId: string) => {
     setMinimised((prev) => ({ ...prev, [threadId]: true }));
     setActiveId((current) => (current === threadId ? null : current));
   }, []);
+
+
 
   /** Stage files against the expanded thread (drag, paste or picker). */
   const addFilesFor = useCallback(
@@ -527,15 +572,18 @@ export function InternalMessageToasts() {
           queuedForRef.current = null;
         }
 
-        const { data } = await invokeSecureFunction('internal-messaging', {
-          action: 'send_message',
-          thread_id: thread.thread_id,
-          body: text,
-          priority,
-          attachments,
-        });
+        const data = attachments.length
+          ? await sendInternalMessageWithAttachments(thread.thread_id, text, attachments, priority)
+          : (await invokeSecureFunction('internal-messaging', {
+              action: 'send_message',
+              thread_id: thread.thread_id,
+              body: text,
+              priority,
+            })).data;
         const msg = data?.message;
+        if (Array.isArray(msg?.attachments)) attachments = msg.attachments;
         const createdAt = msg?.created_at ?? new Date().toISOString();
+
         setDrafts((p) => ({ ...p, [thread.thread_id]: '' }));
         setBaseline(thread.thread_id, createdAt);
         setThreads((prev) =>
@@ -597,18 +645,30 @@ export function InternalMessageToasts() {
   const chips = useMemo(
     () =>
       threads
-        .filter((t) => t.thread_id !== activeId)
+        .filter((t) => t.thread_id !== active?.thread_id)
         .sort((a, b) => {
           const p = PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority];
           if (p !== 0) return p;
           return a.lastAt < b.lastAt ? 1 : -1;
         })
         .slice(0, MAX_CHIPS),
-    [threads, activeId],
+    [threads, active?.thread_id],
   );
 
   /** The whole minimised stack can be dragged anywhere on the page. */
   const dock = useDraggablePosition('aurixa.internalMessages.dockPos');
+
+  /**
+   * The expanded conversation can be resized by dragging its bottom-left grip.
+   * The dock is right-anchored, so dragging left grows the panel (`invertX`).
+   */
+  const panelResize = useResizablePanel('aurixa.internalMessages.panelSize', {
+    invertX: true,
+    minWidth: 288,
+    minHeight: 260,
+    maxWidth: 780,
+    maxHeight: 820,
+  });
 
   const priority = active ? priorities[active.thread_id] ?? 'normal' : 'normal';
 
@@ -620,10 +680,14 @@ export function InternalMessageToasts() {
   return (
     <div
       ref={dock.nodeRef}
-      style={dock.positionStyle}
+      style={{
+        ...dock.positionStyle,
+        ...(panelResize.size ? { width: panelResize.size.width } : {}),
+      }}
       className={cn(
-        'pointer-events-none fixed right-4 top-20 z-[60] flex w-[min(26rem,calc(100vw-2rem))] flex-col items-end gap-2',
-        dock.dragging && 'z-[70]',
+        'pointer-events-none fixed right-4 top-20 z-[60] flex flex-col items-end gap-2',
+        !panelResize.size && 'w-[min(26rem,calc(100vw-2rem))]',
+        (dock.dragging || panelResize.resizing) && 'z-[70]',
       )}
     >
       {/* Dock handle — drag the whole stack anywhere on the page */}
@@ -638,12 +702,15 @@ export function InternalMessageToasts() {
         >
           <GripVertical className="h-3.5 w-3.5" />
         </span>
-        {dock.position && (
+        {(dock.position || panelResize.size) && (
           <button
             type="button"
-            onClick={dock.reset}
-            aria-label="Snap dock back to the corner"
-            title="Snap back to the corner"
+            onClick={() => {
+              dock.reset();
+              panelResize.reset();
+            }}
+            aria-label="Reset chat position and size"
+            title="Reset position & size"
             className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <RotateCcw className="h-3 w-3" />
@@ -657,7 +724,20 @@ export function InternalMessageToasts() {
           key={t.thread_id}
           thread={t}
           typingNow={!!typing[t.thread_id]}
-          onExpand={() => setActiveId(t.thread_id)}
+          onExpand={() => {
+            setMinimised((prev) => {
+              if (!prev[t.thread_id]) return prev;
+              const next = { ...prev };
+              delete next[t.thread_id];
+              return next;
+            });
+            setActiveId(t.thread_id);
+            // Opening the conversation is what marks it read.
+            setThreads((prev) =>
+              prev.map((x) => (x.thread_id === t.thread_id ? { ...x, unread: 0 } : x)),
+            );
+            loadMessages(t.thread_id, true);
+          }}
           onDismiss={() => dismiss(t.thread_id)}
         />
       ))}
@@ -666,6 +746,8 @@ export function InternalMessageToasts() {
       {/* Expanded conversation */}
       {active && (
       <div
+        ref={panelResize.nodeRef}
+        style={panelResize.size ? { height: panelResize.size.height } : undefined}
         role="dialog"
         aria-label={`Message from ${headline}`}
         onDragEnter={(e) => {
@@ -692,17 +774,63 @@ export function InternalMessageToasts() {
           addFilesFor(active.thread_id, dropped);
         }}
         className={cn(
-          'pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-3xl border bg-card/95 backdrop-blur-xl',
-          'shadow-[var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
+          'pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-3xl border-2 bg-card/95 backdrop-blur-xl',
+          // Own identity: a lit primary edge plus a coloured halo so the panel
+          // never camouflages against the dark dashboard behind it.
+          'shadow-[0_0_0_1px_hsl(var(--primary)/0.22),0_24px_60px_-20px_hsl(var(--primary)/0.35),var(--elevation-3,0_18px_40px_-18px_rgba(0,0,0,0.55))]',
           'animate-in slide-in-from-right-4 fade-in-0 motion-reduce:animate-none',
           active.priority === 'urgent'
-            ? 'border-destructive/60 ring-1 ring-destructive/30'
+            ? 'border-destructive/70 ring-2 ring-destructive/25'
             : active.priority === 'high'
-              ? 'border-warning/50'
-              : 'border-[color:var(--glass-hairline,hsl(var(--border)))]',
+              ? 'border-warning/70 ring-2 ring-warning/20'
+              : 'border-primary/55 ring-2 ring-primary/15',
         )}
       >
+        {/* Identity accent — blue · gold · purple, matching the typing signal */}
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 h-[3px] bg-gradient-to-r from-info via-primary to-chart-5 opacity-90"
+        />
+
+        {/* Resize grip — drag the bottom-left corner to size the conversation.
+            Arrow keys nudge it for keyboard users; double-click restores the
+            default size. */}
+        <span
+          {...panelResize.handleProps}
+          role="slider"
+          tabIndex={0}
+          aria-label="Resize conversation window"
+          aria-valuetext={
+            panelResize.size
+              ? `${Math.round(panelResize.size.width)} by ${Math.round(panelResize.size.height)} pixels`
+              : 'Default size'
+          }
+          title="Drag to resize · double-click to reset"
+          onDoubleClick={panelResize.reset}
+          onKeyDown={(e) => {
+            const step = e.shiftKey ? 48 : 16;
+            if (e.key === 'ArrowLeft') panelResize.nudge(step, 0);
+            else if (e.key === 'ArrowRight') panelResize.nudge(-step, 0);
+            else if (e.key === 'ArrowDown') panelResize.nudge(0, step);
+            else if (e.key === 'ArrowUp') panelResize.nudge(0, -step);
+            else return;
+            e.preventDefault();
+          }}
+          className={cn(
+            'absolute bottom-0 left-0 z-10 flex h-6 w-6 cursor-nesw-resize items-end justify-start rounded-bl-3xl',
+            'text-muted-foreground/60 transition-colors hover:text-primary focus-visible:outline-none',
+            'focus-visible:ring-2 focus-visible:ring-ring',
+            panelResize.resizing && 'text-primary',
+          )}
+        >
+          <svg viewBox="0 0 12 12" aria-hidden className="h-3.5 w-3.5 translate-x-1 -translate-y-1">
+            <path d="M11 1 L1 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+            <path d="M11 5.5 L5.5 11" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+        </span>
         {dragActive && <AttachmentDropOverlay />}
+
+
 
         {/* Header */}
         <div className="flex items-center gap-2.5 border-b border-border/50 px-3.5 py-2.5">
@@ -761,7 +889,10 @@ export function InternalMessageToasts() {
         {/* Conversation — native scroll so the newest bubble is never clipped */}
         <div
           ref={scrollRef}
-          className="h-64 overflow-y-auto overscroll-contain px-3 py-2.5"
+          className={cn(
+            'overflow-y-auto overscroll-contain px-3 py-2.5',
+            panelResize.size ? 'min-h-0 flex-1' : 'h-64',
+          )}
           aria-live="polite"
         >
           {active.loading ? (
@@ -784,6 +915,9 @@ export function InternalMessageToasts() {
                     )}
                   >
                     {m.body}
+                    {!m.body?.trim() && !(m.attachments?.length) && (
+                      <span className="italic opacity-70">Attachment unavailable</span>
+                    )}
                     <InternalAttachmentList
                       threadId={active.thread_id}
                       attachments={m.attachments ?? []}

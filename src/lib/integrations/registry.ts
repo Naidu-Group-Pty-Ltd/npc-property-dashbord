@@ -480,6 +480,20 @@ export const INTEGRATIONS: IntegrationDefinition[] = [
     fallbackIcon: 'sparkles',
     fields: [{ key: 'FIGMA_API_TOKEN', label: 'Personal Access Token', placeholder: 'figd_...', type: 'password', required: true }],
   },
+  {
+    id: 'mcp',
+    name: 'MCP Server',
+    description:
+      'Model Context Protocol server. Exposes its tools, resources and prompts to workflows, so any MCP-compatible service becomes a step without needing its own integration.',
+    category: 'infrastructure',
+    tags: ['mcp', 'model context protocol', 'tools', 'agent', 'resources'],
+    docsUrl: 'https://modelcontextprotocol.io/docs',
+    fallbackIcon: 'code',
+    fields: [
+      { key: 'MCP_SERVER_URL', label: 'Server URL', placeholder: 'https://mcp.example.com/sse', type: 'text', required: true },
+      { key: 'MCP_ACCESS_TOKEN', label: 'Access Token', placeholder: 'Bearer token, if the server requires one', type: 'password', required: false },
+    ],
+  },
 
   // ══ Expanded library ═══════════════════════════════════════════════════
   {

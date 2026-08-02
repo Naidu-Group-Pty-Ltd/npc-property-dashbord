@@ -11,6 +11,16 @@ import { requireModulePermission } from "../_shared/authz.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { signStoragePaths } from "../_shared/storageSign.ts";
 import { escapeRawHtmlInMarkdown, removeUnsafeRenderedUrls } from "./markdownSafety.ts";
+// Both are called by `wrapInsightSections` below and neither was imported, so
+// every call to `buildHtml` threw `ReferenceError: wrapInsightHeadingSections is
+// not defined` before WeasyPrint was ever reached. The modules exist and are
+// covered by `insightHeadingSections.test.ts` and
+// `src/security/renderInvestmentReportPdf.security.test.ts` — those import them
+// directly, which is why the tests kept passing while the function could not
+// produce a single PDF.
+import { wrapInsightHeadingSections } from "./insightHeadingSections.ts";
+import { wrapInlineInsightParagraphs } from "./insightSections.ts";
+import { NPC_HOUSE_COVER_ART } from "../_shared/reportDesign/defaultAssets.generated.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -3073,13 +3083,20 @@ export async function buildHtml(
       <rect width='210' height='297' fill='url(%23sheen)'/>
       <rect width='210' height='297' filter='url(%23nz)'/>
     </svg>`)}`;
+  // Inlined, not fetched. This used to be an absolute `lovable.app` URL — a
+  // preview host — on a client-facing premium PDF: every render made an
+  // outbound fetch the SSRF guard had to allow, a 404 printed a blank cover
+  // with nothing raised, and re-issuing an old report depended on that host
+  // still serving that path. Same bytes, no network. See
+  // `scripts/reportDesign/buildDefaultAssets.ts`.
+  const coverArtSrc = NPC_HOUSE_COVER_ART;
   const coverHtml = design.coverStyle === "image"
     ? `<section class="cover cover-clean">
-        <img class="cover-bg" src="https://npc-property-dashbord.lovable.app/templates/npc-portfolio-cover-new.jpg" alt="" />
+        <img class="cover-bg" src="${coverArtSrc}" alt="" />
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
       </section>`
     : `<section class="cover cover-${design.coverStyle}">
-        <img class="cover-bg" src="https://npc-property-dashbord.lovable.app/templates/npc-portfolio-cover-new.jpg" alt="" />
+        <img class="cover-bg" src="${coverArtSrc}" alt="" />
         <div class="cover-scrim"></div>
         <div class="cover-foil" style="background-image:url('${foilOverlaySvg}')"></div>
         <div class="cover-masthead">${esc(String(brandName).toUpperCase())}</div>
@@ -5429,11 +5446,18 @@ async function callWeasyPrint(html: string): Promise<Uint8Array> {
   }
 }
 
+/**
+ * Upload, sign, and hand back both.
+ *
+ * The **path** is the durable half and the signed URL is not: the URL expires
+ * in seven days, so a column holding one is a column that is wrong most of the
+ * time. The caller stores the path and re-signs on demand.
+ */
 async function uploadPdfAndSign(
   supabase: ReturnType<typeof createClient>,
   bytes: Uint8Array,
   fileName: string,
-): Promise<string> {
+): Promise<{ path: string; signedUrl: string }> {
   const path = `generated/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}-${fileName}`;
   const { error: upErr } = await supabase.storage.from(PDF_BUCKET).upload(path, bytes, {
     contentType: "application/pdf",
@@ -5450,7 +5474,38 @@ async function uploadPdfAndSign(
     // URL would not resolve. Consumers re-sign on demand.
     throw new Error(`signed URL failed: ${signErr?.message || "unknown"}`);
   }
-  return signed.signedUrl;
+  return { path, signedUrl: signed.signedUrl };
+}
+
+/**
+ * Record where the file went, so the report can be found again.
+ *
+ * Until now this function returned a signed URL and wrote nothing back, so
+ * `investment_reports.pdf_url` was only ever populated by an older writer that
+ * has since stopped: 899 of 1,157 completed reports carry no file reference at
+ * all, and the Reports tab hides View / Download / Email entirely when there is
+ * none. The report was generated; the row just never remembered it.
+ *
+ * The **path** is stored, not the signed URL — a seven-day URL in a column read
+ * months later is a broken link with extra steps. `parseStorageRef` on the
+ * client reads either shape, so the 263 rows already holding a URL keep working.
+ *
+ * Best-effort: a report that rendered is a success even if the bookkeeping
+ * write fails, and failing the request here would throw away a PDF the caller
+ * already has a link to.
+ */
+async function rememberPdfPath(
+  supabase: ReturnType<typeof createClient>,
+  reportId: string,
+  path: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from("investment_reports")
+    .update({ pdf_url: path })
+    .eq("id", reportId);
+  if (error) {
+    console.warn(`[render-investment-report-pdf] could not record pdf_url: ${error.message}`);
+  }
 }
 
 
@@ -5554,7 +5609,9 @@ if (import.meta.main) Deno.serve(async (req) => {
     if (weasyConfigured) {
       try {
         const pdfBytes = await callWeasyPrint(html);
-        fileUrl = await uploadPdfAndSign(supabase, pdfBytes, fileName);
+        const stored = await uploadPdfAndSign(supabase, pdfBytes, fileName);
+        fileUrl = stored.signedUrl;
+        await rememberPdfPath(supabase, reportId, stored.path);
         renderer = "weasyprint";
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

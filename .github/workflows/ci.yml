@@ -36,6 +36,25 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # The edge-function secret allowlist and status map are generated from
+      # src/lib/integrations/registry.ts. Both live under supabase/functions/, which
+      # none of the test paths below reach, so without this step the generated module
+      # can drift from the registry and nothing catches it until an integration
+      # silently fails to sync.
+      #
+      # Ordered ahead of the report suites deliberately: it has no dependency on them,
+      # runs in ~2s, and a step placed after them would never execute while they are
+      # red — steps stop at the first failure.
+      - name: Integration secrets — registry drift
+        run: npm run integrations:secrets:check && npx vitest run src/lib/integrations
+
+      # The Workflow Playground's step catalog is derived from the same registry,
+      # and its templates reference catalog ids by hand — both rot silently when an
+      # integration or an operation is renamed. Ordered here for the same reason as
+      # the step above: after the report suites it would never run while they are red.
+      - name: Workflow Playground — catalog, graph and canvas
+        run: npx vitest run src/lib/workflow src/components/workflow
+
       # Golden-render isolation guard, run as its own step so a renderer
       # regression (anything that changes the WeasyPrint/jsPDF output, incl. the
       # reconstruction primitives: vector/table/runs/numeric-weight/@font-face)
@@ -62,10 +81,30 @@ jobs:
       - name: Report design system — token drift
         run: npm run reportkit:tokens:check
 
+      # The inlined default report assets must match the files they came from.
+      # Without this, editing public/templates/… silently has no effect on a
+      # render — the module keeps shipping the old bytes.
+      - name: Report asset drift check
+        run: npm run reportkit:assets:check
+
       # Enforces the single-source contract (bridges are re-exports only) and
       # the print contrast floors for every preset x tenant-brand combination.
       - name: Unit tests (report design system)
         run: npx vitest run src/lib/reportDesign
+
+      # The first migrated format. Its payload contract is single-sourced the
+      # same way the design system is, and `audit.spec.ts` reads
+      # calculate-borrowing-capacity to check that every audit entry the engine
+      # emits has a known unit and polarity — a table keyed on strings written
+      # elsewhere goes stale silently.
+      - name: Unit tests (borrowing capacity payload)
+        run: npx vitest run src/lib/reports/borrowingCapacity
+
+      # Renders the shipping generator and pins page count, sections, typeface
+      # and the cover's identity. This is the reference the migration is
+      # measured against; if it stops running, the diff stops meaning anything.
+      - name: Golden capture (borrowing capacity snapshot)
+        run: npx vitest run src/components/borrowing-capacity/__tests__
 
       - name: Build
         run: npm run build
@@ -121,6 +160,11 @@ jobs:
       - name: Deno type-check the report design system
         run: deno check supabase/functions/_shared/reportDesign/*.pure.ts
 
+      # Same reasoning for the per-format payload modules: they are built inside
+      # an Edge Function and re-exported into src/.
+      - name: Deno type-check the borrowing capacity payload
+        run: deno check supabase/functions/_shared/reports/borrowingCapacity/*.pure.ts
+
       # WP-14: type-check every Edge Function entry point, not only shared modules.
       - name: Deno type-check every Edge Function entry point (WP-14)
         run: node scripts/security/check-edge-functions.mjs
@@ -159,6 +203,117 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # The render container is the only place a report font can come from, and a
+  # missing face substitutes silently — the PDF renders, every test passes, and
+  # only the client sees it. Worse: the image previously named three Debian
+  # packages that do not exist, so `apt-get install -y` failed the layer and the
+  # image could not be built at all. Nothing caught that, because nothing built
+  # it. This does.
+  render-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The build itself is the assertion: the Dockerfile's `fc-cache` layer
+      # exits non-zero if any brand family fails to resolve.
+      - name: Build the WeasyPrint image
+        run: docker build -t weasyprint-service:ci ./weasyprint-service
+
+      # Belt and braces — prove the faces are present in the built image rather
+      # than trusting the build-time check alone.
+      - name: Every declared font family resolves inside the image
+        run: |
+          docker run --rm --entrypoint sh weasyprint-service:ci -c '
+            set -e
+            for family in "Cinzel" "Playfair Display" "Inter" "IBM Plex Mono"; do
+              fc-list : family | grep -qi "$family" || { echo "MISSING: $family"; exit 1; }
+              echo "ok: $family"
+            done
+            fc-match "Playfair Display:italic" | grep -qi playfair
+            echo "ok: Playfair Display italic"
+          '
+
+      # A render is the only thing that proves the engine, the fonts and the
+      # service agree. Assert the bytes are a PDF and that the brand faces are
+      # embedded in it — a substituted face still produces a valid PDF.
+      - name: Render a smoke document and assert the fonts are embedded
+        run: |
+          docker run -d --name wp -p 8080:8080 \
+            -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8080/healthz >/dev/null && break
+            sleep 2
+          done
+          printf '%s' '{"html":"<html><body><h1 style=\"font-family:Cinzel\">NPC</h1><p style=\"font-family:Inter\">body</p><em style=\"font-family:\u0027Playfair Display\u0027;font-style:italic\">accent</em></body></html>"}' > /tmp/render.json
+          curl -sf -X POST http://localhost:8080/render \
+            -H "Authorization: Bearer ci-token" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/render.json -o /tmp/out.pdf
+          docker logs wp
+          docker rm -f wp
+          head -c 5 /tmp/out.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+          pdffonts /tmp/out.pdf
+          pdffonts /tmp/out.pdf | grep -qi cinzel || { echo "Cinzel not embedded"; exit 1; }
+          pdffonts /tmp/out.pdf | grep -qi playfair || { echo "Playfair not embedded"; exit 1; }
+          pdffonts /tmp/out.pdf | grep -qi inter || { echo "Inter not embedded"; exit 1; }
+
+      # A smoke document proves the image. This proves the *report*: the real
+      # Borrowing Capacity Snapshot, built by the same code the render path
+      # runs, rendered by the same container, with its brand faces embedded.
+      # F8 in docs/reports/BORROWING_CAPACITY.md is 599 `setFont('helvetica')`
+      # calls across the legacy generators; this is what closes it for the
+      # first migrated format.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Writes reports/html/borrowing-capacity-snapshot.html as a side effect.
+      - name: Build the Borrowing Capacity Snapshot
+        run: npx vitest run src/lib/reports/borrowingCapacity/__tests__/render.spec.ts
+
+      - name: Render it in the container and assert its typography
+        run: |
+          docker run -d --name wp2 -p 8081:8080 \
+            -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8081/healthz >/dev/null && break
+            sleep 2
+          done
+          node -e '
+            const fs = require("node:fs");
+            const html = fs.readFileSync("reports/html/borrowing-capacity-snapshot.html", "utf8");
+            fs.writeFileSync("/tmp/bc.json", JSON.stringify({ html, pdf_variant: "pdf/a-2b", tagged: true }));
+          '
+          curl -sf -X POST http://localhost:8081/render \
+            -H "Authorization: Bearer ci-token" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/bc.json -o /tmp/bc.pdf
+          docker logs wp2
+          docker rm -f wp2
+          head -c 5 /tmp/bc.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          pdffonts /tmp/bc.pdf
+          # Cinzel sets the cover title, Playfair the chapter headings and the
+          # running head, Inter the body, IBM Plex Mono every figure and label.
+          # A substituted face still yields a valid PDF, so the fonts are the
+          # assertion, not the bytes.
+          for face in Cinzel Playfair Inter IBMPlex; do
+            pdffonts /tmp/bc.pdf | grep -qi "$face" || { echo "$face not embedded in the report"; exit 1; }
+          done
+          # The document the fixture describes is eleven pages. A migration
+          # that drops the audit trail changes nothing a unit test sees, and
+          # changes this.
+          pdfinfo /tmp/bc.pdf | grep -E '^Pages: +11$' || {
+            echo "unexpected page count:"; pdfinfo /tmp/bc.pdf | grep Pages; exit 1;
+          }
 
   # Security Remediation Phase 11 (SUPPLY-001): supply-chain visibility.
   # Fails on unaccepted high/critical dependency vulnerabilities and publishes a

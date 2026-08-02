@@ -28,11 +28,15 @@ const read = (rel: string) => readFileSync(join(REPO_ROOT, rel), 'utf8');
 
 const client = read('src/lib/internalMessageAttachments.ts');
 const fn = read('supabase/functions/internal-messaging/index.ts');
+const transport = read('supabase/functions/internal-message-attachments/index.ts');
 
 describe('client and function agree on the attachment protocol', () => {
-  it('uses the same action names on both sides', () => {
-    for (const action of ['attachment_upload_url', 'attachment_download_url']) {
-      expect(client, `client never calls ${action}`).toContain(action);
+  it('keeps the legacy main-function actions available during transition', () => {
+    for (const action of [
+      'attachment_upload_url',
+      'attachment_upload_direct',
+      'attachment_download_url',
+    ]) {
       expect(fn, `function does not implement ${action}`).toContain(action);
     }
   });
@@ -48,7 +52,35 @@ describe('client and function agree on the attachment protocol', () => {
     // it listed seven actions and omitted these two.
     const header = fn.slice(0, fn.indexOf('import '));
     expect(header).toContain('attachment_upload_url');
+    expect(header).toContain('attachment_upload_direct');
     expect(header).toContain('attachment_download_url');
+  });
+});
+
+describe('dedicated attachment transport', () => {
+  it('does not depend on the stale main messaging deployment', () => {
+    expect(client).toContain("invokeSecureFunction('internal-message-attachments'");
+    expect(transport).toContain("operation === 'upload_direct'");
+    expect(transport).toContain("operation === 'upload_ticket'");
+    expect(transport).toContain("operation === 'download_ticket'");
+  });
+
+  it('uses direct server upload before signed browser storage upload', () => {
+    expect(client.indexOf("operation: 'upload_direct'")).toBeLessThan(
+      client.indexOf("operation: 'upload_ticket'"),
+    );
+  });
+
+  it('owns attachment message creation atomically', () => {
+    expect(client).toContain("operation: 'send'");
+    expect(transport).toContain("operation === 'send'");
+    expect(transport).toMatch(/insert\(\{ thread_id: threadId, sender_id: auth\.userId, body: text, priority, attachments: cleaned \}\)/);
+  });
+
+  it('opens the download window during the click gesture', () => {
+    expect(client.indexOf("window.open('', '_blank')")).toBeLessThan(
+      client.indexOf("operation: 'download_ticket'"),
+    );
   });
 });
 

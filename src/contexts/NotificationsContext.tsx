@@ -125,6 +125,11 @@ interface NotificationsContextType {
 
 const NotificationsContext = createContext<NotificationsContextType | undefined>(undefined);
 
+// Deployed slot for the bell feed. `notifications-feed` kept serving a stale
+// bundle whose CSRF allowlist rejected the preview origin; `-v2` is the same
+// source deployed fresh.
+const NOTIFICATIONS_FN = 'notifications-feed-v2';
+
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const navigate = useNavigate();
@@ -147,7 +152,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       const { data: feed, error: feedError } = await invokeSecureFunction<{
         success?: boolean;
         notifications?: Array<Record<string, unknown>>;
-      }>('notifications-feed', { action: 'list', limit: 50 });
+      }>(NOTIFICATIONS_FN, { action: 'list', limit: 50 });
 
       if (feedError || !feed?.success) {
         throw new Error(
@@ -157,7 +162,13 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         );
       }
 
-      const data = feed.notifications ?? [];
+      // Internal staff chat has its own surfaces — an unread count on the
+      // minimised chat chip and on the Aurixa team icon. Keeping those rows out
+      // of the global bell stops one busy conversation from burying operational
+      // alerts (141 rows landed in a single day).
+      const data = (feed.notifications ?? []).filter(
+        (n: any) => n?.type !== 'internal_message',
+      );
 
       if (data) {
         const notificationsWithDates = data.map((n: any) => ({
@@ -233,7 +244,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
    */
   const mutate = async (payload: Record<string, unknown>, failure: string) => {
     const { data, error } = await invokeSecureFunction<{ success?: boolean }>(
-      'notifications-feed',
+      NOTIFICATIONS_FN,
       payload,
     );
     if (error || !data?.success) {

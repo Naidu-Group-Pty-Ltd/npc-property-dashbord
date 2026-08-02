@@ -12,9 +12,9 @@ import {
   CheckCircle,
   ChevronRight,
   Calculator,
-  FileText,
 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
+import { SnapshotDownloadButton } from './SnapshotDownloadButton';
 import { fetchAndGenerateBorrowingCapacityPDF } from './BorrowingCapacityPDFReport';
 import { BorrowingCapacitySegmentCard } from './BorrowingCapacitySegmentCard';
 
@@ -121,6 +121,7 @@ export function BorrowingCapacityCard({ clientId, clientName, onOpenCalculator }
   const bandConfig = getBandConfig(result.band);
   const BandIcon = bandConfig.icon;
 
+
   return (
     <div className="space-y-4">
       <Card>
@@ -134,14 +135,18 @@ export function BorrowingCapacityCard({ clientId, clientName, onOpenCalculator }
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
+                    <SnapshotDownloadButton
+                      appearance="menu"
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
-                      onClick={() => fetchAndGenerateBorrowingCapacityPDF(clientId, clientName || 'Client')}
-                    >
-                      <FileText className="h-4 w-4" />
-                    </Button>
+                      triggerLabel="Export Snapshot PDF"
+                      request={{ clientId: clientId!, clientName: clientName || 'Client' }}
+                      legacy={() => fetchAndGenerateBorrowingCapacityPDF(
+                        clientId, clientName || 'Client', undefined, undefined, { returnBlob: true },
+                      )}
+                      label="Export Snapshot PDF"
+                    />
                   </TooltipTrigger>
                   <TooltipContent>Export Snapshot PDF</TooltipContent>
                 </Tooltip>

@@ -158,9 +158,13 @@ const BRAND_SLOT_LABELS: Record<BrandAssetSlot, string> = {
   sidebar: 'Sidebar slot',
   'sidebar-icon': 'Sidebar icon slot',
   favicon: 'Browser tab slot',
+  report: 'Report slot',
+  'report-mono': 'Report slot (dark ground)',
 };
 
-const BRAND_SLOT_ORDER: BrandAssetSlot[] = ['auth', 'sidebar', 'sidebar-icon', 'favicon'];
+const BRAND_SLOT_ORDER: BrandAssetSlot[] = [
+  'auth', 'sidebar', 'sidebar-icon', 'favicon', 'report', 'report-mono',
+];
 
 function createDefaultDraft() {
   return {
@@ -180,6 +184,19 @@ function getAssetRecommendation(
     return {
       recommendation: aspectRatio >= 2 ? 'Wide lockup fits this slot well.' : 'Use a wider lockup for cleaner horizontal placement.',
       compatibility: aspectRatio >= 2 ? 'wide' : 'flex',
+    };
+  }
+
+  // A report mark prints at ~13mm on a 300dpi sheet — roughly 150px tall — and
+  // is inlined into the render, so both dimensions and file size matter in a way
+  // they do not for a screen asset.
+  if (slot === 'report' || slot === 'report-mono') {
+    const tallEnough = height >= 150;
+    return {
+      recommendation: tallEnough
+        ? 'Resolution is sufficient for print at 300dpi.'
+        : 'Upload at least 150px tall — this mark prints at ~13mm and will look soft.',
+      compatibility: tallEnough ? 'flex' : 'flex',
     };
   }
 
@@ -204,6 +221,8 @@ function getResolvedAssetField(settings: typeof defaultBrandConfig, slot: BrandA
     { key: 'sidebar', value: settings.sidebarLogo },
     { key: 'sidebar-icon', value: settings.sidebarIcon },
     { key: 'favicon', value: settings.favicon },
+    { key: 'report', value: settings.reportLogo },
+    { key: 'report-mono', value: settings.reportMonoLogo },
   ];
 
   return sources.find((source) => source.value === resolvedSrc)?.key ?? slot;
@@ -232,7 +251,7 @@ interface LogoUploadCardProps {
   description: string;
   icon: React.ReactNode;
   currentLogo: string | null;
-  logoType: 'auth' | 'sidebar' | 'sidebar-icon' | 'favicon';
+  logoType: BrandAssetSlot;
   onUpload: (url: string) => void;
   onRemove: () => void;
 }
@@ -664,6 +683,8 @@ export default function WhiteLabel() {
     sidebar: { status: 'idle', detail: 'Waiting for validation.', src: null },
     'sidebar-icon': { status: 'idle', detail: 'Waiting for validation.', src: null },
     favicon: { status: 'idle', detail: 'Waiting for validation.', src: null },
+    report: { status: 'idle', detail: 'Waiting for validation.', src: null },
+    'report-mono': { status: 'idle', detail: 'Waiting for validation.', src: null },
   });
   const [showLeavePrompt, setShowLeavePrompt] = useState(false);
   const [showResetPrompt, setShowResetPrompt] = useState(false);
@@ -1644,6 +1665,26 @@ export default function WhiteLabel() {
           logoType="favicon"
           onUpload={(url) => { updateDraftSettings({ favicon: url }); logActivityDirect({ actionType: 'whitelabel_logo_uploaded', entityType: 'whitelabel_settings', metadata: { logo_type: 'favicon' } }); }}
           onRemove={() => { updateDraftSettings({ favicon: null }); logActivityDirect({ actionType: 'whitelabel_logo_removed', entityType: 'whitelabel_settings', metadata: { logo_type: 'favicon' } }); }}
+        />
+
+        <LogoUploadCard
+          title="Report Logo"
+          description="Printed on generated PDFs — cover, contents and closing page (recommended: wide, at least 150px tall)"
+          icon={<FileText className="h-5 w-5 text-primary" />}
+          currentLogo={draftSettings.reportLogo}
+          logoType="report"
+          onUpload={(url) => { updateDraftSettings({ reportLogo: url }); logActivityDirect({ actionType: 'whitelabel_logo_uploaded', entityType: 'whitelabel_settings', metadata: { logo_type: 'report' } }); }}
+          onRemove={() => { updateDraftSettings({ reportLogo: null }); logActivityDirect({ actionType: 'whitelabel_logo_removed', entityType: 'whitelabel_settings', metadata: { logo_type: 'report' } }); }}
+        />
+
+        <LogoUploadCard
+          title="Report Logo (dark ground)"
+          description="Knockout mark for the dark report cover and closing page. Falls back to the report logo if unset."
+          icon={<FileText className="h-5 w-5 text-primary" />}
+          currentLogo={draftSettings.reportMonoLogo}
+          logoType="report-mono"
+          onUpload={(url) => { updateDraftSettings({ reportMonoLogo: url }); logActivityDirect({ actionType: 'whitelabel_logo_uploaded', entityType: 'whitelabel_settings', metadata: { logo_type: 'report-mono' } }); }}
+          onRemove={() => { updateDraftSettings({ reportMonoLogo: null }); logActivityDirect({ actionType: 'whitelabel_logo_removed', entityType: 'whitelabel_settings', metadata: { logo_type: 'report-mono' } }); }}
         />
       </div>
 

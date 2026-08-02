@@ -5,7 +5,7 @@ import { TemplateSchemaVersionError, validateAndMigrateTemplateSchemaVersion } f
 import { permForAction, requireModulePermission } from '../_shared/authz.ts';
 import { insertGoesLive, validateReportTemplateInsert } from '../_shared/reportTemplateInsertGuard.pure.ts';
 
-type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'comparison_analysis_templates';
+type TableName = 'report_structure_templates' | 'client_branding_profiles' | 'integration_configs' | 'depreciation_comps' | 'depreciation_estimator_runs' | 'charts' | 'chart_analysis' | 'chart_configurations' | 'global_report_settings' | 'finance_agent_contacts' | 'bulk_generation_jobs' | 'property_comparisons' | 'portfolio_analysis_templates' | 'checklist_templates' | 'checklist_template_sections' | 'checklist_template_items' | 'checklist_instances' | 'checklist_instance_items' | 'game_plans' | 'game_plan_phases' | 'game_plan_milestones' | 'game_plan_kpis' | 'game_plan_notes' | 'game_plan_actions' | 'custom_users' | 'cover_page_overlays' | 'report_templates' | 'report_template_versions' | 'comparison_analysis_templates' | 'workflows' | 'workflow_runs' | 'workflow_run_steps';
 
 interface RequestBody {
   // Operation type
@@ -68,6 +68,9 @@ const DEFAULT_SELECTS: Record<TableName, string> = {
   report_templates: '*',
   report_template_versions: '*',
   comparison_analysis_templates: '*',
+  workflows: '*',
+  workflow_runs: '*',
+  workflow_run_steps: '*',
 };
 
 function normaliseTemplateSchema(schema: any): any {
@@ -263,11 +266,16 @@ async function assertTemplatePermission(
   corsHeaders: Record<string, string>,
 ): Promise<Response | null> {
   if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
+  // A workflow can invoke any configured integration, so editing one is the same
+  // privilege as editing the integrations themselves. Note that a table absent
+  // from this map skips the permission check entirely — see the early return.
   const moduleKey = table.startsWith('checklist_')
     ? 'checklists'
-    : table === 'report_templates' || table === 'report_template_versions'
-      ? 'templates'
-      : null;
+    : table.startsWith('workflow')
+      ? 'integrations'
+      : table === 'report_templates' || table === 'report_template_versions'
+        ? 'templates'
+        : null;
   if (!moduleKey) return null;
 
   const permissions = await getModulePermissionContext(supabase, userId, moduleKey);
@@ -509,7 +517,7 @@ Deno.serve(async (req) => {
     }
 
     // Validate table
-    const validTables: TableName[] = ['report_structure_templates', 'client_branding_profiles', 'integration_configs', 'depreciation_comps', 'depreciation_estimator_runs', 'charts', 'chart_analysis', 'chart_configurations', 'global_report_settings', 'finance_agent_contacts', 'bulk_generation_jobs', 'property_comparisons', 'portfolio_analysis_templates', 'checklist_templates', 'checklist_template_sections', 'checklist_template_items', 'checklist_instances', 'checklist_instance_items', 'game_plans', 'game_plan_phases', 'game_plan_milestones', 'game_plan_kpis', 'game_plan_notes', 'game_plan_actions', 'custom_users', 'cover_page_overlays', 'report_templates', 'report_template_versions', 'comparison_analysis_templates'];
+    const validTables: TableName[] = ['report_structure_templates', 'client_branding_profiles', 'integration_configs', 'depreciation_comps', 'depreciation_estimator_runs', 'charts', 'chart_analysis', 'chart_configurations', 'global_report_settings', 'finance_agent_contacts', 'bulk_generation_jobs', 'property_comparisons', 'portfolio_analysis_templates', 'checklist_templates', 'checklist_template_sections', 'checklist_template_items', 'checklist_instances', 'checklist_instance_items', 'game_plans', 'game_plan_phases', 'game_plan_milestones', 'game_plan_kpis', 'game_plan_notes', 'game_plan_actions', 'custom_users', 'cover_page_overlays', 'report_templates', 'report_template_versions', 'comparison_analysis_templates', 'workflows', 'workflow_runs', 'workflow_run_steps'];
     if (!validTables.includes(table)) {
       return new Response(
         JSON.stringify({ error: `Invalid table: ${table}` }),
@@ -648,12 +656,15 @@ Deno.serve(async (req) => {
         }
       }
 
-      const { data: record, error } = await supabase
-        .from(table)
-        .insert(data)
-        .select()
-        .single();
-      
+      // A batch insert cannot use .single() — PostgREST refuses to coerce more
+      // than one row and the whole call fails even though every row was
+      // written. Arrays therefore return `records`, single payloads `record`.
+      const isBatch = Array.isArray(data);
+      const inserted = isBatch
+        ? await supabase.from(table).insert(data).select()
+        : await supabase.from(table).insert(data).select().single();
+      const { data: record, error } = inserted;
+
       if (error) {
         console.error(`[manage-templates] Insert error:`, error);
         return new Response(
@@ -661,9 +672,13 @@ Deno.serve(async (req) => {
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      
+
       return new Response(
-        JSON.stringify({ success: true, record }),
+        JSON.stringify(
+          isBatch
+            ? { success: true, records: record, count: (record as any[])?.length ?? 0 }
+            : { success: true, record }
+        ),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -784,8 +799,13 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error('[manage-templates] Error:', error);
+    // `error` is `unknown` in a catch binding, so reading `.message` off it was
+    // the file's only type error. Narrowing here keeps `deno check` clean, which
+    // matters because a deploy that type-checks the bundle refuses to ship
+    // otherwise — and this is the broker 38 call sites depend on.
+    const details = error instanceof Error ? error.message : String(error);
     return new Response(
-      JSON.stringify({ error: 'Internal server error', details: error.message }),
+      JSON.stringify({ error: 'Internal server error', details }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

@@ -54,6 +54,7 @@ import {
   Command as CommandIcon,
   ExternalLink,
   ArrowLeftRight,
+  Workflow,
 } from 'lucide-react';
 import { usePermissions } from '@/hooks/usePermissions';
 import { useAmlAccess } from '@/hooks/useAmlAccess';
@@ -81,7 +82,7 @@ type NavEntry = {
 const ENTRIES: NavEntry[] = [
   // Main
   { title: 'Overview', url: '/', icon: Home, moduleKey: 'overview', group: 'Main', keywords: ['home', 'dashboard'] },
-  { title: 'Market Updates', url: '/market-updates', icon: Newspaper, moduleKey: '__always__', group: 'Main', keywords: ['news', 'market'] },
+  { title: 'Market News Feed', url: '/market-updates', icon: Newspaper, moduleKey: '__always__', group: 'Main', keywords: ['news', 'market', 'updates'] },
   { title: 'Property Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings', group: 'Main', keywords: ['property', 'listings', 'off-market', 'builder'] },
   { title: 'Commercial / Industrial', url: '/commercial', icon: Building2, moduleKey: '__always__', group: 'Main' },
   { title: 'Calendar', url: '/calendar', icon: Calendar, moduleKey: 'calendar' , group: 'Main' },
@@ -126,6 +127,7 @@ const ADMIN_ENTRIES: NavEntry[] = [
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates', group: 'Admin' },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label', group: 'Admin' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations', group: 'Admin' },
+  { title: 'Workflow Playground', url: '/workflow-playground', icon: Workflow, moduleKey: 'integrations', group: 'Admin' },
   { title: 'Cloudflare', url: '/cloudflare', icon: Cloud, moduleKey: 'cloudflare', group: 'Admin' },
   { title: 'API Usage', url: '/api-usage', icon: Gauge, moduleKey: 'api_usage', group: 'Admin' },
   { title: 'Model Hub', url: '/model-hub', icon: Cpu, moduleKey: 'integrations', group: 'Admin' },
