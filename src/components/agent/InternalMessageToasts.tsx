@@ -269,6 +269,10 @@ export function InternalMessageToasts() {
   /** Minimised map, read inside the poll loop without re-creating it. */
   const minimisedRef = useRef<Record<string, true>>({});
   minimisedRef.current = minimised;
+  /** Set while a user-initiated minimise is in-flight so the auto-expand effect
+   * does not immediately promote another thread to a full card. */
+  const skipAutoExpandRef = useRef(false);
+
 
   /** Baselines: thread_id → ISO timestamp of the newest message already handled. */
   const baselinesRef = useRef<Record<string, string>>(readBaselines());
@@ -428,8 +432,11 @@ export function InternalMessageToasts() {
     };
   }, [user, check]);
 
-  // Keep an expanded card whenever pop-ups exist.
+  // Keep an expanded card whenever pop-ups exist — unless the user has just
+  // deliberately minimised the active card, in which case every chat stays as a
+  // chip so the unread badge on the chip is the only notification.
   useEffect(() => {
+    if (skipAutoExpandRef.current) return;
     if (!threads.length) {
       if (activeId) setActiveId(null);
       return;
@@ -444,6 +451,7 @@ export function InternalMessageToasts() {
       setActiveId(next.thread_id);
     }
   }, [threads, activeId, minimised]);
+
 
   // Typing hints for threads with an open pop-up.
   useEffect(() => {
@@ -511,11 +519,17 @@ export function InternalMessageToasts() {
     [persist, setBaseline],
   );
 
-  /** Collapse the expanded card into a side chip (never opens the agent). */
+  /** Collapse the expanded card into a side chip (never opens another card). */
   const minimise = useCallback((threadId: string) => {
     setMinimised((prev) => ({ ...prev, [threadId]: true }));
     setActiveId((current) => (current === threadId ? null : current));
+    skipAutoExpandRef.current = true;
+    // The auto-expand effect is guarded by this flag for the immediate re-render.
+    window.setTimeout(() => {
+      skipAutoExpandRef.current = false;
+    }, 120);
   }, []);
+
 
   /** Stage files against the expanded thread (drag, paste or picker). */
   const addFilesFor = useCallback(
