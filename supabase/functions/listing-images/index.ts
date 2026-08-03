@@ -26,6 +26,7 @@ import {
   type ImageCandidate,
   type ImageOrigin,
 } from '../_shared/listingImages.pure.ts';
+import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
 
 /**
  * Listing image library.
@@ -43,6 +44,12 @@ import {
  *                  and re-harvest only what actually changed.
  *   op: 'sync'     (service role) — push the durable URLs back into Airtable so
  *                  the enrichment column stays current for downstream consumers.
+ *   op: 'harvest'  (service role) — store an explicit candidate set handed over
+ *                  by `listing-enrichment`. The other ops discover candidates by
+ *                  reading Airtable, which yields nothing here: all four
+ *                  attachment columns on the intake table are empty on every one
+ *                  of the 1,441 records. The photos are on the agency's listing
+ *                  page, and the enrichment sweep is what goes and finds them.
  *
  * The bytes live in the private `listing-images` bucket. The browser only ever
  * receives short-lived signed URLs, never a bucket path and never a source URL.
@@ -447,12 +454,19 @@ async function readAirtableImages(
   };
   for (const record of payload.records ?? []) {
     const fields = record.fields ?? {};
+    // Read the columns this table actually has. The previous names — `Images`,
+    // `Property_Images`, `Listed_Date`, `Date_Listed`, `ReceivedAt` — exist on
+    // none of them, so every sweep read `[]`, fingerprinted every listing as
+    // empty, and re-armed the schedule having done nothing. The sweep has been
+    // running hourly and harvesting nothing since it shipped.
     out.set(record.id, {
-      images: fields.Images ?? fields.Property_Images ?? fields.images ?? [],
+      images:
+        fields[INTAKE_FIELDS.listingImages] ??
+        fields[INTAKE_FIELDS.additionalAttachments] ??
+        [],
       listedAt:
-        epochMs(fields.Listed_Date) ??
-        epochMs(fields.Date_Listed) ??
-        epochMs(fields.ReceivedAt) ??
+        epochMs(fields[INTAKE_FIELDS.createdTime]) ??
+        epochMs(fields[INTAKE_FIELDS.availabilityDate]) ??
         epochMs(record.createdTime),
     });
   }
@@ -554,13 +568,40 @@ Deno.serve(async (req) => {
     }
 
     /* -- Cron / service-role operations ---------------------------------- */
-    if (op === 'refresh' || op === 'sync') {
+    if (op === 'refresh' || op === 'sync' || op === 'harvest') {
       // These carry no user; they are only reachable with the service-role key,
       // which cron holds and a browser never does.
       const authHeader = req.headers.get('authorization') || '';
       const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
       if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
         return createUnauthorizedResponse('Service role required', corsHeaders);
+      }
+
+      /**
+       * Harvest an explicit candidate set, supplied by the enrichment sweep.
+       *
+       * The other two ops discover candidates by reading Airtable. That is no
+       * use here: the four attachment columns on the intake table are empty on
+       * every one of the 1,441 records, so there is nothing to discover. The
+       * photos exist on the agency's listing page, and `listing-enrichment`
+       * is what goes and finds them — this op is how it hands them over, so
+       * that storage, deduplication, checksums and the refresh schedule stay
+       * owned by one module.
+       */
+      if (op === 'harvest') {
+        const listingId = cleanId(body.listingId);
+        if (!listingId) return j({ success: false, error: 'invalid_listing_id' }, 400);
+
+        const candidates = normaliseImageCandidates(body.candidates, 'scraped');
+        if (candidates.length === 0) return j({ success: true, op, stored: 0, failed: 0 });
+
+        const outcome = await harvestListing(
+          supabase,
+          listingId,
+          candidates,
+          epochMs(body.listedAt),
+        );
+        return j({ success: true, op, listingId, ...outcome });
       }
 
       const config = airtableConfig();

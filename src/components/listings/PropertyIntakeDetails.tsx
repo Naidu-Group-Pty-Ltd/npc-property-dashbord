@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
+import { INTAKE_FIELDS } from '@/lib/airtableIntakeFields';
 import {
   Mail,
   Phone,
@@ -85,16 +86,22 @@ const SectionCard = ({ icon: Icon, title, tone = 'default', children }: { icon?:
 
 export function PropertyIntakeDetails({ fields }: PropertyIntakeDetailsProps) {
   const f = fields || {};
-  const sourceWebLink = f['Source Web Link'];
+  const sourceWebLink = f[INTAKE_FIELDS.sourceWebLink];
   const safeSourceWebUrl = getSafeWebUrl(sourceWebLink);
 
   // Only render if this looks like a Property Intake Master record.
+  //
+  // The column names come from the shared constant rather than being spelled out
+  // here. This file was, for a long time, the only place in the codebase that had
+  // them right — the main projection was reading names from a different table
+  // entirely — so keeping a second hand-maintained copy is how that divergence
+  // happened in the first place.
   const looksLikePIM =
-    'Extraction Confidence' in f ||
-    'Overall Data Quality Score' in f ||
-    'Processing Stage' in f ||
-    'Property Unique Key' in f ||
-    'Record Type' in f;
+    INTAKE_FIELDS.extractionConfidence in f ||
+    INTAKE_FIELDS.overallQuality in f ||
+    INTAKE_FIELDS.processingStage in f ||
+    INTAKE_FIELDS.uniqueKey in f ||
+    INTAKE_FIELDS.recordType in f;
 
   if (!looksLikePIM) return null;
 

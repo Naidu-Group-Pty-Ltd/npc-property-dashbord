@@ -57,6 +57,33 @@ export interface ListingFilterState {
    * "$1M–$2M, plus anything undisclosed".
    */
   includeUndisclosedPrice: boolean;
+
+  /* --- Dimensions unlocked by reading the real columns ------------------ */
+
+  /**
+   * `Intent` — Sale, Rent, Lease. Now filterable because the column is read at
+   * all: the projection previously had no notion of a rental, so a weekly rent
+   * and a purchase price sat in the same field.
+   */
+  intent: string;
+  /** `Sector` — Residential, Commercial, Industrial, Rural, Land. */
+  sector: string;
+  /** `Package Type` — House & Land, Build Only, and so on. */
+  packageType: string;
+  /** `Source Type` — how the listing reached us. */
+  sourceType: string;
+  /**
+   * Minimum `Overall Data Quality Score`, as a percentage string.
+   *
+   * Newly meaningful. The six confidence columns are populated on 1,440 of
+   * 1,441 records and were read by nothing, so every listing scored 0% and any
+   * confidence filter was either a no-op or hid everything.
+   */
+  minQuality: string;
+  /** Only listings the pipeline flagged for a human to look at. */
+  needsReview: boolean;
+  /** Only listings whose state and postcode contradict each other. */
+  localityConflict: boolean;
 }
 
 export const DEFAULT_LISTING_FILTERS: ListingFilterState = {
@@ -86,6 +113,13 @@ export const DEFAULT_LISTING_FILTERS: ListingFilterState = {
   hasPhotos: false,
   mappableOnly: false,
   includeUndisclosedPrice: false,
+  intent: 'all',
+  sector: 'all',
+  packageType: 'all',
+  sourceType: 'all',
+  minQuality: '',
+  needsReview: false,
+  localityConflict: false,
 };
 
 export const LISTED_WITHIN_OPTIONS: Array<{ value: string; label: string }> = [
@@ -157,6 +191,24 @@ export interface FilterContext {
   extractPostcode?: (address: string) => string | undefined;
   /** Evaluation time, so "last 7 days" is testable. */
   now?: number;
+  /**
+   * Listing id → whether resolved photos exist, from `useListingImages`.
+   *
+   * Needed because a listing's own `images` field is not where photos live. The
+   * Airtable attachment columns are empty on all 1,441 records; what a listing
+   * actually has is whatever the image library harvested and stored for it. A
+   * predicate reading `listing.images` was therefore permanently false, which
+   * turned the "Has photos" switch into a "show nothing" switch.
+   */
+  hasImagesById?: ReadonlySet<string> | null;
+  /**
+   * Listing id → whether a coordinate was resolved, from `useListingCoordinates`.
+   *
+   * Same shape of bug: `Latitude`/`Longitude` are empty on every record, so
+   * "Mappable only" hid everything. Coordinates come from geocoding at read
+   * time, not from the source record.
+   */
+  mappableById?: ReadonlySet<string> | null;
 }
 
 /**
@@ -175,12 +227,58 @@ function withinRange(value: number | null, min: number | null, max: number | nul
   return true;
 }
 
-export function listingHasPhotos(listing: PropertyListing): boolean {
+/**
+ * Whether a listing has a photo anyone could actually see.
+ *
+ * `resolved` is the set of ids the image library has stored bytes for, and it is
+ * the authority. The record's own `images` field is only a *source candidate*
+ * list — a fetch instruction, not storage — and on this dataset it is empty for
+ * every record, so a predicate that consulted it alone answered "no photos" for
+ * the entire table.
+ *
+ * When no resolved set has been supplied (a caller that does not run the image
+ * hook, or a pass that has not finished), fall back to candidates rather than
+ * asserting there are none: an optimistic answer keeps a listing visible, and a
+ * filter that hides everything is the worse failure.
+ */
+/**
+ * A categorical match, case-insensitively, with `'all'` meaning no constraint.
+ *
+ * A listing with no value for the dimension is excluded once a specific value is
+ * asked for — the same rule `withinRange` applies to numbers. "Show me the
+ * rentals" cannot be satisfied by a record that does not say.
+ */
+function matchesCategory(value: string | null | undefined, filter: string): boolean {
+  if (!filter || filter === 'all') return true;
+  if (!value) return false;
+  return value.toLowerCase() === filter.toLowerCase();
+}
+
+export function listingHasPhotos(
+  listing: PropertyListing,
+  resolved?: ReadonlySet<string> | null,
+): boolean {
+  if (resolved) return resolved.has(listing.id);
   return normaliseImageCandidates(listing.images).length > 0;
 }
 
-export function listingIsMappable(listing: PropertyListing): boolean {
-  return isPlottable(toFiniteNumber(listing.latitude), toFiniteNumber(listing.longitude));
+/**
+ * Whether a listing can be placed on the map.
+ *
+ * Coordinates on the record would settle it, but `Latitude`/`Longitude` are
+ * empty on all 1,441 records — they are resolved by geocoding at read time. So
+ * the question this can honestly answer without a resolved set is "is there
+ * enough of an address to geocode", which is what the map itself acts on.
+ * Answering "no" for everything, as the old predicate did, made the switch hide
+ * the entire table.
+ */
+export function listingIsMappable(
+  listing: PropertyListing,
+  resolved?: ReadonlySet<string> | null,
+): boolean {
+  if (isPlottable(toFiniteNumber(listing.latitude), toFiniteNumber(listing.longitude))) return true;
+  if (resolved) return resolved.has(listing.id);
+  return Boolean(listing.address?.trim() || listing.suburb?.trim());
 }
 
 export function matchesListingFilters(
@@ -188,7 +286,15 @@ export function matchesListingFilters(
   filters: ListingFilterState,
   context: FilterContext = {},
 ): boolean {
-  const { searchQuery, nearbySuburbs, extractState, extractPostcode, now = Date.now() } = context;
+  const {
+    searchQuery,
+    nearbySuburbs,
+    extractState,
+    extractPostcode,
+    now = Date.now(),
+    hasImagesById,
+    mappableById,
+  } = context;
 
   if (searchQuery) {
     const query = searchQuery.toLowerCase();
@@ -251,8 +357,27 @@ export function matchesListingFilters(
     if (!marker.includes('off-market') && !marker.includes('off market')) return false;
   }
 
-  if (filters.hasPhotos && !listingHasPhotos(listing)) return false;
-  if (filters.mappableOnly && !listingIsMappable(listing)) return false;
+  if (filters.hasPhotos && !listingHasPhotos(listing, hasImagesById)) return false;
+  if (filters.mappableOnly && !listingIsMappable(listing, mappableById)) return false;
+
+  // Categorical dimensions that only became filterable once the projection
+  // started reading the columns they live in.
+  if (!matchesCategory(listing.intent, filters.intent)) return false;
+  if (!matchesCategory(listing.sector, filters.sector)) return false;
+  if (!matchesCategory(listing.packageType, filters.packageType)) return false;
+  if (!matchesCategory(listing.sourceType, filters.sourceType)) return false;
+
+  if (filters.needsReview && !listing.needsHumanReview) return false;
+  if (filters.localityConflict && listing.localityTrust !== 'conflict') return false;
+
+  const minQuality = bound(filters.minQuality);
+  if (minQuality !== null) {
+    // Expressed as a percentage in the UI because a 0–1 float is not a thing
+    // anyone types into a filter box.
+    const quality = listing.confidences?.overall ?? listing.confidence;
+    if (quality === null || quality === undefined) return false;
+    if (quality * 100 < minQuality) return false;
+  }
 
   // Price. An unpriced listing is admitted only when explicitly asked for.
   const priceMin = bound(filters.priceMin);
@@ -275,7 +400,10 @@ export function matchesListingFilters(
   if (!withinRange(positiveCount(listing.carSpaces), bound(filters.carsMin), bound(filters.carsMax))) {
     return false;
   }
-  if (!withinRange(parseLandSizeSqm(listing.landSize), bound(filters.landSizeMin), bound(filters.landSizeMax))) {
+  // `landSizeSqm` is the canonical number from `Land Size SQM`; `landSize` is
+  // kept as the fallback for records that arrived through the legacy shape.
+  const landSize = listing.landSizeSqm ?? parseLandSizeSqm(listing.landSize);
+  if (!withinRange(landSize, bound(filters.landSizeMin), bound(filters.landSizeMax))) {
     return false;
   }
 

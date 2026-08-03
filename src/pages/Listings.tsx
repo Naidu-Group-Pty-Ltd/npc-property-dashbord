@@ -3,7 +3,7 @@ import type { ElementType, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -17,13 +17,16 @@ import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { reloadForFreshBuild } from '@/lib/chunkReload';
 import { MobileFilterSheet } from '@/components/listings/MobileFilterSheet';
 import { PropertyCard } from '@/components/listings/PropertyCard';
+import { ListingGalleryGrid } from '@/components/listings/ListingGalleryGrid';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
 import {
   DEFAULT_LISTING_FILTERS,
+  listingHasPhotos,
   matchesListingFilters,
   type ListingFilterState,
 } from '@/lib/listingFilters';
+import { displayPrice, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
 import { propertyDataService } from '@/services/propertyDataService';
 import { PropertyListing } from '@/lib/airtable';
 import { BulkActionBar } from '@/components/aurixa';
@@ -108,10 +111,19 @@ const URL_KEYS_STRING = [
 ] as const;
 const URL_KEYS_BOOL = ['hasInspection', 'lowConfidence', 'offMarket', 'includeNearbySuburbs'] as const;
 
+/**
+ * The four ways the same filtered set can be read.
+ *
+ * `gallery` leads with the photograph and is what a buyer wants; `table` leads
+ * with the numbers and is what an analyst wants. Both draw from one predicate so
+ * they can never disagree about which listings match.
+ */
+export type ListingsViewMode = 'list' | 'table' | 'map' | 'gallery';
+
 function parseListingsUrlState(params: URLSearchParams): {
   filters: Partial<ListingFilters>;
   search: string | null;
-  view: 'list' | 'table' | 'map' | null;
+  view: ListingsViewMode | null;
   hasAny: boolean;
 } {
   let hasAny = false;
@@ -131,7 +143,10 @@ function parseListingsUrlState(params: URLSearchParams): {
   }
   const search = params.get('q');
   const viewRaw = params.get('view');
-  const view = viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' ? viewRaw : null;
+  const view =
+    viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' || viewRaw === 'gallery'
+      ? viewRaw
+      : null;
   if (search !== null) hasAny = true;
   if (view !== null) hasAny = true;
   return { filters, search, view, hasAny };
@@ -140,8 +155,8 @@ function parseListingsUrlState(params: URLSearchParams): {
 function buildListingsUrlParams(
   filters: ListingFilters,
   search: string,
-  view: 'list' | 'table' | 'map',
-  defaultView: 'list' | 'table' | 'map',
+  view: ListingsViewMode,
+  defaultView: ListingsViewMode,
 ): URLSearchParams {
   const params = new URLSearchParams();
   for (const key of URL_KEYS_STRING) {
@@ -245,7 +260,7 @@ export default function Listings() {
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
   const isMobile = useIsMobile();
-  const defaultViewMode: 'list' | 'table' | 'map' = isMobile ? 'list' : 'table';
+  const defaultViewMode: ListingsViewMode = isMobile ? 'list' : 'table';
 
   // Snapshot URL state once at mount so we can hydrate filters/search/view before
   // React writes anything back to the address bar.
@@ -257,7 +272,7 @@ export default function Listings() {
   );
 
   const [searchQuery, setSearchQuery] = useState(() => initialUrlState.search ?? '');
-  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(
+  const [viewMode, setViewMode] = useState<ListingsViewMode>(
     () => initialUrlState.view ?? defaultViewMode,
   );
 
@@ -450,6 +465,10 @@ export default function Listings() {
     const suburbs = [...new Set(listings.map(l => l.suburb).filter(Boolean))].sort();
     const sourceHosts = [...new Set(listings.map(l => l.sourceHost).filter(Boolean))].sort();
     const agencies = [...new Set(listings.map(l => l.agencyName).filter(Boolean))].sort();
+    // Newly available: the projection reads `Intent` and `Sector` now, so a
+    // rental can be told from a sale for the first time.
+    const intents = [...new Set(listings.map(l => l.intent).filter(Boolean))].sort() as string[];
+    const sectors = [...new Set(listings.map(l => l.sector).filter(Boolean))].sort() as string[];
     
     // Extract states from both field and address — AU states only
     const states = [...new Set(listings.map(l => {
@@ -462,7 +481,7 @@ export default function Listings() {
       return extractPostcode(l.address || '');
     }).filter(Boolean))].sort() as string[];
     
-    return { propertyTypes, suburbs, states, zipCodes, sourceHosts, agencies };
+    return { propertyTypes, suburbs, states, zipCodes, sourceHosts, agencies, intents, sectors };
   }, [listings]);
 
   // Compute nearby suburbs when the filter is active
@@ -473,28 +492,39 @@ export default function Listings() {
     return null;
   }, [filters.includeNearbySuburbs, filters.suburb, listings]);
 
-  // Memoize filtered listings for performance.
+  // Filtering happens in two stages, because "has photos" depends on an answer
+  // that only arrives after a network round trip: whether the image library
+  // holds stored bytes for a listing. Resolving images needs a list, and the
+  // list needs the resolution — so everything except the photo filter is
+  // applied first, images are resolved against *that* set, and the photo filter
+  // is applied last.
+  //
   // The predicate itself lives in `@/lib/listingFilters` so list, table and map
   // are guaranteed to agree, and so its edge cases (unknown bedroom counts,
   // undisclosed prices, undated listings) can be asserted directly.
-  const filteredListings = useMemo(() => {
-    return listings.filter((listing) =>
-      matchesListingFilters(listing, filters, {
-        searchQuery,
-        nearbySuburbs: nearbySuburbsList,
-        extractState: (address) => extractAUState(address),
-        extractPostcode: (address) => extractPostcode(address),
-      }),
-    ).sort((a, b) => {
-      const getTs = (l: PropertyListing) => {
-        const d = (l as any).receivedAt || l.createdAt || l.createdTime;
-        if (!d) return 0;
-        const t = d instanceof Date ? d.getTime() : new Date(d).getTime();
-        return isNaN(t) ? 0 : t;
-      };
-      return getTs(b) - getTs(a);
-    });
-  }, [listings, searchQuery, filters, nearbySuburbsList]);
+  const byRecency = useCallback((a: PropertyListing, b: PropertyListing) => {
+    const getTs = (l: PropertyListing) => {
+      const d = (l as any).receivedAt || l.createdAt || l.createdTime;
+      if (!d) return 0;
+      const t = d instanceof Date ? d.getTime() : new Date(d).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+    return getTs(b) - getTs(a);
+  }, []);
+
+  const preFilteredListings = useMemo(() => {
+    const withoutPhotoFilter = { ...filters, hasPhotos: false };
+    return listings
+      .filter((listing) =>
+        matchesListingFilters(listing, withoutPhotoFilter, {
+          searchQuery,
+          nearbySuburbs: nearbySuburbsList,
+          extractState: (address) => extractAUState(address),
+          extractPostcode: (address) => extractPostcode(address),
+        }),
+      )
+      .sort(byRecency);
+  }, [listings, searchQuery, filters, nearbySuburbsList, byRecency]);
 
 
   const openDetailsModal = (listing: PropertyListing) => {
@@ -571,11 +601,29 @@ export default function Listings() {
   // switching list ↔ table ↔ map re-uses the same signed URLs instead of asking
   // again. The map's popup resolves its own single listing on top of this.
   const { images: listingImages, isResolving: listingImagesResolving } =
-    useListingImages(filteredListings);
+    useListingImages(preFilteredListings);
+
+  /** Ids the image library actually holds stored photos for. */
+  const listingsWithPhotos = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [listingId, photos] of Object.entries(listingImages)) {
+      if (photos && photos.length > 0) ids.add(listingId);
+    }
+    return ids;
+  }, [listingImages]);
+
+  const filteredListings = useMemo(() => {
+    if (!filters.hasPhotos) return preFilteredListings;
+    // Applied only once the pass has settled — filtering mid-resolution would
+    // empty the page and then repopulate it, which reads as a bug.
+    if (listingImagesResolving && listingsWithPhotos.size === 0) return preFilteredListings;
+    return preFilteredListings.filter((listing) => listingHasPhotos(listing, listingsWithPhotos));
+  }, [preFilteredListings, filters.hasPhotos, listingImagesResolving, listingsWithPhotos]);
 
   const showListView = viewMode === 'list';
   const showTableView = viewMode === 'table';
   const showMapView = viewMode === 'map';
+  const showGalleryView = viewMode === 'gallery';
   const emptyStateCopy = hasSearchQuery
     ? {
         icon: Search,
@@ -684,6 +732,17 @@ export default function Listings() {
               >
                 <Table2 className="h-4 w-4" />
                 Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-pressed={showGalleryView}
+                onClick={() => setViewMode('gallery')}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showGalleryView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Gallery
               </Button>
               <Button
                 type="button"
@@ -838,6 +897,33 @@ export default function Listings() {
             <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
           </Suspense>
         </ErrorBoundary>
+      ) : showGalleryView ? (
+        filteredListings.length === 0 ? (
+          <ListingsStatePanel
+            icon={emptyStateCopy.icon}
+            eyebrow={emptyStateCopy.eyebrow}
+            title={emptyStateCopy.title}
+            description={emptyStateCopy.description}
+          >
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={clearAllFilters} className={`${LISTINGS_SECONDARY_ACTION} gap-2`}>
+                <X className="h-4 w-4" />
+                Clear filters
+              </Button>
+            )}
+          </ListingsStatePanel>
+        ) : (
+          <ListingGalleryGrid
+            listings={filteredListings}
+            images={listingImages}
+            imagesResolving={listingImagesResolving}
+            selectedIds={selectedListings}
+            onToggleSelect={(listing, checked) => handleSelectListing(listing.id, checked)}
+            onOpenDetails={openDetailsModal}
+            onOpenSource={(listing) => listing.url && openSourceUrl(listing.url)}
+            formatDate={formatDate}
+          />
+        )
       ) : showListView ? (
         <div className="space-y-3">
           {filteredListings.length === 0 ? (
@@ -945,14 +1031,21 @@ export default function Listings() {
                         "max-w-[360px] truncate text-[15px] font-semibold leading-5 tracking-[-0.01em] text-foreground",
                         !listing.address && "text-muted-foreground"
                       )}>
-                        {listing.address || 'Unknown Address'}
+                        {listing.address || listing.fullAddress || 'Address not extracted'}
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-                        <span className="min-w-0 truncate leading-5">
-                          {listing.suburb || 'Unknown Suburb'}
-                          {(listing.state || extractAUState(listing.address || '')) && `, ${listing.state || extractAUState(listing.address || '')}`}
-                          {(listing.zipCode || extractPostcode(listing.address || '')) && ` ${listing.zipCode || extractPostcode(listing.address || '')}`}
+                        <span className={cn('min-w-0 truncate leading-5', !listing.suburb && LISTING_MISSING_VALUE)}>
+                          {formatLocality(listing) || 'Location unknown'}
                         </span>
+                        {qualityCaveat(listing) && (
+                          <Badge
+                            variant="outline"
+                            title={qualityCaveat(listing) ?? undefined}
+                            className={cn(LISTING_BADGE_BASE, 'border-warning/40 text-warning')}
+                          >
+                            Check location
+                          </Badge>
+                        )}
                         {listing.propertyType && (
                           <Badge variant="outline" className={cn(LISTING_BADGE_BASE, LISTING_PROPERTY_TYPE_BADGE)}>
                             {listing.propertyType}
@@ -964,11 +1057,22 @@ export default function Listings() {
                   </TableCell>
 
                   <TableCell className="py-4 text-right align-middle">
-                    {listing.price && listing.price > 0 ? (
-                      <span className="font-semibold tabular-nums text-foreground">{formatCurrency(listing.price)}</span>
-                    ) : (
-                      <span className={LISTING_MISSING_VALUE}>-</span>
-                    )}
+                    {(() => {
+                      // `Display Price Text` is what the agent wrote and is
+                      // populated on more records than the numeric column, so it
+                      // leads here too — a table showing "-" beside a listing
+                      // whose email said "From $1,599,000" is simply wrong.
+                      const price = displayPrice(listing);
+                      if (!price.known) return <span className={LISTING_MISSING_VALUE}>-</span>;
+                      return (
+                        <span className="font-semibold tabular-nums text-foreground">
+                          {price.text}
+                          {price.isRent && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">rent</span>
+                          )}
+                        </span>
+                      );
+                    })()}
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
@@ -997,7 +1101,7 @@ export default function Listings() {
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
-                    <div className={cn("max-w-[180px] truncate text-sm font-medium leading-5", !listing.agencyName && "text-muted-foreground")}>{listing.agencyName || 'Unknown Agency'}</div>
+                    <div className={cn("max-w-[180px] truncate text-sm font-medium leading-5", !listing.agencyName && LISTING_MISSING_VALUE)}>{listing.agencyName || '-'}</div>
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">

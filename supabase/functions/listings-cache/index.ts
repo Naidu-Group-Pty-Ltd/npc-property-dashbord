@@ -21,6 +21,15 @@ import {
   toCacheRow,
   type CachedListingRow,
 } from '../_shared/listingsCache.pure.ts';
+import {
+  allowlistAdmits,
+  buildAllowlist,
+  canonicalTableKey,
+  looksLikeTableId,
+  normaliseName,
+  parseTableAliases,
+} from '../_shared/airtableTableKey.pure.ts';
+import { INTAKE_SORT_FIELD } from '../_shared/airtableIntakeFields.pure.ts';
 
 /**
  * Server-side listings cache.
@@ -65,6 +74,66 @@ interface SyncState {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Table identity                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Display name → table id, learned from Airtable and held for the isolate's
+ * lifetime.
+ *
+ * The alternative was a new env var every deployment would have to set before
+ * the fix took effect. Asking Airtable is self-configuring: the schema endpoint
+ * is the authority on what a table is called, the answer never changes in
+ * practice, and one request per cold isolate is nothing against the fifteen this
+ * whole function exists to remove.
+ */
+let aliasCache: Map<string, string> | null = null;
+
+async function tableAliases(): Promise<Map<string, string>> {
+  if (aliasCache) return aliasCache;
+
+  // An explicit override skips the lookup entirely, for a deployment that would
+  // rather not grant schema access or wants to pin the mapping.
+  const configured = parseTableAliases(Deno.env.get('AIRTABLE_TABLE_ALIASES'));
+  if (configured.size > 0) {
+    aliasCache = configured;
+    return aliasCache;
+  }
+
+  const token = Deno.env.get('AIRTABLE_TOKEN');
+  const baseId = Deno.env.get('AIRTABLE_BASE_ID');
+  if (!token || !baseId) return new Map();
+
+  try {
+    const response = await fetchWithTimeout(
+      `https://api.airtable.com/v0/meta/bases/${baseId}/tables`,
+      { headers: { Authorization: `Bearer ${token}` } },
+      10_000,
+    );
+    if (!response.ok) {
+      // Not fatal. Resolution falls back to the raw string, which is what the
+      // code did before this existed.
+      console.warn('[listings-cache] table metadata unavailable', response.status);
+      return new Map();
+    }
+    const payload = (await response.json()) as { tables?: Array<{ id?: string; name?: string }> };
+    const learned = new Map<string, string>();
+    for (const table of payload.tables ?? []) {
+      if (table?.id && table?.name && looksLikeTableId(table.id)) {
+        learned.set(normaliseName(table.name), table.id);
+      }
+    }
+    // Only cache a useful answer, so a transient empty response does not pin an
+    // empty map for the isolate's whole life.
+    if (learned.size > 0) aliasCache = learned;
+    return learned;
+  } catch (error) {
+    console.warn('[listings-cache] table metadata lookup failed', redactError(error));
+    return new Map();
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Airtable                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -105,7 +174,7 @@ async function walkAirtable(config: AirtableConfig): Promise<WalkResult> {
     url.searchParams.set('pageSize', String(AIRTABLE_PAGE_SIZE));
     if (offset) url.searchParams.set('offset', offset);
     if (!sortRejected) {
-      url.searchParams.set('sort[0][field]', 'Created');
+      url.searchParams.set('sort[0][field]', INTAKE_SORT_FIELD);
       url.searchParams.set('sort[0][direction]', 'desc');
     }
 
@@ -407,20 +476,22 @@ Deno.serve(async (req) => {
 
     const defaultTable = (Deno.env.get('AIRTABLE_TABLE_NAME') || '').trim();
     const requested = typeof body.tableName === 'string' ? body.tableName.trim() : '';
-    const tableKey = requested || defaultTable;
+
+    // Both sides of the storage key and the allowlist go through the same
+    // resolution. Cron passes no table name and so writes under the configured
+    // default (an id); the Listings page passes the display name. Without this
+    // they were two different keys for one table, the read matched nothing, and
+    // the client silently fell back to walking Airtable.
+    const aliases = await tableAliases();
+    const tableKey = canonicalTableKey({ requested, fallback: defaultTable, aliases });
     if (!tableKey) return j({ success: false, error: 'no_table_configured' }, 400);
 
     // Same allowlist the proxy enforces, so the cache cannot become a way to
     // read a table the proxy would have refused.
-    const allowlist = new Set<string>();
-    if (defaultTable) allowlist.add(defaultTable);
-    for (const name of (Deno.env.get('AIRTABLE_TABLE_ALLOWLIST') || '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)) {
-      allowlist.add(name);
+    const allowlist = buildAllowlist(defaultTable, Deno.env.get('AIRTABLE_TABLE_ALLOWLIST'), aliases);
+    if (!allowlistAdmits(allowlist, tableKey)) {
+      return j({ success: false, error: 'table_not_permitted' }, 403);
     }
-    if (!allowlist.has(tableKey)) return j({ success: false, error: 'table_not_permitted' }, 403);
 
     /* -- Cron / service-role sync ---------------------------------------- */
     if (op === 'sync') {
@@ -478,6 +549,47 @@ Deno.serve(async (req) => {
       windowMs: 60_000,
     });
     if (!actorQuota.ok || !ipQuota.ok) return j({ success: false, error: 'rate_limited' }, 429);
+
+    /**
+     * One record, for a deep link.
+     *
+     * `/listings/:id` opened in a fresh tab has no warm cache and no in-memory
+     * set to read from. Without this it would have to pull the whole table —
+     * or, worse, fall back to walking Airtable — to render a single property.
+     */
+    if (op === 'record') {
+      const listingId = typeof body.listingId === 'string' ? body.listingId.trim() : '';
+      if (!/^[A-Za-z0-9_-]{3,64}$/.test(listingId)) {
+        return j({ success: false, error: 'invalid_listing_id' }, 400);
+      }
+      const { data: row, error: rowError } = await supabase
+        .from('listings_cache')
+        .select('listing_id, fields, created_time')
+        .eq('listing_id', listingId)
+        .eq('table_key', tableKey)
+        .maybeSingle();
+      if (rowError) return j({ success: false, error: 'read_failed' }, 500);
+      if (!row) return j({ success: false, error: 'not_found' }, 404);
+
+      const record = row as { listing_id: string; fields: Record<string, unknown>; created_time: string | null };
+      const { data: overlay } = await supabase
+        .from('listing_enrichment')
+        .select('values, provenance, status, last_enriched_at')
+        .eq('listing_id', listingId)
+        .maybeSingle();
+
+      return j({
+        success: true,
+        op,
+        tableKey,
+        record: {
+          id: record.listing_id,
+          createdTime: record.created_time,
+          fields: record.fields ?? {},
+        },
+        enrichment: overlay ?? null,
+      });
+    }
 
     const records = await readCache(supabase, tableKey);
     const { data: state } = await supabase

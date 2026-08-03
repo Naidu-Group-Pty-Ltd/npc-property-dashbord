@@ -116,6 +116,23 @@ export function useListingImages(listings: PropertyListing[]) {
   const [failure, setFailure] = useState<ImageFailure | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
 
+  /**
+   * Every listing is asked about, including those carrying no source candidates.
+   *
+   * This used to drop them — `.filter(row => row.images.length > 0)` — on the
+   * reasoning that a listing with nothing to harvest has nothing to resolve.
+   * That stopped being true once photos could arrive from anywhere other than
+   * the record itself. The Airtable attachment columns are empty on all 1,441
+   * records, so under the old filter the payload was *always* empty, the effect
+   * bailed before making a request, and any bytes the enrichment sweep had
+   * already harvested and stored could never be signed or rendered. The library
+   * would have filled up and shown nothing.
+   *
+   * `signStoredImages` on the server keys off the requested ids alone and is
+   * indifferent to whether candidates came with them, so asking costs one round
+   * trip and answers "does this listing have stored photos" — which is the
+   * actual question.
+   */
   const payload = useMemo<ListingImagePayload[]>(
     () =>
       listings
@@ -129,8 +146,7 @@ export function useListingImages(listings: PropertyListing[]) {
             externalId: candidate.externalId,
           })),
           listedAt: listing.listingDate || null,
-        }))
-        .filter((row) => row.images.length > 0),
+        })),
     [listings],
   );
 

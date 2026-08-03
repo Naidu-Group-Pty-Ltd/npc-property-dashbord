@@ -30,6 +30,9 @@ interface MobileFilterSheetProps {
     zipCodes: string[];
     sourceHosts: string[];
     agencies: string[];
+    /** Optional: present once the projection reads the columns they live in. */
+    intents?: string[];
+    sectors?: string[];
   };
 }
 
