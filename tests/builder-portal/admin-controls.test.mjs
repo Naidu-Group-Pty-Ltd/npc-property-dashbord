@@ -207,7 +207,7 @@ test('13. no admin response can carry a credential hash', () => {
     assert.ok(!safeList.includes(secret), `${secret} is in the safe projection`);
   }
   // The removal operations return a receipt, never a user row.
-  assert.match(operationBlock('delete_user'), /json\(\{ removed: true, result: data \}/);
+  assert.match(operationBlock('delete_user'), /json\(\{ removed: true, id: userId, detail: data \?\? null \}/);
   assert.doesNotMatch(operationBlock('delete_user'), /projectUser|USER_SELECT/);
 });
 
@@ -352,15 +352,22 @@ test('28. a revoked membership can be re-granted without resurrecting the old ro
   assert.match(membershipFormDialog, /They still need to accept an\s*\n?\s*invitation and set a password/);
 });
 
-test('29. membership removal deletes the link and nothing else', () => {
-  const fn = sqlFunctionBody('builder_admin_delete_membership');
-  const deletes = fn.match(/DELETE FROM public\.[a-z_]+/g) ?? [];
-  assert.deepEqual(deletes, ['DELETE FROM public.builder_organisation_memberships']);
-  // A revoked membership is audit evidence and is never removed.
-  assert.match(fn, /IF v_membership\.revoked_at IS NOT NULL THEN/);
-  assert.match(fn, /a revoked membership is retained as audit evidence/);
-  assert.match(fn, /builder_membership_permissions/);
-  assert.match(fn, /builder_project_access/);
+test('29. membership removal deletes the link and its access rows, nothing else', () => {
+  // The live policy lives in the lifecycle migration; this file's `deletionSql`
+  // is the superseded original, kept because other assertions still describe it.
+  const lifecycle = read('supabase/migrations/20260822000000_builder_deletion_lifecycle.sql');
+  const start = lifecycle.indexOf('CREATE OR REPLACE FUNCTION public.builder_admin_delete_membership(');
+  const fn = stripSqlComments(lifecycle.slice(start, lifecycle.indexOf('END $$;', start)));
+
+  const deletes = new Set(fn.match(/DELETE FROM public\.[a-z_]+/g) ?? []);
+  assert.deepEqual(deletes, new Set([
+    'DELETE FROM public.builder_membership_permissions',
+    'DELETE FROM public.builder_project_access',
+    'DELETE FROM public.builder_organisation_memberships',
+  ]));
+  // Never the user, never the organisation.
+  assert.ok(!deletes.has('DELETE FROM public.builder_portal_users'));
+  assert.ok(!deletes.has('DELETE FROM public.builder_organisations'));
   assert.match(adminPageCode, /The user is kept\. The organisation is kept\./);
 });
 

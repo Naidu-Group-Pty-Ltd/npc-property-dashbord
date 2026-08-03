@@ -24,11 +24,23 @@
  *   Sessions:      list_user_sessions | revoke_user_sessions
  *   Reference:     get_permission_catalogue
  *
- * The three delete_* operations are permanent removal for records created in
- * error. Each delegates to a guarded command that counts protected dependants
- * under a lock and refuses with 409 `has_dependents` when the record has been
- * used — revoke, suspend or close is the answer then, and each preserves
- * everything. Nothing here cascade-deletes a business record.
+ * The three delete_* operations are permanent removal. Each delegates to a
+ * guarded command that, under a lock on the parent, sorts dependants into two
+ * categories:
+ *
+ *   Access and account records — memberships (live or revoked), permission
+ *   overrides, sessions, access grants, onboarding, preferences, notifications,
+ *   conversation participation, organisation settings. Deleted with the parent
+ *   in the same transaction, because they describe access and cannot outlive
+ *   the thing they grant it to.
+ *
+ *   Business and historical work — projects, inventory, reservations,
+ *   transactions, construction records, documents, authored messages, tasks.
+ *   These refuse the removal with 409 `has_dependents`; revoke, suspend or
+ *   close is the answer then, and each preserves everything.
+ *
+ * Nothing here cascade-deletes a business record, and a removal either
+ * completes or rolls back whole.
  *
  * Boundary invariants enforced here, not merely documented:
  *   * Forbidden permission keys are stripped server-side before any write.
@@ -326,14 +338,23 @@ Deno.serve(async (req) => {
   };
 
   const rpcFailure = (error: { message?: string; details?: string; code?: string }) => {
+    // Two different reads of the same failure. `text` includes the SQLSTATE so
+    // the patterns above can match on it; the structured values are taken from
+    // the DETAIL line ALONE.
+    //
+    // Reading them out of `text` appended the SQLSTATE to the last field on the
+    // line, which is how "Memberships (1) P0001" reached an administrator's
+    // screen. A guarded command writes its structured detail in DETAIL, so that
+    // is the only place worth reading it from.
+    const detail = String(error?.details ?? '') || String(error?.message ?? '');
     const text = `${error?.message ?? ''} ${error?.details ?? ''} ${error?.code ?? ''}`;
     for (const [pattern, status, code] of RPC_STATUS) {
       if (pattern.test(text)) {
-        const currentVersion = /current_version=(\d+)/.exec(text)?.[1];
+        const currentVersion = /current_version=(\d+)/.exec(detail)?.[1];
         // A refused removal names what is holding the record, so the
         // administrator is told which alternative to reach for rather than
         // just being stopped.
-        const dependents = /dependents=([^\n]+)/.exec(text)?.[1]?.trim();
+        const dependents = /dependents=([^\n]+)/.exec(detail)?.[1]?.trim();
         return json({
           error: (code && RPC_MESSAGE[code]) || error?.message || 'Operation failed',
           ...(code ? { code } : {}),
@@ -636,7 +657,9 @@ Deno.serve(async (req) => {
         if (error) return rpcFailure(error);
 
         auditRows.push({ action: 'builder_user_removed', entity_id: userId });
-        return json({ removed: true, result: data }, 200, cors);
+        // `detail` carries what the command actually cleaned up — memberships
+        // removed, sessions revoked, primary reassigned. It never contains a row.
+        return json({ removed: true, id: userId, detail: data ?? null }, 200, cors);
       }
 
       case 'delete_organisation': {
@@ -661,7 +684,9 @@ Deno.serve(async (req) => {
         if (error) return rpcFailure(error);
 
         auditRows.push({ action: 'builder_organisation_removed', entity_id: organisationId });
-        return json({ removed: true, result: data }, 200, cors);
+        // `detail` carries what the command actually cleaned up — memberships
+        // removed, sessions revoked, primary reassigned. It never contains a row.
+        return json({ removed: true, id: organisationId, detail: data ?? null }, 200, cors);
       }
 
       case 'delete_membership': {
@@ -686,7 +711,9 @@ Deno.serve(async (req) => {
         if (error) return rpcFailure(error);
 
         auditRows.push({ action: 'builder_membership_removed', entity_id: membershipId });
-        return json({ removed: true, result: data }, 200, cors);
+        // `detail` carries what the command actually cleaned up — memberships
+        // removed, sessions revoked, primary reassigned. It never contains a row.
+        return json({ removed: true, id: membershipId, detail: data ?? null }, 200, cors);
       }
 
       // --------------------------------------------------------- memberships

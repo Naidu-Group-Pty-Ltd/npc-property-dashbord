@@ -34,6 +34,7 @@ const read = (relative) => readFileSync(join(root, relative), 'utf8');
 
 const originalSql = read('supabase/migrations/20260820000000_builder_admin_safe_deletion.sql');
 const fixSql = read('supabase/migrations/20260821000000_builder_admin_blocker_array_fix.sql');
+const lifecycleSql = read('supabase/migrations/20260822000000_builder_deletion_lifecycle.sql');
 const adminFn = read('supabase/functions/builder-portal-admin/index.ts');
 const adminPage = read('src/pages/admin/BuilderPortalAdmin.tsx');
 const confirmDialog = read('src/components/admin/builder-portal/ui/BuilderConfirmDialog.tsx');
@@ -97,79 +98,96 @@ test('1. the corrective migration leaves no ambiguous blocker append', () => {
   assert.match(originalSql, /^-- =+\n-- Builder \/ Developer Portal — guarded safe-deletion commands/m);
 });
 
-test('2. removing a revoked membership is refused with a controlled 409', () => {
-  const body = bodyFrom(fixSql, 'builder_admin_delete_membership');
-  assert.match(body, /IF v_membership\.revoked_at IS NOT NULL THEN/);
-  assert.match(body, /BUILDER_HAS_DEPENDENTS/);
-  // The refusal is raised before any DELETE can run.
-  assert.ok(body.indexOf('BUILDER_HAS_DEPENDENTS') < body.indexOf('DELETE FROM'));
-  // And the Edge Function maps that sentinel onto 409 has_dependents.
-  assert.match(adminFnCode, /\[\/BUILDER_HAS_DEPENDENTS\/, 409, 'has_dependents'\]/);
+test('2. a revoked membership is removable, not refused', () => {
+  // The superseded rule. It made the record permanently undeletable, which in
+  // turn made its user and its organisation undeletable.
+  assert.match(
+    bodyFrom(fixSql, 'builder_admin_delete_membership'),
+    /IF v_membership\.revoked_at IS NOT NULL THEN/,
+    'the superseded migration should still show the rule this replaces',
+  );
+
+  const body = bodyFrom(lifecycleSql, 'builder_admin_delete_membership');
+  assert.doesNotMatch(body, /revoked_at IS NOT NULL/,
+    'a revoked membership must no longer be refused');
+  assert.doesNotMatch(body, /BUILDER_HAS_DEPENDENTS/,
+    'a membership is access, so it has no business dependants to refuse for');
+  assert.match(body, /DELETE FROM public\.builder_organisation_memberships WHERE id = _membership_id/);
 });
 
-test('3. the refusal names the revoked-membership reason', () => {
-  const body = bodyFrom(fixSql, 'builder_admin_delete_membership');
-  assert.match(body, /array_append\(\s*v_blockers,\s*'a revoked membership is retained as audit evidence'\s*\)/s);
-  // The reason travels to the browser as `dependents`.
-  assert.match(adminFnCode, /dependents=\(\[\^\\n\]\+\)/);
-  assert.match(adminFnCode, /\.\.\.\(dependents \? \{ dependents \} : \{\}\)/);
-  // And the interface has copy of its own for exactly that reason.
-  assert.match(adminPageCode, /const REVOKED_MEMBERSHIP_BLOCKER = 'a revoked membership is retained as audit evidence'/);
-  assert.match(adminPageCode, /This membership has already been revoked and is retained as audit evidence/);
+test('3. removing a membership records the evidence and cleans up its access rows', () => {
+  const body = bodyFrom(lifecycleSql, 'builder_admin_delete_membership');
+
+  // The audit snapshot is the retained evidence, written before the delete.
+  assert.match(body, /'builder_membership_removed'/);
+  for (const field of [
+    'membership_id', 'builder_user_id', 'organisation_id', 'membership_role',
+    'is_primary', 'status', 'revoked_at', 'revoked_reason',
+  ]) {
+    assert.ok(body.includes(`'${field}'`), `the snapshot omits ${field}`);
+  }
+  assert.ok(body.indexOf('builder_log_activity') < body.indexOf('DELETE FROM'));
+
+  // Access rows that exist only because of this membership go with it.
+  assert.match(body, /DELETE FROM public\.builder_membership_permissions WHERE membership_id = _membership_id/);
+  assert.match(body, /DELETE FROM public\.builder_project_access/);
+
+  // The primary flag is handed on, and lost access ends the sessions.
+  assert.match(body, /IF v_membership\.is_primary THEN/);
+  assert.match(body, /SET is_primary = true WHERE id = v_next_primary/);
+  assert.match(body, /builder_revoke_user_sessions\(\s*v_membership\.builder_user_id, 'membership_removed'\)/s);
 });
 
 // ---------------------------------------------------------------------------
 // 4–5. Action visibility
 // ---------------------------------------------------------------------------
 
-test('4. a revoked membership offers no Remove action', () => {
+test('4. a revoked membership offers Remove, so nothing is trapped', () => {
   const menu = adminPageCode.slice(
     adminPageCode.indexOf('<DropdownMenuLabel>Membership</DropdownMenuLabel>'),
     adminPageCode.indexOf('</DropdownMenuContent>',
       adminPageCode.indexOf('<DropdownMenuLabel>Membership</DropdownMenuLabel>')));
 
-  // Restore is the revoked row's only forward action.
-  assert.match(menu, /\{isRevoked \? \(/);
+  // Remove sits outside the !isRevoked guard; only Revoke is inside it.
+  // The block ends at a `)}` on its own line — `)}` also occurs inside the
+  // onClick handlers, so it cannot be found by a plain indexOf.
+  const guarded = /\{!isRevoked && \(\n([\s\S]*?)\n\s*\)\}/.exec(menu)?.[1] ?? '';
+  assert.ok(guarded.length > 0, 'the !isRevoked guard block was not found');
+  assert.ok(guarded.includes('Revoke membership'), 'Revoke membership should be live-only');
+  assert.ok(!guarded.includes('Remove membership'), 'Remove membership must not be live-only');
+  assert.match(menu, /kind: 'membership_remove', membership/);
   assert.match(menu, /Restore membership/);
-
-  // Both destructive actions sit inside the same `!isRevoked` branch, so a
-  // revoked row cannot reach either of them.
-  const guarded = menu.slice(menu.indexOf('{!isRevoked && ('));
-  assert.ok(guarded.includes('Remove membership'), 'Remove membership is not behind the !isRevoked guard');
-  assert.ok(guarded.includes('Revoke membership'), 'Revoke membership is not behind the !isRevoked guard');
-  assert.equal((menu.match(/Remove membership/g) ?? []).length, 1);
-  assert.equal((menu.match(/\{!isRevoked && \(/g) ?? []).length, 1);
 });
 
-test('5. a live membership still offers Remove, because an unused one qualifies', () => {
-  const menu = adminPageCode.slice(
-    adminPageCode.indexOf('<DropdownMenuLabel>Membership</DropdownMenuLabel>'),
-    adminPageCode.indexOf('</DropdownMenuContent>',
-      adminPageCode.indexOf('<DropdownMenuLabel>Membership</DropdownMenuLabel>')));
-  assert.match(menu, /kind: 'membership_remove', membership/);
-  // The command still permits a live membership that never conferred anything.
-  const body = bodyFrom(fixSql, 'builder_admin_delete_membership');
-  assert.match(body, /DELETE FROM public\.builder_organisation_memberships WHERE id = _membership_id/);
+test('5. the memberships tab counts the rows it actually shows', () => {
+  // It counted live memberships while the table renders every membership, so a
+  // revoked row appeared beneath a tab reading "0".
+  const trigger = adminPageCode.slice(
+    adminPageCode.indexOf('<TabsTrigger value="memberships"'),
+    adminPageCode.indexOf('</TabsTrigger>', adminPageCode.indexOf('<TabsTrigger value="memberships"')));
+  assert.match(trigger, /\{memberships\.length\}/);
+  assert.doesNotMatch(trigger, /liveMemberships\.length/);
+  assert.match(adminPageCode, /\{memberships\.map\(\(membership\) => \{/);
 });
 
 // ---------------------------------------------------------------------------
 // 6–7. Users and organisations still refuse, controllably
 // ---------------------------------------------------------------------------
 
-test('6. removing a user with dependants is refused with a controlled 409', () => {
-  const body = bodyFrom(fixSql, 'builder_admin_delete_user');
+test('6. removing a user with business work is refused with a controlled 409', () => {
+  const body = bodyFrom(lifecycleSql, 'builder_admin_delete_user');
   assert.match(body, /BUILDER_HAS_DEPENDENTS/);
   assert.ok(body.indexOf('FOR UPDATE') < body.indexOf('BUILDER_HAS_DEPENDENTS'));
   assert.ok(body.indexOf('BUILDER_HAS_DEPENDENTS') < body.indexOf('DELETE FROM public.builder_portal_users'));
   // Revoking is the alternative the interface offers.
-  assert.match(adminPageCode, /Revoke access instead to preserve its history/);
+  assert.match(adminPageCode, /Revoke access instead — the account keeps its work and its history/);
 });
 
-test('7. removing an organisation with dependants is refused with a controlled 409', () => {
-  const body = bodyFrom(fixSql, 'builder_admin_delete_organisation');
+test('7. removing an organisation with business work is refused with a controlled 409', () => {
+  const body = bodyFrom(lifecycleSql, 'builder_admin_delete_organisation');
   assert.match(body, /BUILDER_HAS_DEPENDENTS/);
   assert.ok(body.indexOf('BUILDER_HAS_DEPENDENTS') < body.indexOf('DELETE FROM public.builder_organisations'));
-  assert.match(adminPageCode, /Close the organisation instead to preserve its history/);
+  assert.match(adminPageCode, /Close the organisation instead — its projects and records are preserved/);
 });
 
 // ---------------------------------------------------------------------------
@@ -218,7 +236,7 @@ test('10. the dependency detail is rendered inside the dialog', () => {
   assert.match(confirmDialog, /\{blocked\.recommendation && /);
   // The page splits the server's comma-separated list into those bullets.
   assert.match(adminPageCode, /\.split\(','\)/);
-  assert.match(adminPageCode, /This record cannot be removed because it is still in use/);
+  assert.match(adminPageCode, /This record cannot be removed because it holds business records/);
 });
 
 test('11. no raw PostgreSQL text or sentinel can reach the administrator', () => {
@@ -241,38 +259,69 @@ test('11. no raw PostgreSQL text or sentinel can reach the administrator', () =>
 // 12–14. Nothing else moved
 // ---------------------------------------------------------------------------
 
-test('12. no dependency guard is weakened by the corrective migration', () => {
-  // The strongest form of this: apart from the append mechanics, each function
-  // body is byte-identical to the one already applied in production.
-  for (const name of DELETE_FUNCTIONS) {
-    assert.equal(
-      normaliseAppends(bodyFrom(fixSql, name)),
-      normaliseAppends(bodyFrom(originalSql, name)),
-      `${name} differs from the applied version by more than the append mechanics`,
-    );
+test('12. business records still refuse a removal', () => {
+  // The protection that must survive the policy change: every Category B table
+  // is still counted, under the lock, before anything is deleted.
+  const user = bodyFrom(lifecycleSql, 'builder_admin_delete_user');
+  for (const table of [
+    'builder_document_versions', 'builder_messages', 'builder_reservations',
+    'builder_unit_holds', 'builder_tasks', 'builder_task_assignments',
+    'builder_construction_progress_updates', 'builder_construction_photographs',
+    'builder_construction_status_history', 'builder_transaction_status_history',
+  ]) {
+    assert.ok(user.includes(table), `delete_user no longer checks ${table}`);
   }
+  assert.ok(user.indexOf('FOR UPDATE') < user.indexOf('BUILDER_HAS_DEPENDENTS'));
+  assert.ok(user.indexOf('BUILDER_HAS_DEPENDENTS') < user.indexOf('DELETE FROM'));
+
+  const org = bodyFrom(lifecycleSql, 'builder_admin_delete_organisation');
+  for (const table of [
+    'builder_projects', 'builder_reservations', 'builder_transactions',
+    'builder_unit_holds', 'builder_tasks', 'builder_documents',
+  ]) {
+    assert.ok(org.includes(table), `delete_organisation no longer checks ${table}`);
+  }
+  // A conversation carrying messages is business correspondence.
+  assert.match(org, /builder_conversations\s*\n?\s*WHERE organisation_id = _organisation_id AND message_count > 0/);
+  assert.ok(org.indexOf('BUILDER_HAS_DEPENDENTS') < org.indexOf('DELETE FROM'));
 });
 
-test('13. no cascade deletion is introduced', () => {
-  const deletes = fixSqlCode.match(/DELETE FROM public\.[a-z_]+/g) ?? [];
-  assert.deepEqual(new Set(deletes), new Set([
+test('13. only access records are deleted, and never by cascade', () => {
+  const code = stripSqlComments(lifecycleSql);
+  const deletes = new Set(code.match(/DELETE FROM public\.[a-z_]+/g) ?? []);
+  // Every table a removal may delete. Business tables are absent by design.
+  assert.deepEqual(deletes, new Set([
+    'DELETE FROM public.builder_membership_permissions',
+    'DELETE FROM public.builder_organisation_memberships',
+    'DELETE FROM public.builder_project_access',
+    'DELETE FROM public.builder_document_grants',
+    'DELETE FROM public.builder_conversation_participants',
+    'DELETE FROM public.builder_conversations',
+    'DELETE FROM public.builder_notifications',
     'DELETE FROM public.builder_onboarding_steps',
     'DELETE FROM public.builder_user_preferences',
-    'DELETE FROM public.builder_portal_users',
+    'DELETE FROM public.builder_portal_sessions',
     'DELETE FROM public.builder_organisation_settings',
+    'DELETE FROM public.builder_portal_users',
     'DELETE FROM public.builder_organisations',
-    'DELETE FROM public.builder_organisation_memberships',
   ]));
-  assert.doesNotMatch(fixSqlCode, /CASCADE/i);
-  // No table, column or constraint is touched either — functions only.
-  assert.doesNotMatch(fixSqlCode, /\b(CREATE|ALTER|DROP)\s+(TABLE|INDEX|CONSTRAINT|TYPE|SCHEMA)\b/i);
-  // No row is rewritten either — `FOR UPDATE` is a lock, not a write.
-  assert.doesNotMatch(fixSqlCode, /\bTRUNCATE\b/i);
-  assert.doesNotMatch(fixSqlCode, /\bUPDATE\s+public\./i);
+  for (const business of [
+    'DELETE FROM public.builder_projects', 'DELETE FROM public.builder_transactions',
+    'DELETE FROM public.builder_documents', 'DELETE FROM public.builder_messages',
+    'DELETE FROM public.builder_reservations', 'DELETE FROM public.builder_tasks',
+    'DELETE FROM public.builder_portal_activity_log',
+  ]) {
+    assert.ok(!deletes.has(business), `${business} must never be issued`);
+  }
+  assert.doesNotMatch(code, /CASCADE/i);
+  assert.doesNotMatch(code, /\bTRUNCATE\b/i);
+  assert.doesNotMatch(code, /DISABLE TRIGGER|session_replication_role/i);
+  // Functions only — no schema change.
+  assert.doesNotMatch(code, /\b(CREATE|ALTER|DROP)\s+(TABLE|INDEX|CONSTRAINT|TYPE|SCHEMA)\b/i);
 });
 
 test('14. the Solicitor Portal is untouched', () => {
-  for (const source of [fixSql, adminFn, adminPage, confirmDialog]) {
+  for (const source of [fixSql, lifecycleSql, adminFn, adminPage, confirmDialog]) {
     const code = source.includes('CREATE OR REPLACE FUNCTION')
       ? stripSqlComments(source)
       : stripJsComments(source);
@@ -282,4 +331,5 @@ test('14. the Solicitor Portal is untouched', () => {
   }
   // The Finance-owned tables stay off-limits as well.
   assert.doesNotMatch(fixSqlCode, /builder_invoices|build_progress_payments/);
+  assert.doesNotMatch(lifecycleSql, /builder_invoices|build_progress_payments/);
 });
