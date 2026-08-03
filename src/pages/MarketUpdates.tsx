@@ -27,6 +27,7 @@ import type { MarketQAImplications, MarketQARetrievedItem, MarketQAStage, Market
 import { LiveModelBadge } from '@/components/agentModels';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { clearMarketUpdateArticleFilters, DEFAULT_MARKET_UPDATE_ARTICLE_FILTERS, hasClearableMarketUpdateFilters } from '@/lib/marketUpdateFilters';
+import { stripTechnicalIdentifiers as clean, stripTechnicalIdentifiersFromList as cleanList } from '@/utils/stripTechnicalIdentifiers';
 
 const PERIODS: Array<{ id: MarketDigestPeriod; label: string; hint: string }> = [
   { id: '24h', label: '24 Hours', hint: 'Last day' },
