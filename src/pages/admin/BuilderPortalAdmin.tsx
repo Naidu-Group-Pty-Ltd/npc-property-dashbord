@@ -1630,7 +1630,7 @@ export default function BuilderPortalAdmin() {
             editing ? 'update_user' : 'create_user',
             editing
               ? { ...values, builder_user_id: editing.id, expected_version: editing.row_version }
-              : values,
+              : { ...values },
             editing ? 'Portal user updated' : 'Portal user created',
           );
           if (ok) setUserDialog({ open: false, user: null });
