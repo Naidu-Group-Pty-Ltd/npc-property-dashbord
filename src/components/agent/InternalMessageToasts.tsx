@@ -892,7 +892,9 @@ export function InternalMessageToasts() {
             setThreads((prev) =>
               prev.map((x) => (x.thread_id === t.thread_id ? { ...x, unread: 0 } : x)),
             );
+            dismissDesktopMessageAlert(t.thread_id);
             loadMessages(t.thread_id, true);
+
           }}
           onDismiss={() => dismiss(t.thread_id)}
         />
