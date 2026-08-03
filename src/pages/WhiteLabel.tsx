@@ -340,12 +340,16 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
       });
     } catch (error) {
       console.error('Error processing image:', error);
-      toast.error('Failed to process image', { 
-        description: removeBackgroundEnabled 
-          ? 'Background removal failed. Try uploading without background removal.' 
-          : 'Please try again with a different image.'
-      });
+      // The generic "try a different image" copy hid every real cause —
+      // permission denials, expired sessions, size/type rejections — and sent
+      // admins hunting for a fault in their artwork. Surface the actual reason.
+      const reason = error instanceof Error ? error.message : String(error ?? '');
+      const description = removeBackgroundEnabled && !reason
+        ? 'Background removal failed. Try uploading without background removal.'
+        : reason || 'Please try again with a different image.';
+      toast.error('Logo upload failed', { description });
     } finally {
+
       setIsProcessing(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
