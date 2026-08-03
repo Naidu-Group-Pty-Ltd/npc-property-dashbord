@@ -25,6 +25,7 @@
 @import "./styles/base.css";
 @import "./styles/primitives.css";
 @import "./styles/report-qa.css";
+@import "./styles/ci-assessment.css";
 @import "./styles/utilities.css";
 @import "./styles/finance-portal.css";
 @import "./styles/workflow.css";
