@@ -27,7 +27,7 @@ import {
   Sparkles,
   Loader2
 } from 'lucide-react';
-import { invokeSecureFunction, hasActiveSession, describeAuthError } from '@/lib/secureInvoke';
+import { invokeSecureFunction, hasActiveSession, ensureActiveSession, describeAuthError } from '@/lib/secureInvoke';
 import { useToast } from '@/hooks/use-toast';
 import { formatNumberWithCommas, removeCommas } from '@/hooks/useFormattedNumber';
 import {
