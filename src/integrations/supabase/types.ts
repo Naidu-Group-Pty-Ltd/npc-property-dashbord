@@ -8245,6 +8245,82 @@ export type Database = {
           },
         ]
       }
+      client_details_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          client_id: string
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          property_count: number
+          requested_by: string | null
+          sections_included: string[]
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          property_count?: number
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          client_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          property_count?: number
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_details_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_details_renders_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "client_details_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       client_document_acknowledgements: {
         Row: {
           acknowledged_at: string
