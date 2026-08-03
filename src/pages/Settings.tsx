@@ -32,6 +32,7 @@ import { ComparisonScoreMigration } from "@/components/admin/ComparisonScoreMigr
 import { ProfileCredentials } from "@/components/settings/ProfileCredentials";
 import { FinanceAgentContacts } from "@/components/settings/FinanceAgentContacts";
 import { PushNotificationToggle } from "@/components/settings/PushNotificationToggle";
+import { DesktopMessageAlertsToggle } from "@/components/settings/DesktopMessageAlertsToggle";
 import { MissionControlKeyCard } from "@/components/settings/MissionControlKeyCard";
 import { SeatEntitlementCard } from "@/components/settings/SeatEntitlementCard";
 import { PricingCatalogCard } from "@/components/settings/PricingCatalogCard";
@@ -306,6 +307,9 @@ export default function Settings() {
 
       {/* Push Notifications */}
       <PushNotificationToggle />
+
+      {/* Internal message desktop alerts */}
+      <DesktopMessageAlertsToggle />
 
       {/* Personal Mailbox Settings */}
       <Card className={settingsCardClass}>

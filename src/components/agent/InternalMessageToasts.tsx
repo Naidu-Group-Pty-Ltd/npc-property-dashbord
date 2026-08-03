@@ -48,6 +48,8 @@ import {
   onInternalTyping,
   publishInternalMessage,
   publishInternalTyping,
+  requestPopOutInternalThread,
+  type PopOutThreadHint,
 } from '@/lib/internalMessagingBus';
 
 import {
@@ -68,16 +70,22 @@ import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 
 import {
+  claimMessageAlert,
   clearTabUnreadBadge,
+  closeAllDesktopMessageAlerts,
+  consumeInternalThreadDeepLink,
+  deliverDesktopMessageAlert,
   dismissDesktopMessageAlert,
-  desktopAlertsEnabled,
-  getDesktopAlertStatus,
-  hasPromptedDesktopAlerts,
   markPromptedDesktopAlerts,
+  onServiceWorkerThreadOpen,
   playMessagePing,
   requestDesktopAlertPermission,
+  resetMessageAlertClaims,
+  seedMessageAlert,
   setTabUnreadBadge,
-  showDesktopMessageAlert,
+  shouldOfferDesktopAlerts,
+  snoozeDesktopAlertPrompt,
+  type DesktopMessageAlert,
 } from '@/lib/desktopMessageAlerts';
 
 
@@ -175,6 +183,14 @@ function writeBaselines(map: Record<string, string>) {
   } catch {
     /* ignore */
   }
+}
+
+/** Chronological compare that degrades to string order on unparsable input. */
+function isAfter(candidate: string, reference: string) {
+  const a = Date.parse(candidate);
+  const b = Date.parse(reference);
+  if (Number.isFinite(a) && Number.isFinite(b)) return a > b;
+  return candidate > reference;
 }
 
 function timeLabel(iso: string) {
@@ -321,12 +337,24 @@ export function InternalMessageToasts() {
   /** thread_id → last time we broadcast a typing hint (throttling). */
   const lastTypingSentRef = useRef<Record<string, number>>({});
   /**
-   * Desktop-alert bookkeeping: thread_id → newest message timestamp we have
-   * already alerted on, so a background tab fires exactly one OS notification
-   * per inbound message (and none at all for the initial catch-up load).
+   * Desktop-alert bookkeeping. The "have we already alerted on this message?"
+   * ledger lives in `desktopMessageAlerts` (shared across every tab and across
+   * reloads); this ref only records whether THIS mount has completed its first
+   * sweep, so a freshly-loaded tab seeds the ledger instead of replaying a
+   * backlog of notifications.
    */
-  const alertedAtRef = useRef<Record<string, string>>({});
   const alertBootstrappedRef = useRef(false);
+  /**
+   * Messages that arrived while the OS route was unavailable (permission not
+   * granted, alerts switched off, notification API missing). They become a
+   * single quiet catch-up toast the next time the user looks at this tab, so
+   * "notifications are off" never means "you silently missed something".
+   */
+  const missedRef = useRef<Map<string, { sender: string; hint: PopOutThreadHint }>>(new Map());
+  /** One opt-in invitation per mount, at most. */
+  const invitedRef = useRef(false);
+  /** Who the alert ledger currently belongs to. */
+  const alertOwnerRef = useRef<string | null>(null);
 
 
 
@@ -367,6 +395,52 @@ export function InternalMessageToasts() {
   }, []);
 
 
+  /**
+   * Offer desktop alerts once, in context, and never as a modal. Browsers only
+   * grant `Notification` permission from a user gesture, so the actual request
+   * is made from the toast's own button — the user opts in deliberately rather
+   * than being ambushed by a browser dialog on first click.
+   */
+  const offerDesktopAlerts = useCallback(() => {
+    if (invitedRef.current || !shouldOfferDesktopAlerts()) return;
+    invitedRef.current = true;
+
+    toast('Turn on desktop alerts for team messages?', {
+      description:
+        'Get notified when a colleague messages you while you are in another tab, page or module. You can change this any time in Settings.',
+      duration: 15000,
+      action: {
+        label: 'Enable',
+        onClick: () => {
+          markPromptedDesktopAlerts();
+          void requestDesktopAlertPermission().then((result) => {
+            if (result === 'granted') {
+              toast.success('Desktop alerts on', {
+                description:
+                  'New team messages will now reach your desktop, even while the dashboard is in the background.',
+                duration: 6000,
+              });
+            } else if (result === 'denied') {
+              toast.message('Desktop alerts stay off', {
+                description:
+                  'Your browser is blocking notifications for this site. Messages will keep arriving in the dashboard — you can allow notifications later from the padlock icon in the address bar.',
+                duration: 8000,
+              });
+            }
+          });
+        },
+      },
+      cancel: {
+        label: 'Not now',
+        onClick: () => markPromptedDesktopAlerts(),
+      },
+      // Ignoring a toast is not the same as declining: go quiet for a week
+      // rather than forever.
+      onDismiss: () => snoozeDesktopAlertPrompt(),
+      onAutoClose: () => snoozeDesktopAlertPrompt(),
+    });
+  }, []);
+
   /** Poll thread list: opens new pop-ups and refreshes already-open ones. */
   const check = useCallback(async () => {
     try {
@@ -393,30 +467,53 @@ export function InternalMessageToasts() {
         totalUnread += t.unread ?? 0;
 
         // ---- OS-level desktop alert -------------------------------------
-        // Fires whenever an inbound message is newer than the last one we
-        // alerted on. It self-suppresses when this tab is focused, so it only
-        // ever reaches the desktop while the dashboard is in the background.
+        // Fires whenever an inbound message is newer than the last one anyone
+        // alerted on. `claimMessageAlert` is shared across every open tab and
+        // survives reloads, so the user is notified exactly once per message no
+        // matter how many dashboards they have open. The alert itself
+        // self-suppresses when the tab is focused — the in-app chip has it.
         const inbound =
           !!lastAt &&
           (t.unread ?? 0) > 0 &&
           t.last_message_sender_name !== 'You';
         if (inbound) {
-          const alreadyAlerted = alertedAtRef.current[t.id];
-          const isNew = !alreadyAlerted || new Date(lastAt!) > new Date(alreadyAlerted);
-          if (isNew) {
-            alertedAtRef.current[t.id] = lastAt!;
-            if (alertBootstrappedRef.current) {
-              if (!loudestSender) loudestSender = senderName;
-              const shown = showDesktopMessageAlert({
-                thread_id: t.id,
-                title: t.display_title || 'Team message',
+          const kind: DesktopMessageAlert['kind'] =
+            t.kind === 'broadcast' ? 'broadcast' : t.kind === 'group' ? 'group' : 'direct';
+          // Anything predating this mount is backlog: on the first sweep it is
+          // recorded as seen (chips carry it) rather than replayed as a wall of
+          // OS notifications. A message that lands *after* boot is genuinely
+          // new even if the first sweep is what finds it — which also keeps the
+          // desktop→mobile layout swap (a remount) from dropping an alert.
+          if (!alertBootstrappedRef.current && !isAfter(lastAt!, bootAtRef.current)) {
+            seedMessageAlert(t.id, lastAt!);
+          } else if (claimMessageAlert(t.id, lastAt!)) {
+            if (!loudestSender) loudestSender = senderName;
+            const title = t.display_title || 'Team message';
+            const alert: DesktopMessageAlert = {
+              thread_id: t.id,
+              title,
+              sender: senderName,
+              body: typeof t.last_message_preview === 'string' ? t.last_message_preview : '',
+              kind,
+              priority: (t.last_message_priority as Priority) ?? 'normal',
+            };
+            void deliverDesktopMessageAlert(alert).then((outcome) => {
+              if (outcome === 'shown') {
+                playMessagePing();
+                return;
+              }
+              // The user is looking at this tab — the chip is the notification.
+              if (outcome === 'suppressed-focused') return;
+              // No OS route: ping (best effort) and queue the catch-up toast.
+              playMessagePing();
+              missedRef.current.set(t.id, {
                 sender: senderName,
-                body: typeof t.last_message_preview === 'string' ? t.last_message_preview : '',
-                kind: t.kind === 'broadcast' ? 'broadcast' : t.kind === 'group' ? 'group' : 'direct',
-                priority: (t.last_message_priority as Priority) ?? 'normal',
+                hint: { thread_id: t.id, kind, title },
               });
-              if (shown) playMessagePing();
-            }
+              // A message just landed and desktop alerts are still unanswered —
+              // the most useful possible moment to offer them.
+              offerDesktopAlerts();
+            });
           }
         }
 
@@ -498,6 +595,10 @@ export function InternalMessageToasts() {
 
       // Tab title badge: signals a background-but-visible tab in the tab strip.
       setTabUnreadBadge(totalUnread, loudestSender ?? undefined);
+      // Offer the opt-in only to people who actually use internal messaging,
+      // and never on the first sweep — landing on the dashboard should not be
+      // greeted by a prompt.
+      if (alertBootstrappedRef.current && list.length) offerDesktopAlerts();
       // The first sweep only records state — it must never replay a backlog of
       // OS notifications when the dashboard is opened.
       alertBootstrappedRef.current = true;
@@ -510,7 +611,23 @@ export function InternalMessageToasts() {
     } catch {
       /* silent — badge/panel remain the source of truth */
     }
-  }, [loadMessages, persist]);
+  }, [loadMessages, persist, offerDesktopAlerts]);
+
+  /**
+   * The alert ledger is per-person, not per-browser. On a sign-out or a switch
+   * of user, drop it (and any bubble still on screen) — a stale claim from the
+   * previous account would otherwise silence the new one's first message.
+   */
+  useEffect(() => {
+    const id = user?.id ?? null;
+    if (alertOwnerRef.current && alertOwnerRef.current !== id) {
+      resetMessageAlertClaims();
+      missedRef.current.clear();
+      closeAllDesktopMessageAlerts();
+      alertBootstrappedRef.current = false;
+    }
+    alertOwnerRef.current = id;
+  }, [user?.id]);
 
   // Realtime hint + safety-net poll
   useEffect(() => {
@@ -537,29 +654,64 @@ export function InternalMessageToasts() {
   }, [user, check]);
 
   /**
-   * One-time desktop-alert opt-in. Browsers only grant `Notification`
-   * permission from a user gesture, so we piggy-back on the first click
-   * anywhere in the dashboard rather than nagging with a modal.
+   * Fallback for every context the OS route cannot serve — permission not
+   * granted, alerts switched off, an unsupported browser, or a preview iframe.
+   * Messages that could not raise a desktop notification are summarised in one
+   * quiet toast the moment the user comes back to this tab, with a direct way
+   * into the conversation. Nothing is ever silently missed.
    */
   useEffect(() => {
     if (!user) return;
-    if (getDesktopAlertStatus() !== 'default') return;
-    if (hasPromptedDesktopAlerts() || !desktopAlertsEnabled()) return;
+    const flush = () => {
+      if (document.visibilityState !== 'visible') return;
+      const missed = [...missedRef.current.entries()];
+      if (!missed.length) return;
+      missedRef.current.clear();
 
-    const onFirstGesture = async () => {
-      window.removeEventListener('pointerdown', onFirstGesture);
-      markPromptedDesktopAlerts();
-      const result = await requestDesktopAlertPermission();
-      if (result === 'granted') {
-        toast.success('Desktop alerts on', {
+      const senders = [...new Set(missed.map(([, m]) => m.sender))];
+      const names =
+        senders.length === 1
+          ? senders[0]
+          : `${senders.slice(0, 2).join(', ')}${senders.length > 2 ? ` +${senders.length - 2} more` : ''}`;
+      const latest = missed[missed.length - 1][1];
+
+      toast.message(
+        missed.length === 1
+          ? `New message from ${latest.sender}`
+          : `${missed.length} new team messages`,
+        {
           description:
-            'You will now get a notification on your desktop when a team message arrives, even while the dashboard is in another tab.',
-          duration: 6000,
-        });
-      }
+            missed.length === 1
+              ? 'Received while you were working elsewhere.'
+              : `From ${names}, received while you were working elsewhere.`,
+          duration: 10000,
+          action: {
+            label: 'Open',
+            onClick: () => requestPopOutInternalThread(latest.hint),
+          },
+        },
+      );
     };
-    window.addEventListener('pointerdown', onFirstGesture, { once: true });
-    return () => window.removeEventListener('pointerdown', onFirstGesture);
+
+    document.addEventListener('visibilitychange', flush);
+    window.addEventListener('focus', flush);
+    return () => {
+      document.removeEventListener('visibilitychange', flush);
+      window.removeEventListener('focus', flush);
+    };
+  }, [user]);
+
+  /**
+   * Notification click routing. Two arrival paths, one destination:
+   *  • the service worker posts to an already-open dashboard, so the user lands
+   *    back in the conversation without losing the page they were working on;
+   *  • a cold start (no window was open) carries `?internalThread=` instead.
+   */
+  useEffect(() => {
+    if (!user) return;
+    const deepLinked = consumeInternalThreadDeepLink();
+    if (deepLinked) requestPopOutInternalThread({ thread_id: deepLinked });
+    return onServiceWorkerThreadOpen((hint) => requestPopOutInternalThread(hint));
   }, [user]);
 
 
@@ -599,6 +751,9 @@ export function InternalMessageToasts() {
         return next;
       });
       setActiveId(id);
+      // The conversation is now on screen: retire every other signal for it.
+      dismissDesktopMessageAlert(id);
+      missedRef.current.delete(id);
       loadMessages(id, true);
       // Pull authoritative title / sender / priority for the new pop-out.
       check();
@@ -681,6 +836,10 @@ export function InternalMessageToasts() {
         queuedForRef.current = null;
         attachmentQueue.clear();
       }
+      // Closing the chip is an acknowledgement: retire the OS bubble and drop
+      // the thread from the catch-up summary.
+      dismissDesktopMessageAlert(threadId);
+      missedRef.current.delete(threadId);
 
       if (activeRef.current === threadId) setActiveId(null);
     },
@@ -895,6 +1054,7 @@ export function InternalMessageToasts() {
               prev.map((x) => (x.thread_id === t.thread_id ? { ...x, unread: 0 } : x)),
             );
             dismissDesktopMessageAlert(t.thread_id);
+            missedRef.current.delete(t.thread_id);
             loadMessages(t.thread_id, true);
 
           }}
