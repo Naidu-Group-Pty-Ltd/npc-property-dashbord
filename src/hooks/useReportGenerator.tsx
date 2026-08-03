@@ -11,7 +11,7 @@ import { toast } from '@/hooks/use-toast';
 import { BarChart3, CheckCircle2, Clock3, ExternalLink, FolderOpen, Sparkles } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
-import { invokeSecureFunction, hasActiveSession } from '@/lib/secureInvoke';
+import { invokeSecureFunction, hasActiveSession, ensureActiveSession } from '@/lib/secureInvoke';
 import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { AURORA_GOLD_PALETTE, colorAt } from '@/components/charts/kernel/palettes';
 
@@ -565,7 +565,9 @@ export function useReportGenerator() {
     
     try {
       // Check if user is authenticated using custom auth system
-      if (!hasActiveSession()) {
+      // A missing tab-scoped access token is not proof of sign-out: the staff
+      // session lives in an HttpOnly cookie. Re-verify before refusing.
+      if (!hasActiveSession() && !(await ensureActiveSession())) {
         throw new Error('User not authenticated. Please log in to generate reports.');
       }
 
