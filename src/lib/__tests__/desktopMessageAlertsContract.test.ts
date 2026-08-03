@@ -22,6 +22,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { inflateSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import {
@@ -522,6 +523,126 @@ describe('supplying the official brand artwork', () => {
   it('is reachable as an npm script', () => {
     const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
     expect(pkg.scripts['brand:import']).toContain('--import');
+  });
+});
+
+/**
+ * Minimal PNG reader: enough to sample corner pixels of the 8-bit RGB/RGBA
+ * icons this repo generates. Worth the ~40 lines — the white-corner bug was
+ * invisible to every source-level check and only existed in the pixels.
+ */
+function readPngPixels(absolutePath: string) {
+  const file = readFileSync(absolutePath);
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let colourType = 0;
+  const idat: Buffer[] = [];
+
+  while (offset < file.length) {
+    const length = file.readUInt32BE(offset);
+    const type = file.subarray(offset + 4, offset + 8).toString('ascii');
+    const data = file.subarray(offset + 8, offset + 8 + length);
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      colourType = data.readUInt8(9);
+    } else if (type === 'IDAT') {
+      idat.push(data);
+    }
+    offset += 12 + length;
+  }
+
+  const channels = colourType === 6 ? 4 : colourType === 2 ? 3 : 0;
+  if (!channels) throw new Error(`Unsupported PNG colour type ${colourType}`);
+
+  const raw = inflateSync(Buffer.concat(idat));
+  const stride = width * channels;
+  const rows: Buffer[] = [];
+  let previous = Buffer.alloc(stride);
+  let cursor = 0;
+
+  for (let y = 0; y < height; y++) {
+    const filter = raw[cursor++];
+    const line = Buffer.from(raw.subarray(cursor, cursor + stride));
+    cursor += stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? line[x - channels] : 0;
+      const b = previous[x];
+      const c = x >= channels ? previous[x - channels] : 0;
+      if (filter === 1) line[x] = (line[x] + a) & 0xff;
+      else if (filter === 2) line[x] = (line[x] + b) & 0xff;
+      else if (filter === 3) line[x] = (line[x] + ((a + b) >> 1)) & 0xff;
+      else if (filter === 4) {
+        const p = a + b - c;
+        const pa = Math.abs(p - a);
+        const pb = Math.abs(p - b);
+        const pc = Math.abs(p - c);
+        line[x] = (line[x] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 0xff;
+      }
+    }
+    rows.push(line);
+    previous = line;
+  }
+
+  return {
+    width,
+    height,
+    channels,
+    pixel(x: number, y: number) {
+      const row = rows[y];
+      const at = x * channels;
+      return {
+        r: row[at],
+        g: row[at + 1],
+        b: row[at + 2],
+        a: channels === 4 ? row[at + 3] : 255,
+      };
+    },
+  };
+}
+
+/**
+ * Icons were rendered on a rounded tile and screenshotted opaquely, so the area
+ * outside the curve came out solid white — four white corners on every
+ * notification. Artwork now runs edge to edge and platforms apply their own
+ * masking.
+ */
+describe('the notification icon has no corner artefacts', () => {
+  for (const asset of ['aurixa-notification-192.png', 'aurixa-notification-512.png']) {
+    it(`${asset} carries artwork into all four corners`, () => {
+      const png = readPngPixels(join(REPO_ROOT, 'public', 'brand', asset));
+      const corners = [
+        ['top-left', 1, 1],
+        ['top-right', png.width - 2, 1],
+        ['bottom-left', 1, png.height - 2],
+        ['bottom-right', png.width - 2, png.height - 2],
+      ] as const;
+
+      for (const [name, x, y] of corners) {
+        const { r, g, b, a } = png.pixel(x, y);
+        // Not white: that was the artefact.
+        expect(`${name}:${r},${g},${b}`).not.toMatch(/:2[45][0-9],2[45][0-9],2[45][0-9]$/);
+        expect(r > 235 && g > 235 && b > 235).toBe(false);
+        // Not a transparent hole either — the tile is filled to its edges.
+        expect(a).toBeGreaterThan(200);
+      }
+    });
+  }
+
+  it('renders the tile square, letting the OS mask it', () => {
+    const script = read('scripts/brand/build-aurixa-icons.mjs');
+    expect(script).not.toContain('border-radius:${radius}px');
+    // And never paints an opaque backdrop behind the artwork.
+    expect(script).toContain('omitBackground: true');
+    expect(script).not.toContain('omitBackground: !!transparent');
+  });
+
+  it('keeps the vector fallback square too, so both look alike', () => {
+    for (const svg of ['aurixa-mark.svg', 'aurixa-mark-compact.svg']) {
+      const source = read(`public/brand/${svg}`);
+      expect(source).not.toMatch(/<rect width="512" height="512" rx="\d+"/);
+    }
   });
 });
 

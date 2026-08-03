@@ -40,7 +40,7 @@
     </mask>
   </defs>
 
-  <rect width="512" height="512" rx="96" fill="url(#axc-field)"/>
+  <rect width="512" height="512" fill="url(#axc-field)"/>
 
   <g mask="url(#axc-delta)">
     <path d="M256 54 L256 107 L82 416 L38 442 Z" fill="url(#axc-gold-lit)"/>
