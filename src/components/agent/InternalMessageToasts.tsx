@@ -305,6 +305,15 @@ export function InternalMessageToasts() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** thread_id → last time we broadcast a typing hint (throttling). */
   const lastTypingSentRef = useRef<Record<string, number>>({});
+  /**
+   * Desktop-alert bookkeeping: thread_id → newest message timestamp we have
+   * already alerted on, so a background tab fires exactly one OS notification
+   * per inbound message (and none at all for the initial catch-up load).
+   */
+  const alertedAtRef = useRef<Record<string, string>>({});
+  const alertBootstrappedRef = useRef(false);
+
+
 
 
   const persist = useCallback((next: PopupThread[]) => {
