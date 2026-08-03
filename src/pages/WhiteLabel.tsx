@@ -286,10 +286,11 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
   const uploadToSupabase = async (file: Blob, fileName: string): Promise<string> => {
     const fileExt = fileName.split('.').pop() || 'png';
     const filePath = `${logoType}/${Date.now()}.${fileExt}`;
-    
+
+    // No `upsert`: the mediated proxy generates a unique destination path for
+    // browser callers, and it rejects the flag as an unauthorized replace.
     const uploadResult = await secureStorageUpload('branding-assets', filePath, file, {
       contentType: file.type || 'image/png',
-      upsert: true
     });
 
     if (!uploadResult.success) throw new Error(uploadResult.error || 'Upload failed');
@@ -301,6 +302,7 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
 
     return urlData.publicUrl;
   };
+
 
   const processFile = async (file: File) => {
     // Validate file type
