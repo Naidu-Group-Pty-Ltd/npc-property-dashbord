@@ -400,6 +400,7 @@ export default function CommercialAssessmentWorkspace() {
               payload={payload}
               assessmentReference={record.reference}
               assessmentTitle={record.title}
+              segment={definition.segment === 'industrial' ? 'industrial' : 'commercial'}
               onApply={applyIntakePack}
               onCreateClient={() => window.open('/clients', '_blank', 'noopener,noreferrer')}
               disabled={readOnly}
