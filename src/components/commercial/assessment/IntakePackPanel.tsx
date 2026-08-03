@@ -601,6 +601,29 @@ export function IntakePackPanel({
             </Button>
           </div>
 
+          <div className="rounded-md border border-warning/40 bg-warning/10 p-3">
+            <p className="text-xs font-semibold text-foreground">
+              Nothing is in the assessment until you apply it
+            </p>
+            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+              {requiredCoverage.map((check) => (
+                <li key={check.label} className="flex items-center gap-1.5 text-xs">
+                  {check.filled
+                    ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" aria-hidden="true" />
+                    : <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-destructive" aria-hidden="true" />}
+                  <span className={check.filled ? 'text-muted-foreground' : 'font-medium text-foreground'}>
+                    {check.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              Anything still flagged is not in the workbook either — attach the contract, valuation or
+              lender term sheet above and use &quot;Read details&quot;, or enter it on the step directly.
+            </p>
+          </div>
+
+
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
             {([
               ['Entities', parsed.counts.entities],
