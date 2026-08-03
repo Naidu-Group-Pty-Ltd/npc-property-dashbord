@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
@@ -267,15 +267,16 @@ export interface BlockedRemoval {
   recommendation?: string;
 }
 
-/** A revoked membership is kept as evidence, so its refusal is its own case. */
-const REVOKED_MEMBERSHIP_BLOCKER = 'a revoked membership is retained as audit evidence';
-
 /**
  * Turns a refusal into something an administrator can act on.
  *
  * Nothing here echoes the server's raw text: a PostgreSQL sentinel or a
- * malformed-literal message is a bug report, not an instruction, so only
- * wording chosen here reaches the screen.
+ * SQLSTATE is a bug report, not an instruction, so only wording chosen here
+ * reaches the screen.
+ *
+ * Only business work reaches this path now. Access records — memberships,
+ * sessions, permission overrides, onboarding rows — are removed with their
+ * parent and never refuse it.
  */
 function describeBlockedRemoval(kind: string, dependents?: string): BlockedRemoval {
   const parts = (dependents ?? '')
@@ -283,49 +284,31 @@ function describeBlockedRemoval(kind: string, dependents?: string): BlockedRemov
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-  if (parts.some((entry) => entry === REVOKED_MEMBERSHIP_BLOCKER)) {
-    return {
-      message: 'This membership has already been revoked and is retained as audit evidence. '
-        + 'It cannot be permanently removed.',
-      dependents: [],
-      recommendation: 'Restore the membership if this user should have access again.',
-    };
-  }
-
   const recommendation = kind === 'user_remove'
-    ? 'Revoke access instead to preserve its history.'
+    ? 'Revoke access instead — the account keeps its work and its history.'
     : kind === 'org_remove'
-      ? 'Close the organisation instead to preserve its history.'
-      : 'Revoke the membership instead to preserve its history.';
+      ? 'Close the organisation instead — its projects and records are preserved.'
+      : 'Revoke the membership instead to end access without removing the record.';
 
   return {
-    message: 'This record cannot be removed because it is still in use.',
+    message: 'This record cannot be removed because it holds business records.',
     // Sentence case for display; the server sends them lower-case.
     dependents: parts.map((entry) => entry.charAt(0).toUpperCase() + entry.slice(1)),
     recommendation,
   };
 }
 
-/**
- * Where a restore should put this account.
- *
- * An account that never finished setup goes back to the start of the
- * invitation lifecycle rather than to `active`: it has no password, so
- * "active" would describe an account nobody can sign in to. A revoked account
- * returns to `suspended` first, which is the transition the server's own
- * activation guard documents. Both rules are enforced server-side as well —
- * this only stops the interface from asking for something that would be
- * refused.
- */
-function restoreTargetFor(user: BuilderUser, stage: AccessStage): 'active' | 'suspended' | 'invited' {
-  if (!user.has_completed_account_setup) return 'invited';
-  if (stage === 'revoked') return 'suspended';
-  return 'active';
-}
-
 export default function BuilderPortalAdmin() {
   const { canEdit } = useModulePermissions('builder_portal_admin');
   const [loading, setLoading] = useState(true);
+  /**
+   * The full-page loading state replaces the whole surface, which unmounts the
+   * tabs with it. Every refresh after a mutation therefore reset the active tab
+   * to Organisations — so deleting a membership bounced the administrator to a
+   * different tab and looked as though nothing had happened. It is shown for
+   * the first load only; later refreshes reload underneath the page.
+   */
+  const hasLoadedOnce = useRef(false);
   const [busy, setBusy] = useState(false);
   const [organisations, setOrganisations] = useState<BuilderOrganisation[]>([]);
   const [users, setUsers] = useState<BuilderUser[]>([]);
@@ -414,6 +397,7 @@ export default function BuilderPortalAdmin() {
     } catch (error: any) {
       toast.error(error?.message || 'Failed to load Builder Portal administration');
     } finally {
+      hasLoadedOnce.current = true;
       setLoading(false);
     }
   }, [call]);
@@ -727,10 +711,10 @@ export default function BuilderPortalAdmin() {
           title: 'Permanently remove this user?',
           description: `${user.name} (${user.email}) will be deleted. This cannot be undone.`,
           consequences: [
-            { tone: 'ends', text: 'The account record is deleted permanently.' },
-            { tone: 'remains', text: 'Nothing is cascade-deleted — organisations, memberships, projects, documents and messages are all kept.' },
-            { tone: 'remains', text: 'The audit trail is kept, and records who removed the account and why.' },
-            { tone: 'warning', text: 'Refused if the account holds any membership, access grant, session or business record. Revoke access instead.' },
+            { tone: 'ends', text: 'The account, its memberships, sessions and access grants are deleted.' },
+            { tone: 'remains', text: 'Organisations, projects, documents and messages are all kept.' },
+            { tone: 'remains', text: 'The audit trail is kept, and records who removed the account, when and why.' },
+            { tone: 'warning', text: 'Refused if the account produced business work — uploads, messages, reservations or tasks. Revoke access instead.' },
           ],
           confirmLabel: 'Remove user', destructive: true,
           reasonRequired: true, reasonLabel: 'Reason for permanent removal',
@@ -806,10 +790,10 @@ export default function BuilderPortalAdmin() {
           title: 'Permanently remove this organisation?',
           description: `${organisation.legal_name} will be deleted. This cannot be undone.`,
           consequences: [
-            { tone: 'ends', text: 'The organisation record is deleted permanently.' },
-            { tone: 'remains', text: 'Nothing is cascade-deleted — memberships, projects, inventory, transactions and documents are all kept.' },
-            { tone: 'remains', text: 'The audit trail is kept, and records who removed it and why.' },
-            { tone: 'warning', text: 'Refused if the organisation holds any membership, project or record. Close it instead.' },
+            { tone: 'ends', text: 'The organisation, its memberships and its access records are deleted.' },
+            { tone: 'ends', text: 'Members lose access through it; anyone left with none has their sessions ended.' },
+            { tone: 'remains', text: 'The users themselves are kept, including anyone who belonged only here.' },
+            { tone: 'warning', text: 'Refused if it holds projects, inventory, transactions or documents. Close it instead.' },
           ],
           confirmLabel: 'Remove organisation', destructive: true,
           reasonRequired: true, reasonLabel: 'Reason for permanent removal',
@@ -852,10 +836,10 @@ export default function BuilderPortalAdmin() {
           title: 'Permanently remove this membership?',
           description: `The link between ${userName(membership.builder_user_id)} and ${organisationName(membership.organisation_id)} will be deleted.`,
           consequences: [
-            { tone: 'ends', text: 'Only the membership link is deleted.' },
+            { tone: 'ends', text: 'The membership and its permission overrides are deleted.' },
+            { tone: 'ends', text: 'Access through this organisation ends. If it is their last, their sessions end too.' },
             { tone: 'remains', text: 'The user is kept. The organisation is kept.' },
-            { tone: 'remains', text: 'Projects, documents and audit records are kept.' },
-            { tone: 'warning', text: 'Refused once the membership has conferred access or gathered history. Revoke it instead — that keeps the evidence.' },
+            { tone: 'remains', text: 'Projects, documents and the audit trail are kept — the removal is recorded with a full snapshot.' },
           ],
           confirmLabel: 'Remove membership', destructive: true,
           reasonRequired: true, reasonLabel: 'Reason for permanent removal',
@@ -871,7 +855,7 @@ export default function BuilderPortalAdmin() {
     }
   }, [confirm, runConfirmed, revokeInvite, userName, organisationName]);
 
-  if (loading) {
+  if (loading && !hasLoadedOnce.current) {
     return (
       <div className="flex min-h-[40vh] items-center justify-center p-6" role="status" aria-live="polite">
         <div className="flex flex-col items-center gap-4 text-center">
@@ -903,10 +887,10 @@ export default function BuilderPortalAdmin() {
         <Button
           variant="outline"
           onClick={() => void load()}
-          disabled={busy}
+          disabled={busy || loading}
           className="w-full gap-2 sm:w-auto"
         >
-          <RefreshCw className="h-4 w-4" aria-hidden />
+          <RefreshCw className={loading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} aria-hidden />
           Refresh
         </Button>
       </header>
@@ -984,10 +968,13 @@ export default function BuilderPortalAdmin() {
           <TabsTrigger value="memberships" className="relative shrink-0 gap-2">
             <KeyRound className="h-4 w-4 shrink-0" aria-hidden />
             Memberships
+            {/* Counts the rows the tab actually shows. It listed live
+                memberships while the table lists every membership, so a
+                revoked row appeared under a tab reading "0". */}
             <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
-              {liveMemberships.length}
+              {memberships.length}
             </span>
-            <span className="sr-only">, {liveMemberships.length} active memberships</span>
+            <span className="sr-only">, {memberships.length} memberships</span>
           </TabsTrigger>
           <TabsTrigger value="projects" className="shrink-0 gap-2">
             <FolderKanban className="h-4 w-4 shrink-0" aria-hidden />
@@ -1574,31 +1561,28 @@ export default function BuilderPortalAdmin() {
                                   </>
                                 )}
 
-                                {/* A revoked membership is retained as audit evidence, so
-                                    the server always refuses to remove it. Offering the
-                                    action anyway would be offering a guaranteed failure —
-                                    the revoked row's only forward action is Restore. */}
+                                <DropdownMenuSeparator />
+
+                                {/* Revoking only applies to a live membership. Removal
+                                    applies to either: a membership is access, and the
+                                    removal audit record is what is kept. */}
                                 {!isRevoked && (
-                                  <>
-                                    <DropdownMenuSeparator />
-
-                                    <DropdownMenuItem
-                                      className="text-destructive focus:text-destructive"
-                                      onClick={() => setConfirm({ kind: 'membership_revoke', membership, isLast })}
-                                    >
-                                      <ShieldOff className="mr-2 h-4 w-4" aria-hidden />
-                                      Revoke membership
-                                    </DropdownMenuItem>
-
-                                    <DropdownMenuItem
-                                      className="text-destructive focus:text-destructive"
-                                      onClick={() => setConfirm({ kind: 'membership_remove', membership })}
-                                    >
-                                      <Trash2 className="mr-2 h-4 w-4" aria-hidden />
-                                      Remove membership
-                                    </DropdownMenuItem>
-                                  </>
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => setConfirm({ kind: 'membership_revoke', membership, isLast })}
+                                  >
+                                    <ShieldOff className="mr-2 h-4 w-4" aria-hidden />
+                                    Revoke membership
+                                  </DropdownMenuItem>
                                 )}
+
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setConfirm({ kind: 'membership_remove', membership })}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                                  Remove membership
+                                </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
