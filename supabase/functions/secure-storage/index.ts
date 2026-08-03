@@ -97,12 +97,28 @@ function safeFileName(value: unknown): string {
   return base.slice(0, 120);
 }
 
+/**
+ * Does this caller administer branding? Superadmin, or `white_label` can_edit —
+ * the same gate `manage-branding` uses to persist the row. Requiring superadmin
+ * here meant a delegated brand administrator could edit the draft but never
+ * upload the artwork it referenced.
+ */
+async function canAdministerBranding(supabase: any, actorId: string) {
+  if (await isSuperadmin(supabase, actorId)) return true;
+  for (const moduleKey of ['white_label', 'platform_administration']) {
+    const perm = await requireModulePermission(supabase, { userId: actorId, authMethod: 'human' }, moduleKey, 'can_edit');
+    if (perm.ok) return true;
+  }
+  return false;
+}
+
 /** Resolve browser upload binding fields exclusively from authoritative rows. */
 async function resolveHumanUploadBinding(supabase: any, bucket: string, resourceId: unknown, actorId: string) {
   if (bucket === 'branding-assets') {
-    if (!(await isSuperadmin(supabase, actorId))) return { ok: false as const, reason: 'superadmin_required' };
+    if (!(await canAdministerBranding(supabase, actorId))) return { ok: false as const, reason: 'branding_permission_required' };
     return { ok: true as const, resourceType: 'branding_asset', resourceId: null, clientId: null, ownerUserId: actorId };
   }
+
   if (typeof resourceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(resourceId)) return { ok: false as const, reason: 'resource_required' };
   if (bucket === 'qa_exports') {
     const { data } = await supabase.from('report_qa_conversations').select('id, created_by, client_id').eq('id', resourceId).maybeSingle();
