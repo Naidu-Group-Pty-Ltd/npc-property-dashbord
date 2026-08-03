@@ -13,6 +13,7 @@
     "audit:style": "node scripts/audit-style-tokens.cjs",
     "brand:icons": "node scripts/brand/build-aurixa-icons.mjs",
     "brand:icons:check": "node scripts/brand/build-aurixa-icons.mjs --check",
+    "brand:import": "node scripts/brand/build-aurixa-icons.mjs --import",
     "verify:branding": "node scripts/brand/verify-deployed-branding.mjs",
     "integrations:secrets:generate": "node scripts/generate-integration-secrets.mjs",
     "integrations:secrets:check": "node scripts/generate-integration-secrets.mjs --check",

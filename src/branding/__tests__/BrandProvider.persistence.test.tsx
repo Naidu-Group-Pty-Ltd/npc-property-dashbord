@@ -43,6 +43,24 @@ vi.mock('@/integrations/supabase/client', () => ({
   },
 }));
 
+/**
+ * The mediated edge-function write is the primary save path. Unmocked it makes
+ * a real network call, which made these tests slow and non-deterministic — a
+ * different one timed out on each run. Driving it explicitly keeps both routes
+ * testable: `mediatedSave` decides what the edge function answers, and the
+ * direct PostgREST fallback below is exercised by leaving it unavailable.
+ */
+const mediatedSave = { available: false, response: { data: { success: true }, error: null } as unknown };
+vi.mock('@/lib/secureInvoke', () => ({
+  invokeSecureFunction: vi.fn(async (fn: string) => {
+    if (fn !== 'manage-branding') throw new Error(`Unexpected function ${fn}`);
+    if (!mediatedSave.available) {
+      return { data: null, error: { message: 'edge function unavailable', status: 503 } };
+    }
+    return mediatedSave.response;
+  }),
+}));
+
 // Branding writes go through the JWT-bearing client, not the anon one.
 vi.mock('@/hooks/useAuthenticatedSupabase', () => ({
   useAuthenticatedSupabase: () => ({
@@ -116,6 +134,7 @@ describe('BrandProvider persistence and theme application', () => {
     updateMock.mockReset();
     updateReturnsRows = [{ id: 'brand-row-1' }];
     authState.isAuthenticated = true;
+    mediatedSave.available = false;
     updateMock.mockReturnValue({
       eq: vi.fn(() => ({
         select: vi.fn(async () => ({ data: updateReturnsRows, error: null })),
@@ -251,6 +270,7 @@ describe('BrandProvider save outcomes', () => {
     updateMock.mockReset();
     updateReturnsRows = [{ id: 'brand-row-1' }];
     authState.isAuthenticated = true;
+    mediatedSave.available = false;
     updateMock.mockReturnValue({
       eq: vi.fn(() => ({
         select: vi.fn(async () => ({ data: updateReturnsRows, error: null })),
@@ -314,6 +334,19 @@ describe('BrandProvider save outcomes', () => {
       expect(screen.getByTestId('save-result')).toHaveTextContent('failed:unauthenticated'),
     );
     // An anonymous write would have silently no-opped, so it is never attempted.
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('prefers the cookie-authenticated edge function when it is available', async () => {
+    // The staff session cookie is the durable identity; the tab-scoped RLS
+    // token is derived and can be absent while the session is perfectly valid.
+    mediatedSave.available = true;
+    authState.isAuthenticated = false;
+
+    await renderAndRemoveMarks();
+
+    await waitFor(() => expect(screen.getByTestId('save-result')).toHaveTextContent('ok'));
+    // No direct PostgREST write is needed once the mediated path succeeds.
     expect(updateMock).not.toHaveBeenCalled();
   });
 
