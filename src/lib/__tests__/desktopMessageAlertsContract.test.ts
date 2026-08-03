@@ -368,6 +368,32 @@ describe('the stock icon is gone from disk, not just unreferenced', () => {
     expect(script).toContain("'favicon.ico'");
     expect(script).toContain('buildIco');
   });
+
+  /**
+   * Every repo-side check here passed for days while production still served
+   * the heart, because the site had simply never been republished — a state no
+   * repository test can observe. The deploy verifier probes the live site
+   * instead; it only works if it recognises the same stock file this suite
+   * does, so the two constants are pinned together.
+   */
+  it('shares its stock-icon fingerprint with the deploy verifier', () => {
+    const verifier = read('scripts/brand/verify-deployed-branding.mjs');
+    expect(verifier).toContain(STOCK_HEART_SHA256);
+  });
+
+  it('has the deploy verifier wired to an npm script', () => {
+    const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
+    expect(pkg.scripts['verify:branding']).toContain('verify-deployed-branding.mjs');
+  });
+
+  it('checks the surfaces that actually reveal a stale deploy', () => {
+    const verifier = read('scripts/brand/verify-deployed-branding.mjs');
+    // A stale build betrays itself three ways: the old favicon, missing brand
+    // assets, and a service worker still falling back to the stock icon.
+    expect(verifier).toContain('/favicon.ico');
+    expect(verifier).toContain(AURIXA_NOTIFICATION_ICON);
+    expect(verifier).toContain('/sw-push.js');
+  });
 });
 
 describe('platform wiring', () => {

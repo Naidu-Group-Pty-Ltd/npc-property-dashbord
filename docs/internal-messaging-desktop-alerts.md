@@ -116,6 +116,35 @@ all of it and feeds the 16/32px favicon entries, where that detail resamples
 into noise. Both share the same derived delta geometry, so the silhouette is
 identical.
 
+### Verifying a deployment
+
+`npm run verify:branding -- https://your-site.example` probes the **live** site
+and reports whether it is actually serving branded artwork.
+
+This exists because the branding fix was merged and the stock heart kept
+appearing in production anyway. Every repository check was green throughout —
+correctly, because the repository was right. The site had simply never been
+rebuilt and republished, and no repo-side test can observe that. A stale build
+betrays itself three ways, and the verifier checks all three:
+
+| Probe | Stale build looks like |
+| --- | --- |
+| `/favicon.ico` | the stock heart's sha256, header `89504e47` (a PNG, not an ICO) |
+| `/brand/*.png` | `404` |
+| `/sw-push.js` | still contains `data.icon \|\| '/favicon.ico'` |
+
+Two things to know when a human still reports the old icon after a good deploy:
+
+- **Browsers cache favicons and service workers hard.** A hard reload, a new
+  tab, or a fresh profile may be needed before the change is visible. The
+  notification icon itself comes from the page, so it corrects as soon as the
+  new bundle loads.
+- **A configured white-label logo wins, by design.** With one uploaded, alerts
+  show *that*, not the Aurixa mark — so "still not the Aurixa logo" can be the
+  system working correctly. Note that notification shades render the icon at
+  roughly 48px: a large asset with wide margins reads as a near-empty box, so
+  the favicon slot wants a square, tightly-cropped mark.
+
 ## Duplicate prevention
 
 Every open dashboard tab polls independently, so the naive "already alerted"
