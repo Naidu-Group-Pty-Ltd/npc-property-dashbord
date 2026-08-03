@@ -209,14 +209,23 @@ async function renderSource(browser, sourcePath, size) {
     deviceScaleFactor: 1,
   });
 
-  const radius = Math.round(size * 0.22);
+  /**
+   * Icons are rendered EDGE TO EDGE, with no corner radius.
+   *
+   * Rounding them here baked the shape into the bitmap, and because a
+   * screenshot is opaque by default the area outside the curve came out solid
+   * white — four white corners on every notification. Platforms already mask
+   * icons to their own shape (Windows squares them, Android may circle them),
+   * so the artwork stays square and lets the OS decide. `omitBackground` below
+   * is the belt to that braces: nothing outside the artwork can be opaque.
+   */
   const body = crop
     // A recorded crop already isolates a square symbol on its own backdrop, so
     // it fills the frame. Placement is computed from the image's NATURAL size
     // once it has decoded — a CSS percentage would resolve against the tile.
     ? `<style>
          html,body{margin:0;padding:0;background:transparent}
-         .tile{width:${size}px;height:${size}px;border-radius:${radius}px;
+         .tile{width:${size}px;height:${size}px;
                background:${TILE_BACKGROUND};overflow:hidden;position:relative}
          img{position:absolute;display:block;transform-origin:0 0}
        </style>
@@ -224,7 +233,7 @@ async function renderSource(browser, sourcePath, size) {
     // No crop: contain the whole artwork so nothing is cut off.
     : `<style>
          html,body{margin:0;padding:0;background:transparent}
-         .tile{width:${size}px;height:${size}px;border-radius:${radius}px;
+         .tile{width:${size}px;height:${size}px;
                background:${TILE_BACKGROUND};
                display:flex;align-items:center;justify-content:center;overflow:hidden}
          img{width:82%;height:82%;object-fit:contain;display:block}
@@ -250,7 +259,7 @@ async function renderSource(browser, sourcePath, size) {
     }, { crop, size });
   }
 
-  const shot = await page.screenshot();
+  const shot = await page.screenshot({ omitBackground: true });
   await page.close();
   return shot;
 }
@@ -270,7 +279,9 @@ async function renderSvg(browser, svgName, size, transparent) {
      ${svg}`,
     { waitUntil: 'load' },
   );
-  const buffer = await page.screenshot({ omitBackground: !!transparent });
+  // Always omit the backdrop: the SVG paints its own field, and anything
+  // outside it must be transparent rather than white.
+  const buffer = await page.screenshot({ omitBackground: true });
   await page.close();
   return buffer;
 }

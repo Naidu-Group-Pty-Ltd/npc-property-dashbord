@@ -138,6 +138,13 @@ For the current master, the delta measures x 360–718, y 133–492 and the
 wordmark's ink begins at y≈507, leaving a clean gap at 494–508. The committed
 crop is `348,118,382,382`: the symbol and its orbital rings, nothing else.
 
+**Icons are rendered edge to edge, with no corner radius.** Baking a rounded
+shape into the bitmap and screenshotting it opaquely left solid white outside
+the curve — four white corners on every notification. Platforms already mask
+icons to their own shape (Windows squares them, Android may circle them), so
+the artwork stays square and lets the OS decide. A pixel-level test samples all
+four corners of the committed PNGs to keep it that way.
+
 Three things the importer does on purpose:
 
 - **Keeps one master.** Importing removes any previous `aurixa-source.*` and any
