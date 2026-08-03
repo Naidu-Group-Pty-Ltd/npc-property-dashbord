@@ -306,3 +306,30 @@ export async function invokeSecureFunction<T = any>(
 export function hasActiveSession(): boolean {
   return Boolean(getAccessToken());
 }
+
+/**
+ * Authoritative session check.
+ *
+ * `hasActiveSession()` only sees the (tab-scoped) access token, so it reports
+ * "expired" whenever that token was never mirrored into this tab, was cleared
+ * after transient auth failures, or the user signed in through supabase-js.
+ * In all three cases the HttpOnly `__Host-session_token` cookie is still valid,
+ * so we re-verify against it (and re-seed the access token) before telling the
+ * user their session has expired.
+ */
+export async function ensureActiveSession(): Promise<boolean> {
+  if (getAccessToken()) return true;
+
+  try {
+    const { supabase } = await import('@/integrations/supabase/client');
+    if ((await supabase.auth.getSession()).data.session?.access_token) return true;
+  } catch { /* native session lookup is best-effort */ }
+
+  const refreshed = await tryRefreshAccessToken();
+  if (refreshed) {
+    resetAuthFailures();
+    return true;
+  }
+  return false;
+}
+
