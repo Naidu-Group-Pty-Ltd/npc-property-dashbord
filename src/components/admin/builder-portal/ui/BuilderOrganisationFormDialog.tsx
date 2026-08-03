@@ -74,8 +74,11 @@ export function BuilderOrganisationFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
+      <DialogContent
+        bareLayout
+        className="inset-auto bottom-auto left-1/2 top-1/2 flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none -translate-x-1/2 -translate-y-1/2 flex-col gap-0 overflow-hidden rounded-lg border p-0 sm:max-w-2xl"
+      >
+        <DialogHeader className="shrink-0 px-6 pb-4 pt-6 pr-14">
           <DialogTitle>{editing ? 'Edit organisation' : 'Add organisation'}</DialogTitle>
           <DialogDescription>
             {editing
@@ -84,7 +87,12 @@ export function BuilderOrganisationFormDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
+        <div
+          aria-label="Organisation details"
+          className="min-h-0 flex-1 touch-pan-y space-y-4 overflow-x-hidden overflow-y-auto overscroll-contain px-6 pb-6 [scrollbar-color:hsl(var(--border))_transparent] [scrollbar-gutter:stable] [scrollbar-width:thin] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar]:w-2"
+          data-testid="builder-organisation-form-body"
+          tabIndex={0}
+        >
           <div className="space-y-2">
             <Label htmlFor="builder-org-legal-name">Legal name</Label>
             <Input id="builder-org-legal-name" value={form.legal_name} onChange={set('legal_name')} />
@@ -184,7 +192,7 @@ export function BuilderOrganisationFormDialog({
           </div>
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 gap-2 border-t bg-background px-6 pb-6 pt-4 sm:gap-0">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
           <Button disabled={busy || !form.legal_name.trim()} onClick={() => onSubmit(form)}>
             {editing ? 'Save changes' : 'Create'}
