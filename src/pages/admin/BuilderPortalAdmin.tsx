@@ -20,7 +20,25 @@ import { AdminBuilderConstructionPanel } from '@/components/admin/builder-portal
 import { AdminBuilderDeliveryPanel } from '@/components/admin/builder-portal/AdminBuilderDeliveryPanel';
 import { AdminBuilderCollaborationPanel } from '@/components/admin/builder-portal/AdminBuilderCollaborationPanel';
 import { AdminBuilderWorkspacePanel } from '@/components/admin/builder-portal/AdminBuilderWorkspacePanel';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { BuilderStatCard } from '@/components/admin/builder-portal/ui/BuilderStatCard';
+import { BuilderConfirmDialog, type BuilderConsequence } from '@/components/admin/builder-portal/ui/BuilderConfirmDialog';
+import {
+  BuilderUserFormDialog, type BuilderUserFormValues,
+} from '@/components/admin/builder-portal/ui/BuilderUserFormDialog';
+import {
+  BuilderOrganisationFormDialog, type BuilderOrganisationFormValues,
+} from '@/components/admin/builder-portal/ui/BuilderOrganisationFormDialog';
+import {
+  BuilderMembershipFormDialog, type BuilderMembershipFormValues,
+} from '@/components/admin/builder-portal/ui/BuilderMembershipFormDialog';
+import {
+  BuilderPermissionsDialog, type BuilderPermissionKey, type BuilderPermissionOverride,
+  type BuilderRoleDefault,
+} from '@/components/admin/builder-portal/ui/BuilderPermissionsDialog';
 import { BuilderEmptyState } from '@/components/admin/builder-portal/ui/BuilderEmptyState';
 import { BuilderSearchField } from '@/components/admin/builder-portal/ui/BuilderSearchField';
 import { BuilderStatusBadge } from '@/components/admin/builder-portal/ui/BuilderStatusBadge';
@@ -29,8 +47,9 @@ import {
 } from '@/components/admin/builder-portal/ui/BuilderAccessLifecycle';
 import { toast } from 'sonner';
 import {
-  BriefcaseBusiness, Building2, Copy, FolderKanban, Hammer, Handshake, HardHat, KeyRound, Loader2,
-  Mail, MessageSquare, Package, Plus, RefreshCw, ShieldCheck, Truck, UserCheck, UserPlus, Users,
+  Archive, Ban, BriefcaseBusiness, Building2, Copy, FolderKanban, Hammer, Handshake, HardHat,
+  KeyRound, Loader2, LogOut, Mail, MessageSquare, MoreHorizontal, Package, Pencil, Plus, Power,
+  RefreshCw, RotateCcw, ShieldCheck, ShieldOff, Star, Trash2, Truck, UserCheck, UserPlus, Users,
 } from 'lucide-react';
 
 /**
@@ -51,6 +70,8 @@ const ORG_TYPES = [
   { value: 'builder_developer', label: 'Builder and developer' },
   { value: 'sales_representative', label: 'Authorised sales representative' },
 ] as const;
+
+const AU_STATES = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'] as const;
 
 const MEMBERSHIP_ROLES = [
   { value: 'owner', label: 'Organisation owner' },
@@ -91,6 +112,14 @@ interface BuilderOrganisation {
   abn: string | null;
   acn: string | null;
   contact_email: string | null;
+  contact_phone: string | null;
+  website: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  suburb: string | null;
+  state: string | null;
+  postcode: string | null;
+  notes: string | null;
   status: string;
   is_active: boolean;
   row_version: number;
@@ -100,6 +129,7 @@ interface BuilderUser {
   id: string;
   email: string;
   name: string;
+  phone: string | null;
   job_title: string | null;
   status: string;
   is_active: boolean;
@@ -190,9 +220,52 @@ interface BuilderMembership {
   builder_user_id: string;
   organisation_id: string;
   membership_role: string;
+  is_primary: boolean;
   status: string;
   revoked_at: string | null;
+  revoked_reason: string | null;
   row_version: number;
+}
+
+/**
+ * Every destructive or status-changing action routes through one confirmation
+ * dialog, so none of them can ship without the administrator being told what
+ * ends and what is kept.
+ */
+type ConfirmAction =
+  | { kind: 'user_revoke_access'; user: BuilderUser }
+  | { kind: 'user_suspend'; user: BuilderUser }
+  | { kind: 'user_restore_access'; user: BuilderUser; targetStatus: 'active' | 'suspended' | 'invited' }
+  | { kind: 'user_revoke_invite'; user: BuilderUser }
+  | { kind: 'user_revoke_sessions'; user: BuilderUser }
+  | { kind: 'user_remove'; user: BuilderUser }
+  | { kind: 'org_status'; organisation: BuilderOrganisation; status: 'active' | 'suspended' | 'closed' }
+  | { kind: 'org_remove'; organisation: BuilderOrganisation }
+  | { kind: 'membership_revoke'; membership: BuilderMembership; isLast: boolean }
+  | { kind: 'membership_remove'; membership: BuilderMembership }
+  | null;
+
+/** An admin-function failure, carrying the structured detail the server sent. */
+interface AdminCallError extends Error {
+  code?: string;
+  dependents?: string;
+}
+
+/**
+ * Where a restore should put this account.
+ *
+ * An account that never finished setup goes back to the start of the
+ * invitation lifecycle rather than to `active`: it has no password, so
+ * "active" would describe an account nobody can sign in to. A revoked account
+ * returns to `suspended` first, which is the transition the server's own
+ * activation guard documents. Both rules are enforced server-side as well —
+ * this only stops the interface from asking for something that would be
+ * refused.
+ */
+function restoreTargetFor(user: BuilderUser, stage: AccessStage): 'active' | 'suspended' | 'invited' {
+  if (!user.has_completed_account_setup) return 'invited';
+  if (stage === 'revoked') return 'suspended';
+  return 'active';
 }
 
 export default function BuilderPortalAdmin() {
@@ -204,14 +277,30 @@ export default function BuilderPortalAdmin() {
   const [memberships, setMemberships] = useState<BuilderMembership[]>([]);
   const [search, setSearch] = useState('');
 
-  const [orgDialogOpen, setOrgDialogOpen] = useState(false);
-  const [orgForm, setOrgForm] = useState({ legal_name: '', trading_name: '', org_type: 'builder', abn: '', contact_email: '' });
+  // Each form dialog holds the record it is editing, or null when it is being
+  // used to create. That single piece of state is what makes "Add" and "Edit"
+  // the same surface rather than two that can drift apart.
+  const [orgDialog, setOrgDialog] = useState<{ open: boolean; organisation: BuilderOrganisation | null }>(
+    { open: false, organisation: null });
+  const [userDialog, setUserDialog] = useState<{ open: boolean; user: BuilderUser | null }>(
+    { open: false, user: null });
+  const [membershipDialog, setMembershipDialog] = useState<{ open: boolean; membership: BuilderMembership | null }>(
+    { open: false, membership: null });
 
-  const [userDialogOpen, setUserDialogOpen] = useState(false);
-  const [userForm, setUserForm] = useState({ email: '', name: '', job_title: '' });
+  const [permissionsDialog, setPermissionsDialog] = useState<{ open: boolean; membership: BuilderMembership | null }>(
+    { open: false, membership: null });
+  const [permissionKeys, setPermissionKeys] = useState<BuilderPermissionKey[]>([]);
+  const [roleDefaults, setRoleDefaults] = useState<BuilderRoleDefault[]>([]);
+  const [membershipOverrides, setMembershipOverrides] = useState<BuilderPermissionOverride[]>([]);
+  const [permissionsLoading, setPermissionsLoading] = useState(false);
 
-  const [membershipDialogOpen, setMembershipDialogOpen] = useState(false);
-  const [membershipForm, setMembershipForm] = useState({ builder_user_id: '', organisation_id: '', membership_role: 'member' });
+  const [confirm, setConfirm] = useState<ConfirmAction>(null);
+  /**
+   * A refused removal explains itself inside the dialog instead of closing it,
+   * so the administrator can read which records are holding the row and pick
+   * the alternative the dialog names.
+   */
+  const [confirmBlocked, setConfirmBlocked] = useState<string | null>(null);
 
   // Surfaced only when the invite function reports that email delivery did not
   // happen. The link is one-time and is never persisted anywhere in the browser.
@@ -220,7 +309,15 @@ export default function BuilderPortalAdmin() {
   const call = useCallback(async (operation: string, payload: Record<string, unknown> = {}) => {
     const { data, error } = await invokeSecureFunction('builder-portal-admin', { operation, ...payload });
     if (error) throw new Error(error.message);
-    if (data?.error) throw new Error(data.error);
+    if (data?.error) {
+      // The structured detail travels with the error: `code` distinguishes a
+      // refused removal from a stale write, and `dependents` names the records
+      // that are holding the row. Both are shown to the administrator.
+      const failure = new Error(data.error) as AdminCallError;
+      failure.code = data.code;
+      failure.dependents = data.dependents;
+      throw failure;
+    }
     return data;
   }, []);
 
@@ -309,6 +406,60 @@ export default function BuilderPortalAdmin() {
     }
   }, [callInvite, load]);
 
+  /**
+   * Runs a confirmed action. Unlike `mutate` this keeps the dialog open when
+   * the server refuses a removal, because "you cannot remove this, and here is
+   * what is holding it" is the whole answer the administrator needs.
+   */
+  const runConfirmed = useCallback(async (
+    operation: string, payload: Record<string, unknown>, success: string,
+  ) => {
+    setBusy(true);
+    setConfirmBlocked(null);
+    try {
+      await call(operation, payload);
+      toast.success(success);
+      setConfirm(null);
+      await load();
+    } catch (error) {
+      const failure = error as AdminCallError;
+      if (failure?.code === 'has_dependents') {
+        setConfirmBlocked(
+          failure.dependents
+            ? `${failure.message} Still attached: ${failure.dependents}.`
+            : failure.message,
+        );
+        return;
+      }
+      toast.error(failure?.message || 'Operation failed');
+      setConfirm(null);
+    } finally {
+      setBusy(false);
+    }
+  }, [call, load]);
+
+  /** The permission catalogue is fetched once, when it is first needed. */
+  const openPermissions = useCallback(async (membership: BuilderMembership) => {
+    setPermissionsDialog({ open: true, membership });
+    setPermissionsLoading(true);
+    try {
+      const [catalogue, current] = await Promise.all([
+        permissionKeys.length
+          ? Promise.resolve({ permission_keys: permissionKeys, role_defaults: roleDefaults })
+          : call('get_permission_catalogue'),
+        call('get_membership_permissions', { membership_id: membership.id }),
+      ]);
+      setPermissionKeys(catalogue?.permission_keys ?? []);
+      setRoleDefaults(catalogue?.role_defaults ?? []);
+      setMembershipOverrides(current?.overrides ?? []);
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to load membership permissions');
+      setPermissionsDialog({ open: false, membership: null });
+    } finally {
+      setPermissionsLoading(false);
+    }
+  }, [call, permissionKeys, roleDefaults]);
+
   const organisationName = useCallback(
     (id: string) => organisations.find((o) => o.id === id)?.legal_name ?? 'Unknown organisation',
     [organisations],
@@ -368,6 +519,294 @@ export default function BuilderPortalAdmin() {
 
   /** Distinguishes "nothing has been created" from "the search matched nothing". */
   const isSearching = search.trim().length > 0;
+
+  /** How many live memberships a user holds — the last one is the warning case. */
+  const liveMembershipCountFor = useCallback(
+    (userId: string) => liveMemberships.filter((m) => m.builder_user_id === userId).length,
+    [liveMemberships],
+  );
+
+  /**
+   * The confirmation copy for each action, in one place.
+   *
+   * Every entry has to answer the same four questions before it can be
+   * confirmed: what happens, what is kept, whether sessions end, and whether
+   * the action can be refused. Keeping them together is what stops one of them
+   * quietly becoming a bare "are you sure?".
+   */
+  const confirmConfig = useMemo((): null | {
+    title: string; description: string; consequences: BuilderConsequence[];
+    confirmLabel: string; destructive: boolean;
+    reasonRequired: boolean; reasonLabel?: string; reasonPlaceholder?: string;
+    run: (reason: string) => void;
+  } => {
+    if (!confirm) return null;
+
+    switch (confirm.kind) {
+      case 'user_revoke_access': {
+        const user = confirm.user;
+        return {
+          title: 'Revoke portal access?',
+          description: `${user.name} will be blocked from signing in to the Builder Portal.`,
+          consequences: [
+            { tone: 'ends', text: 'Future sign-in is blocked immediately.' },
+            { tone: 'ends', text: 'Every active Builder Portal session is ended.' },
+            { tone: 'remains', text: 'The user, their memberships and their history are all kept.' },
+            { tone: 'remains', text: 'Access can be restored later.' },
+          ],
+          confirmLabel: 'Revoke access', destructive: true,
+          reasonRequired: true, reasonLabel: 'Reason for revoking access',
+          reasonPlaceholder: 'Left the organisation, contract ended…',
+          run: (reason) => void runConfirmed('set_user_status', {
+            builder_user_id: user.id, expected_version: user.row_version,
+            status: 'revoked', reason,
+          }, 'Portal access revoked'),
+        };
+      }
+
+      case 'user_suspend': {
+        const user = confirm.user;
+        return {
+          title: 'Suspend this account?',
+          description: `${user.name} will be unable to sign in until the account is restored.`,
+          consequences: [
+            { tone: 'ends', text: 'Sign-in is blocked and current sessions are ended.' },
+            { tone: 'remains', text: 'Memberships, permissions and history are untouched.' },
+            { tone: 'remains', text: 'Restoring the account returns access without a new invitation.' },
+          ],
+          confirmLabel: 'Suspend', destructive: true,
+          reasonRequired: true, reasonLabel: 'Reason for suspending',
+          reasonPlaceholder: 'On leave, under review…',
+          run: (reason) => void runConfirmed('set_user_status', {
+            builder_user_id: user.id, expected_version: user.row_version,
+            status: 'suspended', reason,
+          }, 'User suspended'),
+        };
+      }
+
+      case 'user_restore_access': {
+        const user = confirm.user;
+        const target = confirm.targetStatus;
+        const backToInvite = target === 'invited';
+        return {
+          title: 'Restore access?',
+          description: backToInvite
+            ? `${user.name} never finished setting up their account, so they return to the invitation stage rather than becoming active.`
+            : target === 'suspended'
+              ? `${user.name} will be moved from revoked back to suspended. Restore once more to return sign-in.`
+              : `${user.name} will be able to sign in again.`,
+          consequences: backToInvite
+            ? [
+              { tone: 'warning', text: 'The account has no password, so it cannot be made active by hand.' },
+              { tone: 'remains', text: 'Send them a fresh invitation to finish setup.' },
+              { tone: 'remains', text: 'Memberships and history are kept.' },
+            ]
+            : target === 'suspended'
+              ? [
+                { tone: 'remains', text: 'The account returns to suspended, not to active.' },
+                { tone: 'warning', text: 'Sign-in stays blocked until it is restored again.' },
+                { tone: 'remains', text: 'Memberships and history are kept.' },
+              ]
+              : [
+                { tone: 'remains', text: 'The user can sign in again with their existing password.' },
+                { tone: 'remains', text: 'Memberships and permissions resume as they were.' },
+                { tone: 'warning', text: 'Refused if they have no valid membership or every organisation is closed.' },
+              ],
+          confirmLabel: 'Restore access', destructive: false,
+          reasonRequired: false, reasonLabel: 'Reason (optional)',
+          run: (reason) => void runConfirmed('set_user_status', {
+            builder_user_id: user.id, expected_version: user.row_version,
+            status: target, reason: reason || null,
+          }, backToInvite ? 'Account returned to the invitation stage' : 'Access restored'),
+        };
+      }
+
+      case 'user_revoke_invite': {
+        const user = confirm.user;
+        return {
+          title: 'Revoke the pending invitation?',
+          description: `The outstanding invitation for ${user.email} will stop working.`,
+          consequences: [
+            { tone: 'ends', text: 'The invitation link is invalidated and cannot be used.' },
+            { tone: 'remains', text: 'The user account and its memberships are kept.' },
+            { tone: 'remains', text: 'A fresh invitation can be sent at any time.' },
+          ],
+          confirmLabel: 'Revoke invite', destructive: true,
+          reasonRequired: false,
+          run: () => {
+            setConfirm(null);
+            void revokeInvite(user);
+          },
+        };
+      }
+
+      case 'user_revoke_sessions': {
+        const user = confirm.user;
+        return {
+          title: 'Revoke active sessions?',
+          description: `Signs ${user.name} out of the Builder Portal everywhere.`,
+          consequences: [
+            { tone: 'ends', text: 'Every active Builder Portal session is ended immediately.' },
+            { tone: 'remains', text: 'The account status and memberships do not change.' },
+            { tone: 'remains', text: 'They can sign back in straight away if their account is active.' },
+          ],
+          confirmLabel: 'Revoke sessions', destructive: false,
+          reasonRequired: false, reasonLabel: 'Reason (optional)',
+          run: (reason) => void runConfirmed('revoke_user_sessions', {
+            builder_user_id: user.id, reason: reason || 'revoked by administrator',
+          }, 'Sessions revoked'),
+        };
+      }
+
+      case 'user_remove': {
+        const user = confirm.user;
+        return {
+          title: 'Permanently remove this user?',
+          description: `${user.name} (${user.email}) will be deleted. This cannot be undone.`,
+          consequences: [
+            { tone: 'ends', text: 'The account record is deleted permanently.' },
+            { tone: 'remains', text: 'Nothing is cascade-deleted — organisations, memberships, projects, documents and messages are all kept.' },
+            { tone: 'remains', text: 'The audit trail is kept, and records who removed the account and why.' },
+            { tone: 'warning', text: 'Refused if the account holds any membership, access grant, session or business record. Revoke access instead.' },
+          ],
+          confirmLabel: 'Remove user', destructive: true,
+          reasonRequired: true, reasonLabel: 'Reason for permanent removal',
+          reasonPlaceholder: 'Created in error, duplicate record…',
+          run: (reason) => void runConfirmed('delete_user', {
+            builder_user_id: user.id, expected_version: user.row_version, reason,
+          }, 'Portal user removed'),
+        };
+      }
+
+      case 'org_status': {
+        const organisation = confirm.organisation;
+        const status = confirm.status;
+        if (status === 'active') {
+          const reopening = organisation.status === 'closed';
+          return {
+            title: reopening ? 'Reopen this organisation?' : 'Activate this organisation?',
+            description: `${organisation.legal_name} will be able to hold memberships and portal access again.`,
+            consequences: [
+              { tone: 'remains', text: 'Members with a valid membership regain access.' },
+              { tone: 'remains', text: 'New memberships can be granted again.' },
+              { tone: 'remains', text: 'All existing records are unchanged.' },
+            ],
+            confirmLabel: reopening ? 'Reopen organisation' : 'Activate organisation',
+            destructive: false, reasonRequired: false, reasonLabel: 'Reason (optional)',
+            run: (reason) => void runConfirmed('set_organisation_status', {
+              organisation_id: organisation.id, expected_version: organisation.row_version,
+              status: 'active', reason: reason || null,
+            }, reopening ? 'Organisation reopened' : 'Organisation activated'),
+          };
+        }
+        if (status === 'suspended') {
+          return {
+            title: 'Suspend this organisation?',
+            description: `Access through ${organisation.legal_name} will be blocked while it is suspended.`,
+            consequences: [
+              { tone: 'ends', text: 'Portal access through this organisation is blocked.' },
+              { tone: 'ends', text: 'Sessions belonging to its members are ended.' },
+              { tone: 'remains', text: 'Every organisation record, membership and project is kept.' },
+              { tone: 'remains', text: 'The organisation can be restored at any time.' },
+            ],
+            confirmLabel: 'Suspend organisation', destructive: true,
+            reasonRequired: true, reasonLabel: 'Reason for suspending',
+            reasonPlaceholder: 'Compliance review, unpaid account…',
+            run: (reason) => void runConfirmed('set_organisation_status', {
+              organisation_id: organisation.id, expected_version: organisation.row_version,
+              status: 'suspended', reason,
+            }, 'Organisation suspended'),
+          };
+        }
+        return {
+          title: 'Close this organisation?',
+          description: `${organisation.legal_name} will be closed. Closure is the end of the relationship, not a pause.`,
+          consequences: [
+            { tone: 'ends', text: 'Portal access through this organisation ends and sessions are closed.' },
+            { tone: 'ends', text: 'No new membership of this organisation can be granted.' },
+            { tone: 'remains', text: 'Projects, transactions, documents and history are all preserved.' },
+            { tone: 'warning', text: 'Members whose only membership is here lose Builder Portal access.' },
+          ],
+          confirmLabel: 'Close organisation', destructive: true,
+          reasonRequired: true, reasonLabel: 'Reason for closing',
+          reasonPlaceholder: 'Relationship ended, entity wound up…',
+          run: (reason) => void runConfirmed('set_organisation_status', {
+            organisation_id: organisation.id, expected_version: organisation.row_version,
+            status: 'closed', reason,
+          }, 'Organisation closed'),
+        };
+      }
+
+      case 'org_remove': {
+        const organisation = confirm.organisation;
+        return {
+          title: 'Permanently remove this organisation?',
+          description: `${organisation.legal_name} will be deleted. This cannot be undone.`,
+          consequences: [
+            { tone: 'ends', text: 'The organisation record is deleted permanently.' },
+            { tone: 'remains', text: 'Nothing is cascade-deleted — memberships, projects, inventory, transactions and documents are all kept.' },
+            { tone: 'remains', text: 'The audit trail is kept, and records who removed it and why.' },
+            { tone: 'warning', text: 'Refused if the organisation holds any membership, project or record. Close it instead.' },
+          ],
+          confirmLabel: 'Remove organisation', destructive: true,
+          reasonRequired: true, reasonLabel: 'Reason for permanent removal',
+          reasonPlaceholder: 'Created in error, duplicate entity…',
+          run: (reason) => void runConfirmed('delete_organisation', {
+            organisation_id: organisation.id, expected_version: organisation.row_version, reason,
+          }, 'Organisation removed'),
+        };
+      }
+
+      case 'membership_revoke': {
+        const membership = confirm.membership;
+        const who = userName(membership.builder_user_id);
+        return {
+          title: 'Revoke this membership?',
+          description: `${who} will lose access through ${organisationName(membership.organisation_id)}.`,
+          consequences: [
+            { tone: 'ends', text: 'Access to this organisation ends immediately.' },
+            ...(confirm.isLast
+              ? [{
+                tone: 'warning' as const,
+                text: 'This is their last active membership — they will lose all Builder Portal access and their sessions will be ended.',
+              }]
+              : [{ tone: 'remains' as const, text: 'Their other memberships are unaffected.' }]),
+            { tone: 'remains', text: 'The membership record is kept, marked revoked, as audit evidence.' },
+            { tone: 'remains', text: 'A fresh membership can be granted later.' },
+          ],
+          confirmLabel: 'Revoke membership', destructive: true,
+          reasonRequired: true, reasonLabel: 'Reason for revoking',
+          reasonPlaceholder: 'Changed role, left the organisation…',
+          run: (reason) => void runConfirmed('revoke_membership', {
+            membership_id: membership.id, reason,
+          }, 'Membership revoked'),
+        };
+      }
+
+      case 'membership_remove': {
+        const membership = confirm.membership;
+        return {
+          title: 'Permanently remove this membership?',
+          description: `The link between ${userName(membership.builder_user_id)} and ${organisationName(membership.organisation_id)} will be deleted.`,
+          consequences: [
+            { tone: 'ends', text: 'Only the membership link is deleted.' },
+            { tone: 'remains', text: 'The user is kept. The organisation is kept.' },
+            { tone: 'remains', text: 'Projects, documents and audit records are kept.' },
+            { tone: 'warning', text: 'Refused once the membership has conferred access or gathered history. Revoke it instead — that keeps the evidence.' },
+          ],
+          confirmLabel: 'Remove membership', destructive: true,
+          reasonRequired: true, reasonLabel: 'Reason for permanent removal',
+          reasonPlaceholder: 'Granted in error…',
+          run: (reason) => void runConfirmed('delete_membership', {
+            membership_id: membership.id, expected_version: membership.row_version, reason,
+          }, 'Membership removed'),
+        };
+      }
+
+      default:
+        return null;
+    }
+  }, [confirm, runConfirmed, revokeInvite, userName, organisationName]);
 
   if (loading) {
     return (
@@ -530,7 +969,7 @@ export default function BuilderPortalAdmin() {
               </div>
               <Button
                 disabled={!canEdit || busy}
-                onClick={() => setOrgDialogOpen(true)}
+                onClick={() => setOrgDialog({ open: true, organisation: null })}
                 className="w-full gap-2 sm:w-auto"
               >
                 <Plus className="h-4 w-4" aria-hidden />
@@ -561,7 +1000,7 @@ export default function BuilderPortalAdmin() {
                       <Button
                         variant="outline"
                         disabled={busy}
-                        onClick={() => setOrgDialogOpen(true)}
+                        onClick={() => setOrgDialog({ open: true, organisation: null })}
                         className="gap-2"
                       >
                         <Plus className="h-4 w-4" aria-hidden />
@@ -608,19 +1047,73 @@ export default function BuilderPortalAdmin() {
                             <BuilderStatusBadge label={meta.label} dot={meta.dot} tone={meta.tone} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={!canEdit || busy}
-                              onClick={() => void mutate('set_organisation_status', {
-                                organisation_id: organisation.id,
-                                expected_version: organisation.row_version,
-                                status: organisation.is_active ? 'suspended' : 'active',
-                                reason: organisation.is_active ? 'Suspended by administrator' : null,
-                              }, organisation.is_active ? 'Organisation suspended' : 'Organisation activated')}
-                            >
-                              {organisation.is_active ? 'Suspend' : 'Activate'}
-                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={!canEdit || busy}
+                                  aria-label={`Actions for ${organisation.legal_name}`}
+                                >
+                                  <MoreHorizontal className="h-4 w-4" aria-hidden />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-56">
+                                <DropdownMenuLabel>Organisation</DropdownMenuLabel>
+                                <DropdownMenuItem onClick={() => setOrgDialog({ open: true, organisation })}>
+                                  <Pencil className="mr-2 h-4 w-4" aria-hidden />
+                                  Edit organisation
+                                </DropdownMenuItem>
+                          
+                                <DropdownMenuSeparator />
+                          
+                                {(organisation.status === 'pending_activation' || organisation.status === 'closed') && (
+                                  <DropdownMenuItem
+                                    onClick={() => setConfirm({ kind: 'org_status', organisation, status: 'active' })}
+                                  >
+                                    <Power className="mr-2 h-4 w-4" aria-hidden />
+                                    Activate organisation
+                                  </DropdownMenuItem>
+                                )}
+                          
+                                {organisation.status === 'suspended' && (
+                                  <DropdownMenuItem
+                                    onClick={() => setConfirm({ kind: 'org_status', organisation, status: 'active' })}
+                                  >
+                                    <RotateCcw className="mr-2 h-4 w-4" aria-hidden />
+                                    Restore organisation
+                                  </DropdownMenuItem>
+                                )}
+                          
+                                {organisation.status === 'active' && (
+                                  <DropdownMenuItem
+                                    onClick={() => setConfirm({ kind: 'org_status', organisation, status: 'suspended' })}
+                                  >
+                                    <Ban className="mr-2 h-4 w-4" aria-hidden />
+                                    Suspend organisation
+                                  </DropdownMenuItem>
+                                )}
+                          
+                                {organisation.status !== 'closed' && (
+                                  <DropdownMenuItem
+                                    onClick={() => setConfirm({ kind: 'org_status', organisation, status: 'closed' })}
+                                  >
+                                    <Archive className="mr-2 h-4 w-4" aria-hidden />
+                                    Close organisation
+                                  </DropdownMenuItem>
+                                )}
+                          
+                                <DropdownMenuSeparator />
+                          
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setConfirm({ kind: 'org_remove', organisation })}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                                  Remove organisation
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </TableCell>
                         </TableRow>
                       );
@@ -645,7 +1138,7 @@ export default function BuilderPortalAdmin() {
               </div>
               <Button
                 disabled={!canEdit || busy}
-                onClick={() => setUserDialogOpen(true)}
+                onClick={() => setUserDialog({ open: true, user: null })}
                 className="w-full gap-2 sm:w-auto"
               >
                 <Plus className="h-4 w-4" aria-hidden />
@@ -687,7 +1180,7 @@ export default function BuilderPortalAdmin() {
                       <Button
                         variant="outline"
                         disabled={busy}
-                        onClick={() => setUserDialogOpen(true)}
+                        onClick={() => setUserDialog({ open: true, user: null })}
                         className="gap-2"
                       >
                         <Plus className="h-4 w-4" aria-hidden />
@@ -714,6 +1207,15 @@ export default function BuilderPortalAdmin() {
                       const meta = ACCESS_STAGE_META[stage];
                       const canInvite = stage === 'not_invited';
                       const canResend = stage === 'invite_pending' || stage === 'invite_expired';
+                      // Restore puts a suspended account that actually finished setup straight
+                      // back to active. Anything else has no password, so it returns to the
+                      // invitation lifecycle rather than being made active by hand; a revoked
+                      // account goes back to suspended first, which is the transition the
+                      // server's activation guard documents. All three are re-checked server-side.
+                      const restoreTarget: 'active' | 'suspended' | 'invited' =
+                        stage === 'suspended' && user.has_completed_account_setup ? 'active'
+                          : !user.has_completed_account_setup ? 'invited'
+                            : 'suspended';
                       return (
                         <TableRow key={user.id} className="align-top">
                           <TableCell className="max-w-[18rem]">
@@ -756,7 +1258,9 @@ export default function BuilderPortalAdmin() {
                                   Grant a membership before inviting
                                 </span>
                               )}
-
+                          
+                              {/* The invitation is the one action a row is usually waiting on, so
+                                  it stays on the surface instead of hiding inside the menu. */}
                               {(canInvite || canResend) && (
                                 <Button
                                   size="sm"
@@ -768,66 +1272,93 @@ export default function BuilderPortalAdmin() {
                                   {canInvite ? 'Send invite' : 'Resend invite'}
                                 </Button>
                               )}
-
-                              {canResend && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!canEdit || busy}
-                                  onClick={() => void revokeInvite(user)}
-                                  className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                >
-                                  Revoke invite
-                                </Button>
-                              )}
-
-                              {stage === 'active' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!canEdit || busy}
-                                  onClick={() => void mutate('set_user_status', {
-                                    builder_user_id: user.id,
-                                    expected_version: user.row_version,
-                                    status: 'suspended',
-                                    reason: 'Suspended by administrator',
-                                  }, 'User suspended')}
-                                  className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                >
-                                  Suspend
-                                </Button>
-                              )}
-
-                              {/* Restore is offered only for an account that
-                                  actually completed setup. The server enforces
-                                  the same rule and answers 409 otherwise. */}
-                              {stage === 'suspended' && user.has_completed_account_setup && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!canEdit || busy}
-                                  onClick={() => void mutate('set_user_status', {
-                                    builder_user_id: user.id,
-                                    expected_version: user.row_version,
-                                    status: 'active',
-                                  }, 'User restored')}
-                                  className="gap-2"
-                                >
-                                  <UserCheck className="h-4 w-4" aria-hidden />
-                                  Restore
-                                </Button>
-                              )}
-
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={!canEdit || busy}
-                                onClick={() => void mutate('revoke_user_sessions', {
-                                  builder_user_id: user.id, reason: 'revoked by administrator',
-                                }, 'Sessions revoked')}
-                              >
-                                Revoke sessions
-                              </Button>
+                          
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    disabled={!canEdit || busy}
+                                    aria-label={`Actions for ${user.name}`}
+                                  >
+                                    <MoreHorizontal className="h-4 w-4" aria-hidden />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-60">
+                                  <DropdownMenuLabel>Portal user</DropdownMenuLabel>
+                                  <DropdownMenuItem onClick={() => setUserDialog({ open: true, user })}>
+                                    <Pencil className="mr-2 h-4 w-4" aria-hidden />
+                                    Edit user
+                                  </DropdownMenuItem>
+                          
+                                  {stage === 'no_membership' && (
+                                    <DropdownMenuItem
+                                      onClick={() => setMembershipDialog({ open: true, membership: null })}
+                                    >
+                                      <KeyRound className="mr-2 h-4 w-4" aria-hidden />
+                                      Grant membership
+                                    </DropdownMenuItem>
+                                  )}
+                          
+                                  <DropdownMenuSeparator />
+                          
+                                  {canResend && (
+                                    <DropdownMenuItem
+                                      onClick={() => setConfirm({ kind: 'user_revoke_invite', user })}
+                                    >
+                                      <Mail className="mr-2 h-4 w-4" aria-hidden />
+                                      Revoke invite
+                                    </DropdownMenuItem>
+                                  )}
+                          
+                                  {stage === 'active' && (
+                                    <DropdownMenuItem
+                                      onClick={() => setConfirm({ kind: 'user_suspend', user })}
+                                    >
+                                      <Ban className="mr-2 h-4 w-4" aria-hidden />
+                                      Suspend
+                                    </DropdownMenuItem>
+                                  )}
+                          
+                                  {(stage === 'suspended' || stage === 'revoked') && (
+                                    <DropdownMenuItem
+                                      onClick={() => setConfirm({
+                                        kind: 'user_restore_access', user, targetStatus: restoreTarget,
+                                      })}
+                                    >
+                                      <UserCheck className="mr-2 h-4 w-4" aria-hidden />
+                                      Restore access
+                                    </DropdownMenuItem>
+                                  )}
+                          
+                                  <DropdownMenuItem
+                                    onClick={() => setConfirm({ kind: 'user_revoke_sessions', user })}
+                                  >
+                                    <LogOut className="mr-2 h-4 w-4" aria-hidden />
+                                    Revoke sessions
+                                  </DropdownMenuItem>
+                          
+                                  <DropdownMenuSeparator />
+                          
+                                  {stage !== 'revoked' && (
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => setConfirm({ kind: 'user_revoke_access', user })}
+                                    >
+                                      <ShieldOff className="mr-2 h-4 w-4" aria-hidden />
+                                      Revoke access
+                                    </DropdownMenuItem>
+                                  )}
+                          
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => setConfirm({ kind: 'user_remove', user })}
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                                    Remove user
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -847,13 +1378,14 @@ export default function BuilderPortalAdmin() {
               <div className="min-w-0">
                 <CardTitle className="text-base">Organisation memberships</CardTitle>
                 <CardDescription>
-                  Membership is the only thing that grants portal access. Revoked memberships leave
-                  this list, and revoking a user's last membership immediately ends their sessions.
+                  Membership is the only thing that grants portal access. Revoking a user's last
+                  membership immediately ends their sessions. Revoked memberships stay listed as
+                  audit evidence and can be re-granted.
                 </CardDescription>
               </div>
               <Button
                 disabled={!canEdit || busy}
-                onClick={() => setMembershipDialogOpen(true)}
+                onClick={() => setMembershipDialog({ open: true, membership: null })}
                 className="w-full gap-2 sm:w-auto"
               >
                 <Plus className="h-4 w-4" aria-hidden />
@@ -861,7 +1393,7 @@ export default function BuilderPortalAdmin() {
               </Button>
             </CardHeader>
             <CardContent className="space-y-4">
-              {liveMemberships.length === 0 ? (
+              {memberships.length === 0 ? (
                 <BuilderEmptyState
                   icon={KeyRound}
                   title="No active memberships yet"
@@ -870,7 +1402,7 @@ export default function BuilderPortalAdmin() {
                     <Button
                       variant="outline"
                       disabled={busy}
-                      onClick={() => setMembershipDialogOpen(true)}
+                      onClick={() => setMembershipDialog({ open: true, membership: null })}
                       className="gap-2"
                     >
                       <Plus className="h-4 w-4" aria-hidden />
@@ -890,38 +1422,120 @@ export default function BuilderPortalAdmin() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {liveMemberships.map((membership) => (
-                      <TableRow key={membership.id}>
-                        <TableCell className="max-w-[16rem] break-words font-medium">
-                          {userName(membership.builder_user_id)}
-                        </TableCell>
-                        <TableCell className="max-w-[18rem] break-words text-sm text-muted-foreground">
-                          {organisationName(membership.organisation_id)}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="whitespace-nowrap font-normal text-muted-foreground">
-                            {MEMBERSHIP_ROLES.find((r) => r.value === membership.membership_role)?.label
-                              ?? membership.membership_role}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <BuilderStatusBadge label="Active" dot="bg-success" />
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!canEdit || busy}
-                            onClick={() => void mutate('revoke_membership', {
-                              membership_id: membership.id, reason: 'revoked by administrator',
-                            }, 'Membership revoked')}
-                            className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          >
-                            Revoke
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {memberships.map((membership) => {
+                      const isRevoked = !!membership.revoked_at;
+                      const isLast = !isRevoked
+                        && liveMembershipCountFor(membership.builder_user_id) === 1;
+                      return (
+                        <TableRow key={membership.id}>
+                          <TableCell className="max-w-[16rem] break-words font-medium">
+                            {userName(membership.builder_user_id)}
+                          </TableCell>
+                          <TableCell className="max-w-[18rem] break-words text-sm text-muted-foreground">
+                            {organisationName(membership.organisation_id)}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <Badge variant="outline" className="whitespace-nowrap font-normal text-muted-foreground">
+                                {MEMBERSHIP_ROLES.find((r) => r.value === membership.membership_role)?.label
+                                  ?? membership.membership_role}
+                              </Badge>
+                              {membership.is_primary && (
+                                <Badge variant="outline" className="gap-1 whitespace-nowrap font-normal">
+                                  <Star className="h-3 w-3 shrink-0" aria-hidden />
+                                  Primary
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            {isRevoked
+                              ? <BuilderStatusBadge label="Revoked" tone="destructive" />
+                              : <BuilderStatusBadge label="Active" dot="bg-success" />}
+                            {isRevoked && membership.revoked_reason && (
+                              <span className="mt-1 block max-w-[16rem] text-xs leading-snug text-muted-foreground">
+                                {membership.revoked_reason}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={!canEdit || busy}
+                                  aria-label={`Actions for ${userName(membership.builder_user_id)} in ${organisationName(membership.organisation_id)}`}
+                                >
+                                  <MoreHorizontal className="h-4 w-4" aria-hidden />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-60">
+                                <DropdownMenuLabel>Membership</DropdownMenuLabel>
+
+                                {isRevoked ? (
+                                  <DropdownMenuItem
+                                    onClick={() => setMembershipDialog({ open: true, membership })}
+                                  >
+                                    <RotateCcw className="mr-2 h-4 w-4" aria-hidden />
+                                    Restore membership
+                                  </DropdownMenuItem>
+                                ) : (
+                                  <>
+                                    <DropdownMenuItem
+                                      onClick={() => setMembershipDialog({ open: true, membership })}
+                                    >
+                                      <Pencil className="mr-2 h-4 w-4" aria-hidden />
+                                      Edit membership
+                                    </DropdownMenuItem>
+
+                                    {!membership.is_primary && (
+                                      <DropdownMenuItem
+                                        onClick={() => void mutate('upsert_membership', {
+                                          builder_user_id: membership.builder_user_id,
+                                          organisation_id: membership.organisation_id,
+                                          membership_role: membership.membership_role,
+                                          is_primary: true,
+                                          expected_version: membership.row_version,
+                                        }, 'Primary organisation updated')}
+                                      >
+                                        <Star className="mr-2 h-4 w-4" aria-hidden />
+                                        Set primary
+                                      </DropdownMenuItem>
+                                    )}
+
+                                    <DropdownMenuItem onClick={() => void openPermissions(membership)}>
+                                      <ShieldCheck className="mr-2 h-4 w-4" aria-hidden />
+                                      Edit permissions
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+
+                                <DropdownMenuSeparator />
+
+                                {!isRevoked && (
+                                  <DropdownMenuItem
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => setConfirm({ kind: 'membership_revoke', membership, isLast })}
+                                  >
+                                    <ShieldOff className="mr-2 h-4 w-4" aria-hidden />
+                                    Revoke membership
+                                  </DropdownMenuItem>
+                                )}
+
+                                <DropdownMenuItem
+                                  className="text-destructive focus:text-destructive"
+                                  onClick={() => setConfirm({ kind: 'membership_remove', membership })}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                                  Remove membership
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               )}
@@ -962,115 +1576,67 @@ export default function BuilderPortalAdmin() {
       </Tabs>
 
       {/* ------------------------------------------------------------ dialogs */}
-      <Dialog open={orgDialogOpen} onOpenChange={setOrgDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add organisation</DialogTitle>
-            <DialogDescription>
-              New organisations start pending activation. Activate them once details are confirmed.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="org-legal-name">Legal name</Label>
-              <Input id="org-legal-name" value={orgForm.legal_name}
-                onChange={(event) => setOrgForm({ ...orgForm, legal_name: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-trading-name">Trading name</Label>
-              <Input id="org-trading-name" value={orgForm.trading_name}
-                onChange={(event) => setOrgForm({ ...orgForm, trading_name: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-type">Organisation type</Label>
-              <Select value={orgForm.org_type} onValueChange={(value) => setOrgForm({ ...orgForm, org_type: value })}>
-                <SelectTrigger id="org-type"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {ORG_TYPES.map((type) => (
-                    <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-abn">ABN</Label>
-              <Input id="org-abn" value={orgForm.abn} inputMode="numeric"
-                onChange={(event) => setOrgForm({ ...orgForm, abn: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="org-email">Contact email</Label>
-              <Input id="org-email" type="email" value={orgForm.contact_email}
-                onChange={(event) => setOrgForm({ ...orgForm, contact_email: event.target.value })} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOrgDialogOpen(false)}>Cancel</Button>
-            <Button
-              disabled={busy || !orgForm.legal_name.trim()}
-              onClick={async () => {
-                const ok = await mutate('upsert_organisation', orgForm, 'Organisation created');
-                if (ok) {
-                  setOrgDialogOpen(false);
-                  setOrgForm({ legal_name: '', trading_name: '', org_type: 'builder', abn: '', contact_email: '' });
-                }
-              }}
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BuilderOrganisationFormDialog
+        open={orgDialog.open}
+        onOpenChange={(open) => setOrgDialog((current) => ({ ...current, open }))}
+        initial={orgDialog.organisation
+          ? {
+            id: orgDialog.organisation.id,
+            legal_name: orgDialog.organisation.legal_name ?? '',
+            trading_name: orgDialog.organisation.trading_name ?? '',
+            org_type: orgDialog.organisation.org_type ?? 'builder',
+            abn: orgDialog.organisation.abn ?? '',
+            acn: orgDialog.organisation.acn ?? '',
+            contact_email: orgDialog.organisation.contact_email ?? '',
+            contact_phone: orgDialog.organisation.contact_phone ?? '',
+            website: orgDialog.organisation.website ?? '',
+            address_line1: orgDialog.organisation.address_line1 ?? '',
+            address_line2: orgDialog.organisation.address_line2 ?? '',
+            suburb: orgDialog.organisation.suburb ?? '',
+            state: orgDialog.organisation.state ?? '',
+            postcode: orgDialog.organisation.postcode ?? '',
+            notes: orgDialog.organisation.notes ?? '',
+          }
+          : null}
+        orgTypes={ORG_TYPES}
+        auStates={AU_STATES}
+        busy={busy}
+        onSubmit={async (values: BuilderOrganisationFormValues) => {
+          const editing = orgDialog.organisation;
+          const ok = await mutate('upsert_organisation', editing
+            ? { ...values, organisation_id: editing.id, expected_version: editing.row_version }
+            : values,
+          editing ? 'Organisation updated' : 'Organisation created');
+          if (ok) setOrgDialog({ open: false, organisation: null });
+        }}
+      />
 
-      <Dialog open={userDialogOpen} onOpenChange={setUserDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add portal user</DialogTitle>
-            <DialogDescription>
-              The user is created without access. Grant a membership to give them portal access.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="user-name">Name</Label>
-              <Input id="user-name" value={userForm.name}
-                onChange={(event) => setUserForm({ ...userForm, name: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="user-email">Email</Label>
-              <Input id="user-email" type="email" value={userForm.email}
-                onChange={(event) => setUserForm({ ...userForm, email: event.target.value })} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="user-job-title">Job title</Label>
-              <Input id="user-job-title" value={userForm.job_title}
-                placeholder="Project manager, site supervisor, sales consultant…"
-                onChange={(event) => setUserForm({ ...userForm, job_title: event.target.value })} />
-              <p className="text-xs text-muted-foreground">
-                Descriptive only. Access comes from the membership role, not the job title.
-              </p>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setUserDialogOpen(false)}>Cancel</Button>
-            <Button
-              disabled={busy || !userForm.name.trim() || !userForm.email.trim()}
-              onClick={async () => {
-                const ok = await mutate('create_user', userForm, 'Portal user created');
-                if (ok) {
-                  setUserDialogOpen(false);
-                  setUserForm({ email: '', name: '', job_title: '' });
-                }
-              }}
-            >
-              Create
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BuilderUserFormDialog
+        open={userDialog.open}
+        onOpenChange={(open) => setUserDialog((current) => ({ ...current, open }))}
+        initial={userDialog.user
+          ? {
+            id: userDialog.user.id,
+            name: userDialog.user.name ?? '',
+            email: userDialog.user.email ?? '',
+            job_title: userDialog.user.job_title ?? '',
+            phone: userDialog.user.phone ?? '',
+          }
+          : null}
+        busy={busy}
+        onSubmit={async (values: BuilderUserFormValues) => {
+          const editing = userDialog.user;
+          const ok = await mutate(
+            editing ? 'update_user' : 'create_user',
+            editing
+              ? { ...values, builder_user_id: editing.id, expected_version: editing.row_version }
+              : values,
+            editing ? 'Portal user updated' : 'Portal user created',
+          );
+          if (ok) setUserDialog({ open: false, user: null });
+        }}
+      />
 
-      {/* Shown only when the server reports that the invitation email could not
-          be sent. The link is one-time; it is not stored and cannot be shown
-          again once this dialog is closed. */}
       <Dialog open={!!inviteLink} onOpenChange={(open) => { if (!open) setInviteLink(null); }}>
         <DialogContent>
           <DialogHeader>
@@ -1104,69 +1670,86 @@ export default function BuilderPortalAdmin() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={membershipDialogOpen} onOpenChange={setMembershipDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Grant membership</DialogTitle>
-            <DialogDescription>
-              Membership binds a user to one organisation and is the only source of portal access.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="membership-user">User</Label>
-              <Select value={membershipForm.builder_user_id}
-                onValueChange={(value) => setMembershipForm({ ...membershipForm, builder_user_id: value })}>
-                <SelectTrigger id="membership-user"><SelectValue placeholder="Select a user" /></SelectTrigger>
-                <SelectContent>
-                  {users.map((user) => (
-                    <SelectItem key={user.id} value={user.id}>{user.name} — {user.email}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="membership-org">Organisation</Label>
-              <Select value={membershipForm.organisation_id}
-                onValueChange={(value) => setMembershipForm({ ...membershipForm, organisation_id: value })}>
-                <SelectTrigger id="membership-org"><SelectValue placeholder="Select an organisation" /></SelectTrigger>
-                <SelectContent>
-                  {organisations.filter((o) => o.status !== 'closed').map((organisation) => (
-                    <SelectItem key={organisation.id} value={organisation.id}>{organisation.legal_name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="membership-role">Role</Label>
-              <Select value={membershipForm.membership_role}
-                onValueChange={(value) => setMembershipForm({ ...membershipForm, membership_role: value })}>
-                <SelectTrigger id="membership-role"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {MEMBERSHIP_ROLES.map((role) => (
-                    <SelectItem key={role.value} value={role.value}>{role.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMembershipDialogOpen(false)}>Cancel</Button>
-            <Button
-              disabled={busy || !membershipForm.builder_user_id || !membershipForm.organisation_id}
-              onClick={async () => {
-                const ok = await mutate('upsert_membership', membershipForm, 'Membership granted');
-                if (ok) {
-                  setMembershipDialogOpen(false);
-                  setMembershipForm({ builder_user_id: '', organisation_id: '', membership_role: 'member' });
-                }
-              }}
-            >
-              Grant
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BuilderMembershipFormDialog
+        open={membershipDialog.open}
+        onOpenChange={(open) => setMembershipDialog((current) => ({ ...current, open }))}
+        initial={membershipDialog.membership
+          ? {
+            id: membershipDialog.membership.id,
+            builder_user_id: membershipDialog.membership.builder_user_id,
+            organisation_id: membershipDialog.membership.organisation_id,
+            membership_role: membershipDialog.membership.membership_role,
+            is_primary: !!membershipDialog.membership.is_primary,
+          }
+          : null}
+        users={users}
+        organisations={organisations}
+        roles={MEMBERSHIP_ROLES}
+        userLabel={membershipDialog.membership ? userName(membershipDialog.membership.builder_user_id) : undefined}
+        organisationLabel={membershipDialog.membership ? organisationName(membershipDialog.membership.organisation_id) : undefined}
+        busy={busy}
+        onSubmit={async (values: BuilderMembershipFormValues) => {
+          // One operation covers grant, role change, primary change and the
+          // re-grant of a revoked membership: upsert_membership matches on the
+          // live row, so a revoked one is replaced by a fresh grant rather than
+          // being resurrected, and the revoked record stays as evidence.
+          const editingLive = membershipDialog.membership && !membershipDialog.membership.revoked_at
+            ? membershipDialog.membership
+            : null;
+          const ok = await mutate('upsert_membership', {
+            ...values,
+            ...(editingLive ? { expected_version: editingLive.row_version } : {}),
+          }, editingLive ? 'Membership updated' : 'Membership granted');
+          if (ok) setMembershipDialog({ open: false, membership: null });
+        }}
+      />
+
+      <BuilderPermissionsDialog
+        open={permissionsDialog.open}
+        onOpenChange={(open) => {
+          setPermissionsDialog((current) => ({ ...current, open }));
+          if (!open) setMembershipOverrides([]);
+        }}
+        membershipLabel={permissionsDialog.membership
+          ? `${userName(permissionsDialog.membership.builder_user_id)} at ${organisationName(permissionsDialog.membership.organisation_id)}`
+          : ''}
+        membershipRole={permissionsDialog.membership?.membership_role ?? 'member'}
+        permissionKeys={permissionKeys}
+        roleDefaults={roleDefaults}
+        overrides={membershipOverrides}
+        loading={permissionsLoading}
+        busy={busy}
+        onSave={async (overrides) => {
+          const membership = permissionsDialog.membership;
+          if (!membership) return;
+          const ok = await mutate('update_membership_permissions', {
+            membership_id: membership.id, overrides,
+          }, 'Membership permissions updated');
+          if (ok) {
+            setPermissionsDialog({ open: false, membership: null });
+            setMembershipOverrides([]);
+          }
+        }}
+      />
+
+      {confirmConfig && (
+        <BuilderConfirmDialog
+          open={!!confirm}
+          onOpenChange={(open) => { if (!open) { setConfirm(null); setConfirmBlocked(null); } }}
+          title={confirmConfig.title}
+          description={confirmConfig.description}
+          consequences={confirmConfig.consequences}
+          reasonRequired={confirmConfig.reasonRequired}
+          reasonLabel={confirmConfig.reasonLabel}
+          reasonPlaceholder={confirmConfig.reasonPlaceholder}
+          confirmLabel={confirmConfig.confirmLabel}
+          destructive={confirmConfig.destructive}
+          busy={busy}
+          blockedMessage={confirmBlocked}
+          onConfirm={confirmConfig.run}
+        />
+      )}
+
     </div>
   );
 }
