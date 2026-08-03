@@ -660,7 +660,7 @@ export default function MarketUpdates() {
                           <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
                             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-primary">Client Advisory Implications</h4>
                             <ul className="list-disc space-y-1 pl-4 text-sm">
-                              {digest.client_advisory_implications.map((c, i) => <li key={i}>{c}</li>)}
+                              {cleanList(digest.client_advisory_implications).map((c, i) => <li key={i}>{c}</li>)}
                             </ul>
                           </div>
                         )}
