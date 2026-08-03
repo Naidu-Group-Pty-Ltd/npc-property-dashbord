@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
+import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { Json } from '@/integrations/supabase/types';
 import {
   BRAND_THEME_STORAGE_KEY,
