@@ -20,14 +20,19 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  AURIXA_NOTIFICATION_BADGE,
+  AURIXA_NOTIFICATION_ICON,
   INTERNAL_NOTIFICATION_KIND,
   INTERNAL_THREAD_DEEPLINK_PARAM,
   SW_OPEN_THREAD_MESSAGE,
   buildAlertCopy,
+  getNotificationBadge,
+  getNotificationIcon,
+  setBrandNotificationIcon,
   claimMessageAlert,
   consumeInternalThreadDeepLink,
   desktopAlertsEnabled,
@@ -53,6 +58,7 @@ const T2 = '2026-08-03T09:05:00.000Z';
 beforeEach(() => {
   localStorage.clear();
   resetMessageAlertClaims();
+  setBrandNotificationIcon(null);
 });
 
 describe('duplicate-notification prevention', () => {
@@ -236,6 +242,81 @@ describe('service worker click routing', () => {
   it('leaves the existing Web Push click behaviour intact', () => {
     expect(sw).toContain("await client.navigate(targetUrl)");
     expect(sw).toContain('await self.clients.openWindow(targetUrl)');
+  });
+});
+
+describe('notification branding', () => {
+  it('falls back to the Aurixa Systems mark when no white-label logo is set', () => {
+    expect(getNotificationIcon()).toBe(AURIXA_NOTIFICATION_ICON);
+    expect(AURIXA_NOTIFICATION_ICON).not.toContain('favicon.ico');
+  });
+
+  it('uses the white-label logo when branding provides one', () => {
+    setBrandNotificationIcon('https://cdn.example.com/tenant-mark.png');
+    expect(getNotificationIcon()).toBe('https://cdn.example.com/tenant-mark.png');
+  });
+
+  it('reverts to Aurixa when the white-label logo is removed', () => {
+    setBrandNotificationIcon('https://cdn.example.com/tenant-mark.png');
+    setBrandNotificationIcon(null);
+    expect(getNotificationIcon()).toBe(AURIXA_NOTIFICATION_ICON);
+  });
+
+  it('treats an empty or whitespace logo as no logo', () => {
+    setBrandNotificationIcon('   ');
+    expect(getNotificationIcon()).toBe(AURIXA_NOTIFICATION_ICON);
+  });
+
+  it('refuses the stock scaffold icon even if branding hands it over', () => {
+    // The stock mark is the one thing that must never reach a notification.
+    setBrandNotificationIcon('/favicon.ico');
+    expect(getNotificationIcon()).toBe(AURIXA_NOTIFICATION_ICON);
+  });
+
+  it('keeps the monochrome Aurixa glyph in the badge slot', () => {
+    // Android discards badge colour and keeps only alpha, so a client's
+    // full-colour logo would render as a grey block.
+    setBrandNotificationIcon('https://cdn.example.com/tenant-mark.png');
+    expect(getNotificationBadge()).toBe(AURIXA_NOTIFICATION_BADGE);
+  });
+
+  it('ships the default artwork the fallbacks point at', () => {
+    for (const asset of [AURIXA_NOTIFICATION_ICON, AURIXA_NOTIFICATION_BADGE]) {
+      expect(existsSync(join(REPO_ROOT, 'public', asset))).toBe(true);
+    }
+  });
+
+  it('leaves no stock-icon reference on any notification path', () => {
+    for (const file of [
+      'src/lib/desktopMessageAlerts.ts',
+      'src/hooks/useEmailNotifications.tsx',
+      'public/sw-push.js',
+    ]) {
+      const source = read(file);
+      // The only permitted mentions are the constant that names it in order to
+      // refuse it, and the comments explaining why.
+      const offending = source
+        .split('\n')
+        .filter((line) => line.includes('favicon.ico'))
+        .filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
+        .filter((line) => !line.includes('STOCK_FAVICON ='));
+      expect(offending).toEqual([]);
+    }
+  });
+
+  it('publishes the tenant mark from BrandProvider so alerts follow branding', () => {
+    const provider = read('src/branding/BrandProvider.tsx');
+    expect(provider).toContain("setBrandNotificationIcon(getBrandAssetSrc(settings, 'favicon'))");
+  });
+
+  it('declares an explicit favicon so the browser never guesses the stock one', () => {
+    const html = read('index.html');
+    expect(html).toContain(`href="${AURIXA_NOTIFICATION_ICON}"`);
+    expect(html).not.toContain('content="/favicon.ico"');
+  });
+
+  it('keeps the stock icon out of the PWA manifest', () => {
+    expect(read('public/manifest.json')).not.toContain('favicon.ico');
   });
 });
 

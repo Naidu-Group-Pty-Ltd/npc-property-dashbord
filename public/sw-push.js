@@ -10,6 +10,14 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Fallback artwork for a push whose payload carries no icon. NEVER
+// '/favicon.ico' — that is the scaffold's stock mark, and a stock mark in a
+// user's notification shade is a branding leak. White-labelled tenants send
+// their own `icon` in the payload; everyone else gets the Aurixa Systems mark.
+// `badge` is the monochrome status-bar glyph, so it stays the flat delta.
+const DEFAULT_NOTIFICATION_ICON = '/brand/aurixa-notification-192.png';
+const DEFAULT_NOTIFICATION_BADGE = '/brand/aurixa-badge-96.png';
+
 self.addEventListener('push', (event) => {
   let data = {};
   try {
@@ -21,8 +29,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Notification';
   const options = {
     body: data.body || '',
-    icon: data.icon || '/favicon.ico',
-    badge: data.badge || '/favicon.ico',
+    icon: data.icon || DEFAULT_NOTIFICATION_ICON,
+    badge: data.badge || DEFAULT_NOTIFICATION_BADGE,
     data: {
       url: data.url || '/',
       notification_id: data.notification_id || null,

@@ -46,6 +46,22 @@ const MAX_CLAIMS = 200;
 const PROMPT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 const CLAIM_CHANNEL = 'aurixa-internal-message-alerts';
 
+/**
+ * Platform default artwork. `/favicon.ico` is deliberately NOT used anywhere on
+ * this path: it is the scaffold's stock icon, and a stock icon on a client's
+ * notification is a branding leak. When no white-label logo is configured the
+ * Aurixa Systems mark stands in.
+ */
+export const AURIXA_NOTIFICATION_ICON = '/brand/aurixa-notification-192.png';
+/**
+ * Android draws `badge` as a monochrome status-bar glyph — it keeps the alpha
+ * and discards the colour. A client's full-colour logo would come back as a
+ * grey block, so the badge slot always carries the flat Aurixa delta.
+ */
+export const AURIXA_NOTIFICATION_BADGE = '/brand/aurixa-badge-96.png';
+/** The scaffold icon. Recognised only so it can be refused. */
+const STOCK_FAVICON = '/favicon.ico';
+
 /** Query parameter used to cold-start the dashboard straight into a thread. */
 export const INTERNAL_THREAD_DEEPLINK_PARAM = 'internalThread';
 /** postMessage type the service worker uses to reach an already-open tab. */
@@ -385,6 +401,42 @@ export function clearTabUnreadBadge() {
   setFaviconBadge(0);
 }
 
+/* ------------------------------------------------------------ brand artwork */
+
+let brandNotificationIcon: string | null = null;
+
+/**
+ * Publish the tenant's white-label mark for use on notifications and on the
+ * favicon badge. `BrandProvider` calls this whenever branding resolves —
+ * including with `null`, which reverts to the Aurixa Systems mark.
+ *
+ * Passing the stock scaffold icon is treated as "no logo": it must never reach
+ * a user's notification shade.
+ */
+export function setBrandNotificationIcon(src: string | null | undefined) {
+  const trimmed = typeof src === 'string' ? src.trim() : '';
+  const next = !trimmed || trimmed === STOCK_FAVICON ? null : trimmed;
+  if (next === brandNotificationIcon) return;
+  brandNotificationIcon = next;
+
+  // The favicon badge is drawn on top of this mark, so its cached base and the
+  // "already at this count" short-circuit both have to be invalidated.
+  faviconBasePromise = null;
+  const showing = faviconCount;
+  faviconCount = -1;
+  setFaviconBadge(Math.max(0, showing));
+}
+
+/** The icon shown on a notification: white-label logo, else Aurixa Systems. */
+export function getNotificationIcon(): string {
+  return brandNotificationIcon ?? AURIXA_NOTIFICATION_ICON;
+}
+
+/** The monochrome status-bar glyph. Always the Aurixa delta — see above. */
+export function getNotificationBadge(): string {
+  return AURIXA_NOTIFICATION_BADGE;
+}
+
 /* ----------------------------------------------------------- favicon badge */
 
 let faviconLink: HTMLLinkElement | null = null;
@@ -402,10 +454,17 @@ function ensureFaviconLink(): HTMLLinkElement | null {
     document.head.appendChild(link);
   }
   if (faviconOriginalHref === null) {
-    faviconOriginalHref = link.getAttribute('href') || '/favicon.ico';
+    const declared = link.getAttribute('href') || '';
+    // A page still pointing at the stock icon is treated as having none.
+    faviconOriginalHref = declared && declared !== STOCK_FAVICON ? declared : null;
   }
   faviconLink = link;
   return link;
+}
+
+/** The unbadged mark: white-label logo, else whatever the page declared, else Aurixa. */
+function faviconSourceHref(): string {
+  return brandNotificationIcon || faviconOriginalHref || AURIXA_NOTIFICATION_ICON;
 }
 
 function loadFaviconBase(): Promise<HTMLImageElement | null> {
@@ -415,7 +474,7 @@ function loadFaviconBase(): Promise<HTMLImageElement | null> {
       const img = new Image();
       img.onload = () => resolve(img);
       img.onerror = () => resolve(null);
-      img.src = faviconOriginalHref || '/favicon.ico';
+      img.src = faviconSourceHref();
     } catch {
       resolve(null);
     }
@@ -450,7 +509,7 @@ export function setFaviconBadge(count: number) {
   faviconCount = next;
 
   if (next <= 0) {
-    if (faviconOriginalHref) link.setAttribute('href', faviconOriginalHref);
+    link.setAttribute('href', faviconSourceHref());
     return;
   }
 
@@ -595,8 +654,10 @@ function notificationOptions(alert: DesktopMessageAlert, withActions: boolean) {
     // same tag can only ever collapse into the same bubble.
     tag: internalNotificationTag(alert.thread_id),
     renotify: true,
-    icon: '/favicon.ico',
-    badge: '/favicon.ico',
+    // The tenant's own mark where one is configured, the Aurixa Systems mark
+    // otherwise. Never the scaffold's stock icon.
+    icon: getNotificationIcon(),
+    badge: getNotificationBadge(),
     // Urgent messages stay on screen until acknowledged; everything else obeys
     // the platform's own timeout so the desktop never feels cluttered.
     requireInteraction: alert.priority === 'urgent',
