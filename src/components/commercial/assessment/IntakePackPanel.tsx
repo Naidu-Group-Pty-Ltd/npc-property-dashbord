@@ -359,8 +359,31 @@ export function IntakePackPanel({
     return Array.from(map.entries());
   }, [parsed]);
 
+  /**
+   * The four figures the calculation refuses to run without.
+   *
+   * Reading a pack is not the same as applying it, and the gap between the two
+   * is where the "218 values read" / "required fields missing" confusion came
+   * from. This says plainly which of the blockers the staged pack will clear.
+   */
+  const requiredCoverage = useMemo(() => {
+    const checks: Array<{ label: string; filled: boolean }> = [];
+    const source = parsed?.payload;
+    const current = payload;
+    const has = (packValue: unknown, currentValue: unknown) => {
+      const usable = (value: unknown) => (typeof value === 'number' ? value > 0 : String(value ?? '').trim() !== '');
+      return usable(packValue) || usable(currentValue);
+    };
+    checks.push({ label: 'Property address', filled: has(source?.property.address, current.property.address) });
+    checks.push({ label: 'Purchase price', filled: has(source?.property.purchasePrice, current.property.purchasePrice) });
+    checks.push({ label: 'Current valuation', filled: has(source?.property.currentValuation, current.property.currentValuation) });
+    checks.push({ label: 'Interest rate', filled: has(source?.loan.actualRatePercent, current.loan.actualRatePercent) });
+    return checks;
+  }, [parsed, payload]);
+
   const errors = parsed?.issues.filter((issue) => issue.severity === 'error') ?? [];
   const warnings = parsed?.issues.filter((issue) => issue.severity === 'warning') ?? [];
+
 
   const apply = () => {
     if (!parsed) return;
