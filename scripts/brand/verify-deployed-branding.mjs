@@ -1,22 +1,53 @@
 /**
- * Verify that a DEPLOYED site is actually serving the branded notification
- * artwork — not just that the repository contains it.
+ * Verify that a DEPLOYED site is serving THIS checkout's branded artwork — not
+ * merely *some* branded artwork.
  *
- * Why this exists: the notification-branding work was merged to `main` and the
- * stock scaffold heart kept appearing in production for days. Every repo-side
- * check was green the whole time. The site had simply never been republished,
- * so the published bundle predated the fix — and nothing in the repo can
- * observe that. Three HTTP probes settle it in seconds:
+ * Why this exists, and why it grew: the branding work was merged to `main` and
+ * the stock scaffold heart kept appearing in production for days. Every
+ * repo-side check was green throughout, because the repository was right; the
+ * site had simply never been republished. These HTTP probes caught that.
  *
- *   1. `/favicon.ico` must not be the stock heart, and must be a real ICO.
- *   2. `/brand/*` must be served (a 404 means the build predates the assets).
- *   3. `/sw-push.js` must carry the branded default, not `/favicon.ico`.
+ * Then they gave a FALSE GREEN. Once the artwork was replaced with the official
+ * logo, the deployment still served the previous generation — right shape, wrong
+ * build — and every check passed, because each only asked "is the heart gone and
+ * is something branded being served?" Both were true. The verifier could not
+ * tell "published" from "published two builds ago", which is the same blind spot
+ * in a new costume.
+ *
+ * So it now compares the served BYTES against the committed ones. Identical or
+ * it is not this build.
+ *
+ *   1. `/favicon.ico` is not the stock heart, and is a real ICO.
+ *   2. Every committed brand asset is served with an identical sha256.
+ *   3. `/sw-push.js` carries the branded default, not `/favicon.ico`.
  *
  * Usage:
  *   npm run verify:branding                        # uses DEPLOY_URL
  *   npm run verify:branding -- https://example.com
+ *
+ * Run it from an up-to-date checkout: it compares against your working tree, so
+ * a stale checkout reports a mismatch it caused itself.
  */
 import { createHash } from 'node:crypto';
+import { readFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const sha256 = (buffer) => createHash('sha256').update(buffer).digest('hex');
+
+/**
+ * Committed assets that must reach production byte-for-byte. `optional` covers
+ * files that only exist once an official master has been imported.
+ */
+const TRACKED_ASSETS = [
+  { url: '/brand/aurixa-notification-192.png', file: 'public/brand/aurixa-notification-192.png' },
+  { url: '/brand/aurixa-notification-512.png', file: 'public/brand/aurixa-notification-512.png' },
+  { url: '/brand/aurixa-badge-96.png', file: 'public/brand/aurixa-badge-96.png' },
+  { url: '/favicon.ico', file: 'public/favicon.ico' },
+  { url: '/brand/aurixa-source.jpg', file: 'public/brand/aurixa-source.jpg', optional: true },
+  { url: '/brand/aurixa-source.png', file: 'public/brand/aurixa-source.png', optional: true },
+];
 
 /**
  * sha256 of the scaffold's stock heart as it shipped: a 73x74 PNG named `.ico`.
@@ -88,18 +119,42 @@ console.log(`Verifying deployed branding at ${target}\n`);
   }
 }
 
-// 2. The branded artwork must actually be served.
-for (const path of [BRANDED_ICON, BRANDED_BADGE]) {
-  const { ok, status, buffer } = await fetchPath(path);
-  const isPng = buffer.subarray(0, 4).toString('hex') === '89504e47';
+// 2. Every committed asset must be served, byte for byte.
+//    A served-but-different asset is the failure mode that used to pass: the
+//    deployment carries branded artwork, just not the artwork in this checkout.
+let staleBuild = false;
+for (const asset of TRACKED_ASSETS) {
+  const localPath = join(ROOT, asset.file);
+  if (!existsSync(localPath)) {
+    // Optional assets simply are not part of this checkout.
+    if (!asset.optional) record(`${asset.file} exists in the checkout`, false, 'missing locally');
+    continue;
+  }
+
+  const expected = readFileSync(localPath);
+  const { ok, status, buffer } = await fetchPath(asset.url);
+
+  if (!ok) {
+    staleBuild = true;
+    record(
+      `${asset.url} is served`,
+      false,
+      `HTTP ${status} — the deployment predates this asset entirely`,
+    );
+    continue;
+  }
+
+  const servedDigest = sha256(buffer);
+  const expectedDigest = sha256(expected);
+  const match = servedDigest === expectedDigest;
+  if (!match) staleBuild = true;
   record(
-    `${path} is served`,
-    ok && isPng,
-    ok
-      ? isPng
-        ? `HTTP ${status}, ${buffer.length}b PNG`
-        : `HTTP ${status} but not a PNG — check for an SPA catch-all rewrite`
-      : `HTTP ${status} — this build predates the branded assets`,
+    `${asset.url} matches the committed file`,
+    match,
+    match
+      ? `sha256 ${servedDigest.slice(0, 12)}…, ${buffer.length}b`
+      : `served ${servedDigest.slice(0, 12)}… (${buffer.length}b) but this checkout has ` +
+        `${expectedDigest.slice(0, 12)}… (${expected.length}b) — an OLDER BUILD is live`,
   );
 }
 
@@ -125,16 +180,24 @@ for (const path of [BRANDED_ICON, BRANDED_BADGE]) {
 const failed = results.filter((r) => !r.pass);
 console.log('');
 if (!failed.length) {
-  console.log(`All ${results.length} checks passed — the deployment is serving branded artwork.`);
+  console.log(
+    `All ${results.length} checks passed — the deployment is serving exactly this checkout's artwork.`,
+  );
   process.exit(0);
 }
 
 console.error(`${failed.length} of ${results.length} checks failed.`);
+if (staleBuild) {
+  console.error(
+    '\nAn OLDER BUILD is live. The repository can be entirely correct while this\n' +
+      'fails — it means the site has not been rebuilt and republished since the\n' +
+      'change merged. Publish the current `main`, then re-run this command.\n' +
+      '\nIf you are running from a checkout that is behind `main`, pull first: this\n' +
+      'compares against your working tree.',
+  );
+}
 console.error(
-  '\nThe repository can be entirely correct while this fails: it means the site\n' +
-    'has not been rebuilt and republished since the branding change merged.\n' +
-    'Publish the current `main`, then re-run this command.\n' +
-    '\nNote that browsers cache favicons and service workers aggressively, so a\n' +
-    'hard reload (or a fresh profile) may be needed before a human sees the change.',
+  '\nBrowsers cache favicons and service workers aggressively, so a hard reload\n' +
+    '(or a fresh profile) may be needed before a human sees a change that IS live.',
 );
 process.exit(1);

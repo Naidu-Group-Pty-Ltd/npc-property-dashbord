@@ -394,6 +394,36 @@ describe('the stock icon is gone from disk, not just unreferenced', () => {
     expect(verifier).toContain(AURIXA_NOTIFICATION_ICON);
     expect(verifier).toContain('/sw-push.js');
   });
+
+  /**
+   * "Is the heart gone and is something branded served?" was true of a
+   * deployment two builds behind, so the verifier passed while production
+   * showed the previous artwork. Presence is not freshness: only the bytes are.
+   */
+  it('compares served bytes against the committed file, not just presence', () => {
+    const verifier = read('scripts/brand/verify-deployed-branding.mjs');
+    expect(verifier).toContain('const TRACKED_ASSETS');
+    expect(verifier).toContain('matches the committed file');
+    expect(verifier).toContain('an OLDER BUILD is live');
+  });
+
+  it('tracks every shipped artwork surface, including the imported master', () => {
+    const verifier = read('scripts/brand/verify-deployed-branding.mjs');
+    for (const asset of [
+      AURIXA_NOTIFICATION_ICON,
+      AURIXA_NOTIFICATION_BADGE,
+      '/brand/aurixa-notification-512.png',
+      '/brand/aurixa-source.jpg',
+    ]) {
+      expect(verifier).toContain(asset);
+    }
+  });
+
+  it('treats an imported master as optional so a vector-only checkout passes', () => {
+    const verifier = read('scripts/brand/verify-deployed-branding.mjs');
+    expect(verifier).toContain('optional: true');
+    expect(verifier).toContain('if (!asset.optional)');
+  });
 });
 
 /**
