@@ -21,6 +21,7 @@ import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
 import {
   DEFAULT_LISTING_FILTERS,
+  listingHasPhotos,
   matchesListingFilters,
   type ListingFilterState,
 } from '@/lib/listingFilters';
@@ -473,28 +474,39 @@ export default function Listings() {
     return null;
   }, [filters.includeNearbySuburbs, filters.suburb, listings]);
 
-  // Memoize filtered listings for performance.
+  // Filtering happens in two stages, because "has photos" depends on an answer
+  // that only arrives after a network round trip: whether the image library
+  // holds stored bytes for a listing. Resolving images needs a list, and the
+  // list needs the resolution — so everything except the photo filter is
+  // applied first, images are resolved against *that* set, and the photo filter
+  // is applied last.
+  //
   // The predicate itself lives in `@/lib/listingFilters` so list, table and map
   // are guaranteed to agree, and so its edge cases (unknown bedroom counts,
   // undisclosed prices, undated listings) can be asserted directly.
-  const filteredListings = useMemo(() => {
-    return listings.filter((listing) =>
-      matchesListingFilters(listing, filters, {
-        searchQuery,
-        nearbySuburbs: nearbySuburbsList,
-        extractState: (address) => extractAUState(address),
-        extractPostcode: (address) => extractPostcode(address),
-      }),
-    ).sort((a, b) => {
-      const getTs = (l: PropertyListing) => {
-        const d = (l as any).receivedAt || l.createdAt || l.createdTime;
-        if (!d) return 0;
-        const t = d instanceof Date ? d.getTime() : new Date(d).getTime();
-        return isNaN(t) ? 0 : t;
-      };
-      return getTs(b) - getTs(a);
-    });
-  }, [listings, searchQuery, filters, nearbySuburbsList]);
+  const byRecency = useCallback((a: PropertyListing, b: PropertyListing) => {
+    const getTs = (l: PropertyListing) => {
+      const d = (l as any).receivedAt || l.createdAt || l.createdTime;
+      if (!d) return 0;
+      const t = d instanceof Date ? d.getTime() : new Date(d).getTime();
+      return isNaN(t) ? 0 : t;
+    };
+    return getTs(b) - getTs(a);
+  }, []);
+
+  const preFilteredListings = useMemo(() => {
+    const withoutPhotoFilter = { ...filters, hasPhotos: false };
+    return listings
+      .filter((listing) =>
+        matchesListingFilters(listing, withoutPhotoFilter, {
+          searchQuery,
+          nearbySuburbs: nearbySuburbsList,
+          extractState: (address) => extractAUState(address),
+          extractPostcode: (address) => extractPostcode(address),
+        }),
+      )
+      .sort(byRecency);
+  }, [listings, searchQuery, filters, nearbySuburbsList, byRecency]);
 
 
   const openDetailsModal = (listing: PropertyListing) => {
@@ -571,7 +583,24 @@ export default function Listings() {
   // switching list ↔ table ↔ map re-uses the same signed URLs instead of asking
   // again. The map's popup resolves its own single listing on top of this.
   const { images: listingImages, isResolving: listingImagesResolving } =
-    useListingImages(filteredListings);
+    useListingImages(preFilteredListings);
+
+  /** Ids the image library actually holds stored photos for. */
+  const listingsWithPhotos = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [listingId, photos] of Object.entries(listingImages)) {
+      if (photos && photos.length > 0) ids.add(listingId);
+    }
+    return ids;
+  }, [listingImages]);
+
+  const filteredListings = useMemo(() => {
+    if (!filters.hasPhotos) return preFilteredListings;
+    // Applied only once the pass has settled — filtering mid-resolution would
+    // empty the page and then repopulate it, which reads as a bug.
+    if (listingImagesResolving && listingsWithPhotos.size === 0) return preFilteredListings;
+    return preFilteredListings.filter((listing) => listingHasPhotos(listing, listingsWithPhotos));
+  }, [preFilteredListings, filters.hasPhotos, listingImagesResolving, listingsWithPhotos]);
 
   const showListView = viewMode === 'list';
   const showTableView = viewMode === 'table';

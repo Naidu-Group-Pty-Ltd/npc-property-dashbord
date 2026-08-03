@@ -1,4 +1,5 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
+import { INTAKE_SORT_FIELD } from '@/lib/airtableIntakeFields';
 
 export interface PropertyListing {
   id: string;
@@ -84,7 +85,7 @@ export interface AirtableResponse {
 class AirtableService {
   async getRecords(options: AirtableGetRecordsOptions = {}): Promise<AirtableResponse> {
     try {
-      const { pageSize = 100, offset, sortField = 'Created', sortDirection = 'desc', tableName } = options;
+      const { pageSize = 100, offset, sortField = INTAKE_SORT_FIELD, sortDirection = 'desc', tableName } = options;
 
       // Call the Supabase edge function instead of direct Airtable API
       const { data, error } = await invokeSecureFunction('airtable-proxy', {
@@ -147,59 +148,6 @@ class AirtableService {
       console.error('Connection test failed:', error);
       return false;
     }
-  }
-
-  transformRecord(record: any): PropertyListing {
-    const fields = record.fields || {};
-    
-    return {
-      id: record.id,
-      title: fields.Property_Title || fields.Title || 'Untitled Property',
-      price: fields.Price || fields.Asking_Price || 0,
-      location: fields.Location || fields.Address || fields.address || 'Location not specified',
-      bedrooms: fields.Bedrooms || fields.Bedroom_Count || fields.beds || 0,
-      bathrooms: fields.Bathrooms || fields.Bathroom_Count || fields.baths || 0,
-      propertyType: fields.Property_Type || fields['Property Type'] || 'Unknown',
-      listingDate: fields.Listed_Date || fields.Date_Listed || record.createdTime,
-      status: fields.Status || 'Available',
-      confidence: fields.Confidence_Score || fields.Confidence || fields.confidence || 85,
-      source: fields.Source || fields.Data_Source || 'Airtable',
-      description: fields.Description || fields.Property_Description || fields.summary || '',
-      images: fields.Images || fields.Property_Images || fields.images || [],
-      agent: fields.Agent || fields.Listing_Agent || fields['Agent Name'] || fields.agentName || 'Unknown Agent',
-      features: fields.Features || fields.Property_Features || [],
-      // Original fields for compatibility
-      recordId: fields['Record ID'],
-      url: fields['URL'],
-      sourceHost: fields['Source Host'],
-      hash: fields['Hash'],
-      messageId: fields['MessageID'],
-      emailSubject: fields['Email Subject'],
-      from: fields['From'],
-      receivedAt: fields['ReceivedAt'] ? new Date(fields['ReceivedAt']) : undefined,
-      address: fields['Address'],
-      suburb: fields['Suburb'],
-      category: fields['Category'],
-      beds: fields['Beds'],
-      baths: fields['Baths'],
-      carSpaces: fields['Car Spaces'],
-      inspectionStart: fields['Inspection Start'] ? new Date(fields['Inspection Start']) : undefined,
-      inspectionEnd: fields['Inspection End'] ? new Date(fields['Inspection End']) : undefined,
-      inspectionNotes: fields['Inspection Notes'],
-      agencyName: fields['Agency Name'],
-      agentName: fields['Agent Name'],
-      agentPhone: fields['Agent Phone'],
-      floorplans: fields['Floorplans'],
-      summary: fields['Summary'],
-      keyEntities: fields['Key Entities'],
-      rawExtract: fields['Raw Extract'],
-      createdTime: record.createdTime ? new Date(record.createdTime) : undefined,
-      createdAt: fields['Created At'] ? new Date(fields['Created At']) : undefined,
-      state: fields['State'],
-      zipCode: fields['Zipcode'] || fields['Zip Code'] || fields['Post Code'] || fields['Postcode'],
-      latitude: fields['Latitude'] ?? fields['latitude'],
-      longitude: fields['Longitude'] ?? fields['longitude'],
-    };
   }
 }
 

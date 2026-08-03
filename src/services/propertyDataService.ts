@@ -1,5 +1,6 @@
 import { airtableService, PropertyListing } from '@/lib/airtable';
 import { listingsCacheApi } from '@/lib/listingsCacheApi';
+import { INTAKE_SORT_FIELD } from '@/lib/airtableIntakeFields';
 import {
   clearListingCache,
   isCacheUsable,
@@ -253,7 +254,12 @@ class PropertyDataService {
       const response = await airtableService.getRecords({
         pageSize: 100,
         offset,
-        sortField: 'Created',
+        // `Created` does not exist on this table; `Created Time` does. The wrong
+        // name never failed loudly — the proxy answers a 422 by silently
+        // retrying without any sort — but this walk's `stopWhenKnown` shortcut
+        // is only correct on a newest-first read, so it had quietly stopped
+        // being safe.
+        sortField: INTAKE_SORT_FIELD,
         sortDirection: 'desc',
         tableName,
       });

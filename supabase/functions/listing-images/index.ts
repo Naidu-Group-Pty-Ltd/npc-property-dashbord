@@ -26,6 +26,7 @@ import {
   type ImageCandidate,
   type ImageOrigin,
 } from '../_shared/listingImages.pure.ts';
+import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
 
 /**
  * Listing image library.
@@ -447,12 +448,19 @@ async function readAirtableImages(
   };
   for (const record of payload.records ?? []) {
     const fields = record.fields ?? {};
+    // Read the columns this table actually has. The previous names — `Images`,
+    // `Property_Images`, `Listed_Date`, `Date_Listed`, `ReceivedAt` — exist on
+    // none of them, so every sweep read `[]`, fingerprinted every listing as
+    // empty, and re-armed the schedule having done nothing. The sweep has been
+    // running hourly and harvesting nothing since it shipped.
     out.set(record.id, {
-      images: fields.Images ?? fields.Property_Images ?? fields.images ?? [],
+      images:
+        fields[INTAKE_FIELDS.listingImages] ??
+        fields[INTAKE_FIELDS.additionalAttachments] ??
+        [],
       listedAt:
-        epochMs(fields.Listed_Date) ??
-        epochMs(fields.Date_Listed) ??
-        epochMs(fields.ReceivedAt) ??
+        epochMs(fields[INTAKE_FIELDS.createdTime]) ??
+        epochMs(fields[INTAKE_FIELDS.availabilityDate]) ??
         epochMs(record.createdTime),
     });
   }
