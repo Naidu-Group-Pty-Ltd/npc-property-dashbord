@@ -62,7 +62,8 @@ export interface ClientSearchRow {
   primary_first_name: string | null;
   primary_surname: string | null;
   primary_email: string | null;
-  primary_phone: string | null;
+  /** The `clients` table stores this as `primary_mobile`, not `primary_phone`. */
+  primary_mobile: string | null;
   updated_at: string | null;
 }
 

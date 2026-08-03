@@ -261,7 +261,7 @@ export function StepClientLink({
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-semibold text-foreground">{clientLabel(client)}</span>
                       <span className="block truncate text-xs text-muted-foreground">{client.primary_email || 'No email recorded'}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{client.primary_phone || 'No phone recorded'}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{client.primary_mobile || 'No phone recorded'}</span>
                     </span>
                   </span>
                   {selected?.id === client.id ? <Check className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" /> : null}
@@ -280,7 +280,7 @@ export function StepClientLink({
             <p className="text-sm font-semibold text-foreground">{clientLabel(selected)}</p>
             <dl className="mt-2 grid gap-1.5 text-sm sm:grid-cols-2">
               <div className="flex gap-2"><dt className="text-muted-foreground">Email</dt><dd className="text-foreground">{selected.primary_email || '—'}</dd></div>
-              <div className="flex gap-2"><dt className="text-muted-foreground">Phone</dt><dd className="text-foreground">{selected.primary_phone || '—'}</dd></div>
+              <div className="flex gap-2"><dt className="text-muted-foreground">Phone</dt><dd className="text-foreground">{selected.primary_mobile || '—'}</dd></div>
             </dl>
             <Button className="mt-3" size="sm" onClick={() => confirmClient(selected)} disabled={loadingProfile}>
               {loadingProfile ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
