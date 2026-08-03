@@ -4694,22 +4694,7 @@ export type Database = {
           reason?: string | null
           user_agent?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "builder_portal_activity_log_builder_user_id_fkey"
-            columns: ["builder_user_id"]
-            isOneToOne: false
-            referencedRelation: "builder_portal_users"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "builder_portal_activity_log_organisation_id_fkey"
-            columns: ["organisation_id"]
-            isOneToOne: false
-            referencedRelation: "builder_organisations"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       builder_portal_sessions: {
         Row: {
