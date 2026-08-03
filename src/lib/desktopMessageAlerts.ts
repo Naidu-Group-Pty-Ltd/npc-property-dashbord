@@ -427,14 +427,29 @@ export function setBrandNotificationIcon(src: string | null | undefined) {
   setFaviconBadge(Math.max(0, showing));
 }
 
+/**
+ * Notification artwork is fetched by the browser, and for a service-worker
+ * notification it is resolved against the worker's scope rather than the page.
+ * Absolutising here removes any doubt about which base a relative path lands
+ * on — a 404 icon is a silently unbranded notification.
+ */
+function absolute(path: string): string {
+  if (typeof window === 'undefined') return path;
+  try {
+    return new URL(path, window.location.origin).href;
+  } catch {
+    return path;
+  }
+}
+
 /** The icon shown on a notification: white-label logo, else Aurixa Systems. */
 export function getNotificationIcon(): string {
-  return brandNotificationIcon ?? AURIXA_NOTIFICATION_ICON;
+  return absolute(brandNotificationIcon ?? AURIXA_NOTIFICATION_ICON);
 }
 
 /** The monochrome status-bar glyph. Always the Aurixa delta — see above. */
 export function getNotificationBadge(): string {
-  return AURIXA_NOTIFICATION_BADGE;
+  return absolute(AURIXA_NOTIFICATION_BADGE);
 }
 
 /* ----------------------------------------------------------- favicon badge */

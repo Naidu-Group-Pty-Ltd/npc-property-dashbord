@@ -85,7 +85,17 @@ The stock icon is refused defensively: `setBrandNotificationIcon('/favicon.ico')
 is treated as "no logo". The same chain feeds the favicon badge, so the count is
 stamped on the tenant's mark rather than on a stock one, and `index.html` now
 declares the Aurixa icon explicitly instead of letting the browser guess
-`/favicon.ico`.
+`/favicon.ico`. Resolved icons are absolutised, because a service worker
+resolves a relative icon against its own scope rather than the page, and a 404
+icon is a silently unbranded notification.
+
+**Redirecting the references was not enough.** `public/favicon.ico` was itself
+the scaffold's stock heart — a 73×74 PNG simply named `.ico` — and it stayed
+reachable at that URL through a cached manifest, a platform-injected tag, or
+Chromium's own fallback when a notification icon fails to load. That file is now
+generated from the brand source as a real multi-size ICO (16/32/48/64/128/256),
+and a contract test pins the stock file's sha256 so it cannot return through a
+dependency bump or a scaffold regeneration.
 
 The `badge` slot is deliberately **not** white-labelled. Android renders it as a
 monochrome status-bar glyph — it keeps the alpha channel and discards the colour
@@ -94,9 +104,17 @@ carries the flat Aurixa delta (`aurixa-badge-96.png`).
 
 The artwork is generated, not hand-drawn: `public/brand/*.svg` are the sources,
 and `npm run brand:icons` rasterises them through Chromium (Chromium does not
-reliably decode SVG for `Notification.icon`). `npm run brand:icons:check` fails
-if the committed PNGs are stale, and skips with a warning where no browser is
+reliably decode SVG for `Notification.icon`) into the notification PNGs, the
+badge glyph and `favicon.ico`. `npm run brand:icons:check` fails if the
+committed output is stale, and skips with a warning where no browser is
 available.
+
+Two mark variants exist because one drawing cannot serve both ends of the size
+range: `aurixa-mark.svg` carries the orbital rings, the warm bloom and the
+speculars, and feeds everything from 48px up; `aurixa-mark-compact.svg` drops
+all of it and feeds the 16/32px favicon entries, where that detail resamples
+into noise. Both share the same derived delta geometry, so the silhouette is
+identical.
 
 ## Duplicate prevention
 
