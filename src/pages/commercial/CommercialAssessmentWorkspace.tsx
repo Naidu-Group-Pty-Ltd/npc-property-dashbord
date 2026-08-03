@@ -24,6 +24,8 @@ import { runAssessment, type AssessmentResult } from '@/lib/ciAssessment/engine'
 import { validateAssessment } from '@/lib/ciAssessment/validation';
 import { ASSESSMENT_STATUS_LABELS, assessmentTypeDefinition, type AssessmentPayload } from '@/lib/ciAssessment/types';
 import { StepAssessmentType } from '@/components/commercial/assessment/StepAssessmentType';
+import { IntakePackPanel } from '@/components/commercial/assessment/IntakePackPanel';
+import type { ParsedPack } from '@/lib/ciAssessment/intakePack';
 import { StepPropertyTransaction } from '@/components/commercial/assessment/StepPropertyTransaction';
 import { StepOwnership } from '@/components/commercial/assessment/StepOwnership';
 import { StepIncome } from '@/components/commercial/assessment/StepIncome';
@@ -36,6 +38,9 @@ import { ResultsRail } from '@/components/commercial/assessment/ResultsRail';
 
 const STEPS = [
   { key: 'type', label: 'Type', section: 'assessmentType' },
+  // The intake pack sits early on purpose: the usual flow is create the
+  // assessment, download the pack, meet the client, come back and upload it.
+  { key: 'pack', label: 'Intake pack', section: 'intakePack' },
   { key: 'property', label: 'Property & transaction', section: 'property' },
   { key: 'ownership', label: 'Ownership', section: 'ownership' },
   { key: 'income', label: 'Income', section: 'income' },
@@ -158,6 +163,65 @@ export default function CommercialAssessmentWorkspace() {
     });
     await reload();
   }, [id, payload, record?.version, reload]);
+
+  /**
+   * Merge a returned intake pack into the working assessment.
+   *
+   * Scalar sections merge field-by-field so a value the pack did not carry
+   * cannot blank out something already entered here. Collections replace
+   * wholesale — a half-merged list of entities or liabilities, matched on
+   * nothing more reliable than array position, would be worse than either
+   * keeping or replacing the set outright.
+   */
+  const applyIntakePack = useCallback((parsed: ParsedPack) => {
+    if (!payload) return;
+    const incoming = parsed.payload;
+
+    // A blank, zero or absent value in the pack means "not answered", not
+    // "set this to nothing" — so those are skipped rather than written over.
+    const mergeScalars = <T,>(current: T, next: T): T => {
+      const merged = { ...(current as Record<string, unknown>) };
+      Object.entries(next as Record<string, unknown>).forEach(([key, value]) => {
+        if (value === undefined || value === null) return;
+        if (typeof value === 'string' && value.trim() === '') return;
+        if (typeof value === 'number' && value === 0) return;
+        if (Array.isArray(value)) return;
+        merged[key] = value;
+      });
+      return merged as T;
+    };
+
+    const next: AssessmentPayload = {
+      ...payload,
+      assessmentType: incoming.assessmentType ?? payload.assessmentType,
+      property: mergeScalars(payload.property, incoming.property),
+      loan: mergeScalars(payload.loan, incoming.loan),
+      lease: {
+        ...mergeScalars(payload.lease, incoming.lease),
+        tenancies: incoming.lease.tenancies.length ? incoming.lease.tenancies : payload.lease.tenancies,
+      },
+      ownership: {
+        ...mergeScalars(payload.ownership, incoming.ownership),
+        entities: incoming.ownership.entities.length ? incoming.ownership.entities : payload.ownership.entities,
+      },
+      income: {
+        ...payload.income,
+        periods: incoming.income.periods.length ? incoming.income.periods : payload.income.periods,
+        addbacks: incoming.income.periods.length ? incoming.income.addbacks : payload.income.addbacks,
+      },
+      portfolio: {
+        ...payload.portfolio,
+        assets: incoming.portfolio.assets.length ? incoming.portfolio.assets : payload.portfolio.assets,
+        liabilities: incoming.portfolio.liabilities.length
+          ? incoming.portfolio.liabilities : payload.portfolio.liabilities,
+      },
+      // Keep prior provenance and append the pack's, so a field imported from a
+      // URL earlier still shows where it came from.
+      provenance: [...payload.provenance, ...parsed.provenance],
+    };
+
+    update(next, 'intakePack');
+  }, [payload, update]);
 
   const calculate = useCallback(async () => {
     if (!id || !payload || !liveResult) return;
@@ -329,6 +393,16 @@ export default function CommercialAssessmentWorkspace() {
             <StepAssessmentType
               payload={payload} title={record.title} onTitleChange={setTitle}
               onChange={setPayload} disabled={readOnly}
+            />
+          ) : null}
+          {activeStep === 'pack' ? (
+            <IntakePackPanel
+              payload={payload}
+              assessmentReference={record.reference}
+              assessmentTitle={record.title}
+              onApply={applyIntakePack}
+              onCreateClient={() => window.open('/clients', '_blank', 'noopener,noreferrer')}
+              disabled={readOnly}
             />
           ) : null}
           {activeStep === 'property' ? (
