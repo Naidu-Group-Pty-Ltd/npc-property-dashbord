@@ -168,14 +168,25 @@ and reports whether it is actually serving branded artwork.
 This exists because the branding fix was merged and the stock heart kept
 appearing in production anyway. Every repository check was green throughout —
 correctly, because the repository was right. The site had simply never been
-rebuilt and republished, and no repo-side test can observe that. A stale build
-betrays itself three ways, and the verifier checks all three:
+rebuilt and republished, and no repo-side test can observe that.
+
+**It then gave a false green, which is worth recording.** Once the artwork was
+replaced with the official logo, the deployment still served the previous
+generation — right shape, wrong build — and every check passed, because each
+only asked *"is the heart gone and is something branded being served?"* Both
+were true. Presence is not freshness.
+
+So it compares the served **bytes** against the committed ones. Identical, or it
+is not this build.
 
 | Probe | Stale build looks like |
 | --- | --- |
 | `/favicon.ico` | the stock heart's sha256, header `89504e47` (a PNG, not an ICO) |
-| `/brand/*.png` | `404` |
+| every committed brand asset | a different sha256 — reported as `an OLDER BUILD is live` — or `404` |
 | `/sw-push.js` | still contains `data.icon \|\| '/favicon.ico'` |
+
+Run it from an up-to-date checkout: the comparison is against your working
+tree, so a stale checkout reports a mismatch it caused itself.
 
 Two things to know when a human still reports the old icon after a good deploy:
 
