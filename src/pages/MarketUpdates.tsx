@@ -632,6 +632,8 @@ export default function MarketUpdates() {
                       <>
                         <p className="text-sm leading-relaxed text-foreground">{digest.executive_summary}</p>
 
+                        <p className="text-sm leading-relaxed text-foreground">{clean(digest.executive_summary)}</p>
+
                         {(() => {
                           const segments = normaliseSegmentBreakdown(digest.segment_breakdown);
                           if (!segments.length) return null;
@@ -642,13 +644,13 @@ export default function MarketUpdates() {
                                   <button type="button" onClick={() => setActiveSegment(seg as MarketSegment)} className="mb-1 rounded text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Filter the feed by ${titleCase(seg)}`}>
                                     {titleCase(seg)}
                                   </button>
-                                  {headline && <p className="text-sm leading-relaxed">{headline}</p>}
+                                  {headline && <p className="text-sm leading-relaxed">{clean(headline)}</p>}
                                   {highlights.length > 0 && (
                                     <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-                                      {highlights.slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
+                                      {cleanList(highlights).slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
                                     </ul>
                                   )}
-                                  {implications && <p className="mt-2 text-xs italic text-foreground/80">{implications}</p>}
+                                  {implications && <p className="mt-2 text-xs italic text-foreground/80">{clean(implications)}</p>}
                                 </div>
                               ))}
                             </div>
