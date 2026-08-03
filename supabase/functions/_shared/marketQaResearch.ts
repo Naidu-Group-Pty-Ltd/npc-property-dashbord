@@ -336,7 +336,7 @@ const EMBEDDING_MODEL = 'openai/text-embedding-3-small';
  * retrieval to lexical rather than fail the question.
  */
 export async function embedQueries(queries: string[], timeoutMs = 8000): Promise<number[][] | null> {
-  const apiKey = Deno.env.get('LOVABLE_API_KEY');
+  const apiKey = (globalThis as any).Deno?.env?.get('LOVABLE_API_KEY') as string | undefined;
   if (!apiKey || !queries.length) return null;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
