@@ -9,20 +9,15 @@
  * event and (optionally) `event: <name>` lines. Events without an `event:`
  * label default to `type: 'message'`.
  */
-import { supabase } from "@/integrations/supabase/client";
+import {
+  describeAuthError,
+  isAuthFailureResponse,
+  refreshAccessToken,
+  resolveAuthBearer,
+} from "@/lib/secureInvoke";
 
 const SUPABASE_URL = "https://dduzbchuswwbefdunfct.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkdXpiY2h1c3d3YmVmZHVuZmN0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU0NDM4NzksImV4cCI6MjA3MTAxOTg3OX0.eSYU6fxIc3tBQuGLsdBRff0alBMkNfvv7OpW0efNjxk";
-
-const ACCESS_TOKEN_KEY = "supabase_access_token";
-
-function readToken(key: string): string | null {
-  try {
-    return sessionStorage.getItem(key) || localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
 
 export interface StreamEvent {
   event: string;
@@ -45,37 +40,59 @@ export async function* streamSecureFunction(
   // WP-11B/C cookie-only: authenticate via the HttpOnly session cookie
   // (`credentials: 'include'`) plus the access-token JWT Bearer. No raw session
   // token is read from storage or sent in the body/headers.
-  let accessToken = readToken(ACCESS_TOKEN_KEY);
-  if (!accessToken) {
-    try {
-      accessToken = (await supabase.auth.getSession()).data.session?.access_token ?? null;
-    } catch {
-      /* best-effort */
+  //
+  // The token is resolved through `resolveAuthBearer` — storage, then the
+  // native supabase-js session, then the cookie — because the tab-scoped access
+  // token is the one carrier that routinely goes missing while the session
+  // itself is fine, and sending the ANON key instead buys a guaranteed
+  // "Authentication required".
+  const payload = JSON.stringify(body);
+  const send = (bearerToken: string) =>
+    fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": `Bearer ${bearerToken}`,
+      },
+      credentials: "include",
+      body: payload,
+      signal: options.signal,
+    });
+
+  const { token, authenticated } = await resolveAuthBearer({ refreshIfMissing: true });
+  let response = await send(token);
+
+  if (!response.ok) {
+    const readDetail = async (res: Response) => {
+      try {
+        return (await res.text()).slice(0, 400);
+      } catch {
+        return "";
+      }
+    };
+    let detail = await readDetail(response);
+
+    // One refresh, one retry — the same allowance the JSON path gets. Skipped
+    // when the resolver already came back empty-handed: the cookie was asked a
+    // moment ago and had nothing to give, so asking again only delays the
+    // message telling the person to sign in.
+    if (authenticated && isAuthFailureResponse(response.status, detail)) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        response = await send(refreshed);
+        if (!response.ok) detail = await readDetail(response);
+      }
+    }
+
+    if (!response.ok) {
+      const guidance = describeAuthError(detail);
+      throw new Error(guidance ?? `Stream request failed: ${response.status} ${detail}`.trim());
     }
   }
-  const bearerToken = accessToken || SUPABASE_ANON_KEY;
 
-  const response = await fetch(`${SUPABASE_URL}/functions/v1/${functionName}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Accept": "text/event-stream",
-      "apikey": SUPABASE_ANON_KEY,
-      "Authorization": `Bearer ${bearerToken}`,
-    },
-    credentials: "include",
-    body: JSON.stringify(body),
-    signal: options.signal,
-  });
-
-  if (!response.ok || !response.body) {
-    let msg = `Stream request failed: ${response.status}`;
-    try {
-      const txt = await response.text();
-      msg += ` ${txt.slice(0, 400)}`;
-    } catch { /* ignore */ }
-    throw new Error(msg);
-  }
+  if (!response.body) throw new Error(`Stream request failed: ${response.status} (no response body)`);
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

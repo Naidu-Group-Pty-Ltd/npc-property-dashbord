@@ -20,6 +20,7 @@
     "integrations:secrets:seed": "node scripts/create-integration-secrets.mjs",
     "integrations:secrets:audit": "node scripts/create-integration-secrets.mjs --audit-fallbacks",
     "audit:style:report": "node scripts/audit-style-tokens.cjs --report",
+    "deploy:report-qa-render": "bash scripts/deploy-report-qa-render.sh",
     "templates:finance-portal": "python3 scripts/finance-portal-templates/build_all.py",
     "templates:finance-portal:verify": "python3 scripts/finance-portal-templates/verify_templates.py",
     "templates:command-center": "python3 scripts/aurixa-templates/export_registry.py && python3 scripts/aurixa-templates/build_library.py --sample",

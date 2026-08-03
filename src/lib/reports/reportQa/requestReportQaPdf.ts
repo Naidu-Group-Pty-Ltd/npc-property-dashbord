@@ -81,20 +81,35 @@ export interface RequestReportQaOptions {
  * not count: the route answers 404 for a conversation that does not exist, and
  * reading that as "not deployed" would send someone to deploy a function that is
  * already there.
+ *
+ * The `network` arm is the one that matters in practice. An absent function is
+ * a 404 from the Supabase gateway rather than from the function, and a gateway
+ * 404 carries no `Access-Control-Allow-Origin`, so the browser never lets the
+ * caller see the status — `fetch` rejects and `invokeSecureFunction` turns that
+ * into its "Network/CORS error calling …" string. Matching only on
+ * `failed to fetch` therefore missed the very case it was written for, and the
+ * person who pressed the button was shown a CORS diagnostic for a function that
+ * had simply never been deployed.
  */
-function looksUndeployed(error: { message?: string } | null): boolean {
+function looksUndeployed(error: { message?: string; network?: boolean; code?: string } | null): boolean {
   if (!error) return false;
+  // A timed-out render is also a `network` failure, and it is the opposite of
+  // an absent one: the route answered slowly, so telling somebody to deploy it
+  // would be wrong. The transcript subject runs to twenty-nine pages.
+  if (error.network === true && error.code !== 'provider_timeout') return true;
   const message = (error.message || '').toLowerCase();
   return message.includes('function not found')
     || message.includes('requested function')
     || message.includes('does not exist')
     || message.includes('failed to fetch')
+    || message.includes('network/cors')
     || message.includes('failed to send a request');
 }
 
 const UNDEPLOYED_MESSAGE =
   'The typeset Q&A document is not available yet — render-report-qa-pdf has not been '
-  + 'deployed. The existing Export PDF button and the .md / .txt / .csv / .json exports still work.';
+  + 'deployed to this project (run npm run deploy:report-qa-render). The existing '
+  + 'Export PDF button and the .md / .txt / .csv / .json exports still work.';
 
 /** Request the document. Throws with a message worth showing a person. */
 export async function requestReportQaPdf(

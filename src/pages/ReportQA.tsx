@@ -11,7 +11,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { invokeSecureFunction } from '@/lib/secureInvoke';
+import {
+  describeAuthError,
+  invokeSecureFunction,
+  isAuthFailureResponse,
+  refreshAccessToken,
+  resolveAuthBearer,
+} from '@/lib/secureInvoke';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { useAuth } from '@/hooks/useAuth';
 import { MessageReportEditor } from '@/components/report-qa/MessageReportEditor';
@@ -1336,56 +1342,88 @@ export default function ReportQA() {
       // Ground retrieval and fallback context only in the reports selected for this chat.
       const reportsToUse = selectedReports;
 
-      // WP-11B/C cookie-only: report-qa uses wildcard CORS (no cookies), so it
-      // authenticates via the access-token JWT Bearer (verifyAuth JWT path).
-      // The raw session token is no longer read or sent.
-      const accessToken = sessionStorage.getItem('supabase_access_token') || localStorage.getItem('supabase_access_token');
-      const bearerToken = accessToken || SUPABASE_KEY;
-
       const { formatted: chatHistoryForRequest, needsSummary, totalMessages } = buildChatHistoryForRequest(messages);
 
-      const response = await fetch(`${SUPABASE_URL}/functions/v1/report-qa`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${bearerToken}`,
-        },
-        credentials: 'omit', // Avoid CORS issues with wildcard origins
-        body: JSON.stringify({
-          action: 'chat',
-          // Send report contents as fallback in case RAG indexing hasn't completed
-          reportContents: reportsToUse.map(r => r.content),
-          reportNames: reportsToUse.map(r => r.name),
-          selectedReportNames: reportsToUse.map(r => r.name),
-          question: messageContent,
-          chatHistory: chatHistoryForRequest,
-          conversationId: activeConversationId,
-          stream: true,
-          
-          agentKey: selectedAgentKey,
-          modelProvider: selectedAgentKey,
-          needsConversationSummary: needsSummary,
-          totalMessageCount: totalMessages,
-          agentMode: effectiveAgentMode,
-        }),
-        signal: streamController.signal,
+      const requestPayload = JSON.stringify({
+        action: 'chat',
+        // Send report contents as fallback in case RAG indexing hasn't completed
+        reportContents: reportsToUse.map(r => r.content),
+        reportNames: reportsToUse.map(r => r.name),
+        selectedReportNames: reportsToUse.map(r => r.name),
+        question: messageContent,
+        chatHistory: chatHistoryForRequest,
+        conversationId: activeConversationId,
+        stream: true,
+
+        agentKey: selectedAgentKey,
+        modelProvider: selectedAgentKey,
+        needsConversationSummary: needsSummary,
+        totalMessageCount: totalMessages,
+        agentMode: effectiveAgentMode,
       });
 
-      if (!response.ok) {
-        let errorMessage = `HTTP ${response.status}`;
+      // WP-11B/C cookie-only: the chat streams, so it cannot go through
+      // `invokeSecureFunction` (that helper reads the whole body as JSON). It
+      // authenticates the same way regardless — the access-token JWT Bearer,
+      // resolved through `resolveAuthBearer` rather than read straight out of
+      // storage.
+      //
+      // Reading storage directly is what broke this: the access token is
+      // tab-scoped and short-lived, so a session that is perfectly valid — its
+      // HttpOnly `__Host-session_token` cookie intact, every other call on the
+      // page working — sends the ANON key here and gets "Authentication
+      // required" back. `refreshIfMissing` re-mints the token from that cookie
+      // before the first attempt, and a 401/403 on the way back buys one more
+      // refresh and one more try, which is exactly what the JSON path does.
+      const sendChatRequest = (bearerToken: string) =>
+        fetch(`${SUPABASE_URL}/functions/v1/report-qa`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_KEY,
+            'Authorization': `Bearer ${bearerToken}`,
+          },
+          // Cookie-free on purpose: without ambient cookie authority the
+          // function's CSRF guard is a no-op, and the JWT above is a complete
+          // credential on its own.
+          credentials: 'omit',
+          body: requestPayload,
+          signal: streamController.signal,
+        });
 
-        try {
-          const payload = await response.json();
-          errorMessage = payload?.error || payload?.message || errorMessage;
-        } catch {
-          const rawText = await response.text();
-          if (rawText?.trim()) {
-            errorMessage = rawText;
+      const { token: bearerToken, authenticated } = await resolveAuthBearer({ refreshIfMissing: true });
+      let response = await sendChatRequest(bearerToken);
+
+      if (!response.ok) {
+        // The body can only be read once, so read it here and decide from the
+        // text — a retry re-sends the request and gets a fresh body of its own.
+        const readFailure = async (res: Response) => {
+          const rawText = await res.text().catch(() => '');
+          try {
+            const payload = JSON.parse(rawText);
+            return String(payload?.error?.message || payload?.error || payload?.message || `HTTP ${res.status}`);
+          } catch {
+            return rawText.trim() || `HTTP ${res.status}`;
+          }
+        };
+
+        let errorMessage = await readFailure(response);
+
+        // Skipped when the resolver already came back empty-handed: the cookie
+        // was asked a moment ago and had nothing to give.
+        if (authenticated && isAuthFailureResponse(response.status, errorMessage)) {
+          const refreshed = await refreshAccessToken();
+          if (refreshed) {
+            response = await sendChatRequest(refreshed);
+            if (!response.ok) errorMessage = await readFailure(response);
           }
         }
 
-        throw new Error(errorMessage);
+        if (!response.ok) {
+          // A session that cannot be refreshed is a person who has to sign in
+          // again, and saying so beats handing them the server's word for it.
+          throw new Error(describeAuthError(errorMessage) ?? errorMessage);
+        }
       }
 
       if (!response.body) {
