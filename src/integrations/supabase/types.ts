@@ -33607,6 +33607,36 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      builder_admin_delete_membership: {
+        Args: {
+          _actor_type: string
+          _actor_user_id: string
+          _expected_version: number
+          _membership_id: string
+          _reason: string
+        }
+        Returns: Json
+      }
+      builder_admin_delete_organisation: {
+        Args: {
+          _actor_type: string
+          _actor_user_id: string
+          _expected_version: number
+          _organisation_id: string
+          _reason: string
+        }
+        Returns: Json
+      }
+      builder_admin_delete_user: {
+        Args: {
+          _actor_type: string
+          _actor_user_id: string
+          _builder_user_id: string
+          _expected_version: number
+          _reason: string
+        }
+        Returns: Json
+      }
       builder_admin_revoke_membership: {
         Args: {
           _actor_type: string
