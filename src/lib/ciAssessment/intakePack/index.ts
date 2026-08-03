@@ -12,3 +12,4 @@ export * from './branding';
 export * from './workbook';
 export * from './document';
 export * from './parseWorkbook';
+export * from './documentExtract';
