@@ -132,7 +132,8 @@ import ReportsAnalytics from "./pages/ReportsAnalytics";
 import ModelHub from "./pages/ModelHub";
 import Billing from "./pages/Billing";
 import TokenAuditLog from "./pages/TokenAuditLog";
-import CommercialProperties from "./pages/commercial/CommercialProperties";
+import CommercialIndustrial from "./pages/commercial/CommercialIndustrial";
+import CommercialAssessmentWorkspace from "./pages/commercial/CommercialAssessmentWorkspace";
 import CommercialPropertyDetail from "./pages/commercial/CommercialPropertyDetail";
 
 import IndustrialPropertyDetail from "./pages/industrial/IndustrialPropertyDetail";
@@ -611,10 +612,13 @@ const App = () => (
                 {/* Legacy deep links land on the consolidated page's Usage tab. */}
                 <Route path="billing/usage" element={<Navigate to="/billing?tab=usage" replace />} />
                 <Route path="admin/token-audit" element={<TokenAuditLog />} />
-                <Route path="commercial" element={<CommercialProperties />} />
+                <Route path="commercial" element={<CommercialIndustrial />} />
                 <Route path="commercial/calculators" element={<PropertyCalculators />} />
+                {/* Assessment routes sit above the :id property route so an
+                    assessment id is never swallowed by the property detail page. */}
+                <Route path="commercial/assessments/:id" element={<CommercialAssessmentWorkspace />} />
                 <Route path="commercial/:id" element={<CommercialPropertyDetail />} />
-                <Route path="industrial" element={<CommercialProperties />} />
+                <Route path="industrial" element={<CommercialIndustrial />} />
                 <Route path="industrial/calculators" element={<PropertyCalculators />} />
                 <Route path="calculators" element={<PropertyCalculators />} />
                 <Route path="industrial/:id" element={<IndustrialPropertyDetail />} />
