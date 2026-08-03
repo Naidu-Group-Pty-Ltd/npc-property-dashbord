@@ -2,7 +2,7 @@ import { Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 
 /**
- * The search control used by the Organisations, Portal users and Memberships
+ * The search control used by the Organisations, Portal users and Organisation
  * surfaces.
  *
  * Display-only: it owns no state and does no filtering. The value and the

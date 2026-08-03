@@ -61,8 +61,8 @@ export function BuilderUserFormDialog({
           <DialogTitle>{editing ? 'Edit user' : 'Add portal user'}</DialogTitle>
           <DialogDescription>
             {editing
-              ? 'Update this user’s profile details. Access is governed by their membership and invitation, not by anything on this form.'
-              : 'The user is created without access and cannot sign in yet. Grant a membership, then send the invitation.'}
+              ? 'Update this user’s profile details. Access is governed by their organisation access and invitation, not by anything on this form.'
+              : 'The user is created without access and cannot sign in yet. Grant organisation access, then send the invitation.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -87,7 +87,7 @@ export function BuilderUserFormDialog({
               placeholder="Project manager, site supervisor, sales consultant…"
             />
             <p className="text-xs text-muted-foreground">
-              Descriptive only. Access comes from the membership role, not the job title.
+              Descriptive only. Access comes from the access role, not the job title.
             </p>
           </div>
           <div className="space-y-2">

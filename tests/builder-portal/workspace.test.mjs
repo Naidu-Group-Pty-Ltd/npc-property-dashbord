@@ -526,7 +526,9 @@ test('every portal surface renders loading, empty and error states', () => {
     assert.ok(/\bisError\b/.test(code), `${name} has no error state`);
   }
   for (const [name, code] of [['dashboard', dashboardPage], ['activity', activityPage]]) {
-    assert.ok(code.includes('border-dashed'), `${name} has no empty state`);
+    // Either drawn inline, or delegated to the shared dashed-border component.
+    assert.ok(code.includes('border-dashed') || code.includes('BuilderPortalEmptyState'),
+      `${name} has no empty state`);
   }
 });
 
@@ -537,7 +539,7 @@ test('the dashboard explains that a zero is a permission answer, not a fact', ()
 
 test('the activity page says administrative changes are not shown', () => {
   assert.match(activityPage,
-    /Administrative changes — memberships, permissions and sessions — are not shown here\./);
+    /Administrative changes — organisation access, permissions and sessions — are not shown here\./);
 });
 
 test('no workspace surface exposes a Finance, Client or AML field', () => {

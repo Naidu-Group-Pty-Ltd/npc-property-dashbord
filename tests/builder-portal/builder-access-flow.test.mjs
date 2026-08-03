@@ -377,7 +377,7 @@ test('the page offers Send invite only once a membership exists', () => {
   assert.match(adminPageCode, /const canInvite = stage === 'not_invited'/);
   assert.match(adminPageCode, /if \(!hasMembership\) return 'no_membership'/);
   // The no-membership row explains itself instead of offering a dead action.
-  assert.match(adminPageCode, /Grant a membership before inviting/);
+  assert.match(adminPageCode, /Grant organisation access before inviting/);
   assert.match(adminPageCode, /No access/);
 });
 
@@ -408,7 +408,7 @@ test('the invitation link is surfaced only when email delivery failed', () => {
 
 test('the page states the lifecycle order it enforces', () => {
   assert.match(adminPageCode, /create the user/);
-  assert.match(adminPageCode, /grant an organisation membership/);
+  assert.match(adminPageCode, /grant organisation access/);
   assert.match(adminPageCode, /send the invitation/);
   assert.match(adminPageCode, /accepts and sets a password/);
   assert.match(adminPageCode, /becomes active/);

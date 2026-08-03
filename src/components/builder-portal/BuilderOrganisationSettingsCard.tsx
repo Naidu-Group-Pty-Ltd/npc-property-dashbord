@@ -101,7 +101,7 @@ export function BuilderOrganisationSettingsCard() {
         <CardTitle className="text-base">Organisation settings</CardTitle>
         <CardDescription>
           Contact details and defaults for everyone in this organisation. These do not grant
-          access to anything — memberships and permissions remain the only authority.
+          access to anything — organisation access and permissions remain the only authority.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

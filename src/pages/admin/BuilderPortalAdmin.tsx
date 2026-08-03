@@ -45,6 +45,7 @@ import { BuilderStatusBadge } from '@/components/admin/builder-portal/ui/Builder
 import {
   BuilderAccessLifecycle, type BuilderAccessLifecycleStep,
 } from '@/components/admin/builder-portal/ui/BuilderAccessLifecycle';
+import { ACCESS_ROLE_OPTIONS, accessErrorMessage } from '@/lib/builderAccessTerms';
 import { toast } from 'sonner';
 import {
   Archive, Ban, BriefcaseBusiness, Building2, Copy, FolderKanban, Hammer, Handshake, HardHat,
@@ -87,13 +88,13 @@ const PROJECT_OPERATION_SECTIONS = [
   { value: 'workspace', label: 'Workspace', icon: BriefcaseBusiness },
 ] as const;
 
-const MEMBERSHIP_ROLES = [
-  { value: 'owner', label: 'Organisation owner' },
-  { value: 'administrator', label: 'Administrator' },
-  { value: 'manager', label: 'Manager' },
-  { value: 'member', label: 'Member' },
-  { value: 'read_only', label: 'Read only' },
-] as const;
+/**
+ * The stored `membership_role` values, with the labels a reader sees. The
+ * catalogue and the labels live in `builderAccessTerms` so the admin surface
+ * and the portal cannot describe the same stored role differently. Values are
+ * unchanged — only the right-hand side of the map is presentation.
+ */
+const MEMBERSHIP_ROLES = ACCESS_ROLE_OPTIONS;
 
 /**
  * Status presentation. `dot` is the token-coloured indicator on an outline
@@ -159,11 +160,14 @@ interface BuilderUser {
 /**
  * Where a user sits in the Builder access lifecycle:
  *
- *   create user -> grant membership -> send invite -> user accepts -> active
+ *   create user -> grant organisation access -> send invite -> accepts -> active
  *
- * Membership comes before the invitation deliberately. An invitation to an
- * account with no membership leads nowhere, and `builder-portal-invite` rejects
- * it with 409 `no_membership`, so the interface must not offer it.
+ * Access comes before the invitation deliberately. An invitation to an account
+ * with no organisation access leads nowhere, and `builder-portal-invite`
+ * rejects it with 409 `no_membership`, so the interface must not offer it.
+ *
+ * The stage keys are the server's vocabulary and stay as they are; only the
+ * labels and hints below are what a reader sees.
  */
 type AccessStage =
   | 'revoked' | 'no_membership' | 'not_invited'
@@ -181,7 +185,7 @@ const ACCESS_STAGE_META: Record<AccessStage, StatusPresentation & { hint: string
   },
   no_membership: {
     label: 'No access', tone: 'destructive',
-    hint: 'Step 2 of 5 — grant an organisation membership. Until then this user cannot be invited.',
+    hint: 'Step 2 of 5 — grant access to an organisation. Until then this user cannot be invited.',
   },
   not_invited: {
     label: 'Awaiting invitation', dot: 'bg-muted-foreground',
@@ -212,7 +216,7 @@ const ACCESS_STAGE_META: Record<AccessStage, StatusPresentation & { hint: string
  */
 const ACCESS_LIFECYCLE_STEPS: ReadonlyArray<BuilderAccessLifecycleStep> = [
   { label: 'create the user', icon: UserPlus },
-  { label: 'grant an organisation membership', icon: KeyRound },
+  { label: 'grant organisation access', icon: KeyRound },
   { label: 'send the invitation', icon: Mail },
   { label: 'the user accepts and sets a password', icon: ShieldCheck },
   { label: 'the account becomes active', icon: UserCheck },
@@ -302,7 +306,7 @@ function describeBlockedRemoval(kind: string, dependents?: string): BlockedRemov
     ? 'Revoke access instead — the account keeps its work and its history.'
     : kind === 'org_remove'
       ? 'Close the organisation instead — its projects and records are preserved.'
-      : 'Revoke the membership instead to end access without removing the record.';
+      : 'Revoke the organisation access instead to end it without removing the record.';
 
   return {
     message: 'This record cannot be removed because it holds business records.',
@@ -458,7 +462,10 @@ export default function BuilderPortalAdmin() {
       }
       await load();
     } catch (error: any) {
-      toast.error(error?.message || 'Failed to issue the invitation');
+      // `builder-portal-invite` refuses an invitation to an account with no
+      // access, in the server's own vocabulary. Only that one recognised
+      // sentence is translated; every other message is shown verbatim.
+      toast.error(accessErrorMessage(error?.message) || 'Failed to issue the invitation');
     } finally {
       setBusy(false);
     }
@@ -523,7 +530,7 @@ export default function BuilderPortalAdmin() {
       setRoleDefaults(catalogue?.role_defaults ?? []);
       setMembershipOverrides(current?.overrides ?? []);
     } catch (error: any) {
-      toast.error(error?.message || 'Failed to load membership permissions');
+      toast.error(error?.message || 'Failed to load access permissions');
       setPermissionsDialog({ open: false, membership: null });
     } finally {
       setPermissionsLoading(false);
@@ -621,7 +628,7 @@ export default function BuilderPortalAdmin() {
           consequences: [
             { tone: 'ends', text: 'Future sign-in is blocked immediately.' },
             { tone: 'ends', text: 'Every active Builder Portal session is ended.' },
-            { tone: 'remains', text: 'The user, their memberships and their history are all kept.' },
+            { tone: 'remains', text: 'The user, their organisation access and their history are all kept.' },
             { tone: 'remains', text: 'Access can be restored later.' },
           ],
           confirmLabel: 'Revoke access', destructive: true,
@@ -641,7 +648,7 @@ export default function BuilderPortalAdmin() {
           description: `${user.name} will be unable to sign in until the account is restored.`,
           consequences: [
             { tone: 'ends', text: 'Sign-in is blocked and current sessions are ended.' },
-            { tone: 'remains', text: 'Memberships, permissions and history are untouched.' },
+            { tone: 'remains', text: 'Organisation access, permissions and history are untouched.' },
             { tone: 'remains', text: 'Restoring the account returns access without a new invitation.' },
           ],
           confirmLabel: 'Suspend', destructive: true,
@@ -669,18 +676,18 @@ export default function BuilderPortalAdmin() {
             ? [
               { tone: 'warning', text: 'The account has no password, so it cannot be made active by hand.' },
               { tone: 'remains', text: 'Send them a fresh invitation to finish setup.' },
-              { tone: 'remains', text: 'Memberships and history are kept.' },
+              { tone: 'remains', text: 'Organisation access and history are kept.' },
             ]
             : target === 'suspended'
               ? [
                 { tone: 'remains', text: 'The account returns to suspended, not to active.' },
                 { tone: 'warning', text: 'Sign-in stays blocked until it is restored again.' },
-                { tone: 'remains', text: 'Memberships and history are kept.' },
+                { tone: 'remains', text: 'Organisation access and history are kept.' },
               ]
               : [
                 { tone: 'remains', text: 'The user can sign in again with their existing password.' },
-                { tone: 'remains', text: 'Memberships and permissions resume as they were.' },
-                { tone: 'warning', text: 'Refused if they have no valid membership or every organisation is closed.' },
+                { tone: 'remains', text: 'Organisation access and permissions resume as they were.' },
+                { tone: 'warning', text: 'Refused if they have no valid organisation access or every organisation is closed.' },
               ],
           confirmLabel: 'Restore access', destructive: false,
           reasonRequired: false, reasonLabel: 'Reason (optional)',
@@ -698,7 +705,7 @@ export default function BuilderPortalAdmin() {
           description: `The outstanding invitation for ${user.email} will stop working.`,
           consequences: [
             { tone: 'ends', text: 'The invitation link is invalidated and cannot be used.' },
-            { tone: 'remains', text: 'The user account and its memberships are kept.' },
+            { tone: 'remains', text: 'The user account and its organisation access are kept.' },
             { tone: 'remains', text: 'A fresh invitation can be sent at any time.' },
           ],
           confirmLabel: 'Revoke invite', destructive: true,
@@ -717,7 +724,7 @@ export default function BuilderPortalAdmin() {
           description: `Signs ${user.name} out of the Builder Portal everywhere.`,
           consequences: [
             { tone: 'ends', text: 'Every active Builder Portal session is ended immediately.' },
-            { tone: 'remains', text: 'The account status and memberships do not change.' },
+            { tone: 'remains', text: 'The account status and organisation access do not change.' },
             { tone: 'remains', text: 'They can sign back in straight away if their account is active.' },
           ],
           confirmLabel: 'Revoke sessions', destructive: false,
@@ -734,7 +741,7 @@ export default function BuilderPortalAdmin() {
           title: 'Permanently remove this user?',
           description: `${user.name} (${user.email}) will be deleted. This cannot be undone.`,
           consequences: [
-            { tone: 'ends', text: 'The account, its memberships, sessions and access grants are deleted.' },
+            { tone: 'ends', text: 'The account, its organisation access, sessions and access grants are deleted.' },
             { tone: 'remains', text: 'Organisations, projects, documents and messages are all kept.' },
             { tone: 'remains', text: 'The audit trail is kept, and records who removed the account, when and why.' },
             { tone: 'warning', text: 'Refused if the account produced business work — uploads, messages, reservations or tasks. Revoke access instead.' },
@@ -755,10 +762,10 @@ export default function BuilderPortalAdmin() {
           const reopening = organisation.status === 'closed';
           return {
             title: reopening ? 'Reopen this organisation?' : 'Activate this organisation?',
-            description: `${organisation.legal_name} will be able to hold memberships and portal access again.`,
+            description: `${organisation.legal_name} will be able to hold organisation access and portal access again.`,
             consequences: [
-              { tone: 'remains', text: 'Members with a valid membership regain access.' },
-              { tone: 'remains', text: 'New memberships can be granted again.' },
+              { tone: 'remains', text: 'Users with valid organisation access regain it.' },
+              { tone: 'remains', text: 'New organisation access can be granted again.' },
               { tone: 'remains', text: 'All existing records are unchanged.' },
             ],
             confirmLabel: reopening ? 'Reopen organisation' : 'Activate organisation',
@@ -776,7 +783,7 @@ export default function BuilderPortalAdmin() {
             consequences: [
               { tone: 'ends', text: 'Portal access through this organisation is blocked.' },
               { tone: 'ends', text: 'Sessions belonging to its members are ended.' },
-              { tone: 'remains', text: 'Every organisation record, membership and project is kept.' },
+              { tone: 'remains', text: 'Every organisation record, access assignment and project is kept.' },
               { tone: 'remains', text: 'The organisation can be restored at any time.' },
             ],
             confirmLabel: 'Suspend organisation', destructive: true,
@@ -793,9 +800,9 @@ export default function BuilderPortalAdmin() {
           description: `${organisation.legal_name} will be closed. Closure is the end of the relationship, not a pause.`,
           consequences: [
             { tone: 'ends', text: 'Portal access through this organisation ends and sessions are closed.' },
-            { tone: 'ends', text: 'No new membership of this organisation can be granted.' },
+            { tone: 'ends', text: 'No new access to this organisation can be granted.' },
             { tone: 'remains', text: 'Projects, transactions, documents and history are all preserved.' },
-            { tone: 'warning', text: 'Members whose only membership is here lose Builder Portal access.' },
+            { tone: 'warning', text: 'Users whose only organisation access is here lose the Builder Portal.' },
           ],
           confirmLabel: 'Close organisation', destructive: true,
           reasonRequired: true, reasonLabel: 'Reason for closing',
@@ -813,8 +820,8 @@ export default function BuilderPortalAdmin() {
           title: 'Permanently remove this organisation?',
           description: `${organisation.legal_name} will be deleted. This cannot be undone.`,
           consequences: [
-            { tone: 'ends', text: 'The organisation, its memberships and its access records are deleted.' },
-            { tone: 'ends', text: 'Members lose access through it; anyone left with none has their sessions ended.' },
+            { tone: 'ends', text: 'The organisation, its access assignments and its access records are deleted.' },
+            { tone: 'ends', text: 'Users lose access through it; anyone left with none has their sessions ended.' },
             { tone: 'remains', text: 'The users themselves are kept, including anyone who belonged only here.' },
             { tone: 'warning', text: 'Refused if it holds projects, inventory, transactions or documents. Close it instead.' },
           ],
@@ -831,45 +838,45 @@ export default function BuilderPortalAdmin() {
         const membership = confirm.membership;
         const who = userName(membership.builder_user_id);
         return {
-          title: 'Revoke this membership?',
+          title: 'Revoke this organisation access?',
           description: `${who} will lose access through ${organisationName(membership.organisation_id)}.`,
           consequences: [
             { tone: 'ends', text: 'Access to this organisation ends immediately.' },
             ...(confirm.isLast
               ? [{
                 tone: 'warning' as const,
-                text: 'This is their last active membership — they will lose all Builder Portal access and their sessions will be ended.',
+                text: 'This is their last active organisation access — they will lose the Builder Portal entirely and their sessions will be ended.',
               }]
-              : [{ tone: 'remains' as const, text: 'Their other memberships are unaffected.' }]),
-            { tone: 'remains', text: 'The membership record is kept, marked revoked, as audit evidence.' },
-            { tone: 'remains', text: 'A fresh membership can be granted later.' },
+              : [{ tone: 'remains' as const, text: 'Their access to other organisations is unaffected.' }]),
+            { tone: 'remains', text: 'The access record is kept, marked revoked, as audit evidence.' },
+            { tone: 'remains', text: 'Fresh organisation access can be granted later.' },
           ],
-          confirmLabel: 'Revoke membership', destructive: true,
+          confirmLabel: 'Revoke organisation access', destructive: true,
           reasonRequired: true, reasonLabel: 'Reason for revoking',
           reasonPlaceholder: 'Changed role, left the organisation…',
           run: (reason) => void runConfirmed('revoke_membership', {
             membership_id: membership.id, reason,
-          }, 'Membership revoked'),
+          }, 'Organisation access revoked'),
         };
       }
 
       case 'membership_remove': {
         const membership = confirm.membership;
         return {
-          title: 'Permanently remove this membership?',
+          title: 'Permanently remove this access assignment?',
           description: `The link between ${userName(membership.builder_user_id)} and ${organisationName(membership.organisation_id)} will be deleted.`,
           consequences: [
-            { tone: 'ends', text: 'The membership and its permission overrides are deleted.' },
+            { tone: 'ends', text: 'The access assignment and its permission overrides are deleted.' },
             { tone: 'ends', text: 'Access through this organisation ends. If it is their last, their sessions end too.' },
             { tone: 'remains', text: 'The user is kept. The organisation is kept.' },
             { tone: 'remains', text: 'Projects, documents and the audit trail are kept — the removal is recorded with a full snapshot.' },
           ],
-          confirmLabel: 'Remove membership', destructive: true,
+          confirmLabel: 'Remove access assignment', destructive: true,
           reasonRequired: true, reasonLabel: 'Reason for permanent removal',
           reasonPlaceholder: 'Granted in error…',
           run: (reason) => void runConfirmed('delete_membership', {
             membership_id: membership.id, expected_version: membership.row_version, reason,
-          }, 'Membership removed'),
+          }, 'Access assignment removed'),
         };
       }
 
@@ -903,8 +910,8 @@ export default function BuilderPortalAdmin() {
             Builder / Developer Portal
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Administer builder and developer organisations, portal users, memberships and the
-            project, inventory and delivery surfaces they work in.
+            Administer builder and developer organisations, portal users, organisation access and
+            the project, inventory and delivery surfaces they work in.
           </p>
         </div>
         <Button
@@ -940,8 +947,8 @@ export default function BuilderPortalAdmin() {
         <BuilderStatCard
           icon={KeyRound}
           value={`${stats.liveMemberships}/${stats.memberships}`}
-          label="Active memberships"
-          hint="organisation access grants"
+          label="Active organisation access"
+          hint="assignments granting a workspace"
         />
       </div>
 
@@ -961,7 +968,7 @@ export default function BuilderPortalAdmin() {
               <Users className="h-4 w-4" aria-hidden />
               <AlertDescription>
                 {usersWithoutAccess.length} portal {usersWithoutAccess.length === 1 ? 'user has' : 'users have'} no
-                active organisation membership and therefore no portal access.
+                active organisation access and therefore cannot enter the portal.
               </AlertDescription>
             </Alert>
           )}
@@ -988,14 +995,17 @@ export default function BuilderPortalAdmin() {
             </span>
             <span className="sr-only">, {organisations.length} organisations</span>
           </TabsTrigger>
+          {/* The tab value stays `memberships`: it is the stored vocabulary the
+              page, the operations and the server all share. Only the label a
+              reader sees is organisation-access wording. */}
           <TabsTrigger value="memberships" className="relative shrink-0 gap-2">
             <KeyRound className="h-4 w-4 shrink-0" aria-hidden />
-            Memberships
+            Organisation Access
             {/* Counts the rows the tab actually shows, revoked included. */}
             <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
               {memberships.length}
             </span>
-            <span className="sr-only">, {memberships.length} memberships</span>
+            <span className="sr-only">, {memberships.length} access assignments</span>
           </TabsTrigger>
           {/* Projects and Transactions carry no badge: neither count is loaded
               by this page, and a fabricated number is worse than none. */}
@@ -1228,7 +1238,7 @@ export default function BuilderPortalAdmin() {
                   <BuilderEmptyState
                     icon={Users}
                     title="No portal users yet"
-                    description="Add the first builder or developer contact. They are created without access — grant a membership, then invite them."
+                    description="Add the first builder or developer contact. They are created without access — grant organisation access, then invite them."
                     action={canEdit ? (
                       <Button
                         variant="outline"
@@ -1308,7 +1318,7 @@ export default function BuilderPortalAdmin() {
                             <div className="flex flex-wrap items-center justify-end gap-2">
                               {stage === 'no_membership' && (
                                 <span className="text-xs text-muted-foreground">
-                                  Grant a membership before inviting
+                                  Grant organisation access before inviting
                                 </span>
                               )}
                           
@@ -1349,7 +1359,7 @@ export default function BuilderPortalAdmin() {
                                       onClick={() => setMembershipDialog({ open: true, membership: null })}
                                     >
                                       <KeyRound className="mr-2 h-4 w-4" aria-hidden />
-                                      Grant membership
+                                      Grant organisation access
                                     </DropdownMenuItem>
                                   )}
                           
@@ -1424,15 +1434,17 @@ export default function BuilderPortalAdmin() {
           </Card>
         </TabsContent>
 
-        {/* ------------------------------------------------------ memberships */}
+        {/* ---------------------------------------------- organisation access */}
         <TabsContent value="memberships" className="mt-4">
           <Card>
             <CardHeader className="flex flex-col items-start justify-between gap-3 space-y-0 sm:flex-row sm:items-center">
               <div className="min-w-0">
-                <CardTitle className="text-base">Organisation memberships</CardTitle>
+                <CardTitle className="text-base">Organisation Access Assignments</CardTitle>
                 <CardDescription>
-                  Membership is the only thing that grants portal access. Revoking a user's last
-                  membership immediately ends their sessions. Revoked memberships stay listed as
+                  Assign portal users to builder or developer organisations, define their access
+                  role and control which organisation is primary. Organisation access determines
+                  which company workspace a portal user can enter. Revoking a user's last
+                  assignment immediately ends their sessions; revoked assignments stay listed as
                   audit evidence and can be re-granted.
                 </CardDescription>
               </div>
@@ -1442,15 +1454,15 @@ export default function BuilderPortalAdmin() {
                 className="w-full gap-2 sm:w-auto"
               >
                 <Plus className="h-4 w-4" aria-hidden />
-                Grant membership
+                Grant organisation access
               </Button>
             </CardHeader>
             <CardContent className="space-y-4">
               {memberships.length === 0 ? (
                 <BuilderEmptyState
                   icon={KeyRound}
-                  title="No active memberships yet"
-                  description="Nobody holds portal access. Grant a membership to bind a portal user to an organisation."
+                  title="No active organisation access yet"
+                  description="Nobody can enter a workspace. Grant organisation access to bind a portal user to an organisation."
                   action={canEdit ? (
                     <Button
                       variant="outline"
@@ -1459,7 +1471,7 @@ export default function BuilderPortalAdmin() {
                       className="gap-2"
                     >
                       <Plus className="h-4 w-4" aria-hidden />
-                      Grant membership
+                      Grant organisation access
                     </Button>
                   ) : undefined}
                 />
@@ -1469,7 +1481,7 @@ export default function BuilderPortalAdmin() {
                     <TableRow className="bg-muted/50 hover:bg-muted/50">
                       <TableHead className="text-xs font-semibold uppercase tracking-wide">User</TableHead>
                       <TableHead className="text-xs font-semibold uppercase tracking-wide">Organisation</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Role</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Access role</TableHead>
                       <TableHead className="text-xs font-semibold uppercase tracking-wide">Status</TableHead>
                       <TableHead className="text-right text-xs font-semibold uppercase tracking-wide">Actions</TableHead>
                     </TableRow>
@@ -1524,14 +1536,14 @@ export default function BuilderPortalAdmin() {
                                 </Button>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-60">
-                                <DropdownMenuLabel>Membership</DropdownMenuLabel>
+                                <DropdownMenuLabel>Organisation access</DropdownMenuLabel>
 
                                 {isRevoked ? (
                                   <DropdownMenuItem
                                     onClick={() => setMembershipDialog({ open: true, membership })}
                                   >
                                     <RotateCcw className="mr-2 h-4 w-4" aria-hidden />
-                                    Restore membership
+                                    Restore organisation access
                                   </DropdownMenuItem>
                                 ) : (
                                   <>
@@ -1539,7 +1551,7 @@ export default function BuilderPortalAdmin() {
                                       onClick={() => setMembershipDialog({ open: true, membership })}
                                     >
                                       <Pencil className="mr-2 h-4 w-4" aria-hidden />
-                                      Edit membership
+                                      Edit organisation access
                                     </DropdownMenuItem>
 
                                     {!membership.is_primary && (
@@ -1553,7 +1565,7 @@ export default function BuilderPortalAdmin() {
                                         }, 'Primary organisation updated')}
                                       >
                                         <Star className="mr-2 h-4 w-4" aria-hidden />
-                                        Set primary
+                                        Set as primary organisation
                                       </DropdownMenuItem>
                                     )}
 
@@ -1566,8 +1578,8 @@ export default function BuilderPortalAdmin() {
 
                                 <DropdownMenuSeparator />
 
-                                {/* Revoking only applies to a live membership. Removal
-                                    applies to either: a membership is access, and the
+                                {/* Revoking only applies to live access. Removal applies
+                                    to either: the assignment is the access itself, and the
                                     removal audit record is what is kept. */}
                                 {!isRevoked && (
                                   <DropdownMenuItem
@@ -1575,7 +1587,7 @@ export default function BuilderPortalAdmin() {
                                     onClick={() => setConfirm({ kind: 'membership_revoke', membership, isLast })}
                                   >
                                     <ShieldOff className="mr-2 h-4 w-4" aria-hidden />
-                                    Revoke membership
+                                    Revoke organisation access
                                   </DropdownMenuItem>
                                 )}
 
@@ -1584,7 +1596,7 @@ export default function BuilderPortalAdmin() {
                                   onClick={() => setConfirm({ kind: 'membership_remove', membership })}
                                 >
                                   <Trash2 className="mr-2 h-4 w-4" aria-hidden />
-                                  Remove membership
+                                  Remove access assignment
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -1791,7 +1803,7 @@ export default function BuilderPortalAdmin() {
           const ok = await mutate('upsert_membership', {
             ...values,
             ...(editingLive ? { expected_version: editingLive.row_version } : {}),
-          }, editingLive ? 'Membership updated' : 'Membership granted');
+          }, editingLive ? 'Organisation access updated' : 'Organisation access granted');
           if (ok) setMembershipDialog({ open: false, membership: null });
         }}
       />
@@ -1816,7 +1828,7 @@ export default function BuilderPortalAdmin() {
           if (!membership) return;
           const ok = await mutate('update_membership_permissions', {
             membership_id: membership.id, overrides,
-          }, 'Membership permissions updated');
+          }, 'Access permissions updated');
           if (ok) {
             setPermissionsDialog({ open: false, membership: null });
             setMembershipOverrides([]);

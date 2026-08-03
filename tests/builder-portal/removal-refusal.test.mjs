@@ -144,19 +144,21 @@ test('3. removing a membership records the evidence and cleans up its access row
 
 test('4. a revoked membership offers Remove, so nothing is trapped', () => {
   const menu = adminPageCode.slice(
-    adminPageCode.indexOf('<DropdownMenuLabel>Membership</DropdownMenuLabel>'),
+    adminPageCode.indexOf('<DropdownMenuLabel>Organisation access</DropdownMenuLabel>'),
     adminPageCode.indexOf('</DropdownMenuContent>',
-      adminPageCode.indexOf('<DropdownMenuLabel>Membership</DropdownMenuLabel>')));
+      adminPageCode.indexOf('<DropdownMenuLabel>Organisation access</DropdownMenuLabel>')));
 
   // Remove sits outside the !isRevoked guard; only Revoke is inside it.
   // The block ends at a `)}` on its own line — `)}` also occurs inside the
   // onClick handlers, so it cannot be found by a plain indexOf.
   const guarded = /\{!isRevoked && \(\n([\s\S]*?)\n\s*\)\}/.exec(menu)?.[1] ?? '';
   assert.ok(guarded.length > 0, 'the !isRevoked guard block was not found');
-  assert.ok(guarded.includes('Revoke membership'), 'Revoke membership should be live-only');
-  assert.ok(!guarded.includes('Remove membership'), 'Remove membership must not be live-only');
+  assert.ok(guarded.includes('Revoke organisation access'),
+    'Revoking access should be live-only');
+  assert.ok(!guarded.includes('Remove access assignment'),
+    'Removing the assignment must not be live-only');
   assert.match(menu, /kind: 'membership_remove', membership/);
-  assert.match(menu, /Restore membership/);
+  assert.match(menu, /Restore organisation access/);
 });
 
 test('5. the memberships tab counts the rows it actually shows', () => {
