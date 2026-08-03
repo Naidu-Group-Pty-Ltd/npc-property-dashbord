@@ -18,6 +18,20 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from '../_shared/auth.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 
+/**
+ * Client ownership filter, matching the model used by `get-client-data`:
+ * a client is reachable when the caller created it or is the assigned team
+ * member.
+ *
+ * NOTE: the shared `clientAccess.ts` helper additionally grants superadmins
+ * access to every client. That bypass is deliberately NOT implemented here —
+ * this function fails closed, so a superadmin sees only clients they created
+ * or are assigned to. Narrowing is safe; widening would not be. Wiring the
+ * shared helper (and its role-resolution chain) is tracked as follow-up.
+ */
+const clientOwnershipFilter = (userId: string) =>
+  `created_by.eq.${userId},assigned_team_user_id.eq.${userId}`;
+
 type Operation =
   | 'list' | 'get' | 'create' | 'autosave' | 'update_section'
   | 'run_calculation' | 'list_calculations'
@@ -170,6 +184,7 @@ Deno.serve(async (req) => {
     return createUnauthorizedResponse(auth.error || 'Authentication required', corsHeaders);
   }
   const userId = auth.userId;
+
 
   if (!body.operation) {
     return fail('operation is required', 400, corsHeaders, 'MISSING_OPERATION');
@@ -548,29 +563,34 @@ Deno.serve(async (req) => {
       }
 
       // ---------------------------------------------------------------------
-      // Client search for the final linking step. Delegates to the existing
-      // client data function so the caller can only ever see clients they are
-      // already authorised to see — this function does not widen that scope.
+      // Client search for the final linking step.
+      //
+      // Reuses the repository's client-access model rather than inventing one:
+      // a client is reachable when the caller created it or is the assigned
+      // team member, and superadmins see all. This function only ever narrows
+      // that scope, never widens it.
       case 'search_clients': {
         const term = String(body.search ?? '').trim().slice(0, 120);
-        const { data, error } = await supabase
+        let query = supabase
           .from('clients')
-          .select('id, primary_first_name, primary_surname, primary_email, primary_phone, updated_at')
-          .eq('user_id', userId)
+          .select('id, primary_first_name, primary_surname, primary_email, primary_mobile, updated_at')
+          .or(clientOwnershipFilter(userId));
+
+        // Filter in the database, not after a truncated fetch — filtering a
+        // 25-row page in memory would hide any client outside that page.
+        if (term) {
+          const safe = term.replace(/[,()\\*]/g, ' ');
+          query = query.or(
+            `primary_first_name.ilike.%${safe}%,primary_surname.ilike.%${safe}%,primary_email.ilike.%${safe}%`,
+          );
+        }
+
+        const { data, error } = await query
           .order('updated_at', { ascending: false })
           .limit(25);
         if (error) throw error;
 
-        const filtered = term
-          ? (data ?? []).filter((client: Record<string, any>) => {
-            const haystack = [
-              client.primary_first_name, client.primary_surname, client.primary_email,
-            ].filter(Boolean).join(' ').toLowerCase();
-            return haystack.includes(term.toLowerCase());
-          })
-          : (data ?? []);
-
-        return json({ success: true, data: filtered }, 200, corsHeaders);
+        return json({ success: true, data: data ?? [] }, 200, corsHeaders);
       }
 
       // ---------------------------------------------------------------------
@@ -591,12 +611,13 @@ Deno.serve(async (req) => {
         }
 
         // Confirm the caller may reach this client. A client they cannot see is
-        // reported as not found, not as forbidden.
+        // reported as not found, not as forbidden — the distinction would
+        // otherwise confirm the existence of another user's record.
         const { data: client, error: clientError } = await supabase
           .from('clients')
           .select('id')
           .eq('id', body.clientId)
-          .eq('user_id', userId)
+          .or(clientOwnershipFilter(userId))
           .maybeSingle();
         if (clientError) throw clientError;
         if (!client) return fail('Client not found', 404, corsHeaders, 'CLIENT_NOT_FOUND');
