@@ -333,9 +333,21 @@ Deno.serve(async (req) => {
         let uploadPath = path as string;
         let uploadBinding: any = null;
         if (!isInternal) {
-          if (upsert === true) return createForbiddenResponse('Use an authorized replace operation', corsHeaders);
+          // `upsert` is meaningless for a human caller because the destination
+          // path is server-generated and unique, so an overwrite can never
+          // happen. Rejecting the flag outright only broke callers that passed
+          // it defensively (the Branding page did) — ignore it instead.
           uploadBinding = await resolveHumanUploadBinding(supabase, bucket, resource_id, actorId);
-          if (!uploadBinding.ok) return jsonResponse({ success: false, error: 'Invalid upload resource' }, corsHeaders, 403);
+          if (!uploadBinding.ok) {
+            return jsonResponse(
+              { success: false, error: uploadBinding.reason === 'branding_permission_required'
+                ? 'You do not have permission to manage branding assets'
+                : 'Invalid upload resource' },
+              corsHeaders,
+              403,
+            );
+          }
+
           // The probe has no binding; use the canonical client ownership check
           // directly so an arbitrary client UUID cannot be attached.
           if (uploadBinding.clientId) {
