@@ -363,6 +363,8 @@ export function InternalMessageToasts() {
 
       const toRefresh: string[] = [];
       const additions: PopupThread[] = [];
+      let totalUnread = 0;
+      let loudestSender: string | null = null;
 
       for (const t of list) {
         const lastAt: string | null = t.last_message_at ?? null;
@@ -372,6 +374,38 @@ export function InternalMessageToasts() {
             : t.kind === 'broadcast'
               ? t.display_title || 'Announcement'
               : t.display_title || 'Team member';
+
+        totalUnread += t.unread ?? 0;
+
+        // ---- OS-level desktop alert -------------------------------------
+        // Fires whenever an inbound message is newer than the last one we
+        // alerted on. It self-suppresses when this tab is focused, so it only
+        // ever reaches the desktop while the dashboard is in the background.
+        const inbound =
+          !!lastAt &&
+          (t.unread ?? 0) > 0 &&
+          t.last_message_sender_name !== 'You';
+        if (inbound) {
+          const alreadyAlerted = alertedAtRef.current[t.id];
+          const isNew = !alreadyAlerted || new Date(lastAt!) > new Date(alreadyAlerted);
+          if (isNew) {
+            alertedAtRef.current[t.id] = lastAt!;
+            if (alertBootstrappedRef.current) {
+              if (!loudestSender) loudestSender = senderName;
+              const shown = showDesktopMessageAlert({
+                thread_id: t.id,
+                title: t.display_title || 'Team message',
+                sender: senderName,
+                body: typeof t.last_message_preview === 'string' ? t.last_message_preview : '',
+                kind: t.kind === 'broadcast' ? 'broadcast' : t.kind === 'group' ? 'group' : 'direct',
+                priority: (t.last_message_priority as Priority) ?? 'normal',
+              });
+              if (shown) playMessagePing();
+            }
+          }
+        }
+
+
 
         if (openIds.has(t.id)) {
           const current = threadsRef.current.find((x) => x.thread_id === t.id);
