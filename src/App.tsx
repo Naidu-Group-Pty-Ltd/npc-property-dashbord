@@ -27,6 +27,7 @@ import { HarveyCountdown } from "@/components/HarveyCountdown";
 import { Button } from "@/components/ui/button";
 import Overview from "./pages/Overview";
 import Listings from "./pages/Listings";
+import ListingDetail from "./pages/ListingDetail";
 import Calendar from "./pages/Calendar";
 import MarketUpdates from "./pages/MarketUpdates";
 import { MarketArchivePage } from "./components/market-updates/MarketArchivePage";
@@ -492,6 +493,12 @@ const App = () => (
                 <Route index element={<Overview />} />
                 <Route path="dashboard" element={<Overview />} />
                 <Route path="listings" element={<ModuleGuard moduleKey="listings"><Listings /></ModuleGuard>} />
+                {/* A listing is the thing people send each other, and a modal
+                    has no URL. This one survives a paste into Slack. */}
+                <Route
+                  path="listings/:listingId"
+                  element={<ModuleGuard moduleKey="listings"><ListingDetail /></ModuleGuard>}
+                />
                 <Route path="market-updates" element={<MarketUpdates />} />
                 <Route path="market-updates/archived" element={<MarketArchivePage />} />
                 <Route

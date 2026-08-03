@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash, Maximize2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -148,6 +149,12 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
                 >
                   <TrendingUp className="h-4 w-4 mr-2" />
                   Investment Report
+                </Button>
+                {/* The modal is the quick look; the page is the shareable one. */}
+                <Button variant="outline" asChild>
+                  <Link to={`/listings/${listing.id}`}>
+                    <Maximize2 className="h-4 w-4 mr-2" /> Full page
+                  </Link>
                 </Button>
                 {listing.webLinks && (
                   <Button variant="outline" onClick={openWebLink}>

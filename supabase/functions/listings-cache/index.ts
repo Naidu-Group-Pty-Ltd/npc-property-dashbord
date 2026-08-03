@@ -550,6 +550,47 @@ Deno.serve(async (req) => {
     });
     if (!actorQuota.ok || !ipQuota.ok) return j({ success: false, error: 'rate_limited' }, 429);
 
+    /**
+     * One record, for a deep link.
+     *
+     * `/listings/:id` opened in a fresh tab has no warm cache and no in-memory
+     * set to read from. Without this it would have to pull the whole table —
+     * or, worse, fall back to walking Airtable — to render a single property.
+     */
+    if (op === 'record') {
+      const listingId = typeof body.listingId === 'string' ? body.listingId.trim() : '';
+      if (!/^[A-Za-z0-9_-]{3,64}$/.test(listingId)) {
+        return j({ success: false, error: 'invalid_listing_id' }, 400);
+      }
+      const { data: row, error: rowError } = await supabase
+        .from('listings_cache')
+        .select('listing_id, fields, created_time')
+        .eq('listing_id', listingId)
+        .eq('table_key', tableKey)
+        .maybeSingle();
+      if (rowError) return j({ success: false, error: 'read_failed' }, 500);
+      if (!row) return j({ success: false, error: 'not_found' }, 404);
+
+      const record = row as { listing_id: string; fields: Record<string, unknown>; created_time: string | null };
+      const { data: overlay } = await supabase
+        .from('listing_enrichment')
+        .select('values, provenance, status, last_enriched_at')
+        .eq('listing_id', listingId)
+        .maybeSingle();
+
+      return j({
+        success: true,
+        op,
+        tableKey,
+        record: {
+          id: record.listing_id,
+          createdTime: record.created_time,
+          fields: record.fields ?? {},
+        },
+        enrichment: overlay ?? null,
+      });
+    }
+
     const records = await readCache(supabase, tableKey);
     const { data: state } = await supabase
       .from('listings_cache_sync')
