@@ -630,7 +630,6 @@ export default function MarketUpdates() {
                       </div>
                     ) : (
                       <>
-                        <p className="text-sm leading-relaxed text-foreground">{digest.executive_summary}</p>
 
                         <p className="text-sm leading-relaxed text-foreground">{clean(digest.executive_summary)}</p>
 
