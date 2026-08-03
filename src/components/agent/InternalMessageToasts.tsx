@@ -65,6 +65,19 @@ import {
   hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
 import { useAuth } from '@/hooks/useAuth';
+import {
+  clearTabUnreadBadge,
+  dismissDesktopMessageAlert,
+  desktopAlertsEnabled,
+  getDesktopAlertStatus,
+  hasPromptedDesktopAlerts,
+  markPromptedDesktopAlerts,
+  playMessagePing,
+  requestDesktopAlertPermission,
+  setTabUnreadBadge,
+  showDesktopMessageAlert,
+} from '@/lib/desktopMessageAlerts';
+
 
 
 type Priority = 'normal' | 'high' | 'urgent';
