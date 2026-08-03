@@ -20,8 +20,18 @@ import { AdminBuilderConstructionPanel } from '@/components/admin/builder-portal
 import { AdminBuilderDeliveryPanel } from '@/components/admin/builder-portal/AdminBuilderDeliveryPanel';
 import { AdminBuilderCollaborationPanel } from '@/components/admin/builder-portal/AdminBuilderCollaborationPanel';
 import { AdminBuilderWorkspacePanel } from '@/components/admin/builder-portal/AdminBuilderWorkspacePanel';
+import { BuilderStatCard } from '@/components/admin/builder-portal/ui/BuilderStatCard';
+import { BuilderEmptyState } from '@/components/admin/builder-portal/ui/BuilderEmptyState';
+import { BuilderSearchField } from '@/components/admin/builder-portal/ui/BuilderSearchField';
+import { BuilderStatusBadge } from '@/components/admin/builder-portal/ui/BuilderStatusBadge';
+import {
+  BuilderAccessLifecycle, type BuilderAccessLifecycleStep,
+} from '@/components/admin/builder-portal/ui/BuilderAccessLifecycle';
 import { toast } from 'sonner';
-import { Copy, HardHat, Loader2, Mail, Plus, RefreshCw, ShieldCheck, Users } from 'lucide-react';
+import {
+  BriefcaseBusiness, Building2, Copy, FolderKanban, Hammer, Handshake, HardHat, KeyRound, Loader2,
+  Mail, MessageSquare, Package, Plus, RefreshCw, ShieldCheck, Truck, UserCheck, UserPlus, Users,
+} from 'lucide-react';
 
 /**
  * Builder / Developer Portal administration — Phase 1 shell.
@@ -50,11 +60,27 @@ const MEMBERSHIP_ROLES = [
   { value: 'read_only', label: 'Read only' },
 ] as const;
 
-const ORG_STATUS_META: Record<string, { label: string; variant: 'default' | 'secondary' | 'outline' | 'destructive' }> = {
-  active: { label: 'Active', variant: 'default' },
-  pending_activation: { label: 'Pending activation', variant: 'secondary' },
-  suspended: { label: 'Suspended', variant: 'outline' },
-  closed: { label: 'Closed', variant: 'destructive' },
+/**
+ * Status presentation. `dot` is the token-coloured indicator on an outline
+ * pill; `tone: 'destructive'` is the solid badge, kept for the states that
+ * mean no access. Every colour here is a semantic token.
+ *
+ * The tinted `success`/`warning`/`info` badge variants are deliberately not
+ * used: their dark-theme foreground token is near-black on a 12% tint, so the
+ * label all but disappears. An outline pill keeps full foreground contrast in
+ * both themes and carries the tone in the dot instead.
+ */
+interface StatusPresentation {
+  label: string;
+  dot?: string;
+  tone?: 'destructive';
+}
+
+const ORG_STATUS_META: Record<string, StatusPresentation> = {
+  active: { label: 'Active', dot: 'bg-success' },
+  pending_activation: { label: 'Pending activation', dot: 'bg-info' },
+  suspended: { label: 'Suspended', dot: 'bg-warning' },
+  closed: { label: 'Closed', tone: 'destructive' },
 };
 
 interface BuilderOrganisation {
@@ -99,40 +125,54 @@ type AccessStage =
   | 'revoked' | 'no_membership' | 'not_invited'
   | 'invite_pending' | 'invite_expired' | 'active' | 'suspended';
 
-const ACCESS_STAGE_META: Record<AccessStage, {
-  label: string;
-  variant: 'default' | 'secondary' | 'outline' | 'destructive';
-  hint: string;
-}> = {
+/**
+ * Labels and hints are unchanged; only the presentation differs, so each of
+ * the seven stages is distinguishable at a glance. The two stages that mean
+ * "no portal access at all" keep the solid destructive badge.
+ */
+const ACCESS_STAGE_META: Record<AccessStage, StatusPresentation & { hint: string }> = {
   revoked: {
-    label: 'Revoked', variant: 'destructive',
+    label: 'Revoked', tone: 'destructive',
     hint: 'Access has been revoked. Restore to suspended before activating.',
   },
   no_membership: {
-    label: 'No access', variant: 'destructive',
+    label: 'No access', tone: 'destructive',
     hint: 'Step 2 of 5 — grant an organisation membership. Until then this user cannot be invited.',
   },
   not_invited: {
-    label: 'Awaiting invitation', variant: 'secondary',
+    label: 'Awaiting invitation', dot: 'bg-muted-foreground',
     hint: 'Step 3 of 5 — send the invitation so the user can set a password.',
   },
   invite_pending: {
-    label: 'Invitation sent', variant: 'secondary',
+    label: 'Invitation sent', dot: 'bg-info',
     hint: 'Step 4 of 5 — waiting for the user to accept and set a password.',
   },
   invite_expired: {
-    label: 'Invitation expired', variant: 'outline',
+    label: 'Invitation expired', dot: 'bg-warning',
     hint: 'The invitation lapsed before it was accepted. Resend it.',
   },
   active: {
-    label: 'Active', variant: 'default',
+    label: 'Active', dot: 'bg-success',
     hint: 'Step 5 of 5 — the account is active and can sign in.',
   },
   suspended: {
-    label: 'Suspended', variant: 'outline',
+    label: 'Suspended', dot: 'bg-destructive',
     hint: 'Sign-in is blocked and sessions were ended. Restore to return access.',
   },
 };
+
+/**
+ * The order the interface enforces, laid out as a process strip rather than a
+ * paragraph. The wording stays here, beside `accessStageFor`, because this is
+ * the page that enforces the order — the strip component only lays it out.
+ */
+const ACCESS_LIFECYCLE_STEPS: ReadonlyArray<BuilderAccessLifecycleStep> = [
+  { label: 'create the user', icon: UserPlus },
+  { label: 'grant an organisation membership', icon: KeyRound },
+  { label: 'send the invitation', icon: Mail },
+  { label: 'the user accepts and sets a password', icon: ShieldCheck },
+  { label: 'the account becomes active', icon: UserCheck },
+];
 
 /** The stage is read from server-provided state only; nothing here is guessed. */
 function accessStageFor(user: BuilderUser, hasMembership: boolean): AccessStage {
@@ -305,131 +345,268 @@ export default function BuilderPortalAdmin() {
     return users.filter((u) => !withMembership.has(u.id));
   }, [users, liveMemberships]);
 
+  /**
+   * Summary metrics. Every figure is read off the three collections already in
+   * state and every user figure goes through `accessStageFor`, so the cards can
+   * never disagree with the badge on the row. No extra request is made.
+   */
+  const stats = useMemo(() => {
+    const withMembership = new Set(liveMemberships.map((m) => m.builder_user_id));
+    const stages = users.map((u) => accessStageFor(u, withMembership.has(u.id)));
+    return {
+      organisations: organisations.length,
+      activeOrganisations: organisations.filter((o) => o.is_active).length,
+      users: users.length,
+      activeUsers: stages.filter((s) => s === 'active').length,
+      pendingInvitations: stages.filter(
+        (s) => s === 'not_invited' || s === 'invite_pending' || s === 'invite_expired',
+      ).length,
+      memberships: memberships.length,
+      liveMemberships: liveMemberships.length,
+    };
+  }, [organisations, users, memberships, liveMemberships]);
+
+  /** Distinguishes "nothing has been created" from "the search matched nothing". */
+  const isSearching = search.trim().length > 0;
+
   if (loading) {
     return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <div className="space-y-3 text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" aria-hidden />
-          <p className="text-sm text-muted-foreground">Loading Builder Portal administration…</p>
+      <div className="flex min-h-[40vh] items-center justify-center p-6" role="status" aria-live="polite">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <span className="relative flex h-14 w-14 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10">
+            <HardHat className="h-6 w-6 text-primary" aria-hidden />
+            <Loader2 className="absolute h-14 w-14 animate-spin text-primary/40" aria-hidden />
+          </span>
+          <p className="text-sm font-medium text-muted-foreground">
+            Loading Builder Portal administration…
+          </p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6">
+    <div className="space-y-6 p-4 md:p-6">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-primary/30 bg-primary/10">
-            <HardHat className="h-5 w-5 text-primary" aria-hidden />
-          </span>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Builder / Developer Portal</h1>
-            <p className="text-sm text-muted-foreground">
-              Administer builder and developer organisations, portal users and memberships.
-            </p>
-          </div>
+        <div className="min-w-0">
+          <h1 className="flex items-center gap-2.5 text-2xl font-bold tracking-tight">
+            <HardHat className="h-6 w-6 shrink-0 text-primary" aria-hidden />
+            Builder / Developer Portal
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Administer builder and developer organisations, portal users, memberships and the
+            project, inventory and delivery surfaces they work in.
+          </p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void load()} disabled={busy}>
-          <RefreshCw className="mr-2 h-4 w-4" aria-hidden />
+        <Button
+          variant="outline"
+          onClick={() => void load()}
+          disabled={busy}
+          className="w-full gap-2 sm:w-auto"
+        >
+          <RefreshCw className="h-4 w-4" aria-hidden />
           Refresh
         </Button>
       </header>
 
-      {!canEdit && (
-        <Alert>
-          <ShieldCheck className="h-4 w-4" aria-hidden />
-          <AlertDescription>
-            You have read-only access to this module. Contact an administrator to request edit permission.
-          </AlertDescription>
-        </Alert>
-      )}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <BuilderStatCard
+          icon={Building2}
+          value={`${stats.activeOrganisations}/${stats.organisations}`}
+          label="Organisations"
+          hint="active organisations"
+        />
+        <BuilderStatCard
+          icon={Users}
+          value={`${stats.activeUsers}/${stats.users}`}
+          label="Portal users"
+          hint="with live portal access"
+        />
+        <BuilderStatCard
+          icon={Mail}
+          value={stats.pendingInvitations}
+          label="Pending invitations"
+          hint="awaiting account setup"
+        />
+        <BuilderStatCard
+          icon={KeyRound}
+          value={`${stats.liveMemberships}/${stats.memberships}`}
+          label="Active memberships"
+          hint="organisation access grants"
+        />
+      </div>
 
-      {usersWithoutAccess.length > 0 && (
-        <Alert>
-          <Users className="h-4 w-4" aria-hidden />
-          <AlertDescription>
-            {usersWithoutAccess.length} portal {usersWithoutAccess.length === 1 ? 'user has' : 'users have'} no
-            active organisation membership and therefore no portal access.
-          </AlertDescription>
-        </Alert>
-      )}
+      {(!canEdit || usersWithoutAccess.length > 0) && (
+        <div className="space-y-3">
+          {!canEdit && (
+            <Alert className="border-border bg-muted/40">
+              <ShieldCheck className="h-4 w-4" aria-hidden />
+              <AlertDescription>
+                You have read-only access to this module. Contact an administrator to request edit permission.
+              </AlertDescription>
+            </Alert>
+          )}
 
-      <Input
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Search organisations and users"
-        aria-label="Search Builder Portal organisations and users"
-        className="max-w-md"
-      />
+          {usersWithoutAccess.length > 0 && (
+            <Alert className="border-destructive/30 bg-destructive/5">
+              <Users className="h-4 w-4" aria-hidden />
+              <AlertDescription>
+                {usersWithoutAccess.length} portal {usersWithoutAccess.length === 1 ? 'user has' : 'users have'} no
+                active organisation membership and therefore no portal access.
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
 
       <Tabs defaultValue="organisations">
-        <TabsList>
-          <TabsTrigger value="organisations">Organisations ({organisations.length})</TabsTrigger>
-          <TabsTrigger value="users">Portal users ({users.length})</TabsTrigger>
-          <TabsTrigger value="memberships">Memberships ({liveMemberships.length})</TabsTrigger>
-          <TabsTrigger value="projects">Projects</TabsTrigger>
-          <TabsTrigger value="inventory">Inventory</TabsTrigger>
-          <TabsTrigger value="transactions">Transactions</TabsTrigger>
-          <TabsTrigger value="construction">Construction</TabsTrigger>
-          <TabsTrigger value="delivery">Delivery</TabsTrigger>
-          <TabsTrigger value="collaboration">Collaboration</TabsTrigger>
-          <TabsTrigger value="workspace">Workspace</TabsTrigger>
+        <TabsList className="w-full justify-start gap-1 sm:justify-start">
+          <TabsTrigger value="organisations" className="relative shrink-0 gap-2">
+            <Building2 className="h-4 w-4 shrink-0" aria-hidden />
+            Organisations
+            {/* The badge is decorative; the count is spelled out for screen
+                readers so the tab is not announced as "Organisations5". */}
+            <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
+              {organisations.length}
+            </span>
+            <span className="sr-only">, {organisations.length} organisations</span>
+          </TabsTrigger>
+          <TabsTrigger value="users" className="relative shrink-0 gap-2">
+            <Users className="h-4 w-4 shrink-0" aria-hidden />
+            Portal users
+            <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
+              {users.length}
+            </span>
+            <span className="sr-only">, {users.length} portal users</span>
+          </TabsTrigger>
+          <TabsTrigger value="memberships" className="relative shrink-0 gap-2">
+            <KeyRound className="h-4 w-4 shrink-0" aria-hidden />
+            Memberships
+            <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
+              {liveMemberships.length}
+            </span>
+            <span className="sr-only">, {liveMemberships.length} active memberships</span>
+          </TabsTrigger>
+          <TabsTrigger value="projects" className="shrink-0 gap-2">
+            <FolderKanban className="h-4 w-4 shrink-0" aria-hidden />
+            Projects
+          </TabsTrigger>
+          <TabsTrigger value="inventory" className="shrink-0 gap-2">
+            <Package className="h-4 w-4 shrink-0" aria-hidden />
+            Inventory
+          </TabsTrigger>
+          <TabsTrigger value="transactions" className="shrink-0 gap-2">
+            <Handshake className="h-4 w-4 shrink-0" aria-hidden />
+            Transactions
+          </TabsTrigger>
+          <TabsTrigger value="construction" className="shrink-0 gap-2">
+            <Hammer className="h-4 w-4 shrink-0" aria-hidden />
+            Construction
+          </TabsTrigger>
+          <TabsTrigger value="delivery" className="shrink-0 gap-2">
+            <Truck className="h-4 w-4 shrink-0" aria-hidden />
+            Delivery
+          </TabsTrigger>
+          <TabsTrigger value="collaboration" className="shrink-0 gap-2">
+            <MessageSquare className="h-4 w-4 shrink-0" aria-hidden />
+            Collaboration
+          </TabsTrigger>
+          <TabsTrigger value="workspace" className="shrink-0 gap-2">
+            <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden />
+            Workspace
+          </TabsTrigger>
         </TabsList>
 
         {/* ---------------------------------------------------- organisations */}
         <TabsContent value="organisations" className="mt-4">
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-              <div>
-                <CardTitle>Builder and developer organisations</CardTitle>
+            <CardHeader className="flex flex-col items-start justify-between gap-3 space-y-0 sm:flex-row sm:items-center">
+              <div className="min-w-0">
+                <CardTitle className="text-base">Builder and developer organisations</CardTitle>
                 <CardDescription>
                   A developer and a builder may be separate organisations. Organisations are never
                   created automatically from existing builder names.
                 </CardDescription>
               </div>
-              <Button size="sm" disabled={!canEdit || busy} onClick={() => setOrgDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" aria-hidden />
+              <Button
+                disabled={!canEdit || busy}
+                onClick={() => setOrgDialogOpen(true)}
+                className="w-full gap-2 sm:w-auto"
+              >
+                <Plus className="h-4 w-4" aria-hidden />
                 Add organisation
               </Button>
             </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <Table>
+            <CardContent className="space-y-4">
+              <BuilderSearchField
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search by legal name, trading name or ABN…"
+                label="Search Builder Portal organisations and users"
+              />
+
+              {filteredOrganisations.length === 0 ? (
+                isSearching ? (
+                  <BuilderEmptyState
+                    icon={Building2}
+                    title="No matching organisations"
+                    description="No organisation matches this search. Clear the search to see every organisation."
+                  />
+                ) : (
+                  <BuilderEmptyState
+                    icon={Building2}
+                    title="No organisations yet"
+                    description="Add the first builder or developer organisation. Portal users must belong to one before they can be invited."
+                    action={canEdit ? (
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setOrgDialogOpen(true)}
+                        className="gap-2"
+                      >
+                        <Plus className="h-4 w-4" aria-hidden />
+                        Add organisation
+                      </Button>
+                    ) : undefined}
+                  />
+                )
+              ) : (
+                <Table className="!min-w-[820px]">
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Legal name</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>ABN</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Organisation</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Type</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">ABN</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Status</TableHead>
+                      <TableHead className="text-right text-xs font-semibold uppercase tracking-wide">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredOrganisations.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
-                          No organisations yet.
-                        </TableCell>
-                      </TableRow>
-                    )}
                     {filteredOrganisations.map((organisation) => {
                       const meta = ORG_STATUS_META[organisation.status] ?? ORG_STATUS_META.pending_activation;
                       return (
                         <TableRow key={organisation.id}>
-                          <TableCell>
-                            <span className="font-medium">{organisation.legal_name}</span>
+                          <TableCell className="max-w-[22rem]">
+                            <span className="block break-words font-medium leading-tight">
+                              {organisation.legal_name}
+                            </span>
                             {organisation.trading_name && (
-                              <span className="block text-xs text-muted-foreground">
+                              <span className="mt-0.5 block break-words text-xs text-muted-foreground">
                                 trading as {organisation.trading_name}
                               </span>
                             )}
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {ORG_TYPES.find((t) => t.value === organisation.org_type)?.label ?? organisation.org_type}
+                          <TableCell>
+                            <Badge variant="outline" className="whitespace-nowrap font-normal text-muted-foreground">
+                              {ORG_TYPES.find((t) => t.value === organisation.org_type)?.label ?? organisation.org_type}
+                            </Badge>
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{organisation.abn ?? '—'}</TableCell>
-                          <TableCell><Badge variant={meta.variant}>{meta.label}</Badge></TableCell>
+                          <TableCell className="whitespace-nowrap text-sm tabular-nums text-muted-foreground">
+                            {organisation.abn ?? '—'}
+                          </TableCell>
+                          <TableCell>
+                            <BuilderStatusBadge label={meta.label} dot={meta.dot} tone={meta.tone} />
+                          </TableCell>
                           <TableCell className="text-right">
                             <Button
                               size="sm"
@@ -450,7 +627,7 @@ export default function BuilderPortalAdmin() {
                     })}
                   </TableBody>
                 </Table>
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -458,45 +635,79 @@ export default function BuilderPortalAdmin() {
         {/* ------------------------------------------------------------ users */}
         <TabsContent value="users" className="mt-4">
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-              <div>
-                <CardTitle>Portal users</CardTitle>
+            <CardHeader className="flex flex-col items-start justify-between gap-3 space-y-0 sm:flex-row sm:items-center">
+              <div className="min-w-0">
+                <CardTitle className="text-base">Portal users</CardTitle>
                 <CardDescription>
-                  Access is granted in order: <strong>1.</strong> create the user →
-                  {' '}<strong>2.</strong> grant an organisation membership →
-                  {' '}<strong>3.</strong> send the invitation →
-                  {' '}<strong>4.</strong> the user accepts and sets a password →
-                  {' '}<strong>5.</strong> the account becomes active. An account cannot be
-                  activated by hand; it becomes active only by the user accepting their
-                  invitation. Job title is descriptive and grants nothing.
+                  Builders, developers and sales staff who sign in to the Builder Portal. Access is
+                  granted in the fixed order shown below.
                 </CardDescription>
               </div>
-              <Button size="sm" disabled={!canEdit || busy} onClick={() => setUserDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" aria-hidden />
+              <Button
+                disabled={!canEdit || busy}
+                onClick={() => setUserDialogOpen(true)}
+                className="w-full gap-2 sm:w-auto"
+              >
+                <Plus className="h-4 w-4" aria-hidden />
                 Add user
               </Button>
             </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <Table>
+            <CardContent className="space-y-4">
+              <BuilderAccessLifecycle
+                steps={ACCESS_LIFECYCLE_STEPS}
+                footnote={(
+                  <>
+                    An account cannot be activated by hand — it becomes active only when the user
+                    accepts their invitation and sets a password. Job title is descriptive and
+                    grants nothing.
+                  </>
+                )}
+              />
+
+              <BuilderSearchField
+                value={search}
+                onValueChange={setSearch}
+                placeholder="Search by name or email…"
+                label="Search Builder Portal organisations and users"
+              />
+
+              {filteredUsers.length === 0 ? (
+                isSearching ? (
+                  <BuilderEmptyState
+                    icon={Users}
+                    title="No matching portal users"
+                    description="No portal user matches this search. Clear the search to see everyone."
+                  />
+                ) : (
+                  <BuilderEmptyState
+                    icon={Users}
+                    title="No portal users yet"
+                    description="Add the first builder or developer contact. They are created without access — grant a membership, then invite them."
+                    action={canEdit ? (
+                      <Button
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => setUserDialogOpen(true)}
+                        className="gap-2"
+                      >
+                        <Plus className="h-4 w-4" aria-hidden />
+                        Add user
+                      </Button>
+                    ) : undefined}
+                  />
+                )
+              ) : (
+                <Table className="!min-w-[1040px]">
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Email</TableHead>
-                      <TableHead>Job title</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Access</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">User</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Job title</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Access stage</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Organisation access</TableHead>
+                      <TableHead className="text-right text-xs font-semibold uppercase tracking-wide">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredUsers.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
-                          No portal users yet.
-                        </TableCell>
-                      </TableRow>
-                    )}
                     {filteredUsers.map((user) => {
                       const memberOf = liveMemberships.filter((m) => m.builder_user_id === user.id);
                       const stage = accessStageFor(user, memberOf.length > 0);
@@ -504,23 +715,42 @@ export default function BuilderPortalAdmin() {
                       const canInvite = stage === 'not_invited';
                       const canResend = stage === 'invite_pending' || stage === 'invite_expired';
                       return (
-                        <TableRow key={user.id}>
-                          <TableCell className="font-medium">{user.name}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{user.email}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{user.job_title ?? '—'}</TableCell>
+                        <TableRow key={user.id} className="align-top">
+                          <TableCell className="max-w-[18rem]">
+                            <span className="block break-words font-medium leading-tight">{user.name}</span>
+                            <span className="mt-0.5 block break-all text-xs text-muted-foreground">
+                              {user.email}
+                            </span>
+                          </TableCell>
+                          <TableCell className="max-w-[12rem] break-words text-sm text-muted-foreground">
+                            {user.job_title ?? '—'}
+                          </TableCell>
                           <TableCell>
-                            <Badge variant={meta.variant}>{meta.label}</Badge>
-                            <span className="mt-1 block max-w-[18rem] text-xs text-muted-foreground">
+                            <BuilderStatusBadge label={meta.label} dot={meta.dot} tone={meta.tone} />
+                            <span className="mt-1.5 block max-w-[18rem] text-xs leading-snug text-muted-foreground">
                               {meta.hint}
                             </span>
                           </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
+                          <TableCell className="max-w-[16rem] text-sm text-muted-foreground">
                             {memberOf.length === 0
-                              ? <span className="text-destructive">No access</span>
-                              : memberOf.map((m) => organisationName(m.organisation_id)).join(', ')}
+                              ? (
+                                <span className="inline-flex items-center gap-1.5 font-medium text-destructive">
+                                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                                  No access
+                                </span>
+                              )
+                              : (
+                                <span className="flex flex-wrap gap-1">
+                                  {memberOf.map((m) => (
+                                    <Badge key={m.id} variant="outline" className="max-w-full font-normal">
+                                      <span className="truncate">{organisationName(m.organisation_id)}</span>
+                                    </Badge>
+                                  ))}
+                                </span>
+                              )}
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="flex flex-wrap justify-end gap-2">
+                            <div className="flex flex-wrap items-center justify-end gap-2">
                               {stage === 'no_membership' && (
                                 <span className="text-xs text-muted-foreground">
                                   Grant a membership before inviting
@@ -532,8 +762,9 @@ export default function BuilderPortalAdmin() {
                                   size="sm"
                                   disabled={!canEdit || busy}
                                   onClick={() => void sendInvite(user, canInvite ? 'invite' : 'resend')}
+                                  className="gap-2"
                                 >
-                                  <Mail className="mr-2 h-4 w-4" aria-hidden />
+                                  <Mail className="h-4 w-4" aria-hidden />
                                   {canInvite ? 'Send invite' : 'Resend invite'}
                                 </Button>
                               )}
@@ -544,6 +775,7 @@ export default function BuilderPortalAdmin() {
                                   variant="outline"
                                   disabled={!canEdit || busy}
                                   onClick={() => void revokeInvite(user)}
+                                  className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
                                 >
                                   Revoke invite
                                 </Button>
@@ -560,6 +792,7 @@ export default function BuilderPortalAdmin() {
                                     status: 'suspended',
                                     reason: 'Suspended by administrator',
                                   }, 'User suspended')}
+                                  className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
                                 >
                                   Suspend
                                 </Button>
@@ -578,7 +811,9 @@ export default function BuilderPortalAdmin() {
                                     expected_version: user.row_version,
                                     status: 'active',
                                   }, 'User restored')}
+                                  className="gap-2"
                                 >
+                                  <UserCheck className="h-4 w-4" aria-hidden />
                                   Restore
                                 </Button>
                               )}
@@ -600,7 +835,7 @@ export default function BuilderPortalAdmin() {
                     })}
                   </TableBody>
                 </Table>
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -608,50 +843,70 @@ export default function BuilderPortalAdmin() {
         {/* ------------------------------------------------------ memberships */}
         <TabsContent value="memberships" className="mt-4">
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-              <div>
-                <CardTitle>Organisation memberships</CardTitle>
+            <CardHeader className="flex flex-col items-start justify-between gap-3 space-y-0 sm:flex-row sm:items-center">
+              <div className="min-w-0">
+                <CardTitle className="text-base">Organisation memberships</CardTitle>
                 <CardDescription>
-                  Membership is the only thing that grants portal access. Revoking a user's last
-                  membership immediately ends their sessions.
+                  Membership is the only thing that grants portal access. Revoked memberships leave
+                  this list, and revoking a user's last membership immediately ends their sessions.
                 </CardDescription>
               </div>
-              <Button size="sm" disabled={!canEdit || busy} onClick={() => setMembershipDialogOpen(true)}>
-                <Plus className="mr-2 h-4 w-4" aria-hidden />
+              <Button
+                disabled={!canEdit || busy}
+                onClick={() => setMembershipDialogOpen(true)}
+                className="w-full gap-2 sm:w-auto"
+              >
+                <Plus className="h-4 w-4" aria-hidden />
                 Grant membership
               </Button>
             </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <Table>
+            <CardContent className="space-y-4">
+              {liveMemberships.length === 0 ? (
+                <BuilderEmptyState
+                  icon={KeyRound}
+                  title="No active memberships yet"
+                  description="Nobody holds portal access. Grant a membership to bind a portal user to an organisation."
+                  action={canEdit ? (
+                    <Button
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => setMembershipDialogOpen(true)}
+                      className="gap-2"
+                    >
+                      <Plus className="h-4 w-4" aria-hidden />
+                      Grant membership
+                    </Button>
+                  ) : undefined}
+                />
+              ) : (
+                <Table className="!min-w-[860px]">
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>User</TableHead>
-                      <TableHead>Organisation</TableHead>
-                      <TableHead>Role</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                    <TableRow className="bg-muted/50 hover:bg-muted/50">
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">User</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Organisation</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Role</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase tracking-wide">Status</TableHead>
+                      <TableHead className="text-right text-xs font-semibold uppercase tracking-wide">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {liveMemberships.length === 0 && (
-                      <TableRow>
-                        <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
-                          No active memberships yet.
-                        </TableCell>
-                      </TableRow>
-                    )}
                     {liveMemberships.map((membership) => (
                       <TableRow key={membership.id}>
-                        <TableCell className="font-medium">{userName(membership.builder_user_id)}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
+                        <TableCell className="max-w-[16rem] break-words font-medium">
+                          {userName(membership.builder_user_id)}
+                        </TableCell>
+                        <TableCell className="max-w-[18rem] break-words text-sm text-muted-foreground">
                           {organisationName(membership.organisation_id)}
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {MEMBERSHIP_ROLES.find((r) => r.value === membership.membership_role)?.label
-                            ?? membership.membership_role}
+                        <TableCell>
+                          <Badge variant="outline" className="whitespace-nowrap font-normal text-muted-foreground">
+                            {MEMBERSHIP_ROLES.find((r) => r.value === membership.membership_role)?.label
+                              ?? membership.membership_role}
+                          </Badge>
                         </TableCell>
-                        <TableCell><Badge variant="default">Active</Badge></TableCell>
+                        <TableCell>
+                          <BuilderStatusBadge label="Active" dot="bg-success" />
+                        </TableCell>
                         <TableCell className="text-right">
                           <Button
                             size="sm"
@@ -660,6 +915,7 @@ export default function BuilderPortalAdmin() {
                             onClick={() => void mutate('revoke_membership', {
                               membership_id: membership.id, reason: 'revoked by administrator',
                             }, 'Membership revoked')}
+                            className="border-destructive/30 text-destructive hover:bg-destructive/10 hover:text-destructive"
                           >
                             Revoke
                           </Button>
@@ -668,11 +924,14 @@ export default function BuilderPortalAdmin() {
                     ))}
                   </TableBody>
                 </Table>
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
-              <TabsContent value="projects" className="mt-4">
+
+        {/* The domain panels each render their own Card, so they are not
+            wrapped again here — a second border would only nest boxes. */}
+        <TabsContent value="projects" className="mt-4">
           <AdminBuilderProjectsPanel canEdit={canEdit} />
         </TabsContent>
 
