@@ -32,9 +32,17 @@ const pureModules = (dir: string) =>
 const BRIDGE_SHAPE =
   /^(?:\/\*\*[\s\S]*?\*\/\s*)?export \* from '\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/reports\/cashFlowComparison\/([\w.]+)\.pure\.ts';\s*$/;
 
-/** Siblings, the design system next door, or the format this one is N of. */
+/**
+ * Siblings, the design system next door, the format this one is N of, and the
+ * shared text helpers.
+ *
+ * `../text.pure.ts` is not another format — it is `_shared/reports/text.pure.ts`,
+ * where `neutraliseUrls` moved when the Report Q&A export became the second
+ * caller. A file, not a directory, which is what stops this reading as "the
+ * parent directory is open now".
+ */
 const ALLOWED_IMPORT =
-  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/cashFlow\/[\w.]+\.pure\.ts)$/;
+  /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/cashFlow\/[\w.]+\.pure\.ts|\.\.\/text\.pure\.ts)$/;
 
 describe('cash flow comparison — single source of truth', () => {
   it('has at least one canonical module', () => {

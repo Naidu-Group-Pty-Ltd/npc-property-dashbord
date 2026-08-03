@@ -20,11 +20,15 @@ import { fetchGlobalReportSettings } from '@/hooks/useGlobalReportSettings';
 import { drawJsPDFDisclaimerPage } from '@/utils/pdfDisclaimerPage';
 import jsPDF from 'jspdf';
 
+import { ReportQaDownloadButton } from './ReportQaDownloadButton';
+
 interface MessageReportEditorProps {
   isOpen: boolean;
   onClose: () => void;
   content: string;
   messageId: string;
+  /** Needed by the typeset export, which reads the answer from the record. */
+  conversationId?: string | null;
   title: string;
   reportNames: string[];
 }
@@ -34,6 +38,7 @@ export function MessageReportEditor({
   onClose, 
   content: originalContent, 
   messageId,
+  conversationId,
   title, 
   reportNames 
 }: MessageReportEditorProps) {
@@ -718,6 +723,17 @@ export function MessageReportEditor({
               <Download className="h-3 w-3 mr-1" />
               Markdown
             </Button>
+            {/*
+              Beside the jsPDF export, not in place of it. This one reads the
+              answer back out of `report_qa_messages` and typesets it through
+              WeasyPrint, so what a broker receives is selectable text.
+            */}
+            <ReportQaDownloadButton
+              conversationId={conversationId ?? null}
+              only="answer"
+              messageId={messageId}
+              label="Typeset PDF"
+            />
             <Button 
               size="sm"
               onClick={exportAsPDF}

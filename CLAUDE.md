@@ -31,16 +31,23 @@ rules from screen, and most of the repo's "logo" files are email-signature banne
 carrying the director's personal mobile number. Architecture and the migration
 programme: [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
-Six formats have been migrated onto it, and each carries its own contract:
+Seven formats have been migrated onto it, and each carries its own contract:
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
 [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md),
 [`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md),
 [`COMPARISON.md`](./docs/reports/COMPARISON.md),
-[`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md) and
-[`CLIENT_DETAILS.md`](./docs/reports/CLIENT_DETAILS.md). Read the relevant one
-before touching that format — all six record defects that only a render against
-production data revealed, and all six name the legacy generators that must
-stay.
+[`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md),
+[`CLIENT_DETAILS.md`](./docs/reports/CLIENT_DETAILS.md) and
+[`QA.md`](./docs/reports/QA.md). Read the relevant one before touching that
+format — all seven record defects that only a render against production data
+revealed, and all seven name the legacy generators that must stay.
+
+The Report Q&A format is the odd one out and the one to read first if you are
+touching prose: its payload is model-authored Markdown rather than typed figures,
+so it carries the programme's only Markdown renderer
+(`_shared/reports/reportQa/markdown.pure.ts`), its sections are discovered from
+the content rather than declared, and it is the only render route that can call a
+model.
 
 ## Report templates
 The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look

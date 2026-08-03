@@ -53,6 +53,7 @@
 import type { Measure } from '../../reportDesign/measure.pure.ts';
 import { aud, percent, ratio, years as yearsUnit } from '../../reportDesign/measure.pure.ts';
 import { buildProjection } from '../cashFlow/normalise.pure.ts';
+import { neutraliseUrls } from '../text.pure.ts';
 import type { CashFlowProjection, ProjectionYear } from '../cashFlow/payload.pure.ts';
 import type {
   AnalysisNote,
@@ -110,29 +111,13 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 /**
  * Turn a URL in model prose back into plain text.
  *
- * Not hygiene — a correctness fix for a failure that takes the whole document
- * down. `assertSafeRenderResources` decodes HTML entities *first*
- * (`renderResourcePolicy.pure.ts:68`) and then throws on any `//host`,
- * `http(s)://`, `file:`, `ftp:` or `gopher:` token **anywhere in the HTML**,
- * including inside escaped body text:
- *
- *     Remote render resources must be normalized into project storage
- *
- * So a model that writes "per corelogic.com.au/median-values" with a scheme on
- * the front fails the render with an error naming no field and no line. Escaping
- * does not help: the policy undoes it before it looks.
- *
- * The scheme and its slashes are removed and the rest of the token kept, so the
- * sentence still reads and still says where the claim came from — `URL_TOKEN`
- * does not match a bare host. Dropping the whole token would silently delete a
- * citation from a client's document, which is a worse answer than a link that
- * is not clickable in a PDF anyway.
+ * The body moved to `../text.pure.ts` when the Report Q&A export became the
+ * second format that needs it — a whole conversation of model prose is where
+ * bare URLs actually live. Re-exported rather than re-imported at the call
+ * sites so this module's own callers and `normalise.spec.ts` are unchanged, and
+ * so there is exactly one implementation to fix.
  */
-export function neutraliseUrls(value: string): string {
-  return value
-    .replace(/(?:https?:)?\/\/+/gi, '')
-    .replace(/\b(?:file|ftp|gopher):\/*/gi, '');
-}
+export { neutraliseUrls };
 
 /** A model-authored string: trimmed, capped, and stripped of URL schemes. */
 const text = (value: unknown, max = MAX_ANALYSIS_SHORT): string =>

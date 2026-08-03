@@ -10,6 +10,7 @@ import {
 import { Download, FileText, FileDown, Sparkles } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { ConversationReportEditor } from './ConversationReportEditor';
+import { ReportQaDownloadButton } from './ReportQaDownloadButton';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -145,6 +146,24 @@ export function ConversationExport({ messages, title, reportNames, conversationI
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {/*
+            The typeset document, above the raster one. Both stay: this produces
+            real text through WeasyPrint, the item below it still opens the
+            jsPDF editor, and the four raw exports underneath are untouched —
+            the .md one is what the typeset document's own truncation notice
+            points at.
+          */}
+          {conversationId && (
+            <div className="px-1 py-1">
+              <ReportQaDownloadButton
+                conversationId={conversationId}
+                variant="ghost"
+                className="w-full justify-start"
+                label="Typeset PDF (WeasyPrint)"
+              />
+            </div>
+          )}
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => setEditorOpen(true)}>
             <Sparkles className="h-4 w-4 mr-2 text-primary" />
             Export as Structured Report (AI)

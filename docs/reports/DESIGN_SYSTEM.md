@@ -374,8 +374,19 @@ PDFs from live form state; there is no row for a server to read.
 
 | Target | For | Path |
 | --- | --- | --- |
-| **A** — server-side | data already persisted: investment, market intelligence, portfolio, borrowing capacity | edge function reads the row → builds HTML → WeasyPrint |
-| **B** — client-side HTML | data that exists only in browser state: cash flow, Formara, Q&A | client imports the same design system via the bridge → POSTs HTML to `render-template-pdf` |
+| **A** — server-side | data already persisted: investment, market intelligence, portfolio, borrowing capacity, property comparison, cash flow comparison, client details, **Report Q&A** | edge function reads the row → builds HTML → WeasyPrint |
+| **B** — client-side HTML | data that exists only in browser state: the cash flow modal's live overrides | client imports the same design system via the bridge → POSTs HTML to `render-template-pdf` |
+
+**Q&A moved from B to A**, and the move is the interesting part of that format.
+It was classified client-side because the browser holds the conversation, but
+every message is a row in `report_qa_messages` and the write-up is a column on
+`report_qa_conversations` — so the browser had nothing the database did not.
+Reading server-side is not only tidier: a transcript the caller posts up is a
+transcript the caller can edit, and that document's whole claim is that it is a
+record of what was asked and what was said. See [`QA.md`](./QA.md).
+
+The Client Details form moved for the same reason and is no longer "Formara" in
+this table: its nine tables are read by `render-client-details-pdf`.
 
 ### The first format: Borrowing Capacity Snapshot
 
