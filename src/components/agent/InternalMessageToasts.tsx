@@ -64,7 +64,22 @@ import {
   sendInternalMessageWithAttachments,
   hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
+import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
+
+import {
+  clearTabUnreadBadge,
+  dismissDesktopMessageAlert,
+  desktopAlertsEnabled,
+  getDesktopAlertStatus,
+  hasPromptedDesktopAlerts,
+  markPromptedDesktopAlerts,
+  playMessagePing,
+  requestDesktopAlertPermission,
+  setTabUnreadBadge,
+  showDesktopMessageAlert,
+} from '@/lib/desktopMessageAlerts';
+
 
 
 type Priority = 'normal' | 'high' | 'urgent';
@@ -305,6 +320,15 @@ export function InternalMessageToasts() {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   /** thread_id → last time we broadcast a typing hint (throttling). */
   const lastTypingSentRef = useRef<Record<string, number>>({});
+  /**
+   * Desktop-alert bookkeeping: thread_id → newest message timestamp we have
+   * already alerted on, so a background tab fires exactly one OS notification
+   * per inbound message (and none at all for the initial catch-up load).
+   */
+  const alertedAtRef = useRef<Record<string, string>>({});
+  const alertBootstrappedRef = useRef(false);
+
+
 
 
   const persist = useCallback((next: PopupThread[]) => {
@@ -354,6 +378,8 @@ export function InternalMessageToasts() {
 
       const toRefresh: string[] = [];
       const additions: PopupThread[] = [];
+      let totalUnread = 0;
+      let loudestSender: string | null = null;
 
       for (const t of list) {
         const lastAt: string | null = t.last_message_at ?? null;
@@ -363,6 +389,38 @@ export function InternalMessageToasts() {
             : t.kind === 'broadcast'
               ? t.display_title || 'Announcement'
               : t.display_title || 'Team member';
+
+        totalUnread += t.unread ?? 0;
+
+        // ---- OS-level desktop alert -------------------------------------
+        // Fires whenever an inbound message is newer than the last one we
+        // alerted on. It self-suppresses when this tab is focused, so it only
+        // ever reaches the desktop while the dashboard is in the background.
+        const inbound =
+          !!lastAt &&
+          (t.unread ?? 0) > 0 &&
+          t.last_message_sender_name !== 'You';
+        if (inbound) {
+          const alreadyAlerted = alertedAtRef.current[t.id];
+          const isNew = !alreadyAlerted || new Date(lastAt!) > new Date(alreadyAlerted);
+          if (isNew) {
+            alertedAtRef.current[t.id] = lastAt!;
+            if (alertBootstrappedRef.current) {
+              if (!loudestSender) loudestSender = senderName;
+              const shown = showDesktopMessageAlert({
+                thread_id: t.id,
+                title: t.display_title || 'Team message',
+                sender: senderName,
+                body: typeof t.last_message_preview === 'string' ? t.last_message_preview : '',
+                kind: t.kind === 'broadcast' ? 'broadcast' : t.kind === 'group' ? 'group' : 'direct',
+                priority: (t.last_message_priority as Priority) ?? 'normal',
+              });
+              if (shown) playMessagePing();
+            }
+          }
+        }
+
+
 
         if (openIds.has(t.id)) {
           const current = threadsRef.current.find((x) => x.thread_id === t.id);
@@ -438,10 +496,17 @@ export function InternalMessageToasts() {
         additions.forEach((a) => loadMessages(a.thread_id, false));
       }
 
+      // Tab title badge: signals a background-but-visible tab in the tab strip.
+      setTabUnreadBadge(totalUnread, loudestSender ?? undefined);
+      // The first sweep only records state — it must never replay a backlog of
+      // OS notifications when the dashboard is opened.
+      alertBootstrappedRef.current = true;
+
       // Refreshing a minimised conversation must not clear its unread badge.
       toRefresh.forEach((id) =>
         loadMessages(id, activeRef.current === id && !minimisedRef.current[id]),
       );
+
     } catch {
       /* silent — badge/panel remain the source of truth */
     }
@@ -455,11 +520,49 @@ export function InternalMessageToasts() {
     });
     check();
     const id = setInterval(check, POLL_MS);
+    // Background tabs get their timers throttled, so re-sync the moment the
+    // dashboard becomes visible again (and whenever it regains focus).
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     return () => {
       off();
       clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      clearTabUnreadBadge();
     };
   }, [user, check]);
+
+  /**
+   * One-time desktop-alert opt-in. Browsers only grant `Notification`
+   * permission from a user gesture, so we piggy-back on the first click
+   * anywhere in the dashboard rather than nagging with a modal.
+   */
+  useEffect(() => {
+    if (!user) return;
+    if (getDesktopAlertStatus() !== 'default') return;
+    if (hasPromptedDesktopAlerts() || !desktopAlertsEnabled()) return;
+
+    const onFirstGesture = async () => {
+      window.removeEventListener('pointerdown', onFirstGesture);
+      markPromptedDesktopAlerts();
+      const result = await requestDesktopAlertPermission();
+      if (result === 'granted') {
+        toast.success('Desktop alerts on', {
+          description:
+            'You will now get a notification on your desktop when a team message arrives, even while the dashboard is in another tab.',
+          duration: 6000,
+        });
+      }
+    };
+    window.addEventListener('pointerdown', onFirstGesture, { once: true });
+    return () => window.removeEventListener('pointerdown', onFirstGesture);
+  }, [user]);
+
+
 
   /**
    * "Pop out chat" from the Aurixa widget: detach any conversation (direct,
@@ -791,7 +894,9 @@ export function InternalMessageToasts() {
             setThreads((prev) =>
               prev.map((x) => (x.thread_id === t.thread_id ? { ...x, unread: 0 } : x)),
             );
+            dismissDesktopMessageAlert(t.thread_id);
             loadMessages(t.thread_id, true);
+
           }}
           onDismiss={() => dismiss(t.thread_id)}
         />
