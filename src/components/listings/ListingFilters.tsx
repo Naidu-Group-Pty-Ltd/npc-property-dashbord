@@ -37,6 +37,9 @@ interface ListingFiltersProps {
     zipCodes: string[];
     sourceHosts: string[];
     agencies: string[];
+    /** Optional: present once the projection reads the columns they live in. */
+    intents?: string[];
+    sectors?: string[];
   };
 }
 
@@ -364,6 +367,87 @@ export function ListingFilters({ filters, setFilters, uniqueValues }: ListingFil
                       aria-label="Include listings with undisclosed prices in a price range"
                     />
                   </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">
+                      Flagged for review
+                      <span className="block text-[11px] text-muted-foreground">
+                        The pipeline was not confident about these
+                      </span>
+                    </span>
+                    <Switch
+                      checked={localFilters.needsReview}
+                      onCheckedChange={(checked) => setLocalFilters({ ...localFilters, needsReview: checked })}
+                      aria-label="Only listings flagged for human review"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm">
+                      Conflicting location
+                      <span className="block text-[11px] text-muted-foreground">
+                        State and postcode disagree with each other
+                      </span>
+                    </span>
+                    <Switch
+                      checked={localFilters.localityConflict}
+                      onCheckedChange={(checked) =>
+                        setLocalFilters({ ...localFilters, localityConflict: checked })
+                      }
+                      aria-label="Only listings whose state and postcode conflict"
+                    />
+                  </div>
+                </div>
+
+                {/* Dimensions that only became readable once the projection was
+                    pointed at the real columns. */}
+                <div className="space-y-3">
+                  <Label>Listing type</Label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Select
+                      value={localFilters.intent}
+                      onValueChange={(value) => setLocalFilters({ ...localFilters, intent: value })}
+                    >
+                      <SelectTrigger aria-label="Intent">
+                        <SelectValue placeholder="Sale or rent" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Sale or rent</SelectItem>
+                        {(uniqueValues.intents ?? []).map((value) => (
+                          <SelectItem key={value} value={value}>{value}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={localFilters.sector}
+                      onValueChange={(value) => setLocalFilters({ ...localFilters, sector: value })}
+                    >
+                      <SelectTrigger aria-label="Sector">
+                        <SelectValue placeholder="Any sector" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Any sector</SelectItem>
+                        {(uniqueValues.sectors ?? []).map((value) => (
+                          <SelectItem key={value} value={value}>{value}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="min-quality">Minimum data quality</Label>
+                  <Input
+                    id="min-quality"
+                    inputMode="numeric"
+                    placeholder="e.g. 70"
+                    value={localFilters.minQuality}
+                    onChange={(event) =>
+                      setLocalFilters({ ...localFilters, minQuality: event.target.value })
+                    }
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Percentage. The pipeline scores every record; listings with no
+                    score are excluded once a minimum is set.
+                  </p>
                 </div>
                 </div>
               </div>

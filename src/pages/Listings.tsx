@@ -3,7 +3,7 @@ import type { ElementType, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/contexts/SearchContext';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
-import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
+import { Search, Download, Bed, Bath, Car, X, FileText, RefreshCw, Loader2, Building2, CalendarCheck, AlertTriangle, EyeOff, List, Table2, LayoutGrid, FilterX, Inbox, Database, Map as MapIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import { lazyWithRetry } from '@/lib/lazyWithRetry';
 import { reloadForFreshBuild } from '@/lib/chunkReload';
 import { MobileFilterSheet } from '@/components/listings/MobileFilterSheet';
 import { PropertyCard } from '@/components/listings/PropertyCard';
+import { ListingGalleryGrid } from '@/components/listings/ListingGalleryGrid';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
 import {
@@ -110,10 +111,19 @@ const URL_KEYS_STRING = [
 ] as const;
 const URL_KEYS_BOOL = ['hasInspection', 'lowConfidence', 'offMarket', 'includeNearbySuburbs'] as const;
 
+/**
+ * The four ways the same filtered set can be read.
+ *
+ * `gallery` leads with the photograph and is what a buyer wants; `table` leads
+ * with the numbers and is what an analyst wants. Both draw from one predicate so
+ * they can never disagree about which listings match.
+ */
+export type ListingsViewMode = 'list' | 'table' | 'map' | 'gallery';
+
 function parseListingsUrlState(params: URLSearchParams): {
   filters: Partial<ListingFilters>;
   search: string | null;
-  view: 'list' | 'table' | 'map' | null;
+  view: ListingsViewMode | null;
   hasAny: boolean;
 } {
   let hasAny = false;
@@ -133,7 +143,10 @@ function parseListingsUrlState(params: URLSearchParams): {
   }
   const search = params.get('q');
   const viewRaw = params.get('view');
-  const view = viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' ? viewRaw : null;
+  const view =
+    viewRaw === 'list' || viewRaw === 'table' || viewRaw === 'map' || viewRaw === 'gallery'
+      ? viewRaw
+      : null;
   if (search !== null) hasAny = true;
   if (view !== null) hasAny = true;
   return { filters, search, view, hasAny };
@@ -142,8 +155,8 @@ function parseListingsUrlState(params: URLSearchParams): {
 function buildListingsUrlParams(
   filters: ListingFilters,
   search: string,
-  view: 'list' | 'table' | 'map',
-  defaultView: 'list' | 'table' | 'map',
+  view: ListingsViewMode,
+  defaultView: ListingsViewMode,
 ): URLSearchParams {
   const params = new URLSearchParams();
   for (const key of URL_KEYS_STRING) {
@@ -247,7 +260,7 @@ export default function Listings() {
   const { globalSearchQuery, setGlobalSearchQuery } = useSearch();
   const [selectedListings, setSelectedListings] = useState<Set<string>>(new Set());
   const isMobile = useIsMobile();
-  const defaultViewMode: 'list' | 'table' | 'map' = isMobile ? 'list' : 'table';
+  const defaultViewMode: ListingsViewMode = isMobile ? 'list' : 'table';
 
   // Snapshot URL state once at mount so we can hydrate filters/search/view before
   // React writes anything back to the address bar.
@@ -259,7 +272,7 @@ export default function Listings() {
   );
 
   const [searchQuery, setSearchQuery] = useState(() => initialUrlState.search ?? '');
-  const [viewMode, setViewMode] = useState<'list' | 'table' | 'map'>(
+  const [viewMode, setViewMode] = useState<ListingsViewMode>(
     () => initialUrlState.view ?? defaultViewMode,
   );
 
@@ -452,6 +465,10 @@ export default function Listings() {
     const suburbs = [...new Set(listings.map(l => l.suburb).filter(Boolean))].sort();
     const sourceHosts = [...new Set(listings.map(l => l.sourceHost).filter(Boolean))].sort();
     const agencies = [...new Set(listings.map(l => l.agencyName).filter(Boolean))].sort();
+    // Newly available: the projection reads `Intent` and `Sector` now, so a
+    // rental can be told from a sale for the first time.
+    const intents = [...new Set(listings.map(l => l.intent).filter(Boolean))].sort() as string[];
+    const sectors = [...new Set(listings.map(l => l.sector).filter(Boolean))].sort() as string[];
     
     // Extract states from both field and address — AU states only
     const states = [...new Set(listings.map(l => {
@@ -464,7 +481,7 @@ export default function Listings() {
       return extractPostcode(l.address || '');
     }).filter(Boolean))].sort() as string[];
     
-    return { propertyTypes, suburbs, states, zipCodes, sourceHosts, agencies };
+    return { propertyTypes, suburbs, states, zipCodes, sourceHosts, agencies, intents, sectors };
   }, [listings]);
 
   // Compute nearby suburbs when the filter is active
@@ -606,6 +623,7 @@ export default function Listings() {
   const showListView = viewMode === 'list';
   const showTableView = viewMode === 'table';
   const showMapView = viewMode === 'map';
+  const showGalleryView = viewMode === 'gallery';
   const emptyStateCopy = hasSearchQuery
     ? {
         icon: Search,
@@ -714,6 +732,17 @@ export default function Listings() {
               >
                 <Table2 className="h-4 w-4" />
                 Table
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                aria-pressed={showGalleryView}
+                onClick={() => setViewMode('gallery')}
+                className={cn(LISTINGS_VIEW_CONTROL, 'min-h-10 gap-1.5', showGalleryView ? LISTINGS_VIEW_CONTROL_ACTIVE : LISTINGS_VIEW_CONTROL_INACTIVE)}
+              >
+                <LayoutGrid className="h-4 w-4" />
+                Gallery
               </Button>
               <Button
                 type="button"
@@ -868,6 +897,33 @@ export default function Listings() {
             <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
           </Suspense>
         </ErrorBoundary>
+      ) : showGalleryView ? (
+        filteredListings.length === 0 ? (
+          <ListingsStatePanel
+            icon={emptyStateCopy.icon}
+            eyebrow={emptyStateCopy.eyebrow}
+            title={emptyStateCopy.title}
+            description={emptyStateCopy.description}
+          >
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={clearAllFilters} className={`${LISTINGS_SECONDARY_ACTION} gap-2`}>
+                <X className="h-4 w-4" />
+                Clear filters
+              </Button>
+            )}
+          </ListingsStatePanel>
+        ) : (
+          <ListingGalleryGrid
+            listings={filteredListings}
+            images={listingImages}
+            imagesResolving={listingImagesResolving}
+            selectedIds={selectedListings}
+            onToggleSelect={(listing, checked) => handleSelectListing(listing.id, checked)}
+            onOpenDetails={openDetailsModal}
+            onOpenSource={(listing) => listing.url && openSourceUrl(listing.url)}
+            formatDate={formatDate}
+          />
+        )
       ) : showListView ? (
         <div className="space-y-3">
           {filteredListings.length === 0 ? (

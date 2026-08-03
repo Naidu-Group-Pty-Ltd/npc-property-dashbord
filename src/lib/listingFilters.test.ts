@@ -247,3 +247,54 @@ describe('activeListingFilterCount', () => {
     expect(activeListingFilterCount(filters({ includeUndisclosedPrice: true }))).toBe(0);
   });
 });
+
+/**
+ * These dimensions could not be filtered on before, because the projection was
+ * not reading the columns they live in. `Intent` in particular matters: without
+ * it a weekly rent and a purchase price shared one field.
+ */
+describe('matchesListingFilters — dimensions unlocked by the field map fix', () => {
+  it('filters on intent, sector, package type and source', () => {
+    const rental = makeListing({ intent: 'Rent', sector: 'Residential', sourceType: 'Email Body' });
+    expect(matches(rental, { intent: 'Rent' })).toBe(true);
+    expect(matches(rental, { intent: 'Sale' })).toBe(false);
+    expect(matches(rental, { sector: 'Residential' })).toBe(true);
+    expect(matches(rental, { sector: 'Commercial' })).toBe(false);
+    expect(matches(rental, { sourceType: 'email body' })).toBe(true);
+  });
+
+  it('excludes a listing that does not state the dimension', () => {
+    // Same rule the numeric ranges use: "show me the rentals" cannot be
+    // satisfied by a record that does not say what it is.
+    expect(matches(makeListing({ intent: undefined }), { intent: 'Rent' })).toBe(false);
+    expect(matches(makeListing({ intent: undefined }), { intent: 'all' })).toBe(true);
+  });
+
+  it('filters on data quality, which is now a real signal', () => {
+    // The six confidence columns are populated on 1,440 of 1,441 records and
+    // were read by nothing, so every listing scored 0%.
+    const good = makeListing({
+      confidences: { extraction: 0.9, overall: 0.82, address: null, price: null, specs: null, agent: null },
+    });
+    const poor = makeListing({
+      confidences: { extraction: 0.4, overall: 0.31, address: null, price: null, specs: null, agent: null },
+    });
+    expect(matches(good, { minQuality: '70' })).toBe(true);
+    expect(matches(poor, { minQuality: '70' })).toBe(false);
+    expect(matches(makeListing({ confidences: undefined, confidence: null }), { minQuality: '70' })).toBe(false);
+  });
+
+  it('surfaces the records that need a human, and the contradictory ones', () => {
+    expect(matches(makeListing({ needsHumanReview: true }), { needsReview: true })).toBe(true);
+    expect(matches(makeListing({ needsHumanReview: false }), { needsReview: true })).toBe(false);
+    // 193 of the 1,293 records carrying both a state and a postcode disagree
+    // with themselves; this is how someone finds them.
+    expect(matches(makeListing({ localityTrust: 'conflict' }), { localityConflict: true })).toBe(true);
+    expect(matches(makeListing({ localityTrust: 'record' }), { localityConflict: true })).toBe(false);
+  });
+
+  it('counts the new filters as active', () => {
+    expect(activeListingFilterCount(filters({ intent: 'Rent' }))).toBe(1);
+    expect(activeListingFilterCount(filters({ needsReview: true, minQuality: '70' }))).toBe(2);
+  });
+});

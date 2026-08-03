@@ -57,6 +57,33 @@ export interface ListingFilterState {
    * "$1M–$2M, plus anything undisclosed".
    */
   includeUndisclosedPrice: boolean;
+
+  /* --- Dimensions unlocked by reading the real columns ------------------ */
+
+  /**
+   * `Intent` — Sale, Rent, Lease. Now filterable because the column is read at
+   * all: the projection previously had no notion of a rental, so a weekly rent
+   * and a purchase price sat in the same field.
+   */
+  intent: string;
+  /** `Sector` — Residential, Commercial, Industrial, Rural, Land. */
+  sector: string;
+  /** `Package Type` — House & Land, Build Only, and so on. */
+  packageType: string;
+  /** `Source Type` — how the listing reached us. */
+  sourceType: string;
+  /**
+   * Minimum `Overall Data Quality Score`, as a percentage string.
+   *
+   * Newly meaningful. The six confidence columns are populated on 1,440 of
+   * 1,441 records and were read by nothing, so every listing scored 0% and any
+   * confidence filter was either a no-op or hid everything.
+   */
+  minQuality: string;
+  /** Only listings the pipeline flagged for a human to look at. */
+  needsReview: boolean;
+  /** Only listings whose state and postcode contradict each other. */
+  localityConflict: boolean;
 }
 
 export const DEFAULT_LISTING_FILTERS: ListingFilterState = {
@@ -86,6 +113,13 @@ export const DEFAULT_LISTING_FILTERS: ListingFilterState = {
   hasPhotos: false,
   mappableOnly: false,
   includeUndisclosedPrice: false,
+  intent: 'all',
+  sector: 'all',
+  packageType: 'all',
+  sourceType: 'all',
+  minQuality: '',
+  needsReview: false,
+  localityConflict: false,
 };
 
 export const LISTED_WITHIN_OPTIONS: Array<{ value: string; label: string }> = [
@@ -207,6 +241,19 @@ function withinRange(value: number | null, min: number | null, max: number | nul
  * asserting there are none: an optimistic answer keeps a listing visible, and a
  * filter that hides everything is the worse failure.
  */
+/**
+ * A categorical match, case-insensitively, with `'all'` meaning no constraint.
+ *
+ * A listing with no value for the dimension is excluded once a specific value is
+ * asked for — the same rule `withinRange` applies to numbers. "Show me the
+ * rentals" cannot be satisfied by a record that does not say.
+ */
+function matchesCategory(value: string | null | undefined, filter: string): boolean {
+  if (!filter || filter === 'all') return true;
+  if (!value) return false;
+  return value.toLowerCase() === filter.toLowerCase();
+}
+
 export function listingHasPhotos(
   listing: PropertyListing,
   resolved?: ReadonlySet<string> | null,
@@ -312,6 +359,25 @@ export function matchesListingFilters(
 
   if (filters.hasPhotos && !listingHasPhotos(listing, hasImagesById)) return false;
   if (filters.mappableOnly && !listingIsMappable(listing, mappableById)) return false;
+
+  // Categorical dimensions that only became filterable once the projection
+  // started reading the columns they live in.
+  if (!matchesCategory(listing.intent, filters.intent)) return false;
+  if (!matchesCategory(listing.sector, filters.sector)) return false;
+  if (!matchesCategory(listing.packageType, filters.packageType)) return false;
+  if (!matchesCategory(listing.sourceType, filters.sourceType)) return false;
+
+  if (filters.needsReview && !listing.needsHumanReview) return false;
+  if (filters.localityConflict && listing.localityTrust !== 'conflict') return false;
+
+  const minQuality = bound(filters.minQuality);
+  if (minQuality !== null) {
+    // Expressed as a percentage in the UI because a 0–1 float is not a thing
+    // anyone types into a filter box.
+    const quality = listing.confidences?.overall ?? listing.confidence;
+    if (quality === null || quality === undefined) return false;
+    if (quality * 100 < minQuality) return false;
+  }
 
   // Price. An unpriced listing is admitted only when explicitly asked for.
   const priceMin = bound(filters.priceMin);
