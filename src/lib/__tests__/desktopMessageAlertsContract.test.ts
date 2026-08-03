@@ -20,14 +20,20 @@
  */
 
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import {
+  AURIXA_NOTIFICATION_BADGE,
+  AURIXA_NOTIFICATION_ICON,
   INTERNAL_NOTIFICATION_KIND,
   INTERNAL_THREAD_DEEPLINK_PARAM,
   SW_OPEN_THREAD_MESSAGE,
   buildAlertCopy,
+  getNotificationBadge,
+  getNotificationIcon,
+  setBrandNotificationIcon,
   claimMessageAlert,
   consumeInternalThreadDeepLink,
   desktopAlertsEnabled,
@@ -53,6 +59,7 @@ const T2 = '2026-08-03T09:05:00.000Z';
 beforeEach(() => {
   localStorage.clear();
   resetMessageAlertClaims();
+  setBrandNotificationIcon(null);
 });
 
 describe('duplicate-notification prevention', () => {
@@ -236,6 +243,130 @@ describe('service worker click routing', () => {
   it('leaves the existing Web Push click behaviour intact', () => {
     expect(sw).toContain("await client.navigate(targetUrl)");
     expect(sw).toContain('await self.clients.openWindow(targetUrl)');
+  });
+});
+
+describe('notification branding', () => {
+  it('falls back to the Aurixa Systems mark when no white-label logo is set', () => {
+    expect(getNotificationIcon()).toBe(`${window.location.origin}${AURIXA_NOTIFICATION_ICON}`);
+    expect(AURIXA_NOTIFICATION_ICON).not.toContain('favicon.ico');
+  });
+
+  it('uses the white-label logo when branding provides one', () => {
+    setBrandNotificationIcon('https://cdn.example.com/tenant-mark.png');
+    expect(getNotificationIcon()).toBe('https://cdn.example.com/tenant-mark.png');
+  });
+
+  it('resolves the default to an absolute URL, not a bare path', () => {
+    // A service worker resolves a relative icon against its own scope, not the
+    // page. A 404 icon is a silently unbranded notification.
+    expect(getNotificationIcon().startsWith('http')).toBe(true);
+    expect(getNotificationBadge().startsWith('http')).toBe(true);
+  });
+
+  it('reverts to Aurixa when the white-label logo is removed', () => {
+    setBrandNotificationIcon('https://cdn.example.com/tenant-mark.png');
+    setBrandNotificationIcon(null);
+    expect(getNotificationIcon()).toContain(AURIXA_NOTIFICATION_ICON);
+  });
+
+  it('treats an empty or whitespace logo as no logo', () => {
+    setBrandNotificationIcon('   ');
+    expect(getNotificationIcon()).toContain(AURIXA_NOTIFICATION_ICON);
+  });
+
+  it('refuses the stock scaffold icon even if branding hands it over', () => {
+    // The stock mark is the one thing that must never reach a notification.
+    setBrandNotificationIcon('/favicon.ico');
+    expect(getNotificationIcon()).toContain(AURIXA_NOTIFICATION_ICON);
+  });
+
+  it('keeps the monochrome Aurixa glyph in the badge slot', () => {
+    // Android discards badge colour and keeps only alpha, so a client's
+    // full-colour logo would render as a grey block.
+    setBrandNotificationIcon('https://cdn.example.com/tenant-mark.png');
+    expect(getNotificationBadge()).toContain(AURIXA_NOTIFICATION_BADGE);
+  });
+
+  it('ships the default artwork the fallbacks point at', () => {
+    for (const asset of [AURIXA_NOTIFICATION_ICON, AURIXA_NOTIFICATION_BADGE]) {
+      expect(existsSync(join(REPO_ROOT, 'public', asset))).toBe(true);
+    }
+  });
+
+  it('leaves no stock-icon reference on any notification path', () => {
+    for (const file of [
+      'src/lib/desktopMessageAlerts.ts',
+      'src/hooks/useEmailNotifications.tsx',
+      'public/sw-push.js',
+    ]) {
+      const source = read(file);
+      // The only permitted mentions are the constant that names it in order to
+      // refuse it, and the comments explaining why.
+      const offending = source
+        .split('\n')
+        .filter((line) => line.includes('favicon.ico'))
+        .filter((line) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
+        .filter((line) => !line.includes('STOCK_FAVICON ='));
+      expect(offending).toEqual([]);
+    }
+  });
+
+  it('publishes the tenant mark from BrandProvider so alerts follow branding', () => {
+    const provider = read('src/branding/BrandProvider.tsx');
+    expect(provider).toContain("setBrandNotificationIcon(getBrandAssetSrc(settings, 'favicon'))");
+  });
+
+  it('declares an explicit favicon so the browser never guesses the stock one', () => {
+    const html = read('index.html');
+    expect(html).toContain(`href="${AURIXA_NOTIFICATION_ICON}"`);
+    expect(html).not.toContain('content="/favicon.ico"');
+  });
+
+  it('keeps the stock icon out of the PWA manifest', () => {
+    expect(read('public/manifest.json')).not.toContain('favicon.ico');
+  });
+});
+
+describe('the stock icon is gone from disk, not just unreferenced', () => {
+  /**
+   * sha256 of the scaffold's stock heart as it shipped: a 73x74 PNG that was
+   * simply named `.ico`. Redirecting every *reference* away from
+   * `/favicon.ico` still leaves that file being served at that URL, reachable
+   * through a cached manifest, a platform-injected tag, or Chromium's own
+   * fallback when a notification icon fails to load. It is pinned here so it
+   * can never return by a dependency bump or a scaffold regeneration.
+   */
+  const STOCK_HEART_SHA256 =
+    '29a40d56580a5366083461297773dbf146ec043d1156f432f5472cb3487f506b';
+
+  const favicon = readFileSync(join(REPO_ROOT, 'public', 'favicon.ico'));
+
+  it('no longer serves the stock heart at /favicon.ico', () => {
+    expect(createHash('sha256').update(favicon).digest('hex')).not.toBe(STOCK_HEART_SHA256);
+  });
+
+  it('serves a real multi-size ICO rather than a PNG wearing an .ico name', () => {
+    // The stock file was a bare PNG: `89 50 4E 47`. A genuine ICO opens with
+    // reserved=0, type=1, then the image count.
+    expect(favicon.readUInt16LE(0)).toBe(0);
+    expect(favicon.readUInt16LE(2)).toBe(1);
+    expect(favicon.readUInt16LE(4)).toBeGreaterThanOrEqual(4);
+  });
+
+  it('covers the sizes a browser actually asks for', () => {
+    const count = favicon.readUInt16LE(4);
+    const sizes = Array.from({ length: count }, (_, i) => {
+      const width = favicon.readUInt8(6 + i * 16);
+      return width === 0 ? 256 : width;
+    });
+    for (const required of [16, 32, 48]) expect(sizes).toContain(required);
+  });
+
+  it('generates the favicon from the brand source, so it cannot drift', () => {
+    const script = read('scripts/brand/build-aurixa-icons.mjs');
+    expect(script).toContain("'favicon.ico'");
+    expect(script).toContain('buildIco');
   });
 });
 

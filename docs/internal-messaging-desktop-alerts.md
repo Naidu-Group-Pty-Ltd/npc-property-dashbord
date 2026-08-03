@@ -66,6 +66,56 @@ working on is preserved. Only when no window is open does it cold-start one at
 strips on boot. Either path ends in `requestPopOutInternalThread`, the same
 free-floating conversation window the rest of the feature uses.
 
+## Branding — what logo appears on the notification
+
+A notification is the one surface that renders **outside** the app, in the OS
+notification shade next to the browser's own name. A stock scaffold icon there
+is a branding leak, so `/favicon.ico` is used on no notification path at all.
+The resolution chain is:
+
+1. **The tenant's white-label logo.** `BrandProvider` publishes it through
+   `setBrandNotificationIcon()` whenever branding resolves, using the same
+   square-mark chain as the favicon (`favicon` → `sidebarIcon` → `sidebarLogo`
+   → `authLogo`), so uploading a logo under White Label automatically rebrands
+   every alert. Removing it publishes `null` and reverts.
+2. **The Aurixa Systems mark** (`public/brand/aurixa-notification-192.png`) when
+   no white-label logo is configured.
+
+The stock icon is refused defensively: `setBrandNotificationIcon('/favicon.ico')`
+is treated as "no logo". The same chain feeds the favicon badge, so the count is
+stamped on the tenant's mark rather than on a stock one, and `index.html` now
+declares the Aurixa icon explicitly instead of letting the browser guess
+`/favicon.ico`. Resolved icons are absolutised, because a service worker
+resolves a relative icon against its own scope rather than the page, and a 404
+icon is a silently unbranded notification.
+
+**Redirecting the references was not enough.** `public/favicon.ico` was itself
+the scaffold's stock heart — a 73×74 PNG simply named `.ico` — and it stayed
+reachable at that URL through a cached manifest, a platform-injected tag, or
+Chromium's own fallback when a notification icon fails to load. That file is now
+generated from the brand source as a real multi-size ICO (16/32/48/64/128/256),
+and a contract test pins the stock file's sha256 so it cannot return through a
+dependency bump or a scaffold regeneration.
+
+The `badge` slot is deliberately **not** white-labelled. Android renders it as a
+monochrome status-bar glyph — it keeps the alpha channel and discards the colour
+— so a client's full-colour logo comes back as a grey block. That slot always
+carries the flat Aurixa delta (`aurixa-badge-96.png`).
+
+The artwork is generated, not hand-drawn: `public/brand/*.svg` are the sources,
+and `npm run brand:icons` rasterises them through Chromium (Chromium does not
+reliably decode SVG for `Notification.icon`) into the notification PNGs, the
+badge glyph and `favicon.ico`. `npm run brand:icons:check` fails if the
+committed output is stale, and skips with a warning where no browser is
+available.
+
+Two mark variants exist because one drawing cannot serve both ends of the size
+range: `aurixa-mark.svg` carries the orbital rings, the warm bloom and the
+speculars, and feeds everything from 48px up; `aurixa-mark-compact.svg` drops
+all of it and feeds the 16/32px favicon entries, where that detail resamples
+into noise. Both share the same derived delta geometry, so the silhouette is
+identical.
+
 ## Duplicate prevention
 
 Every open dashboard tab polls independently, so the naive "already alerted"
