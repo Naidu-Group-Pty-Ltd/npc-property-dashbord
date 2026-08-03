@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuthenticatedSupabase } from '@/hooks/useAuthenticatedSupabase';
 import type { Json } from '@/integrations/supabase/types';
@@ -12,7 +12,7 @@ import {
 import { getBrandAssetSrc } from './brand-assets';
 import { setBrandNotificationIcon } from '@/lib/desktopMessageAlerts';
 import { applyBrandTokenMap, resolveBrandFontVars, resolveBrandTokens } from './token-resolver';
-import type { BrandContextValue, BrandLogoConfig, BrandThemeConfig, EmailSignatureSettings, ThemeMode, WhiteLabelSettings } from './brand-types';
+import type { BrandContextValue, BrandLogoConfig, BrandSaveResult, BrandThemeConfig, EmailSignatureSettings, ThemeMode, WhiteLabelSettings } from './brand-types';
 
 const BrandContext = createContext<BrandContextValue | undefined>(undefined);
 
@@ -154,7 +154,7 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
   // Branding is READ anonymously (login/portal pages before auth), but WRITES
   // must carry the staff JWT so the deny-by-default RLS (Phase 7) can gate
   // them to admins. Reads stay on the anon client below.
-  const { supabase: authedSupabase } = useAuthenticatedSupabase();
+  const { supabase: authedSupabase, isAuthenticated } = useAuthenticatedSupabase();
   const [settings, setSettings] = useState<WhiteLabelSettings>(defaultBrandConfig);
   const [isLoading, setIsLoading] = useState(true);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getInitialThemeMode(defaultBrandConfig.darkModeDefault));
@@ -289,8 +289,106 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
     }
   }, [settings]);
 
-  const updateSettings = useCallback((newSettings: Partial<WhiteLabelSettings>) => {
-    setSettings((prev) => {
+  /**
+   * Read the live settings without making them a dependency of the save
+   * callback. `updateSettings` must re-create whenever the Supabase client
+   * changes (see below) but must NOT re-create on every settings edit.
+   */
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+
+  const persistSettings = useCallback(
+    async (updated: WhiteLabelSettings): Promise<BrandSaveResult> => {
+      if (!updated.id) {
+        return {
+          ok: false,
+          reason: 'error',
+          message: 'Branding has not finished loading yet — try again in a moment.',
+        };
+      }
+
+      /**
+       * `whitelabel_settings` is readable by anyone (`USING (true)`) but its
+       * UPDATE policy is restricted to the `authenticated` role. A client with
+       * no RLS token therefore loads the branding page perfectly and then
+       * writes nothing, matching zero rows and returning NO error. Refusing the
+       * write here is what turns that into something a human can see.
+       */
+      if (!isAuthenticated) {
+        return {
+          ok: false,
+          reason: 'unauthenticated',
+          message:
+            'Your sign-in session has no database token, so nothing can be saved. Reload the page and sign in again.',
+        };
+      }
+
+      const structured = buildStructuredConfig(updated);
+
+      try {
+        // `.select()` is what makes an RLS denial observable: without it,
+        // PostgREST returns 200 and no rows, and `error` stays null.
+        const { data, error } = await authedSupabase
+          .from('whitelabel_settings')
+          .update({
+            auth_logo: updated.authLogo,
+            sidebar_logo: updated.sidebarLogo,
+            sidebar_icon: updated.sidebarIcon,
+            favicon: updated.favicon,
+            company_name: updated.companyName,
+            primary_color: updated.primaryColor,
+            accent_color: updated.accentColor,
+            dark_mode_default: updated.darkModeDefault,
+            email_signature_banner: updated.emailSignature.banner,
+            email_signature_name: updated.emailSignature.name,
+            email_signature_title: updated.emailSignature.title,
+            email_signature_phone: updated.emailSignature.phone,
+            email_signature_email: updated.emailSignature.email,
+            email_signature_website: updated.emailSignature.website,
+            email_signature_address: updated.emailSignature.address,
+            email_signature_disclaimer: updated.emailSignature.disclaimer,
+            theme_config: structured.themeConfig as unknown as Json,
+            logo_config: structured.logoConfig as unknown as Json,
+            theme_version: structured.themeVersion,
+          })
+          .eq('id', updated.id)
+          .select('id');
+
+        if (error) {
+          console.error('Failed to save whitelabel settings:', error);
+          return { ok: false, reason: 'error', message: error.message };
+        }
+
+        if (!data || data.length === 0) {
+          console.error('Whitelabel settings update matched no rows — RLS denied the write.');
+          return {
+            ok: false,
+            reason: 'not-persisted',
+            message:
+              'The database rejected the change. This account may not have edit access to White Label, or the session has expired — reload and sign in again.',
+          };
+        }
+
+        return { ok: true };
+      } catch (error) {
+        console.error('Failed to save whitelabel settings:', error);
+        return {
+          ok: false,
+          reason: 'error',
+          message: error instanceof Error ? error.message : 'Unknown error saving branding.',
+        };
+      }
+    },
+    // The authenticated client is rebuilt when the RLS token arrives. Capturing
+    // it once (the original `[]`) pinned an anonymous client for the life of the
+    // page whenever the token had not yet been minted — every save after that
+    // silently no-opped.
+    [authedSupabase, isAuthenticated],
+  );
+
+  const updateSettings = useCallback(
+    async (newSettings: Partial<WhiteLabelSettings>): Promise<BrandSaveResult> => {
+      const prev = settingsRef.current;
       const updated: WhiteLabelSettings = {
         ...prev,
         ...newSettings,
@@ -304,49 +402,20 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
       updated.logoConfig = structured.logoConfig;
       updated.themeVersion = structured.themeVersion;
 
-      const saveToSupabase = async () => {
-        try {
-          const { error } = await authedSupabase
-            .from('whitelabel_settings')
-            .update({
-              auth_logo: updated.authLogo,
-              sidebar_logo: updated.sidebarLogo,
-              sidebar_icon: updated.sidebarIcon,
-              favicon: updated.favicon,
-              company_name: updated.companyName,
-              primary_color: updated.primaryColor,
-              accent_color: updated.accentColor,
-              dark_mode_default: updated.darkModeDefault,
-              email_signature_banner: updated.emailSignature.banner,
-              email_signature_name: updated.emailSignature.name,
-              email_signature_title: updated.emailSignature.title,
-              email_signature_phone: updated.emailSignature.phone,
-              email_signature_email: updated.emailSignature.email,
-              email_signature_website: updated.emailSignature.website,
-              email_signature_address: updated.emailSignature.address,
-              email_signature_disclaimer: updated.emailSignature.disclaimer,
-              theme_config: structured.themeConfig as unknown as Json,
-              logo_config: structured.logoConfig as unknown as Json,
-              theme_version: structured.themeVersion,
-            })
-            .eq('id', updated.id || '');
+      const result = await persistSettings(updated);
+      // Local state follows the database, not the other way round: a rejected
+      // write must leave the editor showing unsaved changes rather than a
+      // clean slate the server never received.
+      if (!result.ok) return result;
 
-          if (error) {
-            console.error('Failed to save whitelabel settings:', error);
-          }
-        } catch (error) {
-          console.error('Failed to save whitelabel settings:', error);
-        }
-      };
-
+      setSettings(updated);
       if (newSettings.darkModeDefault) {
         setThemeMode(newSettings.darkModeDefault);
       }
-
-      void saveToSupabase();
-      return updated;
-    });
-  }, []);
+      return result;
+    },
+    [persistSettings],
+  );
 
   const value = useMemo<BrandContextValue>(
     () => ({

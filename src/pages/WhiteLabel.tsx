@@ -686,6 +686,7 @@ export default function WhiteLabel() {
     report: { status: 'idle', detail: 'Waiting for validation.', src: null },
     'report-mono': { status: 'idle', detail: 'Waiting for validation.', src: null },
   });
+  const [isSavingBrand, setIsSavingBrand] = useState(false);
   const [showLeavePrompt, setShowLeavePrompt] = useState(false);
   const [showResetPrompt, setShowResetPrompt] = useState(false);
   const [showPresetDialog, setShowPresetDialog] = useState(false);
@@ -878,7 +879,7 @@ export default function WhiteLabel() {
     () => BRAND_SLOT_ORDER.some((slot) => assetValidation[slot].status === 'validating'),
     [assetValidation]
   );
-  const canSaveBranding = hasChanges && canEditWhiteLabel && !hasCriticalChecks && !hasInvalidAssets && !isValidatingAssets;
+  const canSaveBranding = hasChanges && canEditWhiteLabel && !hasCriticalChecks && !hasInvalidAssets && !isValidatingAssets && !isSavingBrand;
   const canUndoLastChange = draftHistoryRef.current.length > 0;
   const handleSaveDraft = useCallback(() => {
     try {
@@ -987,7 +988,7 @@ export default function WhiteLabel() {
     { value: 'system', label: 'System', icon: <Laptop className="h-4 w-4" />, description: 'Follow device settings' },
   ];
 
-  const handleSaveBranding = () => {
+  const handleSaveBranding = async () => {
     if (hasCriticalChecks) {
       toast.error('Resolve the critical brand checks before saving');
       return;
@@ -998,24 +999,43 @@ export default function WhiteLabel() {
       return;
     }
 
-    updateSettings(draftSettings);
-    clearPersistedDraft();
-    setLastDraftSavedAt(null);
-    setAvailablePersistedDraft(null);
-    draftHistoryRef.current = [];
-    toast.success('Branding settings saved');
-    logActivityDirect({
-      actionType: 'whitelabel_settings_updated',
-      entityType: 'whitelabel_settings',
-      entityName: 'Brand System',
-      metadata: {
-        companyName: draftSettings.companyName,
-        hasAuthLogo: Boolean(draftSettings.authLogo),
-        hasSidebarLogo: Boolean(draftSettings.sidebarLogo),
-        hasSidebarIcon: Boolean(draftSettings.sidebarIcon),
-        hasFavicon: Boolean(draftSettings.favicon),
+    if (isSavingBrand) return;
+    setIsSavingBrand(true);
+    try {
+      const result = await updateSettings(draftSettings);
+
+      // A save that the database never accepted must not look like one. This
+      // previously toasted success and cleared the draft unconditionally, so a
+      // rejected write reported "Branding settings saved" AND discarded the
+      // user's edits — which is how removing a logo appeared to do nothing.
+      if (!result.ok) {
+        toast.error('Branding changes were not saved', {
+          description: result.message,
+          duration: 10000,
+        });
+        return;
       }
-    });
+
+      clearPersistedDraft();
+      setLastDraftSavedAt(null);
+      setAvailablePersistedDraft(null);
+      draftHistoryRef.current = [];
+      toast.success('Branding settings saved');
+      logActivityDirect({
+        actionType: 'whitelabel_settings_updated',
+        entityType: 'whitelabel_settings',
+        entityName: 'Brand System',
+        metadata: {
+          companyName: draftSettings.companyName,
+          hasAuthLogo: Boolean(draftSettings.authLogo),
+          hasSidebarLogo: Boolean(draftSettings.sidebarLogo),
+          hasSidebarIcon: Boolean(draftSettings.sidebarIcon),
+          hasFavicon: Boolean(draftSettings.favicon),
+        }
+      });
+    } finally {
+      setIsSavingBrand(false);
+    }
   };
 
   const brandingDraftActions = (
@@ -1035,7 +1055,7 @@ export default function WhiteLabel() {
       <Badge variant="outline" className="min-h-10 rounded-full border-border/70 bg-card/75 px-4 py-2 text-muted-foreground shadow-sm">
         Theme preview: <span className="ml-1 font-semibold capitalize text-foreground">{currentTheme}</span>
       </Badge>
-      <Button className="min-h-10 bg-primary px-4 text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding}>
+      <Button className="min-h-10 bg-primary px-4 text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding} aria-busy={isSavingBrand}>
         <Check className="mr-2 h-4 w-4" />
         Save brand changes
       </Button>
@@ -1172,7 +1192,7 @@ export default function WhiteLabel() {
               setLastDraftSavedAt(null);
             }} disabled={!hasChanges}>Discard</Button>
             <Button variant="outline" className="min-h-10 min-w-0 border-destructive/30 bg-destructive/5 text-destructive shadow-sm transition-all hover:-translate-y-0.5 hover:bg-destructive/10 hover:text-destructive hover:shadow-md hover:shadow-destructive/10 focus-visible:ring-destructive/40 disabled:hover:translate-y-0" onClick={() => setShowResetPrompt(true)} disabled={!canEditWhiteLabel}>Reset to defaults</Button>
-            <Button className="min-h-10 min-w-0 bg-primary text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding}>
+            <Button className="min-h-10 min-w-0 bg-primary text-primary-foreground shadow-lg shadow-primary/25 ring-1 ring-primary/30 transition-all hover:-translate-y-0.5 hover:bg-primary/90 hover:shadow-xl hover:shadow-primary/30 focus-visible:ring-primary/50 disabled:hover:translate-y-0 disabled:shadow-none" onClick={handleSaveBranding} disabled={!canSaveBranding} aria-busy={isSavingBrand}>
               <Check className="mr-2 h-4 w-4" />
               Save brand changes
             </Button>
