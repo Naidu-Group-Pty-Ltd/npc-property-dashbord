@@ -65,7 +65,7 @@ export function BuilderOrganisationFormDialog({
       ...Object.fromEntries(
         (Object.keys(EMPTY) as Array<keyof BuilderOrganisationFormValues>)
           .map((key) => [key, initial[key] ?? EMPTY[key]]),
-      ) as BuilderOrganisationFormValues,
+      ) as Partial<BuilderOrganisationFormValues>,
     });
   }, [open, initial]);
 
