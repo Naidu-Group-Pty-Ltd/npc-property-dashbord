@@ -106,7 +106,7 @@ test('3. a user with no membership cannot be invited', () => {
   // one stage only — which is unreachable without a membership.
   assert.match(adminPageCode, /if \(!hasMembership\) return 'no_membership'/);
   assert.match(adminPageCode, /const canInvite = stage === 'not_invited'/);
-  assert.match(adminPageCode, /Grant a membership before inviting/);
+  assert.match(adminPageCode, /Grant organisation access before inviting/);
   // And the server refuses it regardless of what the interface offers.
   assert.match(invite, /no_membership/);
 });
@@ -160,7 +160,7 @@ test('10. a pending invitation can be revoked without deleting the user', () => 
   assert.ok(adminPageCode.includes('Revoke invite'));
   assert.match(invite, /action === 'revoke_invite'/);
   // The confirmation promises the account survives.
-  assert.match(adminPageCode, /The user account and its memberships are kept/);
+  assert.match(adminPageCode, /The user account and its organisation access are kept/);
 });
 
 // ---------------------------------------------------------------------------
@@ -256,7 +256,7 @@ test('19. an organisation can be closed, and the consequence is spelled out', ()
   assert.ok(adminPageCode.includes('Close organisation'));
   assert.match(adminPageCode, /kind: 'org_status', organisation, status: 'closed'/);
   assert.match(adminPageCode, /Projects, transactions, documents and history are all preserved/);
-  assert.match(adminPageCode, /lose Builder Portal access/);
+  assert.match(adminPageCode, /lose the Builder Portal/);
 });
 
 test('20. organisation removal is refused while dependants exist', () => {
@@ -285,7 +285,7 @@ test('21. an organisation with no dependants is removed, and nothing cascades', 
 });
 
 // ---------------------------------------------------------------------------
-// Memberships
+// Organisation access
 // ---------------------------------------------------------------------------
 
 test('22. a membership can be granted to an existing user and organisation', () => {
@@ -293,7 +293,7 @@ test('22. a membership can be granted to an existing user and organisation', () 
   assert.match(block, /builder_admin_upsert_membership/);
   assert.match(block, /Organisation not found/);
   assert.match(block, /User not found/);
-  assert.ok(adminPageCode.includes('Grant membership'));
+  assert.ok(adminPageCode.includes('Grant organisation access'));
 });
 
 test('23. a duplicate live membership cannot be created', () => {
@@ -310,7 +310,7 @@ test('23. a duplicate live membership cannot be created', () => {
 });
 
 test('24. a membership role can be edited under optimistic concurrency', () => {
-  assert.ok(adminPageCode.includes('Edit membership'));
+  assert.ok(adminPageCode.includes('Edit organisation access'));
   assert.match(adminPageCode, /expected_version: editingLive\.row_version/);
   assert.match(sqlFunctionBody('builder_admin_upsert_membership'), /BUILDER_STALE_WRITE/);
   assert.match(membershipFormDialog, /membership_role/);
@@ -324,32 +324,32 @@ test('25. the primary organisation moves atomically instead of colliding', () =>
   assert.match(fn, /SET is_primary = false/);
   assert.match(fn, /AND \(v_existing\.id IS NULL OR id <> v_existing\.id\)/);
   assert.ok(fn.indexOf('SET is_primary = false') < fn.indexOf('INSERT INTO public.builder_organisation_memberships'));
-  assert.ok(adminPageCode.includes('Set primary'));
+  assert.ok(adminPageCode.includes('Set as primary organisation'));
   assert.match(adminPageCode, /is_primary: true/);
 });
 
 test('26. a membership can be revoked, with a reason', () => {
-  assert.ok(adminPageCode.includes('Revoke membership'));
+  assert.ok(adminPageCode.includes('Revoke organisation access'));
   assert.match(adminPageCode, /kind: 'membership_revoke'/);
   assert.match(adminPageCode, /'revoke_membership'/);
   assert.match(adminPageCode, /reasonLabel: 'Reason for revoking'/);
   // Revocation keeps the record — it is the evidence access once existed.
-  assert.match(adminPageCode, /The membership record is kept, marked revoked, as audit evidence/);
+  assert.match(adminPageCode, /The access record is kept, marked revoked, as audit evidence/);
 });
 
 test('27. revoking the last membership warns that all portal access ends', () => {
   assert.match(adminPageCode, /liveMembershipCountFor\(membership\.builder_user_id\) === 1/);
-  assert.match(adminPageCode, /This is their last active membership/);
-  assert.match(adminPageCode, /they will lose all Builder Portal access/);
+  assert.match(adminPageCode, /This is their last active organisation access/);
+  assert.match(adminPageCode, /they will lose the Builder Portal entirely/);
 });
 
 test('28. a revoked membership can be re-granted without resurrecting the old row', () => {
-  assert.ok(adminPageCode.includes('Restore membership'));
+  assert.ok(adminPageCode.includes('Restore organisation access'));
   // upsert matches only live rows, so a revoked one is replaced by a fresh
   // grant and the revoked record stays put.
   assert.match(adminPageCode, /!membershipDialog\.membership\.revoked_at/);
   // A re-grant does not activate anybody by itself.
-  assert.match(membershipFormDialog, /They still need to accept an\s*\n?\s*invitation and set a password/);
+  assert.match(membershipFormDialog, /They still need to\s*\n?\s*accept an invitation and set a password/);
 });
 
 test('29. membership removal deletes the link and its access rows, nothing else', () => {
@@ -467,7 +467,7 @@ test('the per-stage action set matches the documented lifecycle', () => {
   assert.match(adminPageCode, /\{\(stage === 'suspended' \|\| stage === 'revoked'\) && \(/);
   // Revoking access is meaningless for an already revoked account.
   assert.match(adminPageCode, /\{stage !== 'revoked' && \(/);
-  // Grant membership is offered exactly where the user has none.
+  // Granting access is offered exactly where the user has none.
   assert.match(adminPageCode, /\{stage === 'no_membership' && \(/);
 });
 
@@ -499,5 +499,5 @@ test('permission overrides stay inside the Builder boundary', () => {
   assert.doesNotMatch(stripJsComments(permissionsDialog), /'builder\.[a-z_.]+'/);
   // Leaving a key alone must mean "grant nothing", not "grant the default".
   assert.match(permissionsDialog, /const DECISIONS: PermissionDecision\[\] = \['inherit', 'allow', 'deny'\]/);
-  assert.match(permissionsDialog, /resolves deny-by-default/);
+  assert.match(permissionsDialog, /resolves\s*\n?\s*deny-by-default/);
 });

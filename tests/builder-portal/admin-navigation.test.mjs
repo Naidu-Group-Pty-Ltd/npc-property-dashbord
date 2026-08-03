@@ -5,7 +5,7 @@
  * rather than an administration surface. It is now five, matching the focus of
  * the Solicitor Portal:
  *
- *   Portal users | Organisations | Memberships | Projects | Transactions
+ *   Portal users | Organisations | Organisation Access | Projects | Transactions
  *
  * Inventory, construction, delivery, collaboration and workspace are stages of
  * the same project lifecycle, so they moved into a nested bar inside Projects.
@@ -69,7 +69,7 @@ test('2. the primary tabs are in the required order', () => {
   // The labels read as the brief specifies, in the same order.
   const labels = [...primaryList.matchAll(/aria-hidden \/>\s*\n\s*([A-Z][A-Za-z ]+)\n/g)].map((m) => m[1].trim());
   assert.deepEqual(labels,
-    ['Portal users', 'Organisations', 'Memberships', 'Projects', 'Transactions']);
+    ['Portal users', 'Organisations', 'Organisation Access', 'Projects', 'Transactions']);
 });
 
 test('3. Portal users is the default active tab', () => {

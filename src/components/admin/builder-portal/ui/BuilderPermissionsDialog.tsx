@@ -8,9 +8,12 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, ShieldCheck } from 'lucide-react';
+import { accessRoleLabel } from '@/lib/builderAccessTerms';
 
 /**
- * Per-membership permission overrides.
+ * Per-assignment permission overrides — the access permissions for one
+ * organisation-access record. The props keep the stored `membership`
+ * vocabulary; only the words on screen change.
  *
  * Three things this surface does not do, all of them deliberate:
  *
@@ -107,10 +110,11 @@ export function BuilderPermissionsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-hidden sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>Edit permissions</DialogTitle>
+          <DialogTitle>Edit access permissions</DialogTitle>
           <DialogDescription>
             Overrides for {membershipLabel}. Anything left on <strong>inherit</strong> follows the
-            baseline for the {membershipRole.replace(/_/g, ' ')} role, which resolves deny-by-default.
+            baseline for the {accessRoleLabel(membershipRole)} access role, which resolves
+            deny-by-default.
           </DialogDescription>
         </DialogHeader>
 

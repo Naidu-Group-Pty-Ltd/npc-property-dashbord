@@ -13,6 +13,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
+import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useBuilderInventoryStats, useBuilderProjects, useBuilderUnits } from '@/lib/builderQueries';
 import {
@@ -85,18 +86,8 @@ export default function BuilderInventory() {
       }
     >
       <div className="grid gap-3 sm:grid-cols-3">
-        {summary.map(({ label, value, icon: Icon }) => (
-          <Card key={label}>
-            <CardContent className="flex items-center gap-3 pt-6">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/25 bg-primary/10">
-                <Icon className="h-5 w-5 text-primary" aria-hidden />
-              </span>
-              <div>
-                <p className="text-2xl font-semibold">{value}</p>
-                <p className="text-xs text-muted-foreground">{label}</p>
-              </div>
-            </CardContent>
-          </Card>
+        {summary.map(({ label, value, icon }) => (
+          <BuilderPortalMetricCard key={label} icon={icon} label={label} value={value} />
         ))}
       </div>
 

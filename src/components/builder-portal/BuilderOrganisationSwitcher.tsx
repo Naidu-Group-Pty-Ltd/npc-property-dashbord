@@ -7,11 +7,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
+import { accessRoleLabel } from '@/lib/builderAccessTerms';
 
 /**
  * Organisation switcher. Has no Solicitor counterpart because a solicitor
  * belongs to exactly one firm; Phase 1 permits a Builder user to hold
- * memberships in several organisations.
+ * organisation access to several organisations.
  *
  * The list is whatever the server resolved — it is never assembled in the
  * browser. Selecting one sends a request that the server re-verifies against
@@ -70,7 +71,7 @@ export function BuilderOrganisationSwitcher() {
                   {organisation.trading_name || organisation.legal_name}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {organisation.membership_role.replace(/_/g, ' ')}
+                  {accessRoleLabel(organisation.membership_role)}
                   {organisation.is_primary ? ' · primary' : ''}
                 </span>
               </span>

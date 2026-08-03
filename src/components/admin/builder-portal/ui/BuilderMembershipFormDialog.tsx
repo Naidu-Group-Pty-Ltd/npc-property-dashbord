@@ -10,10 +10,13 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { CircleAlert } from 'lucide-react';
 
 /**
- * Grant a new membership, or edit the role and primary flag of an existing one.
+ * Grant organisation access, or edit the role and primary flag of an existing
+ * assignment. The record is a `membership` everywhere below the surface — the
+ * props, the values and the submitted payload all keep that name; only the
+ * words on screen call it organisation access.
  *
  * When editing, the user and the organisation are fixed and shown as read-only
- * context: moving a membership between organisations is not an edit, it is a
+ * context: moving an assignment between organisations is not an edit, it is a
  * revoke and a fresh grant, and each of those is separately audited.
  *
  * Closed organisations are not offered. The server refuses them too — this only
@@ -54,7 +57,7 @@ export function BuilderMembershipFormDialog({
 
   useEffect(() => { if (open) setForm(initial ?? EMPTY); }, [open, initial]);
 
-  // A revoked user cannot hold a membership; the server rejects it with 409.
+  // A revoked user cannot hold organisation access; the server rejects it with 409.
   const grantableUsers = users.filter((user) => user.status !== 'revoked');
   const openOrganisations = organisations.filter((org) => org.status !== 'closed');
 
@@ -64,11 +67,13 @@ export function BuilderMembershipFormDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{editing ? 'Edit membership' : 'Grant membership'}</DialogTitle>
+          <DialogTitle>
+            {editing ? 'Edit organisation access' : 'Grant organisation access'}
+          </DialogTitle>
           <DialogDescription>
             {editing
-              ? 'Change this membership’s role or make it the user’s primary organisation.'
-              : 'Membership binds a user to one organisation and is the only source of portal access.'}
+              ? 'Change this assignment’s access role, or make it the user’s primary organisation.'
+              : 'Organisation access determines which company workspace a portal user can enter.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -118,14 +123,14 @@ export function BuilderMembershipFormDialog({
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Closed organisations cannot take new members.
+                  Closed organisations cannot take new access assignments.
                 </p>
               </div>
             </>
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="builder-membership-role">Membership role</Label>
+            <Label htmlFor="builder-membership-role">Access role</Label>
             <Select
               value={form.membership_role}
               onValueChange={(value) => setForm((c) => ({ ...c, membership_role: value }))}
@@ -147,7 +152,7 @@ export function BuilderMembershipFormDialog({
               <Label htmlFor="builder-membership-primary">Primary organisation</Label>
               <p className="text-xs text-muted-foreground">
                 The organisation this user lands in when they sign in. Marking this one primary
-                clears the flag on their other memberships.
+                clears the flag on their other organisations.
               </p>
             </div>
             <Switch
@@ -161,8 +166,8 @@ export function BuilderMembershipFormDialog({
             <Alert className="border-border bg-muted/40">
               <CircleAlert className="h-4 w-4" aria-hidden />
               <AlertDescription>
-                Granting membership does not sign the user in. They still need to accept an
-                invitation and set a password before the account becomes active.
+                Granting organisation access does not sign the user in. They still need to
+                accept an invitation and set a password before the account becomes active.
               </AlertDescription>
             </Alert>
           )}
