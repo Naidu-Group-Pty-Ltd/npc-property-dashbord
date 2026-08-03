@@ -130,6 +130,11 @@ verify_jwt = false
 [functions.manage-call-settings]
 verify_jwt = true
 
+# Branding writes authenticate from the HttpOnly staff session cookie inside the
+# handler; the gateway cannot see that cookie, so JWT verification must be off.
+[functions.manage-branding]
+verify_jwt = false
+
 [functions.manage-report-preferences]
 verify_jwt = true
 
