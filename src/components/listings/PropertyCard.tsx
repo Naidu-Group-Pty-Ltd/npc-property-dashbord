@@ -24,6 +24,7 @@ import {
 import { cn } from '@/lib/utils';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import type { StoredListingImage } from '@/lib/listingImages';
+import { displayPrice, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
 
 const LISTING_CARD_BADGE_BASE = 'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold leading-none tracking-[0.02em] shadow-sm';
 const LISTING_CARD_PROPERTY_TYPE_BADGE = 'border-border/80 bg-muted/90 text-foreground dark:border-white/10 dark:bg-white/[0.06] dark:text-foreground';
@@ -61,6 +62,10 @@ export function PropertyCard({
   images,
   imagesResolving,
 }: PropertyCardProps) {
+  // One shared decision about what a price line says, so the card, the table and
+  // the map popup cannot disagree about the same listing.
+  const price = displayPrice(listing);
+  const caveat = qualityCaveat(listing);
   return (
     <Card 
       className={cn(
@@ -93,10 +98,16 @@ export function PropertyCard({
             <span className="mt-1 flex min-w-0 flex-wrap items-center gap-1.5">
               <MapPin className="h-3 w-3 text-muted-foreground shrink-0" />
               <span className="text-xs text-muted-foreground truncate">
-                {listing.suburb || 'Unknown Suburb'}
-                {listing.state && `, ${listing.state}`}
-                {listing.zipCode && ` ${listing.zipCode}`}
+                {formatLocality(listing) || 'Location unknown'}
               </span>
+              {caveat && (
+                <span
+                  title={caveat}
+                  className={cn(badgeVariants({ variant: 'outline' }), LISTING_CARD_BADGE_BASE, 'shrink-0 border-warning/40 text-warning')}
+                >
+                  Check location
+                </span>
+              )}
               {listing.propertyType && (
                 <span className={cn(badgeVariants({ variant: 'outline' }), LISTING_CARD_BADGE_BASE, LISTING_CARD_PROPERTY_TYPE_BADGE, "shrink-0")}>
                   {listing.propertyType}
@@ -137,13 +148,18 @@ export function PropertyCard({
         </div>
 
         {/* Price */}
-        <div className="mt-3">
-          <span className="text-lg font-bold text-primary">
-            {listing.price && listing.price > 0 
-              ? formatCurrency(listing.price) 
-              : 'Price on request'
-            }
+        <div className="mt-3 flex flex-wrap items-baseline gap-2">
+          <span className={cn('text-lg font-bold', price.known ? 'text-primary' : 'text-muted-foreground')}>
+            {price.text}
           </span>
+          {price.isRent && (
+            <span className={cn(badgeVariants({ variant: 'outline' }), LISTING_CARD_BADGE_BASE, 'shrink-0')}>
+              Rental
+            </span>
+          )}
+          {listing.saleMethod && !price.isRent && (
+            <span className="text-xs text-muted-foreground">{listing.saleMethod}</span>
+          )}
         </div>
 
         {/* Property Details Row */}
@@ -163,7 +179,7 @@ export function PropertyCard({
           
           {/* Confidence Badge */}
           <div className="ml-auto">
-            {listing.confidence !== undefined ? (
+            {listing.confidence !== undefined && listing.confidence !== null ? (
               <ConfidenceBadge confidence={listing.confidence} className={cn(LISTING_CARD_CONFIDENCE_BADGE, getListingCardConfidenceBadgeTone(listing.confidence))} />
             ) : null}
           </div>

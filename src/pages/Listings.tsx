@@ -25,6 +25,7 @@ import {
   matchesListingFilters,
   type ListingFilterState,
 } from '@/lib/listingFilters';
+import { displayPrice, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
 import { propertyDataService } from '@/services/propertyDataService';
 import { PropertyListing } from '@/lib/airtable';
 import { BulkActionBar } from '@/components/aurixa';
@@ -974,14 +975,21 @@ export default function Listings() {
                         "max-w-[360px] truncate text-[15px] font-semibold leading-5 tracking-[-0.01em] text-foreground",
                         !listing.address && "text-muted-foreground"
                       )}>
-                        {listing.address || 'Unknown Address'}
+                        {listing.address || listing.fullAddress || 'Address not extracted'}
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
-                        <span className="min-w-0 truncate leading-5">
-                          {listing.suburb || 'Unknown Suburb'}
-                          {(listing.state || extractAUState(listing.address || '')) && `, ${listing.state || extractAUState(listing.address || '')}`}
-                          {(listing.zipCode || extractPostcode(listing.address || '')) && ` ${listing.zipCode || extractPostcode(listing.address || '')}`}
+                        <span className={cn('min-w-0 truncate leading-5', !listing.suburb && LISTING_MISSING_VALUE)}>
+                          {formatLocality(listing) || 'Location unknown'}
                         </span>
+                        {qualityCaveat(listing) && (
+                          <Badge
+                            variant="outline"
+                            title={qualityCaveat(listing) ?? undefined}
+                            className={cn(LISTING_BADGE_BASE, 'border-warning/40 text-warning')}
+                          >
+                            Check location
+                          </Badge>
+                        )}
                         {listing.propertyType && (
                           <Badge variant="outline" className={cn(LISTING_BADGE_BASE, LISTING_PROPERTY_TYPE_BADGE)}>
                             {listing.propertyType}
@@ -993,11 +1001,22 @@ export default function Listings() {
                   </TableCell>
 
                   <TableCell className="py-4 text-right align-middle">
-                    {listing.price && listing.price > 0 ? (
-                      <span className="font-semibold tabular-nums text-foreground">{formatCurrency(listing.price)}</span>
-                    ) : (
-                      <span className={LISTING_MISSING_VALUE}>-</span>
-                    )}
+                    {(() => {
+                      // `Display Price Text` is what the agent wrote and is
+                      // populated on more records than the numeric column, so it
+                      // leads here too — a table showing "-" beside a listing
+                      // whose email said "From $1,599,000" is simply wrong.
+                      const price = displayPrice(listing);
+                      if (!price.known) return <span className={LISTING_MISSING_VALUE}>-</span>;
+                      return (
+                        <span className="font-semibold tabular-nums text-foreground">
+                          {price.text}
+                          {price.isRent && (
+                            <span className="ml-1 text-xs font-normal text-muted-foreground">rent</span>
+                          )}
+                        </span>
+                      );
+                    })()}
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
@@ -1026,7 +1045,7 @@ export default function Listings() {
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">
-                    <div className={cn("max-w-[180px] truncate text-sm font-medium leading-5", !listing.agencyName && "text-muted-foreground")}>{listing.agencyName || 'Unknown Agency'}</div>
+                    <div className={cn("max-w-[180px] truncate text-sm font-medium leading-5", !listing.agencyName && LISTING_MISSING_VALUE)}>{listing.agencyName || '-'}</div>
                   </TableCell>
                   
                   <TableCell className="py-4 align-middle">

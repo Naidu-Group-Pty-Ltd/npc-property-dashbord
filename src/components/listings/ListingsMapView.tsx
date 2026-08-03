@@ -76,6 +76,7 @@ import {
   type PropertyGlyph,
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
+import { displayPrice } from '@/lib/listingDisplay';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
 import { pickHeroImage } from '@/lib/listingImages';
@@ -984,7 +985,9 @@ function ListingPopupCard({
   onOpenDetails: () => void;
 }) {
   const locality = [listing.suburb, listing.state, listing.zipCode].filter(Boolean).join(' ');
-  const price = formatFullAud(listing.price);
+  // The same decision the card and the table make, so one listing cannot read
+  // "$1,599,000" in the grid and "Price undisclosed" in the popup.
+  const price = displayPrice(listing);
   const beds = listing.beds ?? listing.bedrooms;
   const baths = listing.baths ?? listing.bathrooms;
 
@@ -1067,11 +1070,16 @@ function ListingPopupCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        {price ? (
-          <span className="text-sm font-semibold tabular-nums text-primary">{price}</span>
+        {price.known ? (
+          <span className="text-sm font-semibold tabular-nums text-primary">{price.text}</span>
         ) : (
-          <span className="text-xs font-medium text-muted-foreground">Price undisclosed</span>
+          <span className="text-xs font-medium text-muted-foreground">{price.text}</span>
         )}
+        {price.isRent ? (
+          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Rental
+          </span>
+        ) : null}
         {listing.propertyType ? (
           <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             {listing.propertyType}

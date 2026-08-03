@@ -271,8 +271,8 @@ Deno.serve(async (req) => {
       
       // Critical property info (weighted higher) - 35 points max
       if (record.price && record.price > 0) score += 10; // Most important
-      if (record.address && record.address !== 'Unknown Address') score += 8;
-      if (record.suburb && record.suburb !== 'Unknown Suburb') score += 7; 
+      if (record.address) score += 8;
+      if (record.suburb) score += 7;
       if (record.beds && record.beds > 0) score += 5;
       if (record.baths && record.baths > 0) score += 5;
       
@@ -286,8 +286,8 @@ Deno.serve(async (req) => {
       if (record.status && record.status !== 'Available') score += 2;
       
       // Agent and agency info - 15 points max
-      if (record.agentName && record.agentName !== 'Unknown Agent') score += 6;
-      if (record.agencyName && record.agencyName !== 'Unknown Agency') score += 5;
+      if (record.agentName) score += 6;
+      if (record.agencyName) score += 5;
       if (record.agentPhone) score += 4;
       
       // Rich content and media - 20 points max
@@ -310,11 +310,17 @@ Deno.serve(async (req) => {
       if (record.webLinks) score += 2;
       if (record.rawExtract && record.rawExtract.length > 200) score += 3;
       
-      // Quality penalties (subtract points for poor data)
-      if (record.address === 'Unknown Address') score -= 5;
-      if (record.suburb === 'Unknown Suburb') score -= 3;
-      if (record.agentName === 'Unknown Agent') score -= 2;
-      if (record.agencyName === 'Unknown Agency') score -= 2;
+      // Quality penalties (subtract points for poor data).
+      //
+      // These test for absence directly. They used to compare against the
+      // literal strings the projection substituted — 'Unknown Address' and so
+      // on — which the projection no longer emits, so left unchanged they would
+      // simply never fire and every record would score as though its address
+      // were present.
+      if (!record.address) score -= 5;
+      if (!record.suburb) score -= 3;
+      if (!record.agentName) score -= 2;
+      if (!record.agencyName) score -= 2;
       if (!record.price || record.price <= 0) score -= 8;
       
       return Math.max(0, score); // Ensure non-negative score

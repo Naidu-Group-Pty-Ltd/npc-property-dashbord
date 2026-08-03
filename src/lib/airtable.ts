@@ -1,21 +1,51 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { INTAKE_SORT_FIELD } from '@/lib/airtableIntakeFields';
 
+/** The six per-domain quality scores the intake pipeline records. */
+export interface ListingConfidences {
+  extraction: number | null;
+  overall: number | null;
+  address: number | null;
+  price: number | null;
+  specs: number | null;
+  agent: number | null;
+}
+
+/**
+ * How `price` should be read.
+ *
+ * `'rent'` means the listing is a rental and `price` is deliberately null —
+ * a weekly rent must never sit in the same field as a sale price, because every
+ * consumer of `price` (map colour tiers, suburb medians, filter ranges) treats
+ * it as one.
+ */
+export type PriceBasis = 'numeric' | 'range' | 'total' | 'rent' | 'display' | null;
+
+/** Whether a listing's state/postcode survived reconciliation against each other. */
+export type LocalityTrust = 'record' | 'derived' | 'conflict' | 'unknown';
+
 export interface PropertyListing {
   id: string;
   title: string;
   price: number | null;
-  location: string;
+  /**
+   * Nullable throughout, deliberately. These used to carry the literal strings
+   * 'Unknown Address', 'Unknown Suburb', 'Unknown Agent' and 'Unknown Agency',
+   * which were never falsy — so every "is this missing?" check downstream
+   * silently answered no, and the proxy's dedup pass treated two records with no
+   * address as the same property and deleted one of them.
+   */
+  location: string | null;
   bedrooms: number | null;
   bathrooms: number | null;
-  propertyType: string;
+  propertyType: string | null;
   listingDate: string;
-  status: string;
+  status: string | null;
   confidence: number | null;
   source: string;
   description: string;
   images: string[];
-  agent: string;
+  agent: string | null;
   features: string[];
   // Enhanced fields for better data handling
   recordId?: string;
@@ -58,6 +88,94 @@ export interface PropertyListing {
   completenessScore?: number;
   /** Raw Airtable fields exactly as returned by the proxy — used for table-specific extended views. */
   rawFields?: Record<string, any>;
+
+  /* -- Property Intake Master ------------------------------------------------
+   * Everything below is an optional addition, so no existing call site had to
+   * change. They exist because the columns were always there and the projection
+   * simply never read them: `Price Numeric` is populated on 773 of 1,441
+   * records and the six confidence scores on 1,440, while the page rendered
+   * "Price on request" and "Low (0%)".
+   */
+
+  /** What the agent wrote: "From $1,599,000", "$430,000 - $450,000". */
+  priceDisplay?: string | null;
+  priceMin?: number | null;
+  priceMax?: number | null;
+  priceBasis?: PriceBasis;
+  rentAmount?: number | null;
+  rentPeriod?: string | null;
+  priceQualifier?: string | null;
+  saleMethod?: string | null;
+  gstApplicable?: string | null;
+
+  confidences?: ListingConfidences;
+  needsHumanReview?: boolean;
+  reviewReason?: string[];
+  errorType?: string | null;
+  errorMessage?: string | null;
+  humanReviewNotes?: string | null;
+
+  landSizeSqm?: number | null;
+  buildingAreaSqm?: number | null;
+  floorAreaSqm?: number | null;
+  totalAreaSqm?: number | null;
+  frontageM?: number | null;
+  storeys?: number | null;
+  parkingDetails?: string | null;
+
+  sector?: string | null;
+  intent?: string | null;
+  zoning?: string | null;
+  listingStatus?: string | null;
+  recordStatus?: string | null;
+  processingStatus?: string | null;
+  processingStage?: string | null;
+  contractType?: string | null;
+  packageType?: string | null;
+  projectName?: string | null;
+  estateName?: string | null;
+  stage?: string | null;
+  builderDeveloper?: string | null;
+  availabilityDate?: string | null;
+  settlementDate?: string | null;
+
+  fullAddress?: string | null;
+  normalizedAddress?: string | null;
+  unitNumber?: string | null;
+  streetNumber?: string | null;
+  streetName?: string | null;
+  streetType?: string | null;
+  propertyUniqueKey?: string | null;
+  /** Whether state/postcode agreed with each other; `'conflict'` means both were dropped. */
+  localityTrust?: LocalityTrust;
+  localityConflicts?: string[];
+
+  agentMobile?: string | null;
+  agentEmail?: string | null;
+  agentRole?: string | null;
+  agencyPhone?: string | null;
+  agencyEmail?: string | null;
+  agencyWebsite?: string | null;
+
+  inspectionRawText?: string | null;
+  nextInspectionDate?: string | null;
+  openHomeAvailable?: boolean;
+
+  sourceWebLink?: string | null;
+  alternateWebLinks?: string[];
+  sourceType?: string | null;
+  senderEmail?: string | null;
+  senderName?: string | null;
+  senderDomain?: string | null;
+  lastModifiedTime?: string | null;
+  tags?: string[];
+
+  /** False when the date shown is "now" because the record carried none. */
+  listedAtKnown?: boolean;
+  /** Set by the proxy when this record was judged a duplicate of another. */
+  duplicateOf?: string;
+  /** Set on the best record of a duplicate group. */
+  duplicateCount?: number;
 }
 
 

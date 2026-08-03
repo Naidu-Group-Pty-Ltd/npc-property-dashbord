@@ -483,16 +483,24 @@ class PropertyDataService {
     if (this.isValidLocation(listing.address || listing.location)) score += weights.address;
     if ((listing.beds || listing.bedrooms) && (listing.beds || listing.bedrooms)! > 0) score += weights.bedrooms;
     if ((listing.baths || listing.bathrooms) && (listing.baths || listing.bathrooms)! > 0) score += weights.bathrooms;
-    if (listing.propertyType && listing.propertyType !== 'Unknown') score += weights.propertyType;
-    if (listing.suburb && listing.suburb !== 'Unknown') score += weights.suburb;
+    if (listing.propertyType) score += weights.propertyType;
+    if (listing.suburb) score += weights.suburb;
     if (listing.agent || listing.agentName) score += weights.agent;
     if (listing.description && listing.description.length > 20) score += weights.description;
 
     return score;
   }
 
-  private standardizePropertyType(type?: string): string {
-    if (!type) return 'Unknown';
+  /**
+   * Absent stays absent.
+   *
+   * These used to substitute the string 'Unknown', which is not a property type
+   * and not a suburb — it became a selectable value in the filter facets, a
+   * group in every report's "by suburb" breakdown, and a value that passed every
+   * `if (listing.suburb)` check downstream.
+   */
+  private standardizePropertyType(type?: string | null): string | null {
+    if (!type) return null;
     const normalized = type.toLowerCase().trim();
     if (normalized.includes('house') || normalized.includes('home')) return 'House';
     if (normalized.includes('apartment') || normalized.includes('unit')) return 'Apartment';
@@ -503,8 +511,8 @@ class PropertyDataService {
     return type;
   }
 
-  private standardizeSuburb(suburb?: string): string {
-    if (!suburb) return 'Unknown';
+  private standardizeSuburb(suburb?: string | null): string | null {
+    if (!suburb) return null;
     return suburb.trim().replace(/\s+/g, ' ')
       .split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
   }
@@ -549,7 +557,7 @@ class PropertyDataService {
         withPrice: listings.filter(l => this.isValidPrice(l.price)).length,
         withLocation: listings.filter(l => this.isValidLocation(l.address || l.location)).length,
         withBedrooms: listings.filter(l => (l.beds || l.bedrooms) && (l.beds || l.bedrooms)! > 0).length,
-        withPropertyType: listings.filter(l => l.propertyType && l.propertyType !== 'Unknown').length,
+        withPropertyType: listings.filter(l => Boolean(l.propertyType)).length,
       },
       fromCache,
     } : {

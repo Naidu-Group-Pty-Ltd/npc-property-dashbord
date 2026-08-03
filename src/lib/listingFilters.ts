@@ -334,7 +334,10 @@ export function matchesListingFilters(
   if (!withinRange(positiveCount(listing.carSpaces), bound(filters.carsMin), bound(filters.carsMax))) {
     return false;
   }
-  if (!withinRange(parseLandSizeSqm(listing.landSize), bound(filters.landSizeMin), bound(filters.landSizeMax))) {
+  // `landSizeSqm` is the canonical number from `Land Size SQM`; `landSize` is
+  // kept as the fallback for records that arrived through the legacy shape.
+  const landSize = listing.landSizeSqm ?? parseLandSizeSqm(listing.landSize);
+  if (!withinRange(landSize, bound(filters.landSizeMin), bound(filters.landSizeMax))) {
     return false;
   }
 
