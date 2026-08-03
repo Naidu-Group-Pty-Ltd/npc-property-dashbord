@@ -106,10 +106,10 @@ export function IntakePackPanel({
     setDownloading('xlsx');
     try {
       const resolved = await ensureBranding();
-      const workbook = buildIntakeWorkbook({
+      const workbook = await buildIntakeWorkbook({
         branding: resolved, payload, assessmentReference, assessmentTitle,
       });
-      triggerDownload(workbookToBlob(workbook), packFileName(resolved, assessmentReference, 'xlsx'));
+      triggerDownload(await workbookToBlob(workbook), packFileName(resolved, assessmentReference, 'xlsx'));
       toast({
         title: 'Workbook downloaded',
         description: 'Fill it in with the client, then drop it back here to populate the assessment.',
