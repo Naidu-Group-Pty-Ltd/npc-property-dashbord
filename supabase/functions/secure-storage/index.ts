@@ -214,9 +214,23 @@ Deno.serve(async (req) => {
 
     // Permission gating for mutating operations (internal service calls bypass)
     if (!isInternal && (operation === 'upload' || operation === 'delete')) {
+      // Branding artwork is governed by the Branding module itself, not by a
+      // table in the permission matrix — `branding_profiles` is unmapped there,
+      // so routing it through checkPermission() denied every non-superadmin.
+      if (bucket === 'branding-assets') {
+        if (!(await canAdministerBranding(supabase, actorId))) {
+          await logSecurityEvent(supabase, {
+            action: `storage.${operation}`, decision: 'deny', reason_code: 'branding_permission_required',
+            actor_type: 'human', actor_id: actorId, target_type: 'bucket', target_id: bucket,
+          });
+          return createForbiddenResponse('You do not have permission to manage branding assets', corsHeaders);
+        }
+        if (operation === 'delete' && !(await isSuperadmin(supabase, actorId))) {
+          return createForbiddenResponse('Delete on this bucket requires superadmin', corsHeaders);
+        }
+      } else {
       const writeModule = bucket === 'qa_exports' ? 'report_qa'
         : bucket === 'investment-reports' || bucket === 'quantitative-reports' ? 'reports'
-        : bucket === 'branding-assets' ? 'platform_administration'
         : 'clients';
       const modulePerm = await requireModulePermission(supabase, { userId: actorId, authMethod: 'human' }, writeModule, operation === 'delete' ? 'can_delete' : 'can_edit');
       if (!modulePerm.ok) return createForbiddenResponse('Permission denied', corsHeaders);
@@ -239,7 +253,9 @@ Deno.serve(async (req) => {
           return createForbiddenResponse(perm.reason || 'Permission denied', corsHeaders);
         }
       }
+      }
     }
+
 
     // Read-side authorization (EC-5): download/list/signedUrl/publicUrl were
     // previously unauthorized beyond "is authenticated". Require can_view on the
