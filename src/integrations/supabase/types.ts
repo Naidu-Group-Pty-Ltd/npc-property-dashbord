@@ -10501,6 +10501,331 @@ export type Database = {
           },
         ]
       }
+      commercial_industrial_assessment_audit_events: {
+        Row: {
+          actor_id: string | null
+          assessment_id: string
+          created_at: string
+          detail: Json
+          event_type: string
+          id: string
+          user_id: string
+        }
+        Insert: {
+          actor_id?: string | null
+          assessment_id: string
+          created_at?: string
+          detail?: Json
+          event_type: string
+          id?: string
+          user_id: string
+        }
+        Update: {
+          actor_id?: string | null
+          assessment_id?: string
+          created_at?: string
+          detail?: Json
+          event_type?: string
+          id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_assessment_audit_event_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_assessment_client_links: {
+        Row: {
+          applied_changes: Json
+          assessment_id: string
+          client_id: string
+          id: string
+          linked_at: string
+          linked_by: string | null
+          reconciliation_items: Json
+          unlinked_at: string | null
+          unlinked_by: string | null
+          user_id: string
+        }
+        Insert: {
+          applied_changes?: Json
+          assessment_id: string
+          client_id: string
+          id?: string
+          linked_at?: string
+          linked_by?: string | null
+          reconciliation_items?: Json
+          unlinked_at?: string | null
+          unlinked_by?: string | null
+          user_id: string
+        }
+        Update: {
+          applied_changes?: Json
+          assessment_id?: string
+          client_id?: string
+          id?: string
+          linked_at?: string
+          linked_by?: string | null
+          reconciliation_items?: Json
+          unlinked_at?: string | null
+          unlinked_by?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_assessment_client_link_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_assessment_scenarios: {
+        Row: {
+          assessment_id: string
+          changed_assumption: string | null
+          created_at: string
+          created_by: string | null
+          id: string
+          label: string
+          latest_outputs: Json | null
+          parameters: Json
+          scenario_key: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          assessment_id: string
+          changed_assumption?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label: string
+          latest_outputs?: Json | null
+          parameters?: Json
+          scenario_key: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          assessment_id?: string
+          changed_assumption?: string | null
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          label?: string
+          latest_outputs?: Json | null
+          parameters?: Json
+          scenario_key?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_assessment_scenarios_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_assessments: {
+        Row: {
+          archived_at: string | null
+          assessment_type: string
+          binding_constraint: string | null
+          client_id: string | null
+          created_at: string
+          created_by: string | null
+          current_calculation_id: string | null
+          id: string
+          linked_at: string | null
+          linked_by: string | null
+          maximum_indicative_loan: number | null
+          outcome: string | null
+          payload: Json
+          proposed_dscr: number | null
+          proposed_lvr: number | null
+          reference: string
+          requested_loan: number | null
+          segment: string
+          status: string
+          title: string
+          updated_at: string
+          updated_by: string | null
+          user_id: string
+          version: number
+        }
+        Insert: {
+          archived_at?: string | null
+          assessment_type?: string
+          binding_constraint?: string | null
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_calculation_id?: string | null
+          id?: string
+          linked_at?: string | null
+          linked_by?: string | null
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          payload?: Json
+          proposed_dscr?: number | null
+          proposed_lvr?: number | null
+          reference: string
+          requested_loan?: number | null
+          segment?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id: string
+          version?: number
+        }
+        Update: {
+          archived_at?: string | null
+          assessment_type?: string
+          binding_constraint?: string | null
+          client_id?: string | null
+          created_at?: string
+          created_by?: string | null
+          current_calculation_id?: string | null
+          id?: string
+          linked_at?: string | null
+          linked_by?: string | null
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          payload?: Json
+          proposed_dscr?: number | null
+          proposed_lvr?: number | null
+          reference?: string
+          requested_loan?: number | null
+          segment?: string
+          status?: string
+          title?: string
+          updated_at?: string
+          updated_by?: string | null
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ci_assessments_current_calculation_fkey"
+            columns: ["current_calculation_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_calculation_runs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_calculation_runs: {
+        Row: {
+          assessment_id: string
+          binding_constraint: string | null
+          created_at: string
+          created_by: string | null
+          engine_version: string
+          id: string
+          inputs_snapshot: Json
+          maximum_indicative_loan: number | null
+          outcome: string | null
+          outputs: Json
+          policy_snapshot: Json
+          policy_version: string
+          scenario_key: string
+          user_id: string
+        }
+        Insert: {
+          assessment_id: string
+          binding_constraint?: string | null
+          created_at?: string
+          created_by?: string | null
+          engine_version: string
+          id?: string
+          inputs_snapshot: Json
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          outputs: Json
+          policy_snapshot: Json
+          policy_version: string
+          scenario_key?: string
+          user_id: string
+        }
+        Update: {
+          assessment_id?: string
+          binding_constraint?: string | null
+          created_at?: string
+          created_by?: string | null
+          engine_version?: string
+          id?: string
+          inputs_snapshot?: Json
+          maximum_indicative_loan?: number | null
+          outcome?: string | null
+          outputs?: Json
+          policy_snapshot?: Json
+          policy_version?: string
+          scenario_key?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "commercial_industrial_calculation_runs_assessment_id_fkey"
+            columns: ["assessment_id"]
+            isOneToOne: false
+            referencedRelation: "commercial_industrial_assessments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      commercial_industrial_policy_profiles: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          effective_from: string
+          id: string
+          is_active: boolean
+          label: string
+          policy_version: string
+          profile_key: string
+          settings: Json
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          id?: string
+          is_active?: boolean
+          label: string
+          policy_version: string
+          profile_key: string
+          settings?: Json
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          effective_from?: string
+          id?: string
+          is_active?: boolean
+          label?: string
+          policy_version?: string
+          profile_key?: string
+          settings?: Json
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       commercial_leases: {
         Row: {
           base_rent_pa: number

@@ -472,7 +472,11 @@ verify_jwt = true
 request_timeout = 1500
 
 [functions.manage-templates]
-verify_jwt = true
+# Authentication and authorisation are enforced inside the function by
+# verifyAuth + requireModulePermission. Gateway JWT verification must remain
+# disabled so HttpOnly Command Centre cookie sessions can reach that verifier
+# when the short-lived browser JWT is absent or stale.
+verify_jwt = false
 request_timeout = 1500
 
 [functions.import-from-url]

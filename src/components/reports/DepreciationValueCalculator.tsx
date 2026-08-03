@@ -27,7 +27,7 @@ import {
   Sparkles,
   Loader2
 } from 'lucide-react';
-import { invokeSecureFunction, hasActiveSession, ensureActiveSession, describeAuthError } from '@/lib/secureInvoke';
+import { invokeSecureFunction, describeAuthError } from '@/lib/secureInvoke';
 import { useToast } from '@/hooks/use-toast';
 import { formatNumberWithCommas, removeCommas } from '@/hooks/useFormattedNumber';
 import {
@@ -117,24 +117,6 @@ export function DepreciationValueCalculator({
   // Handle calculation
   const handleCalculate = useCallback(async () => {
     if (!isValid || isExcluded) return;
-
-    // Pre-flight: only block when the HttpOnly staff cookie also fails to
-    // re-verify. The access token is tab-scoped and gets cleared after
-    // transient auth failures, so a missing token alone is NOT an expired
-    // session — re-verify before showing a scary toast.
-    if (!hasActiveSession()) {
-      const stillSignedIn = await ensureActiveSession();
-      if (!stillSignedIn) {
-        console.warn('[DepreciationCalculator] Session could not be re-verified — aborting before edge call.');
-        toast({
-          title: "Session expired",
-          description: "Your sign-in session has expired. Please sign out and sign back in to run depreciation calcs.",
-          variant: "destructive",
-        });
-        return;
-      }
-    }
-
 
     setIsCalculating(true);
     setNoMatchFound(false);
