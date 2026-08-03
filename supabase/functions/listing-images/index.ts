@@ -44,6 +44,12 @@ import { INTAKE_FIELDS } from '../_shared/airtableIntakeFields.pure.ts';
  *                  and re-harvest only what actually changed.
  *   op: 'sync'     (service role) — push the durable URLs back into Airtable so
  *                  the enrichment column stays current for downstream consumers.
+ *   op: 'harvest'  (service role) — store an explicit candidate set handed over
+ *                  by `listing-enrichment`. The other ops discover candidates by
+ *                  reading Airtable, which yields nothing here: all four
+ *                  attachment columns on the intake table are empty on every one
+ *                  of the 1,441 records. The photos are on the agency's listing
+ *                  page, and the enrichment sweep is what goes and finds them.
  *
  * The bytes live in the private `listing-images` bucket. The browser only ever
  * receives short-lived signed URLs, never a bucket path and never a source URL.
@@ -562,13 +568,40 @@ Deno.serve(async (req) => {
     }
 
     /* -- Cron / service-role operations ---------------------------------- */
-    if (op === 'refresh' || op === 'sync') {
+    if (op === 'refresh' || op === 'sync' || op === 'harvest') {
       // These carry no user; they are only reachable with the service-role key,
       // which cron holds and a browser never does.
       const authHeader = req.headers.get('authorization') || '';
       const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
       if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
         return createUnauthorizedResponse('Service role required', corsHeaders);
+      }
+
+      /**
+       * Harvest an explicit candidate set, supplied by the enrichment sweep.
+       *
+       * The other two ops discover candidates by reading Airtable. That is no
+       * use here: the four attachment columns on the intake table are empty on
+       * every one of the 1,441 records, so there is nothing to discover. The
+       * photos exist on the agency's listing page, and `listing-enrichment`
+       * is what goes and finds them — this op is how it hands them over, so
+       * that storage, deduplication, checksums and the refresh schedule stay
+       * owned by one module.
+       */
+      if (op === 'harvest') {
+        const listingId = cleanId(body.listingId);
+        if (!listingId) return j({ success: false, error: 'invalid_listing_id' }, 400);
+
+        const candidates = normaliseImageCandidates(body.candidates, 'scraped');
+        if (candidates.length === 0) return j({ success: true, op, stored: 0, failed: 0 });
+
+        const outcome = await harvestListing(
+          supabase,
+          listingId,
+          candidates,
+          epochMs(body.listedAt),
+        );
+        return j({ success: true, op, listingId, ...outcome });
       }
 
       const config = airtableConfig();

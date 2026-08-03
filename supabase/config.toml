@@ -1164,3 +1164,9 @@ verify_jwt = false
 
 [functions.listings-cache]
 verify_jwt = false
+
+# Same posture as listing-images and listings-cache: authenticates the caller
+# itself and then requires the `listings` module permission, and also exposes
+# service-role-only cron ops that carry no user JWT.
+[functions.listing-enrichment]
+verify_jwt = false

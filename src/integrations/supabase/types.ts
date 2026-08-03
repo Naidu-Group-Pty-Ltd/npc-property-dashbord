@@ -21592,6 +21592,123 @@ export type Database = {
           },
         ]
       }
+      listing_enrichment: {
+        Row: {
+          attempt_count: number
+          error_count: number
+          first_enriched_at: string | null
+          last_enriched_at: string | null
+          last_error: string | null
+          lease_until: string | null
+          listing_id: string
+          next_attempt_at: string
+          priority: number
+          provenance: Json
+          stage: string | null
+          status: string
+          table_key: string
+          values: Json
+          writeback_at: string | null
+          writeback_fingerprint: string | null
+          writeback_state: string
+        }
+        Insert: {
+          attempt_count?: number
+          error_count?: number
+          first_enriched_at?: string | null
+          last_enriched_at?: string | null
+          last_error?: string | null
+          lease_until?: string | null
+          listing_id: string
+          next_attempt_at?: string
+          priority?: number
+          provenance?: Json
+          stage?: string | null
+          status?: string
+          table_key: string
+          values?: Json
+          writeback_at?: string | null
+          writeback_fingerprint?: string | null
+          writeback_state?: string
+        }
+        Update: {
+          attempt_count?: number
+          error_count?: number
+          first_enriched_at?: string | null
+          last_enriched_at?: string | null
+          last_error?: string | null
+          lease_until?: string | null
+          listing_id?: string
+          next_attempt_at?: string
+          priority?: number
+          provenance?: Json
+          stage?: string | null
+          status?: string
+          table_key?: string
+          values?: Json
+          writeback_at?: string | null
+          writeback_fingerprint?: string | null
+          writeback_state?: string
+        }
+        Relationships: []
+      }
+      listing_enrichment_budget: {
+        Row: {
+          day: string
+          geocodes: number
+          http_fetches: number
+          images_harvested: number
+          listings: number
+          runs: number
+          writebacks: number
+        }
+        Insert: {
+          day: string
+          geocodes?: number
+          http_fetches?: number
+          images_harvested?: number
+          listings?: number
+          runs?: number
+          writebacks?: number
+        }
+        Update: {
+          day?: string
+          geocodes?: number
+          http_fetches?: number
+          images_harvested?: number
+          listings?: number
+          runs?: number
+          writebacks?: number
+        }
+        Relationships: []
+      }
+      listing_enrichment_events: {
+        Row: {
+          created_at: string
+          detail: Json | null
+          id: number
+          listing_id: string
+          outcome: string
+          stage: string
+        }
+        Insert: {
+          created_at?: string
+          detail?: Json | null
+          id?: number
+          listing_id: string
+          outcome: string
+          stage: string
+        }
+        Update: {
+          created_at?: string
+          detail?: Json | null
+          id?: number
+          listing_id?: string
+          outcome?: string
+          stage?: string
+        }
+        Relationships: []
+      }
       listing_geocodes: {
         Row: {
           lat: number | null
@@ -35650,6 +35767,34 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "integration_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_listing_enrichment: {
+        Args: { p_lease_seconds?: number; p_limit: number; p_table_key: string }
+        Returns: {
+          attempt_count: number
+          error_count: number
+          first_enriched_at: string | null
+          last_enriched_at: string | null
+          last_error: string | null
+          lease_until: string | null
+          listing_id: string
+          next_attempt_at: string
+          priority: number
+          provenance: Json
+          stage: string | null
+          status: string
+          table_key: string
+          values: Json
+          writeback_at: string | null
+          writeback_fingerprint: string | null
+          writeback_state: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "listing_enrichment"
           isOneToOne: false
           isSetofReturn: true
         }

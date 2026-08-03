@@ -1646,6 +1646,12 @@
       "owner": "security-remediation-program",
       "reviewed": true
     },
+    "listing-enrichment": {
+      "verify_jwt": false,
+      "exposure_class": "module-gated",
+      "owner": "security-remediation-program",
+      "reviewed": true
+    },
     "manage-bc-scenarios": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
