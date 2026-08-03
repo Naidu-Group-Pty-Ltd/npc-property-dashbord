@@ -494,10 +494,17 @@ export function InternalMessageToasts() {
         additions.forEach((a) => loadMessages(a.thread_id, false));
       }
 
+      // Tab title badge: signals a background-but-visible tab in the tab strip.
+      setTabUnreadBadge(totalUnread, loudestSender ?? undefined);
+      // The first sweep only records state — it must never replay a backlog of
+      // OS notifications when the dashboard is opened.
+      alertBootstrappedRef.current = true;
+
       // Refreshing a minimised conversation must not clear its unread badge.
       toRefresh.forEach((id) =>
         loadMessages(id, activeRef.current === id && !minimisedRef.current[id]),
       );
+
     } catch {
       /* silent — badge/panel remain the source of truth */
     }
