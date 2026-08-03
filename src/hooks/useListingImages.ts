@@ -7,7 +7,7 @@ import {
   type ImageOrigin,
   type StoredListingImage,
 } from '@/lib/listingImages';
-import { readCachedImages, writeCachedImages } from '@/lib/listingImageCache';
+import { forgetCachedImages, readCachedImages, writeCachedImages } from '@/lib/listingImageCache';
 
 /**
  * Resolves durable listing images.
@@ -269,7 +269,22 @@ export function useListingImages(listings: PropertyListing[]) {
     setRetryNonce((n) => n + 1);
   }, []);
 
-  return { images, isResolving, failure, retry };
+  /**
+   * Re-ask for one listing, discarding whatever was concluded about it.
+   *
+   * `retry` clears the whole resolved map and starts a full pass, which is right
+   * after a request failure and wrong after enriching a single listing: it makes
+   * six requests to answer a question about one record. This clears just that
+   * record — both the "already answered" mark and the session cache — so the
+   * next pass picks it up and nothing else changes.
+   */
+  const refresh = useCallback((listingId: string) => {
+    resolvedRef.current.delete(listingId);
+    forgetCachedImages(listingId);
+    setRetryNonce((n) => n + 1);
+  }, []);
+
+  return { images, isResolving, failure, retry, refresh };
 }
 
 export default useListingImages;

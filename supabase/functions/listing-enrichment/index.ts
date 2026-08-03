@@ -269,6 +269,7 @@ function missingFields(listing: Record<string, unknown>): Set<string> {
     'price',
     'agentMobile',
     'agentEmail',
+    'agentPhone',
     'description',
   ]) {
     if (absent(key)) missing.add(key);
@@ -383,6 +384,11 @@ async function enrichListing(
     offer('priceDisplay', result.priceDisplay, 0.8);
     offer('price', result.priceNumeric, 0.8);
     offer('description', result.description, 0.6);
+    // The largest gap after images: only 451 of 1,441 records carry any
+    // reachable address, so "email the agent" is unavailable on two thirds of
+    // the marketplace. An agency listing page usually publishes both.
+    offer('agentEmail', result.agentEmail, 0.75);
+    offer('agentMobile', result.agentPhone, 0.75);
 
     const merged = mergeEnrichment(values, provenance, incoming, incomingProvenance);
     values = merged.values;
@@ -827,6 +833,8 @@ const WRITEBACK_FIELDS: Array<{ overlay: string; column: string; minConfidence: 
   { overlay: 'buildingAreaSqm', column: F.buildingAreaSqm, minConfidence: 0.85 },
   { overlay: 'priceDisplay', column: F.priceDisplay, minConfidence: 0.85 },
   { overlay: 'price', column: F.priceNumeric, minConfidence: 0.85 },
+  { overlay: 'agentEmail', column: F.agentEmail, minConfidence: 0.75 },
+  { overlay: 'agentMobile', column: F.agentMobile, minConfidence: 0.75 },
   { overlay: 'resolvedUrl', column: F.sourceWebLink, minConfidence: 0.9 },
 ];
 

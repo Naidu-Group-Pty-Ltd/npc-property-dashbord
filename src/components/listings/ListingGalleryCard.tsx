@@ -1,4 +1,4 @@
-import { Bath, Bed, Calendar, Car, MapPin, Maximize2, MoreVertical } from 'lucide-react';
+import { Bath, Bed, Calendar, Car, Mail, MapPin, Maximize2, MoreVertical, Phone } from 'lucide-react';
 import { Badge, badgeVariants } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -13,6 +13,7 @@ import type { PropertyListing } from '@/lib/airtable';
 import type { StoredListingImage } from '@/lib/listingImages';
 import { ListingHero } from '@/components/listings/ListingHero';
 import { displayPrice, formatArea, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
+import { listingContact } from '@/lib/listingContact';
 
 const BADGE = 'inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold leading-none tracking-[0.02em] shadow-sm';
 const SPEC_CHIP = 'inline-flex items-center gap-1 rounded-full border border-border/50 bg-background/70 px-2 py-1 text-xs font-semibold tabular-nums';
@@ -26,6 +27,9 @@ export interface ListingGalleryCardProps {
   onSelect: (checked: boolean) => void;
   onOpenDetails: () => void;
   onOpenSource?: () => void;
+  onEmailAgent?: () => void;
+  onFindPhotos?: () => void;
+  isFindingPhotos?: boolean;
   formatDate: (value: Date | string) => string;
 }
 
@@ -52,6 +56,9 @@ export function ListingGalleryCard({
   onSelect,
   onOpenDetails,
   onOpenSource,
+  onEmailAgent,
+  onFindPhotos,
+  isFindingPhotos = false,
   formatDate,
 }: ListingGalleryCardProps) {
   const price = displayPrice(listing);
@@ -59,6 +66,7 @@ export function ListingGalleryCard({
   const caveat = qualityCaveat(listing);
   const land = formatArea(listing.landSizeSqm);
   const photoCount = images?.length ?? 0;
+  const contact = listingContact(listing);
 
   return (
     <article
@@ -78,6 +86,8 @@ export function ListingGalleryCard({
           aspect="aspect-[4/3]"
           rounded={false}
           onExpand={onOpenDetails}
+          onFindPhotos={onFindPhotos}
+          isFindingPhotos={isFindingPhotos}
         />
 
         <div className="pointer-events-none absolute left-2 top-2 flex flex-wrap gap-1">
@@ -137,8 +147,27 @@ export function ListingGalleryCard({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={onOpenDetails}>Open details</DropdownMenuItem>
+              {contact.email && onEmailAgent && (
+                <DropdownMenuItem onClick={onEmailAgent}>Email the agent</DropdownMenuItem>
+              )}
+              {contact.phone && (
+                <DropdownMenuItem asChild>
+                  <a href={`tel:${contact.phone.replace(/\s/g, '')}`}>Call {contact.phone}</a>
+                </DropdownMenuItem>
+              )}
               {listing.url && onOpenSource && (
                 <DropdownMenuItem onClick={onOpenSource}>Open source listing</DropdownMenuItem>
+              )}
+              {/*
+                Also in the menu, not only in the empty frame: a geocoded listing
+                with no photographs shows the Street View slide instead of the
+                empty state, so the frame's own button never renders — and that
+                is exactly the listing most worth fetching.
+              */}
+              {photoCount === 0 && onFindPhotos && (
+                <DropdownMenuItem onClick={onFindPhotos} disabled={isFindingPhotos}>
+                  {isFindingPhotos ? 'Looking for photos…' : 'Find photos'}
+                </DropdownMenuItem>
               )}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -194,7 +223,7 @@ export function ListingGalleryCard({
 
         <div className="mt-auto flex items-center justify-between gap-2 border-t border-border/60 pt-2.5 text-xs">
           <span className="min-w-0 truncate text-muted-foreground">
-            {listing.agencyName ?? 'Agency not extracted'}
+            {[contact.name, listing.agencyName].filter(Boolean).join(' · ') || 'Agency not extracted'}
           </span>
           {listing.inspectionStart ? (
             <span className="flex shrink-0 items-center gap-1 font-medium text-primary">
@@ -206,6 +235,44 @@ export function ListingGalleryCard({
             <span className="shrink-0 text-muted-foreground/70">Date unknown</span>
           ) : null}
         </div>
+
+        {/*
+          A first-class action rather than a menu item. The whole point of a
+          photo-first grid is that someone browses it and wants to ask about one,
+          and burying that behind a kebab adds a click to the only thing they
+          came to do. It is only rendered when there is somewhere to send it —
+          two thirds of these records carry no address at all, and a disabled
+          button on most of the page is just noise.
+        */}
+        {(contact.email || contact.phone) && (
+          <div className="flex gap-1.5">
+            {contact.email && onEmailAgent && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-8 flex-1 rounded-full text-xs font-semibold"
+                onClick={onEmailAgent}
+              >
+                <Mail className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Email agent
+              </Button>
+            )}
+            {contact.phone && (
+              <Button
+                asChild
+                size="sm"
+                variant="outline"
+                className={cn('h-8 rounded-full text-xs font-semibold', !contact.email && 'flex-1')}
+              >
+                <a href={`tel:${contact.phone.replace(/\s/g, '')}`} aria-label={`Call ${contact.phone}`}>
+                  <Phone className="h-3.5 w-3.5" aria-hidden="true" />
+                  {!contact.email && <span className="ml-1.5">{contact.phone}</span>}
+                </a>
+              </Button>
+            )}
+          </div>
+        )}
 
         {caveat && (
           <Badge

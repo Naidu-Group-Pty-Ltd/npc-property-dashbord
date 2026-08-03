@@ -20,11 +20,13 @@ import {
   LayoutGrid,
   Loader2,
   LocateFixed,
+  Mail,
   MapPin,
   Maximize2,
   Minimize2,
   Minus,
   PanelRightClose,
+  Phone,
   PanelRightOpen,
   Plus,
   X,
@@ -76,9 +78,11 @@ import {
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
 import { displayPrice, formatArea } from '@/lib/listingDisplay';
+import { listingContact } from '@/lib/listingContact';
 import { ListingHero } from './ListingHero';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
+import { useEnrichListing } from '@/hooks/useEnrichListing';
 
 /**
  * Leaflet copies unknown constructor options straight onto `marker.options`, and
@@ -133,6 +137,8 @@ const isPanelState = (value: unknown): value is PanelState =>
 interface ListingsMapViewProps {
   listings: PropertyListing[];
   onSelectListing: (listing: PropertyListing) => void;
+  /** Opens the enquiry composer for a listing, straight from its pin. */
+  onEmailAgent?: (listing: PropertyListing) => void;
 }
 
 interface ListingMarker {
@@ -879,10 +885,12 @@ function ListingPopupCard({
   listing,
   point,
   onOpenDetails,
+  onEmailAgent,
 }: {
   listing: PropertyListing;
   point: GeoPoint;
   onOpenDetails: () => void;
+  onEmailAgent?: () => void;
 }) {
   const locality = [listing.suburb, listing.state, listing.zipCode].filter(Boolean).join(' ');
   // The same decision the card and the table make, so one listing cannot read
@@ -896,7 +904,11 @@ function ListingPopupCard({
   // produces a broken image. `useListingImages` returns signed URLs into our
   // own bucket instead — see src/lib/listingImages.ts.
   const forImages = useMemo(() => [listing], [listing]);
-  const { images, isResolving: imagesResolving } = useListingImages(forImages);
+  const { images, isResolving: imagesResolving, refresh: refreshImages } = useListingImages(forImages);
+  // The popup is where someone lands after zooming into a suburb, so it is a
+  // likely place to notice a listing has no photographs — and therefore a place
+  // worth being able to fetch them from.
+  const { enrich: findPhotos, isEnriching } = useEnrichListing(refreshImages);
 
   /**
    * Keep clicks inside the card away from the map.
@@ -952,6 +964,7 @@ function ListingPopupCard({
     };
   }, []);
 
+  const contact = listingContact(listing);
   const land = formatArea(listing.landSizeSqm);
   const photoCount = images[listing.id]?.length ?? 0;
   const inspection = listing.inspectionStart ?? listing.nextInspectionDate;
@@ -974,6 +987,8 @@ function ListingPopupCard({
         point={point}
         aspect="aspect-[16/10]"
         onExpand={onOpenDetails}
+        onFindPhotos={listing.url ? () => findPhotos(listing.id) : undefined}
+        isFindingPhotos={isEnriching}
       />
 
       <div className="flex items-start justify-between gap-2">
@@ -1016,6 +1031,38 @@ function ListingPopupCard({
         </p>
       )}
 
+      {/*
+        Contact from the pin itself. Someone scanning the map for a suburb wants
+        to ask about what they found without first opening a page — the whole
+        reason the popup exists is to answer "what is this and who do I ask".
+      */}
+      {(contact.email || contact.phone) && (
+        <div className="flex gap-1.5">
+          {contact.email ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 flex-1 text-[11px]"
+              onClick={() => onEmailAgent?.()}
+            >
+              <Mail className="mr-1 h-3 w-3" aria-hidden="true" />
+              Email agent
+            </Button>
+          ) : null}
+          {contact.phone ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className={cn('h-7 text-[11px]', !contact.email && 'flex-1')}
+              onClick={() => window.open(`tel:${contact.phone!.replace(/\s/g, '')}`, '_self')}
+            >
+              <Phone className="h-3 w-3" aria-hidden="true" />
+              {!contact.email && <span className="ml-1">{contact.phone}</span>}
+            </Button>
+          ) : null}
+        </div>
+      )}
+
       {inspection ? (
         <p className="flex items-center gap-1 text-xs font-medium text-primary">
           <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -1053,7 +1100,7 @@ function ListingPopupCard({
 /* Main view                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewProps) {
+export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: ListingsMapViewProps) {
   const { isDark } = useWhiteLabel();
   const [mode, setMode] = usePersistedChoice<MapMode>(STORAGE_KEYS.mode, 'hybrid', isMapMode);
   const [basemapPref, setBasemapPref] = usePersistedChoice<BasemapId>(
@@ -1553,6 +1600,7 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
                 listing={selected.listing}
                 point={selected.point}
                 onOpenDetails={openSelectedDetails}
+                onEmailAgent={onEmailAgent ? () => onEmailAgent(selected.listing) : undefined}
               />
             </Popup>
           ) : null}

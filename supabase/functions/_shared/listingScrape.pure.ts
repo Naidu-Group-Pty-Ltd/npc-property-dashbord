@@ -32,6 +32,9 @@ export interface ScrapedListing {
   priceNumeric?: number;
   title?: string;
   description?: string;
+  agentName?: string;
+  agentEmail?: string;
+  agentPhone?: string;
 }
 
 /**
@@ -287,6 +290,74 @@ export function parseAudAmount(text: string): number | undefined {
 }
 
 /**
+ * The agent's own contact details, from the listing page.
+ *
+ * This is the field with the largest gap after images: only 451 of 1,441
+ * records (31%) carry any reachable address, so "email the agent" is unavailable
+ * on two thirds of the marketplace. An agency listing page almost always
+ * publishes the selling agent's email and mobile, because that is the entire
+ * purpose of the page.
+ *
+ * `mailto:` links are the reliable signal. A bare address in body text is as
+ * likely to belong to the office, the webmaster or a franchise footer as to the
+ * agent, so only mailto hrefs are read, and the site's own generic inboxes are
+ * skipped in favour of a named one where both appear.
+ */
+export function extractContact(html: string, pageUrl?: string): {
+  email?: string;
+  phone?: string;
+  name?: string;
+} {
+  const shape = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
+  const emails: string[] = [];
+  for (const match of html.matchAll(/href\s*=\s*["']mailto:([^"'?]+)/gi)) {
+    const email = decodeURIComponent(match[1]).trim().toLowerCase();
+    if (shape.test(email)) emails.push(email);
+  }
+
+  // Many agency sites route enquiries through a form and publish no mailto at
+  // all. An address in the body text is a weaker signal — it could be the
+  // webmaster, a franchise footer, or a partner — so it is only accepted when
+  // its domain matches the site being read, which is the case that makes it the
+  // agency's own.
+  if (emails.length === 0 && pageUrl) {
+    let host = '';
+    try {
+      host = new URL(pageUrl).hostname.toLowerCase().replace(/^www\./, '');
+    } catch {
+      host = '';
+    }
+    const root = host.split('.').slice(-3).join('.');
+    if (root) {
+      for (const match of html.matchAll(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g)) {
+        const email = match[0].toLowerCase();
+        if (!shape.test(email)) continue;
+        if (!email.endsWith(`@${root}`) && !email.endsWith(`.${root}`)) continue;
+        emails.push(email);
+      }
+    }
+  }
+
+  // A named mailbox is more likely to be the agent than `info@` or `sales@`.
+  const generic = /^(info|sales|admin|enquiries|enquiry|contact|office|reception|hello|mail|rentals?|property|web|webmaster|support|accounts|careers)@/i;
+  const email = emails.find((candidate) => !generic.test(candidate)) ?? emails[0];
+
+  let phone: string | undefined;
+  for (const match of html.matchAll(/href\s*=\s*["']tel:([^"']+)/gi)) {
+    const digits = decodeURIComponent(match[1]).replace(/[^\d+]/g, '');
+    const national = digits.replace(/^\+?61/, '0').replace(/\D/g, '');
+    // A mobile is the useful number; keep looking past a switchboard.
+    if (national.length === 10 && national.startsWith('04')) {
+      phone = national;
+      break;
+    }
+    if (!phone && national.length >= 8 && national.length <= 10) phone = national;
+  }
+
+  return { email, phone };
+}
+
+/**
  * The whole listing, read from one fetched page.
  *
  * Everything is optional. A page that yields only photographs is still a good
@@ -337,6 +408,10 @@ export function scrapeListingPage(html: string, baseUrl: string): ScrapedListing
       result.priceNumeric ??= parseAudAmount(match[0]);
     }
   }
+
+  const contact = extractContact(html, baseUrl);
+  if (contact.email) result.agentEmail = contact.email;
+  if (contact.phone) result.agentPhone = contact.phone;
 
   if (!result.description) {
     const meta = html.match(

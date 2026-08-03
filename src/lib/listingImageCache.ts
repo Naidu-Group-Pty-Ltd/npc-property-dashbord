@@ -68,6 +68,19 @@ export function writeCachedImages(
   trim();
 }
 
+/**
+ * Drop one listing's entry.
+ *
+ * Used after an on-demand enrichment run: the listing genuinely has different
+ * photos now, but its *source* fingerprint is unchanged — the new bytes were
+ * harvested server-side, not written back into the record — so neither the
+ * fingerprint check nor the expiry check would invalidate the stale "nothing
+ * here" answer on its own.
+ */
+export function forgetCachedImages(listingId: string): void {
+  memory.delete(listingId);
+}
+
 /** Used by tests, and after a sign-out so one user's URLs never survive into another's session. */
 export function clearImageCache(): void {
   memory.clear();

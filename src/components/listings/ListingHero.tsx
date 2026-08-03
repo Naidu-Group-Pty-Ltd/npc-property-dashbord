@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Expand, ImageOff, MapPin } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Expand, ImageOff, Loader2, MapPin, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { StoredListingImage } from '@/lib/listingImages';
 import { StreetViewPanel } from '@/components/listings/StreetViewPanel';
@@ -23,6 +23,13 @@ export interface ListingHeroProps {
   showThumbnails?: boolean;
   /** Rounded corners. Off for a full-bleed hero. */
   rounded?: boolean;
+  /**
+   * Fetch this listing's photos from its source page now. Supplying it turns the
+   * empty state from a statement into an action.
+   */
+  onFindPhotos?: () => void;
+  /** A fetch is in flight for this listing. */
+  isFindingPhotos?: boolean;
 }
 
 /**
@@ -56,6 +63,8 @@ export function ListingHero({
   onExpand,
   showThumbnails = false,
   rounded = true,
+  onFindPhotos,
+  isFindingPhotos = false,
 }: ListingHeroProps) {
   const [index, setIndex] = useState(0);
   const [failed, setFailed] = useState<Set<string>>(new Set());
@@ -101,20 +110,41 @@ export function ListingHero({
   );
 
   if (slideCount === 0) {
-    if (isResolving) {
+    if (isResolving || isFindingPhotos) {
       return (
         <div
-          className={cn(frame, 'animate-pulse motion-reduce:animate-none')}
-          aria-hidden="true"
-        />
+          className={cn(frame, 'flex items-center justify-center border border-border/60 bg-muted/60')}
+          aria-busy="true"
+        >
+          {isFindingPhotos ? (
+            <span className="flex flex-col items-center gap-1.5">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />
+              <span className="text-[11px] font-medium text-muted-foreground">Looking for photos…</span>
+            </span>
+          ) : (
+            <span className="sr-only">Loading photos</span>
+          )}
+        </div>
       );
     }
     // An explicit statement rather than an empty box: on a grid, a blank tile
-    // reads as "still loading" indefinitely.
+    // reads as "still loading" indefinitely. Where the caller can do something
+    // about it, the statement carries the remedy — the sweep works worst-first
+    // through 1,441 records and this listing may be hours from its turn.
     return (
       <div className={cn(frame, 'flex flex-col items-center justify-center gap-1.5 border border-border/60')}>
         <ImageOff className="h-5 w-5 text-muted-foreground/50" aria-hidden="true" />
         <span className="text-[11px] font-medium text-muted-foreground/70">No photo on record</span>
+        {onFindPhotos && (
+          <button
+            type="button"
+            onClick={onFindPhotos}
+            className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-2.5 py-1 text-[10px] font-semibold text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+          >
+            <Search className="h-3 w-3" aria-hidden="true" />
+            Find photos
+          </button>
+        )}
       </div>
     );
   }

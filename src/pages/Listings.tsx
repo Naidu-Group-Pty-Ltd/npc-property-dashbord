@@ -20,6 +20,7 @@ import { PropertyCard } from '@/components/listings/PropertyCard';
 import { ListingGalleryGrid } from '@/components/listings/ListingGalleryGrid';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
+import { useEnrichListing } from '@/hooks/useEnrichListing';
 import {
   DEFAULT_LISTING_FILTERS,
   listingHasPhotos,
@@ -27,6 +28,7 @@ import {
   type ListingFilterState,
 } from '@/lib/listingFilters';
 import { displayPrice, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
+import { listingContact } from '@/lib/listingContact';
 import { propertyDataService } from '@/services/propertyDataService';
 import { PropertyListing } from '@/lib/airtable';
 import { BulkActionBar } from '@/components/aurixa';
@@ -90,6 +92,7 @@ const getListingConfidenceBadgeTone = (confidence: number) =>
 // instead of leaving the feature stuck on its loading fallback.
 const ListingDetailsModal = lazyWithRetry(() => import('@/components/listings/ListingDetailsModal').then(m => ({ default: m.ListingDetailsModal })));
 const InvestmentReportModal = lazyWithRetry(() => import('@/components/listings/InvestmentReportModal').then(m => ({ default: m.InvestmentReportModal })));
+const EmailAgentDialog = lazyWithRetry(() => import('@/components/listings/EmailAgentDialog').then(m => ({ default: m.EmailAgentDialog })));
 const BulkGenerationModal = lazyWithRetry(() => import('@/components/listings/BulkGenerationModal').then(m => ({ default: m.BulkGenerationModal })));
 const ListingsMapView = lazyWithRetry(() => import('@/components/listings/ListingsMapView').then(m => ({ default: m.ListingsMapView })));
 
@@ -345,6 +348,7 @@ export default function Listings() {
   const [investmentReportListing, setInvestmentReportListing] = useState<PropertyListing | null>(null);
   const [isInvestmentReportModalOpen, setIsInvestmentReportModalOpen] = useState(false);
   const [isBulkGenerationModalOpen, setIsBulkGenerationModalOpen] = useState(false);
+  const [emailAgentListing, setEmailAgentListing] = useState<PropertyListing | null>(null);
   
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -532,6 +536,9 @@ export default function Listings() {
     setIsDetailsModalOpen(true);
   };
 
+  /** Straight from a card to a drafted enquiry, without a detour through the modal. */
+  const openEmailAgent = (listing: PropertyListing) => setEmailAgentListing(listing);
+
   const openInvestmentReportModal = (listing: PropertyListing) => {
     setInvestmentReportListing(listing);
     setIsInvestmentReportModalOpen(true);
@@ -600,8 +607,14 @@ export default function Listings() {
   // Photos are resolved once for the filtered set and shared by every view, so
   // switching list ↔ table ↔ map re-uses the same signed URLs instead of asking
   // again. The map's popup resolves its own single listing on top of this.
-  const { images: listingImages, isResolving: listingImagesResolving } =
+  const { images: listingImages, isResolving: listingImagesResolving, refresh: refreshListingImages } =
     useListingImages(preFilteredListings);
+
+  // Fetching a listing's photos on demand. The sweep gets there eventually;
+  // this is for the person looking at the card right now. Re-resolving only the
+  // one listing keeps it to a single round trip.
+  const { enrich: findPhotos, pendingListingId: findingPhotosFor } =
+    useEnrichListing(refreshListingImages);
 
   /** Ids the image library actually holds stored photos for. */
   const listingsWithPhotos = useMemo(() => {
@@ -894,7 +907,11 @@ export default function Listings() {
           }
         >
           <Suspense fallback={<div className="rounded-2xl border border-border/60 bg-card/60 p-10 text-center text-sm text-muted-foreground">Loading map…</div>}>
-            <ListingsMapView listings={filteredListings} onSelectListing={openDetailsModal} />
+            <ListingsMapView
+              listings={filteredListings}
+              onSelectListing={openDetailsModal}
+              onEmailAgent={openEmailAgent}
+            />
           </Suspense>
         </ErrorBoundary>
       ) : showGalleryView ? (
@@ -921,6 +938,9 @@ export default function Listings() {
             onToggleSelect={(listing, checked) => handleSelectListing(listing.id, checked)}
             onOpenDetails={openDetailsModal}
             onOpenSource={(listing) => listing.url && openSourceUrl(listing.url)}
+            onEmailAgent={openEmailAgent}
+            onFindPhotos={(listing) => findPhotos(listing.id)}
+            findingPhotosFor={findingPhotosFor}
             formatDate={formatDate}
           />
         )
@@ -954,6 +974,7 @@ export default function Listings() {
                 onOpenDetails={() => openDetailsModal(listing)}
                 onOpenInvestmentReport={() => openInvestmentReportModal(listing)}
                 onCopyAddress={() => copyToClipboard(buildFullAddress(listing), 'Full address')}
+                onEmailAgent={() => openEmailAgent(listing)}
                 onOpenSource={listing.url ? () => openSourceUrl(listing.url!) : undefined}
                 formatCurrency={formatCurrency}
                 formatDate={formatDate}
@@ -1000,6 +1021,7 @@ export default function Listings() {
                   onOpenDetails={() => openDetailsModal(listing)}
                   onCopyAddress={() => copyToClipboard(buildFullAddress(listing), 'Full address')}
                   onOpenSource={listing.url ? () => openSourceUrl(listing.url!) : undefined}
+                  onEmailAgent={listingContact(listing).email ? () => openEmailAgent(listing) : undefined}
                 >
                   <TableRow
                     className={cn(
@@ -1178,6 +1200,16 @@ export default function Listings() {
             listing={selectedListing}
             isOpen={isDetailsModalOpen}
             onClose={closeDetailsModal}
+          />
+        </Suspense>
+      )}
+
+      {emailAgentListing && (
+        <Suspense fallback={null}>
+          <EmailAgentDialog
+            listing={emailAgentListing}
+            open={Boolean(emailAgentListing)}
+            onOpenChange={(open) => !open && setEmailAgentListing(null)}
           />
         </Suspense>
       )}

@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, ExternalLink, Loader2, MapPin } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ExternalLink, Loader2, Mail, MapPin, Phone, Search } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -12,9 +12,12 @@ import {
 } from '@/components/listings/detail/ListingDetailPanel';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useListingRecord } from '@/hooks/useListingRecord';
+import { useEnrichListing } from '@/hooks/useEnrichListing';
 import { useListingCoordinates } from '@/hooks/useListingCoordinates';
 import { propertyDataService } from '@/services/propertyDataService';
 import { displayPrice, formatLocality } from '@/lib/listingDisplay';
+import { listingContact } from '@/lib/listingContact';
+import { EmailAgentDialog } from '@/components/listings/EmailAgentDialog';
 import type { PropertyListing } from '@/lib/airtable';
 
 const PROPERTY_INTAKE_TABLE = 'Property Intake Master';
@@ -39,11 +42,24 @@ const SURFACE =
 export default function ListingDetail() {
   const { listingId } = useParams<{ listingId: string }>();
   const navigate = useNavigate();
-  const { data, isLoading, isError, error } = useListingRecord(listingId, PROPERTY_INTAKE_TABLE);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const { data, isLoading, isError, error, refetch } = useListingRecord(listingId, PROPERTY_INTAKE_TABLE);
   const listing = data?.listing ?? null;
 
   const forResolution = useMemo(() => (listing ? [listing] : []), [listing]);
-  const { images, isResolving } = useListingImages(forResolution);
+  const { images, isResolving, refresh: refreshImages } = useListingImages(forResolution);
+
+  // On this page the enrichment can fill in more than photographs — price,
+  // specs, a contact address — so the record is re-read alongside the imagery.
+  const { enrich: findPhotos, isEnriching } = useEnrichListing(
+    useCallback(
+      (id: string) => {
+        refreshImages(id);
+        void refetch();
+      },
+      [refreshImages, refetch],
+    ),
+  );
   const { points } = useListingCoordinates(forResolution);
   const point = listing ? (points[listing.id] ?? null) : null;
 
@@ -93,6 +109,7 @@ export default function ListingDetail() {
 
   const price = displayPrice(listing);
   const locality = formatLocality(listing);
+  const contact = listingContact(listing);
 
   return (
     <div className={SHELL}>
@@ -114,6 +131,8 @@ export default function ListingDetail() {
           point={point}
           aspect="aspect-[16/9]"
           showThumbnails
+          onFindPhotos={listing.url ? () => findPhotos(listing.id) : undefined}
+          isFindingPhotos={isEnriching}
         />
 
         <header className={cn(SURFACE, 'space-y-3')}>
@@ -149,14 +168,57 @@ export default function ListingDetail() {
                 Flagged for review
               </Badge>
             )}
-            {listing.url && (
-              <Button asChild size="sm" variant="outline" className="ml-auto rounded-full">
-                <a href={listing.url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-                  Source listing
-                </a>
-              </Button>
-            )}
+            <div className="ml-auto flex flex-wrap gap-2">
+              {/*
+                The action the page exists to enable. Someone reads the specs,
+                the inspection time and the confidence scores, decides they are
+                interested, and the next thing they want is to ask about it —
+                without going back to the grid to find a menu.
+              */}
+              {contact.email && (
+                <Button size="sm" className="rounded-full" onClick={() => setEmailOpen(true)}>
+                  <Mail className="mr-1.5 h-3.5 w-3.5" />
+                  Email {contact.name?.split(' ')[0] ?? 'the agent'}
+                </Button>
+              )}
+              {contact.phone && (
+                <Button asChild size="sm" variant="outline" className="rounded-full">
+                  <a href={`tel:${contact.phone.replace(/\s/g, '')}`}>
+                    <Phone className="mr-1.5 h-3.5 w-3.5" />
+                    {contact.phone}
+                  </a>
+                </Button>
+              )}
+              {listing.url && (
+                <Button asChild size="sm" variant="outline" className="rounded-full">
+                  <a href={listing.url} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                    Source listing
+                  </a>
+                </Button>
+              )}
+              {/*
+                Offered whenever the record has a source to read, not only when
+                it has no photographs — a listing can have one image and still be
+                missing its price, its land size and a contact address.
+              */}
+              {listing.url && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="rounded-full"
+                  onClick={() => findPhotos(listing.id)}
+                  disabled={isEnriching}
+                >
+                  {isEnriching ? (
+                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin motion-reduce:hidden" aria-hidden="true" />
+                  ) : (
+                    <Search className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                  {isEnriching ? 'Fetching…' : 'Fetch details'}
+                </Button>
+              )}
+            </div>
           </div>
         </header>
 
@@ -169,6 +231,8 @@ export default function ListingDetail() {
           />
         </div>
       </div>
+
+      <EmailAgentDialog listing={listing} open={emailOpen} onOpenChange={setEmailOpen} />
 
       {isLoading && (
         <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
