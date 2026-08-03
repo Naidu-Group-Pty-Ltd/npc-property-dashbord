@@ -20,6 +20,14 @@ const photo = (n: number): StoredListingImage =>
 
 const POINT = { lat: -31.94, lng: 115.76 };
 
+const LISTING = {
+  address: '13 Larundel Road',
+  suburb: 'City Beach',
+  state: 'WA',
+  propertyType: 'House',
+  price: 850_000,
+} as never;
+
 describe('ListingHero', () => {
   it('says so when there is no photo, rather than showing an empty frame', () => {
     // On a grid, a blank tile reads as "still loading" indefinitely. Most of
@@ -49,6 +57,54 @@ describe('ListingHero', () => {
     render(<ListingHero images={[]} />);
     expect(screen.getByText('No photo on record')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /find photos/i })).toBeNull();
+  });
+
+  it('does not load Street View for a photo-less card until asked', () => {
+    // A 48-card grid where every photo-less tile auto-loaded a panorama would
+    // spend ~96 metered Google calls per page view against a 5,000/day global
+    // quota that the edge function does not cache. The cover is free; the
+    // panorama is one deliberate click.
+    render(<ListingHero images={[]} point={POINT} streetViewMode="on-demand" listing={LISTING} />);
+    expect(screen.queryByTestId('street-view')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Street View' }));
+    expect(screen.getByTestId('street-view')).toBeTruthy();
+  });
+
+  it('keeps Street View as an always-present slide where one listing is on screen', () => {
+    // The property page and the map popup render a single listing, so there is
+    // no fan-out to protect against and the panorama should just be there.
+    render(<ListingHero images={[]} point={POINT} listing={LISTING} label="12 Example St" />);
+    expect(screen.getByTestId('street-view')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Street View' })).toBeNull();
+  });
+
+  it('does not carry one listing\u2019s Street View request onto the next', () => {
+    // Cards are recycled as the reader filters and scrolls. Inheriting the
+    // request would silently spend a call on a property nobody asked about.
+    const { rerender } = render(
+      <ListingHero images={[]} point={POINT} streetViewMode="on-demand" listing={LISTING} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Street View' }));
+    expect(screen.getByTestId('street-view')).toBeTruthy();
+
+    rerender(
+      <ListingHero
+        images={[]}
+        point={POINT}
+        streetViewMode="on-demand"
+        listing={{ ...LISTING, address: '9 Birch Road', suburb: 'Aubin Grove' }}
+      />,
+    );
+    expect(screen.queryByTestId('street-view')).toBeNull();
+  });
+
+  it('draws a cover instead of a blank frame when the record can describe itself', () => {
+    render(<ListingHero images={[]} listing={LISTING} />);
+    // Still honest about the photograph...
+    expect(screen.getByText('No photo on record')).toBeTruthy();
+    // ...but the frame carries the locality rather than being dead grey space.
+    expect(screen.getByText('City Beach WA')).toBeTruthy();
   });
 
   it('shows a counter and advances through the photos', async () => {

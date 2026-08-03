@@ -989,6 +989,7 @@ function ListingPopupCard({
         onExpand={onOpenDetails}
         onFindPhotos={listing.url ? () => findPhotos(listing.id) : undefined}
         isFindingPhotos={isEnriching}
+        listing={listing}
       />
 
       <div className="flex items-start justify-between gap-2">

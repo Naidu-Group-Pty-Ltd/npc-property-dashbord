@@ -88,6 +88,8 @@ export function ListingGalleryCard({
           onExpand={onOpenDetails}
           onFindPhotos={onFindPhotos}
           isFindingPhotos={isFindingPhotos}
+          listing={listing}
+          streetViewMode="on-demand"
         />
 
         <div className="pointer-events-none absolute left-2 top-2 flex flex-wrap gap-1">

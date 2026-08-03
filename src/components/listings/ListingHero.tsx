@@ -3,6 +3,11 @@ import { ChevronLeft, ChevronRight, Expand, ImageOff, Loader2, MapPin, Search } 
 import { cn } from '@/lib/utils';
 import type { StoredListingImage } from '@/lib/listingImages';
 import { StreetViewPanel } from '@/components/listings/StreetViewPanel';
+import { ListingCover, type ListingCoverProps } from '@/components/listings/ListingCover';
+
+/** Small action sitting over imagery — legible on a photo or a drawn cover. */
+const PILL =
+  'inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/90 px-2 py-1 text-[10px] font-semibold text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
 
 export interface ListingHeroProps {
   images: StoredListingImage[] | undefined;
@@ -30,6 +35,24 @@ export interface ListingHeroProps {
   onFindPhotos?: () => void;
   /** A fetch is in flight for this listing. */
   isFindingPhotos?: boolean;
+  /**
+   * Enough of the record to draw a cover when there is no photograph. Without
+   * it the empty frame falls back to a plain panel.
+   */
+  listing?: ListingCoverProps['listing'];
+  /**
+   * How the Street View slide is loaded.
+   *
+   * `'slide'` — always present as the last slide. Right where one listing is on
+   * screen: the property page, the map popup.
+   *
+   * `'on-demand'` — the frame draws a cover, and Street View loads only when the
+   * reader asks for it. Required anywhere many listings render at once. Each
+   * panel costs the `street-view` function two Google calls against a global
+   * 5,000/day quota and it caches nothing, so a 48-card grid auto-loading them
+   * spends ~96 calls per page view and exhausts the day inside an afternoon.
+   */
+  streetViewMode?: 'slide' | 'on-demand';
 }
 
 /**
@@ -65,22 +88,30 @@ export function ListingHero({
   rounded = true,
   onFindPhotos,
   isFindingPhotos = false,
+  listing,
+  streetViewMode = 'slide',
 }: ListingHeroProps) {
   const [index, setIndex] = useState(0);
   const [failed, setFailed] = useState<Set<string>>(new Set());
+  // Only meaningful in 'on-demand' mode: the reader has asked for the panorama,
+  // so it may now cost a Google call.
+  const [streetViewAsked, setStreetViewAsked] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const photos = useMemo(
     () => (images ?? []).filter((image) => image.url && !failed.has(image.url)),
     [images, failed],
   );
-  const hasStreetView = Boolean(point);
+  const hasStreetView = Boolean(point) && (streetViewMode === 'slide' || streetViewAsked);
   const slideCount = photos.length + (hasStreetView ? 1 : 0);
 
   // A listing change hands us a different set under the same component. Without
   // this, slide 5 of the previous listing becomes slide 5 of a two-photo one.
   const signature = photos.map((p) => p.url).join('|');
   useEffect(() => setIndex(0), [signature]);
+  // A recycled card showing a different property must not inherit the previous
+  // reader's request and silently spend a call on the new one.
+  useEffect(() => setStreetViewAsked(false), [listing?.address, listing?.suburb]);
 
   const go = useCallback(
     (delta: number) => {
@@ -127,24 +158,54 @@ export function ListingHero({
         </div>
       );
     }
-    // An explicit statement rather than an empty box: on a grid, a blank tile
-    // reads as "still loading" indefinitely. Where the caller can do something
-    // about it, the statement carries the remedy — the sweep works worst-first
-    // through 1,441 records and this listing may be hours from its turn.
+    // A drawn cover rather than a grey rectangle. At four cards across, a page
+    // of blank tiles reads as a broken product; a page of covers reads as a
+    // catalogue whose photography has not landed yet — which is the truth.
+    //
+    // The caption still says so plainly, and where the caller can do something
+    // about it the caption carries the remedy: the sweep works worst-first
+    // through 1,441 records, so this listing may be hours from its turn.
     return (
-      <div className={cn(frame, 'flex flex-col items-center justify-center gap-1.5 border border-border/60')}>
-        <ImageOff className="h-5 w-5 text-muted-foreground/50" aria-hidden="true" />
-        <span className="text-[11px] font-medium text-muted-foreground/70">No photo on record</span>
-        {onFindPhotos && (
-          <button
-            type="button"
-            onClick={onFindPhotos}
-            className="mt-0.5 inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/80 px-2.5 py-1 text-[10px] font-semibold text-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
-          >
-            <Search className="h-3 w-3" aria-hidden="true" />
-            Find photos
-          </button>
+      <div className={cn(frame, 'border border-border/60')}>
+        {listing ? (
+          <ListingCover listing={listing} />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-muted">
+            <ImageOff className="h-5 w-5 text-muted-foreground/50" aria-hidden="true" />
+          </div>
         )}
+
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-background/85 to-transparent px-2.5 pb-2 pt-6">
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+            <ImageOff className="h-3 w-3" aria-hidden="true" />
+            No photo on record
+          </span>
+          <span className="flex shrink-0 items-center gap-1.5">
+            {/*
+              Geocoded but unphotographed is the largest group on this page —
+              811 of 1,441. There is a real picture of the street frontage one
+              click away, and this is that click. It is a button rather than an
+              automatic slide because loading it costs a metered Google call;
+              see `streetViewMode`.
+            */}
+            {point && streetViewMode === 'on-demand' && (
+              <button
+                type="button"
+                onClick={() => setStreetViewAsked(true)}
+                className={PILL}
+              >
+                <MapPin className="h-3 w-3" aria-hidden="true" />
+                Street View
+              </button>
+            )}
+            {onFindPhotos && (
+              <button type="button" onClick={onFindPhotos} className={PILL}>
+                <Search className="h-3 w-3" aria-hidden="true" />
+                Find photos
+              </button>
+            )}
+          </span>
+        </div>
       </div>
     );
   }
