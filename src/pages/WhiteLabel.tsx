@@ -286,10 +286,11 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
   const uploadToSupabase = async (file: Blob, fileName: string): Promise<string> => {
     const fileExt = fileName.split('.').pop() || 'png';
     const filePath = `${logoType}/${Date.now()}.${fileExt}`;
-    
+
+    // No `upsert`: the mediated proxy generates a unique destination path for
+    // browser callers, and it rejects the flag as an unauthorized replace.
     const uploadResult = await secureStorageUpload('branding-assets', filePath, file, {
       contentType: file.type || 'image/png',
-      upsert: true
     });
 
     if (!uploadResult.success) throw new Error(uploadResult.error || 'Upload failed');
@@ -301,6 +302,7 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
 
     return urlData.publicUrl;
   };
+
 
   const processFile = async (file: File) => {
     // Validate file type
@@ -338,12 +340,16 @@ function LogoUploadCard({ title, description, icon, currentLogo, logoType, onUpl
       });
     } catch (error) {
       console.error('Error processing image:', error);
-      toast.error('Failed to process image', { 
-        description: removeBackgroundEnabled 
-          ? 'Background removal failed. Try uploading without background removal.' 
-          : 'Please try again with a different image.'
-      });
+      // The generic "try a different image" copy hid every real cause —
+      // permission denials, expired sessions, size/type rejections — and sent
+      // admins hunting for a fault in their artwork. Surface the actual reason.
+      const reason = error instanceof Error ? error.message : String(error ?? '');
+      const description = removeBackgroundEnabled && !reason
+        ? 'Background removal failed. Try uploading without background removal.'
+        : reason || 'Please try again with a different image.';
+      toast.error('Logo upload failed', { description });
     } finally {
+
       setIsProcessing(false);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
