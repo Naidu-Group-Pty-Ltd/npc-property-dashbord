@@ -6,6 +6,22 @@
  * alpha channel. The SVGs in `public/brand/` stay the source of truth — run
  * `npm run brand:icons` after editing one.
  *
+ * SUPPLYING THE OFFICIAL ARTWORK
+ * The bundled SVG is a vector reconstruction. To replace it with the real
+ * exported logo, hand this script the file — local path or any URL, including a
+ * Supabase public `branding-assets` URL:
+ *
+ *   npm run brand:icons -- --import ./aurixa-systems-logo.png
+ *   npm run brand:icons -- --import https://…/branding-assets/…/logo.png
+ *
+ * It is stored as `public/brand/aurixa-source.<ext>` and, from then on, every
+ * derived asset — notification icon, favicon.ico, all sizes — is rendered from
+ * it instead of the SVG. `--import --reset` goes back to the vector.
+ *
+ * A source image is centred on the brand tile with `object-fit: contain`, so a
+ * transparent export, a square export and a wide export all come out legible at
+ * the ~48px a notification actually renders.
+ *
  * `public/favicon.ico` is generated here too, and that is deliberate. Redirecting
  * every *reference* away from the stock scaffold icon still leaves the stock icon
  * being served at `/favicon.ico` — reachable through a cached manifest, a
@@ -17,7 +33,7 @@
  *   npm run brand:icons -- --check # fail if the committed output is stale
  */
 import { chromium } from '@playwright/test';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,7 +63,69 @@ const ICO_SIZES = [
   { svg: FULL, size: 256 },
 ];
 
-const check = process.argv.includes('--check');
+const argv = process.argv.slice(2);
+const check = argv.includes('--check');
+const resetToVector = argv.includes('--reset');
+const importIndex = argv.indexOf('--import');
+const importFrom = importIndex >= 0 ? argv[importIndex + 1] : null;
+
+/** Raster master, when one has been imported. Preferred over the SVG. */
+const SOURCE_STEM = 'aurixa-source';
+const SOURCE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
+
+function findImportedSource() {
+  for (const ext of SOURCE_EXTENSIONS) {
+    const candidate = join(BRAND_DIR, `${SOURCE_STEM}.${ext}`);
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+const MIME_BY_MAGIC = [
+  { magic: '89504e47', ext: 'png', mime: 'image/png' },
+  { magic: 'ffd8ff', ext: 'jpg', mime: 'image/jpeg' },
+  { magic: '52494646', ext: 'webp', mime: 'image/webp' },
+];
+
+function sniffImage(buffer) {
+  const head = buffer.subarray(0, 4).toString('hex');
+  for (const entry of MIME_BY_MAGIC) {
+    if (head.startsWith(entry.magic)) return entry;
+  }
+  if (buffer.subarray(0, 512).toString('utf8').includes('<svg')) {
+    return { ext: 'svg', mime: 'image/svg+xml' };
+  }
+  return null;
+}
+
+async function importSource(from) {
+  let buffer;
+  if (/^https?:\/\//i.test(from)) {
+    const response = await fetch(from, { headers: { 'User-Agent': 'brand-icons/1.0' } });
+    if (!response.ok) throw new Error(`Could not fetch ${from} — HTTP ${response.status}`);
+    buffer = Buffer.from(await response.arrayBuffer());
+  } else {
+    buffer = readFileSync(from);
+  }
+
+  const kind = sniffImage(buffer);
+  if (!kind) {
+    throw new Error(
+      'That file is not a PNG, JPEG, WebP or SVG. Export the logo as one of those and try again.',
+    );
+  }
+
+  // Exactly one source may exist, or the next run would not know which won.
+  for (const ext of SOURCE_EXTENSIONS) {
+    const stale = join(BRAND_DIR, `${SOURCE_STEM}.${ext}`);
+    if (existsSync(stale)) rmSync(stale);
+  }
+
+  const target = join(BRAND_DIR, `${SOURCE_STEM}.${kind.ext}`);
+  writeFileSync(target, buffer);
+  console.log(`imported ${from}\n      -> public/brand/${SOURCE_STEM}.${kind.ext} (${buffer.length} bytes)`);
+  return target;
+}
 
 /**
  * Pack PNGs into an ICO container. Every browser in support has read
@@ -79,7 +157,47 @@ function buildIco(entries) {
   return Buffer.concat([header, directory, ...entries.map((e) => e.buffer)]);
 }
 
-async function render(browser, svgName, size, transparent) {
+/**
+ * The obsidian field an imported logo is centred on. Mirrors the SVG's own
+ * backdrop so a swapped-in source still matches the rest of the set, and gives
+ * a transparent export something to sit against in a light notification shade.
+ */
+const TILE_BACKGROUND =
+  'radial-gradient(circle at 50% 40%, #14315B 0%, #0B1F3C 42%, #050D1B 100%)';
+
+async function renderSource(browser, sourcePath, size) {
+  const buffer = readFileSync(sourcePath);
+  const kind = sniffImage(buffer) ?? { mime: 'image/png' };
+  const dataUri = `data:${kind.mime};base64,${buffer.toString('base64')}`;
+  const page = await browser.newPage({
+    viewport: { width: size, height: size },
+    deviceScaleFactor: 1,
+  });
+  await page.setContent(
+    `<!doctype html><meta charset="utf-8">
+     <style>
+       html,body{margin:0;padding:0;background:transparent}
+       .tile{
+         width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.22)}px;
+         background:${TILE_BACKGROUND};
+         display:flex;align-items:center;justify-content:center;overflow:hidden;
+       }
+       /* contain, not cover: a wide or square export must never be cropped. */
+       img{width:82%;height:82%;object-fit:contain;display:block}
+     </style>
+     <div class="tile"><img src="${dataUri}"></div>`,
+    { waitUntil: 'load' },
+  );
+  await page.waitForFunction(() => {
+    const img = document.querySelector('img');
+    return !!img && img.complete && img.naturalWidth > 0;
+  }, undefined, { timeout: 15000 });
+  const shot = await page.screenshot();
+  await page.close();
+  return shot;
+}
+
+async function renderSvg(browser, svgName, size, transparent) {
   const svg = readFileSync(join(BRAND_DIR, svgName), 'utf8');
   const page = await browser.newPage({
     viewport: { width: size, height: size },
@@ -100,6 +218,18 @@ async function render(browser, svgName, size, transparent) {
 }
 
 /**
+ * An imported master wins for every full-colour surface. The badge glyph never
+ * uses it: Android keeps only the alpha channel there, so a full-colour logo
+ * returns as a grey block — see `aurixa-badge.svg`.
+ */
+async function render(browser, svgName, size, transparent) {
+  if (importedSource && !transparent) {
+    return renderSource(browser, importedSource, size);
+  }
+  return renderSvg(browser, svgName, size, transparent);
+}
+
+/**
  * CI images often ship one Chromium build while the pinned Playwright wants
  * another, so try an explicit binary, then the managed one.
  */
@@ -115,6 +245,42 @@ async function launch() {
   }
   throw lastError;
 }
+
+/**
+ * Resolved before anything renders: `render()` consults it to decide whether a
+ * surface comes from the imported master or the bundled vector.
+ */
+let importedSource = findImportedSource();
+
+if (resetToVector) {
+  for (const ext of SOURCE_EXTENSIONS) {
+    const stale = join(BRAND_DIR, `${SOURCE_STEM}.${ext}`);
+    if (existsSync(stale)) {
+      rmSync(stale);
+      console.log(`removed public/brand/${SOURCE_STEM}.${ext}`);
+    }
+  }
+  importedSource = null;
+}
+
+if (importFrom) {
+  if (check) {
+    console.error('--import cannot be combined with --check.');
+    process.exit(2);
+  }
+  try {
+    importedSource = await importSource(importFrom);
+  } catch (error) {
+    console.error(String(error?.message ?? error));
+    process.exit(1);
+  }
+}
+
+console.log(
+  importedSource
+    ? `source: imported master (${importedSource.split('/').pop()})`
+    : 'source: bundled vector (aurixa-mark.svg) — supply the official export with --import',
+);
 
 let browser;
 try {

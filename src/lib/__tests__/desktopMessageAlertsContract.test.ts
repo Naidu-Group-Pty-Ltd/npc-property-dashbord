@@ -396,6 +396,61 @@ describe('the stock icon is gone from disk, not just unreferenced', () => {
   });
 });
 
+/**
+ * The bundled mark is a vector reconstruction. Replacing it with the official
+ * export must not mean hand-editing six binaries and hoping they stay in step —
+ * one command takes the real file and re-derives every surface from it.
+ */
+describe('supplying the official brand artwork', () => {
+  const script = read('scripts/brand/build-aurixa-icons.mjs');
+
+  it('accepts a local path or a URL as the master', () => {
+    expect(script).toContain("argv.indexOf('--import')");
+    // A URL matters: the logo usually arrives in the public branding bucket
+    // rather than on the machine running the build.
+    expect(script).toContain('await fetch(from');
+  });
+
+  it('rejects anything that is not an image the browser can draw', () => {
+    expect(script).toContain('function sniffImage');
+    for (const magic of ['89504e47', 'ffd8ff', '52494646']) {
+      expect(script).toContain(magic);
+    }
+  });
+
+  it('keeps exactly one master so the next run cannot pick the wrong one', () => {
+    expect(script).toContain('const stale = join(BRAND_DIR, `${SOURCE_STEM}.${ext}`)');
+    expect(script).toContain('rmSync(stale)');
+  });
+
+  it('prefers an imported master over the vector for full-colour surfaces', () => {
+    expect(script).toContain('if (importedSource && !transparent)');
+    expect(script).toContain('renderSource(browser, importedSource, size)');
+  });
+
+  it('never lets an imported logo become the monochrome badge', () => {
+    // Android keeps only the badge's alpha, so a full-colour logo returns as a
+    // grey block. `transparent` marks the badge, and it always uses the glyph.
+    const renderFn = script.slice(script.indexOf('async function render(browser'));
+    expect(renderFn).toContain('!transparent');
+    expect(renderFn).toContain('renderSvg(');
+  });
+
+  it('contains the source rather than cropping it', () => {
+    // A wide or square export must survive without having its edges cut off.
+    expect(script).toContain('object-fit:contain');
+  });
+
+  it('can be put back to the bundled vector', () => {
+    expect(script).toContain("argv.includes('--reset')");
+  });
+
+  it('is reachable as an npm script', () => {
+    const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
+    expect(pkg.scripts['brand:import']).toContain('--import');
+  });
+});
+
 describe('platform wiring', () => {
   it('mounts the alert surface on every dashboard route, mobile and desktop', () => {
     const layout = read('src/components/layout/DashboardLayout.tsx');
