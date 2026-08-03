@@ -64,7 +64,9 @@ import {
   sendInternalMessageWithAttachments,
   hydrateThreadAttachments,
 } from '@/lib/internalMessageAttachments';
+import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
+
 import {
   clearTabUnreadBadge,
   dismissDesktopMessageAlert,
