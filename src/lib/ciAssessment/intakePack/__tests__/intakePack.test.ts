@@ -1,20 +1,33 @@
+/* eslint-disable no-restricted-syntax -- this suite asserts on hex colour
+   conversion and on the literal ARGB values written into .xlsx/.docx, so
+   hex is the subject under test rather than a styling shortcut. */
 import { describe, expect, it } from 'vitest';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { buildIntakeWorkbook, INSTRUCTIONS_SHEET, PACK_MAGIC, packFileName } from '../workbook';
 import { parseIntakeWorkbook } from '../parseWorkbook';
+import { buildIntakeDocument, documentToBlob } from '../document';
 import { ALL_PACK_FIELDS, PACK_SECTIONS } from '../schema';
 import { decodeDate, decodeNumber, decodeTriState, encodeValue, decodeValue } from '../values';
-import { DEFAULT_PACK_BRANDING } from '../branding';
+import { DEFAULT_PACK_BRANDING, toHex, fitLogo, argb, bareHex } from '../branding';
 import { emptyAssessmentPayload, type AssessmentPayload } from '../../types';
 import { runAssessment } from '../../engine';
 
 const AS_AT = new Date('2026-08-03T00:00:00.000Z');
 
-/** Round-trip a workbook through a real serialise/parse cycle, as the UI does. */
-function roundTrip(workbook: XLSX.WorkBook) {
-  const bytes = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
-  const reread = XLSX.read(bytes, { type: 'array', cellDates: true });
-  return parseIntakeWorkbook(reread);
+/**
+ * Serialise an ExcelJS workbook and read it back with SheetJS — the exact
+ * cross-library hop the product makes (ExcelJS writes, SheetJS parses). Tests
+ * that skipped the file format entirely would not prove the hop works.
+ */
+async function toSheetJs(workbook: ExcelJS.Workbook): Promise<XLSX.WorkBook> {
+  const buffer = await workbook.xlsx.writeBuffer();
+  return XLSX.read(buffer, { type: 'buffer', cellDates: true });
+}
+
+/** Build then immediately re-read, for tests that assert on generated content. */
+async function buildAndRead(options = {}) {
+  return toSheetJs(await buildIntakeWorkbook({ generatedAt: AS_AT, ...options }));
 }
 
 /** Write a value into a key/value sheet by field key. */
@@ -58,18 +71,18 @@ function addTableRow(workbook: XLSX.WorkBook, sheetName: string, values: Record<
 // ---------------------------------------------------------------------------
 
 describe('pack schema', () => {
-  it('has globally unique field keys', () => {
+  it('has globally unique field keys', async () => {
     const keys = PACK_SECTIONS.flatMap((section) => section.fields.map((field) => field.key));
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it('keeps every sheet name within Excel’s 31-character limit', () => {
+  it('keeps every sheet name within Excel’s 31-character limit', async () => {
     PACK_SECTIONS.forEach((section) => {
       expect(section.sheetName.length).toBeLessThanOrEqual(31);
     });
   });
 
-  it('gives every field an interview question', () => {
+  it('gives every field an interview question', async () => {
     PACK_SECTIONS.forEach((section) => {
       section.fields.forEach((field) => {
         expect(field.question.trim().length).toBeGreaterThan(0);
@@ -77,13 +90,13 @@ describe('pack schema', () => {
     });
   });
 
-  it('declares a collection path for every table section', () => {
+  it('declares a collection path for every table section', async () => {
     PACK_SECTIONS.filter((section) => section.shape === 'table').forEach((section) => {
       expect(section.collectionPath).toBeTruthy();
     });
   });
 
-  it('offers individual, trust and SMSF structures, not just company', () => {
+  it('offers individual, trust and SMSF structures, not just company', async () => {
     const structure = ALL_PACK_FIELDS.get('entity.structure');
     expect(structure).toBeTruthy();
     expect(structure!.field.options).toEqual(
@@ -91,7 +104,7 @@ describe('pack schema', () => {
     );
   });
 
-  it('asks who owns each portfolio asset and liability', () => {
+  it('asks who owns each portfolio asset and liability', async () => {
     expect(ALL_PACK_FIELDS.has('asset.ownershipEntity')).toBe(true);
     expect(ALL_PACK_FIELDS.has('liability.ownershipEntity')).toBe(true);
   });
@@ -102,8 +115,8 @@ describe('pack schema', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildIntakeWorkbook', () => {
-  it('creates a sheet for every section plus instructions and proceed', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('creates a sheet for every section plus instructions and proceed', async () => {
+    const workbook = await buildAndRead();
     expect(workbook.SheetNames).toContain(INSTRUCTIONS_SHEET);
     expect(workbook.SheetNames).toContain('7. Proceed');
     PACK_SECTIONS.forEach((section) => {
@@ -111,8 +124,8 @@ describe('buildIntakeWorkbook', () => {
     });
   });
 
-  it('stamps a machine-readable format marker', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('stamps a machine-readable format marker', async () => {
+    const workbook = await buildAndRead();
     const rows = XLSX.utils.sheet_to_json<unknown[]>(
       workbook.Sheets[INSTRUCTIONS_SHEET], { header: 1, defval: '' },
     );
@@ -120,19 +133,16 @@ describe('buildIntakeWorkbook', () => {
     expect(marker?.[1]).toBe(PACK_MAGIC);
   });
 
-  it('carries the white-label company name', () => {
-    const workbook = buildIntakeWorkbook({
-      generatedAt: AS_AT,
-      branding: { ...DEFAULT_PACK_BRANDING, companyName: 'Acme Finance Group' },
-    });
+  it('carries the white-label company name', async () => {
+    const workbook = await buildAndRead({ branding: { ...DEFAULT_PACK_BRANDING, companyName: 'Acme Finance Group' } });
     const rows = XLSX.utils.sheet_to_json<unknown[]>(
       workbook.Sheets[INSTRUCTIONS_SHEET], { header: 1, defval: '' },
     );
     expect(JSON.stringify(rows)).toContain('Acme Finance Group');
   });
 
-  it('writes field keys onto every sheet so the parser can map columns', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('writes field keys onto every sheet so the parser can map columns', async () => {
+    const workbook = await buildAndRead();
     PACK_SECTIONS.forEach((section) => {
       const flat = JSON.stringify(XLSX.utils.sheet_to_json(
         workbook.Sheets[section.sheetName], { header: 1, defval: '' },
@@ -141,15 +151,15 @@ describe('buildIntakeWorkbook', () => {
     });
   });
 
-  it('leaves blank rows on table sheets to write into', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('leaves blank rows on table sheets to write into', async () => {
+    const workbook = await buildAndRead();
     const rows = XLSX.utils.sheet_to_json<unknown[]>(
       workbook.Sheets['3. Ownership'], { header: 1, defval: '', blankrows: true },
     );
     expect(rows.length).toBeGreaterThan(6);
   });
 
-  it('builds a sensible filename', () => {
+  it('builds a sensible filename', async () => {
     expect(packFileName(
       { ...DEFAULT_PACK_BRANDING, companyName: 'Acme Finance Group' }, 'CI-202608-X9K9U', 'xlsx',
     )).toBe('Acme-Finance-Group-CI-intake-CI-202608-X9K9U.xlsx');
@@ -161,7 +171,7 @@ describe('buildIntakeWorkbook', () => {
 // ---------------------------------------------------------------------------
 
 describe('pack round-trip', () => {
-  it('rejects a workbook that is not one of our packs', () => {
+  it('rejects a workbook that is not one of our packs', async () => {
     const foreign = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(
       foreign, XLSX.utils.aoa_to_sheet([['Name', 'Value'], ['Anything', 1]]), 'Sheet1',
@@ -171,8 +181,8 @@ describe('pack round-trip', () => {
     expect(parsed.issues[0].severity).toBe('error');
   });
 
-  it('recognises a freshly generated, unfilled pack and imports nothing from it', () => {
-    const parsed = roundTrip(buildIntakeWorkbook({ generatedAt: AS_AT }));
+  it('recognises a freshly generated, unfilled pack and imports nothing from it', async () => {
+    const parsed = parseIntakeWorkbook(await buildAndRead());
     expect(parsed.recognised).toBe(true);
     // Blank template rows must not become empty entities or liabilities.
     expect(parsed.counts.entities).toBe(0);
@@ -180,8 +190,8 @@ describe('pack round-trip', () => {
     expect(parsed.counts.liabilities).toBe(0);
   });
 
-  it('round-trips scalar transaction values', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('round-trips scalar transaction values', async () => {
+    const workbook = await buildAndRead();
     setScalar(workbook, '1. Transaction', 'property.address', '45 Industrial Drive');
     setScalar(workbook, '1. Transaction', 'property.suburb', 'Wetherill Park');
     setScalar(workbook, '1. Transaction', 'property.state', 'NSW');
@@ -190,7 +200,7 @@ describe('pack round-trip', () => {
     setScalar(workbook, '1. Transaction', 'loan.requestedLoan', 3_250_000);
     setScalar(workbook, '1. Transaction', 'loan.actualRatePercent', 6.75);
 
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.payload.property.address).toBe('45 Industrial Drive');
     expect(parsed.payload.property.suburb).toBe('Wetherill Park');
     expect(parsed.payload.property.state).toBe('NSW');
@@ -200,20 +210,20 @@ describe('pack round-trip', () => {
     expect(parsed.payload.loan.actualRatePercent).toBe(6.75);
   });
 
-  it('decodes select labels back to engine codes', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('decodes select labels back to engine codes', async () => {
+    const workbook = await buildAndRead();
     setScalar(workbook, '1. Transaction', 'assessment.type', 'Industrial investment');
     setScalar(workbook, '1. Transaction', 'property.assetClass', 'Cold storage');
     setScalar(workbook, '1. Transaction', 'loan.repaymentType', 'Interest only');
 
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.payload.assessmentType).toBe('industrial_investment');
     expect(parsed.payload.property.assetClass).toBe('cold_storage');
     expect(parsed.payload.loan.repaymentType).toBe('interestOnly');
   });
 
-  it('is not confused by re-ordered rows, because it matches on key', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('is not confused by re-ordered rows, because it matches on key', async () => {
+    const workbook = await buildAndRead();
     setScalar(workbook, '1. Transaction', 'property.purchasePrice', 4_000_000);
 
     // Reverse the data rows entirely.
@@ -222,7 +232,7 @@ describe('pack round-trip', () => {
     const reordered = [...rows.slice(0, 3), ...rows.slice(3).reverse()];
     workbook.Sheets['1. Transaction'] = XLSX.utils.aoa_to_sheet(reordered as never);
 
-    expect(roundTrip(workbook).payload.property.purchasePrice).toBe(4_000_000);
+    expect(parseIntakeWorkbook(workbook).payload.property.purchasePrice).toBe(4_000_000);
   });
 });
 
@@ -231,8 +241,8 @@ describe('pack round-trip', () => {
 // ---------------------------------------------------------------------------
 
 describe('ownership structures', () => {
-  it('imports an individual, a family trust and an SMSF together', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('imports an individual, a family trust and an SMSF together', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '3. Ownership', {
       'entity.name': 'Jane Smith', 'entity.structure': 'Individual',
       'entity.ownershipPercent': 40,
@@ -248,7 +258,7 @@ describe('ownership structures', () => {
       'entity.beneficiaries': 'Jane Smith, John Smith',
     });
 
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.counts.entities).toBe(3);
 
     const structures = parsed.payload.ownership.entities.map((entity) => entity.structure);
@@ -260,31 +270,31 @@ describe('ownership structures', () => {
     expect(smsf.beneficiaries).toContain('Jane Smith');
   });
 
-  it('routes an SMSF borrower to specialist review once calculated', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('routes an SMSF borrower to specialist review once calculated', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '3. Ownership', {
       'entity.name': 'Smith Super Fund', 'entity.structure': 'SMSF', 'entity.ownershipPercent': 100,
     });
     setScalar(workbook, '2. Purpose', 'ownership.borrowingPurpose', 'Acquisition of a warehouse as a fund investment.');
     setScalar(workbook, '2. Purpose', 'ownership.purposeIsPredominantlyBusiness', 'Yes');
 
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     const result = runAssessment(parsed.payload, { asAt: AS_AT });
     expect(result.compliance.requiresSpecialistReview).toBe(true);
     expect(result.compliance.flags.some((flag) => flag.code === 'SMSF_BORROWER')).toBe(true);
   });
 
-  it('warns when ownership percentages do not total 100', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('warns when ownership percentages do not total 100', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '3. Ownership', {
       'entity.name': 'Jane Smith', 'entity.structure': 'Individual', 'entity.ownershipPercent': 40,
     });
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.issues.some((issue) => issue.message.includes('total 100%'))).toBe(true);
   });
 
-  it('warns when an asset names an owner absent from the ownership sheet', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('warns when an asset names an owner absent from the ownership sheet', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '3. Ownership', {
       'entity.name': 'Jane Smith', 'entity.structure': 'Individual', 'entity.ownershipPercent': 100,
     });
@@ -292,7 +302,7 @@ describe('ownership structures', () => {
       'asset.address': '9 Other Road', 'asset.ownershipEntity': 'Unlisted Trust',
       'asset.currentValue': 800_000, 'asset.currentBalance': 400_000,
     });
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.issues.some((issue) => issue.message.includes('Unlisted Trust'))).toBe(true);
   });
 });
@@ -302,8 +312,8 @@ describe('ownership structures', () => {
 // ---------------------------------------------------------------------------
 
 describe('portfolio and income import', () => {
-  it('imports portfolio assets with their owning entity', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('imports portfolio assets with their owning entity', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '3. Ownership', {
       'entity.name': 'Smith Family Trust', 'entity.structure': 'Trust', 'entity.ownershipPercent': 100,
     });
@@ -313,7 +323,7 @@ describe('portfolio and income import', () => {
       'asset.currentBalance': 1_500_000, 'asset.interestRate': 6.5, 'asset.annualRent': 210_000,
     });
 
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.counts.portfolioAssets).toBe(1);
     const asset = parsed.payload.portfolio.assets[0];
     expect(asset.address).toBe('12 Example Road');
@@ -322,19 +332,19 @@ describe('portfolio and income import', () => {
     expect(asset.currentValue).toBe(3_000_000);
   });
 
-  it('imports liabilities and preserves the contingent flag', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('imports liabilities and preserves the contingent flag', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '5b. Liabilities', {
       'liability.description': 'Director guarantee', 'liability.liabilityType': 'Guarantee',
       'liability.balance': 400_000, 'liability.isContingent': 'Yes',
     });
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.payload.portfolio.liabilities[0].isContingent).toBe(true);
     expect(parsed.payload.portfolio.liabilities[0].liabilityType).toBe('guarantee');
   });
 
-  it('links add-backs to their period by label', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('links add-backs to their period by label', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '4. Income', {
       'period.label': 'FY2025', 'period.periodEnd': '2025-06-30', 'period.ebitda': 620_000,
     });
@@ -344,30 +354,30 @@ describe('portfolio and income import', () => {
       'addback.source': 'FY2025 statements note 7', 'addback.confirmed': 'Yes',
     });
 
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.counts.addbacks).toBe(1);
     expect(parsed.payload.income.addbacks[0].periodId).toBe(parsed.payload.income.periods[0].id);
     expect(parsed.payload.income.addbacks[0].confirmed).toBe(true);
   });
 
-  it('flags an add-back whose period does not exist', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('flags an add-back whose period does not exist', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '4. Income', { 'period.label': 'FY2025', 'period.periodEnd': '2025-06-30' });
     addTableRow(workbook, '4b. Add-backs', {
       'addback.periodLabel': 'FY2019', 'addback.amount': 10_000,
       'addback.reason': 'x', 'addback.source': 'y',
     });
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.issues.some((issue) => issue.message.includes('FY2019'))).toBe(true);
   });
 
-  it('imports tenancies for the property being acquired', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('imports tenancies for the property being acquired', async () => {
+    const workbook = await buildAndRead();
     addTableRow(workbook, '6. Tenancies', {
       'tenancy.tenantName': 'National Logistics Pty Ltd', 'tenancy.annualRent': 350_000,
       'tenancy.leaseExpiry': '2031-01-01', 'tenancy.tenantQuality': 'National tenant',
     });
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.payload.lease.tenancies[0].tenantName).toBe('National Logistics Pty Ltd');
     expect(parsed.payload.lease.tenancies[0].tenantQuality).toBe('national');
   });
@@ -378,7 +388,7 @@ describe('portfolio and income import', () => {
 // ---------------------------------------------------------------------------
 
 describe('value decoding', () => {
-  it('accepts money written the way people type it', () => {
+  it('accepts money written the way people type it', async () => {
     expect(decodeNumber('$1,250,000')).toBe(1_250_000);
     expect(decodeNumber('1.25m')).toBe(1_250_000);
     expect(decodeNumber('850k')).toBe(850_000);
@@ -388,7 +398,7 @@ describe('value decoding', () => {
     expect(decodeNumber('not a number')).toBeUndefined();
   });
 
-  it('reads Australian day-first dates without shifting the month', () => {
+  it('reads Australian day-first dates without shifting the month', async () => {
     expect(decodeDate('03/08/2026')).toBe('2026-08-03');
     expect(decodeDate('3.8.2026')).toBe('2026-08-03');
     expect(decodeDate('2026-08-03')).toBe('2026-08-03');
@@ -396,27 +406,27 @@ describe('value decoding', () => {
     expect(decodeDate('rubbish')).toBeUndefined();
   });
 
-  it('keeps "not yet known" distinct from "no"', () => {
+  it('keeps "not yet known" distinct from "no"', async () => {
     expect(decodeTriState('Yes')).toBe(true);
     expect(decodeTriState('No')).toBe(false);
     expect(decodeTriState('Not yet known')).toBeNull();
     expect(decodeTriState('')).toBeUndefined();
   });
 
-  it('treats a fractional percentage as a percentage', () => {
+  it('treats a fractional percentage as a percentage', async () => {
     expect(decodeValue('asset.interestRate', 'percent', 0.065)).toBeCloseTo(6.5, 5);
     expect(decodeValue('asset.interestRate', 'percent', 6.5)).toBe(6.5);
   });
 
-  it('writes zero as blank so the pack reads as an empty form', () => {
+  it('writes zero as blank so the pack reads as an empty form', async () => {
     expect(encodeValue('property.stampDuty', 'money', 0)).toBe('');
     expect(encodeValue('property.stampDuty', 'money', 275_000)).toBe(275_000);
   });
 
-  it('rejects an implausible figure rather than importing it', () => {
-    const workbook = buildIntakeWorkbook({ generatedAt: AS_AT });
+  it('rejects an implausible figure rather than importing it', async () => {
+    const workbook = await buildAndRead();
     setScalar(workbook, '1. Transaction', 'property.purchasePrice', 99_000_000_000);
-    const parsed = roundTrip(workbook);
+    const parsed = parseIntakeWorkbook(workbook);
     expect(parsed.payload.property.purchasePrice).toBe(0);
     expect(parsed.issues.some((issue) => issue.severity === 'error')).toBe(true);
   });
@@ -444,8 +454,8 @@ describe('pre-filled pack', () => {
     return payload;
   }
 
-  it('pre-fills an existing assessment and reads it straight back', () => {
-    const parsed = roundTrip(buildIntakeWorkbook({ payload: populated(), generatedAt: AS_AT }));
+  it('pre-fills an existing assessment and reads it straight back', async () => {
+    const parsed = parseIntakeWorkbook(await buildAndRead({ payload: populated() }));
 
     expect(parsed.payload.property.address).toBe('45 Industrial Drive');
     expect(parsed.payload.property.purchasePrice).toBe(5_000_000);
@@ -455,8 +465,8 @@ describe('pre-filled pack', () => {
     expect(parsed.payload.ownership.entities[0].trustees).toBe('Smith Holdings Pty Ltd');
   });
 
-  it('marks every imported value as requiring confirmation', () => {
-    const parsed = roundTrip(buildIntakeWorkbook({ payload: populated(), generatedAt: AS_AT }));
+  it('marks every imported value as requiring confirmation', async () => {
+    const parsed = parseIntakeWorkbook(await buildAndRead({ payload: populated() }));
     expect(parsed.provenance.length).toBeGreaterThan(0);
     parsed.provenance.forEach((entry) => {
       expect(entry.requiresConfirmation).toBe(true);
@@ -464,15 +474,180 @@ describe('pre-filled pack', () => {
     });
   });
 
-  it('produces a payload the engine can calculate without throwing', () => {
-    const parsed = roundTrip(buildIntakeWorkbook({ payload: populated(), generatedAt: AS_AT }));
+  it('produces a payload the engine can calculate without throwing', async () => {
+    const parsed = parseIntakeWorkbook(await buildAndRead({ payload: populated() }));
     expect(() => runAssessment(parsed.payload, { asAt: AS_AT })).not.toThrow();
   });
 
-  it('carries the assessment reference back for matching', () => {
-    const parsed = roundTrip(buildIntakeWorkbook({
-      assessmentReference: 'CI-202608-X9K9U', generatedAt: AS_AT,
-    }));
+  it('carries the assessment reference back for matching', async () => {
+    const parsed = parseIntakeWorkbook(await buildAndRead({ assessmentReference: 'CI-202608-X9K9U' }));
     expect(parsed.assessmentReference).toBe('CI-202608-X9K9U');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// White-label branding
+// ---------------------------------------------------------------------------
+
+describe('brand colour resolution', () => {
+  it('converts the HSL triplet the settings actually store', () => {
+    // whitelabel_settings holds "228 94% 45%", not hex. An earlier version of
+    // this module assumed hex and silently fell back to the default on every
+    // generation, so packs came out unbranded.
+    expect(toHex('228 94% 45%', '#000000')).toBe('#0732DF');
+    expect(toHex('296 100% 44%', '#000000')).toBe('#D100E0');
+  });
+
+  it('passes a hex value straight through', () => {
+    expect(toHex('#1F2937', '#000000')).toBe('#1F2937');
+    expect(toHex('#1f2937', '#000000')).toBe('#1F2937');
+  });
+
+  it('falls back rather than emitting a broken colour', () => {
+    expect(toHex('', '#123456')).toBe('#123456');
+    expect(toHex(null, '#123456')).toBe('#123456');
+    expect(toHex('not a colour', '#123456')).toBe('#123456');
+    expect(toHex(42, '#123456')).toBe('#123456');
+  });
+
+  it('produces ARGB for ExcelJS and bare hex for docx', () => {
+    expect(argb('#0732DF')).toBe('FF0732DF');
+    expect(bareHex('#0732DF')).toBe('0732DF');
+  });
+});
+
+describe('logo sizing', () => {
+  const logo = (w: number, h: number) => ({
+    data: new Uint8Array(1), extension: 'png' as const, widthPx: w, heightPx: h,
+  });
+
+  it('preserves aspect ratio when scaling down', () => {
+    expect(fitLogo(logo(600, 300), 200, 200)).toEqual({ width: 200, height: 100 });
+    expect(fitLogo(logo(300, 600), 200, 200)).toEqual({ width: 100, height: 200 });
+  });
+
+  it('never enlarges a small mark', () => {
+    // An 80px signature mark blown up to 200px looks broken in print.
+    expect(fitLogo(logo(79, 88), 200, 96)).toEqual({ width: 79, height: 88 });
+  });
+
+  it('always returns at least one pixel', () => {
+    const fitted = fitLogo(logo(1000, 1), 10, 10);
+    expect(fitted.height).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('branded workbook output', () => {
+  const branded = {
+    ...DEFAULT_PACK_BRANDING,
+    companyName: 'Naidu Property Consulting Services',
+    brandHex: '#0732DF',
+    accentHex: '#D100E0',
+    contactRows: [
+      { label: 'Website', value: 'www.npcservices.com.au' },
+      { label: 'Email', value: 'admin@npcservices.com.au' },
+      { label: 'Phone', value: '02 8609 3299' },
+      { label: 'Address', value: 'Level 5 Nexus Norwest, 4 Columbia Ct, Norwest NSW 2153' },
+      { label: 'ABN', value: '50 684 555 771' },
+    ],
+  };
+
+  it('writes the company contact block including the ABN', async () => {
+    const workbook = await buildAndRead({ branding: branded });
+    const flat = JSON.stringify(XLSX.utils.sheet_to_json(
+      workbook.Sheets[INSTRUCTIONS_SHEET], { header: 1, defval: '' },
+    ));
+    expect(flat).toContain('50 684 555 771');
+    expect(flat).toContain('admin@npcservices.com.au');
+    expect(flat).toContain('Naidu Property Consulting Services');
+  });
+
+  it('repeats the contact details on the proceed sheet', async () => {
+    const workbook = await buildAndRead({ branding: branded });
+    const flat = JSON.stringify(XLSX.utils.sheet_to_json(
+      workbook.Sheets['7. Proceed'], { header: 1, defval: '' },
+    ));
+    expect(flat).toContain('50 684 555 771');
+  });
+
+  it('snapshots the brand onto the pack so a reissue reproduces it', async () => {
+    const workbook = await buildAndRead({ branding: branded });
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(
+      workbook.Sheets[INSTRUCTIONS_SHEET], { header: 1, defval: '' },
+    );
+    const snapshot = rows.find((row) => String(row?.[0]) === '__brand_snapshot');
+    expect(String(snapshot?.[1])).toContain('Naidu Property Consulting Services');
+    expect(String(snapshot?.[1])).toContain('#0732DF');
+  });
+
+  it('applies the brand fill to header cells', async () => {
+    const excel = await buildIntakeWorkbook({ branding: branded, generatedAt: AS_AT });
+    const sheet = excel.getWorksheet('1. Transaction')!;
+    const fill = sheet.getCell(3, 1).fill as { fgColor?: { argb?: string } };
+    expect(fill.fgColor?.argb).toBe('FF0732DF');
+  });
+
+  it('declares dropdown validation on a select field', async () => {
+    const excel = await buildIntakeWorkbook({ branding: branded, generatedAt: AS_AT });
+    const sheet = excel.getWorksheet('1. Transaction')!;
+    // property.state offers the eight states — short enough for Excel's
+    // 255-character inline list limit.
+    let found = false;
+    sheet.eachRow((row) => {
+      if (String(row.getCell(1).value ?? '') === 'property.state') {
+        const validation = row.getCell(3).dataValidation;
+        expect(validation?.type).toBe('list');
+        expect(String(validation?.formulae?.[0])).toContain('NSW');
+        found = true;
+      }
+    });
+    expect(found).toBe(true);
+  });
+
+  it('omits validation where the option list exceeds Excel’s inline limit', async () => {
+    const excel = await buildIntakeWorkbook({ branding: branded, generatedAt: AS_AT });
+    const sheet = excel.getWorksheet('1. Transaction')!;
+    // A list over 255 characters makes Excel declare the file corrupt, so the
+    // options are left to the guidance column instead.
+    sheet.eachRow((row) => {
+      const validation = row.getCell(3).dataValidation;
+      if (validation?.formulae?.[0]) {
+        expect(String(validation.formulae[0]).length).toBeLessThanOrEqual(255);
+      }
+    });
+  });
+
+  it('still round-trips once branded and styled', async () => {
+    const workbook = await buildAndRead({ branding: branded });
+    const parsed = parseIntakeWorkbook(workbook);
+    expect(parsed.recognised).toBe(true);
+    expect(parsed.counts.entities).toBe(0);
+  });
+});
+
+describe('branded document output', () => {
+  it('builds with an embedded logo without throwing', async () => {
+    // A 1x1 PNG is enough to exercise the ImageRun path.
+    const png = Uint8Array.from(atob(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    ), (c) => c.charCodeAt(0));
+
+    const doc = buildIntakeDocument({
+      generatedAt: AS_AT,
+      branding: {
+        ...DEFAULT_PACK_BRANDING,
+        companyName: 'Naidu Property Consulting Services',
+        brandHex: '#0732DF',
+        logo: { data: png, extension: 'png', widthPx: 1, heightPx: 1 },
+        contactRows: [{ label: 'ABN', value: '50 684 555 771' }],
+      },
+    });
+    const blob = await documentToBlob(doc);
+    expect(blob.size).toBeGreaterThan(0);
+  });
+
+  it('builds without a logo when none is configured', async () => {
+    const doc = buildIntakeDocument({ generatedAt: AS_AT, branding: DEFAULT_PACK_BRANDING });
+    expect((await documentToBlob(doc)).size).toBeGreaterThan(0);
   });
 });
