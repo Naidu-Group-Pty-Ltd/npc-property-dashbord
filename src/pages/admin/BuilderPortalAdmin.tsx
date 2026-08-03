@@ -249,6 +249,61 @@ type ConfirmAction =
 interface AdminCallError extends Error {
   code?: string;
   dependents?: string;
+  currentVersion?: number;
+  status?: number;
+}
+
+/**
+ * What a refused removal is shown as.
+ *
+ * The server answers 409 `has_dependents` with a comma-separated list of what
+ * is still attached. That list is the useful part, so it is broken out and
+ * rendered as its own bullets rather than buried in a sentence, and each
+ * refusal names the operation that does work instead.
+ */
+export interface BlockedRemoval {
+  message: string;
+  dependents: string[];
+  recommendation?: string;
+}
+
+/** A revoked membership is kept as evidence, so its refusal is its own case. */
+const REVOKED_MEMBERSHIP_BLOCKER = 'a revoked membership is retained as audit evidence';
+
+/**
+ * Turns a refusal into something an administrator can act on.
+ *
+ * Nothing here echoes the server's raw text: a PostgreSQL sentinel or a
+ * malformed-literal message is a bug report, not an instruction, so only
+ * wording chosen here reaches the screen.
+ */
+function describeBlockedRemoval(kind: string, dependents?: string): BlockedRemoval {
+  const parts = (dependents ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+
+  if (parts.some((entry) => entry === REVOKED_MEMBERSHIP_BLOCKER)) {
+    return {
+      message: 'This membership has already been revoked and is retained as audit evidence. '
+        + 'It cannot be permanently removed.',
+      dependents: [],
+      recommendation: 'Restore the membership if this user should have access again.',
+    };
+  }
+
+  const recommendation = kind === 'user_remove'
+    ? 'Revoke access instead to preserve its history.'
+    : kind === 'org_remove'
+      ? 'Close the organisation instead to preserve its history.'
+      : 'Revoke the membership instead to preserve its history.';
+
+  return {
+    message: 'This record cannot be removed because it is still in use.',
+    // Sentence case for display; the server sends them lower-case.
+    dependents: parts.map((entry) => entry.charAt(0).toUpperCase() + entry.slice(1)),
+    recommendation,
+  };
 }
 
 /**
@@ -300,7 +355,7 @@ export default function BuilderPortalAdmin() {
    * so the administrator can read which records are holding the row and pick
    * the alternative the dialog names.
    */
-  const [confirmBlocked, setConfirmBlocked] = useState<string | null>(null);
+  const [confirmBlocked, setConfirmBlocked] = useState<BlockedRemoval | null>(null);
 
   // Surfaced only when the invite function reports that email delivery did not
   // happen. The link is one-time and is never persisted anywhere in the browser.
@@ -308,14 +363,23 @@ export default function BuilderPortalAdmin() {
 
   const call = useCallback(async (operation: string, payload: Record<string, unknown> = {}) => {
     const { data, error } = await invokeSecureFunction('builder-portal-admin', { operation, ...payload });
-    if (error) throw new Error(error.message);
-    if (data?.error) {
-      // The structured detail travels with the error: `code` distinguishes a
-      // refused removal from a stale write, and `dependents` names the records
-      // that are holding the row. Both are shown to the administrator.
-      const failure = new Error(data.error) as AdminCallError;
-      failure.code = data.code;
-      failure.dependents = data.dependents;
+
+    // A non-2xx reply sets `error` AND still returns the parsed body as `data`.
+    // Throwing on `error` alone therefore threw away `code`, `dependents` and
+    // `current_version` — every 409 arrived as a bare message, which is why a
+    // refused removal showed a toast instead of explaining itself in the
+    // dialog. Both carriers are read, and the body wins because it is the one
+    // the function actually wrote.
+    //
+    // Scoped to this page on purpose: `invokeSecureFunction` is shared with
+    // every other module, and its return shape is relied on across the app.
+    if (error || data?.error) {
+      const message = typeof data?.error === 'string' ? data.error : error?.message;
+      const failure = new Error(message || 'Operation failed') as AdminCallError;
+      failure.code = data?.code ?? (error as { code?: string } | null)?.code;
+      failure.dependents = data?.dependents;
+      failure.currentVersion = data?.current_version;
+      failure.status = error?.status;
       throw failure;
     }
     return data;
@@ -423,12 +487,11 @@ export default function BuilderPortalAdmin() {
       await load();
     } catch (error) {
       const failure = error as AdminCallError;
+      // A refused removal is an answer, not a failure. The dialog stays open
+      // and explains itself, because closing it would leave the administrator
+      // with a vanished toast and no idea what to do instead.
       if (failure?.code === 'has_dependents') {
-        setConfirmBlocked(
-          failure.dependents
-            ? `${failure.message} Still attached: ${failure.dependents}.`
-            : failure.message,
-        );
+        setConfirmBlocked(describeBlockedRemoval(confirm?.kind ?? '', failure.dependents));
         return;
       }
       toast.error(failure?.message || 'Operation failed');
@@ -436,7 +499,7 @@ export default function BuilderPortalAdmin() {
     } finally {
       setBusy(false);
     }
-  }, [call, load]);
+  }, [call, load, confirm]);
 
   /** The permission catalogue is fetched once, when it is first needed. */
   const openPermissions = useCallback(async (membership: BuilderMembership) => {
@@ -1511,25 +1574,31 @@ export default function BuilderPortalAdmin() {
                                   </>
                                 )}
 
-                                <DropdownMenuSeparator />
-
+                                {/* A revoked membership is retained as audit evidence, so
+                                    the server always refuses to remove it. Offering the
+                                    action anyway would be offering a guaranteed failure —
+                                    the revoked row's only forward action is Restore. */}
                                 {!isRevoked && (
-                                  <DropdownMenuItem
-                                    className="text-destructive focus:text-destructive"
-                                    onClick={() => setConfirm({ kind: 'membership_revoke', membership, isLast })}
-                                  >
-                                    <ShieldOff className="mr-2 h-4 w-4" aria-hidden />
-                                    Revoke membership
-                                  </DropdownMenuItem>
-                                )}
+                                  <>
+                                    <DropdownMenuSeparator />
 
-                                <DropdownMenuItem
-                                  className="text-destructive focus:text-destructive"
-                                  onClick={() => setConfirm({ kind: 'membership_remove', membership })}
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" aria-hidden />
-                                  Remove membership
-                                </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => setConfirm({ kind: 'membership_revoke', membership, isLast })}
+                                    >
+                                      <ShieldOff className="mr-2 h-4 w-4" aria-hidden />
+                                      Revoke membership
+                                    </DropdownMenuItem>
+
+                                    <DropdownMenuItem
+                                      className="text-destructive focus:text-destructive"
+                                      onClick={() => setConfirm({ kind: 'membership_remove', membership })}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                                      Remove membership
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -1745,7 +1814,7 @@ export default function BuilderPortalAdmin() {
           confirmLabel={confirmConfig.confirmLabel}
           destructive={confirmConfig.destructive}
           busy={busy}
-          blockedMessage={confirmBlocked}
+          blocked={confirmBlocked}
           onConfirm={confirmConfig.run}
         />
       )}

@@ -475,9 +475,10 @@ test('every control is hidden from an administrator without edit permission', ()
 
 test('a refused removal explains itself instead of closing the dialog', () => {
   assert.match(adminPageCode, /failure\?\.code === 'has_dependents'/);
-  assert.match(adminPageCode, /Still attached: \$\{failure\.dependents\}/);
+  assert.match(adminPageCode, /setConfirmBlocked\(describeBlockedRemoval\(/);
   assert.match(adminFnCode, /dependents=\(\[\^\\n\]\+\)/);
-  assert.match(confirmDialog, /blockedMessage/);
+  assert.match(confirmDialog, /blocked\.dependents\.map/);
+  assert.match(confirmDialog, /Still attached:/);
 });
 
 test('permission overrides stay inside the Builder boundary', () => {

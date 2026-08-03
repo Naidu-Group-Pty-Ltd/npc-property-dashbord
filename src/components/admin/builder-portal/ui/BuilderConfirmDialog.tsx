@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
  * It exists so a confirmation can never be a bare "are you sure?". Each caller
  * spells out what ends, what is kept and whether the action can be refused, and
  * the dialog renders those consistently. When the server refuses a removal
- * because the record is still in use, `blockedMessage` shows what is holding it
+ * because the record is still in use, `blocked` shows what is holding it
  * without closing the dialog, so the administrator can read it and choose the
  * alternative the caller names.
  */
@@ -41,9 +41,19 @@ export interface BuilderConfirmDialogProps {
   /** Rendered as a destructive button when true. */
   destructive?: boolean;
   busy?: boolean;
-  /** Server explanation of why the action was refused, e.g. a 409. */
-  blockedMessage?: string | null;
+  /**
+   * Why the server refused, e.g. a 409. Rendered in place, with the dialog
+   * still open, so the administrator can read what is holding the record and
+   * act on the alternative rather than chase a toast that has already gone.
+   */
+  blocked?: BuilderBlockedRemoval | null;
   onConfirm: (reason: string) => void;
+}
+
+export interface BuilderBlockedRemoval {
+  message: string;
+  dependents: string[];
+  recommendation?: string;
 }
 
 const TONE_ICON: Record<ConsequenceTone, typeof CircleX> = {
@@ -61,7 +71,7 @@ const TONE_CLASS: Record<ConsequenceTone, string> = {
 export function BuilderConfirmDialog({
   open, onOpenChange, title, description, consequences = [],
   reasonRequired = false, reasonLabel = 'Reason', reasonPlaceholder,
-  confirmLabel, destructive = false, busy = false, blockedMessage, onConfirm,
+  confirmLabel, destructive = false, busy = false, blocked, onConfirm,
 }: BuilderConfirmDialogProps) {
   const [reason, setReason] = useState('');
 
@@ -69,7 +79,7 @@ export function BuilderConfirmDialog({
   // record must not inherit the last one's wording.
   useEffect(() => { if (open) setReason(''); }, [open]);
 
-  const canConfirm = !busy && (!reasonRequired || reason.trim().length > 0);
+  const canConfirm = !busy && !blocked && (!reasonRequired || reason.trim().length > 0);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -93,10 +103,21 @@ export function BuilderConfirmDialog({
           </ul>
         )}
 
-        {blockedMessage && (
+        {blocked && (
           <Alert variant="destructive">
             <CircleAlert className="h-4 w-4" aria-hidden />
-            <AlertDescription>{blockedMessage}</AlertDescription>
+            <AlertDescription className="space-y-2">
+              <p>{blocked.message}</p>
+              {blocked.dependents.length > 0 && (
+                <div>
+                  <p className="font-medium">Still attached:</p>
+                  <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                    {blocked.dependents.map((entry) => <li key={entry}>{entry}</li>)}
+                  </ul>
+                </div>
+              )}
+              {blocked.recommendation && <p className="font-medium">{blocked.recommendation}</p>}
+            </AlertDescription>
           </Alert>
         )}
 
