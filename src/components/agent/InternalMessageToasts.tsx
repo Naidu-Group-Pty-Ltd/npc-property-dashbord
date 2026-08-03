@@ -518,11 +518,49 @@ export function InternalMessageToasts() {
     });
     check();
     const id = setInterval(check, POLL_MS);
+    // Background tabs get their timers throttled, so re-sync the moment the
+    // dashboard becomes visible again (and whenever it regains focus).
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') check();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     return () => {
       off();
       clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      clearTabUnreadBadge();
     };
   }, [user, check]);
+
+  /**
+   * One-time desktop-alert opt-in. Browsers only grant `Notification`
+   * permission from a user gesture, so we piggy-back on the first click
+   * anywhere in the dashboard rather than nagging with a modal.
+   */
+  useEffect(() => {
+    if (!user) return;
+    if (getDesktopAlertStatus() !== 'default') return;
+    if (hasPromptedDesktopAlerts() || !desktopAlertsEnabled()) return;
+
+    const onFirstGesture = async () => {
+      window.removeEventListener('pointerdown', onFirstGesture);
+      markPromptedDesktopAlerts();
+      const result = await requestDesktopAlertPermission();
+      if (result === 'granted') {
+        toast.success('Desktop alerts on', {
+          description:
+            'You will now get a notification on your desktop when a team message arrives, even while the dashboard is in another tab.',
+          duration: 6000,
+        });
+      }
+    };
+    window.addEventListener('pointerdown', onFirstGesture, { once: true });
+    return () => window.removeEventListener('pointerdown', onFirstGesture);
+  }, [user]);
+
+
 
   /**
    * "Pop out chat" from the Aurixa widget: detach any conversation (direct,
