@@ -167,7 +167,7 @@ export function ListingHero({
             className="absolute inset-0 cursor-zoom-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/50"
             aria-label={label ? `Enlarge ${label}` : 'Enlarge photo'}
           >
-            <Expand className="absolute bottom-2 right-2 h-4 w-4 text-white opacity-0 drop-shadow transition-opacity group-hover:opacity-90" aria-hidden="true" />
+            <Expand className="absolute right-2 top-2 h-4 w-4 text-white opacity-0 drop-shadow transition-opacity group-hover:opacity-90" aria-hidden="true" />
           </button>
         )}
 
@@ -181,11 +181,14 @@ export function ListingHero({
           </>
         )}
 
+        {/* Bottom-right, deliberately: callers put their own badge top-right
+            (the gallery card shows a photo count there) and two absolutely
+            positioned pills in one corner overlap. */}
         {hasStreetView && slideCount > 1 && !onStreetViewSlide && (
           <button
             type="button"
             onClick={() => setIndex(photos.length)}
-            className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-foreground/70 px-2 py-1 text-[10px] font-semibold text-background transition-opacity hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-foreground/70 px-2 py-1 text-[10px] font-semibold text-background transition-opacity hover:bg-foreground/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           >
             <MapPin className="h-3 w-3" aria-hidden="true" />
             Street
