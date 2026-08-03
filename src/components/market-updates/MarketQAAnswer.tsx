@@ -14,6 +14,7 @@ import { useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { AlertTriangle, Building2, CalendarClock, Eye, Landmark, Scale, TrendingUp, Users, Wallet } from 'lucide-react';
+import { stripLabelledIdentifiers } from '@/utils/stripTechnicalIdentifiers';
 import { cn } from '@/lib/utils';
 import type { MarketQAImplications, MarketQAKeyFigure, MarketQARetrievedItem, MarketQATimelineEntry } from '@/types/marketUpdates';
 
@@ -69,7 +70,7 @@ function Section({ title, icon: Icon, tone = 'muted', children }: { title: strin
 }
 
 export function MarketQAAnswer({ content, retrieved = [], keyFigures = [], implications, timeline = [], watchItems = [], contrarianView, streaming }: Props) {
-  const prose = useMemo(() => linkCitations(content ?? '', retrieved), [content, retrieved]);
+  const prose = useMemo(() => stripLabelledIdentifiers(linkCitations(content ?? '', retrieved)), [content, retrieved]);
   const audiences = AUDIENCES.filter(a => (implications?.[a.key] ?? '').trim().length > 0);
   const figures = keyFigures.filter(f => f.label && f.value);
   const showStructured = !streaming;

@@ -27,6 +27,7 @@ import type { MarketQAImplications, MarketQARetrievedItem, MarketQAStage, Market
 import { LiveModelBadge } from '@/components/agentModels';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { clearMarketUpdateArticleFilters, DEFAULT_MARKET_UPDATE_ARTICLE_FILTERS, hasClearableMarketUpdateFilters } from '@/lib/marketUpdateFilters';
+import { stripTechnicalIdentifiers as clean, stripTechnicalIdentifiersFromList as cleanList } from '@/utils/stripTechnicalIdentifiers';
 
 const PERIODS: Array<{ id: MarketDigestPeriod; label: string; hint: string }> = [
   { id: '24h', label: '24 Hours', hint: 'Last day' },
@@ -629,7 +630,8 @@ export default function MarketUpdates() {
                       </div>
                     ) : (
                       <>
-                        <p className="text-sm leading-relaxed text-foreground">{digest.executive_summary}</p>
+
+                        <p className="text-sm leading-relaxed text-foreground">{clean(digest.executive_summary)}</p>
 
                         {(() => {
                           const segments = normaliseSegmentBreakdown(digest.segment_breakdown);
@@ -641,13 +643,13 @@ export default function MarketUpdates() {
                                   <button type="button" onClick={() => setActiveSegment(seg as MarketSegment)} className="mb-1 rounded text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Filter the feed by ${titleCase(seg)}`}>
                                     {titleCase(seg)}
                                   </button>
-                                  {headline && <p className="text-sm leading-relaxed">{headline}</p>}
+                                  {headline && <p className="text-sm leading-relaxed">{clean(headline)}</p>}
                                   {highlights.length > 0 && (
                                     <ul className="mt-2 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-                                      {highlights.slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
+                                      {cleanList(highlights).slice(0, 4).map((h, i) => <li key={i}>{h}</li>)}
                                     </ul>
                                   )}
-                                  {implications && <p className="mt-2 text-xs italic text-foreground/80">{implications}</p>}
+                                  {implications && <p className="mt-2 text-xs italic text-foreground/80">{clean(implications)}</p>}
                                 </div>
                               ))}
                             </div>
@@ -658,7 +660,7 @@ export default function MarketUpdates() {
                           <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
                             <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-primary">Client Advisory Implications</h4>
                             <ul className="list-disc space-y-1 pl-4 text-sm">
-                              {digest.client_advisory_implications.map((c, i) => <li key={i}>{c}</li>)}
+                              {cleanList(digest.client_advisory_implications).map((c, i) => <li key={i}>{c}</li>)}
                             </ul>
                           </div>
                         )}
@@ -779,7 +781,7 @@ export default function MarketUpdates() {
                     </div>
                     <h3 className="mt-2 break-words text-xl font-semibold leading-snug tracking-tight lg:text-2xl">{held.title}</h3>
                     <p className="mt-2 break-words text-sm text-muted-foreground">{held.candidate_reason ? titleCase(held.candidate_reason) : 'Publication criteria were not met.'}</p>
-                    {held.ai_summary && <p className="mt-2 break-words text-sm">{held.ai_summary}</p>}
+                    {held.ai_summary && <p className="mt-2 break-words text-sm">{clean(held.ai_summary)}</p>}
                     <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
                       <Button size="sm" onClick={() => void publishHeldUpdate(held)} disabled={publishingId === held.id}>
                         {publishingId === held.id ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Publish to feed
@@ -868,7 +870,7 @@ export default function MarketUpdates() {
                       <span>· {dateLabel(update.source_published_at ?? update.ingested_at)}</span>
                     </p>
 
-                    {update.ai_summary && <p className="mt-3 text-sm leading-relaxed text-foreground/90">{update.ai_summary}</p>}
+                    {update.ai_summary && <p className="mt-3 text-sm leading-relaxed text-foreground/90">{clean(update.ai_summary)}</p>}
 
                     {update.why_it_matters && (
                       <div className="mt-3 rounded-lg border-l-2 border-primary/60 bg-primary/5 py-2 pl-3 pr-2">
@@ -1005,7 +1007,7 @@ export default function MarketUpdates() {
             </DialogHeader>
             {selectedUpdate && (
               <div className="flex-1 space-y-5 overflow-y-auto px-6 pb-6 pt-5 text-base leading-relaxed">
-                {selectedUpdate.ai_summary && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">AI Summary</h4><p className="mt-1.5">{selectedUpdate.ai_summary}</p></div>}
+                {selectedUpdate.ai_summary && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">AI Summary</h4><p className="mt-1.5">{clean(selectedUpdate.ai_summary)}</p></div>}
                 {selectedUpdate.key_points.length > 0 && <div><h4 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Key Points</h4><ul className="mt-1.5 list-disc space-y-1.5 pl-5">{selectedUpdate.key_points.map((p, i) => <li key={i}>{p}</li>)}</ul></div>}
                 {selectedUpdate.why_it_matters && <div className="rounded-lg border-l-2 border-primary/60 bg-primary/5 py-3 pl-4 pr-3"><h4 className="text-sm font-semibold uppercase tracking-wide text-primary">Why it matters</h4><p className="mt-1.5">{selectedUpdate.why_it_matters}</p></div>}
                 <div className="grid gap-4 md:grid-cols-3">
