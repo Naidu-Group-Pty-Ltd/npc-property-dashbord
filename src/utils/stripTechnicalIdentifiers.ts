@@ -40,3 +40,19 @@ export function stripTechnicalIdentifiersFromList(items?: (string | null | undef
   if (!items?.length) return [];
   return items.map(item => stripTechnicalIdentifiers(item)).filter(Boolean);
 }
+
+/**
+ * Conservative variant: removes only explicitly-labelled id fragments
+ * (e.g. "id: <uuid>"), leaving URLs and citation markers untouched. Use where
+ * the text may contain markdown links whose hrefs legitimately carry ids.
+ */
+export function stripLabelledIdentifiers(input?: string | null): string {
+  if (!input) return '';
+  return String(input)
+    .replace(PATTERNS[0], '')
+    .replace(/\(\s*[,;:]?\s*\)/g, '')
+    .replace(/[,;:]\s*\)/g, ')')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([.,;:])/g, '$1')
+    .trim();
+}
