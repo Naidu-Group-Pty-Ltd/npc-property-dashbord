@@ -35,9 +35,62 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+// Internal team messages are notified from the page itself (not Web Push), but
+// they are shown through this registration so the bubble outlives the tab and
+// can carry action buttons. Clicking one must land the user back in the
+// conversation WITHOUT reloading the dashboard they were working in, so an
+// already-open window is reached by postMessage rather than by navigation.
+const INTERNAL_MESSAGE_KIND = 'internal-message';
+const OPEN_INTERNAL_THREAD_MESSAGE = 'aurixa:open-internal-thread';
+
+async function sameOriginClients() {
+  const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  return all.filter((client) => {
+    try {
+      return new URL(client.url).origin === self.location.origin;
+    } catch (e) {
+      return false;
+    }
+  });
+}
+
+async function openInternalThread(data) {
+  const clients = await sameOriginClients();
+  // Prefer a window the user is already looking at.
+  const ordered = clients.sort((a, b) => (b.focused ? 1 : 0) - (a.focused ? 1 : 0));
+  for (const client of ordered) {
+    try {
+      await client.focus();
+    } catch (e) {
+      /* focus can be refused; the postMessage is still worth sending */
+    }
+    client.postMessage({
+      type: OPEN_INTERNAL_THREAD_MESSAGE,
+      thread_id: data.thread_id,
+      kind: data.thread_kind || 'direct',
+      title: data.thread_title || null,
+    });
+    return;
+  }
+  // No dashboard open: cold-start one straight into the conversation.
+  await self.clients.openWindow(
+    data.url || '/?internalThread=' + encodeURIComponent(data.thread_id || ''),
+  );
+}
+
 self.addEventListener('notificationclick', (event) => {
+  const data = event.notification.data || {};
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || '/';
+
+  // "Dismiss" is an acknowledgement, not a request to open anything.
+  if (event.action === 'dismiss') return;
+
+  if (data.kind === INTERNAL_MESSAGE_KIND && data.thread_id) {
+    event.waitUntil(openInternalThread(data));
+    return;
+  }
+
+  const targetUrl = data.url || '/';
 
   event.waitUntil(
     (async () => {
