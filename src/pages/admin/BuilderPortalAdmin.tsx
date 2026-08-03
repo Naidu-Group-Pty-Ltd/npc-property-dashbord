@@ -73,6 +73,20 @@ const ORG_TYPES = [
 
 const AU_STATES = ['NSW', 'VIC', 'QLD', 'SA', 'WA', 'TAS', 'NT', 'ACT'] as const;
 
+/**
+ * The stages of project delivery, shown as a nested bar inside the Projects
+ * tab. Each one keeps its existing panel, props and permissions untouched —
+ * only where the panel is reached from has changed.
+ */
+const PROJECT_OPERATION_SECTIONS = [
+  { value: 'projects', label: 'Projects', icon: FolderKanban },
+  { value: 'inventory', label: 'Inventory', icon: Package },
+  { value: 'construction', label: 'Construction', icon: Hammer },
+  { value: 'delivery', label: 'Delivery', icon: Truck },
+  { value: 'collaboration', label: 'Collaboration', icon: MessageSquare },
+  { value: 'workspace', label: 'Workspace', icon: BriefcaseBusiness },
+] as const;
+
 const MEMBERSHIP_ROLES = [
   { value: 'owner', label: 'Organisation owner' },
   { value: 'administrator', label: 'Administrator' },
@@ -331,6 +345,15 @@ export default function BuilderPortalAdmin() {
   const [roleDefaults, setRoleDefaults] = useState<BuilderRoleDefault[]>([]);
   const [membershipOverrides, setMembershipOverrides] = useState<BuilderPermissionOverride[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(false);
+
+  /**
+   * Both tab selections are controlled. The page already survives a refresh
+   * (the full-page loading state is first-load only), and holding the values
+   * here means a mutation can never hand the administrator back to a different
+   * tab mid-task.
+   */
+  const [primaryTab, setPrimaryTab] = useState('users');
+  const [projectSection, setProjectSection] = useState('projects');
 
   const [confirm, setConfirm] = useState<ConfirmAction>(null);
   /**
@@ -945,64 +968,44 @@ export default function BuilderPortalAdmin() {
         </div>
       )}
 
-      <Tabs defaultValue="organisations">
+      <Tabs value={primaryTab} onValueChange={setPrimaryTab}>
         <TabsList className="w-full justify-start gap-1 sm:justify-start">
-          <TabsTrigger value="organisations" className="relative shrink-0 gap-2">
-            <Building2 className="h-4 w-4 shrink-0" aria-hidden />
-            Organisations
-            {/* The badge is decorative; the count is spelled out for screen
-                readers so the tab is not announced as "Organisations5". */}
-            <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
-              {organisations.length}
-            </span>
-            <span className="sr-only">, {organisations.length} organisations</span>
-          </TabsTrigger>
           <TabsTrigger value="users" className="relative shrink-0 gap-2">
             <Users className="h-4 w-4 shrink-0" aria-hidden />
             Portal users
+            {/* The badge is decorative; the count is spelled out for screen
+                readers so the tab is not announced as "Portal users7". */}
             <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
               {users.length}
             </span>
             <span className="sr-only">, {users.length} portal users</span>
           </TabsTrigger>
+          <TabsTrigger value="organisations" className="relative shrink-0 gap-2">
+            <Building2 className="h-4 w-4 shrink-0" aria-hidden />
+            Organisations
+            <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
+              {organisations.length}
+            </span>
+            <span className="sr-only">, {organisations.length} organisations</span>
+          </TabsTrigger>
           <TabsTrigger value="memberships" className="relative shrink-0 gap-2">
             <KeyRound className="h-4 w-4 shrink-0" aria-hidden />
             Memberships
-            {/* Counts the rows the tab actually shows. It listed live
-                memberships while the table lists every membership, so a
-                revoked row appeared under a tab reading "0". */}
+            {/* Counts the rows the tab actually shows, revoked included. */}
             <span className="text-xs font-normal opacity-60 tabular-nums" aria-hidden>
               {memberships.length}
             </span>
             <span className="sr-only">, {memberships.length} memberships</span>
           </TabsTrigger>
+          {/* Projects and Transactions carry no badge: neither count is loaded
+              by this page, and a fabricated number is worse than none. */}
           <TabsTrigger value="projects" className="shrink-0 gap-2">
             <FolderKanban className="h-4 w-4 shrink-0" aria-hidden />
             Projects
           </TabsTrigger>
-          <TabsTrigger value="inventory" className="shrink-0 gap-2">
-            <Package className="h-4 w-4 shrink-0" aria-hidden />
-            Inventory
-          </TabsTrigger>
           <TabsTrigger value="transactions" className="shrink-0 gap-2">
             <Handshake className="h-4 w-4 shrink-0" aria-hidden />
             Transactions
-          </TabsTrigger>
-          <TabsTrigger value="construction" className="shrink-0 gap-2">
-            <Hammer className="h-4 w-4 shrink-0" aria-hidden />
-            Construction
-          </TabsTrigger>
-          <TabsTrigger value="delivery" className="shrink-0 gap-2">
-            <Truck className="h-4 w-4 shrink-0" aria-hidden />
-            Delivery
-          </TabsTrigger>
-          <TabsTrigger value="collaboration" className="shrink-0 gap-2">
-            <MessageSquare className="h-4 w-4 shrink-0" aria-hidden />
-            Collaboration
-          </TabsTrigger>
-          <TabsTrigger value="workspace" className="shrink-0 gap-2">
-            <BriefcaseBusiness className="h-4 w-4 shrink-0" aria-hidden />
-            Workspace
           </TabsTrigger>
         </TabsList>
 
@@ -1596,34 +1599,70 @@ export default function BuilderPortalAdmin() {
           </Card>
         </TabsContent>
 
-        {/* The domain panels each render their own Card, so they are not
-            wrapped again here — a second border would only nest boxes. */}
+        {/* ---------------------------------------------- project operations */}
+        {/* Inventory, construction, delivery, collaboration and workspace are
+            stages of the same project lifecycle, so they sit under Projects as
+            a nested section rather than as five more top-level tabs.
+
+            Each panel renders its own Card. The heading and the nested bar
+            therefore live in a lighter bordered strip above them rather than in
+            a Card of their own — wrapping a Card around a Card would just draw
+            a second border round every panel. */}
         <TabsContent value="projects" className="mt-4">
-          <AdminBuilderProjectsPanel canEdit={canEdit} />
+          <Tabs value={projectSection} onValueChange={setProjectSection} className="space-y-4">
+            <section className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
+              <div>
+                <h2 className="text-sm font-semibold tracking-tight">Project operations</h2>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  Manage projects and the connected inventory, construction, delivery and
+                  collaboration workflows.
+                </p>
+              </div>
+              {/* Deliberately lighter than the primary bar — a bordered strip on
+                  the page background rather than a filled segmented control — so
+                  the nesting reads at a glance. */}
+              <TabsList
+                aria-label="Project operations sections"
+                className="h-auto w-full justify-start gap-1 border border-border bg-background p-1 sm:justify-start"
+              >
+                {PROJECT_OPERATION_SECTIONS.map((section) => (
+                  <TabsTrigger
+                    key={section.value}
+                    value={section.value}
+                    className="shrink-0 gap-2 text-xs data-[state=active]:bg-muted"
+                  >
+                    <section.icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                    {section.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </section>
+
+            <TabsContent value="projects" className="mt-0">
+              <AdminBuilderProjectsPanel canEdit={canEdit} />
+            </TabsContent>
+            <TabsContent value="inventory" className="mt-0">
+              <AdminBuilderInventoryPanel canEdit={canEdit} />
+            </TabsContent>
+            <TabsContent value="construction" className="mt-0">
+              <AdminBuilderConstructionPanel canEdit={canEdit} />
+            </TabsContent>
+            <TabsContent value="delivery" className="mt-0">
+              <AdminBuilderDeliveryPanel canEdit={canEdit} />
+            </TabsContent>
+            <TabsContent value="collaboration" className="mt-0">
+              <AdminBuilderCollaborationPanel canEdit={canEdit} />
+            </TabsContent>
+            <TabsContent value="workspace" className="mt-0">
+              <AdminBuilderWorkspacePanel canEdit={canEdit} />
+            </TabsContent>
+          </Tabs>
         </TabsContent>
 
-        <TabsContent value="inventory" className="mt-4">
-          <AdminBuilderInventoryPanel canEdit={canEdit} />
-        </TabsContent>
-
+        {/* Transactions stays top-level: it is a commercial surface in its own
+            right, not a stage of project delivery. */}
         <TabsContent value="transactions" className="mt-4">
           <AdminBuilderTransactionsPanel canEdit={canEdit} />
-        </TabsContent>
-
-        <TabsContent value="construction" className="mt-4">
-          <AdminBuilderConstructionPanel canEdit={canEdit} />
-        </TabsContent>
-
-        <TabsContent value="delivery" className="mt-4">
-          <AdminBuilderDeliveryPanel canEdit={canEdit} />
-        </TabsContent>
-
-        <TabsContent value="collaboration" className="mt-4">
-          <AdminBuilderCollaborationPanel canEdit={canEdit} />
-        </TabsContent>
-
-        <TabsContent value="workspace" className="mt-4">
-          <AdminBuilderWorkspacePanel canEdit={canEdit} />
         </TabsContent>
 
       </Tabs>
