@@ -1605,7 +1605,7 @@ export default function BuilderPortalAdmin() {
           const editing = orgDialog.organisation;
           const ok = await mutate('upsert_organisation', editing
             ? { ...values, organisation_id: editing.id, expected_version: editing.row_version }
-            : values,
+            : { ...values },
           editing ? 'Organisation updated' : 'Organisation created');
           if (ok) setOrgDialog({ open: false, organisation: null });
         }}
