@@ -100,7 +100,9 @@ banner to a property as though it were the house.
 | Mining, prioritisation, merge rules | `supabase/functions/_shared/listingEnrichment.pure.ts` |
 | Page extraction | `supabase/functions/_shared/listingScrape.pure.ts` |
 | URL classification and SSRF gate | `supabase/functions/_shared/listingUrlPolicy.pure.ts` |
+| Contact resolution | `supabase/functions/_shared/listingContact.pure.ts` (browser: `src/lib/listingContact.ts`) |
 | The sweep | `supabase/functions/listing-enrichment/index.ts` |
+| On-demand trigger | `src/hooks/useEnrichListing.ts` |
 | Schema, cron, atomic claim | `supabase/migrations/20260803162826_listing_enrichment.sql` |
 | Image storage | `listing-images` `op:'harvest'` |
 
@@ -137,6 +139,74 @@ not do this; the pattern is deliberately not copied.)
 
 **Priority is the gap discounted by remaining life.** A 29-day-old record is about
 to be pruned upstream, so enriching it buys a day of benefit.
+
+## On demand
+
+The sweep is the right default for 1,441 records and the wrong answer for the one
+record someone is looking at. At 25 listings per ten-minute run, working
+worst-first, a given listing can be hours from its turn — and the person reading
+its card has no way to know whether "No photo on record" means *none exist* or
+*we have not looked yet*.
+
+So the empty state carries the remedy. `useEnrichListing` calls `op:'enrich'` for
+a single listing and reports three outcomes distinctly:
+
+| Outcome | What it says |
+| --- | --- |
+| Photos or fields found | `Found 3 photos` / `Filled in price, landSizeSqm` |
+| Reached the page, nothing there | `Nothing new found for this listing` |
+| No source link on the record | `This listing has no source link to follow` |
+| Could not reach the service | Names the deploy, because that is the likely cause |
+
+The action is only offered where `listing.url` is set — an action whose only
+possible outcome is to report its own futility is worse than no action.
+
+On success the caller re-resolves **only that listing's** images
+(`useListingImages().refresh(id)`), rather than the blanket `retry()` that clears
+every resolution and starts a six-request pass. The source fingerprint is
+unchanged — the new bytes were harvested server-side, not written into the record
+— so neither the fingerprint check nor the signed-URL expiry would have
+invalidated the stale "nothing here" answer on its own; `forgetCachedImages` does
+it explicitly.
+
+Surfaces carrying the trigger: gallery card (empty frame and menu), map popup,
+`/listings/:id` header, and the details modal's Images section. On the property
+page it also refetches the record, because enrichment fills price, specs and
+contact details, not only photographs.
+
+## Contacting the agent
+
+Enrichment exists so that someone can act on a listing, and the action is almost
+always "ask the agent about it". That is only possible where the record carries a
+reachable address, and it frequently does not.
+
+Measured over the 1,441 records: `Agent Email` on 416, `Agency Email` on 314,
+`Sender Email` on 361 — **451 (31%) carry at least one**, and any phone number at
+all on 480 (33%).
+
+`listingContact.pure.ts` resolves the best of them in a fixed order — agent,
+agency, then the sending mailbox — and reports which one it used, so the composer
+can say "this went to the agency, not the agent directly" rather than implying a
+precision it does not have. Two filters do the real work:
+
+- **Unreachable local parts** — `noreply`, `donotreply`, `bounce`, `postmaster`,
+  `mailer-daemon`, `notifications`, `alerts`, `automated` and friends. An enquiry
+  sent to one of these is silently lost, which is worse than showing no button.
+- **Bulk-sender hosts** — `sendgrid.net`, `mailchimp`, `amazonses.com`,
+  `mailgun`, `postmarkapp` and the rest. `Sender Email` on a campaign blast is
+  the ESP's envelope address, not a person.
+
+The scraper contributes to this too: `extractContact` reads `mailto:` and `tel:`
+hrefs from the listing page, falling back to body-text addresses **only when the
+domain matches the page's own host**, and skipping generic mailboxes
+(`info@`, `sales@`, `enquiries@`…). Found addresses are offered at confidence
+0.75 and are in `WRITEBACK_FIELDS`, so a contact recovered from a page can reach
+Airtable through the normal empty-columns-only path.
+
+Sending goes through `send-email-reply` — the same outbound path as every other
+email the app sends, from the user's connected mailbox or the organisation's —
+rather than a `mailto:` link, which would depend on a configured desktop client
+and leave no record on the platform.
 
 ## Boilerplate
 

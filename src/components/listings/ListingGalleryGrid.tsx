@@ -26,6 +26,10 @@ export interface ListingGalleryGridProps {
   onToggleSelect: (listing: PropertyListing, checked: boolean) => void;
   onOpenDetails: (listing: PropertyListing) => void;
   onOpenSource?: (listing: PropertyListing) => void;
+  onEmailAgent?: (listing: PropertyListing) => void;
+  onFindPhotos?: (listing: PropertyListing) => void;
+  /** Id of the listing currently being enriched, if any. */
+  findingPhotosFor?: string | null;
   formatDate: (value: Date | string) => string;
   /** Told how many cards are on screen, so image resolution follows the reader. */
   onVisibleCountChange?: (count: number) => void;
@@ -40,6 +44,9 @@ export function ListingGalleryGrid({
   onToggleSelect,
   onOpenDetails,
   onOpenSource,
+  onEmailAgent,
+  onFindPhotos,
+  findingPhotosFor,
   formatDate,
   onVisibleCountChange,
 }: ListingGalleryGridProps) {
@@ -71,6 +78,12 @@ export function ListingGalleryGrid({
             onSelect={(checked) => onToggleSelect(listing, checked)}
             onOpenDetails={() => onOpenDetails(listing)}
             onOpenSource={onOpenSource ? () => onOpenSource(listing) : undefined}
+            onEmailAgent={onEmailAgent ? () => onEmailAgent(listing) : undefined}
+            // Only where there is a page to read. Without a source link the
+            // enrichment has nowhere to go, and an action that can only ever
+            // report its own futility is worse than no action.
+            onFindPhotos={onFindPhotos && listing.url ? () => onFindPhotos(listing) : undefined}
+            isFindingPhotos={findingPhotosFor === listing.id}
             formatDate={formatDate}
           />
         ))}

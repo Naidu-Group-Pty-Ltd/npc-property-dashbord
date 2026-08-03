@@ -28,6 +28,29 @@ describe('ListingHero', () => {
     expect(screen.getByText('No photo on record')).toBeTruthy();
   });
 
+  it('offers to fetch photos when the caller can, and shows progress while it does', () => {
+    // The sweep works worst-first through 1,441 records, so a given listing may
+    // be hours from its turn. The empty state is the only place someone looking
+    // at that listing can say "do it now".
+    const onFindPhotos = vi.fn();
+    const { rerender } = render(<ListingHero images={[]} onFindPhotos={onFindPhotos} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /find photos/i }));
+    expect(onFindPhotos).toHaveBeenCalledTimes(1);
+
+    rerender(<ListingHero images={[]} onFindPhotos={onFindPhotos} isFindingPhotos />);
+    expect(screen.getByText('Looking for photos…')).toBeTruthy();
+    // The button must not survive into the pending state; a second press would
+    // queue a duplicate fetch for the same record.
+    expect(screen.queryByRole('button', { name: /find photos/i })).toBeNull();
+  });
+
+  it('leaves the empty state a plain statement when no fetch is offered', () => {
+    render(<ListingHero images={[]} />);
+    expect(screen.getByText('No photo on record')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /find photos/i })).toBeNull();
+  });
+
   it('shows a counter and advances through the photos', async () => {
     render(<ListingHero images={[photo(1), photo(2), photo(3)]} label="12 Example St" />);
 

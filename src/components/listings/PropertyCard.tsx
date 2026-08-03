@@ -13,7 +13,9 @@ import {
   Copy, 
   BarChart3,
   Calendar,
-  MapPin
+  Mail,
+  MapPin,
+  Phone
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -25,6 +27,7 @@ import { cn } from '@/lib/utils';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import type { StoredListingImage } from '@/lib/listingImages';
 import { displayPrice, formatLocality, qualityCaveat } from '@/lib/listingDisplay';
+import { listingContact } from '@/lib/listingContact';
 
 const LISTING_CARD_BADGE_BASE = 'inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold leading-none tracking-[0.02em] shadow-sm';
 const LISTING_CARD_PROPERTY_TYPE_BADGE = 'border-border/80 bg-muted/90 text-foreground dark:border-white/10 dark:bg-white/[0.06] dark:text-foreground';
@@ -41,6 +44,7 @@ interface PropertyCardProps {
   onOpenDetails: () => void;
   onOpenInvestmentReport: () => void;
   onCopyAddress: () => void;
+  onEmailAgent?: () => void;
   onOpenSource?: () => void;
   formatCurrency: (value: number) => string;
   formatDate: (date: Date | string | null | undefined) => string;
@@ -56,6 +60,7 @@ export function PropertyCard({
   onOpenDetails,
   onOpenInvestmentReport,
   onCopyAddress,
+  onEmailAgent,
   onOpenSource,
   formatCurrency,
   formatDate,
@@ -66,6 +71,7 @@ export function PropertyCard({
   // the map popup cannot disagree about the same listing.
   const price = displayPrice(listing);
   const caveat = qualityCaveat(listing);
+  const contact = listingContact(listing);
   return (
     <Card 
       className={cn(
@@ -124,6 +130,20 @@ export function PropertyCard({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {contact.email && onEmailAgent && (
+                <DropdownMenuItem onClick={onEmailAgent} className="min-h-10 focus:bg-accent focus:text-accent-foreground">
+                  <Mail className="h-4 w-4 mr-2" />
+                  Email the agent
+                </DropdownMenuItem>
+              )}
+              {contact.phone && (
+                <DropdownMenuItem asChild className="min-h-10 focus:bg-accent focus:text-accent-foreground">
+                  <a href={`tel:${contact.phone.replace(/\s/g, '')}`}>
+                    <Phone className="h-4 w-4 mr-2" />
+                    Call {contact.phone}
+                  </a>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={onOpenDetails} className="min-h-10 focus:bg-accent focus:text-accent-foreground">
                 Open Details
               </DropdownMenuItem>

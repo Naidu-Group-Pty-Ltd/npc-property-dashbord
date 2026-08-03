@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash, Maximize2 } from 'lucide-react';
+import { listingContact } from '@/lib/listingContact';
+import { EmailAgentDialog } from '@/components/listings/EmailAgentDialog';
+import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash, Loader2, Maximize2, Search, Send } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -14,6 +16,7 @@ import { buildFullAddress } from '@/lib/addressUtils';
 import { PropertyListing } from '@/lib/airtable';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
+import { useEnrichListing } from '@/hooks/useEnrichListing';
 
 interface ListingDetailsModalProps {
   listing: PropertyListing | null;
@@ -24,6 +27,10 @@ interface ListingDetailsModalProps {
 export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetailsModalProps) {
   const { toast } = useToast();
   const [investmentModalOpen, setInvestmentModalOpen] = useState(false);
+  const [emailAgentOpen, setEmailAgentOpen] = useState(false);
+  // Resolved before the `!listing` bail-out for the same reason as the images
+  // below: hooks and derived values here must not sit behind a conditional.
+  const contact = listingContact(listing ?? ({} as never));
 
   // Resolved before the `!listing` bail-out because hooks cannot be conditional.
   //
@@ -33,8 +40,9 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
   // every base whose photos are attachments — which is most of them. These are
   // signed URLs for our own stored copies instead.
   const galleryInput = useMemo(() => (listing ? [listing] : []), [listing]);
-  const { images: galleryByListing, isResolving: galleryResolving } =
+  const { images: galleryByListing, isResolving: galleryResolving, refresh: refreshGallery } =
     useListingImages(galleryInput);
+  const { enrich: findPhotos, isEnriching } = useEnrichListing(refreshGallery);
 
   if (!listing) return null;
 
@@ -150,6 +158,16 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
                   <TrendingUp className="h-4 w-4 mr-2" />
                   Investment Report
                 </Button>
+                {/*
+                  First in the row, deliberately. Everything above it is there to
+                  help someone decide; this is what they do once they have.
+                */}
+                {contact.email && (
+                  <Button onClick={() => setEmailAgentOpen(true)}>
+                    <Send className="h-4 w-4 mr-2" />
+                    Email {contact.name?.split(' ')[0] ?? 'the agent'}
+                  </Button>
+                )}
                 {/* The modal is the quick look; the page is the shareable one. */}
                 <Button variant="outline" asChild>
                   <Link to={`/listings/${listing.id}`}>
@@ -329,36 +347,71 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
             </div>
           )}
 
-          {/* Images */}
-          {(galleryImages.length > 0 || galleryResolving) && (
-            <div>
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">Images</h3>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                {galleryResolving && galleryImages.length === 0
-                  ? Array.from({ length: 3 }, (_, index) => (
-                      <div
-                        key={`skeleton-${index}`}
-                        className="aspect-video animate-pulse rounded-lg border border-border/60 bg-muted motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ))
-                  : galleryImages.slice(0, 6).map((image, index) => (
-                      <div key={image.url} className="group aspect-video bg-muted rounded-lg overflow-hidden border border-border/60 hover:border-primary/50 transition-colors">
-                        <img
-                          src={image.url}
-                          alt={`Property image ${index + 1}`}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform cursor-pointer"
-                          loading="lazy"
-                          onClick={() => window.open(image.url, '_blank', 'noopener,noreferrer')}
-                        />
-                      </div>
-                    ))}
-              </div>
-              {galleryImages.length > 6 && (
-                <p className="text-xs text-muted-foreground mt-2">+{galleryImages.length - 6} more images available on source</p>
+          {/*
+            Images — rendered even when there are none.
+
+            This section used to disappear entirely when the gallery came back
+            empty, which is the state nearly every record is in. The result read
+            as a property that simply had no photographs section, rather than one
+            whose photographs have not been fetched yet, and left no way to ask
+            for them.
+          */}
+          <div>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Images</h3>
+              {listing.url && galleryImages.length === 0 && !galleryResolving && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 rounded-full text-xs"
+                  onClick={() => findPhotos(listing.id)}
+                  disabled={isEnriching}
+                >
+                  {isEnriching ? (
+                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin motion-reduce:hidden" aria-hidden="true" />
+                  ) : (
+                    <Search className="mr-1.5 h-3 w-3" aria-hidden="true" />
+                  )}
+                  {isEnriching ? 'Looking…' : 'Find photos'}
+                </Button>
               )}
             </div>
-          )}
+            {galleryImages.length === 0 && !galleryResolving && !isEnriching ? (
+              <p className="rounded-lg border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                No photographs stored for this listing yet.
+                {listing.url
+                  ? ' They are fetched from the source page — use Find photos to do it now.'
+                  : ' This record carries no source link to fetch them from.'}
+              </p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {(galleryResolving || isEnriching) && galleryImages.length === 0
+                    ? Array.from({ length: 3 }, (_, index) => (
+                        <div
+                          key={`skeleton-${index}`}
+                          className="aspect-video animate-pulse rounded-lg border border-border/60 bg-muted motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ))
+                    : galleryImages.slice(0, 6).map((image, index) => (
+                        <div key={image.url} className="group aspect-video bg-muted rounded-lg overflow-hidden border border-border/60 hover:border-primary/50 transition-colors">
+                          <img
+                            src={image.url}
+                            alt={`Property image ${index + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform cursor-pointer"
+                            loading="lazy"
+                            onClick={() => window.open(image.url, '_blank', 'noopener,noreferrer')}
+                          />
+                        </div>
+                      ))}
+                </div>
+                {galleryImages.length > 6 && (
+                  <p className="text-xs text-muted-foreground mt-2">+{galleryImages.length - 6} more images available on source</p>
+                )}
+              </>
+            )}
+          </div>
 
           {/* Floorplans */}
           {listing.floorplans && listing.floorplans.length > 0 && (
@@ -448,6 +501,8 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
 
           </div>
         </div>
+
+        <EmailAgentDialog listing={listing} open={emailAgentOpen} onOpenChange={setEmailAgentOpen} />
 
         <InvestmentReportModal
           isOpen={investmentModalOpen}
