@@ -11,6 +11,8 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "audit:style": "node scripts/audit-style-tokens.cjs",
+    "brand:icons": "node scripts/brand/build-aurixa-icons.mjs",
+    "brand:icons:check": "node scripts/brand/build-aurixa-icons.mjs --check",
     "integrations:secrets:generate": "node scripts/generate-integration-secrets.mjs",
     "integrations:secrets:check": "node scripts/generate-integration-secrets.mjs --check",
     "integrations:secrets:seed": "node scripts/create-integration-secrets.mjs",

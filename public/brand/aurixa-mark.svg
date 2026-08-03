@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Aurixa Systems">
+  <title>Aurixa Systems</title>
+  <defs>
+    <!-- Obsidian field: the mark always sits on its own dark tile so it reads
+         against both light and dark notification shades. -->
+    <radialGradient id="aurixa-field" cx="50%" cy="42%" r="72%">
+      <stop offset="0%" stop-color="#12263F"/>
+      <stop offset="55%" stop-color="#0A1526"/>
+      <stop offset="100%" stop-color="#050B14"/>
+    </radialGradient>
+
+    <!-- Brushed gold, lit from the upper left. -->
+    <linearGradient id="aurixa-gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFF3CE"/>
+      <stop offset="28%" stop-color="#F0CE84"/>
+      <stop offset="58%" stop-color="#D3A44C"/>
+      <stop offset="82%" stop-color="#B8862F"/>
+      <stop offset="100%" stop-color="#E7C578"/>
+    </linearGradient>
+
+    <!-- The core: a blue sphere with a hot centre. -->
+    <radialGradient id="aurixa-orb" cx="42%" cy="36%" r="70%">
+      <stop offset="0%" stop-color="#EAF9FF"/>
+      <stop offset="22%" stop-color="#7ED8FF"/>
+      <stop offset="58%" stop-color="#2E86E8"/>
+      <stop offset="100%" stop-color="#0B3C86"/>
+    </radialGradient>
+
+    <radialGradient id="aurixa-orb-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5FC8FF" stop-opacity="0.75"/>
+      <stop offset="60%" stop-color="#2E86E8" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#2E86E8" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="aurixa-halo" cx="50%" cy="50%" r="50%">
+      <stop offset="60%" stop-color="#E7C578" stop-opacity="0"/>
+      <stop offset="88%" stop-color="#E7C578" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#E7C578" stop-opacity="0"/>
+    </radialGradient>
+
+    <!--
+      The delta: an open triangle whose base is split, so the two lower blades
+      angle in toward the core instead of closing the shape. Built as a mask
+      (outer solid, inner hole, base notch) rather than three hand-fitted
+      polygons, so the blade weight stays even at every corner.
+    -->
+    <mask id="aurixa-delta">
+      <rect width="512" height="512" fill="#000000"/>
+      <path d="M256 62 L470 432 L42 432 Z" fill="#FFFFFF"/>
+      <path d="M256 176 L389 407 L123 407 Z" fill="#000000"/>
+      <path d="M256 250 L330 432 L182 432 Z" fill="#000000"/>
+    </mask>
+  </defs>
+
+  <rect width="512" height="512" rx="104" fill="url(#aurixa-field)"/>
+  <circle cx="256" cy="262" r="196" fill="url(#aurixa-halo)"/>
+
+  <g mask="url(#aurixa-delta)">
+    <rect width="512" height="512" fill="url(#aurixa-gold)"/>
+  </g>
+
+  <circle cx="256" cy="300" r="104" fill="url(#aurixa-orb-glow)"/>
+  <circle cx="256" cy="300" r="54" fill="url(#aurixa-orb)"/>
+  <ellipse cx="238" cy="280" rx="19" ry="13" fill="#FFFFFF" opacity="0.55" transform="rotate(-28 238 280)"/>
+</svg>

@@ -66,6 +66,38 @@ working on is preserved. Only when no window is open does it cold-start one at
 strips on boot. Either path ends in `requestPopOutInternalThread`, the same
 free-floating conversation window the rest of the feature uses.
 
+## Branding — what logo appears on the notification
+
+A notification is the one surface that renders **outside** the app, in the OS
+notification shade next to the browser's own name. A stock scaffold icon there
+is a branding leak, so `/favicon.ico` is used on no notification path at all.
+The resolution chain is:
+
+1. **The tenant's white-label logo.** `BrandProvider` publishes it through
+   `setBrandNotificationIcon()` whenever branding resolves, using the same
+   square-mark chain as the favicon (`favicon` → `sidebarIcon` → `sidebarLogo`
+   → `authLogo`), so uploading a logo under White Label automatically rebrands
+   every alert. Removing it publishes `null` and reverts.
+2. **The Aurixa Systems mark** (`public/brand/aurixa-notification-192.png`) when
+   no white-label logo is configured.
+
+The stock icon is refused defensively: `setBrandNotificationIcon('/favicon.ico')`
+is treated as "no logo". The same chain feeds the favicon badge, so the count is
+stamped on the tenant's mark rather than on a stock one, and `index.html` now
+declares the Aurixa icon explicitly instead of letting the browser guess
+`/favicon.ico`.
+
+The `badge` slot is deliberately **not** white-labelled. Android renders it as a
+monochrome status-bar glyph — it keeps the alpha channel and discards the colour
+— so a client's full-colour logo comes back as a grey block. That slot always
+carries the flat Aurixa delta (`aurixa-badge-96.png`).
+
+The artwork is generated, not hand-drawn: `public/brand/*.svg` are the sources,
+and `npm run brand:icons` rasterises them through Chromium (Chromium does not
+reliably decode SVG for `Notification.icon`). `npm run brand:icons:check` fails
+if the committed PNGs are stale, and skips with a warning where no browser is
+available.
+
 ## Duplicate prevention
 
 Every open dashboard tab polls independently, so the naive "already alerted"

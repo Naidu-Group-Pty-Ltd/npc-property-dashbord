@@ -10,6 +10,7 @@ import {
   defaultBrandThemeConfig,
 } from './brand-defaults';
 import { getBrandAssetSrc } from './brand-assets';
+import { setBrandNotificationIcon } from '@/lib/desktopMessageAlerts';
 import { applyBrandTokenMap, resolveBrandFontVars, resolveBrandTokens } from './token-resolver';
 import type { BrandContextValue, BrandLogoConfig, BrandThemeConfig, EmailSignatureSettings, ThemeMode, WhiteLabelSettings } from './brand-types';
 
@@ -220,6 +221,17 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
     mediaQuery.addEventListener('change', handler);
     return () => mediaQuery.removeEventListener('change', handler);
   }, [resolvedTokens, themeMode]);
+
+  /**
+   * Desktop notifications carry a logo too, and it is the one place a stock
+   * scaffold icon would surface outside the app — in the OS notification shade,
+   * next to the browser's own name. Publish the tenant's mark (the same square
+   * chain the favicon uses) so alerts are branded; passing `null` when nothing
+   * is configured is what reverts them to the Aurixa Systems mark.
+   */
+  useEffect(() => {
+    setBrandNotificationIcon(getBrandAssetSrc(settings, 'favicon'));
+  }, [settings]);
 
   useEffect(() => {
     const favicon = getBrandAssetSrc(settings, 'favicon');
