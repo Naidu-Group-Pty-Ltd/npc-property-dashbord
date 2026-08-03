@@ -1605,7 +1605,7 @@ export default function BuilderPortalAdmin() {
           const editing = orgDialog.organisation;
           const ok = await mutate('upsert_organisation', editing
             ? { ...values, organisation_id: editing.id, expected_version: editing.row_version }
-            : values,
+            : { ...values },
           editing ? 'Organisation updated' : 'Organisation created');
           if (ok) setOrgDialog({ open: false, organisation: null });
         }}
@@ -1630,7 +1630,7 @@ export default function BuilderPortalAdmin() {
             editing ? 'update_user' : 'create_user',
             editing
               ? { ...values, builder_user_id: editing.id, expected_version: editing.row_version }
-              : values,
+              : { ...values },
             editing ? 'Portal user updated' : 'Portal user created',
           );
           if (ok) setUserDialog({ open: false, user: null });
