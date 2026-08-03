@@ -297,8 +297,83 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
+  /**
+   * Column payload shared by both write paths.
+   * `null` is a meaningful value throughout: it is how "remove this asset" is
+   * expressed, so nothing here may be pruned for falsiness.
+   */
+  const buildColumnPayload = useCallback((updated: WhiteLabelSettings) => {
+    const structured = buildStructuredConfig(updated);
+    return {
+      auth_logo: updated.authLogo,
+      sidebar_logo: updated.sidebarLogo,
+      sidebar_icon: updated.sidebarIcon,
+      favicon: updated.favicon,
+      company_name: updated.companyName,
+      primary_color: updated.primaryColor,
+      accent_color: updated.accentColor,
+      dark_mode_default: updated.darkModeDefault,
+      email_signature_banner: updated.emailSignature.banner,
+      email_signature_name: updated.emailSignature.name,
+      email_signature_title: updated.emailSignature.title,
+      email_signature_phone: updated.emailSignature.phone,
+      email_signature_email: updated.emailSignature.email,
+      email_signature_website: updated.emailSignature.website,
+      email_signature_address: updated.emailSignature.address,
+      email_signature_disclaimer: updated.emailSignature.disclaimer,
+      theme_config: structured.themeConfig as unknown as Json,
+      logo_config: structured.logoConfig as unknown as Json,
+      theme_version: structured.themeVersion,
+    };
+  }, []);
+
   const persistSettings = useCallback(
     async (updated: WhiteLabelSettings): Promise<BrandSaveResult> => {
+      const payload = buildColumnPayload(updated);
+
+      /**
+       * PRIMARY PATH — service-role mediated write authenticated by the HttpOnly
+       * staff session cookie.
+       *
+       * The direct PostgREST write below depends on the tab-scoped RLS access
+       * token, which is a *derived* artefact: it expires (or was never minted in
+       * this tab) while the staff session cookie is still perfectly valid. That
+       * is what produced "your sign-in session has no database token" on a
+       * signed-in admin — the save was refused client-side before it ever
+       * reached the database. The cookie is the durable identity, so it leads.
+       */
+      try {
+        const { data, error } = await invokeSecureFunction('manage-branding', {
+          operation: 'update',
+          id: updated.id ?? undefined,
+          data: payload,
+        });
+
+        if (!error && data?.success) {
+          return { ok: true };
+        }
+
+        // A 403 is a real answer, not a transport problem: this account may read
+        // branding but not change it. Surface it instead of retrying blindly.
+        if (error?.status === 403) {
+          return {
+            ok: false,
+            reason: 'not-persisted',
+            message:
+              error.message ||
+              'This account does not have edit access to White Label branding.',
+          };
+        }
+
+        console.warn('[branding] Mediated save unavailable, falling back to direct write:', error || data);
+      } catch (mediatedError) {
+        console.warn('[branding] Mediated save threw, falling back to direct write:', mediatedError);
+      }
+
+      /**
+       * FALLBACK PATH — direct RLS write. Kept so branding stays editable if the
+       * edge function is unreachable (not yet deployed, network blocked).
+       */
       if (!updated.id) {
         return {
           ok: false,
@@ -307,50 +382,21 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
         };
       }
 
-      /**
-       * `whitelabel_settings` is readable by anyone (`USING (true)`) but its
-       * UPDATE policy is restricted to the `authenticated` role. A client with
-       * no RLS token therefore loads the branding page perfectly and then
-       * writes nothing, matching zero rows and returning NO error. Refusing the
-       * write here is what turns that into something a human can see.
-       */
       if (!isAuthenticated) {
         return {
           ok: false,
           reason: 'unauthenticated',
           message:
-            'Your sign-in session has no database token, so nothing can be saved. Reload the page and sign in again.',
+            'Branding could not be saved because the secure save service did not respond and this tab has no database token. Reload the page and sign in again.',
         };
       }
-
-      const structured = buildStructuredConfig(updated);
 
       try {
         // `.select()` is what makes an RLS denial observable: without it,
         // PostgREST returns 200 and no rows, and `error` stays null.
         const { data, error } = await authedSupabase
           .from('whitelabel_settings')
-          .update({
-            auth_logo: updated.authLogo,
-            sidebar_logo: updated.sidebarLogo,
-            sidebar_icon: updated.sidebarIcon,
-            favicon: updated.favicon,
-            company_name: updated.companyName,
-            primary_color: updated.primaryColor,
-            accent_color: updated.accentColor,
-            dark_mode_default: updated.darkModeDefault,
-            email_signature_banner: updated.emailSignature.banner,
-            email_signature_name: updated.emailSignature.name,
-            email_signature_title: updated.emailSignature.title,
-            email_signature_phone: updated.emailSignature.phone,
-            email_signature_email: updated.emailSignature.email,
-            email_signature_website: updated.emailSignature.website,
-            email_signature_address: updated.emailSignature.address,
-            email_signature_disclaimer: updated.emailSignature.disclaimer,
-            theme_config: structured.themeConfig as unknown as Json,
-            logo_config: structured.logoConfig as unknown as Json,
-            theme_version: structured.themeVersion,
-          })
+          .update(payload)
           .eq('id', updated.id)
           .select('id');
 
@@ -383,7 +429,7 @@ export function BrandProvider({ children }: { children: React.ReactNode }) {
     // it once (the original `[]`) pinned an anonymous client for the life of the
     // page whenever the token had not yet been minted — every save after that
     // silently no-opped.
-    [authedSupabase, isAuthenticated],
+    [authedSupabase, buildColumnPayload, isAuthenticated],
   );
 
   const updateSettings = useCallback(
