@@ -11,10 +11,10 @@ import {
   BedDouble,
   Building2,
   CalendarClock,
-  Camera,
   Car,
   ChevronDown,
   Crosshair,
+  ExternalLink,
   Flame,
   Layers,
   LayoutGrid,
@@ -46,7 +46,6 @@ import { PropertyListing } from '@/lib/airtable';
 import { useWhiteLabel } from '@/contexts/WhiteLabelContext';
 import { useListingCoordinates, type CoordinateFailure } from '@/hooks/useListingCoordinates';
 import { HeatLayer } from './ListingsHeatLayer';
-import { StreetViewPanel } from './StreetViewPanel';
 import {
   buildHeatModel,
   computePriceTiers,
@@ -76,10 +75,10 @@ import {
   type PropertyGlyph,
 } from '@/lib/listingsMap';
 import { PIN_GLYPH_LABELS, PIN_GLYPH_PATHS, pinGlyphSvg } from './listingPinGlyphs';
-import { displayPrice } from '@/lib/listingDisplay';
+import { displayPrice, formatArea } from '@/lib/listingDisplay';
+import { ListingHero } from './ListingHero';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
-import { pickHeroImage } from '@/lib/listingImages';
 
 /**
  * Leaflet copies unknown constructor options straight onto `marker.options`, and
@@ -867,111 +866,12 @@ function MetaChip({ icon: Icon, value }: { icon: typeof BedDouble; value: string
   );
 }
 
-/**
- * The popup's imagery slot: the property's own photo and Street View, in one
- * frame with a toggle between them.
- *
- * Both matter and neither replaces the other — a photo shows the property, a
- * panorama shows the street it stands on — but stacking them made the card
- * taller than the map frame, and Leaflet's auto-pan then shoved the marker off
- * the bottom of the viewport to fit it. Sharing one slot keeps both a click
- * away at a fixed height. Street View is always reachable; the photo simply
- * leads when there is one.
- */
-function PopupImagery({
-  photo,
-  isResolving,
-  point,
-  label,
-}: {
-  photo: string | null;
-  isResolving: boolean;
-  point: GeoPoint;
-  label?: string;
-}) {
-  const [view, setView] = useState<'photo' | 'street'>(photo ? 'photo' : 'street');
-  const [photoFailed, setPhotoFailed] = useState(false);
-  const chosenRef = useRef(false);
-  const usablePhoto = photoFailed ? null : photo;
-
-  // A photo arriving after the popup opened should take the lead, and one that
-  // fails to load must not leave the toggle pointing at an empty frame — but
-  // once the reader has picked a side, stop moving it under them.
-  useEffect(() => {
-    if (chosenRef.current) return;
-    setView(usablePhoto ? 'photo' : 'street');
-  }, [usablePhoto]);
-
-  const choose = (next: 'photo' | 'street') => {
-    chosenRef.current = true;
-    setView(next);
-  };
-
-  const showing = usablePhoto && view === 'photo' ? 'photo' : 'street';
-
+/** A small outline tag. The popup uses several and they must not drift apart. */
+function PopupTag({ children }: { children: React.ReactNode }) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {showing === 'photo' ? 'Listing photo' : 'Street View'}
-        </span>
-        {usablePhoto ? (
-          <div
-            role="group"
-            aria-label="Imagery source"
-            className="flex items-center gap-0.5 rounded-full border border-border/60 p-0.5"
-          >
-            {(
-              [
-                ['photo', 'Photo', Camera],
-                ['street', 'Street', MapPin],
-              ] as const
-            ).map(([value, text, Icon]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => choose(value)}
-                aria-pressed={showing === value}
-                title={value === 'photo' ? 'Show the listing photo' : 'Show Street View'}
-                className={cn(
-                  'flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium transition-colors',
-                  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
-                  showing === value
-                    ? 'bg-primary text-primary-foreground'
-                    : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
-                )}
-              >
-                <Icon className="h-2.5 w-2.5" />
-                {text}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      {showing === 'photo' && usablePhoto ? (
-        <img
-          src={usablePhoto}
-          alt={label ? `${label} — listing photo` : 'Listing photo'}
-          className="h-28 w-full rounded-lg border border-border/60 object-cover"
-          loading="lazy"
-          onError={() => setPhotoFailed(true)}
-        />
-      ) : isResolving && !usablePhoto ? (
-        <div
-          className="h-28 w-full animate-pulse rounded-lg border border-border/60 bg-muted/50 motion-reduce:animate-none"
-          aria-hidden="true"
-        />
-      ) : (
-        <StreetViewPanel
-          lat={point.lat}
-          lng={point.lng}
-          label={label}
-          variant="inline"
-          frameClassName="h-28"
-        />
-      )}
-    </div>
+    <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </span>
   );
 }
 
@@ -997,7 +897,6 @@ function ListingPopupCard({
   // own bucket instead — see src/lib/listingImages.ts.
   const forImages = useMemo(() => [listing], [listing]);
   const { images, isResolving: imagesResolving } = useListingImages(forImages);
-  const hero = pickHeroImage(images[listing.id] ?? []);
 
   /**
    * Keep clicks inside the card away from the map.
@@ -1053,20 +952,42 @@ function ListingPopupCard({
     };
   }, []);
 
+  const land = formatArea(listing.landSizeSqm);
+  const photoCount = images[listing.id]?.length ?? 0;
+  const inspection = listing.inspectionStart ?? listing.nextInspectionDate;
+
   return (
-    <div ref={cardRef} className="min-w-[248px] max-w-[280px] space-y-2.5">
-      <PopupImagery
-        photo={hero?.url ?? null}
+    <div ref={cardRef} className="min-w-[268px] max-w-[300px] space-y-2.5">
+      {/*
+        The whole gallery, with Street View as its last slide.
+
+        This used to be a single 112px frame showing EITHER one photograph OR
+        Street View, behind a toggle that only rendered when a photograph
+        existed. Since no listing had one, every popup silently showed Street
+        View and gave no hint a photograph was ever expected — which is why the
+        map appeared to know nothing about the property beyond where it was.
+      */}
+      <ListingHero
+        images={images[listing.id]}
         isResolving={imagesResolving}
-        point={point}
         label={listing.address || listing.suburb || undefined}
+        point={point}
+        aspect="aspect-[16/10]"
+        onExpand={onOpenDetails}
       />
 
-      <div>
-        <h3 className="text-sm font-semibold leading-snug text-foreground">
-          {listing.address || listing.title || 'Unknown address'}
-        </h3>
-        {locality ? <p className="text-xs text-muted-foreground">{locality}</p> : null}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold leading-snug text-foreground">
+            {listing.address || listing.title || 'Address not extracted'}
+          </h3>
+          {locality ? <p className="text-xs text-muted-foreground">{locality}</p> : null}
+        </div>
+        {photoCount > 1 ? (
+          <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+            {photoCount}
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
@@ -1075,32 +996,55 @@ function ListingPopupCard({
         ) : (
           <span className="text-xs font-medium text-muted-foreground">{price.text}</span>
         )}
-        {price.isRent ? (
-          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Rental
-          </span>
-        ) : null}
-        {listing.propertyType ? (
-          <span className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            {listing.propertyType}
-          </span>
-        ) : null}
+        {price.isRent ? <PopupTag>Rental</PopupTag> : null}
+        {listing.propertyType ? <PopupTag>{listing.propertyType}</PopupTag> : null}
+        {listing.listingStatus ? <PopupTag>{listing.listingStatus}</PopupTag> : null}
       </div>
 
-      {(beds || baths || listing.carSpaces || listing.landSize) && (
+      {(beds || baths || listing.carSpaces || land) && (
         <div className="flex flex-wrap gap-1.5">
           {beds ? <MetaChip icon={BedDouble} value={`${beds} bed`} /> : null}
           {baths ? <MetaChip icon={Bath} value={`${baths} bath`} /> : null}
           {listing.carSpaces ? <MetaChip icon={Car} value={`${listing.carSpaces} car`} /> : null}
-          {listing.landSize ? (
-            <MetaChip icon={Building2} value={`${listing.landSize}`} />
-          ) : null}
+          {land ? <MetaChip icon={Building2} value={land} /> : null}
         </div>
       )}
 
-      <Button size="sm" className="w-full" onClick={onOpenDetails}>
-        Open details
-      </Button>
+      {(listing.agencyName || listing.agentName) && (
+        <p className="truncate text-xs text-muted-foreground">
+          {[listing.agentName, listing.agencyName].filter(Boolean).join(' · ')}
+        </p>
+      )}
+
+      {inspection ? (
+        <p className="flex items-center gap-1 text-xs font-medium text-primary">
+          <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
+          {new Date(inspection).toLocaleString('en-AU', {
+            weekday: 'short',
+            day: 'numeric',
+            month: 'short',
+            hour: 'numeric',
+            minute: '2-digit',
+          })}
+        </p>
+      ) : null}
+
+      <div className="flex gap-1.5 pt-0.5">
+        <Button size="sm" className="flex-1" onClick={onOpenDetails}>
+          Open details
+        </Button>
+        {listing.url ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            aria-label="Open the source listing"
+            onClick={() => window.open(listing.url!, '_blank', 'noopener,noreferrer')}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -1591,12 +1535,17 @@ export function ListingsMapView({ listings, onSelectListing }: ListingsMapViewPr
               key={selected.listing.id}
               ref={popupRef}
               position={[selected.point.lat, selected.point.lng]}
-              maxWidth={300}
-              minWidth={248}
+              maxWidth={320}
+              minWidth={268}
               // Bounded so the card can never outgrow the frame it sits in:
               // an over-tall popup makes Leaflet auto-pan its own marker out
               // of view. Leaflet scrolls the content past this height.
-              maxHeight={300}
+              //
+              // Raised from 300 to fit the photo carousel. It is a ceiling, not
+              // a target — the card is still deliberately compact, and anything
+              // richer belongs on the property page rather than in a popup that
+              // has to sit inside the viewport with its own marker visible.
+              maxHeight={440}
               autoPanPadding={L.point(32, 44)}
               className="listings-map__popup"
             >
