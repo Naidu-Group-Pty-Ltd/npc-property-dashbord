@@ -25,7 +25,11 @@ import test from 'node:test';
 const root = new URL('../../', import.meta.url).pathname;
 const read = (relative) => readFileSync(join(root, relative), 'utf8');
 
-const lifecycleSql = read('supabase/migrations/20260822000000_builder_deletion_lifecycle.sql');
+// 20260823000000 carries the live definitions of all three commands; the
+// policy they implement was introduced by 20260822000000.
+const lifecycleSql = read('supabase/migrations/20260823000000_builder_deletion_audit_constraints.sql');
+const policySql = read('supabase/migrations/20260822000000_builder_deletion_lifecycle.sql');
+const activitySql = read('supabase/migrations/20260801000600_builder_portal_activity_log.sql');
 const adminFn = read('supabase/functions/builder-portal-admin/index.ts');
 const adminPage = read('src/pages/admin/BuilderPortalAdmin.tsx');
 const confirmDialog = read('src/components/admin/builder-portal/ui/BuilderConfirmDialog.tsx');
@@ -265,6 +269,57 @@ test('a refresh after a deletion does not throw the administrator to another tab
   // The refresh control is where progress shows once the page stays mounted.
   assert.match(adminPageCode, /disabled=\{busy \|\| loading\}/);
   assert.match(adminPageCode, /loading \? 'h-4 w-4 animate-spin' : 'h-4 w-4'/);
+});
+
+// ---------------------------------------------------------------------------
+// Production corrections
+// ---------------------------------------------------------------------------
+
+test('every audited entity_type is one the check constraint permits', () => {
+  // builder_admin_delete_user wrote 'user'; the constraint allows 'portal_user'.
+  // The whole removal failed on the audit insert.
+  const allowed = /entity_type IS NULL OR entity_type IN\s*\n?\s*\(([^)]+)\)/.exec(activitySql)?.[1];
+  assert.ok(allowed, 'the entity_type check constraint could not be read');
+  const permitted = [...allowed.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  assert.ok(permitted.includes('portal_user'));
+
+  for (const name of DELETE_COMMANDS) {
+    const body = fn(name);
+    // entity_type is the 4th argument of builder_log_activity — the literal
+    // immediately after the action. Anchoring on the action keeps this from
+    // matching the same-shaped keys inside jsonb_build_object.
+    const used = [...body.matchAll(/'builder_\w+_removed',\s*\n\s*'([a-z_]+)',/g)].map((m) => m[1]);
+    assert.ok(used.length > 0, `${name} passes no entity_type literal`);
+    for (const value of used) {
+      assert.ok(permitted.includes(value),
+        `${name} audits entity_type '${value}', which the check constraint rejects`);
+    }
+  }
+  // The superseded migration still shows the defect this corrects.
+  assert.match(policySql, /'user', v_user\.id, NULL, NULL,/);
+  assert.match(lifecycleSql, /'portal_user', v_user\.id, NULL, NULL,/);
+});
+
+test('the audit log carries no foreign key to a record it outlives', () => {
+  // organisation_id and builder_user_id were ON DELETE SET NULL, so deleting a
+  // parent made PostgreSQL UPDATE the log — which the append-only trigger
+  // rejects with BUILDER_ACTIVITY_LOG_APPEND_ONLY. Every user and organisation
+  // that had ever been touched was therefore undeletable.
+  assert.match(activitySql, /organisation_id uuid REFERENCES public\.builder_organisations\(id\) ON DELETE SET NULL/);
+  assert.match(activitySql, /builder_user_id uuid REFERENCES public\.builder_portal_users\(id\) ON DELETE SET NULL/);
+
+  assert.match(lifecycleSql,
+    /ALTER TABLE public\.builder_portal_activity_log\s*\n\s*DROP CONSTRAINT IF EXISTS builder_portal_activity_log_organisation_id_fkey;/);
+  assert.match(lifecycleSql,
+    /ALTER TABLE public\.builder_portal_activity_log\s*\n\s*DROP CONSTRAINT IF EXISTS builder_portal_activity_log_builder_user_id_fkey;/);
+
+  // Only the constraints go. The append-only trigger, the columns and the rows
+  // are all left alone — the log becomes more immutable, not less.
+  assert.doesNotMatch(lifecycleSql, /DROP\s+(TRIGGER|TABLE|COLUMN)/i);
+  assert.doesNotMatch(lifecycleSql, /ALTER TABLE[^;]*DROP COLUMN/i);
+  assert.doesNotMatch(lifecycleSql, /DELETE FROM public\.builder_portal_activity_log/);
+  assert.doesNotMatch(lifecycleSql, /UPDATE public\.builder_portal_activity_log/);
+  assert.match(activitySql, /BEFORE UPDATE OR DELETE ON public\.builder_portal_activity_log/);
 });
 
 test('the Solicitor Portal is untouched', () => {
