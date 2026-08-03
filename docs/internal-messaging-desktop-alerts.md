@@ -109,31 +109,49 @@ badge glyph and `favicon.ico`. `npm run brand:icons:check` fails if the
 committed output is stale, and skips with a warning where no browser is
 available.
 
-### Supplying the official artwork
+### The default artwork, and how to replace it
 
-The bundled SVG is a **vector reconstruction** of the Aurixa Systems mark, not
-the original export. To replace it with the real file, hand it to the build —
-a local path or any URL, including a Supabase public `branding-assets` URL:
+The shipped default is the **official Aurixa Systems logo**, imported from the
+brand file and committed as `public/brand/aurixa-source.jpg`. Everything else —
+the 192/512 notification icons and all six `favicon.ico` sub-images — is
+rendered from it, so there is one master and no hand-edited binaries.
+
+To replace it, hand the build a new file: a local path, or any URL, including a
+Supabase public `branding-assets` URL.
 
 ```bash
-npm run brand:import -- ./aurixa-systems-logo.png
+npm run brand:import -- ./logo.png --crop 348,118,382,382
 npm run brand:import -- https://…/storage/v1/object/public/branding-assets/…/logo.png
-npm run brand:icons -- --reset      # back to the bundled vector
+npm run brand:icons                 # re-render from the current master
+npm run brand:icons -- --reset      # fall back to the bundled vector
 ```
 
-The file is stored as `public/brand/aurixa-source.<ext>` and every derived
-surface — the 192/512 notification icons and all six `favicon.ico` sub-images —
-is re-rendered from it. Commit the regenerated binaries; no code changes.
+**`--crop x,y,w,h` matters more than it looks.** Brand artwork arrives as a
+lockup — symbol, wordmark, backdrop. The Aurixa file is 1080×720 with the
+wordmark beneath the delta; contain-fitting that into a 48px notification icon
+gives a letterboxed strip with an illegible wordmark. Icons want the symbol
+alone, so the rectangle is measured once and recorded in
+`aurixa-source.crop.json` rather than re-derived at render time — reproducible,
+and reviewable in a diff.
+
+For the current master, the delta measures x 360–718, y 133–492 and the
+wordmark's ink begins at y≈507, leaving a clean gap at 494–508. The committed
+crop is `348,118,382,382`: the symbol and its orbital rings, nothing else.
 
 Three things the importer does on purpose:
 
-- **Contains, never crops.** The source is centred on the obsidian tile with
-  `object-fit: contain`, so a transparent, square or wide export all survive.
-- **Keeps one master.** Importing removes any previous `aurixa-source.*`, so a
-  later run cannot silently pick a stale file of a different extension.
+- **Keeps one master.** Importing removes any previous `aurixa-source.*` and any
+  stale crop, so a later run cannot silently pick the wrong file — or apply a
+  rectangle measured against a different image.
+- **Places the crop from the image's natural size**, not a CSS percentage. A
+  percentage resolves against the tile, which scaled the artwork wrongly and let
+  the wordmark show through the bottom of the icon.
 - **Never touches the badge.** Android renders `badge` as a monochrome glyph,
   keeping only its alpha, so a full-colour logo returns as a grey block. That
   slot always uses `aurixa-badge.svg`.
+
+Without a crop, a source is centred with `object-fit: contain` so a
+transparent, square or wide export all survive uncropped.
 
 Two mark variants exist because one drawing cannot serve both ends of the size
 range: `aurixa-mark.svg` carries the orbital rings, the warm bloom and the

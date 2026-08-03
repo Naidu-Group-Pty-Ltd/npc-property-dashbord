@@ -69,6 +69,38 @@ const resetToVector = argv.includes('--reset');
 const importIndex = argv.indexOf('--import');
 const importFrom = importIndex >= 0 ? argv[importIndex + 1] : null;
 
+/**
+ * Optional `--crop x,y,w,h` in source pixels.
+ *
+ * Brand artwork usually arrives as a full lockup — symbol, wordmark, backdrop.
+ * At the ~48px a notification renders, contain-fitting a 3:2 lockup gives a
+ * letterboxed strip with an illegible wordmark. Icons want the symbol, so the
+ * crop is recorded explicitly here rather than guessed at render time, which
+ * keeps it reproducible and reviewable.
+ */
+const cropIndex = argv.indexOf('--crop');
+const cropArg = cropIndex >= 0 ? argv[cropIndex + 1] : null;
+const CROP_FILE = join(BRAND_DIR, 'aurixa-source.crop.json');
+
+function parseCrop(value) {
+  const parts = String(value).split(',').map((n) => Number(n.trim()));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n) || n < 0)) {
+    throw new Error('--crop expects four non-negative numbers: x,y,w,h');
+  }
+  const [x, y, w, h] = parts;
+  if (w <= 0 || h <= 0) throw new Error('--crop width and height must be positive');
+  return { x, y, w, h };
+}
+
+function readStoredCrop() {
+  if (!existsSync(CROP_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(CROP_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 /** Raster master, when one has been imported. Preferred over the SVG. */
 const SOURCE_STEM = 'aurixa-source';
 const SOURCE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
@@ -121,6 +153,8 @@ async function importSource(from) {
     if (existsSync(stale)) rmSync(stale);
   }
 
+  if (existsSync(CROP_FILE)) rmSync(CROP_FILE);
+
   const target = join(BRAND_DIR, `${SOURCE_STEM}.${kind.ext}`);
   writeFileSync(target, buffer);
   console.log(`imported ${from}\n      -> public/brand/${SOURCE_STEM}.${kind.ext} (${buffer.length} bytes)`);
@@ -169,29 +203,53 @@ async function renderSource(browser, sourcePath, size) {
   const buffer = readFileSync(sourcePath);
   const kind = sniffImage(buffer) ?? { mime: 'image/png' };
   const dataUri = `data:${kind.mime};base64,${buffer.toString('base64')}`;
+  const crop = readStoredCrop();
   const page = await browser.newPage({
     viewport: { width: size, height: size },
     deviceScaleFactor: 1,
   });
-  await page.setContent(
-    `<!doctype html><meta charset="utf-8">
-     <style>
-       html,body{margin:0;padding:0;background:transparent}
-       .tile{
-         width:${size}px;height:${size}px;border-radius:${Math.round(size * 0.22)}px;
-         background:${TILE_BACKGROUND};
-         display:flex;align-items:center;justify-content:center;overflow:hidden;
-       }
-       /* contain, not cover: a wide or square export must never be cropped. */
-       img{width:82%;height:82%;object-fit:contain;display:block}
-     </style>
-     <div class="tile"><img src="${dataUri}"></div>`,
-    { waitUntil: 'load' },
-  );
+
+  const radius = Math.round(size * 0.22);
+  const body = crop
+    // A recorded crop already isolates a square symbol on its own backdrop, so
+    // it fills the frame. Placement is computed from the image's NATURAL size
+    // once it has decoded — a CSS percentage would resolve against the tile.
+    ? `<style>
+         html,body{margin:0;padding:0;background:transparent}
+         .tile{width:${size}px;height:${size}px;border-radius:${radius}px;
+               background:${TILE_BACKGROUND};overflow:hidden;position:relative}
+         img{position:absolute;display:block;transform-origin:0 0}
+       </style>
+       <div class="tile"><img src="${dataUri}"></div>`
+    // No crop: contain the whole artwork so nothing is cut off.
+    : `<style>
+         html,body{margin:0;padding:0;background:transparent}
+         .tile{width:${size}px;height:${size}px;border-radius:${radius}px;
+               background:${TILE_BACKGROUND};
+               display:flex;align-items:center;justify-content:center;overflow:hidden}
+         img{width:82%;height:82%;object-fit:contain;display:block}
+       </style>
+       <div class="tile"><img src="${dataUri}"></div>`;
+
+  await page.setContent(`<!doctype html><meta charset="utf-8">${body}`, { waitUntil: 'load' });
   await page.waitForFunction(() => {
     const img = document.querySelector('img');
     return !!img && img.complete && img.naturalWidth > 0;
   }, undefined, { timeout: 15000 });
+
+  if (crop) {
+    // Scale so the crop's width maps exactly onto the tile, then shift the
+    // crop's origin to the tile's origin.
+    await page.evaluate(({ crop: c, size: s }) => {
+      const img = document.querySelector('img');
+      const k = s / c.w;
+      img.style.width = `${img.naturalWidth * k}px`;
+      img.style.height = 'auto';
+      img.style.left = `${-c.x * k}px`;
+      img.style.top = `${-c.y * k}px`;
+    }, { crop, size });
+  }
+
   const shot = await page.screenshot();
   await page.close();
   return shot;
@@ -260,6 +318,10 @@ if (resetToVector) {
       console.log(`removed public/brand/${SOURCE_STEM}.${ext}`);
     }
   }
+  if (existsSync(CROP_FILE)) {
+    rmSync(CROP_FILE);
+    console.log('removed public/brand/aurixa-source.crop.json');
+  }
   importedSource = null;
 }
 
@@ -273,6 +335,21 @@ if (importFrom) {
   } catch (error) {
     console.error(String(error?.message ?? error));
     process.exit(1);
+  }
+}
+
+if (cropArg) {
+  if (!importedSource) {
+    console.error('--crop needs an imported source. Run with --import first.');
+    process.exit(2);
+  }
+  try {
+    const crop = parseCrop(cropArg);
+    writeFileSync(CROP_FILE, `${JSON.stringify(crop, null, 2)}\n`);
+    console.log(`crop:   ${crop.w}x${crop.h} at (${crop.x}, ${crop.y}) of the source`);
+  } catch (error) {
+    console.error(String(error?.message ?? error));
+    process.exit(2);
   }
 }
 

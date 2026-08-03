@@ -445,6 +445,50 @@ describe('supplying the official brand artwork', () => {
     expect(script).toContain("argv.includes('--reset')");
   });
 
+  /**
+   * Brand artwork arrives as a lockup — symbol, wordmark, backdrop. Contain-
+   * fitting a 3:2 lockup into a 48px notification icon yields a letterboxed
+   * strip with an illegible wordmark, so the symbol is cropped out. The
+   * rectangle is recorded rather than guessed at render time, which is what
+   * makes the result reproducible and reviewable.
+   */
+  it('records the crop rectangle instead of re-deriving it each run', () => {
+    expect(script).toContain("argv.indexOf('--crop')");
+    expect(script).toContain('aurixa-source.crop.json');
+    expect(script).toContain('function readStoredCrop');
+  });
+
+  it('rejects a malformed crop rather than silently rendering the whole lockup', () => {
+    expect(script).toContain('--crop expects four non-negative numbers');
+    expect(script).toContain('--crop width and height must be positive');
+  });
+
+  it('places the crop from the image natural size, not a CSS percentage', () => {
+    // A percentage resolves against the tile, which scaled the artwork wrongly
+    // and left the wordmark showing through the bottom of the icon.
+    expect(script).toContain('img.naturalWidth * k');
+  });
+
+  it('drops a stale crop when the source or the vector is swapped back in', () => {
+    // A crop measured against one image is meaningless against another.
+    expect(script).toContain('if (existsSync(CROP_FILE)) rmSync(CROP_FILE);');
+  });
+
+  it('ships the imported master and its crop so a checkout regenerates identically', () => {
+    const brandDir = join(REPO_ROOT, 'public', 'brand');
+    const sources = ['aurixa-source.png', 'aurixa-source.jpg', 'aurixa-source.jpeg',
+      'aurixa-source.webp', 'aurixa-source.svg'].filter((f) => existsSync(join(brandDir, f)));
+    // Either the vector is in play (no master) or exactly one master exists —
+    // never two, or the next run could pick the wrong one.
+    expect(sources.length).toBeLessThanOrEqual(1);
+    if (sources.length === 1 && existsSync(join(brandDir, 'aurixa-source.crop.json'))) {
+      const crop = JSON.parse(readFileSync(join(brandDir, 'aurixa-source.crop.json'), 'utf8'));
+      for (const key of ['x', 'y', 'w', 'h']) expect(typeof crop[key]).toBe('number');
+      expect(crop.w).toBeGreaterThan(0);
+      expect(crop.h).toBeGreaterThan(0);
+    }
+  });
+
   it('is reachable as an npm script', () => {
     const pkg = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
     expect(pkg.scripts['brand:import']).toContain('--import');
