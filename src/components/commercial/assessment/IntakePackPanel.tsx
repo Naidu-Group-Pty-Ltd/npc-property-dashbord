@@ -516,10 +516,51 @@ export function IntakePackPanel({
 
           <p className="mt-2 text-xs leading-5 text-muted-foreground">
             These are listed here for the meeting record. Upload them to the client&apos;s document
-            vault once the assessment is linked.
+            vault once the assessment is linked. &quot;Read details&quot; stages what a document says
+            for your review — it never writes into the assessment on its own.
           </p>
         </div>
       ) : null}
+
+      {/* ---- Document extraction review ----------------------------------- */}
+      {extracted ? (
+        <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <ScanLine className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                {extracted.pack.counts.fields} value(s) read from a document
+              </h3>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">{extracted.fileName}</p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setExtracted(null)}>Discard</Button>
+              <Button size="sm" onClick={applyExtracted} disabled={disabled}>Apply to assessment</Button>
+            </div>
+          </div>
+          <ul className="grid gap-1.5 sm:grid-cols-2">
+            {extracted.pack.values.map((value) => (
+              <li
+                key={value.path}
+                className="flex items-baseline justify-between gap-3 rounded-md border border-border bg-card px-2.5 py-1.5"
+              >
+                <span className="text-xs text-muted-foreground">{value.label}</span>
+                <span className="truncate text-sm font-medium tabular-nums text-foreground">
+                  {typeof value.value === 'number'
+                    ? value.value.toLocaleString('en-AU')
+                    : String(value.value)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs leading-5 text-muted-foreground">
+            Applying fills only the fields listed above, and only where they are blank or being
+            replaced deliberately. Interest rate and loan structure are never taken from a document —
+            enter those on the loan step.
+          </p>
+        </div>
+      ) : null}
+
 
       {/* ---- Parse result ------------------------------------------------ */}
       {parsed && parsed.recognised ? (
