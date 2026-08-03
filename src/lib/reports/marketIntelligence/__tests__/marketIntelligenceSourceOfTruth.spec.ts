@@ -1,45 +1,36 @@
 /**
- * The Report Q&A export must have exactly one implementation.
+ * The Market Intelligence export must have exactly one implementation.
  *
- * The same guard the six formats before it carry, with one relaxation: the
- * shared `../text.pure.ts` and `../markdown.pure.ts`, where `neutraliseUrls` and
- * the Markdown parser live now that two formats each need them. Those are
- * **files** and not a directory, which is what stops it reading as "the parent
- * directory is open now" — the assertion at the bottom pins it.
+ * The same guard the seven formats before it carry. The relaxation is the
+ * shared `../markdown.pure.ts` and `../text.pure.ts` — files, not a directory,
+ * which is what stops it reading as "the parent directory is open now". The
+ * assertion at the bottom pins that.
  *
- * The guard matters more here than anywhere else in the programme. This format
- * has four legacy implementations across three libraries, two of them near-
- * verbatim copies of a third that have since drifted apart — one uses a fixed
- * `rowHeight` where the other measures, so multi-line table cells overlap in one
- * and not the other. Four copies is how that happens, and one is how it stops.
+ * `../../reportDesign/measure.pure.ts` is in the allow-list for the same reason
+ * it is everywhere else: the renderer groups thousands with `formatMeasure`
+ * rather than `toLocaleString`, because Deno and Node do not have to agree on
+ * ICU grouping and the string is asserted in a test.
  */
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const REPO = resolve(__dirname, '../../../../..');
-const CANONICAL_DIR = resolve(REPO, 'supabase/functions/_shared/reports/reportQa');
-const BRIDGE_DIR = resolve(REPO, 'src/lib/reports/reportQa');
+const CANONICAL_DIR = resolve(REPO, 'supabase/functions/_shared/reports/marketIntelligence');
+const BRIDGE_DIR = resolve(REPO, 'src/lib/reports/marketIntelligence');
 
 const pureModules = (dir: string) =>
   readdirSync(dir).filter((f) => f.endsWith('.pure.ts')).sort();
 
 /** An optional block comment, then exactly one `export * from '…'`. */
 const BRIDGE_SHAPE =
-  /^(?:\/\*\*[\s\S]*?\*\/\s*)?export \* from '\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/reports\/reportQa\/([\w.]+)\.pure\.ts';\s*$/;
+  /^(?:\/\*\*[\s\S]*?\*\/\s*)?export \* from '\.\.\/\.\.\/\.\.\/\.\.\/supabase\/functions\/_shared\/reports\/marketIntelligence\/([\w.]+)\.pure\.ts';\s*$/;
 
-/**
- * Siblings, the design system next door, or the shared helpers.
- *
- * `../text.pure.ts` and `../markdown.pure.ts` are not other formats — they are
- * `_shared/reports/*.pure.ts`, where `neutraliseUrls` and the Markdown parser
- * live now that two formats each need them. Named files, not a directory, which
- * is what stops this reading as "the parent directory is open now".
- */
+/** Siblings, the design system next door, or the two shared helpers. */
 const ALLOWED_IMPORT =
   /^(?:\.\/[\w.]+\.pure\.ts|\.\.\/\.\.\/reportDesign\/[\w.]+\.(?:pure|generated)\.ts|\.\.\/(?:text|markdown)\.pure\.ts)$/;
 
-describe('report Q&A — single source of truth', () => {
+describe('market intelligence — single source of truth', () => {
   it('has at least one canonical module', () => {
     expect(pureModules(CANONICAL_DIR).length).toBeGreaterThan(0);
   });
@@ -70,12 +61,11 @@ describe('report Q&A — single source of truth', () => {
   describe.each(pureModules(CANONICAL_DIR))('canonical %s', (file) => {
     const source = readFileSync(resolve(CANONICAL_DIR, file), 'utf8');
 
-    it('imports only siblings, the design system, or the shared text helpers', () => {
-      // Specifiers only. The specs this was copied from match `from '…'`
-      // anywhere in the file, which also matches *prose* — a doc comment whose
-      // line happens to end "…are calculated from '" reads as an import of a
-      // newline. A module path has no whitespace in it, which is enough to tell
-      // the two apart.
+    it('imports only siblings, the design system, or the shared helpers', () => {
+      // Specifiers only. Matching `from '…'` anywhere in the file also matches
+      // *prose* — a doc comment whose line happens to end "…carried verbatim
+      // from '" reads as an import of a newline. A module path has no
+      // whitespace in it, which is enough to tell the two apart.
       const imports = [...source.matchAll(/from '([^']+)'/g)]
         .map((m) => m[1])
         .filter((spec) => !/\s/.test(spec));
@@ -95,16 +85,19 @@ describe('report Q&A — single source of truth', () => {
       }
     });
 
+    it('formats numbers without the runtime locale', () => {
+      // `measure.pure.ts:121` records why: the same payload is formatted in Deno
+      // and in Node, their ICU builds do not have to agree, and a golden that
+      // depends on the runtime's locale data fails on someone else's machine.
+      const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+      expect(code, `${file} uses toLocaleString — use formatMeasure(count(…))`)
+        .not.toContain('toLocaleString');
+    });
+
     it('draws no PDF of its own', () => {
-      // The whole point. Four legacy implementations reach for jsPDF, pdf-lib
-      // and html2canvas; a canonical module here builds HTML and nothing else.
-      //
       // Comments are stripped first, and that is not a detail. These modules'
-      // doc comments *name* all three libraries, because naming what they
-      // replace is how the reasoning survives — the first version of this
-      // assertion read the prose and failed on three files that contain no code
-      // at all. The same mistake the copied import check makes when a doc
-      // comment ends in "from '".
+      // doc comments *name* the library they replace, because naming what they
+      // replace is how the reasoning survives.
       const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
       for (const library of ['jspdf', 'jsPDF', 'pdf-lib', 'html2canvas', 'PDFDocument']) {
         expect(code, `${file} references ${library}`).not.toContain(library);
@@ -119,17 +112,13 @@ describe('report Q&A — single source of truth', () => {
    * reading it as "other formats are fine now" — which would make every format's
    * payload reachable from every other and undo the reason the rule exists.
    */
-  it('permits the shared text helpers and no other format', () => {
-    const spec = readFileSync(resolve(__dirname, 'reportQaSourceOfTruth.spec.ts'), 'utf8');
+  it('permits the shared helpers and no other format', () => {
+    const spec = readFileSync(resolve(__dirname, 'marketIntelligenceSourceOfTruth.spec.ts'), 'utf8');
     const pattern = /const ALLOWED_IMPORT =\s*([\s\S]*?);/.exec(spec)?.[1] ?? '';
-    // The names, inside the alternation. Matching `text\.pure\.ts` as one
-    // substring stopped working the moment the rule became `(?:text|markdown)`,
-    // which is the point: this assertion is about which names are admitted, not
-    // about how the pattern happens to be spelled.
     expect(pattern).toMatch(/\btext\b/);
     expect(pattern).toMatch(/\bmarkdown\b/);
     expect(pattern).toMatch(/pure\\?\.ts/);
-    for (const other of ['cashFlow', 'portfolio', 'propertyComparison', 'borrowingCapacity', 'clientDetails']) {
+    for (const other of ['cashFlow', 'portfolio', 'propertyComparison', 'borrowingCapacity', 'clientDetails', 'reportQa']) {
       expect(pattern, `the import rule now admits ${other}`).not.toContain(other);
     }
   });

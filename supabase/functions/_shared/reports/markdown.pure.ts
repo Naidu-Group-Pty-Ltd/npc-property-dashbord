@@ -1,0 +1,1089 @@
+/**
+ * Markdown, as the report design system sets it.
+ *
+ * Written for the Report Q&A export, which was the first format whose payload
+ * was prose rather than typed figures, and moved here when the Market
+ * Intelligence report turned out to be the second. Both store model-authored
+ * Markdown in a column and need it turned into the system's own HTML without
+ * either losing what the model said or letting it say anything.
+ *
+ * The move is the same one `neutraliseUrls` made for the same reason: two
+ * callers is where a second copy starts, and a second Markdown parser is a
+ * second set of the defects recorded below.
+ *
+ * ## What the record actually contains
+ *
+ * Measured across the 562 assistant answers in `report_qa_messages`
+ * (`coalesce(edited_content, content)`), because a grammar guessed from
+ * CommonMark would be both too large and, in two places, too small:
+ *
+ * | construct | answers |     | construct | answers |
+ * | --- | --- | --- | --- | --- |
+ * | inline bold | 392 (70%) |  | blockquote | 18 |
+ * | bullet list | 321 (57%) |  | inline code | 6 |
+ * | ATX heading | 270 (48%) |  | fenced code | 6 |
+ * | inline italic | 193 (34%) || thematic break | 3 |
+ * | ordered list | 181 (32%) || bare URL | 7 |
+ * | pipe table | 105 (19%) |  | markdown link | **0** |
+ * | smart punctuation | 389 || markdown image | 1 |
+ *
+ * Heading levels used: `#` 290, `##` 1,214, `###` 1,536, `####` 192, `#####` 5.
+ * Tables run to **14 columns** and 101 rows. Dingbats appear in 98 answers,
+ * arrows in 89, **variation selector 16 in 93**, pictographs in 16.
+ *
+ * ## Three rules the stylesheet imposes
+ *
+ * `css.pure.ts` styles `h1, h2, h3` (`:635`), `h4` (`:649`), `p` (`:660`),
+ * `strong` (`:666`), `em` (`:667`), `a` (`:668`), `ul, ol` (`:673`), `li`
+ * (`:674`) and the whole `table.data` system (`:239-344`). It styles **nothing**
+ * for `h5`, `h6`, `blockquote` as an element, `code`, `pre`, `hr` or `img`.
+ *
+ * 1. **`h4` is not a small heading.** It is IBM Plex Mono, uppercase, tracked,
+ *    at caption size — the comment at `css.pure.ts:647` says it is the same
+ *    object as `.eyebrow`. It is a real level to demote onto, but it reads as a
+ *    labelled sub-section, which is why the clamp stops there rather than
+ *    marching on into unstyled `h5`.
+ * 2. **`<pre>` is disqualified.** WeasyPrint's UA sheet gives it
+ *    `white-space: pre`, and there is no `overflow-wrap` or `word-break` rule
+ *    anywhere in the sheet — so a 120-character line of JSON would run off the
+ *    trim edge of a client's document. A fenced block becomes a callout of
+ *    `<code>` separated by `<br>`, which wraps.
+ * 3. Everything the sheet already styles is emitted as that element. Only the
+ *    unstyled constructs go through a primitive, whose *classes* it does style.
+ *
+ * ## Never repairs, and never throws
+ *
+ * The block scan is one left-to-right pass in the house style of
+ * `propertyComparison/salvage.pure.ts:180`. A table without a delimiter row is
+ * not a table; seven hashes are not a heading; a ten-digit ordinal is not a
+ * list. Each falls through to a paragraph, which is the honest reading of what
+ * was written. Nothing is fabricated to make a construct parse.
+ *
+ * And nothing throws. A caller who hands over 350 KB gets a truncated document
+ * and a notice saying so — the same choice `measure.pure.ts:249` makes returning
+ * `null` rather than throwing, and for the same reason: a pure formatter that
+ * throws takes the whole render down and the caller has no better recovery.
+ */
+import {
+  escapeHtml,
+  renderCallout,
+  renderDataTable,
+  renderPage,
+  renderSidenote,
+  type TableColumn,
+  type TableRow,
+} from '../reportDesign/primitives.pure.ts';
+import { countUrlTokens, neutraliseUrls } from './text.pure.ts';
+
+// ── Bounds ──────────────────────────────────────────────────────────────────
+
+/**
+ * The unit of work is one message, not one conversation.
+ *
+ * The largest conversation in the record is 354,406 characters, but the caller
+ * renders per turn, so the number this has to survive is the largest single
+ * answer: 33,377. This is twice that, and it is deliberately the same figure as
+ * `MAX_SALVAGE_CHARS` (`propertyComparison/salvage.pure.ts:49`) — a cap rather
+ * than a guess, bounding a linear scan at a size no legitimate input approaches.
+ *
+ * The conversation-level budget is a different question and lives in
+ * `normalise.pure.ts`, where the turns are.
+ */
+export const MAX_MARKDOWN_CHARS = 65_536;
+
+/** A p90 answer is 60–120 blocks. This is a runaway guard, not a budget. */
+export const MAX_BLOCKS = 400;
+export const MAX_HEADINGS = 100;
+/** Per list, not per document. */
+export const MAX_LIST_ITEMS = 200;
+/**
+ * `ul, ol { padding-left: 14pt }` (`css.pure.ts:673`), so depth 4 has consumed
+ * 56pt ≈ 20mm of a 174mm measure and reads as broken in a print column. Deeper
+ * items are flattened onto this depth — the content is real, only the indent is
+ * not printable.
+ */
+export const MAX_LIST_DEPTH = 3;
+export const MAX_TABLE_ROWS = 120;
+/**
+ * `renderBandedMatrix`'s own landscape budget (`primitives.pure.ts:461`): twelve
+ * columns is 42pt each portrait and 63pt across the long edge. Not chosen here —
+ * inherited from the one place in the design system that already measured it.
+ */
+export const MAX_TABLE_COLS = 12;
+/**
+ * `TEXT_BLOCK.widthMm = 174` (`page.pure.ts:41`). At seven columns a prose cell
+ * gets 24.9mm ≈ 70pt and wraps to three lines, so seven is where a table stops
+ * fitting the portrait measure and starts needing the long edge.
+ */
+export const MAX_PORTRAIT_TABLE_COLS = 6;
+export const MAX_CODE_LINES = 60;
+
+/**
+ * What a landscape table costs on top of its own rows.
+ *
+ * `renderPage('landscape-table', …)` opens a page of its own, so the portrait
+ * flow breaks before it and resumes after it — two page boundaries the row count
+ * knows nothing about. Measured: a chapter whose only content was one
+ * eleven-column table claimed one page and printed two more than that; charging it one page of
+ * lines closes the gap exactly.
+ */
+export const LANDSCAPE_BREAK_LINES = 38;
+
+/**
+ * Above this many characters in one text run, emphasis is not parsed and the
+ * markers are stripped instead.
+ *
+ * The emphasis patterns are lazy, so a run with many markers costs
+ * markers × length. `MAX_INLINE_MARKERS` is the real guard; this is the second
+ * one, because a single 20,000-character paragraph is already eight printed
+ * pages and nothing legitimate is one.
+ */
+export const MAX_INLINE_CHARS = 20_000;
+/** Ordinary prose carries a handful. Four hundred is adversarial input. */
+export const MAX_INLINE_MARKERS = 400;
+
+/**
+ * `page.pure.ts:26` states the 18mm side margins "keep the measure near 65
+ * characters at 10.5pt". Used to estimate rendered lines so the caller can
+ * compute a page count before the render rather than after it.
+ */
+export const CHARS_PER_LINE = 65;
+
+/**
+ * Body lines that fit one page.
+ *
+ * The other half of the same measurement, and it lives beside it for that
+ * reason. `TEXT_BLOCK.heightMm` is 253mm ≈ 717pt; body copy is 10.5pt on roughly
+ * 15.5pt of leading, which is 46 lines with nothing else on the page. Real pages
+ * carry headings, table furniture and callout padding — all of which this module
+ * already charges for in its own block line counts — so the working figure is
+ * lower than that arithmetic ceiling.
+ *
+ * **Pinned by render, not by arithmetic.** Ten Report Q&A fixtures through
+ * WeasyPrint matched their claimed page counts exactly at 38, and the Market
+ * Intelligence fixtures were checked against the same figure.
+ */
+export const LINES_PER_PAGE = 38;
+
+/** A section always claims at least one page, because its header opens one. */
+export const MIN_SECTION_PAGES = 1;
+
+/** Lines to pages, floored at one. The one conversion both formats do. */
+export function pagesForLines(lines: number): number {
+  return Math.max(MIN_SECTION_PAGES, Math.ceil(lines / LINES_PER_PAGE));
+}
+
+// ── Glyphs ──────────────────────────────────────────────────────────────────
+
+/**
+ * Codepoints removed before anything else looks at the text.
+ *
+ * **Variation selector 16 is the highest-value entry here — 93 answers.** It
+ * asks for the emoji presentation of a character that has a perfectly good text
+ * form, and the container installs no colour-emoji font
+ * (`typography.pure.ts:46-56`), so the engine either ignores it or draws
+ * `.notdef`. Removing it turns `⚠️` into `⚠`, which DejaVu Sans sets correctly,
+ * and `1️⃣` into `1`. It costs nothing and fixes a fifth of the corpus.
+ *
+ * The bidi controls are here for a second reason: they reorder text on a
+ * document a client relies on, which is a spoofing vector rather than a
+ * typographic one.
+ */
+function isStripped(cp: number): boolean {
+  if (cp === 0x09 || cp === 0x0a) return false;
+  if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) return true; // C0 / C1
+  if (cp >= 0x200b && cp <= 0x200f) return true; // ZWSP, ZWNJ, ZWJ, LRM, RLM
+  if (cp >= 0x202a && cp <= 0x202e) return true; // bidi embedding / override
+  if (cp >= 0x2060 && cp <= 0x2064) return true; // word joiner, invisible ops
+  if (cp === 0x20e3) return true; // combining keycap
+  if (cp === 0xfe0e || cp === 0xfe0f) return true; // variation selectors 15/16
+  if (cp === 0xfeff) return true; // BOM / ZWNBSP
+  if (cp >= 0x1f1e6 && cp <= 0x1f1ff) return true; // regional indicators
+  if (cp >= 0x1f3fb && cp <= 0x1f3ff) return true; // skin tone modifiers
+  return false;
+}
+
+/**
+ * Symbol blocks with no coverage in any installed text face.
+ *
+ * **This list is what the pass is about, and getting its shape wrong is a real
+ * defect I shipped and then found by looking at a page.** The first version
+ * dropped everything at or above U+2600 unless it was explicitly kept — which
+ * reads as a safe allow-list and is not one, because Han starts at U+4E00. A
+ * rendered proof carried `A non-Latin name: 李小龍 and Ελληνικά`, and the page came
+ * back reading `A non-Latin name: and Ελληνικά`. The name was gone. That is
+ * precisely the over-reach this module criticises `sanitizeForPDF` for, arrived
+ * at from the other direction, and the container installs `fonts-noto-cjk`
+ * (`typography.pure.ts:54`) to stop exactly it.
+ *
+ * So the rule is: **scripts are open-ended and are kept; symbol blocks are
+ * finite and are enumerated.** Everything not in one of these ranges survives,
+ * which means Greek, Cyrillic, Han, Hangul, Arabic, Hebrew and Devanagari all
+ * reach the page and are set by DejaVu or Noto. Inside these ranges a codepoint
+ * survives only if `KEEP_SYMBOLS` names it or `TRANSLITERATE` maps it.
+ */
+const SYMBOL_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x2600, 0x27bf], // Miscellaneous Symbols, Dingbats
+  [0x2b00, 0x2bff], // Miscellaneous Symbols and Arrows
+  [0xe000, 0xf8ff], // Private use — no agreed meaning, and a font may draw anything
+  [0xfff0, 0xffff], // Specials, including the replacement character
+  [0x1f000, 0x1faff], // Every pictograph block
+];
+
+const inSymbolRange = (cp: number): boolean =>
+  SYMBOL_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
+
+/**
+ * Symbols inside those ranges that survive.
+ *
+ * Short on purpose, and every one of them verified on a rendered page rather
+ * than assumed from a font's advertised coverage — a substituted face still
+ * produces a valid PDF, which is the trap `DESIGN_SYSTEM.md:345` records about
+ * `pdffonts`.
+ */
+const KEEP_SYMBOLS = new Set<number>([
+  0x2605, 0x2606, // ★ ☆
+  0x260e, // ☎
+  0x2610, 0x2611, 0x2612, // ☐ ☑ ☒
+  0x2660, 0x2663, 0x2665, 0x2666, // ♠ ♣ ♥ ♦
+  0x266a, 0x266b, // ♪ ♫
+  0x26a0, // ⚠
+  0x2713, 0x2714, 0x2715, 0x2716, 0x2717, 0x2718, // ✓ ✔ ✕ ✖ ✗ ✘
+]);
+
+/**
+ * Emoji-presentation symbols that carry meaning a word would lose.
+ *
+ * Each maps onto something in `KEEP_SYMBOLS` or outside the symbol ranges
+ * entirely, so the output alphabet never grows. `✅` and `❌` are the two
+ * that matter: they are how a model says yes and no, and dropping them would
+ * leave a bare table cell where a verdict was.
+ */
+const TRANSLITERATE: Readonly<Record<number, string>> = {
+  0x2705: '✓', // ✅ -> ✓
+  0x274c: '✗', // ❌ -> ✗
+  0x274e: '✗', // ❎ -> ✗
+  0x2b50: '★', // ⭐ -> ★
+  0x2753: '?', 0x2754: '?',
+  0x2755: '!', 0x2757: '!',
+  0x27a1: '→', 0x2794: '→', 0x279c: '→', 0x27a4: '→',
+  0x2b05: '←', 0x2b06: '↑', 0x2b07: '↓',
+  0x2b1b: '■', 0x2b1c: '□',
+  0x276f: '›', 0x276e: '‹',
+  0x2726: '•', 0x2727: '•',
+};
+
+/**
+ * The glyph pass.
+ *
+ * A codepoint is emitted unless it is in the strip set, or it falls in a symbol
+ * range and is neither kept nor transliterated. Scripts are never touched.
+ *
+ * ## Where the prior art is right, and where it over-reaches
+ *
+ * `sanitizeForPDF` (`QAPDFGenerator.tsx:24-42`) ends in `[^\x00-\x7F]` with a
+ * small Latin-1 keep-list, and the *architecture* is right: a deny-list of "bad
+ * glyphs" can never be complete and its failure mode is tofu on a document a
+ * client has already been sent. But it exists because jsPDF's built-in faces
+ * genuinely cannot set U+2014, and against WeasyPrint it costs:
+ *
+ *  - `—` -> `--`, `…` -> `...`, curly quotes -> straight, on **389 of 562
+ *    answers**, on a document whose entire premise is print typography;
+ *  - `≤` -> `<=`, `→` -> `->`, `•` -> `-`, all fully covered by the installed faces;
+ *  - **every non-Latin name**, which is what `fonts-noto-cjk` is installed for.
+ *
+ * Dropping the 16 answers' pictographs outright is still right, because the
+ * house vocabulary is decorative-prefix-plus-word — `clientDetails/render.pure.ts`
+ * documents the same list in its own "No emoji" section — so `🏠 Owner Occupied`
+ * becomes `Owner Occupied` and reads perfectly. The coloured circles are dropped
+ * rather than mapped to `●`: three identical discs destroy the distinction they
+ * were carrying, and status in this design system is a `renderCallout` tone.
+ */
+export function sanitiseGlyphs(
+  value: string,
+): { text: string; dropped: number; transliterated: number } {
+  let dropped = 0;
+  let transliterated = 0;
+  let out = '';
+  for (const ch of value) {
+    const cp = ch.codePointAt(0)!;
+    if (isStripped(cp)) { dropped++; continue; }
+    if (!inSymbolRange(cp)) { out += ch; continue; }
+    if (KEEP_SYMBOLS.has(cp)) { out += ch; continue; }
+    const swap = TRANSLITERATE[cp];
+    if (swap !== undefined) { out += swap; transliterated++; continue; }
+    dropped++;
+  }
+  return { text: out, dropped, transliterated };
+}
+
+// ── Public shape ────────────────────────────────────────────────────────────
+
+export interface MarkdownOptions {
+  /** The h-level this run's *shallowest* heading maps to. Default 2. */
+  baseHeadingLevel?: 2 | 3 | 4;
+  /** Namespaces heading ids so two answers on one page cannot collide. */
+  idPrefix?: string;
+  /** Label on the callout a `>` blockquote becomes. */
+  blockquoteLabel?: string;
+  /** Label on a fenced block whose fence names no language. */
+  codeLabel?: string;
+  /** Label on the truncation callout. */
+  truncationLabel?: string;
+  /** Send a table wider than the portrait measure to the landscape page. */
+  landscapeWideTables?: boolean;
+  /** Mark a row whose first cell is exactly "Total" with the primitive's rule. */
+  detectTotalRow?: boolean;
+}
+
+export interface MarkdownHeading {
+  /** As emitted. Never 1, 5 or 6. */
+  level: 2 | 3 | 4;
+  /** As authored, 1–6. Kept so a contract test can prove the demotion. */
+  sourceLevel: number;
+  /** Plain — no markup, glyph-sanitised. What a contents entry prints. */
+  text: string;
+  /** Unique within one call. Charset `[a-z0-9-]`, so it can never hold `//`. */
+  id: string;
+  blockIndex: number;
+}
+
+export type MarkdownBlockKind =
+  | 'paragraph' | 'heading' | 'list' | 'table' | 'landscape-table'
+  | 'blockquote' | 'code' | 'notice';
+
+export interface MarkdownBlock {
+  kind: MarkdownBlockKind;
+  html: string;
+  /** Estimated rendered lines across the 174mm measure. See `estimateLines`. */
+  lines: number;
+}
+
+/** Every departure from the source, counted. Zero on a clean answer. */
+export interface MarkdownNotices {
+  /** Characters not shown, or null when nothing was cut. */
+  truncatedAtChars: number | null;
+  truncatedAtBlocks: boolean;
+  /** No delimiter row, a mismatched one, or no body rows. */
+  tablesRejected: number;
+  tablesRagged: number;
+  tableColumnsDropped: number;
+  tableRowsDropped: number;
+  tablesLandscaped: number;
+  listsFlattened: number;
+  listItemsDropped: number;
+  codeLinesDropped: number;
+  headingsDropped: number;
+  thematicBreaks: number;
+  linksFlattened: number;
+  imagesDropped: number;
+  glyphsDropped: number;
+  glyphsTransliterated: number;
+  urlsNeutralised: number;
+  unmatchedEmphasis: number;
+  /** Runs too long or too marker-dense to parse emphasis in. */
+  inlineSkipped: number;
+}
+
+export interface MarkdownResult {
+  blocks: readonly MarkdownBlock[];
+  /** `blocks.map(b => b.html).join('')` — the common case. */
+  html: string;
+  headings: readonly MarkdownHeading[];
+  lines: number;
+  notices: MarkdownNotices;
+  /**
+   * True only when **content** was lost.
+   *
+   * Not set by glyph or emphasis normalisation, which happen on almost every
+   * answer in the record — a flag that is true for 70% of inputs tells an
+   * operator nothing, and the ledger column that records this exists to answer
+   * "did we send someone a partial document".
+   */
+  degraded: boolean;
+}
+
+const emptyNotices = (): MarkdownNotices => ({
+  truncatedAtChars: null,
+  truncatedAtBlocks: false,
+  tablesRejected: 0,
+  tablesRagged: 0,
+  tableColumnsDropped: 0,
+  tableRowsDropped: 0,
+  tablesLandscaped: 0,
+  listsFlattened: 0,
+  listItemsDropped: 0,
+  codeLinesDropped: 0,
+  headingsDropped: 0,
+  thematicBreaks: 0,
+  linksFlattened: 0,
+  imagesDropped: 0,
+  glyphsDropped: 0,
+  glyphsTransliterated: 0,
+  urlsNeutralised: 0,
+  unmatchedEmphasis: 0,
+  inlineSkipped: 0,
+});
+
+// ── Inline ──────────────────────────────────────────────────────────────────
+
+/**
+ * Escape first, then apply emphasis over the escaped string.
+ *
+ * ## Why this order and not the other
+ *
+ * Both can be made correct. This one is chosen for its **failure mode**.
+ * Escape-first puts `escapeHtml` at one auditable call at the top of this
+ * function; get it wrong — parse emphasis first and escape the result — and the
+ * page prints `&lt;strong&gt;` in the body copy. Loud, and the first test
+ * catches it. The alternative, building an AST and escaping at serialisation, is
+ * correct only if *every* serialiser branch remembers to; the branch that
+ * forgets is an XSS-shaped hole that renders identically to correct output in
+ * every test that does not specifically probe it.
+ *
+ * ## The property that makes it safe
+ *
+ * `escapeHtml` (`primitives.pure.ts:34`) produces only `&amp; &lt; &gt; &quot;
+ * &#39;`, and **none of `*`, `_`, backtick, `[`, `]`, `(`, `)` appears in any of
+ * those five entities**. So no marker can land inside an entity and no emphasis
+ * span can split one. `markdown.spec.ts` asserts that directly, so adding a
+ * sixth entity to `escapeHtml` fails here rather than in a client's document.
+ *
+ * Two rules follow, and both are load-bearing:
+ *
+ *  - the scanner anchors only on those seven characters, never on `&` or `;`;
+ *  - every length cap is applied to the **raw** text, because a run of `&` grows
+ *    fivefold under escaping.
+ */
+export function renderInlineMarkdown(value: string, notices?: MarkdownNotices): string {
+  const raw = value ?? '';
+  if (!raw) return '';
+
+  const markers = (raw.match(/[*_`]/g) ?? []).length;
+  if (raw.length > MAX_INLINE_CHARS || markers > MAX_INLINE_MARKERS) {
+    if (notices) notices.inlineSkipped++;
+    return escapeHtml(stripMarkers(raw));
+  }
+
+  // Links first, on the *raw* string: the target has to be recognised as a unit
+  // before escaping turns its parentheses into ordinary text, and it must never
+  // reach the output as an `href`. See `flattenLinks`.
+  let s = flattenLinks(raw, notices);
+  s = escapeHtml(s);
+
+  // Code spans become their tag first; the string is then split on those tags
+  // and emphasis applied only outside them. CommonMark does not parse emphasis
+  // inside a code span, and a backtick span is the one construct here that
+  // legitimately contains asterisks.
+  //
+  // A split rather than a placeholder substitution, because a placeholder is a
+  // token that could also occur in the prose. Escaping has already run, so no
+  // literal `<code>` can exist in the text and the split is exact.
+  s = s.replace(/`+([^`]+?)`+/g, (_m, inner: string) => `<code>${inner}</code>`);
+  return s
+    .split(/(<code>[\s\S]*?<\/code>)/)
+    .map((part, idx) => (idx % 2 === 1 ? part : emphasise(part, notices)))
+    .join('');
+}
+
+/** The emphasis half of the inline pass. Never sees the inside of a code span. */
+function emphasise(input: string, notices?: MarkdownNotices): string {
+  let s = input
+    .replace(/\*\*\*(?=\S)([\s\S]*?\S)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, '<strong>$1</strong>')
+    .replace(/(?<![\w*])\*(?=\S)([^*]*?\S)\*(?![\w*])/g, '<em>$1</em>')
+    // Intraword `_` never emphasises. Not a nicety — this codebase's own prose
+    // is full of `edited_content` and `snake_case`, and CommonMark's flanking
+    // rule exists for exactly that.
+    .replace(/(?<![\w_])___(?=\S)([\s\S]*?\S)___(?![\w_])/g, '<strong><em>$1</em></strong>')
+    .replace(/(?<![\w_])__(?=\S)([\s\S]*?\S)__(?![\w_])/g, '<strong>$1</strong>')
+    .replace(/(?<![\w_])_(?=\S)([^_]*?\S)_(?![\w_])/g, '<em>$1</em>');
+
+  // What is left is a marker with no partner. A *flanking* one — hard against
+  // the text on exactly one side — is dropped, because `**Important` printing
+  // its asterisks on a client's document reads unambiguously as a defect and
+  // nothing a reader could act on is lost.
+  //
+  // This is a deliberate departure from `salvage.pure.ts`'s never-repair rule,
+  // and the distinction is the justification: salvage refuses because a
+  // half-closed array yields a *partial fact* indistinguishable from a whole
+  // one. An unmatched `**` is presentation, not content.
+  s = s.replace(/(^|\s)([*_]{1,3})(?=\S)/g, (_m, pre: string) => { bump(notices); return pre; });
+  s = s.replace(/(?<=\S)([*_]{1,3})(?=\s|$)/g, () => { bump(notices); return ''; });
+
+  // A marker with space on both sides is arithmetic, not emphasis — `2 * 3 * 4`
+  // keeps its asterisks, and neither pattern above touches them.
+
+  return s;
+}
+
+function bump(notices?: MarkdownNotices): void {
+  if (notices) notices.unmatchedEmphasis++;
+}
+
+/** Every emphasis marker removed, leaving the words. For a table cell. */
+function stripMarkers(value: string): string {
+  return value
+    .replace(/`+([^`]+?)`+/g, '$1')
+    .replace(/\*{1,3}(?=\S)([\s\S]*?\S)\*{1,3}/g, '$1')
+    .replace(/(?<![\w_])_{1,3}(?=\S)([\s\S]*?\S)_{1,3}(?![\w_])/g, '$1')
+    .replace(/(^|\s)[*_]{1,3}(?=\S)/g, '$1')
+    .replace(/(?<=\S)[*_]{1,3}(?=\s|$)/g, '');
+}
+
+/**
+ * `[text](target)` and `![alt](src)` become their text, and never an anchor.
+ *
+ * The stakes here are the whole document, not this span.
+ * `assertSafeRenderResources` decodes HTML entities and *then* throws on any
+ * `https?://`, `//host`, `file:`, `ftp:` or `gopher:` token anywhere in the
+ * HTML, escaped body text included (`renderResourcePolicy.pure.ts:67-91`). An
+ * `<a href>` would fail the render with an error naming no field and no line —
+ * and `a` *is* styled by the sheet, which is exactly what makes emitting one
+ * look reasonable.
+ *
+ * The target is not simply deleted. `neutraliseUrls` has already stripped its
+ * scheme in Pass 0, so what is left is a bare host and path; printing it in
+ * parentheses keeps the attribution a citation was carrying. Zero links appear
+ * in the 562-answer corpus, so this rule exists to be correct rather than to be
+ * exercised — which is precisely when it will be got wrong.
+ */
+function flattenLinks(value: string, notices?: MarkdownNotices): string {
+  let s = value.replace(/!\[([^\]]*)\]\([^)]*\)/g, (_m, alt: string) => {
+    if (notices) notices.imagesDropped++;
+    return alt;
+  });
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]*)[^)]*\)/g, (_m, text: string, target: string) => {
+    if (notices) notices.linksFlattened++;
+    const bare = target.replace(/^[a-z]+:/i, '').replace(/^\/+/, '').trim();
+    return bare && bare !== text ? `${text} (${bare})` : text;
+  });
+  return s;
+}
+
+/**
+ * Markers gone, glyphs normalised, URLs neutralised. A contents entry, a running
+ * head, or a question printed above the answer it drew.
+ *
+ * `neutraliseUrls` belongs here and not only in `renderMarkdown`, because these
+ * strings reach the page **without passing through the block scanner**: the
+ * transcript prints each question in a callout of its own, and a heading's plain
+ * text becomes a contents entry. Eight user messages in the record carry a URL,
+ * and without this the render fails on every one of them with an error naming no
+ * field and no line. Found by a test that put a URL in a question rather than in
+ * an answer.
+ */
+export function markdownToPlainText(value: string, maxChars?: number): string {
+  const clean = neutraliseUrls(stripMarkers(sanitiseGlyphs(String(value ?? '')).text))
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (typeof maxChars !== 'number' || clean.length <= maxChars) return clean;
+
+  // Cut on a word, and say that it was cut.
+  //
+  // This text is a contents-page note, a chapter standfirst or a running head —
+  // furniture a reader takes in at a glance — and a hard slice ends it mid-word
+  // on a hyphenated compound often enough to look like a truncated database
+  // column rather than a summary. The Market Intelligence render showed
+  // "…the board's statement noting trimmed" under a heading, with the rest of
+  // "trimmed-mean" gone.
+  //
+  // The ellipsis is inside the budget, not added to it, so a caller's cap still
+  // means what it says. A word boundary is only used when there is one in the
+  // back third; a single very long token is cut where it falls rather than
+  // collapsing the whole string to nothing.
+  const room = Math.max(1, maxChars - 1);
+  const head = clean.slice(0, room);
+  const space = head.lastIndexOf(' ');
+  const cut = space > room * (2 / 3) ? head.slice(0, space) : head;
+  return `${cut.replace(/[\s,;:.–—-]+$/, '')}…`;
+}
+
+// ── Tables ──────────────────────────────────────────────────────────────────
+
+/** `1,234`, `-1,234`, `(500)`, `$1,234.56`, `12.5%`, `1.2x`. */
+const NUMERIC_CELL = /^[-+(]?\s*[$€£]?\s*\d[\d,\s]*(?:\.\d+)?\s*(?:%|x)?\s*\)?$/i;
+
+const splitRow = (line: string): string[] => {
+  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  return trimmed.split('|').map((c) => c.trim());
+};
+
+const isDelimiterRow = (line: string): boolean => {
+  const cells = splitRow(line);
+  return cells.length > 0 && cells.every((c) => /^:?-{1,}:?$/.test(c));
+};
+
+// ── The scan ────────────────────────────────────────────────────────────────
+
+interface ListItem { depth: number; text: string }
+
+const slugify = (value: string): string =>
+  value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'section';
+
+/**
+ * Turn Markdown into design-system HTML.
+ *
+ * Three passes. **Pass 0** normalises once — BOM, line endings, the character
+ * cap, then `sanitiseGlyphs`, then `neutraliseUrls`, in that order. The order is
+ * not cosmetic: stripping a zero-width character is what *creates* a
+ * scheme-relative URL, so neutralising first leaves a live `//` for the resource
+ * policy to throw on. Running the URL pass once over the whole raw input, rather
+ * than per construct, is what covers table cells, code blocks, alt text and
+ * heading ids by construction instead of by remembering.
+ *
+ * **Pass 1** segments blocks in one left-to-right walk. **Pass 2** runs inline
+ * only where inline is legal — never inside a fence.
+ */
+export function renderMarkdown(source: string, options: MarkdownOptions = {}): MarkdownResult {
+  const notices = emptyNotices();
+  const base = options.baseHeadingLevel ?? 2;
+  const idPrefix = (options.idPrefix ?? 'a').replace(/[^a-z0-9]+/gi, '').toLowerCase() || 'a';
+  const landscape = options.landscapeWideTables !== false;
+  const detectTotal = options.detectTotalRow !== false;
+
+  // ── Pass 0 ────────────────────────────────────────────────────────────────
+  let text = String(source ?? '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  if (text.length > MAX_MARKDOWN_CHARS) {
+    const cut = text.lastIndexOf('\n', MAX_MARKDOWN_CHARS);
+    const at = cut > MAX_MARKDOWN_CHARS / 2 ? cut : MAX_MARKDOWN_CHARS;
+    notices.truncatedAtChars = text.length - at;
+    text = text.slice(0, at);
+  }
+  const glyphs = sanitiseGlyphs(text);
+  notices.glyphsDropped = glyphs.dropped;
+  notices.glyphsTransliterated = glyphs.transliterated;
+  text = glyphs.text;
+  const urlsBefore = countUrlTokens(text);
+  if (urlsBefore) {
+    notices.urlsNeutralised = urlsBefore;
+    text = neutraliseUrls(text);
+  }
+
+  const lines = text.split('\n');
+  const blocks: MarkdownBlock[] = [];
+  const headings: MarkdownHeading[] = [];
+  const idsUsed = new Map<string, number>();
+
+  // Pass 1a — the shallowest heading in this run, so demotion is relative.
+  let minLevel = 7;
+  for (const line of lines) {
+    const m = /^(#{1,6})\s+\S/.exec(line);
+    if (m) minLevel = Math.min(minLevel, m[1].length);
+  }
+  if (minLevel === 7) minLevel = 1;
+
+  const push = (kind: MarkdownBlockKind, html: string, lineCount: number): boolean => {
+    if (!html) return true;
+    if (blocks.length >= MAX_BLOCKS) { notices.truncatedAtBlocks = true; return false; }
+    blocks.push({ kind, html, lines: Math.max(1, Math.round(lineCount)) });
+    return true;
+  };
+
+  const textLines = (s: string) => Math.ceil(Math.max(1, s.length) / CHARS_PER_LINE);
+
+  // ── Pass 1b — one left-to-right walk ──────────────────────────────────────
+  let i = 0;
+  let paragraph: string[] = [];
+
+  const flushParagraph = (): boolean => {
+    if (!paragraph.length) return true;
+    const joined = paragraph.join('\n');
+    paragraph = [];
+    const html = paragraphHtml(joined, notices);
+    return push('paragraph', html, textLines(joined) + 0.5);
+  };
+
+  scan: while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Fenced code.
+    const fence = /^([`~]{3,})\s*([\w+-]*)\s*$/.exec(trimmed);
+    if (fence) {
+      if (!flushParagraph()) break scan;
+      const closer = fence[1][0];
+      const body: string[] = [];
+      i++;
+      while (i < lines.length && !new RegExp(`^\\s*${closer}{3,}\\s*$`).test(lines[i])) {
+        body.push(lines[i]);
+        i++;
+      }
+      // An unclosed fence at end of input is still a complete block. This is a
+      // deliberate difference from `salvage.pure.ts`: a truncated line of code
+      // is self-evidently truncated, so there is no fabrication hazard.
+      if (i < lines.length) i++;
+      const kept = body.slice(0, MAX_CODE_LINES);
+      notices.codeLinesDropped += body.length - kept.length;
+      const label = fence[2] ? fence[2].toUpperCase() : (options.codeLabel ?? 'Code');
+      const inner = kept
+        // Leading indentation becomes non-breaking: this wraps as `<p>` text,
+        // not `<pre>`, so ordinary leading spaces would collapse away.
+        .map((l) => escapeHtml(l).replace(/^ +/, (sp) => '\u00a0'.repeat(sp.length)))
+        .join('<br>');
+      if (!push('code', renderCallout('informative', label, `<p><code>${inner}</code></p>`), kept.length + 2)) break scan;
+      continue;
+    }
+
+    // A bare `#` with nothing after it. Not a heading, and not worth printing
+    // as a paragraph either — a lone hash on a client's document is noise, and
+    // this is the one place where dropping beats falling through.
+    if (/^#{1,6}$/.test(trimmed)) {
+      if (!flushParagraph()) break scan;
+      i++;
+      continue;
+    }
+
+    // ATX heading. Seven or more hashes is not a heading in CommonMark, and
+    // neither is `#Heading`; both fall through to the paragraph below.
+    const atx = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+    if (atx && !/^#{7,}/.test(trimmed)) {
+      if (!flushParagraph()) break scan;
+      const raw = atx[2].replace(/\s+#+\s*$/, '').trim();
+      if (raw) {
+        if (!emitHeading(atx[1].length, raw)) break scan;
+      }
+      i++;
+      continue;
+    }
+
+    // Setext. Supported because without it a `---` under a text line is neither
+    // a break nor a heading, and the `---` would print inside the paragraph.
+    if (
+      paragraph.length && /^(=+|-+)\s*$/.test(trimmed)
+      && !isDelimiterRow(line) && lines[i - 1]?.trim()
+    ) {
+      // The underlined line is the heading; anything above it in flight is a
+      // paragraph that ends here.
+      const heading = paragraph.pop()!.trim();
+      if (!flushParagraph()) break scan;
+      if (!emitHeading(trimmed.startsWith('=') ? 1 : 2, heading)) break scan;
+      i++;
+      continue;
+    }
+
+    // Pipe table. A table only exists when the next line is a delimiter row
+    // whose cell count matches the header's — GFM's own rule, and the point at
+    // which this module declines to invent structure.
+    if (trimmed.includes('|') && i + 1 < lines.length && isDelimiterRow(lines[i + 1])) {
+      const header = splitRow(line);
+      const delim = splitRow(lines[i + 1]);
+      if (header.length === delim.length && header.length > 0) {
+        const body: string[][] = [];
+        let j = i + 2;
+        while (j < lines.length && lines[j].trim().includes('|') && lines[j].trim()) {
+          body.push(splitRow(lines[j]));
+          j++;
+        }
+        if (body.length) {
+          if (!flushParagraph()) break scan;
+          if (!emitTable(header, delim, body)) break scan;
+          i = j;
+          continue;
+        }
+        // Header and delimiter but no body. `renderDataTable` returns '' on an
+        // empty row set (`primitives.pure.ts:426`), so building one here would
+        // make the block silently vanish. Fall through to paragraphs instead.
+        notices.tablesRejected++;
+      } else {
+        notices.tablesRejected++;
+      }
+    } else if (
+      // A run of pipe lines with no delimiter row under its first line is not a
+      // table — GFM requires one, and inventing a header from whichever line
+      // happens to come first is exactly the fabrication `salvage.pure.ts`
+      // refuses. It is still worth counting: a model that meant a table and
+      // wrote one badly is a thing an operator should be able to see.
+      trimmed.split('|').length > 2
+      && !(lines[i - 1] ?? '').includes('|')
+      && (lines[i + 1] ?? '').includes('|')
+    ) {
+      notices.tablesRejected++;
+    }
+
+    // Blockquote.
+    if (/^>\s?/.test(trimmed)) {
+      if (!flushParagraph()) break scan;
+      const body: string[] = [];
+      while (i < lines.length && /^\s*>/.test(lines[i])) {
+        body.push(lines[i].replace(/^\s*>+\s?/, ''));
+        i++;
+      }
+      const joined = body.join('\n').trim();
+      const innerHtml = joined
+        .split(/\n{2,}/)
+        .map((p) => paragraphHtml(p, notices))
+        .join('');
+      if (!push(
+        'blockquote',
+        renderCallout('neutral', options.blockquoteLabel ?? 'Note', innerHtml),
+        textLines(joined) + 2,
+      )) break scan;
+      continue;
+    }
+
+    // Lists.
+    const listMark = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(line);
+    if (listMark) {
+      if (!flushParagraph()) break scan;
+      const ordered = /\d/.test(listMark[2]);
+      const items: ListItem[] = [];
+      while (i < lines.length) {
+        const m = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/.exec(lines[i]);
+        if (!m) {
+          // A plain continuation line belongs to the item above it.
+          if (items.length && lines[i].trim() && /^\s{2,}\S/.test(lines[i])) {
+            items[items.length - 1].text += ` ${lines[i].trim()}`;
+            i++;
+            continue;
+          }
+          break;
+        }
+        if (/\d/.test(m[2]) !== ordered) break;
+        const rawDepth = Math.floor(m[1].replace(/\t/g, '  ').length / 2);
+        const depth = Math.min(rawDepth, MAX_LIST_DEPTH - 1);
+        if (rawDepth > MAX_LIST_DEPTH - 1) notices.listsFlattened++;
+        items.push({ depth, text: m[3] });
+        i++;
+      }
+      const kept = items.slice(0, MAX_LIST_ITEMS);
+      notices.listItemsDropped += items.length - kept.length;
+      if (!push('list', listHtml(kept, ordered, notices), kept.length + 1)) break scan;
+      continue;
+    }
+
+    // Thematic break. Dropped: it carries no content, and the design system's
+    // own block rhythm already separates. The one construct where dropping is
+    // unambiguously right.
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed.replace(/\s/g, ''))) {
+      if (!flushParagraph()) break scan;
+      notices.thematicBreaks++;
+      i++;
+      continue;
+    }
+
+    if (!trimmed) {
+      if (!flushParagraph()) break scan;
+      i++;
+      continue;
+    }
+
+    paragraph.push(line);
+    i++;
+  }
+  flushParagraph();
+
+  const total = blocks.reduce((n, b) => n + b.lines, 0);
+
+  // The truncation notice is part of the document, not a log line. It names the
+  // residue exactly, so a reader knows what they are missing and where to get
+  // it — silent truncation is the failure this whole migration removes.
+  if (notices.truncatedAtChars !== null || notices.truncatedAtBlocks) {
+    const said = notices.truncatedAtChars !== null
+      ? `A further ${notices.truncatedAtChars.toLocaleString('en-AU')} characters of this answer are not shown.`
+      : 'The remainder of this answer is not shown.';
+    blocks.push({
+      kind: 'notice',
+      html: renderCallout(
+        'caution',
+        options.truncationLabel ?? 'Not shown',
+        `<p>${escapeHtml(said)} The complete text is in the Markdown export.</p>`,
+      ),
+      lines: 3,
+    });
+  }
+
+  const degraded = notices.truncatedAtChars !== null
+    || notices.truncatedAtBlocks
+    || notices.tableRowsDropped > 0
+    || notices.tableColumnsDropped > 0
+    || notices.listItemsDropped > 0
+    || notices.codeLinesDropped > 0
+    || notices.headingsDropped > 0;
+
+  return {
+    blocks,
+    html: blocks.map((b) => b.html).join(''),
+    headings,
+    lines: total,
+    notices,
+    degraded,
+  };
+
+  // ── Emitters, closed over the accumulators above ────────────────────────
+
+  function emitHeading(sourceLevel: number, raw: string): boolean {
+    if (headings.length >= MAX_HEADINGS) {
+      notices.headingsDropped++;
+      return true;
+    }
+    // Relative to this run's own shallowest heading, then clamped.
+    //
+    // Relative because models are inconsistent about whether they open at `#` or
+    // `##`, and an answer written entirely in `##`/`###` must render with the
+    // same hierarchy as one written in `#`/`##` rather than being pushed a level
+    // down for an arbitrary authoring choice. Clamped at 4 because `h4` is the
+    // last level the stylesheet dresses and `h5` would print at body size with
+    // the user agent's own margins.
+    const level = Math.min(4, Math.max(base, base + (sourceLevel - minLevel))) as 2 | 3 | 4;
+    const plain = markdownToPlainText(raw, 160);
+    const stem = `${idPrefix}-${headings.length + 1}-${slugify(plain)}`;
+    const seen = idsUsed.get(stem) ?? 0;
+    idsUsed.set(stem, seen + 1);
+    const id = seen ? `${stem}-${seen + 1}` : stem;
+    const html = `<h${level} id="${id}">${renderInlineMarkdown(raw, notices)}</h${level}>`;
+    const index = blocks.length;
+    if (!push('heading', html, 2)) return false;
+    headings.push({ level, sourceLevel, text: plain, id, blockIndex: index });
+    return true;
+  }
+
+  function emitTable(header: string[], delim: string[], body: string[][]): boolean {
+    // Column keys are positional, never the header text. `TableRow` is keyed by
+    // string (`primitives.pure.ts:397`), so two columns both headed "Value"
+    // would collide and one would silently render blank — and a positional key
+    // can never collide with the reserved `__total` either.
+    const width = Math.min(header.length, MAX_TABLE_COLS);
+    const droppedCols = header.slice(width);
+    notices.tableColumnsDropped += droppedCols.length;
+
+    const keptRows = body.slice(0, MAX_TABLE_ROWS);
+    notices.tableRowsDropped += body.length - keptRows.length;
+
+    const cells = keptRows.map((r) => {
+      if (r.length !== header.length) notices.tablesRagged++;
+      // A short row's trailing cells become empty, which is GFM's own reading.
+      // A long row's extras are dropped and counted, because a row wider than
+      // its header is a malformed table and the count is how anyone finds out.
+      // Against the header, not against the cap: the columns cut by
+      // `MAX_TABLE_COLS` are already counted once above, and counting them
+      // again per row would report a 19-column table as losing 14.
+      if (r.length > header.length) notices.tableColumnsDropped += r.length - header.length;
+      return Array.from({ length: width }, (_, c) => stripMarkers(r[c] ?? '').trim());
+    });
+
+    // A column the model gave no alignment to but filled with figures is a
+    // numeric column. Saying so is what buys `tabular-nums` and `white-space:
+    // nowrap` from the sheet — the difference between a readable ledger column
+    // and an unreadable one, and the reason this goes through the primitive.
+    const numeric = Array.from({ length: width }, (_, c) => {
+      const values = cells.map((r) => r[c]).filter(Boolean);
+      return values.length > 0 && values.every((v) => NUMERIC_CELL.test(v));
+    });
+
+    const cols: TableColumn[] = Array.from({ length: width }, (_, c) => ({
+      key: `c${c}`,
+      label: stripMarkers(header[c] ?? '').trim(),
+      // `TableColumn.align` is `'left' | 'right'` only (`primitives.pure.ts:394`),
+      // so `:---:` lands on left. Inventing a centre alignment the design system
+      // does not have is out of scope for a format module.
+      align: (/-:$/.test(delim[c] ?? '') && !/^:-/.test(delim[c] ?? '')) || numeric[c] ? 'right' : 'left',
+    }));
+
+    // A single column is a list wearing a ledger's clothes. `table.data` would
+    // give it banded rows and a mono uppercase head, and its tagged structure is
+    // strictly worse than a real list's.
+    if (width === 1) {
+      const items = cells.map((r) => ({ depth: 0, text: r[0] })).filter((it) => it.text);
+      const head = cols[0].label ? `<h4>${escapeHtml(cols[0].label)}</h4>` : '';
+      return push('list', head + listHtml(items, false, notices), items.length + 2);
+    }
+
+    const rows: TableRow[] = cells.map((r) => {
+      const row: TableRow = {};
+      r.forEach((v, c) => { row[`c${c}`] = v; });
+      // Whole-cell match, so "Total addressable market" is not a total row.
+      const first = (r[0] ?? '').trim().toLowerCase();
+      if (detectTotal && (first === 'total' || first === 'totals')) row.__total = true;
+      return row;
+    });
+
+    const table = renderDataTable(cols, rows, {
+      signedKeys: cols.filter((c) => c.align === 'right').map((c) => c.key),
+    });
+
+    const wide = width > MAX_PORTRAIT_TABLE_COLS;
+    const note = droppedCols.length
+      ? renderSidenote(
+        'Columns not shown',
+        `<p>${escapeHtml(droppedCols.map((h) => stripMarkers(h).trim()).filter(Boolean).join(', '))}</p>`,
+      )
+      : '';
+
+    if (wide && landscape) {
+      notices.tablesLandscaped++;
+      return push('landscape-table', renderPage('landscape-table', table + note), rows.length + 4 + LANDSCAPE_BREAK_LINES);
+    }
+    return push('table', table + note, rows.length + 3);
+  }
+}
+
+function paragraphHtml(block: string, notices: MarkdownNotices): string {
+  return block
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p>${inlineWithBreaks(p, notices)}</p>`)
+    .join('');
+}
+
+/** Two trailing spaces or a trailing backslash is a hard break; a bare newline is a space. */
+function inlineWithBreaks(paragraph: string, notices: MarkdownNotices): string {
+  return paragraph
+    .split('\n')
+    .map((l) => ({ text: l.replace(/(?: {2,}|\\)$/, ''), hard: /(?: {2,}|\\)$/.test(l) }))
+    .map((l, idx, all) => renderInlineMarkdown(l.text.trim(), notices) + (idx < all.length - 1 ? (l.hard ? '<br>' : ' ') : ''))
+    .join('');
+}
+
+/**
+ * A list, nested correctly.
+ *
+ * The sublist goes **inside** the `<li>` it belongs to, which is the whole
+ * difficulty: the obvious loop — close the item, open the sublist, carry on —
+ * produces `<ul><li>a</li><ul><li>b</li></ul></ul>`, where the nested list is a
+ * sibling of the item rather than its child. That is invalid HTML, and
+ * WeasyPrint renders it as a second list at the parent's own indent, so the
+ * nesting the author wrote is simply not on the page. Caught by looking at the
+ * output rather than by the type checker, which is happy either way.
+ */
+function listHtml(items: readonly ListItem[], ordered: boolean, notices: MarkdownNotices): string {
+  if (!items.length) return '';
+  const tag = ordered ? 'ol' : 'ul';
+  // A list that opens indented still starts at depth zero; the author's absolute
+  // indentation is not the document's.
+  const floor = Math.min(...items.map((it) => it.depth));
+  let out = `<${tag}>`;
+  let depth = 0;
+  let itemOpen = false;
+  for (const item of items) {
+    const want = item.depth - floor;
+    if (want > depth) {
+      // Opened while the parent item is still open, so it nests inside it.
+      while (depth < want) { out += `<${tag}>`; depth++; }
+      itemOpen = false;
+    } else {
+      while (depth > want) {
+        if (itemOpen) { out += '</li>'; itemOpen = false; }
+        out += `</${tag}></li>`;
+        depth--;
+      }
+      if (itemOpen) { out += '</li>'; itemOpen = false; }
+    }
+    out += `<li>${renderInlineMarkdown(item.text, notices)}`;
+    itemOpen = true;
+  }
+  while (depth > 0) {
+    if (itemOpen) { out += '</li>'; itemOpen = false; }
+    out += `</${tag}></li>`;
+    depth--;
+  }
+  if (itemOpen) out += '</li>';
+  return `${out}</${tag}>`;
+}
+
+/** Sum of block lines. The caller divides by its own lines-per-page. */
+export function estimateLines(blocks: readonly MarkdownBlock[]): number {
+  return blocks.reduce((n, b) => n + b.lines, 0);
+}

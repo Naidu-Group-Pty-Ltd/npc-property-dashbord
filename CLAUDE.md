@@ -31,23 +31,27 @@ rules from screen, and most of the repo's "logo" files are email-signature banne
 carrying the director's personal mobile number. Architecture and the migration
 programme: [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
-Seven formats have been migrated onto it, and each carries its own contract:
+Eight formats have been migrated onto it, and each carries its own contract:
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
 [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md),
 [`PORTFOLIO.md`](./docs/reports/PORTFOLIO.md),
 [`COMPARISON.md`](./docs/reports/COMPARISON.md),
 [`CASH_FLOW_COMPARISON.md`](./docs/reports/CASH_FLOW_COMPARISON.md),
-[`CLIENT_DETAILS.md`](./docs/reports/CLIENT_DETAILS.md) and
-[`QA.md`](./docs/reports/QA.md). Read the relevant one before touching that
-format — all seven record defects that only a render against production data
-revealed, and all seven name the legacy generators that must stay.
+[`CLIENT_DETAILS.md`](./docs/reports/CLIENT_DETAILS.md),
+[`QA.md`](./docs/reports/QA.md) and
+[`MARKET_INTELLIGENCE.md`](./docs/reports/MARKET_INTELLIGENCE.md). Read the
+relevant one before touching that format — all eight record defects that only a
+render against production data revealed, and all eight name the legacy generators
+that must stay.
 
-The Report Q&A format is the odd one out and the one to read first if you are
-touching prose: its payload is model-authored Markdown rather than typed figures,
-so it carries the programme's only Markdown renderer
-(`_shared/reports/reportQa/markdown.pure.ts`), its sections are discovered from
-the content rather than declared, and it is the only render route that can call a
-model.
+Two of the eight carry model-authored Markdown rather than typed figures, and
+they share the programme's only Markdown renderer,
+`_shared/reports/markdown.pure.ts`. Read them first if you are touching prose.
+**Report Q&A** discovers its sections from the content rather than declaring
+them, and is the only render route that can call a model. **Market Intelligence**
+is the one whose page budget is fitted block by block against real renders rather
+than summed, the one that clips a section and says so on the page, and the only
+one that writes a PDF a scheduled email later attaches.
 
 ## Report templates
 The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look

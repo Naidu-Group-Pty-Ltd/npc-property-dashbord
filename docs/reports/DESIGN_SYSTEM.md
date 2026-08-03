@@ -374,7 +374,7 @@ PDFs from live form state; there is no row for a server to read.
 
 | Target | For | Path |
 | --- | --- | --- |
-| **A** — server-side | data already persisted: investment, market intelligence, portfolio, borrowing capacity, property comparison, cash flow comparison, client details, **Report Q&A** | edge function reads the row → builds HTML → WeasyPrint |
+| **A** — server-side | data already persisted: investment, **market intelligence**, portfolio, borrowing capacity, property comparison, cash flow comparison, client details, **Report Q&A** | edge function reads the row → builds HTML → WeasyPrint |
 | **B** — client-side HTML | data that exists only in browser state: the cash flow modal's live overrides | client imports the same design system via the bridge → POSTs HTML to `render-template-pdf` |
 
 **Q&A moved from B to A**, and the move is the interesting part of that format.
@@ -387,6 +387,20 @@ record of what was asked and what was said. See [`QA.md`](./QA.md).
 
 The Client Details form moved for the same reason and is no longer "Formara" in
 this table: its nine tables are read by `render-client-details-pdf`.
+
+**Market Intelligence was always Target A on paper and had nothing implementing
+it.** The archetype had been declared years before anything rendered against it,
+and its note described a locality report — comparables and commentary for a
+suburb — which is not that document and never was. It reads as having been
+written from the archetype's name rather than from the generator, which is the
+hazard of declaring an archetype before something implements it. The band was
+wrong in the same way and is now pinned by render. See
+[`MARKET_INTELLIGENCE.md`](./MARKET_INTELLIGENCE.md).
+
+That format is also where the design system's own contents page ran out: it is
+the first with enough chapters to need two, so `buildSpine` gained an optional
+`contentsPages` and `.toc-row` gained `break-inside: avoid` after a render put a
+contents entry's title on the page after its number.
 
 ### The first format: Borrowing Capacity Snapshot
 

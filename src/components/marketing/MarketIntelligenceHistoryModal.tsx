@@ -9,6 +9,7 @@ import { format } from 'date-fns';
 import { CheckCircle, XCircle, Clock, FileText, Download, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { generateMarketIntelligencePDF, type MarketIntelligenceReportData } from './MarketIntelligencePDFGenerator';
+import { MarketIntelligenceDownloadButton } from './MarketIntelligenceDownloadButton';
 
 interface ReportEntry {
   id: string;
@@ -203,6 +204,18 @@ export const MarketIntelligenceHistoryModal = ({ open, onOpenChange }: MarketInt
                         filename={`Market_Intelligence_Report_${(report.report_period || 'Report').replace(/\s+/g, '_')}.pdf`}
                         variant="ghost"
                         size="icon"
+                        className="h-8 w-8"
+                        disabled={downloadingId === report.id}
+                      />
+                      {/* Beside the legacy re-download, never instead of it.
+                          This one reads the row server-side, which is why it can
+                          print the correlation block the browser path cannot
+                          reach from here. */}
+                      <MarketIntelligenceDownloadButton
+                        reportId={report.id}
+                        audienceSegment={report.audience_segment}
+                        size="icon"
+                        variant="ghost"
                         className="h-8 w-8"
                         disabled={downloadingId === report.id}
                       />

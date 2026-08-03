@@ -866,7 +866,12 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
 
   /* ── Contents ───────────────────────────────────────────────────────── */
   .contents { display: table; width: 100%; margin-top: ${pt(d.blockGapPt)}; }
-  .contents .toc-row { display: table-row; }
+  /* A contents entry is one line and must not be split across a page.
+     Found on the first Market Intelligence render, which is the first document
+     in the programme with a contents page long enough to break: the last entry
+     kept its number and its note on page two and put its title alone on page
+     three, so the contents listed a section with no name. */
+  .contents .toc-row { display: table-row; break-inside: avoid; page-break-inside: avoid; }
   .contents .toc-row > * {
     display: table-cell;
     padding: ${pt(d.cellPadPt)} 0;

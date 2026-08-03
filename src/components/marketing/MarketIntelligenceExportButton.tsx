@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { MarketIntelligenceHistoryModal } from './MarketIntelligenceHistoryModal';
+import { MarketIntelligenceDownloadButton } from './MarketIntelligenceDownloadButton';
 import { ReportGenerationStatus } from '@/components/billing/ReportGenerationStatus';
 import { TokenCostEstimate } from '@/components/billing/TokenCostEstimate';
 import { estimateTokens } from '@/lib/missionControl';
@@ -26,7 +27,20 @@ interface MarketIntelligenceExportButtonProps {
 
 type GenerationState =
   | { status: 'idle' }
-  | { status: 'success'; fileName: string; downloadUrl: string }
+  | {
+    status: 'success';
+    fileName: string;
+    downloadUrl: string;
+    /**
+     * The row the generator wrote, so the typeset render can be offered here.
+     *
+     * The legacy path never needed it — it typesets the payload it already has
+     * in memory — which is why it was thrown away, and why the correlation
+     * block could never survive to the History modal.
+     */
+    reportId: string | null;
+    audienceSegment: string;
+  }
   | { status: 'error'; message: string };
 
 export function MarketIntelligenceExportButton({ reportType = 'full', reportContext = 'default', correlationData }: MarketIntelligenceExportButtonProps) {
@@ -77,6 +91,12 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
         report_type: reportType,
         audience_segment: 'general',
         include_advisory_strategy: includeAdvisoryStrategy,
+        // Persisted from here on. This panel has always had the correlation
+        // block and only ever handed it to the in-browser generator, so it
+        // never reached the row — which is why re-downloading a correlation
+        // report from the History modal has always silently dropped that whole
+        // section. Zero of the six stored reports carry one.
+        correlation_data: correlationData,
       });
 
       if (error) throw new Error(error.message || 'Failed to generate report data');
@@ -100,7 +120,13 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
       a.click();
       document.body.removeChild(a);
 
-      setGenerationState({ status: 'success', fileName, downloadUrl: url });
+      setGenerationState({
+        status: 'success',
+        fileName,
+        downloadUrl: url,
+        reportId: typeof data.reportId === 'string' ? data.reportId : null,
+        audienceSegment: 'general',
+      });
 
       toast.success('Market Intelligence Report generated!', {
         id: toastId,
@@ -207,6 +233,15 @@ export function MarketIntelligenceExportButton({ reportType = 'full', reportCont
               filename={generationState.fileName}
               size="sm"
             />
+            {/* Beside the legacy download, never instead of it. The two produce
+                different documents, so substituting would send somebody
+                something nobody chose. */}
+            {generationState.reportId && (
+              <MarketIntelligenceDownloadButton
+                reportId={generationState.reportId}
+                audienceSegment={generationState.audienceSegment}
+              />
+            )}
           </div>
         </div>
       )}
