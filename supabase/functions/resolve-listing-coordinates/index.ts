@@ -4,6 +4,7 @@ import { requireModulePermission } from '../_shared/authz.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import { assessAuPoint } from '../_shared/auGeoSanity.pure.ts';
 import { assessAuPostcodePoint } from '../_shared/auPostcodeGeo.pure.ts';
+import { assessAgainstConsensus, type GeoPointLike } from '../_shared/geoConsensus.pure.ts';
 import {
   enforceGlobalDailyQuota,
   fetchWithTimeout,
@@ -106,6 +107,7 @@ Deno.serve(async (req) => {
       hash: string;
       state: string | null;
       postcode: string | null;
+      suburb: string | null;
     }> = [];
 
     for (const listing of rawListings) {
@@ -127,6 +129,7 @@ Deno.serve(async (req) => {
         hash: await hashQuery(query),
         state: clean(listing.state, 60) || null,
         postcode: clean(listing.postcode, 8) || null,
+        suburb: clean(listing.suburb, 80) || null,
       });
     }
 
@@ -196,6 +199,35 @@ Deno.serve(async (req) => {
       return j({ success: true, results, pendingLookups: 0 });
     }
 
+    // Suburb consensus: the corpus as its own control group. Verified
+    // coordinates already stored for the same suburb form a median prior;
+    // a fresh answer hundreds of kilometres from every neighbour is a
+    // wrong-town geocode no rectangle or polygon can catch. One query per
+    // request, neighbours grouped in memory.
+    const consensusSuburbs = Array.from(
+      new Set(
+        needsLookup
+          .map((item) => (item.suburb ? item.suburb.toLowerCase() : null))
+          .filter((v): v is string => Boolean(v)),
+      ),
+    );
+    const neighboursBySuburb = new Map<string, GeoPointLike[]>();
+    if (consensusSuburbs.length > 0) {
+      const { data: neighbourRows } = await supabase
+        .from('listing_geocodes')
+        .select('suburb, lat, lng')
+        .eq('status', 'ok')
+        .not('suburb', 'is', null)
+        .in('suburb', consensusSuburbs.concat(consensusSuburbs.map((v) => v.toUpperCase())));
+      for (const row of (neighbourRows ?? []) as Array<{ suburb: string | null; lat: number | null; lng: number | null }>) {
+        if (!row.suburb || row.lat === null || row.lng === null) continue;
+        const key = row.suburb.toLowerCase();
+        const list = neighboursBySuburb.get(key) ?? [];
+        list.push({ lat: row.lat, lng: row.lng });
+        neighboursBySuburb.set(key, list);
+      }
+    }
+
     if (apiKey && !killSwitchActive('GOOGLE_GEOCODING_KILL_SWITCH')) {
       // This endpoint is already protected by staff authentication and the
       // listings permission. Per-request actor/IP throttles caused normal map
@@ -240,12 +272,18 @@ Deno.serve(async (req) => {
             const lat = numeric(loc.lat);
             const lng = numeric(loc.lng);
             const precision = String(data.results[0].geometry.location_type ?? 'UNKNOWN').slice(0, 40);
+            const neighbours = item.suburb
+              ? (neighboursBySuburb.get(item.suburb.toLowerCase()) ?? [])
+              : [];
             const sane =
               validPoint(lat, lng) &&
               assessAuPoint(lat as number, lng as number, item.state).ok &&
               // A geocode in the right state but the wrong end of it — the
               // postcode band is the only gate that can see this.
-              assessAuPostcodePoint(lat as number, lng as number, item.postcode).ok;
+              assessAuPostcodePoint(lat as number, lng as number, item.postcode).ok &&
+              // And the neighbours get the final word: a fresh answer must
+              // agree with the suburb's own verified median when one exists.
+              assessAgainstConsensus({ lat: lat as number, lng: lng as number }, neighbours).ok;
             if (sane) {
               cacheMap.set(item.hash, { lat, lng, status: 'ok', precision });
               inserts.push({
@@ -255,6 +293,8 @@ Deno.serve(async (req) => {
                 precision,
                 provider: 'google',
                 status: 'ok',
+                suburb: item.suburb,
+                state: item.state,
                 resolved_at: new Date().toISOString(),
               });
             } else if (validPoint(lat, lng)) {
