@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, HardHat, Loader2, Lock } from 'lucide-react';
+import {
+  Building2, CheckCircle2, HardHat, Loader2, Lock, Mail, ShieldCheck, Sparkles, UserCheck,
+} from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -10,29 +11,67 @@ import { useBrand } from '@/branding/useBrand';
 import { cn } from '@/lib/utils';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 import { builderLoadGovernance, type BuilderOnboardingStep } from '@/lib/builderPortal';
-import { BuilderGovernanceShell } from '@/components/builder-portal/ui/BuilderGovernanceShell';
 
 /**
- * Builder / Developer Portal onboarding checklist.
+ * Builder / Developer Portal onboarding.
  *
- * The steps come from the server; the checkboxes are an acknowledgement
- * gesture, and completion is recorded server-side for the authenticated user.
- * Nothing here decides which steps exist, which are mandatory, or which are
- * already done — `builderLoadGovernance()` answers all three, and a step the
- * server marks complete is shown as complete and cannot be unticked.
+ * The Solicitor onboarding wizard's composition — centred card, header with a
+ * centred icon block, introductory slides, progress dots, acknowledgement cards
+ * and a Back / Step / Next footer — with Builder's own slides and step copy.
  *
- * The visual shell is shared with the terms page so first entry reads as one
- * sequence. The journey strip in that shell is display only.
+ * The introductory slides are display only. They create no server step, record
+ * nothing and gate nothing: `steps` still comes from `builderLoadGovernance()`,
+ * `ready` is still the same rule over the same mandatory filter, and
+ * `completeOnboarding()` is still the only write. A step the server marks
+ * complete is shown complete and cannot be unticked.
+ *
+ * BRANDING. The slides name the configured white-label operator, never the
+ * active organisation — the organisation is the user's context, not the
+ * product's identity.
  */
-const STEP_LABELS: Record<string, string> = {
-  profile_confirmed: 'Confirm your name, job title and contact details are correct',
-  organisation_confirmed: 'Confirm the organisation you are acting for',
-  contact_confirmed: 'Confirm the best contact address for portal notifications',
-  security_reviewed: 'Review device and session security, and how to report a lost device',
+const STEP_COPY: Record<string, { label: string; hint: string; icon: React.ElementType }> = {
+  profile_confirmed: {
+    label: 'Confirm your name, job title and contact details are correct',
+    hint: 'Your name and job title are shown to everyone you collaborate with on a project.',
+    icon: UserCheck,
+  },
+  organisation_confirmed: {
+    label: 'Confirm the organisation you are acting for',
+    hint: 'Your access is scoped to this organisation. You can switch later if you hold access to more than one.',
+    icon: Building2,
+  },
+  contact_confirmed: {
+    label: 'Confirm the best contact address for portal notifications',
+    hint: 'Defect, inspection, variation, message and task notifications are sent to this address.',
+    icon: Mail,
+  },
+  security_reviewed: {
+    label: 'Review device and session security, and how to report a lost device',
+    hint: 'You can review and revoke signed-in devices at any time from Settings.',
+    icon: ShieldCheck,
+  },
 };
 
+const buildIntroSlides = (brand: string) => [
+  {
+    icon: HardHat,
+    title: 'Welcome to the Builder / Developer Portal',
+    body: `A project-delivery workspace for the developments ${brand} has shared with your organisation — projects, inventory, transactions, construction records, documents and collaboration in one place.`,
+  },
+  {
+    icon: Lock,
+    title: 'Organisation and project-scoped access',
+    body: `You see only the organisations and projects explicitly granted to your account. Inventory, transactions, documents and conversations are scoped to those records, and ${brand} controls what is shared.`,
+  },
+  {
+    icon: ShieldCheck,
+    title: 'Secure and auditable collaboration',
+    body: 'Logins, changes, document activity and collaboration may be recorded and audited against your account. Keep your credentials private and report anything unexpected immediately.',
+  },
+];
+
 export default function BuilderOnboarding() {
-  const { completeOnboarding, activeOrganisation } = useBuilderPortalAuth();
+  const { completeOnboarding } = useBuilderPortalAuth();
   const { settings: brandSettings } = useBrand();
   const navigate = useNavigate();
 
@@ -41,11 +80,12 @@ export default function BuilderOnboarding() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [wizardStep, setWizardStep] = useState(0);
 
-  const companyName = (brandSettings.companyName || '').trim() || 'the Operator';
-  const organisationName = activeOrganisation
-    ? activeOrganisation.trading_name || activeOrganisation.legal_name
-    : null;
+  const brandName = (brandSettings.companyName || '').trim() || 'the operator';
+  const introSlides = useMemo(() => buildIntroSlides(brandName), [brandName]);
+  const totalSteps = introSlides.length + 1; // intro slides + acknowledgements
+  const isAcknowledgementStep = wizardStep === totalSteps - 1;
 
   useEffect(() => {
     let cancelled = false;
@@ -63,9 +103,6 @@ export default function BuilderOnboarding() {
   const outstanding = steps.filter((step) => step.mandatory && !step.completed_at);
   const ready = steps.length > 0 && outstanding.every((step) => checked[step.step_key]);
 
-  /** Progress reporting only — it gates nothing. `ready` above is the gate. */
-  const acknowledged = outstanding.filter((step) => checked[step.step_key]).length;
-
   const handleComplete = async () => {
     setError(null);
     setSubmitting(true);
@@ -79,127 +116,146 @@ export default function BuilderOnboarding() {
     navigate('/builder', { replace: true });
   };
 
+  const intro = isAcknowledgementStep ? null : introSlides[wizardStep];
+  const IntroIcon = intro?.icon;
+
   return (
-    <BuilderGovernanceShell
-      icon={HardHat}
-      title="Prepare Your Builder Workspace"
-      eyebrow={
-        <>
-          {companyName} · Builder / Developer Portal
-          {organisationName ? <> · {organisationName}</> : null}
-        </>
-      }
-      intro="Confirm your organisation, profile, contact and security details before entering the project workspace."
-      step="Workspace setup"
-      footer={
-        <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <Lock className="h-3 w-3 shrink-0" aria-hidden />
-            <span>
-              {outstanding.length > 0
-                ? `${acknowledged} of ${outstanding.length} required ${outstanding.length === 1 ? 'item' : 'items'} confirmed.`
-                : 'Your confirmation is recorded securely against your account.'}
-            </span>
+    <main className="builder-portal-theme flex min-h-screen items-center justify-center p-4">
+      <div className="relative z-10 w-full max-w-2xl animate-in overflow-hidden rounded-2xl border border-border bg-card shadow-2xl duration-300 fade-in zoom-in-95 motion-reduce:animate-none">
+        {/* Header */}
+        <div className="border-b border-border bg-primary/5 px-6 py-6 text-center md:px-8 md:py-8">
+          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+            {isAcknowledgementStep
+              ? <Sparkles className="h-7 w-7 text-primary" aria-hidden />
+              : IntroIcon ? <IntroIcon className="h-7 w-7 text-primary" aria-hidden /> : null}
+          </div>
+          <h1 className="text-xl font-bold text-foreground md:text-2xl">
+            {isAcknowledgementStep ? 'Prepare your Builder workspace' : intro?.title}
+          </h1>
+          <p className="mx-auto mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
+            {isAcknowledgementStep
+              ? 'Confirm your organisation, profile, contact and security details before entering the project workspace.'
+              : intro?.body}
           </p>
-          <Button
-            size="lg"
-            disabled={!ready || submitting}
-            onClick={() => void handleComplete()}
-            className="w-full sm:w-auto sm:min-w-[200px]"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                Completing…
-              </>
-            ) : (
-              'Complete onboarding'
-            )}
-          </Button>
         </div>
-      }
-    >
-      {error ? (
-        <Alert variant="destructive" role="alert">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      ) : null}
 
-      {loading ? (
-        <div className="space-y-3" role="status" aria-label="Loading onboarding steps">
-          <span className="sr-only">Loading onboarding steps…</span>
-          {[0, 1, 2, 3].map((row) => (
-            <Skeleton key={row} className="h-[4.5rem] w-full rounded-xl" aria-hidden />
-          ))}
-        </div>
-      ) : null}
+        {/* Body */}
+        <div className="px-6 py-6 md:px-8">
+          {error ? (
+            <Alert variant="destructive" role="alert" className="mb-4">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
 
-      {!loading && steps.length === 0 ? (
-        <Alert>
-          <AlertDescription>
-            No onboarding steps are configured. Contact your administrator.
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
-      {!loading && steps.length > 0 ? (
-        <ol className="space-y-3">
-          {steps.map((step, index) => {
-            const done = Boolean(step.completed_at);
-            const ticked = done || Boolean(checked[step.step_key]);
-            return (
-              <li key={step.step_key}>
-                <label
-                  className={cn(
-                    'flex cursor-pointer items-start gap-3 rounded-xl border p-4 text-sm transition-colors',
-                    ticked
-                      ? 'border-primary/30 bg-primary/5'
-                      : 'border-border hover:border-primary/25 hover:bg-muted/40',
-                    done && 'cursor-default',
-                  )}
-                >
-                  <span
+          {isAcknowledgementStep ? (
+            <div className="space-y-3">
+              {loading ? (
+                <div className="space-y-3" role="status" aria-label="Loading onboarding steps">
+                  <span className="sr-only">Loading onboarding steps…</span>
+                  {[0, 1, 2].map((row) => (
+                    <Skeleton key={row} className="h-20 w-full rounded-xl" aria-hidden />
+                  ))}
+                </div>
+              ) : steps.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-border/70 px-4 py-10 text-center text-sm text-muted-foreground">
+                  No onboarding steps are configured. Contact your administrator.
+                </p>
+              ) : steps.map((step) => {
+                const copy = STEP_COPY[step.step_key];
+                const StepIcon = copy?.icon ?? CheckCircle2;
+                const done = Boolean(step.completed_at);
+                return (
+                  <label
+                    key={step.step_key}
+                    htmlFor={`ack-${step.step_key}`}
                     className={cn(
-                      'mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold',
-                      ticked ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground',
+                      'flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors',
+                      done
+                        ? 'border-primary/25 bg-primary/5'
+                        : 'border-border/70 bg-muted/20 hover:border-primary/25 hover:bg-primary/5',
                     )}
-                    aria-hidden
                   >
-                    {ticked ? <Check className="h-3.5 w-3.5" /> : index + 1}
-                  </span>
-
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-medium leading-snug text-foreground">
-                      {STEP_LABELS[step.step_key] || step.step_key.replace(/_/g, ' ')}
-                    </span>
-                    <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      {/* Never colour alone — required, optional and already
-                          done are each spelled out. */}
-                      <Badge variant="outline" className="font-normal">
-                        {step.mandatory ? 'Required' : 'Optional'}
-                      </Badge>
-                      {done ? (
-                        <Badge variant="outline" className="gap-1 font-normal">
-                          <Check className="h-3 w-3 shrink-0" aria-hidden />
-                          Already confirmed
-                        </Badge>
+                    <Checkbox
+                      id={`ack-${step.step_key}`}
+                      className="mt-0.5"
+                      checked={done || Boolean(checked[step.step_key])}
+                      disabled={done}
+                      onCheckedChange={(value) =>
+                        setChecked((current) => ({ ...current, [step.step_key]: value === true }))}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                        <StepIcon className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                        {copy?.label || step.step_key.replace(/_/g, ' ')}
+                        {step.mandatory ? (
+                          <span className="rounded-full border border-primary/25 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-primary">
+                            Required
+                          </span>
+                        ) : null}
+                        {/* State is spelled out, never signalled by tint alone. */}
+                        {done ? (
+                          <span className="rounded-full border border-border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            Confirmed
+                          </span>
+                        ) : null}
+                      </span>
+                      {copy?.hint ? (
+                        <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                          {copy.hint}
+                        </span>
                       ) : null}
                     </span>
-                  </span>
+                  </label>
+                );
+              })}
+            </div>
+          ) : null}
 
-                  <Checkbox
-                    checked={ticked}
-                    disabled={done}
-                    className="mt-0.5 shrink-0"
-                    onCheckedChange={(value) =>
-                      setChecked((current) => ({ ...current, [step.step_key]: value === true }))}
-                  />
-                </label>
-              </li>
-            );
-          })}
-        </ol>
-      ) : null}
-    </BuilderGovernanceShell>
+          {/* Progress dots */}
+          <div className="flex items-center justify-center gap-2 pt-6" aria-hidden>
+            {Array.from({ length: totalSteps }).map((_, index) => (
+              <span
+                key={index}
+                className={cn(
+                  'h-1.5 rounded-full transition-all duration-300',
+                  index === wizardStep ? 'w-8 bg-primary'
+                    : index < wizardStep ? 'w-2 bg-primary/40'
+                      : 'w-2 bg-muted-foreground/20',
+                )}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-6 py-4 md:px-8 md:py-5">
+          <Button
+            variant="ghost"
+            onClick={() => setWizardStep((step) => Math.max(0, step - 1))}
+            disabled={wizardStep === 0 || submitting}
+          >
+            Back
+          </Button>
+          <p className="hidden text-xs text-muted-foreground sm:block">
+            Step {wizardStep + 1} of {totalSteps}
+          </p>
+          {isAcknowledgementStep ? (
+            <Button onClick={() => void handleComplete()} disabled={!ready || submitting} className="gap-2">
+              {submitting
+                ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                : <Sparkles className="h-4 w-4" aria-hidden />}
+              {submitting ? 'Completing…' : 'Complete onboarding'}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => setWizardStep((step) => Math.min(totalSteps - 1, step + 1))}
+              disabled={submitting}
+            >
+              Next
+            </Button>
+          )}
+        </div>
+      </div>
+    </main>
   );
 }
