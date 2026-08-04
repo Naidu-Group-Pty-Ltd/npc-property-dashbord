@@ -19,7 +19,8 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "luxury-dialog-overlay fixed inset-0 z-50 bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      // Scrim (tint + backdrop blur) comes from `.luxury-dialog-overlay`.
+      "luxury-dialog-overlay fixed inset-0 z-50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -54,7 +55,8 @@ const DialogContent = React.forwardRef<
       ref={ref}
       className={cn(
         // Neutral surface + fade shared by every dialog (bespoke and default).
-        "luxury-dialog-content fixed z-50 border bg-background shadow-lg duration-200",
+        // Glass surface from `.luxury-dialog-content`; no bg/shadow utility.
+        "luxury-dialog-content fixed z-50 border duration-200",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         // Default treatment: mobile (<640px) bottom sheet sliding up; ≥sm classic centered modal.
         !bareLayout && [

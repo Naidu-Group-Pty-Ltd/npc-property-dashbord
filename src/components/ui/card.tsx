@@ -9,7 +9,11 @@ const Card = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "luxury-card rounded-lg border bg-card text-card-foreground shadow-sm",
+      // Surface material comes from `.luxury-card` in src/styles/glass.css —
+      // fill, edge and shadow. Deliberately no `bg-*` or `shadow-*` utility
+      // here: utilities are emitted after the components layer and would
+      // paint an opaque background back over the glass.
+      "luxury-card rounded-lg border text-card-foreground",
       className
     )}
     {...props}

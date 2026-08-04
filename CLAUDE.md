@@ -85,5 +85,10 @@ the generated migration. See
 ## Hard rules
 - **Semantic design tokens only** — never raw Tailwind palette classes or hardcoded
   colors/fonts in shared UI. `npm run audit:style` must not regress (new violations = 0).
+- **Surfaces are glass.** The material lives in [`src/styles/glass.css`](./src/styles/glass.css)
+  (recipe) and the glass scale in `src/styles/tokens.css` (values). Use a `.glass-*`
+  class; don't hand-roll a frosted surface, don't add a `bg-*`/`shadow-*` utility to
+  one, and don't put `backdrop-filter` on anything that repeats. Read that file's
+  header before adding a surface — it explains why for each rule.
 - Respect the shadcn setup (`components.json`, `tailwind.config.ts`, `src/index.css`).
 - Before finishing a UI change, run `npm run lint`, `npm run audit:style`, and `npm run build`.
