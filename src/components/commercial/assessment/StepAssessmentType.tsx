@@ -1,6 +1,8 @@
+import { useEffect, useRef, useState } from 'react';
 import { Building2, Factory, AlertTriangle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { TextField } from './AssessmentFields';
+
 import {
   ASSESSMENT_TYPE_DEFINITIONS,
   type AssessmentPayload,
