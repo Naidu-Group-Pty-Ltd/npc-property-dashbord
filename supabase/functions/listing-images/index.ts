@@ -22,6 +22,8 @@ import {
   isRefreshDue,
   nextRefreshAt,
   normaliseImageCandidates,
+  orderCandidatesForDisplay,
+  parseImageUrlList,
   imageIdentity,
   type ImageCandidate,
   type ImageOrigin,
@@ -94,6 +96,22 @@ interface ListingInput {
   id: string;
   images?: unknown;
   listedAt?: string | number | null;
+  /** When intake last captured this image set, if it recorded one. */
+  capturedAt?: string | number | null;
+}
+
+/**
+ * The date the refresh tiers should be measured from.
+ *
+ * `Images Captured At` when we have it, because the premise of the tiers is
+ * that a photo set churns hardest while it is new — and "new" means the photos,
+ * not the record. A listing filed a year ago whose gallery was re-scraped
+ * yesterday has a day-old image set and belongs on the fast tier; keying off
+ * the record date alone put it on the 60-day tier and left the page showing
+ * last year's photographs for two months.
+ */
+function imageAgeAnchor(capturedAt: unknown, listedAt: unknown): number | null {
+  return epochMs(capturedAt) ?? epochMs(listedAt);
 }
 
 interface StoredImageRow {
@@ -459,12 +477,23 @@ async function readAirtableImages(
     // none of them, so every sweep read `[]`, fingerprinted every listing as
     // empty, and re-armed the schedule having done nothing. The sweep has been
     // running hourly and harvesting nothing since it shipped.
+    //
+    // `??` was also the wrong operator between the attachment columns: it takes
+    // the first non-nullish one rather than the union, so a record carrying both
+    // would have lost half its photos. They are concatenated now, and the
+    // scraped URL column — where photographs actually arrive — is read too.
     out.set(record.id, {
-      images:
-        fields[INTAKE_FIELDS.listingImages] ??
-        fields[INTAKE_FIELDS.additionalAttachments] ??
-        [],
+      images: [
+        ...normaliseImageCandidates(fields[INTAKE_FIELDS.listingImages], 'airtable'),
+        ...normaliseImageCandidates(fields[INTAKE_FIELDS.additionalAttachments], 'airtable'),
+        ...normaliseImageCandidates(
+          parseImageUrlList(fields[INTAKE_FIELDS.listingImageUrls]),
+          'scraped',
+        ),
+      ],
       listedAt:
+        // Image freshness first — see `imageAgeAnchor`.
+        epochMs(fields[INTAKE_FIELDS.imagesCapturedAt]) ??
         epochMs(fields[INTAKE_FIELDS.createdTime]) ??
         epochMs(fields[INTAKE_FIELDS.availabilityDate]) ??
         epochMs(record.createdTime),
@@ -665,7 +694,9 @@ Deno.serve(async (req) => {
             continue;
           }
 
-          const candidates = normaliseImageCandidates(record.images, 'airtable');
+          // `readAirtableImages` has already classified each candidate by the
+          // column it came from, so no origin is forced here.
+          const candidates = orderCandidatesForDisplay(normaliseImageCandidates(record.images));
           const fingerprint = imageSetFingerprint(candidates.slice(0, MAX_IMAGES_PER_LISTING));
 
           if (fingerprint === priorFingerprints.get(listingId)) {
@@ -733,7 +764,12 @@ Deno.serve(async (req) => {
       const entry = raw as ListingInput;
       const id = cleanId(entry?.id);
       if (!id) continue;
-      listings.push({ id, images: entry.images, listedAt: entry.listedAt ?? null });
+      listings.push({
+        id,
+        images: entry.images,
+        listedAt: entry.listedAt ?? null,
+        capturedAt: entry.capturedAt ?? null,
+      });
     }
     if (listings.length === 0) return j({ success: true, images: {}, pending: [] });
 
@@ -757,7 +793,11 @@ Deno.serve(async (req) => {
     let budget = MAX_HARVESTS_PER_REQUEST;
 
     for (const listing of listings) {
-      const candidates = normaliseImageCandidates(listing.images, 'airtable');
+      // No forced origin: the client has already classified each candidate, and
+      // overriding that to 'airtable' collapsed the ranking that decides which
+      // shot leads a card. A Street View frame relabelled as an agent's own
+      // photograph outranks nothing, so the kerb stayed the hero.
+      const candidates = orderCandidatesForDisplay(normaliseImageCandidates(listing.images));
       if (candidates.length === 0) continue;
 
       const fingerprint = imageSetFingerprint(candidates.slice(0, MAX_IMAGES_PER_LISTING));
@@ -775,7 +815,12 @@ Deno.serve(async (req) => {
         continue;
       }
       budget -= 1;
-      await harvestListing(supabase, listing.id, candidates, epochMs(listing.listedAt));
+      await harvestListing(
+        supabase,
+        listing.id,
+        candidates,
+        imageAgeAnchor(listing.capturedAt, listing.listedAt),
+      );
     }
 
     const images = await signStoredImages(supabase, ids);

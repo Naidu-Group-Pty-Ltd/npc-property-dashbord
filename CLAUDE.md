@@ -24,6 +24,21 @@ Guidance for Claude Code (and Claude-based tools) working in this repo.
   reports), `frontend-design` (aesthetic direction) and `web-design-guidelines`
   (accessibility / UX review).
 
+## Listings intake (Airtable + Make)
+Everything on the Listings page arrives through one Make scenario, **NPC Email 1**, which
+reads a mailbox and writes Airtable's **Property Intake Master** (205 columns, base
+`NPC Emails`). Read [`docs/integrations/NPC_EMAIL_1_AUDIT.md`](./docs/integrations/NPC_EMAIL_1_AUDIT.md)
+before touching intake, the projection in `_shared/airtableListing.pure.ts`, or anything to
+do with listing photographs — it records 22 defects found in that scenario, including the
+two that meant the page had never received a single photo, and it names the columns the
+dashboard now depends on. Retention (the 30-day purge) is in
+[`AIRTABLE_RETENTION.md`](./docs/integrations/AIRTABLE_RETENTION.md); it has one manual step.
+
+Column names for that table live in `_shared/airtableIntakeFields.pure.ts` and nowhere else.
+Airtable returns `undefined` for a column that does not exist exactly as it does for one
+that is empty, so a mistyped name is invisible — that file's header records what that cost
+last time.
+
 ## Generated reports / PDFs
 Read [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
 before touching any PDF generator — print has different contrast, colour and font
