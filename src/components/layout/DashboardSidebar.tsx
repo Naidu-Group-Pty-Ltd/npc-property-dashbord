@@ -435,7 +435,7 @@ export function DashboardSidebar() {
                 onChange={(event) => setNavFilter(event.target.value)}
                 placeholder="Filter navigation…"
                 aria-label="Filter navigation"
-                className="h-8 w-full rounded-md border border-[color:var(--sidebar-border)] bg-[color:hsl(var(--sidebar-background))] pl-8 pr-7 text-xs text-sidebar-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="glass-inset h-8 w-full rounded-md pl-8 pr-7 text-xs text-sidebar-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               {navFilter.length > 0 && (
                 <button

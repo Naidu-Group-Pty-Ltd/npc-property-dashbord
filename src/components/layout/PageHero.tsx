@@ -14,16 +14,20 @@ interface PageHeroProps {
 
 export function PageHero({ eyebrow, title, subtitle, imageVariant = 'overview', actions, className }: PageHeroProps) {
   const visual = getLightModeModuleVisual(imageVariant) ?? lightModeModuleVisuals.overview;
+  // The hero is a glass pane, so its decorative layers are tints rather
+  // than fills — every stop carries an alpha and the ambient field reads
+  // through. An opaque base here would make the one surface most likely
+  // to sit at the top of a page the one surface that isn't glass.
   const overlayClass =
     visual.overlay === 'ivory'
-      ? 'from-[hsl(var(--card)/0.96)] via-[hsl(var(--dashboard-surface-elevated)/0.84)]'
-      : 'from-[hsl(var(--card)/0.96)] via-[hsl(var(--dashboard-primary-soft)/0.82)]';
+      ? 'from-[hsl(var(--card)/0.62)] via-[hsl(var(--dashboard-surface-elevated)/0.44)]'
+      : 'from-[hsl(var(--card)/0.62)] via-[hsl(var(--dashboard-primary-soft)/0.46)]';
   const fallbackGradientClass =
     visual.fallbackGradient === 'brand-studio'
-      ? 'bg-[radial-gradient(circle_at_18%_0%,hsl(var(--dashboard-primary-soft)/0.86),transparent_26rem),radial-gradient(circle_at_88%_12%,hsl(var(--accent)/0.18),transparent_22rem),linear-gradient(135deg,hsl(var(--card))_0%,hsl(var(--dashboard-surface-elevated))_54%,hsl(var(--dashboard-primary-soft))_100%)]'
+      ? 'bg-[radial-gradient(circle_at_18%_0%,hsl(var(--dashboard-primary-soft)/0.42),transparent_26rem),radial-gradient(circle_at_88%_12%,hsl(var(--accent)/0.12),transparent_22rem),linear-gradient(135deg,hsl(var(--card)/0.34)_0%,hsl(var(--dashboard-surface-elevated)/0.22)_54%,hsl(var(--dashboard-primary-soft)/0.30)_100%)]'
       : visual.fallbackGradient === 'ivory'
-        ? 'bg-[radial-gradient(circle_at_18%_0%,hsl(var(--card)/0.92),transparent_24rem),linear-gradient(135deg,hsl(var(--card))_0%,hsl(var(--dashboard-surface-elevated))_58%,hsl(var(--background))_100%)]'
-        : 'bg-[radial-gradient(circle_at_18%_0%,hsl(var(--dashboard-primary-soft)/0.86),transparent_24rem),linear-gradient(135deg,hsl(var(--card))_0%,hsl(var(--dashboard-surface-elevated))_54%,hsl(var(--dashboard-primary-soft))_100%)]';
+        ? 'bg-[radial-gradient(circle_at_18%_0%,hsl(var(--card)/0.44),transparent_24rem),linear-gradient(135deg,hsl(var(--card)/0.34)_0%,hsl(var(--dashboard-surface-elevated)/0.22)_58%,hsl(var(--background)/0.28)_100%)]'
+        : 'bg-[radial-gradient(circle_at_18%_0%,hsl(var(--dashboard-primary-soft)/0.42),transparent_24rem),linear-gradient(135deg,hsl(var(--card)/0.34)_0%,hsl(var(--dashboard-surface-elevated)/0.22)_54%,hsl(var(--dashboard-primary-soft)/0.30)_100%)]';
 
   return (
     <DashboardThemeFrame as="header" variant="hero" className={cn('page-hero', className)}>
