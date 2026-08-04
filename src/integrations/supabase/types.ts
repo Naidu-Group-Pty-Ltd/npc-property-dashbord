@@ -18969,6 +18969,100 @@ export type Database = {
           },
         ]
       }
+      investment_report_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          chapters_dropped: number
+          chapters_included: string[]
+          chars_omitted: number
+          charts_drawn: number
+          charts_skipped: number
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          has_financials: boolean
+          has_score: boolean
+          id: string
+          page_count: number | null
+          report_id: string
+          requested_by: string | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chapters_dropped?: number
+          chapters_included?: string[]
+          chars_omitted?: number
+          charts_drawn?: number
+          charts_skipped?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_financials?: boolean
+          has_score?: boolean
+          id?: string
+          page_count?: number | null
+          report_id: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chapters_dropped?: number
+          chapters_included?: string[]
+          chars_omitted?: number
+          charts_drawn?: number
+          charts_skipped?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          has_financials?: boolean
+          has_score?: boolean
+          id?: string
+          page_count?: number | null
+          report_id?: string
+          requested_by?: string | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "investment_report_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investment_report_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "investment_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "investment_report_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       investment_reports: {
         Row: {
           brand_snapshot_id: string | null
@@ -22152,6 +22246,103 @@ export type Database = {
           trigger_type?: string
         }
         Relationships: []
+      }
+      market_intelligence_renders: {
+        Row: {
+          audience_segment: string
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          chars_omitted: number
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          layers_empty: number
+          layers_shown: number
+          page_count: number | null
+          persisted: boolean
+          report_id: string
+          report_type: string
+          requested_by: string | null
+          sections_dropped: number
+          sections_included: string[]
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+        }
+        Insert: {
+          audience_segment?: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chars_omitted?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          layers_empty?: number
+          layers_shown?: number
+          page_count?: number | null
+          persisted?: boolean
+          report_id: string
+          report_type?: string
+          requested_by?: string | null
+          sections_dropped?: number
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Update: {
+          audience_segment?: string
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          chars_omitted?: number
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          layers_empty?: number
+          layers_shown?: number
+          page_count?: number | null
+          persisted?: boolean
+          report_id?: string
+          report_type?: string
+          requested_by?: string | null
+          sections_dropped?: number
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "market_intelligence_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_intelligence_renders_report_id_fkey"
+            columns: ["report_id"]
+            isOneToOne: false
+            referencedRelation: "marketing_intelligence_reports"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "market_intelligence_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       market_qa_digests: {
         Row: {
