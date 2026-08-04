@@ -15,9 +15,11 @@ import { useWorkspaceEntitlements } from "./useWorkspaceEntitlements";
  *
  * Combines the workspace's commercial entitlement (base tier, add-ons,
  * trials, overrides) with the user's module permission. A superadministrator
- * bypasses the USER permission axis only; commercial entitlement is never
- * silently bypassed — a billing-exempt workspace resolves through the
- * audited `workspace_override` source instead.
+ * bypasses both axes as the deployment's operator, and the resolver records
+ * that as the `operator_override` source with `operatorOnly` set — so a
+ * capability the workspace has not bought still reads as unbought in
+ * diagnostics and says so on the page, rather than silently masquerading as
+ * a purchase.
  */
 export function useCapability(key: CapabilityKey | string): CapabilityDecision {
   const { resolve } = useCapabilityResolver();
@@ -40,7 +42,7 @@ export function useCapabilityResolver() {
           capability: rawKey as CapabilityKey,
           enabled: granted,
           status: granted ? "enabled" : permissionLoading ? "loading" : "permission_denied",
-          entitlementSources: [],
+          entitlementSources: isSuperadmin ? ["operator_override"] : [],
         };
       }
       const def = getCapabilityDefinition(key);
@@ -52,6 +54,7 @@ export function useCapabilityResolver() {
         snapshotState,
         hasPermission,
         permissionLoading,
+        isPlatformOperator: isSuperadmin,
       });
     },
     [snapshot, snapshotState, hasModuleAccess, isSuperadmin, permissionLoading],

@@ -203,7 +203,21 @@ export type CapabilityStatus =
   | "loading"
   | "unknown";
 
-export type EntitlementSource = "base_tier" | "addon" | "trial" | "workspace_override";
+export type EntitlementSource =
+  | "base_tier"
+  | "addon"
+  | "trial"
+  | "workspace_override"
+  /**
+   * The signed-in user is a platform superadministrator. Superadmins operate
+   * the deployment — they configure it, support it, and are the only role that
+   * can reach the platform-engineering consoles — so a capability they cannot
+   * open is a capability they cannot administer. Recorded as its own source
+   * rather than folded into `workspace_override` so diagnostics, denial
+   * screens and the audit trail can always tell "the workspace bought this"
+   * apart from "an operator is looking at it".
+   */
+  | "operator_override";
 
 /**
  * The full answer to "may this workspace, and this user, use this capability
@@ -220,6 +234,11 @@ export interface CapabilityDecision {
   entitlementSources: EntitlementSource[];
   /** The source the decision actually rests on (first of the list). */
   effectiveSource?: EntitlementSource;
+  /** True when the capability is open ONLY because the viewer is a platform
+   * superadministrator and the workspace itself holds no commercial source
+   * for it. Surfaces use this to say so on the page, so an operator is never
+   * left believing the customer sees what they see. */
+  operatorOnly?: boolean;
   /** Cheapest tier that would include this capability, for denial screens. */
   requiredPlan?: PlanSlug;
   /** Add-ons that would unlock it without a tier change. */

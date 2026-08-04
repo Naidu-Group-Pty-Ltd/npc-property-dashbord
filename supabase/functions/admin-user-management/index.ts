@@ -900,8 +900,26 @@ Deno.serve(async (req: Request) => {
         );
       }
 
+      // The stored rows are returned exactly as they are, never synthesised.
+      // For a superadmin they are usually empty, because the role grants
+      // access on its own — so the editor is told who it is looking at and
+      // says as much, rather than presenting an empty grid that reads as "no
+      // access" for the one account that has all of it.
+      const { data: targetRoleRow } = await supabase
+        .from('user_roles')
+        .select('role')
+        .eq('user_id', user_id)
+        .eq('role', 'superadmin')
+        .maybeSingle();
+      const { data: targetUserRow } = await supabase
+        .from('custom_users')
+        .select('role')
+        .eq('id', user_id)
+        .maybeSingle();
+      const targetIsSuperadmin = !!targetRoleRow || targetUserRow?.role === 'super_admin';
+
       return new Response(
-        JSON.stringify({ success: true, permissions }),
+        JSON.stringify({ success: true, permissions, target_is_superadmin: targetIsSuperadmin }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -943,10 +961,26 @@ Deno.serve(async (req: Request) => {
         }
       }
 
-      await revokeUserSessions(user_id, 'privilege_change:permissions_updated');
-      console.log(`Permissions updated for user ${user_id} by ${adminUser.username}`);
+      // Revoking every session forces the target to sign back in under the
+      // new grants. Editing your OWN grid is the one case where that is pure
+      // cost: only a superadmin can reach this action, their access comes
+      // from the role rather than these rows, so signing them out changes
+      // nothing except throwing away the session of the person who just made
+      // the change. (Losing the role revokes sessions on its own path —
+      // `demote_from_superadmin` below.)
+      const editingSelf = user_id === adminUser.id;
+      if (!editingSelf) {
+        await revokeUserSessions(user_id, 'privilege_change:permissions_updated');
+      }
+      console.log(
+        `Permissions updated for user ${user_id} by ${adminUser.username}${editingSelf ? ' (self-edit; sessions kept)' : ''}`,
+      );
       return new Response(
-        JSON.stringify({ success: true, message: 'Permissions updated' }),
+        JSON.stringify({
+          success: true,
+          message: 'Permissions updated',
+          sessions_revoked: !editingSelf,
+        }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
