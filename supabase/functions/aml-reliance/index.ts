@@ -39,6 +39,16 @@ import {
   evaluateArrangementForReliance,
   evaluatePartnerLinkForReliance,
 } from "../_shared/aml/relianceEligibility.ts";
+import {
+  DEFAULT_ALLOWED_ATTRIBUTE_CODES,
+  DEFAULT_DENIED_CLASSES,
+  evaluateManifestForRead,
+  findRestrictedKeys,
+  intersectPayloadWithManifest,
+  materialInputHash,
+  sha256HexCanonical,
+  toV2Payload,
+} from "../_shared/aml/attestationV2.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -175,6 +185,7 @@ async function flagEnabled(admin: any, key: string): Promise<boolean> {
 
 const partnerIdentityEnforced = (admin: any) => flagEnabled(admin, "aml_partner_identity");
 const arrangementGovernanceEnforced = (admin: any) => flagEnabled(admin, "aml_arrangement_governance");
+const attestationV2Enabled = (admin: any) => flagEnabled(admin, "aml_attestation_v2");
 
 const PARTNER_ORG_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer", "other"];
 const PARTNER_PORTAL_TYPES = ["finance", "builder", "developer", "solicitor_conveyancer"];
@@ -226,6 +237,68 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       const attestation = (grant as any).compliance_attestations;
 
       if (op === "redeem_attestation") {
+        const schemaVersion = attestation.schema_version ?? 1;
+
+        // Schema-aware reading. v1 historical grants behave exactly as
+        // before. v2 is manifest-controlled: superseded content is never
+        // served, expiry/revocation are checked at read time, and the
+        // response is BUILT by intersecting the payload with the manifest —
+        // denied classes override allowed codes, server-side.
+        if (schemaVersion === 2) {
+          const logDenied = async (code: string) => {
+            await admin.schema("aml").from("reliance_access_log").insert({
+              grant_id: grant.id, case_id: grant.case_id, action: "view_attestation",
+              actor_label: agreement.partner_org_name, ip_address: ip,
+              detail: { attestation_version: attestation.version, denied: code },
+            });
+          };
+          if (attestation.superseded_at) {
+            await logDenied("attestation_superseded");
+            return jr({
+              error: "This attestation has been superseded. Ask the issuing organisation for current access.",
+              code: "attestation_superseded",
+              refresh_required: true,
+            }, 409);
+          }
+          const { data: manifest } = await admin.schema("aml").from("disclosure_manifests")
+            .select("*").eq("grant_id", grant.id).maybeSingle();
+          const manifestDecision = evaluateManifestForRead(manifest ?? null, new Date());
+          if (!manifestDecision.ok) {
+            await logDenied(manifestDecision.code);
+            return jr({ error: manifestDecision.message, code: manifestDecision.code }, 403);
+          }
+          let disclosed: Record<string, unknown>;
+          try {
+            disclosed = intersectPayloadWithManifest(attestation.payload, manifest);
+          } catch (_integrity) {
+            // The stored payload tripped the restricted-key tripwire —
+            // refuse to serve anything rather than risk over-disclosure.
+            await logDenied("integrity_check_failed");
+            return jr({ error: "Disclosure blocked by an integrity check. Contact the issuing organisation.", code: "integrity_check_failed" }, 500);
+          }
+          await admin.schema("aml").from("reliance_access_log").insert({
+            grant_id: grant.id, case_id: grant.case_id, action: "view_attestation",
+            actor_label: agreement.partner_org_name, ip_address: ip,
+            detail: {
+              attestation_version: attestation.version,
+              schema_version: 2,
+              manifest_version: manifest.version,
+            },
+          });
+          return jr({
+            attestation: disclosed,
+            attestation_sha256: attestation.payload_sha256,
+            schema_version: 2,
+            issued_at: attestation.issued_at,
+            agreement: {
+              partner_org_name: agreement.partner_org_name,
+              agreement_reference: agreement.agreement_reference,
+              scope: agreement.scope,
+            },
+            notice: "You may rely on the customer identification procedures described here under your written CDD arrangement (AML/CTF Act Pt 2 Div 7). Your organisation remains responsible for its own AML/CTF compliance. To make your own determination without re-approaching the customer, record an independent assessment.",
+          });
+        }
+
         await admin.schema("aml").from("reliance_access_log").insert({
           grant_id: grant.id, case_id: grant.case_id, action: "view_attestation",
           actor_label: agreement.partner_org_name, ip_address: ip,
@@ -381,26 +454,102 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             code: "nothing_to_attest",
           }, 409);
         }
-        const payloadSha = await sha256Hex(JSON.stringify(payload));
+
+        // Schema v2 (flag-gated): anchored to the EXPLICIT authorised gate
+        // decision, hashed canonically, with a material-input hash so
+        // supersession is deterministic. v1 issuance below is byte-identical
+        // to the pre-Phase-3 behaviour while the flag is off.
+        const v2 = await attestationV2Enabled(admin);
+        let payloadToStore: Record<string, unknown> = payload as Record<string, unknown>;
+        let payloadSha: string;
+        const insertExtra: Record<string, unknown> = {};
+        let materialHash: string | null = null;
+        if (v2) {
+          if (!["approved", "approved_with_controls"].includes(String(caseRow.service_gate_status ?? ""))) {
+            return jr({
+              error: "A v2 attestation requires an explicit approved or approved-with-controls service gate on this case.",
+              code: "service_gate_not_approved",
+            }, 409);
+          }
+          const { data: gateDecision } = await admin.schema("aml").from("service_gate_decisions")
+            .select("id, status").eq("case_id", caseId)
+            .in("status", ["approved", "approved_with_controls"])
+            .order("created_at", { ascending: false }).limit(1).maybeSingle();
+          if (!gateDecision) {
+            return jr({
+              error: "No recorded service-gate decision exists for this case. A v2 attestation anchors to the explicit decision record, not a status string.",
+              code: "service_gate_decision_missing",
+            }, 409);
+          }
+          payloadToStore = toV2Payload(payload as Record<string, unknown>);
+          const violations = findRestrictedKeys(payloadToStore);
+          if (violations.length > 0) {
+            // Fail closed and loudly: never store, never serve.
+            return jr({
+              error: `Refusing to issue: restricted vocabulary in the assembled payload (${violations.join(", ")}).`,
+              code: "restricted_keys_in_payload",
+            }, 500);
+          }
+          materialHash = await materialInputHash({
+            subject: (payload as any).subject ?? null,
+            subject_type: (payload as any).subject_type ?? null,
+            parties: (payload as any).customer_identification.parties,
+            consents_held: (payload as any).customer_identification.consents_held,
+            screening: (payload as any).screening,
+            service_gate_decision_id: gateDecision.id,
+            limitations: (payload as any).limitations,
+            questionnaire_version: (payload as any).customer_identification.questionnaire_version ?? null,
+          });
+          payloadSha = await sha256HexCanonical(payloadToStore);
+          insertExtra.schema_version = 2;
+          insertExtra.material_input_hash = materialHash;
+          insertExtra.service_gate_decision_id = gateDecision.id;
+        } else {
+          payloadSha = await sha256Hex(JSON.stringify(payloadToStore));
+        }
 
         const { data: last } = await admin.schema("aml").from("compliance_attestations")
-          .select("id, version").eq("case_id", caseId)
+          .select("*").eq("case_id", caseId)
           .order("version", { ascending: false }).limit(1).maybeSingle();
         const version = (last?.version ?? 0) + 1;
+        if (v2) {
+          const requested = String(body.issued_reason_code ?? "");
+          insertExtra.issued_reason_code =
+            ["initial_issue", "material_change", "scheduled_refresh", "correction", "other"].includes(requested)
+              ? requested
+              : !last ? "initial_issue"
+              : (last.material_input_hash && last.material_input_hash !== materialHash)
+                ? "material_change" : "other";
+        }
         if (last) {
+          const supersedePatch: Record<string, unknown> = { superseded_at: new Date().toISOString() };
+          if (v2) {
+            supersedePatch.superseded_reason_code =
+              insertExtra.issued_reason_code === "material_change" ? "material_change" : "new_version_issued";
+          }
           await admin.schema("aml").from("compliance_attestations")
-            .update({ superseded_at: new Date().toISOString() }).eq("id", last.id);
+            .update(supersedePatch).eq("id", last.id);
         }
         const { data: att, error } = await admin.schema("aml").from("compliance_attestations")
           .insert({
-            case_id: caseId, version, payload, payload_sha256: payloadSha,
+            case_id: caseId, version, payload: payloadToStore, payload_sha256: payloadSha,
             issued_by: userId, issued_by_email: userEmail,
+            ...insertExtra,
           }).select("*").single();
         if (error) throw error;
+        if (v2 && last) {
+          await admin.schema("aml").from("compliance_attestations")
+            .update({ superseded_by_id: att.id }).eq("id", last.id);
+        }
 
         await appendCaseEvent(admin, caseId, "mlro_decision",
           `Compliance attestation v${version} issued (sha ${payloadSha.slice(0, 12)})`,
-          { attestation_id: att.id, version, payload_sha256: payloadSha }, userId, userEmail);
+          {
+            attestation_id: att.id, version, payload_sha256: payloadSha,
+            schema_version: v2 ? 2 : 1,
+            material_input_hash: materialHash,
+            issued_reason_code: (insertExtra.issued_reason_code as string | undefined) ?? null,
+          }, userId, userEmail);
         return jr({ attestation: att });
       }
 
@@ -447,7 +596,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
         const { data: att } = await admin.schema("aml").from("compliance_attestations")
-          .select("id, version").eq("case_id", caseId).is("superseded_at", null)
+          .select("*").eq("case_id", caseId).is("superseded_at", null)
           .order("version", { ascending: false }).limit(1).maybeSingle();
         if (!att) return jr({ error: "Issue an attestation for this case first", code: "no_attestation" }, 409);
 
@@ -550,6 +699,35 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           }
         }
         if (grantError) throw grantError;
+
+        // v2 grants are manifest-controlled: the manifest is WHAT this
+        // partner is authorised to receive from this attestation version.
+        // If this insert fails the grant remains unusable for v2 reading
+        // (manifest_missing at redemption) — fail closed, never open.
+        if ((att.schema_version ?? 1) === 2 && await attestationV2Enabled(admin)) {
+          const manifestScope = {
+            allowed_attribute_codes: DEFAULT_ALLOWED_ATTRIBUTE_CODES,
+            allowed_record_classes: (agreement.scope_record_classes ?? []) as string[],
+            denied_classes: DEFAULT_DENIED_CLASSES,
+          };
+          const manifestSha = await sha256HexCanonical({
+            ...manifestScope, attestation_id: att.id, grant_id: grant.id, version: 1,
+          });
+          const { error: manifestError } = await admin.schema("aml").from("disclosure_manifests").insert({
+            attestation_id: att.id, grant_id: grant.id,
+            partner_org_id: agreement.partner_org_id ?? null,
+            partner_case_link_id: linkForGrant?.id ?? null,
+            purpose: linkForGrant
+              ? "reliance_disclosure_under_partner_case_link"
+              : "reliance_disclosure",
+            consent_id: consent.id,
+            ...manifestScope,
+            manifest_sha256: manifestSha,
+            expires_at: grant.expires_at,
+            created_by: userId,
+          });
+          if (manifestError) throw manifestError;
+        }
 
         await appendCaseEvent(admin, caseId, "mlro_decision",
           `Reliance access granted to ${agreement.partner_org_name} (attestation v${att.version})`,
