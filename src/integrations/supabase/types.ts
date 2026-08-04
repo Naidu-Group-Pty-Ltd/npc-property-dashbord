@@ -2663,6 +2663,59 @@ export type Database = {
           },
         ]
       }
+      brand_design_systems: {
+        Row: {
+          brand_hex: string | null
+          brief: string
+          created_at: string
+          created_by: string | null
+          description: string
+          id: string
+          is_active: boolean
+          name: string
+          options: Json
+          origin: string
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          brand_hex?: string | null
+          brief?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          options?: Json
+          origin?: string
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          brand_hex?: string | null
+          brief?: string
+          created_at?: string
+          created_by?: string | null
+          description?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          options?: Json
+          origin?: string
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "brand_design_systems_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       brand_kits: {
         Row: {
           created_at: string
@@ -31749,6 +31802,109 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      template_conversions: {
+        Row: {
+          appendix_sections: number
+          binding: Json | null
+          bound_chapters: number
+          bound_format: string | null
+          brand_snapshot_id: string | null
+          bytes: number | null
+          created_at: string
+          design_system_id: string | null
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          id: string
+          page_count: number | null
+          requested_by: string | null
+          source_filename: string
+          source_markdown: string | null
+          source_size_bytes: number | null
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          structure: Json | null
+          unfilled_chapters: number
+          unstructured: boolean
+          updated_at: string
+        }
+        Insert: {
+          appendix_sections?: number
+          binding?: Json | null
+          bound_chapters?: number
+          bound_format?: string | null
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          design_system_id?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          source_filename?: string
+          source_markdown?: string | null
+          source_size_bytes?: number | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          structure?: Json | null
+          unfilled_chapters?: number
+          unstructured?: boolean
+          updated_at?: string
+        }
+        Update: {
+          appendix_sections?: number
+          binding?: Json | null
+          bound_chapters?: number
+          bound_format?: string | null
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          created_at?: string
+          design_system_id?: string | null
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          id?: string
+          page_count?: number | null
+          requested_by?: string | null
+          source_filename?: string
+          source_markdown?: string | null
+          source_size_bytes?: number | null
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          structure?: Json | null
+          unfilled_chapters?: number
+          unstructured?: boolean
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "template_conversions_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "template_conversions_design_system_id_fkey"
+            columns: ["design_system_id"]
+            isOneToOne: false
+            referencedRelation: "brand_design_systems"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "template_conversions_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       template_events: {
         Row: {
