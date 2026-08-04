@@ -470,10 +470,37 @@ in `from '`.
 
 ## 11 · Deployment
 
-1. Apply `supabase/migrations/20260820000000_report_qa_render_path.sql`.
-2. Deploy `render-report-qa-pdf`.
+1. ~~Apply `supabase/migrations/20260820000000_report_qa_render_path.sql`.~~
+   **Applied to production** — `report_qa_renders`, its six indexes and the
+   superadmin-only SELECT policy exist, and the migration is recorded under its
+   own version so `supabase db push` does not attempt it a second time (it
+   would fail: `CREATE POLICY` has no `IF NOT EXISTS`).
+2. Deploy `render-report-qa-pdf` — **still pending**. `npm run deploy:report-qa-render`.
 
 The DDL was executed against production inside a transaction — including an
 insert against real conversation and message rows, to prove the shape is usable
 and not merely creatable — and rolled back, with `to_regclass` confirmed null
-afterwards.
+afterwards. It has since been applied for real.
+
+### What an undeployed route looks like from the app
+
+Worth recording, because it cost a support round-trip and the message was
+actively misleading.
+
+An absent function is a 404 from the **Supabase gateway**, not from the
+function, and a gateway 404 carries no `Access-Control-Allow-Origin`. So the
+browser refuses the response, `fetch` rejects with `TypeError: Failed to fetch`,
+and `invokeSecureFunction` rewrites that into *"Network/CORS error calling
+render-report-qa-pdf. Please check the function deployment and auth/CORS
+configuration."* — which is what a person pressing **Typeset PDF (WeasyPrint)**
+saw. Nothing about this route's CORS is wrong; it never ran.
+
+`requestReportQaPdf` was written to catch exactly this and say so, but its
+`looksUndeployed` matched on `failed to fetch` — a string that no longer
+survives the transport. It matches the transport's `network` flag now (minus
+`provider_timeout`, which is the opposite failure: the route answered, slowly),
+so the undeployed case reads as *"render-report-qa-pdf has not been deployed to
+this project"* and names the exports that do work.
+
+The deploy is a CLI job rather than an MCP one: the route pulls in 32 shared
+modules through `../_shared/**`, and the CLI is what resolves them.

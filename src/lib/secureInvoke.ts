@@ -55,9 +55,31 @@ export function describeAuthError(message: string | undefined | null): string | 
     || m.includes('session not found')
     || m === 'unauthorized'
   ) {
-    return 'Your sign-in session has expired. Sign out, sign back in, and retry the import.';
+    return 'Your sign-in session has expired. Sign out, sign back in, and try again.';
   }
   return null;
+}
+
+/**
+ * Does this response mean "we did not believe who you are"?
+ *
+ * 401 and 403 are unambiguous. The 400 arm exists because several functions
+ * answer a missing session with `400 { error: 'Authentication required' }`
+ * rather than a 401, and a caller that only looked at the status would show
+ * that to a signed-in user as a bad request instead of refreshing their token.
+ *
+ * Exported so the streaming callers — which cannot go through
+ * `invokeSecureFunction`, because it reads the whole body as JSON — apply the
+ * same rule rather than inventing a second one.
+ */
+export function isAuthFailureResponse(status: number, message?: string | null): boolean {
+  if (status === 401 || status === 403) return true;
+  if (status !== 400) return false;
+  const m = String(message ?? '').toLowerCase();
+  return m.includes('authentication required')
+    || m.includes('auth required')
+    || m.includes('invalid session')
+    || m.includes('session expired');
 }
 
 export interface InvokeResult<T = any> {
@@ -117,6 +139,54 @@ async function tryRefreshAccessToken(): Promise<string | null> {
 }
 
 /**
+ * Re-mint the access token from the HttpOnly session cookie.
+ *
+ * Public because the streaming callers need the same one-shot refresh
+ * `invokeSecureFunction` performs on an auth failure. Returns the new token, or
+ * null when the cookie is gone or no longer valid — i.e. when the person really
+ * does have to sign in again.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  return tryRefreshAccessToken();
+}
+
+/**
+ * The Bearer credential for a call to an edge function.
+ *
+ * Three carriers, in order: the access token this tab mirrored at sign-in, the
+ * native supabase-js session (for users who signed in through it), and — only
+ * when asked — the HttpOnly `__Host-session_token` cookie, re-minted through
+ * `custom-auth-verify-v2`.
+ *
+ * `refreshIfMissing` is opt-in because for the ordinary JSON path a missing
+ * token is cheap to discover: the function answers 401 and
+ * `invokeSecureFunction` refreshes and retries. A caller that cannot do that —
+ * a streaming request, whose body is consumed once — asks for the refresh up
+ * front instead of sending a credential it already knows is absent.
+ */
+export async function resolveAuthBearer(
+  options: { refreshIfMissing?: boolean } = {},
+): Promise<{ token: string; authenticated: boolean }> {
+  let accessToken = getAccessToken();
+
+  // Native Supabase Auth fallback: users signed in through supabase-js keep
+  // their JWT in the client's own storage, not under our custom keys — for
+  // them the old code silently sent the ANON key and secured functions 401'd.
+  if (!accessToken) {
+    try {
+      const { supabase } = await import('@/integrations/supabase/client');
+      accessToken = (await supabase.auth.getSession()).data.session?.access_token ?? null;
+    } catch { /* native session lookup is best-effort */ }
+  }
+
+  if (!accessToken && options.refreshIfMissing) {
+    accessToken = await tryRefreshAccessToken();
+  }
+
+  return { token: accessToken || SUPABASE_ANON_KEY, authenticated: Boolean(accessToken) };
+}
+
+/**
  * Invoke an edge function with HttpOnly cookie support
  */
 export async function invokeSecureFunction<T = any>(
@@ -126,17 +196,7 @@ export async function invokeSecureFunction<T = any>(
 ): Promise<InvokeResult<T>> {
   const correlationId = options?.correlationId ?? crypto.randomUUID();
   try {
-    let accessToken = getAccessToken();
-    // Native Supabase Auth fallback: users signed in through supabase-js keep
-    // their JWT in the client's own storage, not under our custom keys — for
-    // them the old code silently sent the ANON key and secured functions 401'd.
-    if (!accessToken) {
-      try {
-        const { supabase } = await import('@/integrations/supabase/client');
-        accessToken = (await supabase.auth.getSession()).data.session?.access_token ?? null;
-      } catch { /* native session lookup is best-effort */ }
-    }
-    const bearerToken = accessToken || SUPABASE_ANON_KEY;
+    const { token: bearerToken, authenticated: hasAccessToken } = await resolveAuthBearer();
 
     // WP-11C: attach a live step-up token when the caller declares a capability.
     let stepUpToken: string | null = null;
@@ -214,18 +274,11 @@ export async function invokeSecureFunction<T = any>(
         functionName,
         status: response.status,
         ...(functionName.startsWith('market-updates-') ? { code:data?.code ?? 'unknown', stage:data?.stage ?? 'function', correlationId:responseCorrelationId } : { data }),
-        hasAccessToken: Boolean(accessToken),
+        hasAccessToken,
       });
 
-      const message = String(data?.error || data?.message || '').toLowerCase();
-      const isAuthFailure = response.status === 401
-        || response.status === 403
-        || (response.status === 400 && (
-          message.includes('authentication required')
-          || message.includes('auth required')
-          || message.includes('invalid session')
-          || message.includes('session expired')
-        ));
+      const message = String(data?.error?.message || data?.error || data?.message || '');
+      const isAuthFailure = isAuthFailureResponse(response.status, message);
 
       // ── One-shot token refresh + retry on auth failure ──
       if (isAuthFailure && !options?._isRetry && functionName !== 'custom-auth-verify-v2') {

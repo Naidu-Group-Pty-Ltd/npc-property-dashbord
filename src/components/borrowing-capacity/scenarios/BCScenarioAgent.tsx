@@ -13,6 +13,7 @@ import ReactMarkdown from 'react-markdown';
 import type { BorrowingCapacityInput, BorrowingCapacityResult } from '@/utils/borrowingCapacityCalculations';
 import type { LiabilityItem, PropertyItem } from './StrategyScenarioModeling';
 import { toast } from 'sonner';
+import { resolveAuthBearer } from '@/lib/secureInvoke';
 import { runScenarioWithInputs, type ScenarioContext } from '@/utils/scenarioDeltaEngine';
 import type { ScenarioDelta } from '@/utils/borrowingCapacityTypes';
 
@@ -362,7 +363,14 @@ export function BCScenarioAgent({
       // WP-11B/C cookie-only: this endpoint uses wildcard CORS (no cookies),
       // so it authenticates via the access-token JWT Bearer (verifyAuth JWT
       // path). The raw session token is no longer read or sent.
-      const accessToken = sessionStorage.getItem('supabase_access_token');
+      //
+      // Resolved rather than read: the access token lives in tab-scoped
+      // `sessionStorage`, so a second tab has a perfectly good session — its
+      // HttpOnly cookie — and no token to send with it. Reading storage
+      // directly sends the ANON key instead and the agent answers
+      // "Authentication required" to a signed-in person. Same defect, same
+      // fix, as the Report Q&A chat.
+      const { token: accessToken } = await resolveAuthBearer({ refreshIfMissing: true });
 
       const resp = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bc-scenario-agent`,
@@ -370,7 +378,7 @@ export function BCScenarioAgent({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${accessToken || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            Authorization: `Bearer ${accessToken}`,
           },
           credentials: 'omit',
           body: JSON.stringify({
