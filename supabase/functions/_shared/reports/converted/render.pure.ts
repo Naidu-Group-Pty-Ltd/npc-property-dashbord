@@ -62,7 +62,7 @@ import type { BindingPlan } from './binding.pure.ts';
 import { formatName } from './binding.pure.ts';
 import { enrichedLines, type EnrichedBlock } from './enrich.pure.ts';
 import { renderEnrichedBlocks } from './renderBlocks.pure.ts';
-import type { ExtractedStructure } from './structure.pure.ts';
+import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
 
 /**
  * Enriched blocks for the chapters that got them, by chapter id.
@@ -105,11 +105,47 @@ export interface PlannedConvertedChapter {
   markdown: string;
   /** Present only when this chapter was enriched. Rendered instead of `markdown`. */
   blocks?: readonly EnrichedBlock[];
+  /** Sub-sections folded into this chapter rather than given one of their own. */
+  foldedSubsections?: number;
   lines: number;
   pages: number;
 }
 
-/** Plan the document from the binding, in the format's own chapter order. */
+/**
+ * A sub-section's content, put back under a heading.
+ *
+ * `ExtractedSection.markdown` has its own heading stripped — the spine printed
+ * it — so folding one into a parent has to put it back or the reader gets two
+ * subjects run together with nothing between them. `depth + 1` matches what
+ * `extractStructure` already does for headings too deep to bind.
+ */
+function asNestedMarkdown(section: ExtractedSection): string {
+  return `${'#'.repeat(section.depth + 1)} ${section.title}\n\n${section.markdown}`;
+}
+
+/**
+ * Plan the document from the binding, in the format's own chapter order.
+ *
+ * ## Sub-sections belong to their parent, not to the appendix
+ *
+ * This function used to ignore `depth` entirely: every section the binding did
+ * not want became its own appendix chapter, with an eyebrow, a header and a
+ * page break. That is right for a top-level section the format has no place
+ * for, and wrong for a `###` inside one.
+ *
+ * Measured on a real conversion: a Snapshot transcribed into 20 sections, of
+ * which 12 were `depth: 2` sub-headings inside *How This Was Calculated* —
+ * `DTI Ratio` at 61 characters, `Serviceability Band` at 55, `Stress Test` at
+ * 78. Each got a full page. The document came out at 27 pages where the same
+ * source with a flatter transcription came out at 14, and the back half read as
+ * a list of stubs rather than a report.
+ *
+ * So an unbound sub-section is folded into the chapter its parent produced —
+ * whether that parent was bound to a format chapter or is itself an appendix
+ * entry. A sub-section the binding *did* want still becomes a chapter, because
+ * somebody chose it. Nothing is dropped either way; the appendix keeps its job
+ * of losing nothing, and stops being a page per paragraph.
+ */
 export function planConvertedChapters(
   structure: ExtractedStructure,
   plan: BindingPlan,
@@ -120,6 +156,38 @@ export function planConvertedChapters(
   // Whatever the first chapter carries on top of its own content.
   const opening = OPENING_NOTICE_LINES
     + (structure.notices.unstructured ? UNSTRUCTURED_NOTICE_LINES : 0);
+
+  // ── Fold unbound sub-sections into their parent ───────────────────────────
+  //
+  // The parent is the nearest preceding section one level shallower. A
+  // sub-section with no parent — a document that opens at `##` — has nothing to
+  // fold into and keeps its own chapter.
+  const bound = new Set(
+    plan.bindings.map((b) => b.sectionIndex).filter((i): i is number => i !== null),
+  );
+  const foldedInto = new Map<number, ExtractedSection[]>();
+  const absorbed = new Set<number>();
+
+  for (const section of structure.sections) {
+    if (section.depth === 1 || bound.has(section.index)) continue;
+    let parent: ExtractedSection | null = null;
+    for (let i = section.index - 1; i >= 0; i -= 1) {
+      const candidate = structure.sections[i];
+      if (candidate && candidate.depth < section.depth) { parent = candidate; break; }
+    }
+    if (!parent) continue;
+    const list = foldedInto.get(parent.index) ?? [];
+    list.push(section);
+    foldedInto.set(parent.index, list);
+    absorbed.add(section.index);
+  }
+
+  /** A section's own Markdown plus whatever folded into it, in source order. */
+  const bodyOf = (section: ExtractedSection): string => {
+    const children = foldedInto.get(section.index);
+    if (!children?.length) return section.markdown;
+    return [section.markdown, ...children.map(asNestedMarkdown)].join('\n\n');
+  };
 
   // Enriched blocks and flat Markdown cost different numbers of lines — a KPI
   // strip is four where the table it replaced was nine — so the budget has to
@@ -144,14 +212,17 @@ export function planConvertedChapters(
     if (section) {
       const id = `cv.${i}`;
       const blocks = enriched[id];
-      const lines = costOf(id, section.markdown, `cv${i}`);
+      const markdown = bodyOf(section);
+      const lines = costOf(id, markdown, `cv${i}`);
+      const folded = foldedInto.get(section.index)?.length ?? 0;
       chapters.push({
         id,
         kind: 'bound',
         title: binding.chapter,
         note: section.title === binding.chapter ? undefined : `From "${section.title}"`,
-        markdown: section.markdown,
+        markdown,
         blocks: blocks?.length ? blocks : undefined,
+        foldedSubsections: folded || undefined,
         lines,
         pages: pagesForLines(lines),
       });
@@ -169,23 +240,31 @@ export function planConvertedChapters(
     });
   });
 
-  plan.unbound.forEach((index, n) => {
+  // `n` counts appendix chapters, not unbound sections — a folded sub-section
+  // produces no chapter and must not consume an id, or the ids the enrichment
+  // map is keyed on would shift between the planning call and the render call.
+  let n = 0;
+  for (const index of plan.unbound) {
     const section = structure.sections[index];
-    if (!section) return;
+    if (!section || absorbed.has(index)) continue;
     const id = `cv.a${n}`;
     const blocks = enriched[id];
-    const lines = costOf(id, section.markdown, `cva${n}`);
+    const markdown = bodyOf(section);
+    const lines = costOf(id, markdown, `cva${n}`);
+    const folded = foldedInto.get(section.index)?.length ?? 0;
     chapters.push({
       id,
       kind: 'appendix',
       title: section.title,
       note: 'From the uploaded template',
-      markdown: section.markdown,
+      markdown,
       blocks: blocks?.length ? blocks : undefined,
+      foldedSubsections: folded || undefined,
       lines,
       pages: pagesForLines(lines),
     });
-  });
+    n += 1;
+  }
 
   return chapters;
 }

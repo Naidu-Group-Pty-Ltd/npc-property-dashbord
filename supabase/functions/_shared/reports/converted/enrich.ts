@@ -32,6 +32,8 @@ import {
   enrichmentPrompt,
   enrichmentRetryPrompt,
   parseEnrichment,
+  partitionForEnrichment,
+  tooShortNote,
   type ConversionFidelity,
   type EnrichedBlock,
 } from './enrich.pure.ts';
@@ -209,11 +211,18 @@ export async function enrichChapters(
   chapters: readonly ChapterToEnrich[],
   fidelity: ConversionFidelity,
 ): Promise<EnrichmentRun> {
-  const work = chapters.filter((c) => c.markdown.trim().length > 0);
+  // Chapters worth asking about, and the ones that are too small to be worth
+  // eleven seconds. `skipped` is reported rather than silently dropped: a
+  // person looking at "4 of 6 designed" deserves to know the other two were not
+  // attempted rather than assume they failed.
+  const { work, skipped } = partitionForEnrichment(chapters);
+
   if (!apiKey || !work.length) {
     return {
       enriched: {},
-      notes: apiKey ? [] : ['ANTHROPIC_API_KEY is not configured, so no chapter was designed'],
+      notes: apiKey
+        ? skipped.map(tooShortNote)
+        : ['ANTHROPIC_API_KEY is not configured, so no chapter was designed'],
       model: null,
       chaptersAttempted: 0,
       chaptersEnriched: 0,
@@ -242,6 +251,8 @@ export async function enrichChapters(
     if (r.blocks.length) enriched[r.id] = r.blocks;
     for (const note of r.notes) notes.push(`${titleOf.get(r.id) ?? r.id}: ${note}`);
   }
+
+  for (const c of skipped) notes.push(tooShortNote(c));
 
   return {
     enriched,

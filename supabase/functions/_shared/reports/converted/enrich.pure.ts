@@ -171,6 +171,23 @@ export const MIN_BAR_ITEMS = 2;
 /** Below three segments a donut is a pie chart of one thing and a gap. */
 export const MIN_DONUT_SEGMENTS = 3;
 export const MAX_DONUT_SEGMENTS = 8;
+/**
+ * Below this a chapter has nothing to design, and asking costs eleven seconds.
+ *
+ * Not a quality bar — a floor on whether the question is worth putting. A
+ * 55-character sub-section is a sentence; the honest answer to "lay this out as
+ * designed blocks" is "it is a sentence", which is what the model kept saying:
+ * a real conversion spent fourteen of its twenty calls on fragments and filled
+ * its notes with `the model returned no blocks`.
+ *
+ * Set just above the longest fragment that run produced (`Additional
+ * Assumptions`, 776 characters, is a real table and sits well above it;
+ * `Capacity Derivation` at 126 does not). Folding sub-sections into their
+ * parents removes most of these anyway — this catches the genuinely tiny
+ * top-level section, like a two-line `Warnings`.
+ */
+export const MIN_ENRICH_CHARS = 220;
+
 /** A lede is the sentence that opens a chapter. Longer is a paragraph. */
 export const MAX_LEDE_CHARS = 240;
 export const MAX_LABEL_CHARS = 80;
@@ -181,6 +198,20 @@ export const MAX_PROSE_CHARS = 12_000;
 const CALLOUT_TONES: readonly CalloutTone[] = [
   'neutral', 'positive', 'caution', 'negative', 'informative',
 ];
+/**
+ * What a callout calls itself when the model gives it no label.
+ *
+ * One word each, taking the tone at its word — a `caution` block is a caution
+ * whether or not anybody titled it.
+ */
+const CALLOUT_DEFAULT_LABEL: Record<CalloutTone, string> = {
+  neutral: 'Note',
+  positive: 'Worth knowing',
+  caution: 'Caution',
+  negative: 'Shortfall',
+  informative: 'For reference',
+};
+
 const VALUE_TONES: readonly ValueTone[] = ['neutral', 'positive', 'negative'];
 const BAR_TONES: readonly NonNullable<BarBlockItem['tone']>[] = [
   'positive', 'caution', 'negative', 'accent',
@@ -430,12 +461,22 @@ function readBlock(raw: unknown, notes: string[], at: number): EnrichedBlock | n
 
     case 'callout':
     case 'sidenote': {
-      const label = str(r.label, MAX_LABEL_CHARS);
       const text = block(r.text, MAX_CALLOUT_CHARS);
-      if (!label || !text) { notes.push(`block ${at}: a ${kind} missing its label or body`); return null; }
-      return kind === 'callout'
-        ? { kind, tone: oneOf(r.tone, CALLOUT_TONES) ?? 'neutral', label, text }
-        : { kind, label, text };
+      // The body is the block. Without it there is nothing to render and the
+      // label alone is a heading over a hole.
+      if (!text) { notes.push(`block ${at}: a ${kind} with no body`); return null; }
+
+      const tone = oneOf(r.tone, CALLOUT_TONES) ?? 'neutral';
+      // A missing label is not a reason to throw the body away.
+      //
+      // This used to require both, and a real conversion filled its notes with
+      // `a callout missing its label or body` — the model returns a warning
+      // with its text and no heading often enough that the rule was costing
+      // real callouts rather than catching bad ones. The tone already says what
+      // kind of thing it is, so it can name itself.
+      const label = str(r.label, MAX_LABEL_CHARS)
+        || (kind === 'callout' ? CALLOUT_DEFAULT_LABEL[tone] : 'Note');
+      return kind === 'callout' ? { kind, tone, label, text } : { kind, label, text };
     }
 
     case 'bars': {
@@ -627,7 +668,20 @@ export function enrichedText(blocks: readonly EnrichedBlock[]): string {
       case 'bullet':
         parts.push(b.label ?? '', b.sub ?? '', b.caption ?? '', String(b.value));
         if (b.target !== undefined) parts.push(String(b.target));
-        if (b.max !== undefined) parts.push(String(b.max));
+        // `max` is deliberately absent, and it is the one exclusion in here.
+        //
+        // It is the chart's *axis*, not a claim about anybody's finances. The
+        // commonest bullet by far is "the proposed loan is 76% of capacity" —
+        // `value: 76, max: 100` — and 100 is not in the chapter, because no
+        // chapter says "100". The faithfulness check saw an invented figure,
+        // rejected the chapter, retried, rejected it again, and fell the whole
+        // thing back to flat prose. On a real conversion that destroyed
+        // "Capacity at a glance": the single most important chapter of the
+        // report, deleted by its own guard, for the scale of a bar.
+        //
+        // The exposure this creates is bounded and visible: a wrong `max`
+        // mis-scales one bar. A wrong `value` or `target` misstates a figure,
+        // and those two stay checked.
         break;
       case 'prose': parts.push(b.markdown); break;
     }
@@ -683,6 +737,48 @@ export function checkQuota(sourceMarkdown: string, blocks: readonly EnrichedBloc
     reason: `the source contains ${missed} and every block came back as prose`,
     designed,
   };
+}
+
+// ── What is worth asking about ──────────────────────────────────────────────
+
+/** The shape the partition needs. `enrich.ts`'s `ChapterToEnrich` satisfies it. */
+export interface EnrichableChapter {
+  title: string;
+  markdown: string;
+}
+
+export interface EnrichmentPartition<T> {
+  /** Long enough to design. These are the calls that get made. */
+  work: T[];
+  /** Has content, but not enough of it. Reported, never silently dropped. */
+  skipped: T[];
+}
+
+/**
+ * Split chapters into the ones worth a model call and the ones that are not.
+ *
+ * Pure and here rather than inline in `enrich.ts` for one reason: `enrich.ts`
+ * reads `Deno.env` at module scope, so a spec cannot import it, and a floor
+ * that decides how much a conversion costs should not be a rule nobody can
+ * run. Empty chapters are dropped outright — an unfilled chapter has no source
+ * to design and is not a skip anybody needs telling about.
+ */
+export function partitionForEnrichment<T extends EnrichableChapter>(
+  chapters: readonly T[],
+): EnrichmentPartition<T> {
+  const work: T[] = [];
+  const skipped: T[] = [];
+  for (const chapter of chapters) {
+    const length = chapter.markdown.trim().length;
+    if (length === 0) continue;
+    (length >= MIN_ENRICH_CHARS ? work : skipped).push(chapter);
+  }
+  return { work, skipped };
+}
+
+/** Why a chapter was not attempted, in the same voice as the guards' notes. */
+export function tooShortNote(chapter: EnrichableChapter): string {
+  return `${chapter.title}: too short to design (${chapter.markdown.trim().length} characters)`;
 }
 
 // ── Prompts ─────────────────────────────────────────────────────────────────

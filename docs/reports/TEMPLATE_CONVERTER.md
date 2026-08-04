@@ -172,6 +172,83 @@ the remaining gap is a single page from `pagesForLines`' own ±1.
 
 ---
 
+## The second round: what the design pass got wrong
+
+The design pass shipped, ran in production, and produced a 27-page draft of a
+document that should be about fifteen. It was tempting to read that as WeasyPrint
+refusing something, and it was not: the run's ledger row records
+`enrichment_model: claude-opus-4-8`, `binding_source: model`, an imported design
+system with its own paper and ink, 53 designed blocks
+(`{kpi:10, bars:5, table:9, callout:11, sidenote:3, lede:13, prose:4}`), and an
+empty `error`. Everything ran. Four things about *what* it ran were wrong, and
+all four are recorded here because none of them failed loudly.
+
+**D1 — sub-sections became appendix chapters.** `planConvertedChapters` never
+read `depth`. Every section the binding did not want became its own appendix
+chapter with an eyebrow, a header and a page break — correct for a top-level
+section the format has no place for, wrong for a `###` inside one. The run
+transcribed into 20 sections, of which 12 were `depth: 2` sub-headings inside
+*How This Was Calculated*: `DTI Ratio` at 61 characters, `Serviceability Band` at
+55, `Stress Test` at 78. Each got a page, and the back half of the document read
+as a list of stubs.
+
+An unbound sub-section is now folded into the chapter its parent produced —
+bound or appendix — with its heading put back at `depth + 1`, since
+`ExtractedSection.markdown` has its own heading stripped. A sub-section the
+binding *did* want still becomes a chapter, because somebody chose it. Nothing
+is dropped either way. One subtlety worth keeping: the appendix counter now
+counts *chapters*, not unbound sections. A folded section that consumed an id
+would shift every `cv.aN` after it between the planning call that decides what
+to ask the model about and the planning call that renders the answers, and every
+block would land on the wrong chapter.
+
+Measured on the real source, rendered through WeasyPrint: **26 pages → 16**, with
+`DTI Ratio`, `Stress Test` and `Serviceability Band` now sub-headings inside
+*How this was calculated* where they belong.
+
+**D2 — the faithfulness guard was deleting the flagship chapter.** The run's
+notes carry, twice:
+
+> `Capacity at a glance: rejected: it contains 1 figure the chapter does not: 100`
+
+The chapter says "76% utilisation" and contains no `100`. The model had done
+exactly the right thing — a `bullet` with `value: 76, max: 100`, the
+*Proposed loan 76%* case the feature was built for — and `enrichedText`
+stringified `max` into the prose figure check, where `BARE_INTEGER_FLOOR = 12`
+made it read as an invented figure. Rejected, retried, rejected again, fallen
+back to flat prose: the most important chapter in the report, destroyed by its
+own guard, for the axis of a chart.
+
+`max` is now the one exclusion in `enrichedText`. It is the chart's scale, not a
+claim about anybody's finances. `value` and `target` stay checked, because those
+are assertions about the client — a wrong `max` mis-scales one bar, a wrong
+`value` misstates a figure, and only the second is worth throwing a chapter away
+for.
+
+**D3 — callouts were dropped whole for a missing label.** `readBlock` required
+both a label and a body; the model routinely returned a body with no label, and
+the notes filled with `block 0: a callout missing its label or body`. The label
+now defaults from the tone — `caution` → "Caution", `negative` → "Shortfall",
+`positive` → "Worth knowing" — and a sidenote defaults to "Note". A callout with
+a label and *no body* is still refused, because that renders as an empty box.
+
+**D4 — enrichment ran on 55-character stubs.** All 20 sections went to the model,
+so roughly fourteen calls per conversion were spent on fragments with nothing to
+design, which is where most of the `the model returned no blocks` notes came
+from. `MIN_ENRICH_CHARS = 220` is a floor on whether the question is worth
+putting, not a quality bar; it sits just above the longest fragment that run
+produced. Fixing D1 removes most of these anyway — this catches the genuinely
+tiny top-level section, like a two-line `Warnings`.
+
+The partition lives in `enrich.pure.ts` as `partitionForEnrichment`, not inline
+in `enrich.ts`, for one reason: `enrich.ts` reads `Deno.env` at module scope, so
+no spec can import it, and a floor that decides how much a conversion costs
+should not be a rule nobody can run. Skipped chapters are *reported*
+(`tooShortNote`) rather than silently dropped — "4 of 6 designed" with nothing
+else said reads as two failures, and they were never asked.
+
+---
+
 ## The design pass
 
 ### What was wrong
@@ -652,6 +729,8 @@ change. Add the drift-guard spec at the same time.
    and ink) and `20260825000100_seed_house_design_systems.sql` (the house
    system and the five voices; idempotent on `slug`).
 3. Deploy `convert-template-document` and `generate-brand-design-system`.
+   D1–D4 are all in `_shared`, so they reach production only on a redeploy of
+   `convert-template-document` — the migrations for them are none.
 4. `ANTHROPIC_API_KEY` must be set for PDF sources, for the design pass, for the
    binding proposal and for drafting a design system from a brief. Without it,
    `.md`/`.txt` sources still convert, the binding falls back to the word-overlap
