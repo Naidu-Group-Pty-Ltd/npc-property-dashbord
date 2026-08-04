@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl } from 'react-leaflet';
+import { Circle, MapContainer, TileLayer, Marker, Popup, ScaleControl, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
@@ -778,6 +778,34 @@ function ResultsPanel({
 /* Markers layer                                                               */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * The hover card a pin shows before anyone commits to a click.
+ *
+ * The pins already carry a price chip; this adds the two facts that decide
+ * whether a click is worth it — the address and the spec line — in the same
+ * reading order as the gallery card, so the map and the grid describe a
+ * listing identically. Bound lazily on first hover: fourteen hundred prebuilt
+ * tooltips would be DOM ballast for the handful anyone touches.
+ */
+function pinTooltipHtml(listing: PropertyListing): string {
+  const beds = listing.beds ?? listing.bedrooms;
+  const baths = listing.baths ?? listing.bathrooms;
+  const specs = [
+    beds ? `${beds} bed` : null,
+    baths ? `${baths} bath` : null,
+    listing.carSpaces ? `${listing.carSpaces} car` : null,
+    listing.propertyType ?? null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  const address = listing.address || listing.suburb || 'Listing';
+  return (
+    `<span class="listings-pin-tip__price">${escapeHtml(formatFullAud(listing.price) ?? 'Price on request')}</span>` +
+    `<span class="listings-pin-tip__address">${escapeHtml(address)}</span>` +
+    (specs ? `<span class="listings-pin-tip__specs">${escapeHtml(specs)}</span>` : '')
+  );
+}
+
 interface ListingMarkersProps {
   markers: ListingMarker[];
   tiers: PriceTiers | null;
@@ -847,17 +875,109 @@ const ListingMarkers = memo(function ListingMarkers({
             // augmentation above.
             listingPrice={typeof listing.price === 'number' ? listing.price : null}
             listingTier={tier}
-            title={title}
             alt={title}
             riseOnHover
             keyboard
-            eventHandlers={{ click: () => onSelect(listing.id) }}
+            eventHandlers={{
+              click: () => onSelect(listing.id),
+              mouseover: (event) => {
+                const marker = event.target as L.Marker & { __npcTipBound?: boolean };
+                if (!marker.__npcTipBound) {
+                  marker.__npcTipBound = true;
+                  marker.bindTooltip(pinTooltipHtml(listing), {
+                    direction: 'top',
+                    offset: L.point(0, -14),
+                    opacity: 1,
+                    className: 'listings-pin-tip',
+                  });
+                }
+                marker.openTooltip();
+              },
+            }}
           />
         );
       })}
     </MarkerClusterGroup>
   );
 });
+
+/**
+ * Keeps every cluster bubble on a property instead of in the sea.
+ *
+ * leaflet.markercluster positions a cluster at the weighted centroid of its
+ * members, and Australia's stock hugs the coastline — so at country zoom the
+ * centroid of Perth's arc of suburbs lands in the Indian Ocean and Sydney's
+ * lands in the Tasman, with the count bubble floating over open water. The
+ * geocodes themselves are fine (all 957 sit inside the continental bounding
+ * box); only the presentation drifts offshore.
+ *
+ * After each re-cluster, every visible cluster is nudged to the member nearest
+ * its centroid — a real property, therefore on land. Purely presentational:
+ * spiderfy, zoom-to-bounds and membership all still work from the cluster's
+ * internal state, and any failure here leaves the map exactly as it was.
+ */
+function ClusterAnchorToProperty({
+  clusterRef,
+  signature,
+}: {
+  clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
+  signature: number;
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    let frame: number | null = null;
+
+    const snap = () => {
+      if (frame !== null) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = null;
+        const group = clusterRef.current;
+        if (!group) return;
+        try {
+          const featureGroup = (group as unknown as { _featureGroup?: L.FeatureGroup })
+            ._featureGroup;
+          featureGroup?.eachLayer((layer) => {
+            const cluster = layer as L.MarkerCluster;
+            if (typeof cluster.getAllChildMarkers !== 'function') return;
+            const children = cluster.getAllChildMarkers();
+            if (!children || children.length === 0) return;
+            const centre = cluster.getLatLng();
+            let best: L.LatLng | null = null;
+            let bestDistance = Infinity;
+            for (const child of children) {
+              const at = child.getLatLng();
+              const d = (at.lat - centre.lat) ** 2 + (at.lng - centre.lng) ** 2;
+              if (d < bestDistance) {
+                bestDistance = d;
+                best = at;
+              }
+            }
+            if (best && bestDistance > 0) cluster.setLatLng(best);
+          });
+        } catch {
+          /* presentational only — never let a snap failure touch the map */
+        }
+      });
+    };
+
+    const group = clusterRef.current;
+    map.on('zoomend moveend viewreset', snap);
+    group?.on('animationend', snap);
+    // chunkedLoading builds clusters over several frames after mount, so a
+    // single immediate pass would run before most clusters exist.
+    const timers = [0, 300, 900].map((ms) => window.setTimeout(snap, ms));
+
+    return () => {
+      map.off('zoomend moveend viewreset', snap);
+      group?.off('animationend', snap);
+      timers.forEach((t) => window.clearTimeout(t));
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [map, clusterRef, signature]);
+
+  return null;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Popup card                                                                  */
@@ -1556,6 +1676,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: Lis
             registerMarker={registerMarker}
             clusterRef={clusterRef}
           />
+          <ClusterAnchorToProperty clusterRef={clusterRef} signature={markers.length} />
 
           {userLocation ? (
             <>

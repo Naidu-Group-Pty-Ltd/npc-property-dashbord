@@ -14,6 +14,7 @@ import { useListingImages } from '@/hooks/useListingImages';
 import { useListingRecord } from '@/hooks/useListingRecord';
 import { useEnrichListing } from '@/hooks/useEnrichListing';
 import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
+import { useOrderedImages } from '@/hooks/useOrderedImages';
 import { useListingCoordinates } from '@/hooks/useListingCoordinates';
 import { propertyDataService } from '@/services/propertyDataService';
 import { displayPrice, formatLocality } from '@/lib/listingDisplay';
@@ -69,6 +70,10 @@ export default function ListingDetail() {
   const { searchingId } = useAutoFindPhotos(forResolution, images, isResolving, onEnriched);
   const { points } = useListingCoordinates(forResolution);
   const point = listing ? (points[listing.id] ?? null) : null;
+
+  // Ordered once here and handed to both the hero and the lightbox, so the
+  // index the hero reports on expand opens the same slide in the lightbox.
+  const { images: orderedImages } = useOrderedImages(listing ? images[listing.id] : undefined);
 
   // Comparison drawn from the corpus already in memory. It is only offered when
   // the reader came from the grid — computing it would otherwise mean loading
@@ -132,7 +137,7 @@ export default function ListingDetail() {
 
       <div className="space-y-4">
         <ListingHero
-          images={images[listing.id]}
+          images={orderedImages}
           isResolving={isResolving}
           label={listing.address ?? listing.suburb ?? undefined}
           point={point}
@@ -252,7 +257,7 @@ export default function ListingDetail() {
       </div>
 
       <ListingLightbox
-        images={images[listing.id] ?? []}
+        images={orderedImages}
         openAt={lightboxAt}
         onClose={() => setLightboxAt(null)}
         label={listing.address ?? listing.suburb ?? undefined}

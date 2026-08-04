@@ -5,6 +5,7 @@ import type { StoredListingImage } from '@/lib/listingImages';
 import { StreetViewPanel, type StreetViewStatus } from '@/components/listings/StreetViewPanel';
 import { ListingCover, type ListingCoverProps } from '@/components/listings/ListingCover';
 import { useInView } from '@/hooks/useInView';
+import { useOrderedImages } from '@/hooks/useOrderedImages';
 
 export interface ListingHeroProps {
   images: StoredListingImage[] | undefined;
@@ -98,9 +99,13 @@ export function ListingHero({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const inView = useInView(containerRef);
 
+  // Photographs first, floor plans last — a hero slot opening on a line
+  // drawing is accurate but sells nothing. The ordering also names plan
+  // slides, so the counter can say what the reader is looking at.
+  const { images: ordered, kindOf } = useOrderedImages(images);
   const photos = useMemo(
-    () => (images ?? []).filter((image) => image.url && !failed.has(image.url)),
-    [images, failed],
+    () => ordered.filter((image) => image.url && !failed.has(image.url)),
+    [ordered, failed],
   );
   const hasStreetView = Boolean(point) && streetViewMode === 'slide';
   const slideCount = photos.length + (hasStreetView ? 1 : 0);
@@ -309,9 +314,20 @@ export function ListingHero({
             <CarouselButton side="left" onClick={() => go(-1)} />
             <CarouselButton side="right" onClick={() => go(1)} />
             <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-foreground/70 px-2 py-0.5 text-[10px] font-semibold tabular-nums text-background">
-              {onStreetViewSlide ? 'Street View' : `${index + 1}/${photos.length}`}
+              {onStreetViewSlide
+                ? 'Street View'
+                : current && kindOf(current.url) === 'floorplan'
+                  ? `${index + 1}/${photos.length} · Floor plan`
+                  : `${index + 1}/${photos.length}`}
             </span>
           </>
+        )}
+
+        {/* A lone plan still says what it is — without a counter to carry it. */}
+        {slideCount === 1 && current && kindOf(current.url) === 'floorplan' && (
+          <span className="pointer-events-none absolute bottom-2 left-2 rounded-full bg-foreground/70 px-2 py-0.5 text-[10px] font-semibold text-background">
+            Floor plan
+          </span>
         )}
 
         {/* Bottom-right, deliberately: callers put their own badge top-right

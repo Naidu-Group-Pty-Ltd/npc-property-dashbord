@@ -505,6 +505,50 @@
   border-radius: 0.9rem;
 }
 
+/* --- Pin hover card ------------------------------------------------------
+   The tooltip a pin shows before anyone commits to a click: price, address,
+   spec line — the gallery card's reading order, on the map. Overrides
+   Leaflet's default tooltip chrome with the app's own tokens so it re-themes
+   with the palette and dark mode like every other surface. */
+.listings-map .listings-pin-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid hsl(var(--border) / 0.7);
+  border-radius: 0.65rem;
+  background: hsl(var(--background) / 0.96);
+  color: hsl(var(--foreground));
+  box-shadow: 0 10px 28px hsl(var(--foreground) / 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.listings-map .listings-pin-tip::before {
+  border-top-color: hsl(var(--background) / 0.96);
+}
+
+.listings-pin-tip__price {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: hsl(var(--primary));
+}
+
+.listings-pin-tip__address {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  color: hsl(var(--foreground));
+  max-width: 15rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listings-pin-tip__specs {
+  font-size: 0.625rem;
+  color: hsl(var(--muted-foreground));
+}
+
 /* --- Clusters -----------------------------------------------------------
    A cluster carries two facts, not one: how many listings it hides (the
    count) and what they are worth (a band-mix ring plus the median price).

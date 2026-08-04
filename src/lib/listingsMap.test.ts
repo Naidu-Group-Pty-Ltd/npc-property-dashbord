@@ -377,8 +377,18 @@ describe('heatGeometryForZoom', () => {
   });
 
   it('clamps to a sane pixel range at both extremes', () => {
-    expect(heatGeometryForZoom(0, 'tight').radius).toBeGreaterThanOrEqual(10);
+    expect(heatGeometryForZoom(0, 'tight').radius).toBeGreaterThanOrEqual(5);
     expect(heatGeometryForZoom(22, 'wide').radius).toBeLessThanOrEqual(62);
+  });
+
+  it('keeps national-scale hotspots tight so a city cannot bleed into the sea', () => {
+    // At zoom 4 all of Melbourne is a couple of pixels; a generous radius put
+    // its blob in Bass Strait. Country zooms trade gradient for placement.
+    const country = heatGeometryForZoom(4, 'balanced');
+    const regional = heatGeometryForZoom(8, 'balanced');
+    expect(country.radius).toBeLessThanOrEqual(10);
+    expect(country.blur).toBeLessThan(country.radius);
+    expect(regional.radius).toBeGreaterThan(country.radius);
   });
 
   it('scales with the focus setting', () => {
