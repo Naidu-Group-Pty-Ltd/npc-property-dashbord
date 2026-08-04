@@ -1,5 +1,5 @@
 // App configuration - updated Mar 9, 2026
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -23,23 +23,24 @@ import { Phase1NotificationListeners } from "./components/Phase1NotificationList
 import { TokenEventsListener } from "@/components/billing/TokenEventsListener";
 import { PushNotificationPrompt } from "./components/PushNotificationPrompt";
 import { ErrorBoundary } from "@/components/common/ErrorBoundary";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
 import { HarveyCountdown } from "@/components/HarveyCountdown";
 import { Button } from "@/components/ui/button";
-import Overview from "./pages/Overview";
-import Listings from "./pages/Listings";
-import ListingDetail from "./pages/ListingDetail";
-import Calendar from "./pages/Calendar";
-import MarketUpdates from "./pages/MarketUpdates";
+const Overview = lazyWithRetry(() => import("./pages/Overview"));
+const Listings = lazyWithRetry(() => import("./pages/Listings"));
+const ListingDetail = lazyWithRetry(() => import("./pages/ListingDetail"));
+const Calendar = lazyWithRetry(() => import("./pages/Calendar"));
+const MarketUpdates = lazyWithRetry(() => import("./pages/MarketUpdates"));
 import { MarketArchivePage } from "./components/market-updates/MarketArchivePage";
-import Sources from "./pages/Sources";
-import Reports from "./pages/Reports";
-import QuantitativeReports from "./pages/QuantitativeReports";
-import Charts from "./pages/Charts";
-import GeneratedReports from "./pages/GeneratedReports";
-import ReportViewer from "./pages/ReportViewer";
-import Settings from "./pages/Settings";
-import UserGuide from "./pages/UserGuide";
-import Feedback from "./pages/Feedback";
+const Sources = lazyWithRetry(() => import("./pages/Sources"));
+const Reports = lazyWithRetry(() => import("./pages/Reports"));
+const QuantitativeReports = lazyWithRetry(() => import("./pages/QuantitativeReports"));
+const Charts = lazyWithRetry(() => import("./pages/Charts"));
+const GeneratedReports = lazyWithRetry(() => import("./pages/GeneratedReports"));
+const ReportViewer = lazyWithRetry(() => import("./pages/ReportViewer"));
+const Settings = lazyWithRetry(() => import("./pages/Settings"));
+const UserGuide = lazyWithRetry(() => import("./pages/UserGuide"));
+const Feedback = lazyWithRetry(() => import("./pages/Feedback"));
 import DataImport from './pages/DataImport';
 import Monitoring from './pages/Monitoring';
 import QualityAssurance from './pages/QualityAssurance';
@@ -56,184 +57,184 @@ import SharedQAAnswer from './pages/SharedQAAnswer';
 import InvestmentReportView from './pages/InvestmentReportView';
 import Templates from './pages/Templates';
 import WhiteLabel from './pages/WhiteLabel';
-import Auth from "./pages/Auth";
-import AcceptInvite from "./pages/AcceptInvite";
-import UserManagement from "./pages/admin/UserManagement";
-import GhlMigration from "./pages/admin/GhlMigration";
-import FinancePortalAdmin from "./pages/admin/FinancePortalAdmin";
-import SolicitorPortalAdmin from "./pages/admin/SolicitorPortalAdmin";
-import BuilderPortalAdmin from "./pages/admin/BuilderPortalAdmin";
-import FinancePortalAnalytics from "./pages/admin/FinancePortalAnalytics";
-import FinancePortalBulkImport from "./pages/admin/FinancePortalBulkImport";
-import FinancePortalCompliance from "./pages/admin/FinancePortalCompliance";
-import FinancePortalHealth from "./pages/admin/FinancePortalHealth";
-import FinancePortalCommissions from "./pages/admin/FinancePortalCommissions";
-import ActivityLogs from "./pages/ActivityLogs";
+const Auth = lazyWithRetry(() => import("./pages/Auth"));
+const AcceptInvite = lazyWithRetry(() => import("./pages/AcceptInvite"));
+const UserManagement = lazyWithRetry(() => import("./pages/admin/UserManagement"));
+const GhlMigration = lazyWithRetry(() => import("./pages/admin/GhlMigration"));
+const FinancePortalAdmin = lazyWithRetry(() => import("./pages/admin/FinancePortalAdmin"));
+const SolicitorPortalAdmin = lazyWithRetry(() => import("./pages/admin/SolicitorPortalAdmin"));
+const BuilderPortalAdmin = lazyWithRetry(() => import("./pages/admin/BuilderPortalAdmin"));
+const FinancePortalAnalytics = lazyWithRetry(() => import("./pages/admin/FinancePortalAnalytics"));
+const FinancePortalBulkImport = lazyWithRetry(() => import("./pages/admin/FinancePortalBulkImport"));
+const FinancePortalCompliance = lazyWithRetry(() => import("./pages/admin/FinancePortalCompliance"));
+const FinancePortalHealth = lazyWithRetry(() => import("./pages/admin/FinancePortalHealth"));
+const FinancePortalCommissions = lazyWithRetry(() => import("./pages/admin/FinancePortalCommissions"));
+const ActivityLogs = lazyWithRetry(() => import("./pages/ActivityLogs"));
 import { DepreciationCompsAdmin } from "./components/admin/DepreciationCompsAdmin";
-import TemplateBuilder from "./pages/admin/TemplateBuilder";
-import TemplateBuilderEdit from "./pages/admin/TemplateBuilderEdit";
-import TemplateConverter from "./pages/admin/TemplateConverter";
-import BrandSystems from "./pages/admin/BrandSystems";
-import TemplateSharePreview from "./pages/TemplateSharePreview";
-import ReportEngineInspector from "./pages/admin/ReportEngineInspector";
-import FigmaTemplates from "./pages/admin/FigmaTemplates";
-import PdfImportEngineAdmin from "./pages/admin/PdfImportEngineAdmin";
-import BcSegmentEngineAdmin from "./pages/admin/BcSegmentEngineAdmin";
-import AmlV3Cutover from "./pages/admin/AmlV3Cutover";
-import AmlIntegrationHealth from "./pages/admin/AmlIntegrationHealth";
-import PdfImportDiagnostics from "./pages/admin/PdfImportDiagnostics";
-import PdfImportMonitoring from "./pages/admin/PdfImportMonitoring";
-import PdfImportRetention from "./pages/admin/PdfImportRetention";
-import PdfImportClientReports from "./pages/admin/PdfImportClientReports";
-import TemplateImportQuality from "./pages/admin/TemplateImportQuality";
-import PdfGoldenRegression from "./pages/admin/PdfGoldenRegression";
-import MarketQAQuality from "./pages/admin/MarketQAQuality";
-import ReclassifyPropertyAdmin from "./pages/admin/ReclassifyPropertyAdmin";
-import AgentQuality from "./pages/admin/AgentQuality";
-import AmlCases from "./pages/aml/AmlCases";
-import AmlCaseWorkspace from "./pages/aml/AmlCaseWorkspace";
-import AmlOverview from "./pages/aml/AmlOverview";
+const TemplateBuilder = lazyWithRetry(() => import("./pages/admin/TemplateBuilder"));
+const TemplateBuilderEdit = lazyWithRetry(() => import("./pages/admin/TemplateBuilderEdit"));
+const TemplateConverter = lazyWithRetry(() => import("./pages/admin/TemplateConverter"));
+const BrandSystems = lazyWithRetry(() => import("./pages/admin/BrandSystems"));
+const TemplateSharePreview = lazyWithRetry(() => import("./pages/TemplateSharePreview"));
+const ReportEngineInspector = lazyWithRetry(() => import("./pages/admin/ReportEngineInspector"));
+const FigmaTemplates = lazyWithRetry(() => import("./pages/admin/FigmaTemplates"));
+const PdfImportEngineAdmin = lazyWithRetry(() => import("./pages/admin/PdfImportEngineAdmin"));
+const BcSegmentEngineAdmin = lazyWithRetry(() => import("./pages/admin/BcSegmentEngineAdmin"));
+const AmlV3Cutover = lazyWithRetry(() => import("./pages/admin/AmlV3Cutover"));
+const AmlIntegrationHealth = lazyWithRetry(() => import("./pages/admin/AmlIntegrationHealth"));
+const PdfImportDiagnostics = lazyWithRetry(() => import("./pages/admin/PdfImportDiagnostics"));
+const PdfImportMonitoring = lazyWithRetry(() => import("./pages/admin/PdfImportMonitoring"));
+const PdfImportRetention = lazyWithRetry(() => import("./pages/admin/PdfImportRetention"));
+const PdfImportClientReports = lazyWithRetry(() => import("./pages/admin/PdfImportClientReports"));
+const TemplateImportQuality = lazyWithRetry(() => import("./pages/admin/TemplateImportQuality"));
+const PdfGoldenRegression = lazyWithRetry(() => import("./pages/admin/PdfGoldenRegression"));
+const MarketQAQuality = lazyWithRetry(() => import("./pages/admin/MarketQAQuality"));
+const ReclassifyPropertyAdmin = lazyWithRetry(() => import("./pages/admin/ReclassifyPropertyAdmin"));
+const AgentQuality = lazyWithRetry(() => import("./pages/admin/AgentQuality"));
+const AmlCases = lazyWithRetry(() => import("./pages/aml/AmlCases"));
+const AmlCaseWorkspace = lazyWithRetry(() => import("./pages/aml/AmlCaseWorkspace"));
+const AmlOverview = lazyWithRetry(() => import("./pages/aml/AmlOverview"));
 import {
   AmlIntakeQueue, AmlVerification, AmlScreening, AmlRisk, AmlCounterparty,
   AmlFinance, AmlTransactions,
   AmlMonitoring, AmlInvestigations, AmlAustracReporting, AmlRecords, AmlGovernance, AmlConfiguration,
 } from "./pages/aml/AmlShellPages";
-import AmlLaunchOps from "./pages/aml/AmlLaunchOps";
+const AmlLaunchOps = lazyWithRetry(() => import("./pages/aml/AmlLaunchOps"));
 import { AmlLayout } from "@/components/aml/AmlLayout";
 import { AmlGuard } from "@/components/aml/AmlGuard";
-import AgentMemoryManager from "./pages/agent/MemoryManager";
-import AgentInsights from "./pages/agent/AgentInsights";
-import AgentPlans from "./pages/agent/AgentPlans";
-import AgentSkills from "./pages/agent/AgentSkills";
-import SharedMarketQAAnswer from "./pages/qa/SharedMarketQAAnswer";
-import MarketQASubscriptions from "./pages/qa/MarketQASubscriptions";
-import MarketQADigests from "./pages/qa/MarketQADigests";
+const AgentMemoryManager = lazyWithRetry(() => import("./pages/agent/MemoryManager"));
+const AgentInsights = lazyWithRetry(() => import("./pages/agent/AgentInsights"));
+const AgentPlans = lazyWithRetry(() => import("./pages/agent/AgentPlans"));
+const AgentSkills = lazyWithRetry(() => import("./pages/agent/AgentSkills"));
+const SharedMarketQAAnswer = lazyWithRetry(() => import("./pages/qa/SharedMarketQAAnswer"));
+const MarketQASubscriptions = lazyWithRetry(() => import("./pages/qa/MarketQASubscriptions"));
+const MarketQADigests = lazyWithRetry(() => import("./pages/qa/MarketQADigests"));
 
-import Integrations from "./pages/Integrations";
-import WorkflowPlayground from "./pages/WorkflowPlayground";
-import MarketingAnalytics from "./pages/MarketingAnalytics";
-import CloudflareManagement from "./pages/CloudflareManagement";
-import ClientManagement from "./pages/ClientManagement";
-import ClientTracker from "./pages/ClientTracker";
-import PortfolioReports from "./pages/PortfolioReports";
-import ReportRequests from "./pages/ReportRequests";
-import ApiUsage from "./pages/ApiUsage";
-import DealPipeline from "./pages/DealPipeline";
-import RemindersHub from "./pages/RemindersHub";
-import Checklists from "./pages/Checklists";
-import Agreements from "./pages/Agreements";
-import PartnerAgreements from "./pages/PartnerAgreements";
-import PartnerCompliance from "./pages/PartnerCompliance";
+const Integrations = lazyWithRetry(() => import("./pages/Integrations"));
+const WorkflowPlayground = lazyWithRetry(() => import("./pages/WorkflowPlayground"));
+const MarketingAnalytics = lazyWithRetry(() => import("./pages/MarketingAnalytics"));
+const CloudflareManagement = lazyWithRetry(() => import("./pages/CloudflareManagement"));
+const ClientManagement = lazyWithRetry(() => import("./pages/ClientManagement"));
+const ClientTracker = lazyWithRetry(() => import("./pages/ClientTracker"));
+const PortfolioReports = lazyWithRetry(() => import("./pages/PortfolioReports"));
+const ReportRequests = lazyWithRetry(() => import("./pages/ReportRequests"));
+const ApiUsage = lazyWithRetry(() => import("./pages/ApiUsage"));
+const DealPipeline = lazyWithRetry(() => import("./pages/DealPipeline"));
+const RemindersHub = lazyWithRetry(() => import("./pages/RemindersHub"));
+const Checklists = lazyWithRetry(() => import("./pages/Checklists"));
+const Agreements = lazyWithRetry(() => import("./pages/Agreements"));
+const PartnerAgreements = lazyWithRetry(() => import("./pages/PartnerAgreements"));
+const PartnerCompliance = lazyWithRetry(() => import("./pages/PartnerCompliance"));
 
-import PartnerReferrals from "./pages/PartnerReferrals";
-import LoanWriterUndertakings from "./pages/LoanWriterUndertakings";
-import PublicPartnerConsent from "./pages/PublicPartnerConsent";
+const PartnerReferrals = lazyWithRetry(() => import("./pages/PartnerReferrals"));
+const LoanWriterUndertakings = lazyWithRetry(() => import("./pages/LoanWriterUndertakings"));
+const PublicPartnerConsent = lazyWithRetry(() => import("./pages/PublicPartnerConsent"));
 
-import GamePlan from "./pages/GamePlan";
-import Commissions from "./pages/Commissions";
-import ReportsAnalytics from "./pages/ReportsAnalytics";
-import ModelHub from "./pages/ModelHub";
-import Billing from "./pages/Billing";
-import TokenAuditLog from "./pages/TokenAuditLog";
-import CommercialIndustrial from "./pages/commercial/CommercialIndustrial";
-import CommercialAssessmentWorkspace from "./pages/commercial/CommercialAssessmentWorkspace";
-import CommercialPropertyDetail from "./pages/commercial/CommercialPropertyDetail";
+const GamePlan = lazyWithRetry(() => import("./pages/GamePlan"));
+const Commissions = lazyWithRetry(() => import("./pages/Commissions"));
+const ReportsAnalytics = lazyWithRetry(() => import("./pages/ReportsAnalytics"));
+const ModelHub = lazyWithRetry(() => import("./pages/ModelHub"));
+const Billing = lazyWithRetry(() => import("./pages/Billing"));
+const TokenAuditLog = lazyWithRetry(() => import("./pages/TokenAuditLog"));
+const CommercialIndustrial = lazyWithRetry(() => import("./pages/commercial/CommercialIndustrial"));
+const CommercialAssessmentWorkspace = lazyWithRetry(() => import("./pages/commercial/CommercialAssessmentWorkspace"));
+const CommercialPropertyDetail = lazyWithRetry(() => import("./pages/commercial/CommercialPropertyDetail"));
 
-import IndustrialPropertyDetail from "./pages/industrial/IndustrialPropertyDetail";
-import PropertyCalculators from "./pages/calculators/PropertyCalculators";
-import NotFound from "./pages/NotFound";
+const IndustrialPropertyDetail = lazyWithRetry(() => import("./pages/industrial/IndustrialPropertyDetail"));
+const PropertyCalculators = lazyWithRetry(() => import("./pages/calculators/PropertyCalculators"));
+const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
 import { PortalAuthProvider } from "@/hooks/usePortalAuth";
 import { PortalProtectedRoute } from "@/components/portal/PortalProtectedRoute";
 import { PortalLayout } from "@/components/portal/PortalLayout";
-import PortalAuth from "./pages/portal/PortalAuth";
-import PortalHandoff from "./pages/portal/PortalHandoff";
-import PortalDashboard from "./pages/portal/PortalDashboard";
-import PortalProfile from "./pages/portal/PortalProfile";
-import PortalProperties from "./pages/portal/PortalProperties";
-import PortalEmployment from "./pages/portal/PortalEmployment";
-import PortalReports from "./pages/portal/PortalReports";
-import PortalDocuments from "./pages/portal/PortalDocuments";
-import PortalAcceptInvite from "./pages/portal/PortalAcceptInvite";
-import PortalNotifications from "./pages/portal/PortalNotifications";
-import PortalDealProgress from "./pages/portal/PortalDealProgress";
-import PortalActionItems from "./pages/portal/PortalActionItems";
-import PortalFinanceHub from "./pages/portal/PortalFinanceHub";
-import PortalLenders from "./pages/portal/PortalLenders";
-import PortalMessages from "./pages/portal/PortalMessages";
-import PortalPropertyInsights from "./pages/portal/PortalPropertyInsights";
-import PortalBooking from "./pages/portal/PortalBooking";
-import PortalAppointments from "./pages/portal/PortalAppointments";
-import PortalAml from "./pages/portal/PortalAml";
-import PortalLegal from "./pages/portal/PortalLegal";
-import PortalLegalDetail from "./pages/portal/PortalLegalDetail";
-import PortalConfig from "./pages/PortalConfig";
+const PortalAuth = lazyWithRetry(() => import("./pages/portal/PortalAuth"));
+const PortalHandoff = lazyWithRetry(() => import("./pages/portal/PortalHandoff"));
+const PortalDashboard = lazyWithRetry(() => import("./pages/portal/PortalDashboard"));
+const PortalProfile = lazyWithRetry(() => import("./pages/portal/PortalProfile"));
+const PortalProperties = lazyWithRetry(() => import("./pages/portal/PortalProperties"));
+const PortalEmployment = lazyWithRetry(() => import("./pages/portal/PortalEmployment"));
+const PortalReports = lazyWithRetry(() => import("./pages/portal/PortalReports"));
+const PortalDocuments = lazyWithRetry(() => import("./pages/portal/PortalDocuments"));
+const PortalAcceptInvite = lazyWithRetry(() => import("./pages/portal/PortalAcceptInvite"));
+const PortalNotifications = lazyWithRetry(() => import("./pages/portal/PortalNotifications"));
+const PortalDealProgress = lazyWithRetry(() => import("./pages/portal/PortalDealProgress"));
+const PortalActionItems = lazyWithRetry(() => import("./pages/portal/PortalActionItems"));
+const PortalFinanceHub = lazyWithRetry(() => import("./pages/portal/PortalFinanceHub"));
+const PortalLenders = lazyWithRetry(() => import("./pages/portal/PortalLenders"));
+const PortalMessages = lazyWithRetry(() => import("./pages/portal/PortalMessages"));
+const PortalPropertyInsights = lazyWithRetry(() => import("./pages/portal/PortalPropertyInsights"));
+const PortalBooking = lazyWithRetry(() => import("./pages/portal/PortalBooking"));
+const PortalAppointments = lazyWithRetry(() => import("./pages/portal/PortalAppointments"));
+const PortalAml = lazyWithRetry(() => import("./pages/portal/PortalAml"));
+const PortalLegal = lazyWithRetry(() => import("./pages/portal/PortalLegal"));
+const PortalLegalDetail = lazyWithRetry(() => import("./pages/portal/PortalLegalDetail"));
+const PortalConfig = lazyWithRetry(() => import("./pages/PortalConfig"));
 import { PortalConsentWall } from "@/components/portal/PortalConsentWall";
 import { FinancePortalAuthProvider } from "@/hooks/useFinancePortalAuth";
 import { SolicitorPortalAuthProvider } from "@/hooks/useSolicitorPortalAuth";
 import { SolicitorPortalProtectedRoute } from "@/components/solicitor-portal/SolicitorPortalProtectedRoute";
 import { SolicitorPortalLayout } from "@/components/solicitor-portal/SolicitorPortalLayout";
-import SolicitorLogin from "@/pages/solicitor/SolicitorLogin";
-import SolicitorAcceptInvite from "@/pages/solicitor/SolicitorAcceptInvite";
-import SolicitorForgotPassword from "@/pages/solicitor/SolicitorForgotPassword";
-import SolicitorChangePassword from "@/pages/solicitor/SolicitorChangePassword";
-import SolicitorDashboard from "@/pages/solicitor/SolicitorDashboard";
-import SolicitorMatters from "@/pages/solicitor/SolicitorMatters";
-import SolicitorPipeline from "@/pages/solicitor/SolicitorPipeline";
-import SolicitorMatterDetail from "@/pages/solicitor/SolicitorMatterDetail";
-import SolicitorTerms from "@/pages/solicitor/SolicitorTerms";
-import SolicitorOnboarding from "@/pages/solicitor/SolicitorOnboarding";
-import SolicitorSecurity from "@/pages/solicitor/SolicitorSecurity";
-import SolicitorSettings from "@/pages/solicitor/SolicitorSettings";
-import SolicitorWorkspacePage from "@/pages/solicitor/SolicitorWorkspacePage";
+const SolicitorLogin = lazyWithRetry(() => import("@/pages/solicitor/SolicitorLogin"));
+const SolicitorAcceptInvite = lazyWithRetry(() => import("@/pages/solicitor/SolicitorAcceptInvite"));
+const SolicitorForgotPassword = lazyWithRetry(() => import("@/pages/solicitor/SolicitorForgotPassword"));
+const SolicitorChangePassword = lazyWithRetry(() => import("@/pages/solicitor/SolicitorChangePassword"));
+const SolicitorDashboard = lazyWithRetry(() => import("@/pages/solicitor/SolicitorDashboard"));
+const SolicitorMatters = lazyWithRetry(() => import("@/pages/solicitor/SolicitorMatters"));
+const SolicitorPipeline = lazyWithRetry(() => import("@/pages/solicitor/SolicitorPipeline"));
+const SolicitorMatterDetail = lazyWithRetry(() => import("@/pages/solicitor/SolicitorMatterDetail"));
+const SolicitorTerms = lazyWithRetry(() => import("@/pages/solicitor/SolicitorTerms"));
+const SolicitorOnboarding = lazyWithRetry(() => import("@/pages/solicitor/SolicitorOnboarding"));
+const SolicitorSecurity = lazyWithRetry(() => import("@/pages/solicitor/SolicitorSecurity"));
+const SolicitorSettings = lazyWithRetry(() => import("@/pages/solicitor/SolicitorSettings"));
+const SolicitorWorkspacePage = lazyWithRetry(() => import("@/pages/solicitor/SolicitorWorkspacePage"));
 import { BuilderPortalAuthProvider } from "@/hooks/useBuilderPortalAuth";
 import { BuilderPortalProtectedRoute } from "@/components/builder-portal/BuilderPortalProtectedRoute";
 import { BuilderPortalLayout } from "@/components/builder-portal/BuilderPortalLayout";
-import BuilderLogin from "@/pages/builder/BuilderLogin";
-import BuilderAcceptInvite from "@/pages/builder/BuilderAcceptInvite";
-import BuilderForgotPassword from "@/pages/builder/BuilderForgotPassword";
-import BuilderResetPassword from "@/pages/builder/BuilderResetPassword";
-import BuilderChangePassword from "@/pages/builder/BuilderChangePassword";
-import BuilderSelectOrganisation from "@/pages/builder/BuilderSelectOrganisation";
-import BuilderTerms from "@/pages/builder/BuilderTerms";
-import BuilderOnboarding from "@/pages/builder/BuilderOnboarding";
-import BuilderDashboard from "@/pages/builder/BuilderDashboard";
-import BuilderSettings from "@/pages/builder/BuilderSettings";
-import BuilderProjects from "@/pages/builder/BuilderProjects";
-import BuilderProjectDetail from "@/pages/builder/BuilderProjectDetail";
-import BuilderInventory from "@/pages/builder/BuilderInventory";
-import BuilderUnitDetail from "@/pages/builder/BuilderUnitDetail";
-import BuilderTransactions from "@/pages/builder/BuilderTransactions";
-import BuilderTransactionDetail from "@/pages/builder/BuilderTransactionDetail";
-import BuilderPipeline from "@/pages/builder/BuilderPipeline";
-import BuilderConstruction from "@/pages/builder/BuilderConstruction";
-import BuilderConstructionDetail from "@/pages/builder/BuilderConstructionDetail";
-import BuilderDeliveryDetail from "@/pages/builder/BuilderDeliveryDetail";
-import BuilderDocuments from "@/pages/builder/BuilderDocuments";
-import BuilderMessages from "@/pages/builder/BuilderMessages";
-import BuilderTasks from "@/pages/builder/BuilderTasks";
-import BuilderNotifications from "@/pages/builder/BuilderNotifications";
-import BuilderActivity from "@/pages/builder/BuilderActivity";
+const BuilderLogin = lazyWithRetry(() => import("@/pages/builder/BuilderLogin"));
+const BuilderAcceptInvite = lazyWithRetry(() => import("@/pages/builder/BuilderAcceptInvite"));
+const BuilderForgotPassword = lazyWithRetry(() => import("@/pages/builder/BuilderForgotPassword"));
+const BuilderResetPassword = lazyWithRetry(() => import("@/pages/builder/BuilderResetPassword"));
+const BuilderChangePassword = lazyWithRetry(() => import("@/pages/builder/BuilderChangePassword"));
+const BuilderSelectOrganisation = lazyWithRetry(() => import("@/pages/builder/BuilderSelectOrganisation"));
+const BuilderTerms = lazyWithRetry(() => import("@/pages/builder/BuilderTerms"));
+const BuilderOnboarding = lazyWithRetry(() => import("@/pages/builder/BuilderOnboarding"));
+const BuilderDashboard = lazyWithRetry(() => import("@/pages/builder/BuilderDashboard"));
+const BuilderSettings = lazyWithRetry(() => import("@/pages/builder/BuilderSettings"));
+const BuilderProjects = lazyWithRetry(() => import("@/pages/builder/BuilderProjects"));
+const BuilderProjectDetail = lazyWithRetry(() => import("@/pages/builder/BuilderProjectDetail"));
+const BuilderInventory = lazyWithRetry(() => import("@/pages/builder/BuilderInventory"));
+const BuilderUnitDetail = lazyWithRetry(() => import("@/pages/builder/BuilderUnitDetail"));
+const BuilderTransactions = lazyWithRetry(() => import("@/pages/builder/BuilderTransactions"));
+const BuilderTransactionDetail = lazyWithRetry(() => import("@/pages/builder/BuilderTransactionDetail"));
+const BuilderPipeline = lazyWithRetry(() => import("@/pages/builder/BuilderPipeline"));
+const BuilderConstruction = lazyWithRetry(() => import("@/pages/builder/BuilderConstruction"));
+const BuilderConstructionDetail = lazyWithRetry(() => import("@/pages/builder/BuilderConstructionDetail"));
+const BuilderDeliveryDetail = lazyWithRetry(() => import("@/pages/builder/BuilderDeliveryDetail"));
+const BuilderDocuments = lazyWithRetry(() => import("@/pages/builder/BuilderDocuments"));
+const BuilderMessages = lazyWithRetry(() => import("@/pages/builder/BuilderMessages"));
+const BuilderTasks = lazyWithRetry(() => import("@/pages/builder/BuilderTasks"));
+const BuilderNotifications = lazyWithRetry(() => import("@/pages/builder/BuilderNotifications"));
+const BuilderActivity = lazyWithRetry(() => import("@/pages/builder/BuilderActivity"));
 import { FinancePortalProtectedRoute } from "@/components/finance-portal/FinancePortalProtectedRoute";
 import { FinancePortalLayout } from "@/components/finance-portal/FinancePortalLayout";
-import FinancePortalLogin from "./pages/finance-portal/FinancePortalLogin";
-import FinancePortalAcceptInvite from "./pages/finance-portal/FinancePortalAcceptInvite";
-import FinancePortalChangePassword from "./pages/finance-portal/FinancePortalChangePassword";
-import FinancePortalDashboard from "./pages/finance-portal/FinancePortalDashboard";
-import FinancePortalClients from "./pages/finance-portal/FinancePortalClients";
-import FinancePortalClientProfile from "./pages/finance-portal/FinancePortalClientProfile";
-import FinancePortalMessages from "./pages/finance-portal/FinancePortalMessages";
-import FinancePortalEarnings from "./pages/finance-portal/FinancePortalEarnings";
-import FinancePortalLenderIntelligence from "./pages/finance-portal/FinancePortalLenderIntelligence";
-import FinancePortalReports from "./pages/finance-portal/FinancePortalReports";
-import FinancePortalSettings from "./pages/finance-portal/FinancePortalSettings";
+const FinancePortalLogin = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalLogin"));
+const FinancePortalAcceptInvite = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalAcceptInvite"));
+const FinancePortalChangePassword = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalChangePassword"));
+const FinancePortalDashboard = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalDashboard"));
+const FinancePortalClients = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClients"));
+const FinancePortalClientProfile = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClientProfile"));
+const FinancePortalMessages = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalMessages"));
+const FinancePortalEarnings = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalEarnings"));
+const FinancePortalLenderIntelligence = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalLenderIntelligence"));
+const FinancePortalReports = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalReports"));
+const FinancePortalSettings = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalSettings"));
 
-import FinancePortalPurchaseFiles from "./pages/finance-portal/FinancePortalPurchaseFiles";
-import FinancePortalPurchaseFileDetail from "./pages/finance-portal/FinancePortalPurchaseFileDetail";
-import FinancePortalClientInbox from "./pages/finance-portal/FinancePortalClientInbox";
-import FinancePortalPipeline from "./pages/finance-portal/FinancePortalPipeline";
-import FinancePortalInsights from "./pages/finance-portal/FinancePortalInsights";
-import PartnerReferralInbox from "./pages/finance-portal/PartnerReferralInbox";
-import AmlCaseSnapshot from "./pages/finance-portal/AmlCaseSnapshot";
+const FinancePortalPurchaseFiles = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalPurchaseFiles"));
+const FinancePortalPurchaseFileDetail = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalPurchaseFileDetail"));
+const FinancePortalClientInbox = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClientInbox"));
+const FinancePortalPipeline = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalPipeline"));
+const FinancePortalInsights = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalInsights"));
+const PartnerReferralInbox = lazyWithRetry(() => import("./pages/finance-portal/PartnerReferralInbox"));
+const AmlCaseSnapshot = lazyWithRetry(() => import("./pages/finance-portal/AmlCaseSnapshot"));
 
 
 /**
@@ -254,6 +255,24 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * Shown while a route's chunk is in flight.
+ *
+ * Every page is now its own chunk, so this is the one thing a reader can see
+ * between clicking a link and the page arriving. Deliberately quiet — a
+ * centred pulse on the app's own surface rather than a spinner that flashes
+ * on every navigation — and it uses semantic tokens so it re-themes with the
+ * brand like everything else.
+ */
+const RouteFallback = () => (
+  <div className="flex min-h-[60vh] w-full items-center justify-center" aria-busy="true">
+    <div className="flex flex-col items-center gap-3">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-border border-t-primary motion-reduce:animate-none" />
+      <span className="text-xs font-medium text-muted-foreground">Loading…</span>
+    </div>
+  </div>
+);
 
 const CalendarErrorFallback = () => (
   <div className="p-6">
@@ -311,6 +330,7 @@ const App = () => (
                       <Toaster />
                       <Sonner />
                       <BuildVersionWatcher />
+                      <Suspense fallback={<RouteFallback />}>
                       <Routes>
                         {/* Public shareable answer link (no auth) */}
                         <Route path="/qa/shared/:token" element={<SharedQAAnswer />} />
@@ -640,6 +660,7 @@ const App = () => (
                         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                         <Route path="*" element={<NotFound />} />
                       </Routes>
+                      </Suspense>
                     </SearchProvider>
                   </ComparisonProvider>
                 </NotificationsProvider>
