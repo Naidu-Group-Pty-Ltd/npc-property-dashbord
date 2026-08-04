@@ -170,13 +170,23 @@ describe('validateSpine', () => {
   });
 
   it('rejects a render that came in short of its band', () => {
+    // On `financial-analysis`, not `investment-compass`.
+    //
+    // This used a five-page investment-compass spine against that archetype's
+    // declared floor of 34 — a floor that had been written before anything
+    // rendered against it. When the format was implemented and measured, the
+    // real minimum turned out to be six pages: a location-only report with no
+    // score and no financial model is a legitimate and common shape, and a
+    // floor of 34 would have refused every one of them. The floor is now the
+    // arithmetic minimum, so a five-page spine is inside the band and this
+    // assertion needed a vehicle that is genuinely short of its own.
     const spine = buildSpine({
-      archetype: 'investment-compass',
-      chapters: [{ id: 'c.1', title: 'Only section', pageBudget: 2 }],
+      archetype: 'financial-analysis',
+      chapters: [{ id: 'c.1', title: 'Only section', pageBudget: 1 }],
     });
-    const problems = validateSpine('investment-compass', spine).join('\n');
-    expect(problems).toContain('outside investment-compass');
-    expect(spinePageBudget(spine)).toBe(5);
+    const problems = validateSpine('financial-analysis', spine).join('\n');
+    expect(problems).toContain('outside financial-analysis');
+    expect(spinePageBudget(spine)).toBe(4);
   });
 
   it('rejects a slot the archetype does not permit', () => {
