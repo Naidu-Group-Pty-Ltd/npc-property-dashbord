@@ -28,6 +28,7 @@ import {
   MAX_SOURCE_BYTES,
   sourceKindFor,
 } from './route.pure';
+import type { ConversionFidelity } from './enrich.pure';
 import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
 
 /** Shared so the converter page can invalidate the list after a render. */
@@ -137,6 +138,8 @@ export function renderConvertedTemplate(args: {
   format: ReportArchetypeId;
   binding: unknown;
   designSystemId: string | null;
+  /** How much licence the design pass has. The route defaults it if absent. */
+  fidelity?: ConversionFidelity;
 }): Promise<ConvertRenderResponse> {
   return call<ConvertRenderResponse>({ action: 'render', ...args }, 240_000);
 }

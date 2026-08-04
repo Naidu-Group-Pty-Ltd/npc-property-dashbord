@@ -10,6 +10,7 @@
  * Nothing here formats a date: relative time needs a clock, and a clock in a
  * pure module is a module that cannot be tested.
  */
+import { fidelityLabel } from './fidelityChoices';
 import type { ConvertListRow } from './route.pure';
 
 export type ConversionTone = 'success' | 'danger' | 'info' | 'neutral';
@@ -65,6 +66,22 @@ export function describeConversionRow(row: ConvertListRow): ConversionRowView {
     chips.push(`+${row.appendixSections} appendix`);
   }
   if (row.unstructured) chips.push('no headings');
+
+  // Whether a model designed this one, and how much of it.
+  //
+  // Only on rows that reached a render, and only when a pass was attempted: a
+  // row from before the design pass existed has a null model, and captioning it
+  // "0 designed" would report a failure that never happened. `Not designed`
+  // appears only when a pass ran and every chapter fell back — which is the
+  // case worth knowing about.
+  if (row.enrichmentModel) {
+    chips.push(row.enrichedChapters > 0 ? `${row.enrichedChapters} designed` : 'Not designed');
+  }
+  const fidelity = fidelityLabel(row.fidelity);
+  if (fidelity) chips.push(fidelity);
+  // Only the scorer is worth a chip. A model-proposed binding is the norm; a
+  // word-overlap one is the exception and deserves more scrutiny on review.
+  if (row.bindingSource === 'scorer') chips.push('matched on wording');
 
   const size = formatBytes(row.bytes);
   if (size) chips.push(size);

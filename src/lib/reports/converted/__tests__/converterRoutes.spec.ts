@@ -267,6 +267,23 @@ describe('the PDF extraction prompt', () => {
   it('names the file, so a model has the document title if the page does not', () => {
     expect(prompt).toContain('Borrowing Power.pdf');
   });
+
+  it('tells the model an eyebrow label is not a heading', () => {
+    // The failure this rule exists for: reading a page, a model maps type size
+    // to heading level, so `SECTION 01` set small above a large chapter title
+    // comes back as that title's *parent*. Every chapter of a real Snapshot
+    // arrived inverted this way. `extractStructure` folds them anyway, but the
+    // repair should not be the only thing standing between us and it.
+    expect(prompt).toContain('SECTION 01');
+    expect(prompt).toContain('not by type size');
+    expect(prompt.toLowerCase()).toContain('siblings');
+  });
+
+  it('tells the model the cover is front matter, not sections', () => {
+    // A masthead and a client name set large on page one came back as two `#`
+    // headings owning nothing, which then defined the shallowest level.
+    expect(prompt.toLowerCase()).toContain('front matter');
+  });
 });
 
 describe('parseBrandRequest', () => {
@@ -419,8 +436,18 @@ describe('source of truth', () => {
 
   it('keeps the route contracts as one-line bridges to the Edge Function modules', () => {
     // Two copies of "what a request is" is how a client and a server stop
-    // agreeing about it.
-    for (const rel of ['reports/converted/route.pure.ts', 'brandDesign/route.pure.ts']) {
+    // agreeing about it. The design-pass modules are on the list for a stronger
+    // reason: `enrich.pure.ts` holds the block vocabulary, `renderBlocks` maps
+    // it to primitives and `faithfulness` checks the output — a browser copy of
+    // any of the three would let the screen describe a document the renderer is
+    // not producing.
+    for (const rel of [
+      'reports/converted/route.pure.ts',
+      'reports/converted/enrich.pure.ts',
+      'reports/converted/renderBlocks.pure.ts',
+      'reports/converted/faithfulness.pure.ts',
+      'brandDesign/route.pure.ts',
+    ]) {
       const source = bridge(rel);
       const code = source.split('\n').filter((l) => l.trim() && !l.trim().startsWith('*')
         && !l.trim().startsWith('/*') && !l.trim().startsWith('//'));

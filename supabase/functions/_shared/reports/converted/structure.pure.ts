@@ -75,6 +75,15 @@ export interface ExtractedStructure {
     charsOmitted: number;
     /** True when the source had no headings at all. */
     unstructured: boolean;
+    /**
+     * Eyebrow headings folded into the title beneath them.
+     *
+     * `SECTION 01` over `Capacity at a glance` arrives from a transcription as
+     * two headings with the label at the *shallower* level. Counted so the
+     * review screen can say the structure was repaired rather than leaving a
+     * person to wonder why their section list looks different from their PDF.
+     */
+    labelsFolded: number;
   };
 }
 
@@ -96,6 +105,18 @@ function readHeading(line: string): { level: number; title: string } | null {
 const TABLE_ROW = /^\s*\|.*\|\s*$/;
 
 /**
+ * A heading that is a *label* for the heading beneath it, not a section.
+ *
+ * `SECTION 01`, `Part Two`, `Step 3`, a bare `04`, a bare `IV`. These are
+ * eyebrows: printed small above a large title, and transcribed back as the
+ * shallower heading because a model reading a page maps size to level. Matching
+ * on the wording alone is not enough — a chapter genuinely called "Section 8 of
+ * the Act" owns a body, and the fold only applies to headings that own nothing.
+ */
+const LABEL_HEADING =
+  /^(?:section|chapter|part|step|stage|phase|appendix|schedule)?\s*(?:\d{1,3}|[ivxlcdm]{1,6}|one|two|three|four|five|six|seven|eight|nine|ten)?\s*[.:)-]?$/i;
+
+/**
  * Read an uploaded template's Markdown into sections.
  *
  * Never throws. A source with no headings at all produces one section holding
@@ -109,79 +130,141 @@ export function extractStructure(markdown: string, fallbackTitle = ''): Extracte
 
   const lines = source.split('\n');
   const sections: ExtractedSection[] = [];
-  const notices = { flattened: 0, tooShort: 0, charsOmitted: omittedBySource, unstructured: false };
+  const notices = {
+    flattened: 0,
+    tooShort: 0,
+    charsOmitted: omittedBySource,
+    unstructured: false,
+    labelsFolded: 0,
+  };
 
   let title = clean(fallbackTitle);
   let headingCount = 0;
-  let current: { depth: 1 | 2; title: string; body: string[] } | null = null;
-  let shallowest = 6;
 
-  // Pass one: what is the shallowest heading level the source actually uses?
-  // Templates open at `#` or at `##` about equally often, and binding depth has
-  // to be relative or half the corpus binds nothing.
-  const levels: number[] = [];
+  // ── Pass one — every heading with the body it owns ────────────────────────
+  //
+  // Collected before anything is decided, because the decisions below need to
+  // see whether a heading owns content and what follows it. The previous
+  // single-streaming-pass version could not: it had to commit to a depth the
+  // moment it read a heading.
+  const raw: Array<{ level: number; title: string; body: string[] }> = [];
+  let open: { level: number; title: string; body: string[] } | null = null;
+  const preamble: string[] = [];
   for (const line of lines) {
     const h = readHeading(line);
-    if (h) { headingCount += 1; levels.push(h.level); shallowest = Math.min(shallowest, h.level); }
+    if (!h) {
+      (open ? open.body : preamble).push(line);
+      continue;
+    }
+    headingCount += 1;
+    open = { level: h.level, title: h.title, body: [] };
+    raw.push(open);
   }
 
-  // A lone heading at the shallowest level is the document's title, not a
-  // section, and the baseline is the level below it.
+  // ── Pass two — fold the labels ────────────────────────────────────────────
   //
-  // Without this the overwhelmingly common shape — one `#` title over a run of
-  // `##` sections — makes every real section depth 2, so nothing is a top-level
-  // section and the review screen reports "0 sections, 8 sub-sections" for a
-  // document that plainly has eight sections. The Report Q&A migration hit the
-  // same thing in `chapterLevelOf` and resolved it the same way: when the
-  // shallowest level holds a single heading, fall to the next one.
-  const atShallowest = levels.filter((l) => l === shallowest).length;
-  const deeper = levels.filter((l) => l > shallowest);
-  const titleIsLone = atShallowest === 1 && levels[0] === shallowest && deeper.length > 0;
-  const baseline = titleIsLone ? Math.min(...deeper) : shallowest;
+  // A well-designed report prints a small eyebrow above a large title —
+  // `SECTION 01` over `Capacity at a glance`. A model transcribing that PDF maps
+  // *visual size* to heading level, so the eyebrow comes back as `##` and the
+  // real title as `#`. The hierarchy arrives inverted.
+  //
+  // The tell is reliable: the eyebrow owns no body at all, because the title
+  // heading follows it immediately. So a heading that owns nothing and is
+  // followed by another heading is furniture, not a section — and when it reads
+  // like a section label, the heading beneath it inherits the shallower of the
+  // two levels, which is what puts sibling chapters back on one level.
+  //
+  // Measured against the run that prompted this: a Borrowing Capacity Snapshot
+  // came back with `# masthead`, `# client name`, `## Section 01`,
+  // `# Capacity at a glance`, `## Expenses and commitments` … and bound 3 of 7
+  // chapters with 3 sections dumped in the appendix.
+  const folded: Array<{ level: number; title: string; body: string[] }> = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const entry = raw[i];
+    const bodyChars = entry.body.join('\n').trim().length;
+    const next = raw[i + 1];
+    if (next && bodyChars < MIN_SECTION_CHARS && LABEL_HEADING.test(entry.title)) {
+      // The eyebrow. Its level is the one the design intended for the title
+      // beneath it, so hand it over and drop the label itself.
+      next.level = Math.min(next.level, entry.level);
+      notices.labelsFolded += 1;
+      continue;
+    }
+    folded.push(entry);
+  }
 
-  const flush = () => {
-    if (!current) return;
-    const body = current.body.join('\n').trim();
+  // ── Pass three — level from the headings that own content ─────────────────
+  //
+  // Empty headings are excluded from the baseline. A masthead or a running head
+  // that survived transcription owns nothing, and letting it define the
+  // shallowest level pushes every real chapter a rung deeper.
+  // This replaces the old `titleIsLone` rule rather than joining it.
+  //
+  // That rule said: when exactly one heading sits at the shallowest level and
+  // it comes first, it is the document's title, so start the baseline one level
+  // down. It was a proxy for the thing actually being asked — *does this
+  // heading own any content?* — and excluding empty headings answers that
+  // directly, in every case the proxy covered and two it did not: a `# Title`
+  // over `## A` / `### A.1` (where the proxy pushed the baseline to 3 and
+  // flattened the real nesting), and a title that *does* carry a preamble
+  // (which the proxy discarded, because a heading above the baseline opens no
+  // section).
+  const owning = folded.filter((e) => e.body.join('\n').trim().length >= MIN_SECTION_CHARS);
+  const levels = (owning.length ? owning : folded).map((e) => e.level);
+  const baseline = levels.length ? Math.min(...levels) : 1;
+
+  // Naming the document is a separate question from levelling it. A first
+  // heading sitting alone above everything else is the title whether or not it
+  // also carries a preamble; when it does, it is *also* a section, and the
+  // baseline above lets it be one. The rule this replaced could only answer one
+  // of those and answered it by discarding the preamble.
+  const first = folded[0];
+  if (!title && first && folded.length > 1 && folded.slice(1).every((e) => e.level > first.level)) {
+    title = first.title;
+  }
+
+  const push = (depth: 1 | 2, sectionTitle: string, bodyLines: string[]) => {
+    const body = bodyLines.join('\n').trim();
     const capped = body.length > MAX_SECTION_CHARS ? body.slice(0, MAX_SECTION_CHARS) : body;
     notices.charsOmitted += body.length - capped.length;
-    if (capped.length < MIN_SECTION_CHARS) { notices.tooShort += 1; current = null; return; }
+    if (capped.length < MIN_SECTION_CHARS) { notices.tooShort += 1; return; }
     const tableLines = capped.split('\n').filter((l) => TABLE_ROW.test(l)).length;
     sections.push({
       index: sections.length,
-      depth: current.depth,
-      title: current.title,
+      depth,
+      title: sectionTitle,
       markdown: capped,
       chars: capped.length,
       tables: tableLines >= 2 ? Math.max(1, Math.round(tableLines / 4)) : 0,
       tabular: tableLines >= 2 && tableLines >= capped.split('\n').filter(Boolean).length / 2,
     });
-    current = null;
   };
 
-  for (const line of lines) {
-    const h = readHeading(line);
-    if (!h) { if (current) current.body.push(line); continue; }
+  // ── Pass four — emit ──────────────────────────────────────────────────────
+  let carry: { depth: 1 | 2; title: string; body: string[] } | null = null;
+  for (const entry of folded) {
+    if (sections.length >= MAX_SECTIONS) break;
+    const relative = entry.level - baseline + 1;
 
-    const relative = h.level - baseline + 1;
-    // Above the baseline: this is the lone title heading. It names the document
-    // and opens no section.
     if (relative < 1) {
-      flush();
-      if (!title) title = h.title;
+      // Above the baseline: the document's own title. It opens no section.
+      if (carry) { push(carry.depth, carry.title, carry.body); carry = null; }
+      if (!title) title = entry.title;
       continue;
     }
     if (relative > MAX_BIND_DEPTH) {
-      // Too deep to be a chapter. Kept in the prose of whichever section it
-      // falls in, so nothing is lost — only its candidacy.
+      // Too deep to be a chapter. Its heading and body stay in the prose of
+      // whichever section it falls in, so nothing is lost — only its candidacy.
       notices.flattened += 1;
-      if (current) current.body.push(line);
+      if (carry) {
+        carry.body.push(`${'#'.repeat(entry.level)} ${entry.title}`, ...entry.body);
+      }
       continue;
     }
-    flush();
-    current = { depth: relative === 1 ? 1 : 2, title: h.title, body: [] };
-    if (sections.length >= MAX_SECTIONS) { current = null; break; }
+    if (carry) push(carry.depth, carry.title, carry.body);
+    carry = { depth: relative === 1 ? 1 : 2, title: entry.title, body: [...entry.body] };
   }
-  flush();
+  if (carry && sections.length < MAX_SECTIONS) push(carry.depth, carry.title, carry.body);
 
   if (!headingCount) {
     notices.unstructured = true;

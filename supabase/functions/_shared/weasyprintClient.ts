@@ -115,21 +115,97 @@ export async function renderPdf(
   }
 }
 
+/** Latin-1 decode. Keeps byte values intact; the tokens matched are ASCII. */
+function asLatin1(bytes: Uint8Array): string {
+  let text = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    text += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return text;
+}
+
+/** `/Type /Page` outside a `/Pages` node is one page. Stable across producers. */
+function countPageTokens(text: string): number {
+  return (text.match(/\/Type\s*\/Page[^s]/g) ?? []).length;
+}
+
 /**
  * The number of pages in a PDF, or `null`.
  *
- * Counted from the bytes rather than asked of a library: `/Type /Page` outside a
- * `/Pages` node is one page, and that is stable across producers. Recorded on
- * the render row so a document that silently lost its audit trail is visible as
- * a page count that moved, without opening the file.
+ * Counted from the bytes rather than asked of a library.
+ *
+ * **This returns `null` for every document WeasyPrint produces**, and did so
+ * for every render in this programme until it was measured. WeasyPrint packs
+ * its page objects into compressed object streams — the raw bytes hold
+ * `/Type /ObjStm … /Filter /FlateDecode` and the `/Type /Page` token appears
+ * nowhere outside them — so the scan finds zero matches and, by its own rule,
+ * says it does not know. It was not wrong; it was blind. Use
+ * `countPdfPagesAsync`, which inflates the streams first.
+ *
+ * Kept, un-deprecated, because it is correct and synchronous for an uncompressed
+ * PDF and it is the first thing the async version tries.
  */
 export function countPdfPages(pdf: Uint8Array): number | null {
-  // Latin-1 keeps byte values intact; the tokens being matched are ASCII.
-  let text = '';
-  const CHUNK = 0x8000;
-  for (let i = 0; i < pdf.length; i += CHUNK) {
-    text += String.fromCharCode(...pdf.subarray(i, i + CHUNK));
+  const matches = countPageTokens(asLatin1(pdf));
+  return matches ? matches : null;
+}
+
+/**
+ * `/Type /ObjStm` … `stream` … `endstream`, capturing the dictionary and the
+ * payload separately.
+ *
+ * The dictionary is captured because it carries `/Length`, and `/Length` is the
+ * only exact answer. Slicing at `endstream` overshoots by the end-of-line the
+ * spec puts before the keyword — one byte here — and a deflate stream handed
+ * one trailing byte fails with `failed to write whole buffer` rather than
+ * inflating what it can. That single byte is why the first version of this
+ * counted zero pages in a PDF whose object stream inflated perfectly under
+ * `zlib.decompress`.
+ */
+const OBJ_STREAM = /\/Type\s*\/ObjStm([\s\S]{0,400}?)stream\r?\n([\s\S]*?)endstream/g;
+
+/**
+ * The number of pages, looking inside compressed object streams.
+ *
+ * Async because inflating needs `DecompressionStream`, which is a stream API.
+ * That is the entire reason this is a second function rather than a fix to the
+ * first: every caller records the count on a row it is already `await`ing a
+ * write to, so the cost is nothing, but the signature change is not free.
+ *
+ * Still `null` on genuine failure — an encrypted PDF, a producer using a filter
+ * other than Flate, a truncated file. A wrong page count is worse than an
+ * absent one: the column exists so that a document which silently lost its
+ * audit trail shows up as a count that moved, and a fabricated number defeats
+ * exactly that.
+ */
+export async function countPdfPagesAsync(pdf: Uint8Array): Promise<number | null> {
+  const raw = asLatin1(pdf);
+  const direct = countPageTokens(raw);
+  if (direct) return direct;
+
+  let found = 0;
+  for (const match of raw.matchAll(OBJ_STREAM)) {
+    const declared = Number(/\/Length\s+(\d+)/.exec(match[1] ?? '')?.[1]);
+    let payload = match[2];
+    if (!payload) continue;
+    payload = Number.isFinite(declared) && declared > 0 && declared <= payload.length
+      ? payload.slice(0, declared)
+      // No `/Length` — an indirect one, which is legal. Drop the end-of-line
+      // the spec requires before `endstream` and hope the data does not end in
+      // one itself.
+      : payload.replace(/\r?\n$/, '');
+    const bytes = new Uint8Array(payload.length);
+    for (let i = 0; i < payload.length; i += 1) bytes[i] = payload.charCodeAt(i) & 0xff;
+    try {
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+      const inflated = new Uint8Array(await new Response(stream).arrayBuffer());
+      found += countPageTokens(asLatin1(inflated));
+    } catch {
+      // One unreadable stream is not a reason to abandon the others; a PDF
+      // mixing filters still yields a count from the streams that did inflate.
+      continue;
+    }
   }
-  const matches = text.match(/\/Type\s*\/Page[^s]/g);
-  return matches ? matches.length : null;
+  return found || null;
 }
