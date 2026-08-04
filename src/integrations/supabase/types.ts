@@ -33916,6 +33916,10 @@ export type Database = {
           role_name: string
         }[]
       }
+      aml_activate_client_open_case: {
+        Args: { p_case: Json; p_client_id: string }
+        Returns: Json
+      }
       append_migration_upload_chunk: {
         Args: {
           _chunk_index: number
