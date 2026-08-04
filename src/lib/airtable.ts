@@ -1,5 +1,6 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { INTAKE_SORT_FIELD } from '@/lib/airtableIntakeFields';
+import type { ImageCandidate } from '@/lib/listingImages';
 
 /** The six per-domain quality scores the intake pipeline records. */
 export interface ListingConfidences {
@@ -164,6 +165,24 @@ export interface PropertyListing {
   sourceWebLink?: string | null;
   alternateWebLinks?: string[];
   sourceType?: string | null;
+
+  /* -- Photographs ---------------------------------------------------------
+   * `images` is the raw `Listing Images` attachment array and stays exactly as
+   * it was. `imageCandidates` is the resolved set the image library should
+   * harvest: attachments plus the scraped `Listing Image URLs` column, ordered
+   * best-source-first with plans pushed to the back.
+   *
+   * `imagesCapturedAt` is the freshness signal. It answers "how recent are
+   * these photos", which `createdTime` cannot — a record filed in January can
+   * have its photos re-scraped in August.
+   */
+  imageCandidates?: ImageCandidate[];
+  imagesCapturedAt?: string | null;
+  imageCount?: number;
+  /** What intake counted, which can exceed `imageCount` if some URLs were malformed. */
+  reportedImageCount?: number | null;
+  imageSource?: string | null;
+  primaryImageUrl?: string | null;
   senderEmail?: string | null;
   senderName?: string | null;
   senderDomain?: string | null;

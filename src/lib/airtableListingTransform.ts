@@ -11,10 +11,12 @@
 export {
   projectAirtableRecord,
   resolveConfidences,
+  resolveListingImages,
   resolvePrice,
   type AirtableSourceRecord,
   type ListingConfidences,
   type PriceBasis,
   type ProjectedListing,
+  type ResolvedListingImages,
   type ResolvedPrice,
 } from '../../supabase/functions/_shared/airtableListing.pure';

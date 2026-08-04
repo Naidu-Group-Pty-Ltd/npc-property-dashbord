@@ -8,9 +8,12 @@ import {
   isSignedUrlUsable,
   nextRefreshAt,
   normaliseImageCandidates,
+  orderCandidatesForDisplay,
+  parseImageUrlList,
   pickHeroImage,
   toImageCandidate,
   type ImageCandidate,
+  type ImageOrigin,
   type StoredListingImage,
 } from '@/lib/listingImages';
 
@@ -314,5 +317,120 @@ describe('isSignedUrlUsable', () => {
     expect(isSignedUrlUsable(image, NOW)).toBe(true);
     expect(isSignedUrlUsable(image, NOW + 90_000)).toBe(false);
     expect(isSignedUrlUsable(image, NOW + 200_000)).toBe(false);
+  });
+});
+
+describe('parseImageUrlList', () => {
+  it('reads the newline-separated column intake writes', () => {
+    expect(
+      parseImageUrlList('https://a.test/1.jpg\nhttps://a.test/2.jpg\nhttps://a.test/3.jpg'),
+    ).toEqual(['https://a.test/1.jpg', 'https://a.test/2.jpg', 'https://a.test/3.jpg']);
+  });
+
+  it('survives the separators a round trip through a spreadsheet introduces', () => {
+    expect(parseImageUrlList('https://a.test/1.jpg, https://a.test/2.jpg;https://a.test/3.jpg')).toEqual([
+      'https://a.test/1.jpg',
+      'https://a.test/2.jpg',
+      'https://a.test/3.jpg',
+    ]);
+  });
+
+  it('keeps intake ordering, because the first URL is the hero', () => {
+    expect(parseImageUrlList('https://a.test/c.jpg\nhttps://a.test/a.jpg')).toEqual([
+      'https://a.test/c.jpg',
+      'https://a.test/a.jpg',
+    ]);
+  });
+
+  it('drops anything that is not a fetchable absolute URL', () => {
+    expect(
+      parseImageUrlList('https://a.test/1.jpg\n/relative.jpg\ndata:image/png;base64,AA\nnot a url'),
+    ).toEqual(['https://a.test/1.jpg']);
+  });
+
+  it('de-duplicates and tolerates prose punctuation', () => {
+    expect(parseImageUrlList('(https://a.test/1.jpg), https://a.test/1.jpg.')).toEqual([
+      'https://a.test/1.jpg',
+    ]);
+  });
+
+  it('answers [] for the shapes an empty column arrives as', () => {
+    expect(parseImageUrlList(null)).toEqual([]);
+    expect(parseImageUrlList(undefined)).toEqual([]);
+    expect(parseImageUrlList('')).toEqual([]);
+    expect(parseImageUrlList(42)).toEqual([]);
+  });
+});
+
+describe('toImageCandidate origin round trip', () => {
+  it('keeps an origin the candidate already carries', () => {
+    // The resolve endpoint re-normalises candidates the client has already
+    // classified. Overriding them collapsed the ranking that picks the hero.
+    const out = toImageCandidate(
+      { url: 'https://maps.test/streetview.jpg', origin: 'street_view' },
+      'airtable',
+    );
+    expect(out?.origin).toBe('street_view');
+  });
+
+  it('falls back to the requested origin when the object does not know', () => {
+    expect(toImageCandidate({ url: 'https://a.test/1.jpg' }, 'scraped')?.origin).toBe('scraped');
+    expect(toImageCandidate({ url: 'https://a.test/1.jpg', origin: 'nonsense' }, 'scraped')?.origin).toBe(
+      'scraped',
+    );
+  });
+
+  it('accepts externalId as well as an Airtable attachment id', () => {
+    expect(toImageCandidate({ url: 'https://a.test/1.jpg', externalId: 'attXYZ' }, 'airtable')?.externalId).toBe(
+      'attXYZ',
+    );
+  });
+});
+
+describe('orderCandidatesForDisplay', () => {
+  const candidate = (url: string, origin: ImageOrigin) => ({ url, origin }) as ImageCandidate;
+
+  it('puts an agent’s own photographs ahead of a Street View fallback', () => {
+    // The failure this exists to stop: a listing is geocoded before it is
+    // photographed, picks up a Street View frame at position 0, and keeps a
+    // picture of the kerb as its hero after the real photos arrive.
+    const out = orderCandidatesForDisplay([
+      candidate('https://maps.test/sv.jpg', 'street_view'),
+      candidate('https://cdn.test/front.jpg', 'airtable'),
+      candidate('https://cdn.test/kitchen.jpg', 'scraped'),
+    ]);
+    expect(out.map((c) => c.url)).toEqual([
+      'https://cdn.test/front.jpg',
+      'https://cdn.test/kitchen.jpg',
+      'https://maps.test/sv.jpg',
+    ]);
+  });
+
+  it('is stable within one origin, so the agent’s ordering survives', () => {
+    const out = orderCandidatesForDisplay([
+      candidate('https://cdn.test/c.jpg', 'scraped'),
+      candidate('https://cdn.test/a.jpg', 'scraped'),
+      candidate('https://cdn.test/b.jpg', 'scraped'),
+    ]);
+    expect(out.map((c) => c.url)).toEqual([
+      'https://cdn.test/c.jpg',
+      'https://cdn.test/a.jpg',
+      'https://cdn.test/b.jpg',
+    ]);
+  });
+
+  it('still pushes floor plans to the back', () => {
+    const out = orderCandidatesForDisplay([
+      candidate('https://cdn.test/floorplan-1.jpg', 'airtable'),
+      candidate('https://cdn.test/lounge.jpg', 'scraped'),
+    ]);
+    expect(out.map((c) => c.url)).toEqual([
+      'https://cdn.test/lounge.jpg',
+      'https://cdn.test/floorplan-1.jpg',
+    ]);
+  });
+
+  it('leaves an empty set alone', () => {
+    expect(orderCandidatesForDisplay([])).toEqual([]);
   });
 });
