@@ -69,6 +69,25 @@ export interface PartnerWorkspaceClient {
   }): Promise<PartnerClientResult<{ assessment: unknown }>>;
   listDeliveries(linkId: string): Promise<PartnerClientResult<{ deliveries: unknown[] }>>;
   getAuditReceipt(linkId: string): Promise<PartnerClientResult<{ receipt: Record<string, unknown> }>>;
+  /**
+   * Stage B: controlled, expiring, audited access to ONE approved P3
+   * evidence object. Optional — where a transport does not provide it the
+   * UI shows no access control at all (fails closed). The server derives
+   * the organisation from the session and returns a short-lived signed URL
+   * that is displayed once and never stored.
+   */
+  getEvidenceAccess?(input: {
+    linkId: string; deliveryId: string; retrievalReason: string;
+  }): Promise<PartnerClientResult<{ access: PartnerEvidenceAccess }>>;
+}
+
+export interface PartnerEvidenceAccess {
+  url: string;
+  filename: string;
+  mime_type: string | null;
+  expires_at: string;
+  record_code: string;
+  safe_label: string;
 }
 
 export interface PartnerRecordsRequestView {

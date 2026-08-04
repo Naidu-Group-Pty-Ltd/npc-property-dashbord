@@ -13,6 +13,7 @@ import { ComplianceSummaryCard } from "./ComplianceSummaryCard";
 import { ProcedureEvidenceViewer } from "./ProcedureEvidenceViewer";
 import { IndependentAssessmentForm } from "./IndependentAssessmentForm";
 import { RecordsRequestBuilder } from "./RecordsRequestBuilder";
+import { EvidenceDeliveriesPanel } from "./EvidenceDeliveriesPanel";
 import { TaskDeadlineRail } from "./TaskDeadlineRail";
 import { AuditReceiptPanel } from "./AuditReceiptPanel";
 import { ClarificationChannel } from "./ClarificationChannel";
@@ -150,6 +151,9 @@ export function PartnerComplianceWorkspace({
             <RecordsRequestBuilder
               workspace={workspace} requests={requests} client={client} onSubmitted={refresh}
             />
+          )}
+          {adapter.panels.deliveries && (
+            <EvidenceDeliveriesPanel workspace={workspace} client={client} />
           )}
           {adapter.panels.auditReceipt && (
             <AuditReceiptPanel workspace={workspace} client={client} />

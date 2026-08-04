@@ -59,6 +59,7 @@ import {
   evaluateMaterialChange,
   materialInputsFromV2Payload,
 } from "../_shared/aml/partnerEvents.ts";
+import { evaluateEvidenceObjectDelivery } from "../_shared/aml/partnerRetention.ts";
 import {
   DEFAULT_SLA_TARGETS,
   REGISTER_DEFS,
@@ -262,7 +263,15 @@ const PARTNER_WORKSPACE_OPS = new Set([
   // obligations complete through record_partner_determination, never here).
   "list_partner_refresh_obligations",
   "list_partner_notifications",
+  // Pre-rollout Stage B: controlled, expiring, audited P3 evidence access.
+  "get_partner_evidence_delivery_access",
 ]);
+
+/** Server-controlled signed-access lifetime for evidence objects. The body
+ * cannot lengthen it; nothing persists the URL. */
+const EVIDENCE_ACCESS_TTL_SECONDS = 300;
+/** Evidence-access attempts allowed per membership per minute. */
+const EVIDENCE_ACCESS_RATE_LIMIT = 10;
 
 const WORKSPACE_PORTAL_FLAGS: Record<string, string> = {
   finance: "aml_partner_workspace_finance",
@@ -676,6 +685,231 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .eq("partner_case_link_id", link.id).order("delivered_at", { ascending: false }).limit(100);
         if (error) throw error;
         return jr({ deliveries: data ?? [] });
+      }
+
+      if (op === "get_partner_evidence_delivery_access") {
+        // Controlled, expiring, audited access to ONE approved P3 evidence
+        // object (Stage B). The partner organisation comes from the session
+        // resolver above — the body cannot name an organisation or tenant.
+        // Every attempt, approved or denied, lands in the access log with a
+        // safe result code; the signed URL is returned once and never
+        // persisted anywhere.
+        const deliveryId = String(body.delivery_id ?? "");
+        const retrievalReason = String(body.retrieval_reason ?? "").trim();
+        const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
+
+        const logAttempt = async (
+          result: "approved" | "denied" | "failed",
+          detailExtra: Record<string, unknown>,
+          grantId: string | null = null,
+          caseId: string | null = link?.case_id ?? null,
+        ) => {
+          if (!caseId) return; // nothing safe to anchor the log to
+          await admin.schema("aml").from("reliance_access_log").insert({
+            grant_id: grantId, case_id: caseId, action: "evidence_access",
+            actor_label: `${partnerOrg.legal_name} — ${portalUserLabel ?? "portal user"}`,
+            ip_address: ip,
+            detail: {
+              via: "partner_workspace", portal: surface,
+              membership_id: membership.id,
+              partner_case_link_id: link?.id ?? null,
+              delivery_id: deliveryId || null,
+              retrieval_reason: retrievalReason ? retrievalReason.slice(0, 500) : null,
+              result, ...detailExtra,
+            },
+          });
+        };
+        const deny = async (
+          status: number, code: string, message: string,
+          detailExtra: Record<string, unknown> = {}, grantId: string | null = null,
+        ) => {
+          await logAttempt("denied", { denial_code: code, ...detailExtra }, grantId);
+          return jr({ error: message, code }, status);
+        };
+
+        if (!link) return jr({ error: "Not found" }, 404);
+        if (!(await flagEnabled(admin, "aml_partner_evidence_delivery_write"))) {
+          return deny(409, "evidence_access_disabled",
+            "Evidence access is not enabled for this environment.");
+        }
+        if (link.state !== "active") {
+          return deny(409, "link_inactive", "This link is no longer active.");
+        }
+        if (membership.compliance_role !== "compliance_officer") {
+          return deny(403, "compliance_role_required",
+            "Only your organisation's compliance role can retrieve delivered evidence.");
+        }
+        if (!deliveryId) return jr({ error: "delivery_id required" }, 400);
+        if (retrievalReason.length < 10) {
+          return jr({ error: "retrieval_reason must be at least 10 characters — record why access is necessary now", code: "retrieval_reason_required" }, 400);
+        }
+
+        // Rate limit: attempts (any outcome) by this membership in the last
+        // minute, from the same access log the attempt lands in.
+        const { count: recentAttempts } = await admin.schema("aml").from("reliance_access_log")
+          .select("id", { count: "exact", head: true })
+          .eq("action", "evidence_access")
+          .eq("detail->>membership_id", membership.id)
+          .gte("created_at", new Date(Date.now() - 60_000).toISOString());
+        if ((recentAttempts ?? 0) >= EVIDENCE_ACCESS_RATE_LIMIT) {
+          return deny(429, "rate_limited", "Too many access attempts. Try again shortly.");
+        }
+
+        // Runtime catalogue tripwire: the classification correction must be
+        // present and coherent, or nothing is served (fail closed).
+        const { data: catalogueRow } = await admin.schema("aml").from("record_class_catalogue")
+          .select("information_classification").eq("record_code", "raw_id_document_copy").maybeSingle();
+        if (!catalogueRow || catalogueRow.information_classification !== "P3") {
+          return deny(503, "catalogue_inconsistent",
+            "Evidence access is unavailable while the record catalogue is inconsistent. Contact the issuing organisation.");
+        }
+
+        const { data: delivery } = await admin.schema("aml").from("partner_evidence_deliveries")
+          .select("*").eq("id", deliveryId)
+          .eq("partner_case_link_id", link.id).eq("partner_org_id", partnerOrg.id)
+          .maybeSingle();
+        if (!delivery) return deny(404, "delivery_not_found", "Not found");
+        if (delivery.revoked_at) {
+          return deny(403, "delivery_revoked", "Access to this record has been withdrawn.",
+            { record_code: delivery.record_code });
+        }
+        if (new Date(delivery.expires_at).getTime() <= Date.now()) {
+          return deny(403, "delivery_expired", "Access to this record has expired.",
+            { record_code: delivery.record_code });
+        }
+
+        // The delivery must trace to an approved request covering EXACTLY
+        // this record code on this link for this organisation.
+        const { data: request } = await admin.schema("aml").from("partner_records_requests")
+          .select("*").eq("id", delivery.request_id).maybeSingle();
+        if (!request || request.partner_org_id !== partnerOrg.id
+          || request.partner_case_link_id !== link.id || request.case_id !== link.case_id) {
+          return deny(403, "request_mismatch", "This record is not available.",
+            { record_code: delivery.record_code });
+        }
+        if (!["approved", "partly_approved", "delivered"].includes(request.status)) {
+          return deny(403, "request_not_approved", "This record's request is not approved.",
+            { record_code: delivery.record_code });
+        }
+        if (!(request.approved_record_codes ?? []).includes(delivery.record_code)) {
+          return deny(403, "record_code_not_approved",
+            "That record code was not approved on this request.",
+            { record_code: delivery.record_code });
+        }
+
+        // Delivery-class rule: the object channel serves ONLY the closed P3
+        // evidence catalogue. P1/P2 metadata, P4 reviewer material, P5
+        // prohibited and P6 biometric classes are refused categorically.
+        const classDecision = evaluateEvidenceObjectDelivery(
+          delivery.record_code, REQUESTABLE_RECORD_CLASSES);
+        if (!classDecision.ok) {
+          return deny(403, classDecision.code, classDecision.message,
+            { record_code: delivery.record_code });
+        }
+
+        // Legal route / arrangement: reliance-route sharing requires the
+        // written arrangement to still stand. (Independent-CDD and
+        // information-share links rest on the origin's explicit per-request
+        // approval recorded above.)
+        const { grant } = await loadOrgGrantAndAttestation(admin, link.case_id, partnerOrg.id);
+        if (link.legal_route === "reliance" || link.legal_route === "outsourced_cdd") {
+          const agreementId = grant?.agreement_id ?? request.grant_id ?? null;
+          const { data: agreement } = agreementId
+            ? await admin.schema("aml").from("reliance_agreements")
+              .select("status").eq("id", agreementId).maybeSingle()
+            : await admin.schema("aml").from("reliance_agreements")
+              .select("status").eq("partner_org_id", partnerOrg.id)
+              .eq("status", "active").limit(1).maybeSingle();
+          if (!agreement || agreement.status !== "active") {
+            return deny(403, "arrangement_inactive",
+              "The arrangement between the organisations is not active.",
+              { record_code: delivery.record_code }, grant?.id ?? null);
+          }
+        }
+        // Disclosure manifest: where one exists for the current grant, a
+        // REVOKED manifest is a kill switch for every disclosure channel.
+        if (grant) {
+          const { data: manifest } = await admin.schema("aml").from("disclosure_manifests")
+            .select("revoked_at, expires_at").eq("grant_id", grant.id).maybeSingle();
+          if (manifest?.revoked_at) {
+            return deny(403, "manifest_revoked", "Access to this disclosure has been revoked.",
+              { record_code: delivery.record_code }, grant.id);
+          }
+        }
+
+        // Disclosure hold: any active legal hold touching the case or this
+        // delivery withholds release with GENERIC wording — the existence
+        // and reason of a hold are never disclosed to a partner.
+        const { data: holds } = await admin.schema("aml").from("legal_holds")
+          .select("id").is("released_at", null)
+          .or(`case_id.eq.${link.case_id},and(entity_type.eq.partner_evidence_delivery,entity_id.eq.${delivery.id})`)
+          .limit(1);
+        if ((holds ?? []).length > 0) {
+          return deny(409, "evidence_temporarily_unavailable",
+            "This record is temporarily unavailable. Contact the issuing organisation if it remains needed.",
+            { record_code: delivery.record_code }, grant?.id ?? null);
+        }
+
+        // The opaque object reference. Metadata-only deliveries (no linked
+        // object) answer a safe unavailable state — nothing is fabricated.
+        if (!delivery.evidence_document_id) {
+          return deny(409, "evidence_object_unavailable",
+            "No retrievable document is attached to this delivery. The delivery record itself remains valid metadata.",
+            { record_code: delivery.record_code }, grant?.id ?? null);
+        }
+        const { data: doc } = await admin.schema("aml").from("documents")
+          .select("id, case_id, filename, mime_type, storage_path, status")
+          .eq("id", delivery.evidence_document_id).maybeSingle();
+        if (!doc || doc.case_id !== link.case_id || doc.status !== "accepted" || !doc.storage_path) {
+          return deny(409, "evidence_object_unavailable",
+            "The underlying document is not available for release.",
+            { record_code: delivery.record_code, evidence_document_id: delivery.evidence_document_id },
+            grant?.id ?? null);
+        }
+
+        // Authorised: mint the short-lived signed URL through the existing
+        // secure mechanism. The bucket name and permanent path never leave
+        // this block; the URL is never written anywhere.
+        const { data: signed, error: signErr } = await admin.storage
+          .from("aml-documents")
+          .createSignedUrl(doc.storage_path, EVIDENCE_ACCESS_TTL_SECONDS, { download: doc.filename });
+        if (signErr || !signed?.signedUrl) {
+          await logAttempt("failed", {
+            denial_code: "storage_resolution_failed",
+            record_code: delivery.record_code,
+            evidence_document_id: delivery.evidence_document_id,
+          }, grant?.id ?? null);
+          return jr({
+            error: "The document could not be retrieved. The attempt has been recorded — contact the issuing organisation.",
+            code: "evidence_access_failed",
+          }, 502);
+        }
+
+        const expiresAt = new Date(Date.now() + EVIDENCE_ACCESS_TTL_SECONDS * 1000).toISOString();
+        await logAttempt("approved", {
+          record_code: delivery.record_code,
+          request_id: delivery.request_id,
+          evidence_document_id: delivery.evidence_document_id,
+          signed_expiry: expiresAt,
+        }, grant?.id ?? null);
+        await appendCaseEvent(admin, link.case_id, "system",
+          `Evidence access by ${partnerOrg.legal_name}: ${delivery.record_code}`,
+          {
+            delivery_id: delivery.id, partner_case_link_id: link.id,
+            record_code: delivery.record_code, signed_expiry: expiresAt,
+            note: "Controlled P3 evidence retrieval under the written arrangement. Short-lived access; the URL is not retained.",
+          }, null, `${partnerOrg.legal_name} — ${portalUserLabel ?? "portal user"}`);
+
+        return jr({
+          access: {
+            url: signed.signedUrl,
+            filename: doc.filename,
+            mime_type: doc.mime_type ?? null,
+            expires_at: expiresAt,
+            record_code: delivery.record_code,
+            safe_label: delivery.safe_label,
+          },
+        });
       }
 
       if (op === "list_partner_refresh_obligations") {
@@ -1886,6 +2120,22 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jr({ error: "That record code was not approved on this request." }, 403);
         }
         const days = Math.min(Math.max(Number(body.expires_days ?? 14) || 14, 1), 90);
+        // Stage B: a delivery may carry an OPAQUE reference to the accepted
+        // evidence document that backs it. Validated against the request's
+        // own case — a document from another case can never be attached.
+        let evidenceDocumentId: string | null = null;
+        if (body.evidence_document_id) {
+          const { data: doc } = await admin.schema("aml").from("documents")
+            .select("id, case_id, status").eq("id", String(body.evidence_document_id)).maybeSingle();
+          if (!doc) return jr({ error: "Evidence document not found." }, 404);
+          if (doc.case_id !== request.case_id) {
+            return jr({ error: "That document belongs to a different case.", code: "evidence_case_mismatch" }, 403);
+          }
+          if (doc.status !== "accepted") {
+            return jr({ error: "Only an accepted (reviewed) document can back a delivery.", code: "evidence_not_accepted" }, 409);
+          }
+          evidenceDocumentId = doc.id;
+        }
         const { data: delivery, error } = await admin.schema("aml").from("partner_evidence_deliveries").insert({
           request_id: requestId,
           case_id: request.case_id,
@@ -1894,6 +2144,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           record_code: recordCode,
           safe_label: safeLabel.slice(0, 300),
           delivered_sha256: String(body.delivered_sha256 ?? "").slice(0, 64) || null,
+          evidence_document_id: evidenceDocumentId,
           delivered_by: userId,
           delivered_by_label: userEmail,
           expires_at: new Date(Date.now() + days * 864e5).toISOString(),

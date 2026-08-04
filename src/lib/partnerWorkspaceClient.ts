@@ -66,5 +66,10 @@ export function makePartnerWorkspaceClient(
       call<{ receipt: Record<string, unknown> }>({
         op: "get_partner_audit_receipt", partner_case_link_id: linkId,
       }),
+    getEvidenceAccess: ({ linkId, deliveryId, retrievalReason }) =>
+      call<{ access: import("@/components/partner-compliance/types").PartnerEvidenceAccess }>({
+        op: "get_partner_evidence_delivery_access", partner_case_link_id: linkId,
+        delivery_id: deliveryId, retrieval_reason: retrievalReason,
+      }),
   };
 }

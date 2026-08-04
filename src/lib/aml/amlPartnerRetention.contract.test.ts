@@ -15,6 +15,7 @@ const repo = join(__dirname, "../../..");
 const read = (p: string) => readFileSync(join(repo, p), "utf8");
 
 const migration = read("supabase/migrations/20260805150000_aml_partner_records_retention_phase7.sql");
+const correction = read("supabase/migrations/20260828000000_aml_record_classification_correction.sql");
 const records = read("supabase/functions/aml-records/index.ts");
 const pure = read("supabase/functions/_shared/aml/partnerRetention.ts");
 const events = read("supabase/functions/_shared/aml/partnerEvents.ts");
@@ -65,16 +66,39 @@ describe("the record-class catalogue (§7.2, §7.3)", () => {
     /([a-z_]+):\s*\{ family: "([A-Z]{3})", classification: "(P[1-6])"/g)]
     .map((m) => ({ code: m[1], family: m[2], classification: m[3] }));
 
-  it("the SQL seed and the pure module carry the same classes, families and classifications", () => {
+  it("the EFFECTIVE SQL catalogue (Phase 7 seed + correction migration) matches the pure module", () => {
     expect(sqlRows.length).toBe(21);
-    expect(tsRows.length).toBe(21);
-    const sqlByCode = new Map(sqlRows.map((r) => [r.code, r]));
+    expect(tsRows.length).toBe(22);
+    // Apply the pre-rollout classification correction on top of the seed —
+    // the correction migration must actually contain these statements.
+    expect(correction).toMatch(/UPDATE aml\.record_class_catalogue SET\s*\n?\s*information_classification = 'P3'[\s\S]{0,600}?WHERE record_code = 'raw_id_document_copy'/);
+    expect(correction).toMatch(/UPDATE aml\.record_class_catalogue SET\s*\n?\s*information_classification = 'P4'[\s\S]{0,600}?WHERE record_code = 'legal_hold_record'/);
+    expect(correction).toMatch(/\('suspicious_matter_material', 'RPT',[\s\S]{0,200}?'P5'/);
+    const effective = new Map(sqlRows.map((r) => [r.code, { ...r }]));
+    effective.get("raw_id_document_copy")!.classification = "P3";
+    effective.get("legal_hold_record")!.classification = "P4";
+    effective.set("suspicious_matter_material", {
+      code: "suspicious_matter_material", family: "RPT", classification: "P5",
+    });
     for (const ts of tsRows) {
-      const sql = sqlByCode.get(ts.code);
+      const sql = effective.get(ts.code);
       expect(sql, ts.code).toBeTruthy();
       expect(sql!.family, ts.code).toBe(ts.family);
       expect(sql!.classification, ts.code).toBe(ts.classification);
     }
+    expect(effective.size).toBe(tsRows.length);
+  });
+
+  it("the correction fails closed and preserves triggers, disposal and hold blocking", () => {
+    expect(correction).toContain("RAISE EXCEPTION 'classification correction expects raw_id_document_copy");
+    expect(correction).toMatch(/refusing to guess/);
+    expect(correction).toContain("classification correction did not converge");
+    // Nothing about clocks or destruction changes.
+    for (const preserved of ["raw_id_copy_necessity_end", "legal_hold_release"]) {
+      expect(correction).not.toMatch(new RegExp(`SET[^;]*retention_trigger_kind[^;]*'(?!${preserved})`));
+    }
+    expect(correction).not.toContain("disposal_rule =");
+    expect(correction).not.toContain("DROP TABLE");
   });
 
   it("P4/P5/P6 can never be partner-exportable — enforced by a table CHECK, not convention", () => {

@@ -119,10 +119,20 @@ export const PARTNER_RECORD_CLASSES: Record<string, RecordClass> = {
   delivery_attempt_record:       { family: "AUD", classification: "P4", zone: "audit_retention_ledger", triggerKind: "audit_obligation_end", disposalRule: "recorded_only", partnerExportable: false, label: "Event delivery attempt ledger entry" },
   reliance_access_event_record:  { family: "AUD", classification: "P4", zone: "audit_retention_ledger", triggerKind: "audit_obligation_end", disposalRule: "recorded_only", partnerExportable: false, label: "Partner access log entry" },
   retention_trigger_record:      { family: "RET", classification: "P4", zone: "audit_retention_ledger", triggerKind: "audit_obligation_end", disposalRule: "recorded_only", partnerExportable: false, label: "Recorded retention trigger" },
-  legal_hold_record:             { family: "RET", classification: "P5", zone: "audit_retention_ledger", triggerKind: "legal_hold_release", disposalRule: "recorded_only", partnerExportable: false, label: "Legal hold" },
+  // Corrected pre-rollout: legal holds are reviewer/MLRO restricted (P4),
+  // not P5. Everything else about them — invisibility to partners/clients,
+  // non-exportability, disposal blocking — is unchanged.
+  legal_hold_record:             { family: "RET", classification: "P4", zone: "audit_retention_ledger", triggerKind: "legal_hold_release", disposalRule: "recorded_only", partnerExportable: false, label: "Legal hold" },
   disposal_evidence_record:      { family: "RET", classification: "P4", zone: "audit_retention_ledger", triggerKind: "audit_obligation_end", disposalRule: "recorded_only", partnerExportable: false, label: "Disposal approval/execution evidence" },
-  raw_id_document_copy:          { family: "IDV", classification: "P5", zone: "aml_document_vault", triggerKind: "raw_id_copy_necessity_end", disposalRule: "hard_delete", partnerExportable: false, label: "Full identity-document image copy" },
+  // Corrected pre-rollout: a retained full ID-document image is restricted
+  // CDD evidence (P3) — deliverable ONLY through the controlled, approved,
+  // expiring evidence-delivery path. Necessity clock and hard delete stand.
+  raw_id_document_copy:          { family: "IDV", classification: "P3", zone: "aml_document_vault", triggerKind: "raw_id_copy_necessity_end", disposalRule: "hard_delete", partnerExportable: true, label: "Full identity-document image copy" },
   biometric_raw_capture:         { family: "IDV", classification: "P6", zone: "biometric_vault", triggerKind: "biometric_necessity_end", disposalRule: "hard_delete", partnerExportable: false, label: "Raw biometric capture (facial image)" },
+  // Seeded with the correction: the genuinely-P5 class. The fact, status
+  // and content of suspicious-matter/AUSTRAC reporting never enters any
+  // partner or client surface (s 123).
+  suspicious_matter_material:    { family: "RPT", classification: "P5", zone: "restricted_reporting_vault", triggerKind: "report_complete", disposalRule: "recorded_only", partnerExportable: false, label: "Suspicious-matter and regulatory-reporting material" },
 };
 
 /* ── trigger kinds (mirror of the widened SQL CHECK) ───────────────────── */
@@ -147,13 +157,26 @@ export const RETENTION_TRIGGER_KIND_LABELS: Record<string, string> = {
 
 /* ── the export guard ──────────────────────────────────────────────────── */
 
+/**
+ * Classes whose substance is a stored OBJECT rather than metadata. They
+ * never travel in ordinary metadata exports or passport payloads — the only
+ * partner route for a P3 object is the controlled, approved, expiring
+ * evidence-delivery channel (and there is NO partner route at all for P6).
+ */
+export const EVIDENCE_OBJECT_CLASSES = new Set([
+  "raw_id_document_copy",
+  "biometric_raw_capture",
+]);
+
 export type ExportDecision =
   | { ok: true }
   | { ok: false; blocked: Array<{ code: string; classification: string }> };
 
-/** A partner-facing export may only carry classes that are BOTH flagged
- * exportable AND outside P4/P5/P6. Unknown codes are blocked — a caller
- * cannot invent vocabulary to reach a record. */
+/** An ORDINARY partner-facing (metadata) export may only carry classes that
+ * are flagged exportable, outside P4/P5/P6, and not evidence objects.
+ * Unknown codes are blocked — a caller cannot invent vocabulary to reach a
+ * record. Object delivery is a different, stricter channel: see
+ * evaluateEvidenceObjectDelivery. */
 export function evaluatePartnerExport(recordCodes: string[]): ExportDecision {
   const blocked: Array<{ code: string; classification: string }> = [];
   for (const code of recordCodes ?? []) {
@@ -163,11 +186,48 @@ export function evaluatePartnerExport(recordCodes: string[]): ExportDecision {
       continue;
     }
     if (!entry.partnerExportable ||
-      (NEVER_PARTNER_EXPORTABLE as readonly string[]).includes(entry.classification)) {
+      (NEVER_PARTNER_EXPORTABLE as readonly string[]).includes(entry.classification) ||
+      EVIDENCE_OBJECT_CLASSES.has(code)) {
       blocked.push({ code, classification: entry.classification });
     }
   }
   return blocked.length > 0 ? { ok: false, blocked } : { ok: true };
+}
+
+/* ── the evidence-object delivery guard (Stage B) ──────────────────────── */
+
+export type EvidenceDeliveryClassDecision =
+  | { ok: true; classification: "P3" }
+  | { ok: false; code: "record_code_unknown" | "classification_not_deliverable"; message: string };
+
+/**
+ * The controlled object channel accepts EXACTLY the closed requestable
+ * record-code catalogue (the P3 CDD-evidence families a partner may request
+ * and the origin may approve). Everything else is refused with a safe code:
+ * catalogue classes that are not P3 evidence (P1/P2 metadata, P4 reviewer
+ * material, P5 prohibited, P6 biometric) name their classification; unknown
+ * vocabulary discloses nothing.
+ *
+ * The requestable catalogue is injected (not imported) so this module stays
+ * dependency-free; callers pass REQUESTABLE_RECORD_CLASSES from
+ * partnerWorkspace.ts.
+ */
+export function evaluateEvidenceObjectDelivery(
+  recordCode: string,
+  requestableCodes: Record<string, unknown>,
+): EvidenceDeliveryClassDecision {
+  if (requestableCodes[recordCode]) return { ok: true, classification: "P3" };
+  const catalogued = PARTNER_RECORD_CLASSES[recordCode];
+  if (catalogued) {
+    return {
+      ok: false, code: "classification_not_deliverable",
+      message: `Records of class ${catalogued.classification} are not deliverable through the evidence channel.`,
+    };
+  }
+  return {
+    ok: false, code: "record_code_unknown",
+    message: "That record code is not part of the controlled evidence catalogue.",
+  };
 }
 
 /* ── partner dependency evaluation (§7.6) ──────────────────────────────── */

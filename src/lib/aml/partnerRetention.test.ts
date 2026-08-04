@@ -49,7 +49,7 @@ describe("every partner-domain record class is fully classified", () => {
     "partner_notification_record", "integration_event_record",
     "delivery_attempt_record", "reliance_access_event_record",
     "retention_trigger_record", "legal_hold_record", "disposal_evidence_record",
-    "raw_id_document_copy", "biometric_raw_capture",
+    "raw_id_document_copy", "biometric_raw_capture", "suspicious_matter_material",
   ];
 
   it("covers every class Phases 1–6 created, plus the raw-capture classes", () => {
@@ -77,9 +77,26 @@ describe("every partner-domain record class is fully classified", () => {
     }
   });
 
-  it("legal holds are P5 and internal — a partner or client never learns of one", () => {
-    expect(PARTNER_RECORD_CLASSES.legal_hold_record.classification).toBe("P5");
+  it("legal holds are P4 (reviewer/MLRO restricted) and internal — a partner or client never learns of one", () => {
+    expect(PARTNER_RECORD_CLASSES.legal_hold_record.classification).toBe("P4");
     expect(PARTNER_RECORD_CLASSES.legal_hold_record.partnerExportable).toBe(false);
+  });
+
+  it("raw/full ID-document copies are P3 restricted CDD evidence — object-channel only", () => {
+    expect(PARTNER_RECORD_CLASSES.raw_id_document_copy.classification).toBe("P3");
+    // Deliverable through the controlled channel…
+    expect(PARTNER_RECORD_CLASSES.raw_id_document_copy.partnerExportable).toBe(true);
+    // …but never through an ordinary metadata export or passport payload.
+    expect(evaluatePartnerExport(["raw_id_document_copy"]).ok).toBe(false);
+  });
+
+  it("suspicious-matter/reporting material is P5 and never exportable", () => {
+    expect(PARTNER_RECORD_CLASSES.suspicious_matter_material.classification).toBe("P5");
+    expect(PARTNER_RECORD_CLASSES.suspicious_matter_material.partnerExportable).toBe(false);
+  });
+
+  it("raw biometrics remain P6", () => {
+    expect(PARTNER_RECORD_CLASSES.biometric_raw_capture.classification).toBe("P6");
   });
 });
 
@@ -124,12 +141,13 @@ describe("the partner export guard (§7.10)", () => {
 
   it("blocks reviewer/MLRO-restricted, prohibited and biometric classes", () => {
     const decision = evaluatePartnerExport([
-      "arrangement_assessment_record", "legal_hold_record", "biometric_raw_capture",
+      "arrangement_assessment_record", "suspicious_matter_material", "biometric_raw_capture",
     ]);
     expect(decision.ok).toBe(false);
     if (!decision.ok) {
       expect(decision.blocked.map((b) => b.classification).sort()).toEqual(["P4", "P5", "P6"]);
     }
+    expect(evaluatePartnerExport(["legal_hold_record"]).ok).toBe(false);
   });
 
   it("blocks unknown codes — vocabulary cannot be invented to reach a record", () => {
