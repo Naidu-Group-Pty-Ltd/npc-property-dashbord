@@ -29752,6 +29752,107 @@ export type Database = {
           },
         ]
       }
+      report_qa_renders: {
+        Row: {
+          brand_gaps: string[]
+          brand_snapshot_id: string | null
+          bytes: number | null
+          conversation_id: string
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          file_name: string
+          generated_summary: boolean
+          id: string
+          message_id: string | null
+          page_count: number | null
+          requested_by: string | null
+          sections_included: string[]
+          status: string
+          storage_bucket: string
+          storage_path: string | null
+          subject: string
+          truncated: boolean
+          turn_count: number
+          turns_shown: number
+        }
+        Insert: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          conversation_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          generated_summary?: boolean
+          id?: string
+          message_id?: string | null
+          page_count?: number | null
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          subject: string
+          truncated?: boolean
+          turn_count?: number
+          turns_shown?: number
+        }
+        Update: {
+          brand_gaps?: string[]
+          brand_snapshot_id?: string | null
+          bytes?: number | null
+          conversation_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          file_name?: string
+          generated_summary?: boolean
+          id?: string
+          message_id?: string | null
+          page_count?: number | null
+          requested_by?: string | null
+          sections_included?: string[]
+          status?: string
+          storage_bucket?: string
+          storage_path?: string | null
+          subject?: string
+          truncated?: boolean
+          turn_count?: number
+          turns_shown?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "report_qa_renders_brand_snapshot_id_fkey"
+            columns: ["brand_snapshot_id"]
+            isOneToOne: false
+            referencedRelation: "report_brand_snapshots"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_qa_renders_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "report_qa_conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_qa_renders_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "report_qa_messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "report_qa_renders_requested_by_fkey"
+            columns: ["requested_by"]
+            isOneToOne: false
+            referencedRelation: "custom_users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       report_qa_share_access_log: {
         Row: {
           created_at: string
