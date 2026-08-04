@@ -2671,11 +2671,14 @@ export type Database = {
           created_by: string | null
           description: string
           id: string
+          imported_at: string | null
           is_active: boolean
           name: string
+          neutrals: Json | null
           options: Json
           origin: string
           slug: string
+          source_namespace: string
           updated_at: string
         }
         Insert: {
@@ -2685,11 +2688,14 @@ export type Database = {
           created_by?: string | null
           description?: string
           id?: string
+          imported_at?: string | null
           is_active?: boolean
           name: string
+          neutrals?: Json | null
           options?: Json
           origin?: string
           slug: string
+          source_namespace?: string
           updated_at?: string
         }
         Update: {
@@ -2699,11 +2705,14 @@ export type Database = {
           created_by?: string | null
           description?: string
           id?: string
+          imported_at?: string | null
           is_active?: boolean
           name?: string
+          neutrals?: Json | null
           options?: Json
           origin?: string
           slug?: string
+          source_namespace?: string
           updated_at?: string
         }
         Relationships: [
