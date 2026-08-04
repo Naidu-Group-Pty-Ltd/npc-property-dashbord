@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { canAccessClient } from '../_shared/clientAccess.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { computeDtiDenominator } from '../_shared/dtiDenominator.ts';
@@ -1369,6 +1370,10 @@ Deno.serve(async (req) => {
       console.log(`[calculate-borrowing-capacity] Auth failed for client ${clientId}:`, authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
+
+    // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'borrowing-capacity');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log(`[calculate-borrowing-capacity] Authenticated user: ${userId}`);
 
     if (!clientId) {

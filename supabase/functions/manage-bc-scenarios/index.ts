@@ -2,6 +2,7 @@
 // Operations: list | create | delete (per client)
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createForbiddenResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { requireWorkspaceCapability, entitlementDeniedResponse } from "../_shared/entitlements.ts";
 import { requireModulePermission, type ModulePerm } from "../_shared/authz.ts";
 import { canAccessClient } from "../_shared/clientAccess.ts";
 
@@ -46,6 +47,10 @@ Deno.serve(async (req) => {
       return createUnauthorizedResponse(authError, corsHeaders);
     }
     console.log(`[manage-bc-scenarios] Auth OK: ${username || userId}`);
+
+    // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'borrowing-capacity');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     const { operation, clientId, recordId, data } = body;
 

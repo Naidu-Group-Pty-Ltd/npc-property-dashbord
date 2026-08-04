@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.55.0';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 
@@ -106,13 +107,17 @@ const __portfolioHandler = async (req: Request): Promise<Response> => {
       marketOutlook = null
     } = analysisConfig;
     // SECURITY: Verify authentication (enforced - TODO removed)
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log(`[generate-portfolio-analysis] Auth failed for client ${clientId}:`, authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     } else {
       console.log(`[generate-portfolio-analysis] Authenticated user: ${userId}`);
     }
+
+    // Portfolio Analysis is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'portfolio-analysis');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     if (!clientId) {
       return new Response(

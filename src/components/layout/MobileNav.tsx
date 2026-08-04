@@ -1,22 +1,35 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { Home, Building2, BarChart3, FileText, MoreHorizontal, UserCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { MobileSidebar } from './MobileSidebar';
+import { useNavigationVisibility } from '@/hooks/useNavigation';
 
-const mobileNavItems = [
-  { title: 'Overview', url: '/', icon: Home },
-  { title: 'Marketplace', url: '/listings', icon: Building2 },
-  { title: 'Clients', url: '/clients', icon: UserCircle },
-  { title: 'Reports', url: '/reports', icon: BarChart3 },
-  { title: 'Generated', url: '/generated-reports', icon: FileText },
+// Candidates for the bottom bar; each is gated by the same capability rule
+// as the sidebars via its moduleKey, so e.g. Marketplace disappears for a
+// workspace without the Property Marketplace entitlement.
+const mobileNavCandidates = [
+  { title: 'Overview', url: '/', icon: Home, moduleKey: 'overview' },
+  { title: 'Marketplace', url: '/listings', icon: Building2, moduleKey: 'listings' },
+  { title: 'Clients', url: '/clients', icon: UserCircle, moduleKey: 'clients' },
+  { title: 'Reports', url: '/reports', icon: BarChart3, moduleKey: 'reports' },
+  { title: 'Generated', url: '/generated-reports', icon: FileText, moduleKey: 'generated_reports' },
 ];
 
 export function MobileNav() {
   const location = useLocation();
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const { isNavItemVisible } = useNavigationVisibility();
+
+  const mobileNavItems = useMemo(
+    () =>
+      mobileNavCandidates.filter((item) =>
+        isNavItemVisible({ ...item, group: 'Main Dashboard' }),
+      ),
+    [isNavItemVisible],
+  );
 
   const isActive = (path: string) => {
     if (path === '/') return location.pathname === '/';

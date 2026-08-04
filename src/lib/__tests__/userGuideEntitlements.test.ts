@@ -38,10 +38,13 @@ describe('tier gating', () => {
 
   it('shows Growth guides on Growth but still hides Scale ones', () => {
     const growth = visibleOn('growth');
-    expect(growth).toContain('market-updates');
     expect(growth).toContain('deal-pipeline');
     expect(growth).not.toContain('finance-portal');
     expect(growth).not.toContain('model-hub');
+    // Market News Feed is Scale-bundled or an add-on — a Growth workspace
+    // sees its guide only after buying it.
+    expect(visibleOn('growth', [])).not.toContain('market-updates');
+    expect(visibleOn('growth', ['market-updates'])).toContain('market-updates');
   });
 
   it('shows everything tier-gated on Scale', () => {
@@ -75,8 +78,11 @@ describe('universal sections', () => {
     }
   });
 
-  it('shows AML on Launch — it is a baseline feature, not an upsell', () => {
-    expect(visibleOn('launch')).toContain('aml-ctf');
+  it('shows AML when the SKU carries it — entitlement follows the purchase, not the tier', () => {
+    // Mission Control states aml-ctf for every headline SKU, so the normal
+    // Launch workspace sees the guide; a without-AML SKU (no slug) does not.
+    expect(visibleOn('launch', ['aml-ctf'])).toContain('aml-ctf');
+    expect(visibleOn('launch', [])).not.toContain('aml-ctf');
   });
 
   it('treats an unmapped section as universal', () => {
@@ -182,12 +188,16 @@ describe('mapping integrity', () => {
 
 describe('AI knowledge base respects entitlement', () => {
   it('omits sections the workspace cannot see', () => {
-    const launch = formatKnowledgeBaseForAI('launch', []);
+    // The typical Launch snapshot carries aml-ctf (headline SKUs include it,
+    // and Mission Control states it as an add-on slug).
+    const launch = formatKnowledgeBaseForAI('launch', ['aml-ctf']);
     // Feeding the assistant a section the page will not render produces links
     // that scroll nowhere, and walkthroughs for absent screens.
     expect(launch).not.toContain('Section ID: `finance-portal`');
     expect(launch).not.toContain('Section ID: `model-hub`');
     expect(launch).toContain('Section ID: `aml-ctf`');
+    // A without-AML SKU never carries the slug, and the guide follows.
+    expect(formatKnowledgeBaseForAI('launch', [])).not.toContain('Section ID: `aml-ctf`');
   });
 
   it('includes a section unlocked by an add-on', () => {

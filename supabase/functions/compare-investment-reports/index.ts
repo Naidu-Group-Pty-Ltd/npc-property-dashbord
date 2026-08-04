@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withReportMetering, resolveUserId, buildIdempotencyKey } from '../_shared/reportMetering.ts';
 
@@ -59,11 +60,15 @@ const __compareInvestmentReportsHandler = async (req: Request): Promise<Response
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
     
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('[compare-investment-reports] Auth failed:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
+
+    // Report Comparisons is a Growth/Scale capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'report-comparisons');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log('[compare-investment-reports] Authenticated user:', userId);
 
     const weightKeys = ['growth', 'location', 'yield', 'demand', 'risk'];

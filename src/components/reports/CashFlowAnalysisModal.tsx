@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useCapability } from '@/hooks/useCapability';
 import { supabase } from '@/integrations/supabase/client';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { secureStorageUpload } from '@/hooks/useSecureStorage';
@@ -243,8 +244,26 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
   const yieldChartRef = useRef<HTMLDivElement>(null);
   const comparisonChartRef = useRef<HTMLDivElement>(null);
 
+  // Cash-Flow Comparisons are commercialised independently of the standard
+  // 10-year analysis (Growth+ or the add-on). Without the capability the
+  // toggle is removed, comparison mode cannot activate, and neither
+  // comparison query effect runs (both are comparisonMode-gated).
+  const cashflowComparisonsEnabled = useCapability('cashflow.comparisons').enabled;
+
   // Comparison mode state - support up to 5 properties (1 primary + 4 comparison)
-  const [comparisonMode, setComparisonMode] = useState(false);
+  const [comparisonMode, setComparisonModeRaw] = useState(false);
+  const setComparisonMode = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      setComparisonModeRaw((prev) => {
+        const value = typeof next === 'function' ? next(prev) : next;
+        return cashflowComparisonsEnabled ? value : false;
+      });
+    },
+    [cashflowComparisonsEnabled],
+  );
+  useEffect(() => {
+    if (!cashflowComparisonsEnabled) setComparisonModeRaw(false);
+  }, [cashflowComparisonsEnabled]);
   const [availableReports, setAvailableReports] = useState<InvestmentReport[]>([]);
   const [selectedComparisonReportIds, setSelectedComparisonReportIds] = useState<string[]>([]);
   const [comparisonReports, setComparisonReports] = useState<InvestmentReport[]>([]);
@@ -4123,6 +4142,7 @@ export function CashFlowAnalysisModal({ report, isOpen, onClose, onReportUpdated
 
             <CashFlowControlPanel
               comparisonMode={comparisonMode}
+              comparisonsAvailable={cashflowComparisonsEnabled}
               onComparisonModeChange={setComparisonMode}
               selectedComparisonReportIds={selectedComparisonReportIds}
               availableReports={availableReports}

@@ -153,13 +153,24 @@ describe('formatModuleAwarenessForAI', () => {
     expect(launch).toContain('Launch plan');
     expect(launch).toContain('Included in this plan');
     expect(launch).toContain('requires an upgrade');
-    // AML is a Launch baseline; Finance Portal is Scale-only.
+    // Finance Portal is Scale-only; AML follows the purchased SKU, so with
+    // no add-ons stated it sits in the add-on section, not "included".
     const included = launch.slice(
       launch.indexOf('### Included in this plan'),
       launch.indexOf('### Not included'),
     );
-    expect(included).toContain('AML / CTF Compliance');
     expect(included).not.toContain('Finance Portal');
+    expect(included).not.toContain('AML / CTF Compliance');
+    const addonSection = launch.slice(launch.indexOf('### Available as a paid add-on'));
+    expect(addonSection).toContain('AML / CTF Compliance');
+    // A snapshot that carries the slug (every headline SKU) reports AML as
+    // included — a paying customer is never told to buy it twice.
+    const withAml = formatModuleAwarenessForAI('launch', ['aml-ctf']);
+    const includedWithAml = withAml.slice(
+      withAml.indexOf('### Included in this plan'),
+      withAml.indexOf('### Not included'),
+    );
+    expect(includedWithAml).toContain('AML / CTF Compliance');
   });
 
   it('names the plan that unlocks something the current plan lacks', () => {

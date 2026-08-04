@@ -1,70 +1,70 @@
 /**
- * The sidebar renders admin entries by walking `adminGroup.itemTitles` and
- * looking each title up in `adminItems`. That means an item can be fully
- * defined — route, icon, module key — and still never appear, silently, because
- * its title was not added to the group list. Nothing fails, nothing warns; the
- * page is simply unreachable from the nav.
+ * Navigation used to be four hand-synchronised lists (desktop sidebar,
+ * mobile sidebar, bottom bar, command palette), and the admin group was a
+ * second layer of drift: an item could be fully defined and still never
+ * render because its title was missing from a separate `itemTitles` list.
+ * That silent-gap bug shipped twice.
  *
- * That has already happened twice, so it is worth a test. The two sidebars keep
- * separate copies of both lists, so both are checked.
+ * The registry refactor removed the failure mode structurally — items carry
+ * their own group, there is no title lookup, and every surface renders from
+ * `src/lib/navigation/registry.ts` through the one visibility rule in
+ * `useNavigationVisibility`. What this suite pins now is that the structure
+ * STAYS that way: no surface may reintroduce a private navigation list, and
+ * the registry itself must stay internally coherent.
  *
- * Read as source text rather than imported: the arrays are module-private, and
- * exporting them purely for a test would widen a component's surface to satisfy
- * its own guard.
+ * Read as source text rather than imported where the assertion is about the
+ * file's shape, matching the repo's contract-test convention.
  */
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import {
+  ADMIN_NAVIGATION_ITEMS,
+  NAVIGATION_GROUP_ORDER,
+  NAVIGATION_ITEMS,
+} from '@/lib/navigation/registry';
 
-const SIDEBARS = ['DashboardSidebar', 'MobileSidebar'] as const;
+const SURFACES = [
+  'DashboardSidebar',
+  'MobileSidebar',
+  'MobileNav',
+  'GlobalCommandPalette',
+] as const;
 
-/**
- * Admin entries deliberately defined but not listed, and so not rendered.
- * Recorded here so the omission is a decision on the record rather than a
- * silent gap — not an endorsement of it. Removing a name from this list should
- * mean adding it to `adminGroup.itemTitles`.
- */
-const UNLISTED_BY_DESIGN = new Set(['Builder / Developer Portal']);
+describe.each(SURFACES)('%s navigation source', (surface) => {
+  const source = readFileSync(`src/components/layout/${surface}.tsx`, 'utf8');
 
-function readLists(sidebar: string) {
-  const source = readFileSync(`src/components/layout/${sidebar}.tsx`, 'utf8');
-
-  const groupStart = source.indexOf('const adminGroup');
-  const itemsStart = source.indexOf('const adminItems');
-  expect(groupStart, `${sidebar} declares adminGroup`).toBeGreaterThan(-1);
-  expect(itemsStart, `${sidebar} declares adminItems`).toBeGreaterThan(groupStart);
-
-  const titles = [...source.slice(groupStart, itemsStart).matchAll(/^\s+'([^']+)',$/gm)].map((m) => m[1]);
-  // Bounded to the adminItems literal so the AML array below it is not swept in.
-  const itemsBlock = source.slice(itemsStart, source.indexOf('];', itemsStart));
-  const items = [...itemsBlock.matchAll(/\{ title: '([^']+)', url:/g)].map((m) => m[1]);
-
-  return { titles, items };
-}
-
-describe.each(SIDEBARS)('%s admin navigation', (sidebar) => {
-  const { titles, items } = readLists(sidebar);
-
-  it('defines both lists', () => {
-    expect(titles.length).toBeGreaterThan(0);
-    expect(items.length).toBeGreaterThan(0);
+  it('consumes the shared registry visibility rule', () => {
+    expect(source).toContain('useNavigationVisibility');
   });
 
-  it('renders every admin item it defines', () => {
-    const listed = new Set(titles);
-    const unrendered = items.filter((title) => !listed.has(title) && !UNLISTED_BY_DESIGN.has(title));
-    expect(unrendered).toEqual([]);
+  it('declares no private admin list to drift out of sync', () => {
+    expect(source).not.toContain('const adminGroup');
+    expect(source).not.toContain('const adminItems');
+    expect(source).not.toContain('const navigationItems = [');
+  });
+});
+
+describe('navigation registry coherence', () => {
+  it('renders every admin item it defines — no silent gaps possible', () => {
+    // Every admin item is rendered directly from the array; the historical
+    // title-lookup indirection no longer exists. Titles must be unique so a
+    // rename cannot shadow another entry.
+    const titles = ADMIN_NAVIGATION_ITEMS.map((item) => item.title);
+    expect(new Set(titles).size).toBe(titles.length);
   });
 
-  it('lists no title without a matching item', () => {
-    // The other direction: a rename or typo leaves a title that resolves to
-    // nothing, which also fails silently.
-    const defined = new Set(items);
-    expect(titles.filter((title) => !defined.has(title))).toEqual([]);
-  });
-
-  it('reaches the Workflow Playground', () => {
-    expect(items).toContain('Workflow Playground');
+  it('reaches the Workflow Playground and the Builder / Developer Portal', () => {
+    const titles = ADMIN_NAVIGATION_ITEMS.map((item) => item.title);
     expect(titles).toContain('Workflow Playground');
+    // Previously unlisted-by-design in MobileSidebar; the registry renders it
+    // everywhere, closing that recorded gap.
+    expect(titles).toContain('Builder / Developer Portal');
+  });
+
+  it('assigns every main item to a rendered group', () => {
+    for (const item of NAVIGATION_ITEMS) {
+      expect(NAVIGATION_GROUP_ORDER, item.title).toContain(item.group);
+    }
   });
 });

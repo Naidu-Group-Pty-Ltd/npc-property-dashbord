@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { getBrandConfig } from '../_shared/brand-config.ts';
 import { buildFreeformEnvelope, pdfBytesToBase64, type FreeformRecipient, type FreeformTab } from '../_shared/docusign-freeform.ts';
@@ -376,6 +377,11 @@ Deno.serve(async (req) => {
     if (authResult.error) {
       return createUnauthorizedResponse(authResult.error, corsHeaders);
     }
+
+    // Agreements is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, authResult, 'agreements');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
+
     const { action } = body;
 
     // ─── LIST AGREEMENTS ────────────────────────────────────
