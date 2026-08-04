@@ -203,6 +203,28 @@
   line-height: 1.35;
 }
 
+/* When the card is taller than the popup's ceiling, Leaflet scrolls it with
+   the browser's default scrollbar — a wide grey slab that sat on top of the
+   photo and cut the action row in half. Thin, token-coloured, and out of the
+   content's way. */
+.listings-map .leaflet-popup-content {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+}
+
+.listings-map .leaflet-popup-content::-webkit-scrollbar {
+  width: 5px;
+}
+
+.listings-map .leaflet-popup-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.listings-map .leaflet-popup-content::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.45);
+  border-radius: 9999px;
+}
+
 .listings-map .leaflet-container a.leaflet-popup-close-button {
   color: hsl(var(--muted-foreground));
   padding: 0.35rem 0.4rem 0 0;
@@ -557,6 +579,27 @@
 .listings-pin-tip__specs {
   font-size: 0.625rem;
   color: hsl(var(--muted-foreground));
+}
+
+.listings-pin-tip__note {
+  color: hsl(var(--warning));
+  font-weight: 600;
+}
+
+/* A suburb-centroid pin wears a dashed halo: visibly a region claim, not a
+   rooftop claim. The halo inherits the pin's own rounding so it fits chips
+   and dot pins alike. */
+.listings-map .listing-pin--approx {
+  opacity: 0.9;
+}
+
+.listings-map .listing-pin--approx::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1.5px dashed hsl(var(--warning) / 0.85);
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 /* --- Clusters -----------------------------------------------------------
