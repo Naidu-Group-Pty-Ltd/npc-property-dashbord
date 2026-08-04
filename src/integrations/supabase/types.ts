@@ -31807,6 +31807,7 @@ export type Database = {
         Row: {
           appendix_sections: number
           binding: Json | null
+          binding_source: string | null
           bound_chapters: number
           bound_format: string | null
           brand_snapshot_id: string | null
@@ -31814,7 +31815,12 @@ export type Database = {
           created_at: string
           design_system_id: string | null
           duration_ms: number | null
+          enriched_chapters: number
+          enrichment_blocks: Json
+          enrichment_model: string | null
+          enrichment_notes: string[]
           error: string | null
+          fidelity: string | null
           file_name: string
           id: string
           page_count: number | null
@@ -31833,6 +31839,7 @@ export type Database = {
         Insert: {
           appendix_sections?: number
           binding?: Json | null
+          binding_source?: string | null
           bound_chapters?: number
           bound_format?: string | null
           brand_snapshot_id?: string | null
@@ -31840,7 +31847,12 @@ export type Database = {
           created_at?: string
           design_system_id?: string | null
           duration_ms?: number | null
+          enriched_chapters?: number
+          enrichment_blocks?: Json
+          enrichment_model?: string | null
+          enrichment_notes?: string[]
           error?: string | null
+          fidelity?: string | null
           file_name?: string
           id?: string
           page_count?: number | null
@@ -31859,6 +31871,7 @@ export type Database = {
         Update: {
           appendix_sections?: number
           binding?: Json | null
+          binding_source?: string | null
           bound_chapters?: number
           bound_format?: string | null
           brand_snapshot_id?: string | null
@@ -31866,7 +31879,12 @@ export type Database = {
           created_at?: string
           design_system_id?: string | null
           duration_ms?: number | null
+          enriched_chapters?: number
+          enrichment_blocks?: Json
+          enrichment_model?: string | null
+          enrichment_notes?: string[]
           error?: string | null
+          fidelity?: string | null
           file_name?: string
           id?: string
           page_count?: number | null
