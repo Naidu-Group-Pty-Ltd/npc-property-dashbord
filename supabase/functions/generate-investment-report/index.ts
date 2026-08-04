@@ -12,6 +12,31 @@ import { buildInvestmentReportMeteringParts } from '../_shared/investmentReportM
 const INTERNAL_EDGE_SECRET = (Deno.env.get('INTERNAL_EDGE_SECRET') || '').trim();
 
 // ============================================================================
+// WALL-CLOCK BUDGET
+// ============================================================================
+// The Supabase edge runtime terminates an invocation at ~150s. A full Compass
+// report is 17 sections at 9-37s each (~425s), so a single invocation can never
+// finish one — it used to be killed around section 6, leaving `status` stuck on
+// 'processing' with `report_generation_runs.status` still 'running' and no error
+// anywhere. Instead of racing the ceiling we stop before it and report progress
+// honestly; the caller resumes with `continueFrom: true`.
+//
+// Budget stops us STARTING a section we predict we cannot finish. The reserve
+// covers post-processing (schema validation, dedup, DB write) on the run that
+// does complete the final section.
+const SECTION_LOOP_BUDGET_MS = 110_000;
+const POST_PROCESSING_RESERVE_MS = 25_000;
+// Fallback estimate before we have measured a section in this run.
+const DEFAULT_SECTION_ESTIMATE_MS = 30_000;
+
+// Per-call ceilings for the model. These used to be 150s/120s — longer than the
+// entire edge invocation, so one hung call could still blow the whole run past
+// the platform ceiling before the between-sections budget guard could fire.
+// Observed section latency in production is 9-37s, so these leave ample room.
+const SECTION_REQUEST_TIMEOUT_MS = 60_000;
+const SECTION_CONTINUATION_TIMEOUT_MS = 45_000;
+
+// ============================================================================
 // REPORT SECTION DEFINITIONS - SYNCED WITH DATABASE TEMPLATE STRUCTURE
 // ============================================================================
 // These section definitions match the "Investor Compass Structure v2" template
@@ -1585,7 +1610,7 @@ Start now with the first heading.`;
             { role: 'user', content: userPromptForAttempt }
           ]
         }),
-      }, 150000, 'perplexity-api'); // 150 second timeout per section, with circuit breaker tracking
+      }, SECTION_REQUEST_TIMEOUT_MS, 'perplexity-api'); // bounded so the loop always regains control, with circuit breaker tracking
 
       if (!response.ok) {
         const errorText = await response.text();
@@ -1667,7 +1692,7 @@ Start now with the first heading.`;
                 { role: 'user', content: continuePrompt },
               ],
             }),
-          }, 120000, 'perplexity-api');
+          }, SECTION_CONTINUATION_TIMEOUT_MS, 'perplexity-api');
           if (!contResp.ok) {
             console.warn(`   continuation HTTP ${contResp.status} — stopping continuation loop`);
             break;
@@ -1753,6 +1778,14 @@ async function markReportFailed(reportId: string | null, errorMessage: string): 
 const __investmentReportHandler = async (req: Request): Promise<Response> => {
   const origin = req.headers.get('origin');
   const corsHeaders = createCorsHeaders(origin);
+
+  // Wall-clock reference for the section budget. The Supabase edge runtime kills
+  // an invocation at ~150s; a 17-section Compass report needs ~425s. Before this
+  // existed the loop simply ran until the platform killed it mid-section, which
+  // left the row stuck at 'processing' forever with no error recorded. We now
+  // stop voluntarily and hand the rest to the next caller (cron watchdog or the
+  // browser pump). See docs/reports/INVESTMENT_REPORT_RESUME.md.
+  const runStartedAt = Date.now();
 
   console.log('Investment report function invoked with method:', req.method);
   
@@ -5242,10 +5275,18 @@ YOUR DEDICATED PROPERTY PARTNER
     });
     if (_traceRunId) console.log(`🔭 generation-trace run started: ${_traceRunId}`);
 
+    // Rolling average of section wall time, used to predict whether the next
+    // section fits in what is left of the budget.
+    const sectionDurationsMs: number[] = [];
+    let budgetExhausted = false;
+    let lastCompletedSectionIndex = completedSectionIndices.length
+      ? Math.max(...completedSectionIndices) + 1
+      : 0;
+
     for (let i = 0; i < filteredSections.length; i++) {
       const sectionDef = filteredSections[i];
       const _chunkStart = Date.now();
-      
+
       // CONTINUATION MODE: Skip already-completed sections
       if (isContinuation && completedSectionIndices.includes(i)) {
         console.log(`\n⏭️ Skipping section ${i + 1}/${filteredSections.length}: ${sectionDef.name} (already complete)`);
@@ -5259,7 +5300,29 @@ YOUR DEDICATED PROPERTY PARTNER
         });
         continue;
       }
-      
+
+      // === WALL-CLOCK BUDGET GUARD ===
+      // Only ever bail BETWEEN sections, and only once this run has banked at
+      // least one section — otherwise a resume that starts near the ceiling
+      // could spin forever making no progress.
+      const elapsedMs = Date.now() - runStartedAt;
+      const predictedSectionMs = sectionDurationsMs.length
+        ? sectionDurationsMs.reduce((a, b) => a + b, 0) / sectionDurationsMs.length
+        : DEFAULT_SECTION_ESTIMATE_MS;
+      const isLastSection = i === filteredSections.length - 1;
+      // The final section is followed by post-processing, so it needs more room.
+      const requiredMs = predictedSectionMs + (isLastSection ? POST_PROCESSING_RESERVE_MS : 0);
+
+      if (sectionDurationsMs.length > 0 && elapsedMs + requiredMs > SECTION_LOOP_BUDGET_MS) {
+        console.log(
+          `⏱️ Wall-clock budget reached after ${Math.round(elapsedMs / 1000)}s ` +
+          `(next section needs ~${Math.round(requiredMs / 1000)}s, budget ${SECTION_LOOP_BUDGET_MS / 1000}s). ` +
+          `Stopping at section ${lastCompletedSectionIndex}/${filteredSections.length} and handing off to resume.`
+        );
+        budgetExhausted = true;
+        break;
+      }
+
       console.log(`\n📄 Generating section ${i + 1}/${filteredSections.length}: ${sectionDef.name}`);
       
       // Pass context from previous sections for consistency
@@ -5445,6 +5508,10 @@ YOUR DEDICATED PROPERTY PARTNER
               .update(progressiveUpdatePayload)
               .eq('id', reportId);
             console.log(`✓ Progress saved: ${combinedContent.length} chars, last_completed_section=${completedSectionIndex}`);
+            // Feed the budget predictor and remember how far we actually got,
+            // so a budget-exhausted return can report the true section count.
+            sectionDurationsMs.push(Date.now() - _chunkStart);
+            lastCompletedSectionIndex = completedSectionIndex;
 
             if (didAttachEnhancedData) {
               enhancedDataPersisted = true;
@@ -5509,8 +5576,30 @@ YOUR DEDICATED PROPERTY PARTNER
             console.warn(`⚠️ Failed section save error (non-blocking):`, saveError?.message);
           }
         }
+
+        // === SINGLE-SECTION MODE: return on failure too ===
+        // The success path returns after one section; without the same return
+        // here a failed section fell through and the loop carried on generating
+        // every remaining section in the same invocation — precisely the
+        // platform-timeout behaviour single-section mode exists to prevent.
+        if (isSingleSectionMode) {
+          console.log(`🔧 Single-section mode: section ${i + 1}/${filteredSections.length} failed, returning for retry`);
+          await traceFinishRun(_traceSb, _traceRunId, { status: 'failed', error: `Section ${sectionDef.name} produced no content` });
+          return new Response(JSON.stringify({
+            success: false,
+            error: `Section ${sectionDef.name} failed to generate after ${sectionAttempts} attempts`,
+            sectionCompleted: lastCompletedSectionIndex,
+            totalSections: filteredSections.length,
+            isComplete: false,
+            resumeRequired: true,
+            contentLength: combinedContent.length,
+          }), {
+            status: 200,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
       }
-      
+
       // Adaptive delay between sections to avoid rate limiting
       // Use jitter to prevent thundering herd
       if (i < filteredSections.length - 1) {
@@ -5519,7 +5608,54 @@ YOUR DEDICATED PROPERTY PARTNER
         await new Promise(resolve => setTimeout(resolve, baseDelay + jitter));
       }
     }
-    
+
+    // === BUDGET HANDOFF ===
+    // We stopped short of the last section on purpose. Everything generated so
+    // far is already persisted by the progressive save above, and the row stays
+    // 'processing' so the watchdog (or the browser pump) picks it up. Returning
+    // 200 with resumeRequired is what distinguishes "more work to do" from the
+    // old silent kill, where the caller learned nothing at all.
+    if (budgetExhausted) {
+      const remaining = filteredSections.length - lastCompletedSectionIndex;
+      console.log(
+        `🔁 Handing off after ${lastCompletedSectionIndex}/${filteredSections.length} sections ` +
+        `(${remaining} remaining, ${combinedContent.length} chars banked)`
+      );
+      await traceFinishRun(_traceSb, _traceRunId, {
+        status: 'paused',
+        error: `Wall-clock budget reached at section ${lastCompletedSectionIndex}/${filteredSections.length}`,
+      });
+
+      // Persist the true section count (the progress widget and the watchdog
+      // both read it) and clear any error left by an earlier failed attempt —
+      // this run succeeded, it just is not finished. updated_at is stamped so
+      // the watchdog's staleness window runs from real progress.
+      if (reportId && supabaseClient) {
+        await supabaseClient
+          .from('investment_reports')
+          .update({
+            status: 'processing',
+            error_message: null,
+            total_sections: filteredSections.length,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', reportId);
+      }
+
+      return new Response(JSON.stringify({
+        success: true,
+        message: `Generated ${lastCompletedSectionIndex}/${filteredSections.length} sections; resume required`,
+        sectionCompleted: lastCompletedSectionIndex,
+        totalSections: filteredSections.length,
+        isComplete: false,
+        resumeRequired: true,
+        contentLength: combinedContent.length,
+      }), {
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
     // === FINAL VALIDATION SUMMARY ===
     const totalScore = sectionResults.reduce((sum, s) => sum + s.score, 0);
     const avgScore = Math.round(totalScore / sectionResults.length);

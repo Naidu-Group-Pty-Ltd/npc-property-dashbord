@@ -57,7 +57,12 @@ export interface ChunkRecord {
 }
 
 export interface FinishRunInput {
-  status: 'completed' | 'failed' | 'cancelled';
+  // 'paused' is a *successful* non-terminal outcome: the run hit its wall-clock
+  // budget with sections still to generate and handed off to a resume. It is
+  // distinct from 'failed' — the work banked so far is good and the report is
+  // still on its way. Anything auditing run outcomes should treat a trailing
+  // 'paused' run as in-flight, not as an error.
+  status: 'completed' | 'failed' | 'cancelled' | 'paused';
   error?: string | null;
   total_prompt_tokens?: number;
   total_completion_tokens?: number;

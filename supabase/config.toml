@@ -246,6 +246,10 @@ request_timeout = 1500
 [functions.resume-bulk-generation]
 request_timeout = 1500
 
+[functions.resume-investment-reports]
+verify_jwt = false
+request_timeout = 1500
+
 [functions.abs-data-service]
 verify_jwt = false
 
