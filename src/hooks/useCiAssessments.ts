@@ -332,6 +332,40 @@ export function useCiAssessment(assessmentId: string | null) {
     await flush(section);
   }, [flush]);
 
+  /**
+   * Persist the record title without a refetch.
+   *
+   * The title lives on the record rather than the payload, but reloading the
+   * whole assessment to pick up the new value tore the workspace down to its
+   * loading state mid-keystroke — which is what made the name field feel dead.
+   * Take the version and record straight from the save response instead.
+   */
+  const saveTitle = useCallback(async (title: string) => {
+    if (!assessmentId) return;
+    const current = pendingRef.current ?? payload;
+    if (!current) return;
+    setSaveState('saving');
+    const result = await ciAssessmentApi.autosave({
+      assessmentId, payload: current, expectedVersion: versionRef.current, title,
+    });
+    if (result.code === 'VERSION_CONFLICT') {
+      setSaveState('conflict');
+      setError('This assessment was changed in another tab or session. Reload to continue.');
+      return;
+    }
+    if (result.error || !result.data) {
+      setSaveState('error');
+      setError(result.error ?? 'Save failed');
+      return;
+    }
+    versionRef.current = result.data.version;
+    setRecord(result.data);
+    setLastSavedAt(result.data.updated_at);
+    setError(null);
+    setSaveState('saved');
+  }, [assessmentId, payload]);
+
+
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
 
   // Warn before a reload or tab close discards work that has not reached the
