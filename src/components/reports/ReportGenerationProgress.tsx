@@ -237,7 +237,9 @@ function ReportGenerationProgressInner() {
         // converge instead of waiting 120s between each section.
         const MAX_SECTION_CALLS = 60; // hard upper bound
         const MAX_TRANSIENT_RETRIES = 4;
+        const MAX_SECTION_FAILURES = 3;
         let consecutiveTransientErrors = 0;
+        let consecutiveSectionFailures = 0;
         let done = false;
 
         for (let call = 0; call < MAX_SECTION_CALLS && !done; call++) {
@@ -278,10 +280,42 @@ function ReportGenerationProgressInner() {
           }
 
           consecutiveTransientErrors = 0;
-          if (data?.isComplete === true || data?.success === false) {
+
+          if (data?.isComplete === true) {
             done = true;
             break;
           }
+
+          // `success: false` means this section failed, NOT that the report is
+          // finished. Treating it as done silently abandoned the report with
+          // partial content and no terminal status. Retry the section a bounded
+          // number of times, then stop and leave it for the server-side
+          // watchdog rather than pretending it completed.
+          if (data?.success === false) {
+            if (consecutiveSectionFailures < MAX_SECTION_FAILURES) {
+              consecutiveSectionFailures++;
+              const backoff = Math.min(15000, 2000 * 2 ** (consecutiveSectionFailures - 1));
+              console.warn(
+                `[ReportGenerationProgress] Section failed (#${consecutiveSectionFailures}), retrying in ${backoff}ms`,
+                data?.error
+              );
+              await new Promise((r) => setTimeout(r, backoff));
+              continue;
+            }
+            setReports((prev) =>
+              prev.map((r) =>
+                r.id === reportId
+                  ? { ...r, error_message: String(data?.error || 'Section generation failed') }
+                  : r
+              )
+            );
+            break;
+          }
+
+          // A budgeted hand-off (`resumeRequired`) is normal progress, not an
+          // error: the edge function stopped short of its wall-clock ceiling
+          // and expects to be called again. Keep pumping.
+          consecutiveSectionFailures = 0;
           // small jitter to avoid hammering
           await new Promise((r) => setTimeout(r, 250 + Math.random() * 250));
         }

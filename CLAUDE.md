@@ -31,6 +31,13 @@ rules from screen, and most of the repo's "logo" files are email-signature banne
 carrying the director's personal mobile number. Architecture and the migration
 programme: [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
 
+Investment report **generation** is a separate concern from rendering, and the
+one pipeline that cannot finish inside a single request: 17 sections at ~25s each
+against a ~150s edge ceiling. It survives by stopping at a wall-clock budget and
+being resumed — by the browser, the bulk worker, or a cron watchdog. Read
+[`docs/reports/INVESTMENT_REPORT_RESUME.md`](./docs/reports/INVESTMENT_REPORT_RESUME.md)
+before changing the section loop, its timeouts, or anything that claims a report.
+
 Eight formats have been migrated onto it, and each carries its own contract:
 [`BORROWING_CAPACITY.md`](./docs/reports/BORROWING_CAPACITY.md),
 [`CASH_FLOW.md`](./docs/reports/CASH_FLOW.md),

@@ -143,6 +143,7 @@ export function useChunkedRegeneration() {
       const startSection = shouldResumeGeneration || shouldResumePostProcessing ? existingCompletedSection : 0;
 
       // ── Phase 1: Generate sections ────────────────────────────────────────
+      let allSectionsComplete = false;
       for (let section = startSection; section < totalSections; section++) {
         if (abortRef.current) {
           console.log('[ChunkedRegeneration] Aborted by user');
@@ -192,6 +193,7 @@ export function useChunkedRegeneration() {
             sectionSuccess = true;
             if (data.isComplete) {
               console.log('[ChunkedRegeneration] All sections complete');
+              allSectionsComplete = true;
               break;
             }
           } else {
@@ -202,6 +204,13 @@ export function useChunkedRegeneration() {
         if (!sectionSuccess) {
           throw new Error(`Failed to generate section ${section + 1}: ${lastError}`);
         }
+
+        // The edge function reports completion the moment the last section
+        // lands. Without this the outer loop kept calling for section indices
+        // that were already generated — every one of them a full round-trip
+        // that skipped straight to finalisation and did the post-processing
+        // again.
+        if (allSectionsComplete) break;
       }
 
       // ── Phase 2: Condense + page-pressure trim ────────────────────────────

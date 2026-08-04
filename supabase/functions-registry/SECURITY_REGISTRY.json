@@ -2372,6 +2372,13 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "resume-investment-reports": {
+      "verify_jwt": true,
+      "exposure_class": "internal-service",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "wp14_auto_classified": true
+    },
     "retrieve-template-context": {
       "verify_jwt": true,
       "exposure_class": "human-authenticated",
