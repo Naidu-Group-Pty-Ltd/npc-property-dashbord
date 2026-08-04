@@ -65,7 +65,6 @@ import {
   propertyGlyph,
   PROPERTY_GLYPHS,
   describeGeocodePrecision,
-  robustClusterAnchor,
   summariseCluster,
   tierMixGradientStops,
   type BasemapId,
@@ -885,7 +884,14 @@ function clusterTooltipHtml(cluster: ClusterLike): string {
 interface ListingMarkersProps {
   markers: ListingMarker[];
   tiers: PriceTiers | null;
-  images?: Record<string, StoredListingImage[]>;
+  /**
+   * Read through a ref, deliberately. Image resolution delivers in waves, and
+   * passing the record itself re-rendered fourteen hundred markers — and
+   * rebound every one of their event listeners — on each wave. The ref's
+   * identity never changes, so the memo holds; the hover handler reads
+   * whatever imagery has arrived by the time someone actually hovers.
+   */
+  imagesRef: React.MutableRefObject<Record<string, StoredListingImage[]> | undefined>;
   variant: PinVariant;
   selectedId: string | null;
   /** The listing under the pointer in the results panel, if any. */
@@ -899,7 +905,7 @@ interface ListingMarkersProps {
 const ListingMarkers = memo(function ListingMarkers({
   markers,
   tiers,
-  images,
+  imagesRef,
   variant,
   selectedId,
   hoveredId,
@@ -967,7 +973,7 @@ const ListingMarkers = memo(function ListingMarkers({
                 const marker = event.target as L.Marker;
                 const html = pinTooltipHtml(
                   listing,
-                  images?.[listing.id]?.[0]?.url ?? null,
+                  imagesRef.current?.[listing.id]?.[0]?.url ?? null,
                   precision,
                 );
                 if (marker.getTooltip()) marker.setTooltipContent(html);
@@ -1285,6 +1291,10 @@ function ListingPopupCard({
 /* -------------------------------------------------------------------------- */
 
 export function ListingsMapView({ listings, onSelectListing, onEmailAgent, images }: ListingsMapViewProps) {
+  // Stable identity for the marker layer; see ListingMarkersProps.imagesRef.
+  const imagesRef = useRef<Record<string, StoredListingImage[]> | undefined>(images);
+  imagesRef.current = images;
+
   const { isDark } = useWhiteLabel();
   const [mode, setMode] = usePersistedChoice<MapMode>(STORAGE_KEYS.mode, 'hybrid', isMapMode);
   const [basemapPref, setBasemapPref] = usePersistedChoice<BasemapId>(
@@ -1749,7 +1759,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
           <ListingMarkers
             markers={markers}
             tiers={tiers}
-            images={images}
+            imagesRef={imagesRef}
             variant={pinVariant}
             selectedId={selectedId}
             hoveredId={hoveredId}
