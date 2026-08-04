@@ -904,7 +904,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             const { data: row } = await aml.from(src.table)
               .select(`id${src.refCol ? `, ${src.refCol}` : ""}`).eq("id", t.entity_id).maybeSingle();
             if (!row) continue;
-            t.__reference_label = src.refCol ? row[src.refCol] : null;
+            t.__reference_label = src.refCol ? (row as unknown as Record<string, unknown>)[src.refCol] : null;
           }
 
           candidates++;
@@ -1001,7 +1001,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             const { data: sourceRecord, error: sourceRecordError } = await aml.from(src.table)
               .select(src.caseIdCol).eq("id", it.entity_id).maybeSingle();
             if (sourceRecordError) throw sourceRecordError;
-            caseId = sourceRecord?.[src.caseIdCol] ?? null;
+            caseId = (sourceRecord as Record<string, unknown> | null)?.[src.caseIdCol] as string | null ?? null;
           }
           const holdId = await activeHoldFor(admin, it.entity_type, it.entity_id, caseId);
           if (holdId) {

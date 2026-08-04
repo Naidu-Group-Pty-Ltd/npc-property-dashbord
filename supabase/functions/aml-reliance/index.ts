@@ -553,8 +553,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         if (link.state !== "active") {
           return jr({ error: "This link is no longer active.", code: "link_inactive" }, 409);
         }
-        const codes = Array.isArray(body.record_codes)
-          ? [...new Set(body.record_codes.map((c: unknown) => String(c)))] : [];
+        const codes: string[] = Array.isArray(body.record_codes)
+          ? [...new Set<string>((body.record_codes as unknown[]).map((c) => String(c)))] : [];
         const rationale = String(body.rationale ?? "").trim();
         if (codes.length === 0) return jr({ error: "record_codes required" }, 400);
         if (rationale.length < 10) return jr({ error: "rationale must be at least 10 characters — record why the records are necessary" }, 400);
@@ -2081,8 +2081,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         const patch: Record<string, unknown> = { status: decision };
         if (decision !== "under_review") {
           const requested: string[] = request.requested_record_codes ?? [];
-          const approved = Array.isArray(body.approved_record_codes)
-            ? [...new Set(body.approved_record_codes.map((c: unknown) => String(c)))]
+          const approved: string[] = Array.isArray(body.approved_record_codes)
+            ? [...new Set<string>((body.approved_record_codes as unknown[]).map((c) => String(c)))]
               .filter((c) => requested.includes(c))
             : [];
           if (decision === "approved" && approved.length !== requested.length) {
