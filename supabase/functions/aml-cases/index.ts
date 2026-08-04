@@ -506,52 +506,41 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         let clientMarkedActive = false;
 
         if (clientWasInactive) {
-          // Atomic path (Part 5): mark the client active and open the case in
-          // ONE database transaction, so a failed case insert can never leave
-          // the client active without a case (or the reverse). The RPC locks
-          // the client row, flips is_active, inserts the case and rolls the
-          // whole thing back on any error — including the duplicate-open
-          // unique index, which still surfaces as the same 409 contract.
+          // Atomic path ONLY (Part 5): mark the client active and open the
+          // case in ONE database transaction. The RPC locks the client row,
+          // flips is_active, inserts the case and rolls the whole thing back
+          // on any error — including the duplicate-open unique index, which
+          // still surfaces as the same 409 contract.
+          //
+          // There is deliberately NO non-transactional fallback. A compensated
+          // flip/insert/revert sequence can race a concurrent activation into
+          // deactivating a client who holds a valid open case, and its revert
+          // can itself fail, leaving an active client with no case. If the RPC
+          // has not been installed yet, this path fails closed with a clear
+          // configuration error and mutates nothing.
           const { data: txResult, error: txErr } = await admin.rpc(
             'aml_activate_client_open_case',
             { p_client_id: clientId, p_case: { ...baseInsert, ...dimensionFields } },
           );
-          if (txErr && !isMissingFunctionError(txErr)) {
+          if (txErr) {
+            if (isMissingFunctionError(txErr)) {
+              // Fail closed: no client update, no case insert, no case event.
+              // Deployment order requires the migration installing the RPC to
+              // be applied before this function serves inactive activations.
+              return jsonResponse({
+                error: 'AML client activation is temporarily unavailable because the required database function has not been installed.',
+                code: 'aml_activation_rpc_unavailable',
+              }, 503);
+            }
             if (txErr.code === '23505' || /aml_cases_one_open_per_client|already exists/i.test(String(txErr.message ?? ''))) {
               return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
             }
             if (txErr.code === 'P0002') return jsonResponse({ error: 'Client not found' }, 404);
             throw txErr;
           }
-          if (!txErr) {
-            created = (txResult as any)?.case ?? null;
-            clientMarkedActive = Boolean((txResult as any)?.client_marked_active);
-            if (!created) throw new Error('Activation transaction returned no case');
-          } else {
-            // The transactional RPC has not been migrated in this environment
-            // yet. Compensated fallback: flip active, insert the case, and
-            // revert the flip if the insert fails for any reason so the client
-            // is never left active without their AML case.
-            const { error: flipErr } = await admin
-              .from('clients').update({ is_active: true }).eq('id', clientId);
-            if (flipErr) throw flipErr;
-            clientMarkedActive = true;
-            let { data: fallbackCreated, error: createErr } = await admin
-              .schema('aml').from('cases')
-              .insert({ ...baseInsert, ...dimensionFields }).select('*').single();
-            if (createErr && isMissingColumnError(createErr)) {
-              ({ data: fallbackCreated, error: createErr } = await admin
-                .schema('aml').from('cases').insert(baseInsert).select('*').single());
-            }
-            if (createErr) {
-              await admin.from('clients').update({ is_active: false }).eq('id', clientId);
-              if (createErr.code === '23505') {
-                return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
-              }
-              throw createErr;
-            }
-            created = fallbackCreated;
-          }
+          created = (txResult as any)?.case ?? null;
+          clientMarkedActive = Boolean((txResult as any)?.client_marked_active);
+          if (!created) throw new Error('Activation transaction returned no case');
         } else {
           // Already-active client: existing case-creation behaviour unchanged.
           let { data: createdRow, error: createErr } = await admin

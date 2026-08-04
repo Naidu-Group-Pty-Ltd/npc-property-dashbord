@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -7,8 +7,12 @@ import { describe, expect, it } from "vitest";
 const repo = process.cwd();
 const read = (p: string) => readFileSync(join(repo, p), "utf8");
 
+const MIGRATION_PATH = "supabase/migrations/20260804160000_aml_activate_inactive_client.sql";
+const OLD_FUTURE_DATED_MIGRATION_PATH =
+  "supabase/migrations/20260826000000_aml_activate_inactive_client.sql";
+
 const edgeSource = read("supabase/functions/aml-cases/index.ts");
-const migrationSource = read("supabase/migrations/20260826000000_aml_activate_inactive_client.sql");
+const migrationSource = read(MIGRATION_PATH);
 const amlCasesPage = read("src/pages/aml/AmlCases.tsx");
 const dialogSource = read("src/components/aml/ActivateClientDialog.tsx");
 const activateAction = read("src/components/clients/ClientAmlActivateAction.tsx");
@@ -21,19 +25,58 @@ describe("AML activation pathway — server contract", () => {
     expect(edgeSource).toContain("const clientWasInactive = client.is_active !== true;");
   });
 
-  it("marks the client active and opens the case in one transaction, with a compensated fallback", () => {
-    // Transactional RPC first…
-    expect(edgeSource).toContain("aml_activate_client_open_case");
-    // …and if the RPC is not migrated yet, the fallback reverts the active
-    // flip whenever case creation fails, so a client is never left active
-    // without their AML case.
-    const fallback = edgeSource.slice(edgeSource.indexOf("isMissingFunctionError(txErr)"));
-    expect(fallback).toContain(".update({ is_active: true }).eq('id', clientId)");
-    expect(fallback).toContain(".update({ is_active: false }).eq('id', clientId)");
-    const revertIdx = edgeSource.indexOf(".update({ is_active: false })");
-    const createErrIdx = edgeSource.indexOf("if (createErr) {", edgeSource.indexOf("clientMarkedActive = true;"));
-    expect(createErrIdx).toBeGreaterThan(-1);
-    expect(revertIdx).toBeGreaterThan(createErrIdx);
+  it("activates an inactive client exclusively through the transactional RPC", () => {
+    const inactiveBranch = edgeSource.slice(
+      edgeSource.indexOf("if (clientWasInactive) {"),
+      edgeSource.indexOf("} else {", edgeSource.indexOf("if (clientWasInactive) {")),
+    );
+    expect(inactiveBranch).toContain("admin.rpc(");
+    expect(inactiveBranch).toContain("'aml_activate_client_open_case'");
+    // No direct writes on this path: the flip and the insert happen only
+    // inside the RPC's transaction.
+    expect(inactiveBranch).not.toContain(".update(");
+    expect(inactiveBranch).not.toContain(".insert(");
+    expect(inactiveBranch).not.toContain("appendEvent(");
+  });
+
+  it("fails closed with a 503 configuration error when the RPC is not installed", () => {
+    const inactiveBranch = edgeSource.slice(
+      edgeSource.indexOf("if (clientWasInactive) {"),
+      edgeSource.indexOf("} else {", edgeSource.indexOf("if (clientWasInactive) {")),
+    );
+    expect(inactiveBranch).toContain("isMissingFunctionError(txErr)");
+    expect(inactiveBranch).toContain(
+      "error: 'AML client activation is temporarily unavailable because the required database function has not been installed.',",
+    );
+    expect(inactiveBranch).toContain("code: 'aml_activation_rpc_unavailable',");
+    expect(inactiveBranch).toContain("}, 503);");
+    // The 503 must not swallow genuine failures: duplicate and not-found
+    // mappings survive, and everything else still throws.
+    expect(inactiveBranch).toContain("An open AML case already exists for this client");
+    expect(inactiveBranch).toContain("txErr.code === 'P0002'");
+    expect(inactiveBranch).toContain("throw txErr;");
+  });
+
+  it("contains no compensated flip/insert/revert fallback anywhere", () => {
+    // The old fallback flipped is_active outside a transaction and tried to
+    // revert it on failure — racy (a concurrent activation's committed case
+    // could get its client flipped back to inactive) and the revert itself
+    // could fail. It must not exist in any form.
+    expect(edgeSource).not.toContain(".update({ is_active: true })");
+    expect(edgeSource).not.toContain(".update({ is_active: false })");
+    expect(edgeSource).not.toMatch(/update\(\s*\{\s*is_active/);
+    expect(edgeSource).not.toContain("fallbackCreated");
+  });
+
+  it("keeps the existing direct case-creation path for already-active clients", () => {
+    const activeBranch = edgeSource.slice(
+      edgeSource.indexOf("// Already-active client: existing case-creation behaviour unchanged."),
+      edgeSource.indexOf("const clientActivation = {"),
+    );
+    expect(activeBranch).toContain(".insert({ ...baseInsert, ...dimensionFields }).select('*').single()");
+    expect(activeBranch).toContain("isMissingColumnError(createErr)");
+    expect(activeBranch).toContain("An open AML case already exists for this client");
+    expect(activeBranch).not.toContain("admin.rpc(");
   });
 
   it("the migration performs the flip and the insert inside a single function (one transaction)", () => {
@@ -83,6 +126,33 @@ describe("AML activation pathway — server contract", () => {
     expect(searchBlock).not.toContain("marketing");
     expect(searchBlock).not.toMatch(/filter\(.*is_active === true\)\.slice/);
     expect(searchBlock).toContain("selectActivationMatches");
+  });
+});
+
+describe("AML activation pathway — migration filename", () => {
+  it("the migration exists under a repository-consistent, non-future timestamp", () => {
+    expect(existsSync(join(repo, MIGRATION_PATH))).toBe(true);
+    // Sorts after the AML dependencies it builds on (aml.cases 20260716…,
+    // workflow dimensions 20260725153000) and after the other 20260804
+    // migrations already in the repo.
+    const version = "20260804160000";
+    expect(MIGRATION_PATH).toContain(version);
+    expect(version > "20260725153000").toBe(true);
+  });
+
+  it("the old future-dated filename is gone and nothing references it", () => {
+    expect(existsSync(join(repo, OLD_FUTURE_DATED_MIGRATION_PATH))).toBe(false);
+    // No source or test (other than this guard's own constant) may point at
+    // the removed filename.
+    for (const p of [
+      "supabase/functions/aml-cases/index.ts",
+      "src/lib/aml/amlPortalContracts.test.ts",
+      "src/lib/aml/amlClientSearch.test.ts",
+      "src/components/aml/__tests__/activateClientDialog.test.tsx",
+      "src/components/aml/ActivateClientDialog.tsx",
+    ]) {
+      expect(read(p)).not.toContain("20260826000000");
+    }
   });
 });
 
