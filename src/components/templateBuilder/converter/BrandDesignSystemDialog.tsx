@@ -75,6 +75,8 @@ const BLANK: BrandDesignSystem = {
   options: { ...DEFAULT_REPORT_DESIGN_OPTIONS },
   origin: 'authored',
   brief: '',
+  neutrals: null,
+  sourceNamespace: '',
 };
 
 interface Props {
