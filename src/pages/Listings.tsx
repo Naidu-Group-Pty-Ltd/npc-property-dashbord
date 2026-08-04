@@ -937,6 +937,7 @@ export default function Listings() {
               listings={filteredListings}
               onSelectListing={openDetailsModal}
               onEmailAgent={openEmailAgent}
+              images={listingImages}
             />
           </Suspense>
         </ErrorBoundary>

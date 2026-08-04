@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
   addressFingerprint,
+  forgetCachedPoint,
   readCachedPoint,
   writeCachedPoint,
 } from '@/lib/listingCoordinateCache';
+import { assessAuPoint } from '../../supabase/functions/_shared/auGeoSanity.pure';
 import type { PropertyListing } from '@/lib/airtable';
 
 export interface ResolvedPoint {
@@ -50,8 +52,17 @@ function numeric(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function isValid(lat: number | null, lng: number | null): boolean {
-  return lat !== null && lng !== null && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+/**
+ * "Somewhere on Earth" is not good enough for a corpus that is entirely
+ * Australian. This used to accept any world coordinate, which let a geocoder
+ * answering a contaminated locality put a listing in the Southern Ocean —
+ * and, worse, let that answer be *cached*, resurrecting the phantom pin every
+ * session. The claimed state tightens the check further when the record has
+ * one: a Perth listing plotted in the Tasman is wrong even though both points
+ * are inside the country box.
+ */
+function isValid(lat: number | null, lng: number | null, state?: string | null): boolean {
+  return lat !== null && lng !== null && assessAuPoint(lat, lng, state).ok;
 }
 
 /** Enough of an address for the server to have any chance of placing it. */
@@ -84,7 +95,14 @@ export function useListingCoordinates(listings: PropertyListing[]) {
         listing.id,
         addressFingerprint([listing.address, listing.suburb, listing.state, listing.zipCode]),
       );
-      if (hit) seed[listing.id] = hit;
+      if (!hit) continue;
+      // A cached point that fails the geography check is a poisoned answer
+      // from an earlier session. Forget it so it stops resurrecting.
+      if (!isValid(hit.lat, hit.lng, listing.state)) {
+        forgetCachedPoint(listing.id);
+        continue;
+      }
+      seed[listing.id] = hit;
     }
     return seed;
   });
@@ -139,7 +157,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     for (const row of payload) {
       const lat = numeric(row.latitude);
       const lng = numeric(row.longitude);
-      if (isValid(lat, lng)) {
+      if (isValid(lat, lng, row.state)) {
         immediate[row.id] = { lat: lat as number, lng: lng as number, source: 'record' };
       }
     }
@@ -165,9 +183,14 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     const cached: Record<string, ResolvedPoint> = {};
     for (const row of payload) {
       if (pointsRef.current[row.id]) continue;
-      if (isValid(numeric(row.latitude), numeric(row.longitude))) continue;
+      if (isValid(numeric(row.latitude), numeric(row.longitude), row.state)) continue;
       const hit = readCachedPoint(row.id, fingerprintOf(row));
-      if (hit) cached[row.id] = hit;
+      if (!hit) continue;
+      if (!isValid(hit.lat, hit.lng, row.state)) {
+        forgetCachedPoint(row.id);
+        continue;
+      }
+      cached[row.id] = hit;
     }
     if (Object.keys(cached).length === 0) return;
     pointsRef.current = { ...pointsRef.current, ...cached };
@@ -179,7 +202,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
       payloadRef.current.filter(
         (row) =>
           !pointsRef.current[row.id] &&
-          !isValid(numeric(row.latitude), numeric(row.longitude)) &&
+          !isValid(numeric(row.latitude), numeric(row.longitude), row.state) &&
           (attemptsRef.current.get(row.id) ?? 0) < MAX_ATTEMPTS &&
           isResolvable(row),
       );
@@ -189,8 +212,16 @@ export function useListingCoordinates(listings: PropertyListing[]) {
     ) => {
       const next: Record<string, ResolvedPoint> = {};
       const fingerprints = new Map(payloadRef.current.map((row) => [row.id, fingerprintOf(row)]));
+      const states = new Map(payloadRef.current.map((row) => [row.id, row.state]));
       for (const r of resolved) {
-        if (!isValid(r.lat, r.lng)) continue;
+        if (!isValid(r.lat, r.lng, states.get(r.id))) {
+          // The geocoder placed an Australian property outside Australia (or
+          // outside its own state). That is a wrong answer, not a pending
+          // one: record the attempt so the pass does not ask forever, and
+          // never let it into the cache.
+          attemptsRef.current.set(r.id, (attemptsRef.current.get(r.id) ?? 0) + 1);
+          continue;
+        }
         const point: ResolvedPoint = { lat: r.lat, lng: r.lng, source: r.source ?? 'geocoded' };
         next[r.id] = point;
         const fp = fingerprints.get(r.id);

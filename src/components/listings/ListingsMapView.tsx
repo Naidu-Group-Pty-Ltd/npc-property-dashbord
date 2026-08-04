@@ -83,6 +83,8 @@ import { ListingHero } from './ListingHero';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
+import { assessAuPoint } from '../../../supabase/functions/_shared/auGeoSanity.pure';
+import type { StoredListingImage } from '@/lib/listingImages';
 
 /**
  * Leaflet copies unknown constructor options straight onto `marker.options`, and
@@ -95,6 +97,7 @@ declare module 'leaflet' {
   interface MarkerOptions {
     listingPrice?: number | null;
     listingTier?: PriceTier;
+    listingSuburb?: string | null;
   }
 }
 
@@ -139,6 +142,13 @@ interface ListingsMapViewProps {
   onSelectListing: (listing: PropertyListing) => void;
   /** Opens the enquiry composer for a listing, straight from its pin. */
   onEmailAgent?: (listing: PropertyListing) => void;
+  /**
+   * Resolved imagery from the page, keyed by listing id. Purely additive: a
+   * pin whose listing has a stored photograph shows it in the hover card, so
+   * the map answers "is this worth a click" with the same photography as the
+   * gallery.
+   */
+  images?: Record<string, StoredListingImage[]>;
 }
 
 interface ListingMarker {
@@ -787,7 +797,7 @@ function ResultsPanel({
  * listing identically. Bound lazily on first hover: fourteen hundred prebuilt
  * tooltips would be DOM ballast for the handful anyone touches.
  */
-function pinTooltipHtml(listing: PropertyListing): string {
+function pinTooltipHtml(listing: PropertyListing, photoUrl?: string | null): string {
   const beds = listing.beds ?? listing.bedrooms;
   const baths = listing.baths ?? listing.bathrooms;
   const specs = [
@@ -800,15 +810,59 @@ function pinTooltipHtml(listing: PropertyListing): string {
     .join(' · ');
   const address = listing.address || listing.suburb || 'Listing';
   return (
+    // The photograph, when the page has already resolved one — the same
+    // signed URL the gallery card is rendering, so hovering a pin shows the
+    // property itself, not just its numbers.
+    (photoUrl
+      ? `<img class="listings-pin-tip__photo" src="${escapeHtml(photoUrl)}" alt="" loading="lazy" />`
+      : '') +
     `<span class="listings-pin-tip__price">${escapeHtml(formatFullAud(listing.price) ?? 'Price on request')}</span>` +
     `<span class="listings-pin-tip__address">${escapeHtml(address)}</span>` +
     (specs ? `<span class="listings-pin-tip__specs">${escapeHtml(specs)}</span>` : '')
   );
 }
 
+/**
+ * What a cluster says on hover, before anyone decides to zoom: how many
+ * properties, what they are worth at the median, and where they are — the
+ * question a bubble over a whole region begs. Built lazily per hover;
+ * clusters are recreated on every re-cluster, so nothing here goes stale.
+ */
+function clusterTooltipHtml(cluster: ClusterLike): string {
+  const members = clusterMembers(cluster);
+  const summary = summariseCluster(members);
+  const median = formatCompactAud(summary.median);
+
+  const bySuburb = new Map<string, number>();
+  for (const marker of cluster.getAllChildMarkers()) {
+    const suburb = marker.options.listingSuburb;
+    if (suburb) bySuburb.set(suburb, (bySuburb.get(suburb) ?? 0) + 1);
+  }
+  const top = Array.from(bySuburb.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([name]) => name);
+  const rest = bySuburb.size - top.length;
+  const where =
+    top.length === 0
+      ? null
+      : rest > 0
+        ? `${top.join(', ')} +${rest} more suburb${rest === 1 ? '' : 's'}`
+        : top.join(', ');
+
+  return (
+    `<span class="listings-pin-tip__price">${escapeHtml(
+      `${summary.count} propert${summary.count === 1 ? 'y' : 'ies'}${median ? ` · median ${median}` : ''}`,
+    )}</span>` +
+    (where ? `<span class="listings-pin-tip__address">${escapeHtml(where)}</span>` : '') +
+    `<span class="listings-pin-tip__specs">Click to zoom in</span>`
+  );
+}
+
 interface ListingMarkersProps {
   markers: ListingMarker[];
   tiers: PriceTiers | null;
+  images?: Record<string, StoredListingImage[]>;
   variant: PinVariant;
   selectedId: string | null;
   /** The listing under the pointer in the results panel, if any. */
@@ -822,6 +876,7 @@ interface ListingMarkersProps {
 const ListingMarkers = memo(function ListingMarkers({
   markers,
   tiers,
+  images,
   variant,
   selectedId,
   hoveredId,
@@ -875,16 +930,21 @@ const ListingMarkers = memo(function ListingMarkers({
             // augmentation above.
             listingPrice={typeof listing.price === 'number' ? listing.price : null}
             listingTier={tier}
+            listingSuburb={listing.suburb ?? null}
             alt={title}
             riseOnHover
             keyboard
             eventHandlers={{
               click: () => onSelect(listing.id),
               mouseover: (event) => {
-                const marker = event.target as L.Marker & { __npcTipBound?: boolean };
-                if (!marker.__npcTipBound) {
-                  marker.__npcTipBound = true;
-                  marker.bindTooltip(pinTooltipHtml(listing), {
+                // Rebuilt on every hover rather than bound once: the page's
+                // image resolution may have delivered this listing's
+                // photograph since the last look, and the card should show it.
+                const marker = event.target as L.Marker;
+                const html = pinTooltipHtml(listing, images?.[listing.id]?.[0]?.url ?? null);
+                if (marker.getTooltip()) marker.setTooltipContent(html);
+                else {
+                  marker.bindTooltip(html, {
                     direction: 'top',
                     offset: L.point(0, -14),
                     opacity: 1,
@@ -921,7 +981,8 @@ function ClusterAnchorToProperty({
   signature,
 }: {
   clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
-  signature: number;
+  /** Re-arms the listeners when the data or the cluster group itself changes. */
+  signature: string;
 }) {
   const map = useMap();
 
@@ -966,7 +1027,7 @@ function ClusterAnchorToProperty({
     group?.on('animationend', snap);
     // chunkedLoading builds clusters over several frames after mount, so a
     // single immediate pass would run before most clusters exist.
-    const timers = [0, 300, 900].map((ms) => window.setTimeout(snap, ms));
+    const timers = [0, 300, 900, 2000].map((ms) => window.setTimeout(snap, ms));
 
     return () => {
       map.off('zoomend moveend viewreset', snap);
@@ -975,6 +1036,50 @@ function ClusterAnchorToProperty({
       if (frame !== null) window.cancelAnimationFrame(frame);
     };
   }, [map, clusterRef, signature]);
+
+  return null;
+}
+
+/**
+ * Cluster hover intelligence: count, median and where — bound lazily on the
+ * group's own event, so a thousand clusters cost nothing until one is under
+ * the pointer.
+ */
+function ClusterHoverIntel({
+  clusterRef,
+  signature,
+}: {
+  clusterRef: React.MutableRefObject<L.MarkerClusterGroup | null>;
+  signature: string;
+}) {
+  useEffect(() => {
+    const group = clusterRef.current;
+    if (!group) return;
+    const onOver = (event: L.LeafletEvent) => {
+      const cluster = (event as { propagatedFrom?: unknown; layer?: unknown }).propagatedFrom ??
+        (event as { layer?: unknown }).layer;
+      const marker = cluster as (L.MarkerCluster & { __npcIntel?: boolean }) | undefined;
+      if (!marker || typeof marker.getAllChildMarkers !== 'function') return;
+      try {
+        if (!marker.__npcIntel) {
+          marker.__npcIntel = true;
+          marker.bindTooltip(clusterTooltipHtml(marker as unknown as ClusterLike), {
+            direction: 'top',
+            offset: L.point(0, -22),
+            opacity: 1,
+            className: 'listings-pin-tip',
+          });
+        }
+        marker.openTooltip();
+      } catch {
+        /* a tooltip is never worth an exception on the map */
+      }
+    };
+    group.on('clustermouseover', onOver);
+    return () => {
+      group.off('clustermouseover', onOver);
+    };
+  }, [clusterRef, signature]);
 
   return null;
 }
@@ -1221,7 +1326,7 @@ function ListingPopupCard({
 /* Main view                                                                   */
 /* -------------------------------------------------------------------------- */
 
-export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: ListingsMapViewProps) {
+export function ListingsMapView({ listings, onSelectListing, onEmailAgent, images }: ListingsMapViewProps) {
   const { isDark } = useWhiteLabel();
   const [mode, setMode] = usePersistedChoice<MapMode>(STORAGE_KEYS.mode, 'hybrid', isMapMode);
   const [basemapPref, setBasemapPref] = usePersistedChoice<BasemapId>(
@@ -1272,25 +1377,35 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: Lis
 
   const { points, isResolving, failure, retry } = useListingCoordinates(listings);
 
-  const markers = useMemo<ListingMarker[]>(() => {
+  // The accuracy gate. Every plotted point must survive the Australian
+  // geography check — country bounds, and the record's own state where it
+  // names one. A coordinate that fails is not plotted *anywhere*: not as a
+  // pin, not into a cluster centroid, not into the heat surface. It joins the
+  // unmapped list with its reason, which is the honest outcome — a pin in the
+  // Southern Ocean is not "mapped", it is wrong with confidence.
+  const { markers, unmapped } = useMemo(() => {
     const rows: ListingMarker[] = [];
+    const held: Array<{ listing: PropertyListing; reason: 'no_coordinates' | 'failed_check' }> =
+      [];
     for (const listing of listings) {
       const resolved = points[listing.id];
       const point = resolved
         ? { lat: resolved.lat, lng: resolved.lng }
         : getStoredListingPoint(listing);
-      if (point) rows.push({ listing, point });
+      if (!point) {
+        held.push({ listing, reason: 'no_coordinates' });
+        continue;
+      }
+      if (!assessAuPoint(point.lat, point.lng, listing.state).ok) {
+        held.push({ listing, reason: 'failed_check' });
+        continue;
+      }
+      rows.push({ listing, point });
     }
-    return rows;
+    return { markers: rows, unmapped: held };
   }, [listings, points]);
 
   markersRef.current = markers;
-
-  const unmappedListings = useMemo(() => {
-    if (markers.length === listings.length) return [];
-    const plotted = new Set(markers.map((m) => m.listing.id));
-    return listings.filter((l) => !plotted.has(l.id));
-  }, [listings, markers]);
 
   const tiers = useMemo(
     () =>
@@ -1669,6 +1784,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: Lis
           <ListingMarkers
             markers={markers}
             tiers={tiers}
+            images={images}
             variant={pinVariant}
             selectedId={selectedId}
             hoveredId={hoveredId}
@@ -1676,7 +1792,17 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: Lis
             registerMarker={registerMarker}
             clusterRef={clusterRef}
           />
-          <ClusterAnchorToProperty clusterRef={clusterRef} signature={markers.length} />
+          {/* The cluster group remounts when the ghost style toggles, so the
+              signature carries the variant as well as the data size — both
+              re-arm the listeners on the fresh group. */}
+          <ClusterAnchorToProperty
+            clusterRef={clusterRef}
+            signature={`${markers.length}:${pinVariant === 'ghost'}`}
+          />
+          <ClusterHoverIntel
+            clusterRef={clusterRef}
+            signature={`${markers.length}:${pinVariant === 'ghost'}`}
+          />
 
           {userLocation ? (
             <>
@@ -1770,7 +1896,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: Lis
             </button>
           )}
 
-          {unmappedListings.length > 0 && !isResolving && (
+          {unmapped.length > 0 && !isResolving && (
             <Popover>
               <PopoverTrigger asChild>
                 <button
@@ -1778,23 +1904,23 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: Lis
                   className="flex items-center gap-1.5 rounded-full border border-warning/40 bg-background/85 px-3 py-1.5 text-xs font-semibold text-foreground shadow-md backdrop-blur transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                 >
                   <AlertTriangle className="h-3.5 w-3.5 text-warning" />
-                  <span className="tabular-nums">{unmappedListings.length}</span> unmapped
+                  <span className="tabular-nums">{unmapped.length}</span> unmapped
                   <ChevronDown className="h-3 w-3 text-muted-foreground" />
                 </button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-80 p-0">
                 <div className="border-b border-border/60 px-3 py-2">
                   <p className="text-xs font-semibold text-foreground">
-                    Listings without coordinates
+                    Listings held off the map
                   </p>
                   <p className="mt-0.5 text-[11px] text-muted-foreground">
-                    Addresses resolve server-side. Add a street address, suburb and state so these
-                    records can be located.
+                    Records with no resolvable address, plus any whose coordinates failed the
+                    location accuracy check — held back rather than plotted wrongly.
                   </p>
                 </div>
                 <div className="max-h-64 overflow-y-auto">
                   <ul className="divide-y divide-border/50">
-                    {unmappedListings.slice(0, 50).map((listing) => (
+                    {unmapped.slice(0, 50).map(({ listing, reason }) => (
                       <li key={listing.id}>
                         <button
                           type="button"
@@ -1805,17 +1931,19 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent }: Lis
                             {listing.address || listing.title || 'Untitled listing'}
                           </span>
                           <span className="block truncate text-[11px] text-muted-foreground">
-                            {[listing.suburb, listing.state].filter(Boolean).join(' ') ||
-                              'No locality on record'}
+                            {reason === 'failed_check'
+                              ? 'Coordinates failed the location accuracy check'
+                              : [listing.suburb, listing.state].filter(Boolean).join(' ') ||
+                                'No locality on record'}
                           </span>
                         </button>
                       </li>
                     ))}
                   </ul>
                 </div>
-                {unmappedListings.length > 50 && (
+                {unmapped.length > 50 && (
                   <p className="border-t border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-                    +{unmappedListings.length - 50} more
+                    +{unmapped.length - 50} more
                   </p>
                 )}
               </PopoverContent>

@@ -527,6 +527,16 @@
   border-top-color: hsl(var(--background) / 0.96);
 }
 
+.listings-pin-tip__photo {
+  width: 13rem;
+  max-width: 100%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: 0.45rem;
+  margin-bottom: 0.25rem;
+  background: hsl(var(--muted));
+}
+
 .listings-pin-tip__price {
   font-size: 0.8125rem;
   font-weight: 700;
