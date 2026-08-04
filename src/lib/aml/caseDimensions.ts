@@ -205,6 +205,49 @@ export const CASE_STAGE_LABELS: Record<AmlCaseStage, string> = {
   closed: "Closed",
 };
 
+/**
+ * Plain-English labels for the legacy `status` column (Command Centre only).
+ * Surfaces must show these, never the raw enum value (e.g. "Onboarding in
+ * progress", not `kyc_in_progress`).
+ */
+export const CASE_STATUS_LABELS: Record<AmlCaseStatus, string> = {
+  draft: "Draft",
+  kyc_in_progress: "Onboarding in progress",
+  kyc_complete: "Submission received",
+  edd_required: "Additional information required",
+  under_review: "Under review",
+  escalated_mlro: "Awaiting decision",
+  cleared: "Cleared",
+  blocked: "Blocked",
+  closed: "Closed",
+};
+
+/**
+ * Shared badge treatment for risk ratings. Escalates through tone *and*
+ * weight rather than four unrelated hues: the two "bad" ratings share the
+ * destructive token separated by fill strength, so `prohibited` is
+ * unmistakably the loudest pill on any surface. Semantic tokens only.
+ */
+export const RISK_BADGE_CLASSES = {
+  low: "bg-success/20 text-success border-success/40",
+  medium: "bg-warning/20 text-warning border-warning/40",
+  high: "bg-destructive/15 text-destructive border-destructive/40",
+  prohibited: "border-destructive bg-destructive text-destructive-foreground",
+} as const;
+
+/** Plain-English labels for the service-gate dimension (Command Centre only). */
+export const SERVICE_GATE_LABELS: Record<AmlServiceGateStatus, string> = {
+  not_activated: "Not activated",
+  cdd_incomplete: "CDD incomplete",
+  information_outstanding: "Information outstanding",
+  under_review: "Under review",
+  conditions_outstanding: "Conditions outstanding",
+  approved_with_controls: "Approved with controls",
+  approved: "Approved",
+  locked: "Locked",
+  terminated: "Terminated",
+};
+
 /** Plain-English labels for the client-portal dimension (client-safe). */
 export const CLIENT_PORTAL_STATUS_LABELS: Record<AmlClientPortalStatus, string> = {
   not_started: "Not started",
