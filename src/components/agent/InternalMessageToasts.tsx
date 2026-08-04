@@ -1008,16 +1008,17 @@ export function InternalMessageToasts() {
       )}
     >
       {/* Dock handle — drag the whole stack anywhere on the page */}
-      <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-border/50 bg-card/80 px-1.5 py-0.5 backdrop-blur-xl">
+      <div className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-primary/40 bg-card/95 px-2.5 py-1.5 shadow-lg shadow-primary/10 ring-1 ring-primary/10 backdrop-blur-xl">
         <span
           {...dock.handleProps}
           role="button"
           tabIndex={-1}
           aria-label="Move messages dock"
           title="Drag to move all minimised chats"
-          className="flex cursor-grab items-center text-muted-foreground/70 hover:text-foreground active:cursor-grabbing"
+          className="flex cursor-grab items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground active:cursor-grabbing"
         >
-          <GripVertical className="h-3.5 w-3.5" />
+          <GripVertical className="h-4 w-4" />
+          <span className="hidden sm:inline">Move</span>
         </span>
         {(dock.position || panelResize.size) && (
           <button
@@ -1028,9 +1029,10 @@ export function InternalMessageToasts() {
             }}
             aria-label="Reset chat position and size"
             title="Reset position & size"
-            className="rounded-full p-0.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
-            <RotateCcw className="h-3 w-3" />
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Reset</span>
           </button>
         )}
       </div>
