@@ -28,7 +28,7 @@
  * for the same reason.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -37,6 +37,7 @@ import {
   FileUp,
   Loader2,
   Palette,
+  PencilRuler,
   Plus,
   RefreshCw,
   TriangleAlert,
@@ -52,13 +53,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { usePermissions } from '@/hooks/usePermissions';
 import { BrandDesignSystemDialog } from '@/components/templateBuilder/converter/BrandDesignSystemDialog';
+import { listDesignSystems } from '@/lib/brandDesign/requestBrandDesignSystem';
+import type { BrandDesignSystemSummary } from '@/lib/brandDesign/route.pure';
 import {
+  conversionChapters,
   deliverConvertedTemplate,
   extractTemplate,
   proposeTemplateBinding,
+  RECENT_CONVERSIONS_QUERY_KEY,
 } from '@/lib/reports/converted/requestTemplateConversion';
+import { RecentConversions } from '@/components/templateBuilder/converter/RecentConversions';
+import { buildConvertedTemplate } from '@/lib/reportTemplate/convertedTemplateSchema.pure';
+import { useReportTemplateMutations } from '@/hooks/useReportTemplates';
 import {
   type ConvertExtractResponse,
   type ConvertRenderResponse,
@@ -78,18 +85,21 @@ const ACCEPT = [...TEXT_SUFFIXES, '.pdf'].join(',');
 /** The dropdown value for "no section", since a Select cannot hold empty. */
 const NONE = '__none__';
 
-interface DesignSystemRow {
-  id: string;
-  name: string;
-  description: string;
-  origin: string;
-}
+/**
+ * The adapter key an editable copy is filed under.
+ *
+ * Matches the archetype the converter binds to today
+ * (`adapters/index.ts` registers `borrowing_capacity`), so the template lands
+ * in the list under the report type it is actually about. When a second format
+ * becomes bindable this needs a map rather than a constant.
+ */
+const CONVERTED_REPORT_TYPE = 'borrowing_capacity';
+
 
 export default function TemplateConverter() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { canEdit } = usePermissions();
-  const canEditTemplates = canEdit('templates');
+  const { create } = useReportTemplateMutations();
 
   const fileInput = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -97,6 +107,7 @@ export default function TemplateConverter() {
   const [extracting, setExtracting] = useState(false);
   const [reproposing, setReproposing] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [materialising, setMaterialising] = useState(false);
 
   const [extracted, setExtracted] = useState<ConvertExtractResponse | null>(null);
   const [plan, setPlan] = useState<BindingPlan | null>(null);
@@ -105,23 +116,28 @@ export default function TemplateConverter() {
   const [result, setResult] = useState<ConvertRenderResponse | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
-  const { data: systems = [], isLoading: systemsLoading } = useQuery({
+  // Through the edge function, not `supabase.from(...)`.
+  //
+  // The browser client is permanently anonymous under this app's cookie auth
+  // and `brand_design_systems` is granted to `authenticated` only, so the
+  // direct read is refused at the grant level. It used to be caught and turned
+  // into `[]`, which made a broken read look exactly like an empty table — the
+  // picker was silently, permanently empty for everybody.
+  //
+  // The error is deliberately not swallowed now: a failure renders as a failure.
+  const {
+    data: systems = [],
+    isLoading: systemsLoading,
+    error: systemsError,
+    refetch: refetchSystems,
+  } = useQuery({
     queryKey: ['brand-design-systems'],
-    queryFn: async (): Promise<DesignSystemRow[]> => {
-      const { data, error } = await supabase
-        .from('brand_design_systems')
-        .select('id, name, description, origin')
-        .eq('is_active', true)
-        .order('updated_at', { ascending: false });
-      // A converter that cannot list design systems still converts under the
-      // house default, so this is a warning rather than a thrown query.
-      if (error) {
-        console.warn('[TemplateConverter] design systems unreadable', error.message);
-        return [];
-      }
-      return (data ?? []) as DesignSystemRow[];
-    },
+    queryFn: async (): Promise<BrandDesignSystemSummary[]> =>
+      (await listDesignSystems()).systems,
   });
+
+  /** A stale selection must not blank the trigger — see `onSaved`. */
+  const selectedSystem = systems.find((s) => s.id === designSystemId) ?? null;
 
   const { data: whitelabel } = useQuery({
     queryKey: ['whitelabel-company-name'],
@@ -225,6 +241,56 @@ export default function TemplateConverter() {
     setResult(null);
   };
 
+  /**
+   * The same conversion, as pages you can edit.
+   *
+   * A second artefact rather than a replacement: the PDF is the finished
+   * document and this is a working copy of its words. The layout is not
+   * carried across — it never was, the converter keeps structure and throws
+   * layout away — so this produces text laid out from the chapters, which is
+   * what "editable" can honestly mean here.
+   */
+  const handleMaterialise = async () => {
+    if (!extracted || !result) return;
+    setMaterialising(true);
+    try {
+      const { chapters, title, formatName: boundName } =
+        await conversionChapters(extracted.conversionId);
+
+      const schema = buildConvertedTemplate({
+        title,
+        formatName: boundName,
+        chapters,
+        systemName: result.designSystemName,
+      });
+
+      // Through the existing mutation, which posts to `manage-templates`. A
+      // direct insert cannot work: the browser client is anonymous and the
+      // INSERT policy is `auth.uid() = created_by`.
+      // The mutation already sets `version: 1`, `is_active: false` and
+      // `is_default: false`, which is the exact shape
+      // `validateReportTemplateInsert` waves through — nothing here should
+      // override them.
+      const record = await create.mutateAsync({
+        name: `${title} (converted)`.slice(0, 120),
+        description: `Converted from ${extracted.sections.length} sections of an uploaded template, `
+          + `bound to ${boundName}.`,
+        report_type: CONVERTED_REPORT_TYPE,
+        schema,
+      });
+
+      const id = (record as { id?: string } | null)?.id;
+      if (!id) throw new Error('the template was created but returned no id');
+      // No toast here: the mutation raises its own on success, and two for one
+      // action reads as two things having happened.
+      navigate(`/admin/template-builder/${id}`);
+    } catch (e) {
+      toast.error('Could not create an editable template', { description: (e as Error).message });
+    } finally {
+      setMaterialising(false);
+    }
+  };
+
   const handleRender = async () => {
     if (!extracted || !plan) return;
     setRendering(true);
@@ -240,6 +306,9 @@ export default function TemplateConverter() {
         if (old) URL.revokeObjectURL(old);
         return URL.createObjectURL(delivered.blob);
       });
+      // So the row appears in "Earlier conversions" on this screen, which is
+      // how somebody learns that list is where their document went.
+      queryClient.invalidateQueries({ queryKey: RECENT_CONVERSIONS_QUERY_KEY });
       toast.success(`Converted — ${delivered.pageCount ?? '?'} pages`, {
         description: `${delivered.boundCount} bound, ${delivered.unfilledCount} left to the live report, `
           + `${delivered.appendixCount} in the appendix.`,
@@ -251,41 +320,69 @@ export default function TemplateConverter() {
     }
   };
 
-  if (!canEditTemplates) {
-    return (
-      <div className="container mx-auto py-8">
-        <Alert>
-          <TriangleAlert className="h-4 w-4" />
-          <AlertTitle>Templates edit permission required</AlertTitle>
-          <AlertDescription>
-            Converting a template writes a design system and a document. Ask an administrator for
-            edit access to Templates.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   return (
     <div className="container mx-auto space-y-6 py-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="-ml-2 mb-2"
-            onClick={() => navigate('/admin/template-builder')}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Template Builder
+          <Button variant="ghost" size="sm" className="-ml-2 mb-2" asChild>
+            <Link to="/admin/template-builder">
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Template Builder
+            </Link>
           </Button>
           <h1 className="text-2xl font-semibold tracking-tight">Converter</h1>
           <p className="text-sm text-muted-foreground max-w-2xl">
-            Upload an existing template and have it set through the report design system, bound to
-            one of the migrated report formats so the real report data can flow into it later.
+            Upload a template you already send clients and have it re-set through the report design
+            system, bound to one of the migrated report formats so real report data can flow into it
+            later.
           </p>
         </div>
       </div>
+
+      {/* Onboarding, not chrome.
+          It answers the three questions somebody has before they upload
+          anything — what goes in, what comes out, and what this is *not* — and
+          disappears the moment there is work on the screen. */}
+      {!extracted && (
+        <div className="grid gap-4 md:grid-cols-3">
+          <Card>
+            <CardHeader className="pb-2">
+              <Badge variant="outline" className="w-fit text-[10px] uppercase tracking-wide">Step one</Badge>
+              <CardTitle className="text-sm">What goes in</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              A PDF, Markdown or text file up to {MAX_SOURCE_BYTES / 1024 / 1024} MB. Only its
+              heading structure is read — which sections exist, in what order. The old layout is
+              deliberately left behind.
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <Badge variant="outline" className="w-fit text-[10px] uppercase tracking-wide">What you get</Badge>
+              <CardTitle className="text-sm">A finished PDF, kept</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              Set in the report design system and bound to a report format. It is saved and stays
+              downloadable from <span className="font-medium">Earlier conversions</span> at the
+              bottom of this page. You can also open it as an editable template.
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <Badge variant="outline" className="w-fit text-[10px] uppercase tracking-wide">Not this</Badge>
+              <CardTitle className="text-sm">Not a copy of your design</CardTitle>
+            </CardHeader>
+            <CardContent className="text-sm text-muted-foreground">
+              Nothing of the original's layout is reproduced. If you want your document back looking
+              as it does now, use{' '}
+              <Link to="/admin/template-builder" className="font-medium underline underline-offset-2">
+                Import a PDF
+              </Link>{' '}
+              in the Template Builder instead.
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* ── 1 · The upload ─────────────────────────────────────────────── */}
 
@@ -353,7 +450,21 @@ export default function TemplateConverter() {
 
       {/* ── 2 · The binding ────────────────────────────────────────────── */}
 
-      {extracted && plan && (
+      {/* Steps two and three are on screen from the start, greyed until they
+          are reachable. They used to render only once an upload had been read,
+          so a first-time user saw a single card and no evidence that a third
+          step — the one that produces the document — existed at all. */}
+      {!(extracted && plan) ? (
+        <Card aria-disabled className="opacity-60">
+          <CardHeader>
+            <CardTitle className="text-base">2 · What plays which part</CardTitle>
+            <CardDescription>
+              Each chapter of the report format gets a section of your template, proposed with a
+              confidence score you can override. Available once the sections have been read.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">2 · What plays which part</CardTitle>
@@ -449,7 +560,17 @@ export default function TemplateConverter() {
 
       {/* ── 3 · The design system, and the render ──────────────────────── */}
 
-      {extracted && plan && (
+      {!(extracted && plan) ? (
+        <Card aria-disabled className="opacity-60">
+          <CardHeader>
+            <CardTitle className="text-base">3 · How it is set</CardTitle>
+            <CardDescription>
+              Choose a brand design system — or make one — and convert. The PDF appears here and is
+              kept below. Available once a binding is confirmed.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      ) : (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">3 · How it is set</CardTitle>
@@ -466,7 +587,12 @@ export default function TemplateConverter() {
                   <Skeleton className="h-9 w-[280px]" />
                 ) : (
                   <Select
-                    value={designSystemId ?? NONE}
+                    // Falls back to the house design when the selected id is not
+                    // in the list. Radix renders an *empty* trigger for a value
+                    // with no matching item, so without this a system saved
+                    // while the list was stale showed as a blank box — live, but
+                    // invisible.
+                    value={selectedSystem ? selectedSystem.id : NONE}
                     onValueChange={(v) => { setDesignSystemId(v === NONE ? null : v); setResult(null); }}
                   >
                     <SelectTrigger id="converter-system" className="w-[280px]">
@@ -491,16 +617,41 @@ export default function TemplateConverter() {
                 {rendering
                   ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   : <Palette className="mr-2 h-4 w-4" />}
-                {rendering ? 'Rendering…' : result ? 'Render again' : 'Convert'}
+                {rendering ? 'Converting…' : result ? 'Render again' : 'Convert and save the PDF'}
               </Button>
             </div>
 
-            {designSystemId && (
+            {/* Where it lands, said before it is clicked rather than after. */}
+            {!result && (
               <p className="text-xs text-muted-foreground">
-                {systems.find((s) => s.id === designSystemId)?.description || 'No description.'}
-                {systems.find((s) => s.id === designSystemId)?.origin === 'generated'
-                  ? ' · Drafted by Claude'
-                  : ''}
+                The PDF appears below and is kept in <span className="font-medium">Earlier
+                conversions</span> at the bottom of this page.
+              </p>
+            )}
+
+            {/* A failed read says so. Returning an empty list instead is what
+                made "the query was refused" indistinguishable from "nobody has
+                made one yet" — the document still renders, in the house
+                design, and that is worth saying out loud rather than
+                discovering from the cover. */}
+            {systemsError && (
+              <Alert>
+                <TriangleAlert className="h-4 w-4" />
+                <AlertTitle>Design systems could not be loaded</AlertTitle>
+                <AlertDescription className="flex flex-wrap items-center gap-3">
+                  <span>Converting now will use the house design.</span>
+                  <Button size="sm" variant="outline" onClick={() => refetchSystems()}>
+                    <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                    Try again
+                  </Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {selectedSystem && (
+              <p className="text-xs text-muted-foreground">
+                {selectedSystem.description || 'No description.'}
+                {selectedSystem.origin === 'generated' ? ' · Drafted by Claude' : ''}
               </p>
             )}
 
@@ -528,11 +679,31 @@ export default function TemplateConverter() {
                       <Download className="mr-2 h-4 w-4" />
                       Download
                     </Button>
-                    <Button size="sm" variant="ghost" onClick={handleRender} disabled={rendering}>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Re-render
+                    {/* No "Re-render" here — the button above already flips to
+                        "Render again" and does exactly this. Two controls for
+                        one action is how a page starts feeling crowded. */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleMaterialise}
+                      disabled={materialising || create.isPending}
+                    >
+                      {materialising || create.isPending
+                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        : <PencilRuler className="mr-2 h-4 w-4" />}
+                      Open as an editable template
                     </Button>
                   </div>
+
+                  {/* Said plainly, because the two artefacts are not the same
+                      thing and somebody will otherwise expect the editable copy
+                      to look like the PDF. */}
+                  <p className="text-xs text-muted-foreground">
+                    The PDF is the finished document. An editable template is a working copy of its
+                    words — the chapters laid out as text you can rearrange, not a reproduction of
+                    this design. Its page breaks are estimated from the text, so a page may run long
+                    until you adjust it.
+                  </p>
 
                   {result.bandNote.length > 0 && (
                     <Alert>
@@ -567,13 +738,31 @@ export default function TemplateConverter() {
         </Card>
       )}
 
+      {/* Always here, not only after a render.
+          This is the answer to "where will the output be rendered": the newest
+          row is the document you just made, and it is still here tomorrow. */}
+      <Card>
+        <CardContent className="pt-6">
+          <RecentConversions />
+        </CardContent>
+      </Card>
+
       <BrandDesignSystemDialog
         open={systemDialogOpen}
         onOpenChange={setSystemDialogOpen}
         companyName={whitelabel ?? ''}
-        onSaved={(id) => {
+        onSaved={(summary) => {
+          // Seeded before the refetch, not after. The refetch is a round trip
+          // and the selection happens on this tick; without the seed the newly
+          // saved system is selected while absent from the list, which Radix
+          // renders as an empty trigger.
+          queryClient.setQueryData<BrandDesignSystemSummary[]>(
+            ['brand-design-systems'],
+            (prev) => [summary, ...(prev ?? []).filter((s) => s.id !== summary.id)],
+          );
           queryClient.invalidateQueries({ queryKey: ['brand-design-systems'] });
-          if (id) setDesignSystemId(id);
+          setDesignSystemId(summary.id);
+          setResult(null);
         }}
       />
     </div>

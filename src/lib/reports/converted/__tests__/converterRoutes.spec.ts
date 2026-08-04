@@ -30,6 +30,8 @@ import {
   convertedFileName,
   convertedReference,
   convertedStoragePath,
+  DEFAULT_LIST_LIMIT,
+  MAX_LIST_LIMIT,
   MAX_SOURCE_BYTES,
   parseConvertRequest,
   pdfExtractionPrompt,
@@ -148,7 +150,49 @@ describe('parseConvertRequest', () => {
       expect(parsed.error).toContain('extract');
       expect(parsed.error).toContain('propose');
       expect(parsed.error).toContain('render');
+      expect(parsed.error).toContain('list');
+      expect(parsed.error).toContain('chapters');
     }
+  });
+});
+
+describe('the actions that name no format', () => {
+  // The regression guard for an ordering decision that is easy to undo by
+  // accident. `parseConvertRequest` validates `format` for every other action
+  // *before* it looks at which action was asked for, so `list` and `chapters`
+  // have to be handled above that check. Move either branch below it and the
+  // request is refused with an error about report formats, which has nothing to
+  // do with what was asked — and the history panel silently shows nothing.
+  it('accepts a listing with no format at all', () => {
+    const parsed = parseConvertRequest({ action: 'list' });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(parsed.request.action).toBe('list');
+  });
+
+  it('accepts a chapters request with no format, given a uuid', () => {
+    const parsed = parseConvertRequest({ action: 'chapters', conversionId: UUID });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.request.action === 'chapters') {
+      expect(parsed.request.conversionId).toBe(UUID);
+    }
+  });
+
+  it('still requires a uuid for chapters', () => {
+    expect(parseConvertRequest({ action: 'chapters', conversionId: 'nope' }).ok).toBe(false);
+  });
+
+  it('clamps the listing limit and defaults it', () => {
+    const def = parseConvertRequest({ action: 'list' });
+    expect(def.ok && def.request.action === 'list' && def.request.limit).toBe(DEFAULT_LIST_LIMIT);
+
+    const huge = parseConvertRequest({ action: 'list', limit: 5_000 });
+    expect(huge.ok && huge.request.action === 'list' && huge.request.limit).toBe(MAX_LIST_LIMIT);
+
+    const zero = parseConvertRequest({ action: 'list', limit: 0 });
+    expect(zero.ok && zero.request.action === 'list' && zero.request.limit).toBe(1);
+
+    const junk = parseConvertRequest({ action: 'list', limit: 'ten' });
+    expect(junk.ok && junk.request.action === 'list' && junk.request.limit).toBe(DEFAULT_LIST_LIMIT);
   });
 });
 
@@ -273,6 +317,22 @@ describe('parseBrandRequest', () => {
     }
   });
 
+  it('accepts a listing with no system in the body', () => {
+    // `audit` and `save` both run `readBrandDesignSystem(b.system)`, so the
+    // `list` branch has to come first or a listing is refused for not being a
+    // design system.
+    const parsed = parseBrandRequest({ action: 'list' });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.request.action === 'list') {
+      expect(parsed.request.includeInactive).toBe(false);
+    }
+  });
+
+  it('carries includeInactive when asked', () => {
+    const parsed = parseBrandRequest({ action: 'list', includeInactive: true });
+    expect(parsed.ok && parsed.request.action === 'list' && parsed.request.includeInactive).toBe(true);
+  });
+
   it('names the actions it knows', () => {
     const parsed = parseBrandRequest({ action: 'draft' });
     expect(parsed.ok).toBe(false);
@@ -280,6 +340,7 @@ describe('parseBrandRequest', () => {
       expect(parsed.error).toContain('audit');
       expect(parsed.error).toContain('generate');
       expect(parsed.error).toContain('save');
+      expect(parsed.error).toContain('list');
     }
   });
 });

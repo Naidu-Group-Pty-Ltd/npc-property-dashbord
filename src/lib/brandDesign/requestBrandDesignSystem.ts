@@ -13,7 +13,7 @@
  */
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import type { BrandDesignSystem } from './system.pure';
-import type { BrandRouteResponse } from './route.pure';
+import type { BrandListResponse, BrandRouteResponse } from './route.pure';
 
 export type BrandDesignSystemResult = BrandRouteResponse;
 
@@ -38,20 +38,33 @@ function looksUndeployed(error: { message?: string } | null): boolean {
 const UNDEPLOYED_MESSAGE =
   'Brand design systems are not available yet — generate-brand-design-system has not been deployed.';
 
-async function call(
-  body: Record<string, unknown>,
-  timeoutMs: number,
-): Promise<BrandDesignSystemResult> {
+async function call<T>(body: Record<string, unknown>, timeoutMs: number): Promise<T> {
   const { data, error } = await invokeSecureFunction('generate-brand-design-system', body, { timeoutMs });
 
-  if (!error && data?.action) return data as BrandDesignSystemResult;
+  if (!error && data?.action) return data as T;
   if (looksUndeployed(error)) throw new Error(UNDEPLOYED_MESSAGE);
   throw new Error(error?.message || 'The design system service did not answer');
 }
 
+/**
+ * The saved design systems.
+ *
+ * Through the edge function rather than `supabase.from('brand_design_systems')`,
+ * and that is not a preference. The browser client is permanently anonymous
+ * under this app's cookie auth, the table is granted to `authenticated` only,
+ * and the direct read is refused at the grant level — which used to surface as
+ * a picker that was silently, permanently empty.
+ *
+ * Deliberately not caught here: a caller that cannot tell "no design systems
+ * exist" from "the read failed" will show the first and mean the second.
+ */
+export function listDesignSystems(includeInactive = false): Promise<BrandListResponse> {
+  return call<BrandListResponse>({ action: 'list', includeInactive }, 30_000);
+}
+
 /** Resolve and audit a candidate. No model, no write. */
 export function auditDesignSystem(system: BrandDesignSystem): Promise<BrandDesignSystemResult> {
-  return call({ action: 'audit', system }, 30_000);
+  return call<BrandDesignSystemResult>({ action: 'audit', system }, 30_000);
 }
 
 /**
@@ -65,7 +78,7 @@ export function generateDesignSystem(
   brief: string,
   companyName: string,
 ): Promise<BrandDesignSystemResult> {
-  return call({ action: 'generate', brief, companyName }, 120_000);
+  return call<BrandDesignSystemResult>({ action: 'generate', brief, companyName }, 120_000);
 }
 
 /** Write one. Authored or accepted-generated, same validation either way. */
@@ -73,7 +86,7 @@ export function saveDesignSystem(
   system: BrandDesignSystem,
   options: { id?: string | null; isActive?: boolean } = {},
 ): Promise<BrandDesignSystemResult> {
-  return call({
+  return call<BrandDesignSystemResult>({
     action: 'save',
     system,
     id: options.id ?? null,

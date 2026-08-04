@@ -7,8 +7,11 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, FileText, Edit, Trash2, CheckCircle2, Layers, Upload, History, Loader2, Search, SlidersHorizontal, Wand2 } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Trash2, Layers, History, Loader2, Search, Wand2 } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -19,7 +22,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -36,12 +38,17 @@ import {
   formatTemplateDate,
   getTemplateReportTypeOptions,
   getTemplateStats,
-  getTemplatePageCount,
+  deleteBlockedReason,
+  type TemplateRowLike,
   readTemplateListFiltersFromParams,
   writeTemplateListFiltersToParams,
   type TemplateSortOption,
   type TemplateStatusFilter,
 } from '@/lib/reportTemplate/templateListControls';
+import { TemplateStartSplitButton } from '@/components/templateBuilder/TemplateStartSplitButton';
+import { TemplateStartChoices } from '@/components/templateBuilder/TemplateStartChoices';
+import { TemplateCard } from '@/components/templateBuilder/TemplateCard';
+import { RecentConversions } from '@/components/templateBuilder/converter/RecentConversions';
 import { ImportPdfDialog } from '@/components/templateBuilder/ImportPdfDialog';
 import { ImportReviewDialog } from '@/components/templateBuilder/ImportReviewDialog';
 import { usePersistedImportReviewController } from '@/components/templateBuilder/usePersistedImportReviewController';
@@ -69,6 +76,8 @@ export default function TemplateBuilder() {
   const canDeleteTemplates = canDelete('templates');
   const [importOpen, setImportOpen] = useState(false);
   const [reconcilingReview, setReconcilingReview] = useState(false);
+  /** The template a person has asked to delete. Drives the one page dialog. */
+  const [deleteTarget, setDeleteTarget] = useState<TemplateRowLike | null>(null);
   const [filters, setFilters] = useState(() => readTemplateListFiltersFromParams(searchParams));
   const searchParamString = searchParams.toString();
   const { search, reportType: reportTypeFilter, status: statusFilter, sort } = filters;
@@ -104,10 +113,6 @@ export default function TemplateBuilder() {
       status: DEFAULT_TEMPLATE_LIST_FILTERS.status,
     }));
   };
-  const clearTemplateView = () => {
-    setFilters(DEFAULT_TEMPLATE_LIST_FILTERS);
-  };
-
   const handleCreate = () => {
     if (!canEditTemplates) return;
     create.mutate(
@@ -179,45 +184,30 @@ export default function TemplateBuilder() {
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-6xl space-y-6">
+      {/* One control, not three.
+          `New template` is the primary because it is the common case; the other
+          two ways in live behind the chevron where each carries a sentence
+          saying what it is for and what you end up with. Three unlabelled peer
+          buttons is what made "where is the converter?" a fair question. */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold flex items-center gap-2">
-            <Layers className="h-7 w-7 text-primary" />
+            <Layers className="h-7 w-7 text-primary" aria-hidden />
             Template Builder
           </h1>
           <p className="text-muted-foreground mt-1 text-sm max-w-2xl">
-            Visual editor for every PDF report template. Drag, drop, bind to live data, and
-            preview the actual generated PDF in real time.
+            Every PDF report template lives here. Design one visually, bring an existing PDF in as
+            editable pages, or refurbish a template you already send onto the report design system.
           </p>
         </div>
-        <div className="flex gap-2 items-center flex-wrap">
-          {canEditTemplates && (
-            <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload className="h-4 w-4 mr-1" />
-              Import PDF
-            </Button>
-          )}
-          {/* Beside Import PDF, not instead of it. Import brings a PDF into the
-              visual editor as a template; the converter refurbishes one onto the
-              report design system and binds it to a report format. Different
-              destinations, and both stay. */}
-          {canEditTemplates && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => navigate('/admin/template-builder/converter')}
-            >
-              <Wand2 className="h-4 w-4 mr-1" />
-              Converter
-            </Button>
-          )}
-          {canEditTemplates && (
-            <Button type="button" onClick={handleCreate} disabled={create.isPending}>
-              <Plus className="h-4 w-4 mr-1" />
-              New template
-            </Button>
-          )}
-        </div>
+        {canEditTemplates && (
+          <TemplateStartSplitButton
+            onBlank={handleCreate}
+            onImport={() => setImportOpen(true)}
+            onConvert={() => navigate('/admin/template-builder/converter')}
+            pending={create.isPending}
+          />
+        )}
       </div>
       <ImportPdfDialog open={importOpen} onOpenChange={setImportOpen} />
       <ImportReviewDialog
@@ -228,96 +218,42 @@ export default function TemplateBuilder() {
       />
 
 
-      {canEditTemplates && (importsLoading || recentImports.length > 0) && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <History className="h-4 w-4 text-primary" /> Recent import reviews
-            </CardTitle>
-            <CardDescription>
-              Reopen persisted CDIR/fidelity reviews for recent PDF imports.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {importsLoading ? (
-              <Skeleton className="h-10" />
-            ) : recentImports.map((imp: any) => {
-              const meta = (imp.meta as any) ?? {};
-              const summary = meta.cdir_fidelity_summary ?? {};
-              const savedDecision = readImportReviewDecision(meta);
-              const hasVisualQa = Boolean(meta.visual_quality_artifact_path);
-              const hasRepair = Boolean(meta.visual_repair_artifact_path);
-              return (
-                <div key={imp.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
-                  <div className="min-w-0">
-                    <div className="font-medium truncate">{imp.source_filename || 'Imported PDF'}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {imp.page_count ?? 0} page{imp.page_count === 1 ? '' : 's'} · score {summary.overallScore == null ? '—' : `${Math.round(summary.overallScore * 100)}%`}
-                      {savedDecision ? ` · ${savedDecision.decision.replace(/_/g, ' ')}` : ''}
-                    </div>
-                    {savedDecision?.note && <div className="text-[11px] text-muted-foreground line-clamp-1">Note: {savedDecision.note}</div>}
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {hasVisualQa ? <Badge variant="default" className="text-[10px]">Visual QA saved</Badge> : <Badge variant="outline" className="text-[10px]">Needs QA</Badge>}
-                      {hasRepair && <Badge variant="secondary" className="text-[10px]">Repair audit saved</Badge>}
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => importReview.openPersistedReview(imp.id)}
-                    disabled={importReview.reviewLoadingId === imp.id}
-                  >
-                    {importReview.reviewLoadingId === imp.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <History className="h-3.5 w-3.5 mr-1" />}
-                    Review / Visual QA
-                  </Button>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
+      {/* Four cards holding four numbers, none of them actionable, was the
+          largest block of chrome on the page. One line says the same thing. */}
+      {!isLoading && templates.length > 0 && (
+        <dl className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <dt className="text-muted-foreground">Templates</dt>
+            <dd className="font-semibold tabular-nums">{templateStats.total}</dd>
+          </div>
+          <div className="flex items-center gap-2">
+            <dt className="text-muted-foreground">Active</dt>
+            <dd><StatusBadge tone="brand">{templateStats.active}</StatusBadge></dd>
+          </div>
+          <div className="flex items-center gap-2">
+            <dt className="text-muted-foreground">Draft</dt>
+            <dd><StatusBadge tone="neutral">{templateStats.draft}</StatusBadge></dd>
+          </div>
+          <div className="flex items-center gap-2">
+            <dt className="text-muted-foreground">Preview-only</dt>
+            <dd><StatusBadge tone="info">{templateStats.previewOnly}</StatusBadge></dd>
+          </div>
+        </dl>
       )}
 
+      {/* A toolbar, not a card with a heading. "Find the right template
+          quickly" was a label telling you a search box is a search box. */}
       {!isLoading && templates.length > 0 && (
-        <div className="grid gap-3 md:grid-cols-4">
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">Total templates</div>
-              <div className="mt-1 text-2xl font-semibold">{templateStats.total}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">Active</div>
-              <div className="mt-1 text-2xl font-semibold text-primary">{templateStats.active}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">Draft</div>
-              <div className="mt-1 text-2xl font-semibold">{templateStats.draft}</div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="text-xs uppercase tracking-wide text-muted-foreground">Preview-only</div>
-              <div className="mt-1 text-2xl font-semibold">{templateStats.previewOnly}</div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {!isLoading && templates.length > 0 && (
-        <Card>
-          <CardContent className="p-4 space-y-3">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <SlidersHorizontal className="h-4 w-4 text-primary" />
-              Find the right template quickly
-            </div>
+        <DashboardThemeFrame variant="toolbar" className="p-4">
+          <div className="space-y-3">
             <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_150px_170px]">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
                 <Input
+                  type="search"
+                  aria-label="Search templates"
+                  autoComplete="off"
+                  spellCheck={false}
                   value={search}
                   onChange={(e) => setFilters((current) => ({ ...current, search: e.target.value }))}
                   placeholder="Search by name, description, report type, or tier…"
@@ -370,14 +306,17 @@ export default function TemplateBuilder() {
             </div>
             <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>Showing {visibleTemplates.length} of {templates.length} template{templates.length === 1 ? '' : 's'}.</span>
+              {/* The only "Clear filters" on the page, beside the controls it
+                  clears. There were two, and they behaved differently — one
+                  kept the sort, the other reset it. */}
               {hasTemplateFilters && (
                 <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={clearTemplateFilters}>
                   Clear filters
                 </Button>
               )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </DashboardThemeFrame>
       )}
 
       {isLoading ? (
@@ -387,138 +326,165 @@ export default function TemplateBuilder() {
           ))}
         </div>
       ) : templates.length === 0 ? (
+        /* The three ways in, in full, exactly once. Visible only on day one —
+           free at steady state, unmissable when it matters. */
         <Card>
-          <CardContent className="py-16 text-center">
-            <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <CardTitle className="text-lg">No templates yet</CardTitle>
-            <CardDescription className="mt-2 max-w-md mx-auto">
-              Create your first template to start designing report layouts visually.
-            </CardDescription>
-            {canEditTemplates && (
-              <Button type="button" onClick={handleCreate} className="mt-6" disabled={create.isPending}>
-                <Plus className="h-4 w-4 mr-1" /> Create first template
-              </Button>
-            )}
+          <CardContent className="py-10">
+            <TemplateStartChoices
+              onBlank={handleCreate}
+              onImport={() => setImportOpen(true)}
+              onConvert={() => navigate('/admin/template-builder/converter')}
+              disabled={!canEditTemplates}
+              heading="No templates yet"
+              description="Three ways to make one. The last line of each card is what you end up with."
+            />
           </CardContent>
         </Card>
       ) : (
         visibleTemplates.length === 0 ? (
           <Card>
             <CardContent className="py-12 text-center">
-              <Search className="h-10 w-10 text-muted-foreground mx-auto mb-3" />
+              <Search className="h-10 w-10 text-muted-foreground mx-auto mb-3" aria-hidden />
               <CardTitle className="text-lg">No templates match your filters</CardTitle>
+              {/* No button here. There is one "Clear filters", and it sits in
+                  the toolbar beside the controls it clears — two of them, doing
+                  subtly different things, is what there used to be. */}
               <CardDescription className="mt-2 max-w-md mx-auto">
-                Broaden the search, change the report type/status, or clear filters to view all templates.
+                Broaden the search or change the report type and status. Clear filters is in the
+                toolbar above.
               </CardDescription>
-              <Button variant="outline" className="mt-5" onClick={clearTemplateView}>
-                Clear filters
-              </Button>
             </CardContent>
           </Card>
         ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {visibleTemplates.map((tpl) => {
-            const pageCount = getTemplatePageCount(tpl);
-            return (
-              <Card key={tpl.id} className="hover:border-primary/40 transition-colors">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <CardTitle className="text-base truncate">{tpl.name}</CardTitle>
-                      <CardDescription className="mt-1 line-clamp-2 text-xs">
-                        {tpl.description || 'No description'}
-                      </CardDescription>
-                      <div className="mt-2 text-[11px] text-muted-foreground">
-                        Updated {formatTemplateDate(tpl.updated_at)}
-                      </div>
-                    </div>
-                    {tpl.is_active && (
-                      <Badge variant="default" className="text-xs">
-                        <CheckCircle2 className="h-3 w-3 mr-1" /> Active
-                      </Badge>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="flex flex-wrap gap-1.5 text-xs">
-                    {tpl.report_type && (() => {
-                      const adapter = getAdapter(tpl.report_type);
-                      return (
-                        <Badge variant={adapter?.supportsProduction ? 'secondary' : 'outline'} title={adapter?.supportsProduction ? 'Production adapter available' : 'Preview-only report type'}>
-                          {adapter?.label || REPORT_TYPE_LABELS[tpl.report_type] || tpl.report_type}
-                          {adapter && !adapter.supportsProduction ? ' · preview-only' : ''}
-                        </Badge>
-                      );
-                    })()}
-                    {tpl.tier && <Badge variant="outline">{tpl.tier}</Badge>}
-                    <Badge variant="outline">v{tpl.version}</Badge>
-                    {tpl.schema && (
-                      <Badge variant="outline">
-                        {pageCount} page{pageCount === 1 ? '' : 's'}
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="flex gap-2 pt-2">
-                    <Button
-                      size="sm"
-                      variant="default"
-                      className="flex-1"
-                      disabled={!canEditTemplates}
-                      title={canEditTemplates ? 'Open editor' : 'Edit permission required'}
-                      onClick={() => navigate(`/admin/template-builder/${tpl.id}`)}
-                    >
-                      <Edit className="h-3.5 w-3.5 mr-1" /> Open editor
-                    </Button>
-                    {canDeleteTemplates && (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 rounded-full text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40 disabled:text-muted-foreground disabled:hover:bg-transparent"
-                            disabled={tpl.is_active || !!tpl.locked_for_review}
-                            title={tpl.is_active ? 'Deactivate before deleting' : tpl.locked_for_review ? 'Unlock review before deleting' : `Delete template ${tpl.name}`}
-                            aria-label={`Delete template ${tpl.name}`}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent className="border-destructive/25 bg-background text-foreground shadow-2xl shadow-destructive/10 sm:max-w-md">
-                          <AlertDialogHeader className="space-y-3">
-                            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive sm:mx-0">
-                              <Trash2 className="h-5 w-5" />
-                            </div>
-                            <AlertDialogTitle className="text-destructive">Delete template?</AlertDialogTitle>
-                            <AlertDialogDescription className="space-y-2 text-left text-muted-foreground">
-                              <span className="block">
-                                This will permanently delete <span className="font-medium text-foreground">{tpl.name}</span>.
-                              </span>
-                              <span className="block">Only inactive, unlocked templates can be deleted. This cannot be undone.</span>
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter className="gap-2 sm:gap-0">
-                            <AlertDialogCancel className="border-border bg-background text-foreground hover:bg-muted">Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/40"
-                              onClick={() => {
-                                if (tpl.is_active || tpl.locked_for_review) return;
-                                remove.mutate(tpl.id);
-                              }}
-                            >
-                              Delete template
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {visibleTemplates.map((tpl) => (
+              <TemplateCard
+                key={tpl.id}
+                template={tpl}
+                reportTypeLabels={REPORT_TYPE_LABELS}
+                canEdit={canEditTemplates}
+                canDelete={canDeleteTemplates}
+                onDelete={setDeleteTarget}
+              />
+            ))}
+          </div>
         )
       )}
+
+      {/* Activity, below the list and closed.
+          Recent import reviews used to be the first thing under the header,
+          empty for most people, pushing the templates themselves off the fold.
+          Conversions join it, so both histories live in one place. */}
+      {canEditTemplates && (
+        <Accordion type="single" collapsible className="rounded-lg border px-4">
+          {(importsLoading || recentImports.length > 0) && (
+            <AccordionItem value="imports" className="border-b-0">
+              <AccordionTrigger className="text-sm">
+                <span className="flex items-center gap-2">
+                  <History className="h-4 w-4 text-primary" aria-hidden />
+                  Recent import reviews
+                  {recentImports.length > 0 && (
+                    <span className="text-xs font-normal tabular-nums opacity-60" aria-hidden>
+                      {recentImports.length}
+                    </span>
+                  )}
+                </span>
+              </AccordionTrigger>
+              <AccordionContent className="space-y-2 pb-4">
+                <p className="text-xs text-muted-foreground">
+                  Reopen persisted CDIR/fidelity reviews for recent PDF imports.
+                </p>
+
+                {importsLoading ? (
+                  <Skeleton className="h-10" />
+                ) : recentImports.map((imp: any) => {
+                  const meta = (imp.meta as any) ?? {};
+                  const summary = meta.cdir_fidelity_summary ?? {};
+                  const savedDecision = readImportReviewDecision(meta);
+                  const hasVisualQa = Boolean(meta.visual_quality_artifact_path);
+                  const hasRepair = Boolean(meta.visual_repair_artifact_path);
+                  return (
+                    <div key={imp.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
+                      <div className="min-w-0">
+                        <div className="font-medium truncate">{imp.source_filename || 'Imported PDF'}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {imp.page_count ?? 0} page{imp.page_count === 1 ? '' : 's'} · score {summary.overallScore == null ? '—' : `${Math.round(summary.overallScore * 100)}%`}
+                          {savedDecision ? ` · ${savedDecision.decision.replace(/_/g, ' ')}` : ''}
+                        </div>
+                        {savedDecision?.note && <div className="text-[11px] text-muted-foreground line-clamp-1">Note: {savedDecision.note}</div>}
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {hasVisualQa ? <Badge variant="default" className="text-[10px]">Visual QA saved</Badge> : <Badge variant="outline" className="text-[10px]">Needs QA</Badge>}
+                          {hasRepair && <Badge variant="secondary" className="text-[10px]">Repair audit saved</Badge>}
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => importReview.openPersistedReview(imp.id)}
+                        disabled={importReview.reviewLoadingId === imp.id}
+                      >
+                        {importReview.reviewLoadingId === imp.id ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <History className="h-3.5 w-3.5 mr-1" />}
+                        Review / Visual QA
+                      </Button>
+                    </div>
+                  );
+                })}
+              </AccordionContent>
+            </AccordionItem>
+          )}
+
+          <AccordionItem value="conversions" className="border-b-0">
+            <AccordionTrigger className="text-sm">
+              <span className="flex items-center gap-2">
+                <Wand2 className="h-4 w-4 text-primary" aria-hidden />
+                Recent conversions
+              </span>
+            </AccordionTrigger>
+            <AccordionContent className="pb-4">
+              <RecentConversions heading="" limit={10} />
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      )}
+
+      {/* One dialog for the whole page.
+          Every card used to mount its own `AlertDialogContent` tree, and a
+          trigger nested inside a dropdown item loses focus when the menu
+          closes. */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}>
+        <AlertDialogContent className="border-destructive/25 bg-background text-foreground shadow-2xl shadow-destructive/10 sm:max-w-md">
+          <AlertDialogHeader className="space-y-3">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive sm:mx-0">
+              <Trash2 className="h-5 w-5" aria-hidden />
+            </div>
+            <AlertDialogTitle className="text-destructive">Delete template?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2 text-left text-muted-foreground">
+              <span className="block">
+                This will permanently delete{' '}
+                <span className="font-medium text-foreground">{deleteTarget?.name}</span>.
+              </span>
+              <span className="block">Only inactive, unlocked templates can be deleted. This cannot be undone.</span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0">
+            <AlertDialogCancel className="border-border bg-background text-foreground hover:bg-muted">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/40"
+              onClick={() => {
+                if (!deleteTarget || deleteBlockedReason(deleteTarget)) return;
+                remove.mutate(deleteTarget.id);
+                setDeleteTarget(null);
+              }}
+            >
+              Delete template
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </div>
   );
 }

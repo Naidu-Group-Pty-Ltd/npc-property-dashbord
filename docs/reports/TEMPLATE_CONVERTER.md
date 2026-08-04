@@ -42,6 +42,14 @@ headings stay in the prose and simply stop being chapter candidates.
 | `extract` | Parses the upload, extracts the structure, proposes a binding | A `template_conversions` row at `review` |
 | `propose` | Re-scores the **stored** Markdown against a different format | `binding`, `bound_format`, the three counts |
 | `render` | Renders the confirmed binding through WeasyPrint | `succeeded`, the file, the counts, the snapshot |
+| `list` | Earlier conversions, each with a freshly signed URL | nothing |
+| `chapters` | The bound chapters and their prose, for an editable copy | nothing |
+
+Only `render` stamps a failure onto the row. It is the action that moves the row
+to `rendering`, so a throw partway through leaves it stuck there unless the catch
+corrects it; a failed `propose`, `list` or `chapters` changes no status and reads
+a conversion that is perfectly fine, and marking it `failed` would be a lie that
+outlives the request.
 
 They are separate because a person sits between them.
 
@@ -200,6 +208,100 @@ screen is used and each render is the current draft of that conversion.
 
 ---
 
+## Where the feature lives, and how you find it
+
+`/admin/template-builder/converter`, reached from the **Template Builder**
+landing page — the split control beside the title, whose menu explains each way
+in — and from the command palette (`Cmd/Ctrl+K`, "converter").
+
+That needed fixing rather than documenting. `/admin/template-builder` was an
+orphan route: not in the sidebar, not in the command palette, linked only from
+the PDF Import Engine page and the editor's back arrow. The sidebar's
+`Templates → /templates` led to a **"Builder" tab that duplicated the whole
+landing page** — its own search, sort, grid and New-template button, with a
+weaker delete that skipped the `is_active` / `locked_for_review` guards. The
+reachable surface was the copy; the converter sat on the original. That tab is
+now a pointer into the real page, so there is one template list.
+
+The three ways a template comes into existence are written down once, in
+`src/lib/reportTemplate/templateStartRoutes.ts`, and rendered in the split menu,
+the zero-template empty state and the Templates page. The distinction that
+matters:
+
+> **Import keeps the layout. Convert throws the layout away and keeps the
+> argument.**
+
+`templateStartRoutes.spec.ts` pins that copy, including the `outcome` line, so a
+later refactor cannot quietly drop the sentence that resolves the confusion.
+
+## Finding a conversion again
+
+`convert-template-document` answers a `list` action, and the converter page and
+the Template Builder's activity accordion both render it as **Earlier
+conversions**.
+
+Before this, a conversion was write-only. The PDF goes to a private bucket that
+grants `authenticated` no object access at all, so a stored `storage_path` could
+not be turned back into a URL from the browser; closing the tab made the
+document unreachable forever. Every listing re-signs each row's URL as it
+returns it — a separate `resign` action would have required the UI to know when
+a signature expired, which is a clock it cannot see. A row whose signing fails
+comes back with `url: null` and no Open button rather than a link that 404s.
+
+**`list` and `chapters` are parsed above the format check.** `parseConvertRequest`
+validates `format` for every other action *before* it branches, and neither of
+these names a format. Put either below it and the request is refused with an
+error about report formats that has nothing to do with what was asked — and the
+history panel silently shows nothing. `converterRoutes.spec.ts` guards the
+ordering.
+
+## Opening a conversion as an editable template
+
+The result block offers **Open as an editable template**, which asks for the
+conversion's `chapters` and lays them out as pages in the visual editor
+(`src/lib/reportTemplate/convertedTemplateSchema.pure.ts`).
+
+Three things are worth knowing about that copy:
+
+- **It is not a reproduction of the PDF.** The converter keeps structure and
+  discards layout, so the editable copy is the chapters set as text — not the
+  design you just looked at. Use **Import a PDF** if you want the original's
+  layout back.
+- **Its page breaks are estimated, not measured.** The editor schema has no
+  reflow — every overlay is an absolute box on a fixed page — so the prose is cut
+  using the same `CHARS_PER_LINE` / `LINES_PER_PAGE` estimator the PDF renderer
+  uses. Page breaks therefore land roughly where the PDF's do, and a page that
+  runs a little long is expected and adjustable.
+- **Tables become plain text** in the editable copy. The PDF keeps them.
+
+Creation goes through `manage-templates`, not a direct insert: the
+`report_templates` INSERT policy is `WITH CHECK (auth.uid() = created_by)` and
+the browser client never holds a GoTrue session, so an anonymous insert is
+always rejected. `useReportTemplateMutations().create` already posts to that
+function, and is reused unchanged — which also means `is_active`, `is_default`
+and `version` stay at the values `validateReportTemplateInsert` waves through.
+
+## The design-system picker, and why it was empty
+
+`generate-brand-design-system` answers a `list` action, and the picker reads it
+through `invokeSecureFunction`.
+
+It previously read `brand_design_systems` with the browser Supabase client. That
+client uses the anon key with `persistSession: false` and never receives a
+session — this app authenticates with custom HttpOnly cookies — and the
+converter's migration does `REVOKE ALL … FROM anon` with no re-grant, so the
+request failed at the *grant* level before RLS was consulted. The page caught
+the error and returned `[]`, which made a refused read indistinguishable from an
+empty table: the picker was silently, permanently empty for everybody. Saving a
+new system made it worse — the save succeeded, the id was selected, the refetch
+returned `[]` again, and Radix rendered an empty trigger for a value with no
+matching item.
+
+Three things changed and all three matter: the read goes through the route, the
+error is no longer swallowed (a failure renders an alert saying the house design
+will be used), and the trigger falls back to the house design when the selected
+id is not in the list.
+
 ## Access
 
 Both routes gate on `templates` / `can_edit` — the module the Template Builder
@@ -224,10 +326,10 @@ handles.
 
 ## What stays
 
-Nothing is replaced. `ImportPdfDialog` and `parse-template-document` bring a PDF
-into the visual editor as an editable template; the converter refurbishes one
-onto the report design system and binds it to a report format. Different
-destinations, and both buttons sit side by side on the Template Builder header.
+Nothing is replaced. `ImportPdfDialog` brings a PDF into the visual editor
+keeping its layout; the converter refurbishes one onto the report design system
+and binds it to a report format. Different destinations, and both live in the
+Template Builder's start menu with a sentence each saying which is which.
 
 ---
 

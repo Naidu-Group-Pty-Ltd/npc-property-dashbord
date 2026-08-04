@@ -20,13 +20,18 @@
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import {
   base64Bytes,
+  type ConvertChaptersResponse,
   type ConvertExtractResponse,
+  type ConvertListResponse,
   type ConvertProposeResponse,
   type ConvertRenderResponse,
   MAX_SOURCE_BYTES,
   sourceKindFor,
 } from './route.pure';
 import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
+
+/** Shared so the converter page can invalidate the list after a render. */
+export const RECENT_CONVERSIONS_QUERY_KEY = ['template-conversions', 'recent'] as const;
 
 function looksUndeployed(error: { message?: string } | null): boolean {
   if (!error) return false;
@@ -100,6 +105,30 @@ export function proposeTemplateBinding(
   format: ReportArchetypeId,
 ): Promise<ConvertProposeResponse> {
   return call<ConvertProposeResponse>({ action: 'propose', conversionId, format }, 45_000);
+}
+
+/**
+ * Earlier conversions, each with a freshly signed link.
+ *
+ * The only way back to a rendered PDF once the page has been reloaded: the
+ * bucket is private and grants the browser no object access, so a URL has to be
+ * signed server-side. Signing happens per listing rather than on demand,
+ * because an expiry is a clock the browser cannot see.
+ */
+export function listConversions(limit = 10): Promise<ConvertListResponse> {
+  return call<ConvertListResponse>({ action: 'list', limit }, 45_000);
+}
+
+/**
+ * The chapters of a converted document and the prose in them.
+ *
+ * Asked for separately rather than returned by `render`, because it is only
+ * wanted when somebody chooses to open the conversion as an editable template —
+ * and a hundred kilobytes of prose on every render is a hundred kilobytes
+ * nobody asked for.
+ */
+export function conversionChapters(conversionId: string): Promise<ConvertChaptersResponse> {
+  return call<ConvertChaptersResponse>({ action: 'chapters', conversionId }, 45_000);
 }
 
 /** Render the confirmed binding. */

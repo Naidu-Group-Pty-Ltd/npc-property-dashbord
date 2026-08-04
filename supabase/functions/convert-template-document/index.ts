@@ -61,13 +61,21 @@ import {
   MAX_SOURCE_CHARS,
 } from '../_shared/reports/converted/structure.pure.ts';
 import {
+  bindableFormats,
   formatName,
   proposeBinding,
   readBindingPlan,
 } from '../_shared/reports/converted/binding.pure.ts';
-import { renderConvertedFromBrand } from '../_shared/reports/converted/render.pure.ts';
 import {
+  planConvertedChapters,
+  renderConvertedFromBrand,
+} from '../_shared/reports/converted/render.pure.ts';
+import type { ReportArchetypeId } from '../_shared/reportDesign/structure.pure.ts';
+import {
+  type ConvertChaptersResponse,
   type ConvertExtractResponse,
+  type ConvertListResponse,
+  type ConvertListRow,
   type ConvertProposeResponse,
   type ConvertRenderResponse,
   convertedFileName,
@@ -122,6 +130,29 @@ function readReportSettings(
     else if (row.setting_key === 'professional_disclaimer') disclaimer = value as Record<string, unknown>;
   }
   return { contact, disclaimer };
+}
+
+/**
+ * Is this actor a superadmin?
+ *
+ * One helper called from both places that need it. A conversion holds whatever
+ * prose was in somebody's uploaded template, and this route runs as service
+ * role — the table's RLS says "owner or superadmin" but RLS is bypassed here,
+ * so the rule has to be restated in code. Restating it *twice* is how the two
+ * copies drift.
+ */
+async function actorIsSuperadmin(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  userId: string,
+): Promise<boolean> {
+  const { data: roleRows } = await supabase
+    .from('user_roles')
+    .select('role')
+    .eq('user_id', userId);
+  return (roleRows ?? []).some(
+    (r: { role?: string }) => String(r?.role ?? '').toLowerCase() === 'superadmin',
+  );
 }
 
 /** Base64 to bytes, without a data-URI prefix. */
@@ -252,6 +283,71 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       return json({ error: permission.error || 'Templates edit permission required' }, 403);
     }
 
+    // ── list ────────────────────────────────────────────────────────────────
+    //
+    // What makes a conversion findable again. Scoped to the caller's own rows
+    // unless they are a superadmin, and every stored PDF re-signed on the way
+    // out — the bucket is private and grants `authenticated` nothing, so a
+    // signed URL issued here is the only way back to the file.
+
+    if (request.action === 'list') {
+      const superadmin = await actorIsSuperadmin(supabase, auth.userId);
+      let query = supabase
+        .from('template_conversions')
+        .select(
+          'id, status, source_filename, file_name, bound_format, storage_bucket, storage_path, '
+          + 'page_count, bytes, bound_chapters, unfilled_chapters, appendix_sections, '
+          + 'unstructured, error, created_at, brand_design_systems(name)',
+        )
+        .order('created_at', { ascending: false })
+        .limit(request.limit);
+      if (!superadmin) query = query.eq('requested_by', auth.userId);
+
+      const { data, error } = await query;
+      if (error) throw new Error(`could not list template_conversions: ${error.message}`);
+
+      const rows = (data ?? []) as Record<string, unknown>[];
+      const conversions: ConvertListRow[] = await Promise.all(rows.map(async (row) => {
+        const path = typeof row.storage_path === 'string' ? row.storage_path : '';
+        let url: string | null = null;
+        if (path) {
+          // Per row, and never fatal. One conversion whose object has gone
+          // missing must not blank the whole history.
+          const { data: signed } = await supabase.storage
+            .from(String(row.storage_bucket || STORAGE_BUCKET))
+            .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+          url = signed?.signedUrl ?? null;
+        }
+        const boundFormat = typeof row.bound_format === 'string' ? row.bound_format : null;
+        const system = row.brand_design_systems as { name?: string } | null;
+        return {
+          id: String(row.id ?? ''),
+          status: String(row.status ?? ''),
+          sourceFilename: String(row.source_filename ?? ''),
+          fileName: String(row.file_name ?? ''),
+          boundFormat,
+          formatName: boundFormat ? formatName(boundFormat as ReportArchetypeId) : null,
+          designSystemName: system?.name ?? null,
+          pageCount: typeof row.page_count === 'number' ? row.page_count : null,
+          bytes: typeof row.bytes === 'number' ? row.bytes : null,
+          boundChapters: Number(row.bound_chapters ?? 0),
+          unfilledChapters: Number(row.unfilled_chapters ?? 0),
+          appendixSections: Number(row.appendix_sections ?? 0),
+          unstructured: row.unstructured === true,
+          error: typeof row.error === 'string' && row.error ? row.error : null,
+          createdAt: String(row.created_at ?? ''),
+          url,
+        };
+      }));
+
+      const response: ConvertListResponse = {
+        action: 'list',
+        conversions,
+        durationMs: Date.now() - started,
+      };
+      return json(response);
+    }
+
     // ── extract ─────────────────────────────────────────────────────────────
 
     if (request.action === 'extract') {
@@ -329,7 +425,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
     const { data: conversion, error: readError } = await supabase
       .from('template_conversions')
-      .select('id, requested_by, status, source_markdown, structure, source_filename')
+      .select('id, requested_by, status, source_markdown, structure, source_filename, bound_format, binding')
       .eq('id', request.conversionId)
       .maybeSingle();
 
@@ -343,22 +439,19 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // The table's RLS says the same thing; this route runs as service role and
     // so has to say it again itself.
     const isOwner = String(conversion.requested_by ?? '') === auth.userId;
-    if (!isOwner) {
-      const { data: roleRows } = await supabase
-        .from('user_roles')
-        .select('role')
-        .eq('user_id', auth.userId);
-      const superadmin = (roleRows ?? []).some(
-        (r: { role?: string }) => String(r?.role ?? '').toLowerCase() === 'superadmin',
-      );
-      if (!superadmin) return json({ error: 'not found' }, 404);
+    if (!isOwner && !(await actorIsSuperadmin(supabase, auth.userId))) {
+      return json({ error: 'not found' }, 404);
     }
 
-    // Set only once the row is known to exist and to be this caller's. The
-    // catch below writes a failure onto whatever `conversionId` names, and a
-    // row the caller may not read is not a row this request should be able to
-    // stamp `failed`.
-    conversionId = request.conversionId;
+    // Only `render` stamps a failure onto the row, and only once the row is
+    // known to exist and to be this caller's.
+    //
+    // `render` is the action that moves the row to `rendering`, so a throw
+    // partway through leaves it stuck there unless the catch corrects it. A
+    // failed `propose` or `chapters` changes no status and reads a conversion
+    // that is perfectly fine — marking it `failed` would be a lie that outlives
+    // the request.
+    if (request.action === 'render') conversionId = request.conversionId;
 
     // Re-extracted rather than trusted. The stored `structure` column is a
     // convenience for the review screen; the binding indices are re-checked
@@ -370,6 +463,41 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     );
     if (!structure.sections.length) {
       return json({ error: 'this conversion has no stored sections — re-upload the template' }, 409);
+    }
+
+    // ── chapters ────────────────────────────────────────────────────────────
+    //
+    // The document's chapters and the prose in them, so the browser can lay
+    // them out as an editable template.
+    //
+    // Read from the *stored* binding rather than one the caller sends: this is
+    // asked for after a render, and the answer has to describe the document
+    // that was actually produced. `planConvertedChapters` is the same function
+    // the renderer used, so the chapter list cannot disagree with the PDF.
+
+    if (request.action === 'chapters') {
+      const stored = typeof conversion.bound_format === 'string' ? conversion.bound_format : '';
+      const legal = bindableFormats() as string[];
+      if (!legal.includes(stored)) {
+        return json({ error: 'this conversion has not been bound to a report format yet' }, 409);
+      }
+      const format = stored as ReportArchetypeId;
+      const plan = readBindingPlan(conversion.binding, format, structure);
+
+      const response: ConvertChaptersResponse = {
+        action: 'chapters',
+        conversionId: request.conversionId,
+        title: structure.title,
+        format,
+        formatName: formatName(format),
+        chapters: planConvertedChapters(structure, plan).map((c) => ({
+          title: c.title,
+          kind: c.kind,
+          markdown: c.markdown,
+        })),
+        durationMs: Date.now() - started,
+      };
+      return json(response);
     }
 
     if (request.action === 'propose') {
@@ -388,7 +516,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       const response: ConvertProposeResponse = {
         action: 'propose',
-        conversionId,
+        conversionId: request.conversionId,
         format: request.format,
         formatName: formatName(request.format),
         binding: plan,
@@ -507,7 +635,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       disclaimer: settings.disclaimer as never,
       coverArtDataUri: coverArt.ok ? coverArt.asset.dataUri : null,
       preparedOn: new Date().toISOString(),
-      reference: convertedReference(conversionId),
+      reference: convertedReference(request.conversionId),
     });
 
     // The page band is advisory for a converted draft and lives in `bandNote`
@@ -522,7 +650,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     assertSafeRenderResources(rendered.html, Deno.env.get('SUPABASE_URL') || '');
 
     const fileName = convertedFileName(structure.title, request.format);
-    const path = convertedStoragePath(conversionId, fileName);
+    const path = convertedStoragePath(request.conversionId, fileName);
 
     const pdf = await renderPdf(weasyprint, rendered.html, { variant: 'pdf/a-2b', tagged: true });
 
@@ -566,11 +694,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         error: null,
         updated_at: new Date().toISOString(),
       })
-      .eq('id', conversionId);
+      .eq('id', request.conversionId);
 
     const response: ConvertRenderResponse = {
       action: 'render',
-      conversionId,
+      conversionId: request.conversionId,
       url: signed.signedUrl,
       fileName,
       bytes: pdf.length,

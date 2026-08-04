@@ -30,6 +30,8 @@ import {
   MessageSquareText,
   MessageSquare,
   FileStack,
+  Layers,
+  Wand2,
   Palette,
   Users,
   History,
@@ -125,6 +127,11 @@ const ENTRIES: NavEntry[] = [
 const ADMIN_ENTRIES: NavEntry[] = [
   { title: 'Auto Report Generation', url: '/automation', icon: Zap, moduleKey: 'automation', group: 'Admin', keywords: ['automation'] },
   { title: 'Templates', url: '/templates', icon: FileStack, moduleKey: 'templates', group: 'Admin' },
+  // Both of these are otherwise unreachable by navigation — nothing in the
+  // sidebar links to /admin/template-builder, so the palette is where somebody
+  // who types "converter" has to find it.
+  { title: 'Template Builder', url: '/admin/template-builder', icon: Layers, moduleKey: 'templates', group: 'Admin', keywords: ['visual editor', 'pdf template', 'builder', 'report template'] },
+  { title: 'Template Converter', url: '/admin/template-builder/converter', icon: Wand2, moduleKey: 'templates', group: 'Admin', keywords: ['convert', 'converter', 'refurbish', 'rebrand', 'existing template', 'design system'] },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label', group: 'Admin' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations', group: 'Admin' },
   { title: 'Workflow Playground', url: '/workflow-playground', icon: Workflow, moduleKey: 'integrations', group: 'Admin' },
