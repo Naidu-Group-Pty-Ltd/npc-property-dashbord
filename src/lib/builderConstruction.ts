@@ -162,8 +162,8 @@ export const CONSTRUCTION_STATUS_CLASSES: Record<BuilderConstructionStatus, stri
   site_preparation: 'border-primary/40 text-primary',
   under_construction: 'border-primary/60 text-primary',
   on_hold: 'border-destructive/40 text-destructive',
-  practical_completion: 'border-accent/60 text-accent-foreground',
-  handover: 'border-accent/60 text-accent-foreground',
+  practical_completion: 'border-accent/60 text-accent',
+  handover: 'border-accent/60 text-accent',
   completed: 'border-border text-muted-foreground',
   cancelled: 'border-destructive/60 text-destructive',
 };

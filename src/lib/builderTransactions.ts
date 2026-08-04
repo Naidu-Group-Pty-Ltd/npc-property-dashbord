@@ -129,12 +129,12 @@ export const TRANSACTION_STATUS_LABELS: Record<BuilderTransactionStatus, string>
 /** Semantic tokens only — no raw palette classes (repository style rule). */
 export const TRANSACTION_STATUS_CLASSES: Record<BuilderTransactionStatus, string> = {
   lead: 'border-border text-muted-foreground',
-  reserved: 'border-accent/60 text-accent-foreground',
+  reserved: 'border-accent/60 text-accent',
   contract_issued: 'border-primary/40 text-primary',
   contract_signed: 'border-primary/50 text-primary',
   unconditional: 'border-primary/60 text-primary',
   construction: 'border-primary/60 text-primary',
-  practical_completion: 'border-accent/60 text-accent-foreground',
+  practical_completion: 'border-accent/60 text-accent',
   settled: 'border-border text-muted-foreground',
   cancelled: 'border-destructive/60 text-destructive',
   lapsed: 'border-destructive/40 text-destructive',
