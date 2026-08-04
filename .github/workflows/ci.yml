@@ -360,8 +360,16 @@ jobs:
           # running head, Inter the body, IBM Plex Mono every figure and label.
           # A substituted face still yields a valid PDF, so the fonts are the
           # assertion, not the bytes.
-          for face in Cinzel Playfair Inter IBMPlex; do
-            pdffonts /tmp/bc.pdf | grep -qi "$face" || { echo "$face not embedded in the report"; exit 1; }
+          #
+          # Normalised on both sides. The engine writes `IAPHVP+IBM-Plex-Mono` —
+          # a subset tag, and the family with its spaces turned into hyphens —
+          # so grepping for `IBMPlex` stopped matching and failed this job with
+          # a font problem that did not exist. `selfcheck.py` normalises the
+          # same way, for the same reason.
+          EMBEDDED=$(pdffonts /tmp/bc.pdf | tr -d '[:punct:][:space:]' | tr '[:upper:]' '[:lower:]')
+          for face in cinzel playfairdisplay inter ibmplexmono; do
+            printf '%s' "$EMBEDDED" | grep -q "$face" \
+              || { echo "$face not embedded in the report"; exit 1; }
           done
           # The document the fixture describes is eleven pages. A migration
           # that drops the audit trail changes nothing a unit test sees, and

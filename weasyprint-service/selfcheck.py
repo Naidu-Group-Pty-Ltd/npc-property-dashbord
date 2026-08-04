@@ -27,18 +27,44 @@ could not be built at all. The check belongs where the libraries are.
 3. `pdf_tags` writes a structure tree — the option that produces `/StructTreeRoot`
    does not exist before WeasyPrint 63, and the service spent its life passing
    something the engine ignored, so every report it made was untagged.
-4. Every brand family the stylesheet names is embedded in the output, by name.
-   Rendered uncompressed for this: a compressed PDF hides its font descriptors
-   inside object streams, where a byte search finds nothing.
+4. Every brand family the stylesheet names is embedded in the output, read off
+   the `/BaseFont` entries. Rendered uncompressed for this: a compressed PDF
+   hides its font descriptors inside object streams, where a byte search finds
+   nothing.
+
+   The names are normalised before comparing, because the engine writes
+   `LNXIQZ+IBM-Plex-Mono` — a subset tag, and the family with its spaces turned
+   into hyphens. CI grepped the raw output for `IBMPlex`, which stopped matching
+   and failed a job that was reporting a font problem that did not exist. And
+   the first version of this file searched the whole file for `IBMPlexMono`,
+   which *passed* — by matching the spaced name inside the embedded font program
+   rather than the descriptor. Right answer, wrong reason, and no assertion at
+   all about what the page was actually set in.
 5. The engine still drops what `engineSupport.pure.ts` says it drops. A capability
    that quietly changes is a stylesheet that quietly stops being true.
 """
 from __future__ import annotations
 
 import logging
+import re
 import sys
 
 from weasyprint import HTML
+
+# `/BaseFont /LNXIQZ+IBM-Plex-Mono` — a six-letter subset tag, then the name.
+BASE_FONT = re.compile(rb"/BaseFont\s*/(?:[A-Z]{6}\+)?([A-Za-z0-9\-_.]+)")
+
+
+def norm(name: str | bytes) -> str:
+    """A font name with nothing in it but letters and digits, lowercased.
+
+    `IBM Plex Mono`, `IBM-Plex-Mono` and `IBMPlexMono` are the same face written
+    three ways — by the stylesheet, by the PDF descriptor and by the file on
+    disk. Comparing any two of them literally is a check that fails on a naming
+    change and says "the font is missing", which is exactly what CI did.
+    """
+    text = name.decode("latin-1") if isinstance(name, bytes) else name
+    return re.sub(r"[^a-z0-9]", "", text.lower())
 
 # Mirrors `BRAND_FAMILIES` in app.py and the `PRINT_STACK` roles it comes from.
 BRAND_FAMILIES = ("Cinzel", "Playfair Display", "Inter", "IBM Plex Mono")
@@ -91,11 +117,18 @@ def main() -> int:
     if b"/StructTreeRoot" not in pdf:
         failures.append("pdf_tags produced no structure tree — this engine cannot tag output")
 
+    # The descriptors, not the whole file: the embedded font *program* carries
+    # the family's own name table, so a whole-file search says "embedded" for a
+    # face that was never used to set anything.
+    embedded = [norm(name) for name in BASE_FONT.findall(pdf)]
     for family in BRAND_FAMILIES:
-        # The family name travels in the font descriptor. A substituted face
-        # leaves a perfectly valid PDF with somebody else's name in it.
-        if family.replace(" ", "").encode() not in pdf.replace(b" ", b""):
-            failures.append(f"{family} is not embedded — the engine substituted it silently")
+        # A substituted face leaves a perfectly valid PDF with somebody else's
+        # name in it, and the engine does not log that it happened.
+        if not any(norm(family) in name for name in embedded):
+            failures.append(
+                f"{family} is not embedded — the engine substituted it silently. "
+                f"Embedded: {', '.join(sorted(set(embedded))) or 'nothing'}",
+            )
 
     ignored = "\n".join(said)
     for name, decl in MUST_DROP.items():
