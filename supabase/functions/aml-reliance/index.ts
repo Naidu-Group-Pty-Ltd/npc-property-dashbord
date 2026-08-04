@@ -55,6 +55,10 @@ import {
   evaluateRecordsRequestScope,
   validatePartnerDetermination,
 } from "../_shared/aml/partnerWorkspace.ts";
+import {
+  evaluateMaterialChange,
+  materialInputsFromV2Payload,
+} from "../_shared/aml/partnerEvents.ts";
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
@@ -242,6 +246,10 @@ const PARTNER_WORKSPACE_OPS = new Set([
   "record_partner_determination",
   "list_partner_evidence_deliveries",
   "get_partner_audit_receipt",
+  // Phase 6: refresh obligations and safe notifications (read-only lists;
+  // obligations complete through record_partner_determination, never here).
+  "list_partner_refresh_obligations",
+  "list_partner_notifications",
 ]);
 
 const WORKSPACE_PORTAL_FLAGS: Record<string, string> = {
@@ -448,8 +456,8 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             .select("*").eq("grant_id", grant.id).maybeSingle();
           manifestRow = manifest ?? null;
           const manifestDecision = evaluateManifestForRead(manifestRow, new Date());
-          if (manifestDecision.ok && !attestation.superseded_at && !grant.revoked_at
-            && new Date(grant.expires_at).getTime() > Date.now()) {
+          if (manifestDecision.ok && !attestation.superseded_at && !attestation.refresh_required_at
+            && !grant.revoked_at && new Date(grant.expires_at).getTime() > Date.now()) {
             try {
               procedures = intersectPayloadWithManifest(attestation.payload, manifestRow);
               recordAvailability = [...(manifestRow.allowed_record_classes ?? [])];
@@ -490,6 +498,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             schema_version: attestation.schema_version ?? 1, version: attestation.version,
             payload_sha256: attestation.payload_sha256, issued_at: attestation.issued_at,
             superseded_at: attestation.superseded_at ?? null,
+            refresh_required_at: attestation.refresh_required_at ?? null,
           } : null,
           grant: grant ? { revoked_at: grant.revoked_at ?? null, expires_at: grant.expires_at } : null,
           procedures, limitations, recordAvailability,
@@ -627,6 +636,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             detail: { assessment_id: assessment.id, status: outcome, via: "partner_workspace" },
           });
         }
+        // Phase 6: a fresh determination discharges the open refresh
+        // obligation for this link. Idempotent — re-recording matches zero
+        // open rows; with no Phase 6 data the update matches nothing.
+        await admin.schema("aml").from("partner_refresh_obligations").update({
+          status: "completed", completed_at: new Date().toISOString(),
+          completed_by_source: source, completed_by_id: portalUserId,
+          completed_against_attestation_hash: currentHash,
+          determination_id: assessment.id,
+        }).eq("partner_case_link_id", link.id).eq("partner_org_id", partnerOrg.id)
+          .eq("status", "open").eq("required_action", "review_and_redetermine");
         await appendCaseEvent(admin, link.case_id, "system",
           `Independent assessment by ${partnerOrg.legal_name}: ${outcome.replace(/_/g, " ")}`,
           {
@@ -645,6 +664,30 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .eq("partner_case_link_id", link.id).order("delivered_at", { ascending: false }).limit(100);
         if (error) throw error;
         return jr({ deliveries: data ?? [] });
+      }
+
+      if (op === "list_partner_refresh_obligations") {
+        // Safe fields ONLY: the internal trigger classification
+        // (internal_trigger_codes, trigger_source) never leaves the origin.
+        const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
+        if (!link) return jr({ error: "Not found" }, 404);
+        const { data, error } = await admin.schema("aml").from("partner_refresh_obligations")
+          .select("id, required_action, safe_reason_code, status, due_at, created_at, completed_at")
+          .eq("partner_case_link_id", link.id).eq("partner_org_id", partnerOrg.id)
+          .order("created_at", { ascending: false }).limit(50);
+        if (error) throw error;
+        return jr({ obligations: data ?? [] });
+      }
+
+      if (op === "list_partner_notifications") {
+        // Fixed safe copy written by the outbox worker; org-scoped from the
+        // resolved session, never from a body identifier.
+        const { data, error } = await admin.schema("aml").from("partner_notifications")
+          .select("id, partner_case_link_id, event_type, safe_reason_code, title, body, created_at, read_at")
+          .eq("partner_org_id", partnerOrg.id)
+          .order("created_at", { ascending: false }).limit(100);
+        if (error) throw error;
+        return jr({ notifications: data ?? [] });
       }
 
       if (op === "get_partner_audit_receipt") {
@@ -740,6 +783,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             return jr({
               error: "This attestation has been superseded. Ask the issuing organisation for current access.",
               code: "attestation_superseded",
+              refresh_required: true,
+            }, 409);
+          }
+          // Phase 6: a material change flags the attestation for refresh
+          // without superseding it — flagged content stops being served the
+          // same way. Safe wording only; the trigger detail stays internal.
+          if (attestation.refresh_required_at) {
+            await logDenied("attestation_refresh_required");
+            return jr({
+              error: "The information behind this attestation has been updated. Ask the issuing organisation for refreshed access.",
+              code: "attestation_refresh_required",
               refresh_required: true,
             }, 409);
           }
@@ -1850,6 +1904,149 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             record_code: recordCode, expires_at: delivery.expires_at,
           }, userId, userEmail);
         return jr({ delivery });
+      }
+
+      /* ── reliable events, invalidation and refresh (Phase 6) ──────────── */
+
+      case "apply_material_change": {
+        // Central material-change invalidation (§6.5). The evaluator
+        // recomputes the Phase 3 material-input hash from live case data and
+        // compares it, group by group, with the inputs reconstructed from
+        // the stored v2 payload. Presentation-only changes cannot register.
+        // Consequences apply in ONE database transaction
+        // (aml.apply_partner_material_change); the origin service gate,
+        // risk assessment and case outcome are never touched.
+        if (!isMlro) return jr({ error: "MLRO role required — invalidation changes what partners may rely on" }, 403);
+        if (!(await flagEnabled(admin, "aml_partner_event_outbox"))) {
+          return jr({
+            error: "Material-change invalidation is part of the partner event outbox, which is not enabled.",
+            code: "events_disabled",
+          }, 409);
+        }
+        const caseId = String(body.case_id ?? "");
+        if (!caseId) return jr({ error: "case_id required" }, 400);
+        const mode = body.mode === "revoke" ? "revoke" : "refresh";
+        const { data: caseRow } = await admin.schema("aml").from("cases")
+          .select("*").eq("id", caseId).maybeSingle();
+        if (!caseRow) return jr({ error: "Case not found" }, 404);
+        const { data: att } = await admin.schema("aml").from("compliance_attestations")
+          .select("*").eq("case_id", caseId).is("superseded_at", null)
+          .order("version", { ascending: false }).limit(1).maybeSingle();
+        if (!att) return jr({ error: "No current attestation on this case." }, 404);
+        if ((att.schema_version ?? 1) !== 2 || !att.material_input_hash) {
+          return jr({
+            error: "Material-change invalidation requires a v2 attestation with a material-input hash. Re-issue under aml_attestation_v2 first.",
+            code: "attestation_v2_required",
+          }, 409);
+        }
+
+        const payload = await buildAttestationPayload(admin, caseRow);
+        const { data: gateDecision } = await admin.schema("aml").from("service_gate_decisions")
+          .select("id").eq("case_id", caseId)
+          .in("status", ["approved", "approved_with_controls"])
+          .order("created_at", { ascending: false }).limit(1).maybeSingle();
+        const nextInputs = materialInputsFromV2Payload(
+          toV2Payload(payload as Record<string, unknown>),
+          gateDecision?.id ?? att.service_gate_decision_id ?? null);
+        const previousInputs = materialInputsFromV2Payload(
+          att.payload, att.service_gate_decision_id ?? null);
+        const evaluation = await evaluateMaterialChange(previousInputs, nextInputs);
+
+        if (!evaluation.material) {
+          return jr({
+            material: false, changed_groups: [],
+            message: "No material change: the current attestation's inputs are unchanged. Nothing was invalidated.",
+          });
+        }
+
+        const { data: applied, error } = await admin.schema("aml").rpc("apply_partner_material_change", {
+          _case_id: caseId,
+          _attestation_id: att.id,
+          _new_material_hash: evaluation.next_hash,
+          _changed_groups: evaluation.changed_groups,
+          _safe_reason_code: evaluation.safe_reason_code,
+          _mode: mode,
+          _actor_user_id: userId,
+        });
+        if (error) throw error;
+
+        await appendCaseEvent(admin, caseId, "mlro_decision",
+          `Material change recorded — attestation v${att.version} flagged for refresh`,
+          {
+            attestation_id: att.id,
+            changed_groups: evaluation.changed_groups,
+            mode,
+            summary: applied,
+            note: "Partner-facing surfaces stop serving the flagged content and receive safe refresh wording only. The service gate, risk assessment and case outcome are unchanged by this action.",
+          }, userId, userEmail);
+        return jr({ material: true, changed_groups: evaluation.changed_groups, applied });
+      }
+
+      case "staff_list_refresh_obligations": {
+        const q = admin.schema("aml").from("partner_refresh_obligations")
+          .select("*, partner_organisations:partner_org_id(legal_name)")
+          .order("created_at", { ascending: false }).limit(200);
+        if (body.case_id) q.eq("case_id", String(body.case_id));
+        if (body.status) q.eq("status", String(body.status));
+        const { data, error } = await q;
+        if (error) throw error;
+        return jr({ obligations: data ?? [] });
+      }
+
+      case "get_partner_events_health": {
+        // Narrow Phase 6 ops visibility (§6.8). Every figure is read live
+        // from the database, and the underlying rows travel with the counts
+        // so the card can show the filtered records themselves. Flag state
+        // is reported as recorded configuration — nothing here claims the
+        // worker is deployed or scheduled.
+        const nowIso = new Date().toISOString();
+        const [flagOn, pending, retrying, dead, obligations, flaggedAttestations, agreementsDue] = await Promise.all([
+          flagEnabled(admin, "aml_partner_event_outbox"),
+          admin.from("integration_outbox")
+            .select("id, event_type, occurred_at, attempts, last_error", { count: "exact" })
+            .like("event_type", "aml.%").is("processed_at", null)
+            .order("occurred_at", { ascending: true }).limit(20),
+          admin.from("integration_outbox")
+            .select("id", { count: "exact", head: true })
+            .like("event_type", "aml.%").is("processed_at", null).gt("attempts", 0),
+          admin.from("integration_dead_letters")
+            .select("id, event_type, failed_at, attempts", { count: "exact" })
+            .like("event_type", "aml.%").is("replayed_at", null)
+            .order("failed_at", { ascending: false }).limit(20),
+          admin.schema("aml").from("partner_refresh_obligations")
+            .select("id, case_id, partner_case_link_id, safe_reason_code, required_action, status, due_at, created_at", { count: "exact" })
+            .eq("status", "open").order("created_at", { ascending: true }).limit(20),
+          admin.schema("aml").from("compliance_attestations")
+            .select("id, case_id, version, refresh_required_at", { count: "exact" })
+            .not("refresh_required_at", "is", null).is("superseded_at", null)
+            .order("refresh_required_at", { ascending: true }).limit(20),
+          admin.schema("aml").from("reliance_agreements")
+            .select("id, partner_org_name, next_review_due", { count: "exact" })
+            .eq("status", "active")
+            .lte("next_review_due", new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10))
+            .order("next_review_due", { ascending: true }).limit(20),
+        ]);
+        const overdueObligations = (obligations.data ?? [])
+          .filter((o: any) => o.due_at && o.due_at < nowIso).length;
+        return jr({
+          health: {
+            outbox_enabled: flagOn,
+            pending_count: pending.count ?? 0,
+            retrying_count: retrying.count ?? 0,
+            dead_letter_count: dead.count ?? 0,
+            oldest_pending_at: pending.data?.[0]?.occurred_at ?? null,
+            open_obligation_count: obligations.count ?? 0,
+            overdue_obligation_count: overdueObligations,
+            refresh_required_attestation_count: flaggedAttestations.count ?? 0,
+            arrangement_reviews_due_count: agreementsDue.count ?? 0,
+            pending_events: pending.data ?? [],
+            dead_letters: dead.data ?? [],
+            open_obligations: obligations.data ?? [],
+            refresh_required_attestations: flaggedAttestations.data ?? [],
+            arrangement_reviews_due: agreementsDue.data ?? [],
+            generated_at: nowIso,
+          },
+        });
       }
 
       default:

@@ -362,6 +362,27 @@ export function ReliancePassportSection({
     } finally { setBusy(null); }
   };
 
+  // Phase 6: recompute the material-input hash against live case data and,
+  // where it genuinely changed, atomically flag the attestation, grants and
+  // partner determinations for refresh (never the case, gate or risk state).
+  const materialChange = async () => {
+    setBusy("material");
+    try {
+      const result = await amlRelianceApi.applyMaterialChange({ case_id: caseId });
+      if (!result.material) {
+        toast({ title: "No material change", description: result.message });
+      } else {
+        toast({
+          title: "Material change recorded",
+          description: `Changed: ${result.changed_groups.join(", ")}. Partners see safe refresh wording only.`,
+        });
+      }
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not evaluate material change", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
   if (!loaded) return null;
   const current = attestations.find((a) => !a.superseded_at) ?? null;
 
@@ -379,6 +400,11 @@ export function ReliancePassportSection({
             <Button size="sm" variant="outline" onClick={issue} disabled={busy !== null}>
               {busy === "issue" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
               Issue attestation
+            </Button>
+            <Button size="sm" variant="outline" onClick={materialChange}
+              disabled={busy !== null || !current} title="Re-evaluate the material inputs and flag partner surfaces for refresh if they changed">
+              {busy === "material" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+              Material change
             </Button>
             <Button size="sm" onClick={grant} disabled={busy !== null || !current}>
               {busy === "grant" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}

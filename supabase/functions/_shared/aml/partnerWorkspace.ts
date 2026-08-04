@@ -82,7 +82,7 @@ export type PartnerAttestationState =
   | "current" | "superseded" | "refresh_required" | "revoked" | "expired" | "unavailable";
 
 export function deriveAttestationState(input: {
-  attestation: { superseded_at: string | null } | null;
+  attestation: { superseded_at: string | null; refresh_required_at?: string | null } | null;
   grant: { revoked_at: string | null; expires_at: string } | null;
   determinationHash: string | null;
   attestationHash: string | null;
@@ -92,6 +92,10 @@ export function deriveAttestationState(input: {
   if (input.grant.revoked_at) return "revoked";
   if (new Date(input.grant.expires_at).getTime() < input.now.getTime()) return "expired";
   if (input.attestation.superseded_at) return "superseded";
+  // Phase 6: a material change flags the attestation for refresh without
+  // superseding it. Non-current content is never served (see the DTO below),
+  // so a flagged attestation immediately stops disclosing.
+  if (input.attestation.refresh_required_at) return "refresh_required";
   // The partner's recorded determination pinned an older content hash than
   // the current attestation → their decision needs refreshing even though
   // the attestation itself is current.
@@ -248,6 +252,7 @@ export function buildPartnerWorkspaceDto(input: {
   attestation: {
     schema_version: number | null; version: number; payload_sha256: string;
     issued_at: string; superseded_at: string | null;
+    refresh_required_at?: string | null;
   } | null;
   grant: { revoked_at: string | null; expires_at: string } | null;
   /** Manifest-intersected procedure facts (already sanitised) or null. */

@@ -292,4 +292,52 @@ export const amlRelianceApi = {
     executed_document_reference?: string;
     effective_from?: string; expires_on?: string;
   }) => invoke<{ agreement: RelianceAgreement }>({ op: "update_agreement_scope", ...params }),
+
+  /* ── reliable events, invalidation and refresh (Phase 6) ──────────────── */
+
+  applyMaterialChange: (params: { case_id: string; mode?: "refresh" | "revoke" }) =>
+    invoke<{
+      material: boolean;
+      changed_groups: string[];
+      applied?: Record<string, unknown>;
+      message?: string;
+    }>({ op: "apply_material_change", ...params }),
+  staffListRefreshObligations: (params: { case_id?: string; status?: string } = {}) =>
+    invoke<{ obligations: PartnerRefreshObligation[] }>({ op: "staff_list_refresh_obligations", ...params }),
+  getPartnerEventsHealth: () =>
+    invoke<{ health: PartnerEventsHealth }>({ op: "get_partner_events_health" }),
 };
+
+/* ── Phase 6 types ───────────────────────────────────────────────────────── */
+
+export interface PartnerRefreshObligation {
+  id: string;
+  case_id: string;
+  partner_org_id: string;
+  partner_case_link_id: string;
+  safe_reason_code: string;
+  required_action: "review_and_redetermine" | "acknowledge_access_change";
+  status: "open" | "completed" | "cancelled" | "expired";
+  due_at: string | null;
+  created_at: string;
+  completed_at: string | null;
+  partner_organisations?: { legal_name: string } | null;
+}
+
+export interface PartnerEventsHealth {
+  outbox_enabled: boolean;
+  pending_count: number;
+  retrying_count: number;
+  dead_letter_count: number;
+  oldest_pending_at: string | null;
+  open_obligation_count: number;
+  overdue_obligation_count: number;
+  refresh_required_attestation_count: number;
+  arrangement_reviews_due_count: number;
+  pending_events: Array<{ id: string; event_type: string; occurred_at: string; attempts: number; last_error: string | null }>;
+  dead_letters: Array<{ id: string; event_type: string; failed_at: string; attempts: number }>;
+  open_obligations: Array<{ id: string; case_id: string; safe_reason_code: string; required_action: string; due_at: string | null; created_at: string }>;
+  refresh_required_attestations: Array<{ id: string; case_id: string; version: number; refresh_required_at: string }>;
+  arrangement_reviews_due: Array<{ id: string; partner_org_name: string; next_review_due: string }>;
+  generated_at: string;
+}
