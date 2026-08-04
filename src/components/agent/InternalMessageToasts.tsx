@@ -1306,16 +1306,16 @@ export function InternalMessageToasts() {
             className="min-h-[46px] resize-none rounded-2xl border-border/60 bg-background/60 text-[12px]"
           />
 
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1">
+          <div className="mt-2 flex items-center justify-between gap-2 pl-8">
+            <div className="flex items-center gap-1.5">
               <button
                 type="button"
                 aria-label="Attach files"
                 title="Attach files — any format, any size"
                 onClick={() => fileInputRef.current?.click()}
-                className="mr-0.5 rounded-full border border-border/60 p-1 text-muted-foreground transition-colors hover:text-foreground"
+                className="mr-1 flex h-8 w-8 items-center justify-center rounded-full border border-border/60 bg-muted/40 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
-                <Paperclip className="h-3 w-3" />
+                <Paperclip className="h-4 w-4" />
               </button>
               {(['normal', 'high', 'urgent'] as Priority[]).map((p) => (
                 <button
