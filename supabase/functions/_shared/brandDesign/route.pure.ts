@@ -218,6 +218,24 @@ export interface BrandRouteResponse {
   slug: string;
   /** Present on `generate`: what the model was told, for the review screen. */
   brief: string;
+  /**
+   * Present on `import`: what was recognised in the dropped file.
+   *
+   * Optional because only the import action fills it — every other action
+   * answers about a system that was authored or drafted, and has no provenance
+   * to report.
+   */
+  imported?: {
+    namespace: string;
+    tokenCount: number;
+    colorCount: number;
+    cardCount: number;
+    themes: string[];
+    brandFonts: string[];
+    sources: Record<string, string>;
+    notes: string[];
+    kind: 'manifest' | 'css';
+  };
   durationMs: number;
 }
 
