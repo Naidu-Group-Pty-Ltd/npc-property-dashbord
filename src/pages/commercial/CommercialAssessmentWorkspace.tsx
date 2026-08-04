@@ -155,14 +155,11 @@ export default function CommercialAssessmentWorkspace() {
   }, [update, activeIndex]);
 
   const setTitle = useCallback(async (title: string) => {
-    if (!id || !payload) return;
-    // Title lives on the record, not the payload, so it saves through its own
-    // path rather than piggybacking on the next autosave of a field.
-    await ciAssessmentApi.autosave({
-      assessmentId: id, payload, expectedVersion: record?.version ?? 0, title,
-    });
-    await reload();
-  }, [id, payload, record?.version, reload]);
+    // No refetch here: reloading the assessment dropped the workspace into its
+    // loading state and destroyed the input mid-typing.
+    await saveTitle(title);
+  }, [saveTitle]);
+
 
   /**
    * Merge a returned intake pack into the working assessment.
