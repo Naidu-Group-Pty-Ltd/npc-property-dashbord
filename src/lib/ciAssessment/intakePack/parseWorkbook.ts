@@ -69,6 +69,63 @@ export interface ParsedPack {
 
 const MAX_TABLE_ROWS = 250;
 
+// ---------------------------------------------------------------------------
+// Heading fallback matching
+//
+// The primary contract is the stable field key written into the sheet. But
+// workbooks come back rebuilt — copied into a fresh file, restructured by an
+// assistant, retyped by hand — with the key rows gone and only the human
+// wording left. Since the schema owns both the question text and the column
+// labels, those are themselves a reliable second identifier: match on the
+// normalised heading, and a file that kept our wording still imports instead
+// of reading as zero values.
+// ---------------------------------------------------------------------------
+
+/**
+ * Normalise a heading for comparison: case, the required-marker glyphs (✱ *),
+ * "(optional)" suffixes and all punctuation are stripped, whitespace collapses.
+ * "ENTITY OR PERSON NAME ✱" and "Entity or person name" both become
+ * "entity or person name".
+ */
+function normaliseHeading(value: unknown): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/\(optional\)/g, ' ')
+    .replace(/[✱*]/g, ' ')
+    .replace(/[^a-z0-9%]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+interface HeadingIndex {
+  /** Normalised question and label text → field, per section. */
+  bySection: Map<string, Map<string, PackField>>;
+}
+
+const HEADING_INDEX: HeadingIndex = (() => {
+  const bySection = new Map<string, Map<string, PackField>>();
+  PACK_SECTIONS.forEach((section) => {
+    const map = new Map<string, PackField>();
+    section.fields.forEach((field) => {
+      const label = normaliseHeading(field.label);
+      const question = normaliseHeading(field.question);
+      // First writer wins so an ambiguous heading never silently re-routes a
+      // later field; unique keys remain the primary, unambiguous channel.
+      if (label && !map.has(label)) map.set(label, field);
+      if (question && !map.has(question)) map.set(question, field);
+    });
+    bySection.set(section.id, map);
+  });
+  return { bySection };
+})();
+
+/** Match a cell's text to a field of the given section by heading. */
+function fieldByHeading(sectionId: string, cell: unknown): PackField | undefined {
+  const text = normaliseHeading(cell);
+  if (!text) return undefined;
+  return HEADING_INDEX.bySection.get(sectionId)?.get(text);
+}
+
 /** Read a sheet as a dense 2-D array, preserving blanks so indices line up. */
 function sheetRows(workbook: XLSX.WorkBook, name: string): unknown[][] {
   const sheet = workbook.Sheets[name];
@@ -132,39 +189,64 @@ function parseSingleSheet(
   }
 
   const rows = sheetRows(workbook, sheetName);
+  const seenFields = new Set<string>();
   rows.forEach((row) => {
     const key = String(row?.[0] ?? '').trim();
-    if (!key || !ALL_PACK_FIELDS.has(key)) return;
+    let field: PackField | undefined;
+    let raw: unknown;
 
-    const entry = ALL_PACK_FIELDS.get(key)!;
-    // Only accept keys that belong to this sheet, so a stray paste of another
-    // sheet's rows cannot inject values under the wrong section.
-    if (entry.section.id !== section.id) return;
+    if (key && ALL_PACK_FIELDS.has(key)) {
+      const entry = ALL_PACK_FIELDS.get(key)!;
+      // Only accept keys that belong to this sheet, so a stray paste of another
+      // sheet's rows cannot inject values under the wrong section.
+      if (entry.section.id !== section.id) return;
+      field = entry.field;
+      raw = row?.[2];
+    } else {
+      // Fallback: the key column is gone, but the question or label wording
+      // survived. Match the first two cells against this section's headings
+      // and take the cell immediately to the right as the answer — never a
+      // rightward scan, which would swallow guidance text on a blank answer.
+      for (const column of [0, 1]) {
+        const match = fieldByHeading(section.id, row?.[column]);
+        if (match) {
+          field = match;
+          raw = row?.[column + 1];
+          break;
+        }
+      }
+      if (!field) return;
+    }
 
-    const raw = row?.[2];
+    // One value per field per sheet: with both a key row and a heading match
+    // present (or a heading repeated), the first read wins rather than the
+    // last silently overwriting it.
+    if (seenFields.has(field.key)) return;
+    seenFields.add(field.key);
+
     if (raw == null || String(raw).trim() === '') return;
 
-    const value = decodeValue(key, entry.field.type, raw);
+    const value = decodeValue(field.key, field.type, raw);
     if (value === undefined) {
       issues.push({
         severity: 'warning', sheet: sheetName,
-        message: `"${entry.field.label}" could not be read from "${String(raw)}" — left unset.`,
+        message: `"${field.label}" could not be read from "${String(raw)}" — left unset.`,
       });
       return;
     }
 
-    const problem = rangeIssue(entry.field, value);
+    const problem = rangeIssue(field, value);
     if (problem) {
       issues.push({
         severity: 'error', sheet: sheetName,
-        message: `"${entry.field.label}" ${problem} — left unset. Check the cell.`,
+        message: `"${field.label}" ${problem} — left unset. Check the cell.`,
       });
       return;
     }
 
     collect({
-      key, label: entry.field.label, section: section.title, step: section.step,
-      path: entry.field.path, value, raw,
+      key: field.key, label: field.label, section: section.title, step: section.step,
+      path: field.path, value, raw,
     });
   });
 }
@@ -187,33 +269,55 @@ function parseTableSheet(
   // Find the header row by looking for one whose cells are known field keys.
   // Scanning rather than assuming row 3 means an extra title line inserted by
   // a user does not break the import.
+  const keyMatches = (row: unknown[] | undefined) => (row ?? []).filter(
+    (cell) => ALL_PACK_FIELDS.get(String(cell ?? '').trim())?.section.id === section.id,
+  ).length;
+  const headingMatches = (row: unknown[] | undefined) => (row ?? []).filter(
+    (cell) => fieldByHeading(section.id, cell) != null,
+  ).length;
+
   let headerIndex = -1;
+  let headerMode: 'keys' | 'headings' = 'keys';
   for (let index = 0; index < Math.min(rows.length, 12); index += 1) {
-    const matches = (rows[index] ?? []).filter(
-      (cell) => ALL_PACK_FIELDS.get(String(cell ?? '').trim())?.section.id === section.id,
-    ).length;
-    if (matches >= 2) { headerIndex = index; break; }
+    if (keyMatches(rows[index]) >= 2) { headerIndex = index; break; }
+  }
+  if (headerIndex === -1) {
+    // Fallback: the key row is gone, but a row of recognisable column labels
+    // (however cased or decorated) still identifies the table.
+    for (let index = 0; index < Math.min(rows.length, 12); index += 1) {
+      if (headingMatches(rows[index]) >= 2) {
+        headerIndex = index;
+        headerMode = 'headings';
+        break;
+      }
+    }
   }
 
   if (headerIndex === -1) {
     issues.push({
       severity: 'warning', sheet: sheetName,
-      message: `Could not find the field-key header row on "${sheetName}". `
-        + 'That row must be left intact for the upload to map columns.',
+      message: `Could not find a header row on "${sheetName}" — neither field keys nor `
+        + 'recognisable column labels. Nothing was imported from it.',
     });
     return [];
   }
 
   const header = rows[headerIndex] ?? [];
   const columns = header.map((cell) => {
-    const key = String(cell ?? '').trim();
-    const entry = ALL_PACK_FIELDS.get(key);
-    return entry && entry.section.id === section.id ? entry.field : null;
+    if (headerMode === 'keys') {
+      const entry = ALL_PACK_FIELDS.get(String(cell ?? '').trim());
+      return entry && entry.section.id === section.id ? entry.field : null;
+    }
+    return fieldByHeading(section.id, cell) ?? null;
   });
 
-  // Row after the header is the human-label row the generator writes; skip it
-  // only when it does not itself look like data.
-  const firstDataIndex = headerIndex + 2;
+  // In the generated layout a human-label row sits under the key row and must
+  // be skipped. A label-matched header has no second header row — unless the
+  // next row is itself another run of headings (keys then labels), which the
+  // heading check covers either way.
+  const nextRowIsAlsoHeader = headerMode === 'keys'
+    || headingMatches(rows[headerIndex + 1]) >= 2;
+  const firstDataIndex = headerIndex + (nextRowIsAlsoHeader ? 2 : 1);
   const items: Record<string, unknown>[] = [];
 
   for (let rowIndex = firstDataIndex; rowIndex < rows.length; rowIndex += 1) {
@@ -226,6 +330,19 @@ function parseTableSheet(
     }
 
     const row = rows[rowIndex] ?? [];
+
+    // A row that says only "NOTES" (or "Notes") marks the end of the data and
+    // the start of a commentary block. Everything below it is explanation for
+    // the person filling the sheet in — importing it would mint phantom
+    // entities and properties out of footnote text.
+    const populatedCells = row.filter((cell) => String(cell ?? '').trim() !== '');
+    if (
+      populatedCells.length === 1
+      && /^notes?$/.test(normaliseHeading(populatedCells[0]))
+    ) {
+      break;
+    }
+
     const item: Record<string, unknown> = {};
     let populated = false;
 

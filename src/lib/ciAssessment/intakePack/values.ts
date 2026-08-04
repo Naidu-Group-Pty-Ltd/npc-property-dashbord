@@ -261,6 +261,21 @@ export function decodeDate(value: unknown): string | undefined {
     return toIsoDate(value);
   }
 
+  // A bare number in a date field is an Excel serial. Workbooks rebuilt by
+  // hand (or by another tool) often lose the date number-format, so the cell
+  // arrives as e.g. 45838 rather than a Date. The plausible window 1955–2118
+  // keeps a stray small count or a year typed as a number from being read as
+  // a date.
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    if (value >= 20000 && value <= 80000 && Number.isInteger(value)) {
+      // Excel's day 0 is 30 December 1899 (the off-by-two Lotus legacy).
+      const millis = Date.UTC(1899, 11, 30) + value * 86_400_000;
+      const date = new Date(millis);
+      return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+    }
+    return undefined;
+  }
+
   const text = String(value).trim();
   if (!text) return undefined;
 
