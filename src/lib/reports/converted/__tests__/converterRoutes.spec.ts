@@ -385,7 +385,7 @@ describe('parseBrandRequest — import', () => {
   it('refuses a file too large to be a design system, saying how large', () => {
     const parsed = parseBrandRequest({ action: 'import', source: 'x'.repeat(MAX_IMPORT_CHARS + 1) });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.error).toContain('KB');
+    if (parsed.ok === false) expect(parsed.error).toContain('KB');
   });
 
   it('carries a name when one is given, and trims it', () => {
@@ -400,7 +400,7 @@ describe('parseBrandRequest — import', () => {
   it('names import among the actions it knows', () => {
     const parsed = parseBrandRequest({ action: 'nonsense' });
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.error).toContain('import');
+    if (parsed.ok === false) expect(parsed.error).toContain('import');
   });
 });
 

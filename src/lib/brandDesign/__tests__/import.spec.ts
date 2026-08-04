@@ -39,9 +39,9 @@ const MANIFEST = JSON.parse(readFileSync(
 
 describe('the real NPC Services Design System, imported', () => {
   const read = readDesignSystemManifest(MANIFEST);
-  if (!read.ok) throw new Error(read.error);
+  if (read.ok === false) throw new Error(read.error);
   const derived = deriveReportNeutrals(read.manifest.tokens);
-  if (!derived.ok) throw new Error(derived.error);
+  if (derived.ok === false) throw new Error(derived.error);
 
   it('reproduces every print surface exactly', () => {
     expect(derived.derived.neutrals.paper).toBe(PRINT_SURFACE.paper);
@@ -82,7 +82,7 @@ describe('the real NPC Services Design System, imported', () => {
   it('produces a saveable, legible design system', () => {
     const imported = importDesignSystem(MANIFEST);
     expect(imported.ok).toBe(true);
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     expect(imported.result.system.origin).toBe('imported');
     expect(imported.result.system.neutrals).not.toBeNull();
     expect(imported.result.system.sourceNamespace).toBe(read.manifest.namespace);
@@ -92,7 +92,7 @@ describe('the real NPC Services Design System, imported', () => {
 
   it('names itself from the namespace rather than "Untitled"', () => {
     const imported = importDesignSystem(MANIFEST);
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     expect(imported.result.system.name).toContain('NPC');
     expect(imported.result.system.slug).toMatch(/^[a-z0-9-]+$/);
   });
@@ -196,7 +196,7 @@ describe('the fallback chains', () => {
   it('takes the second choice and says so', () => {
     const d = deriveReportNeutrals([...MINIMUM, t('--secondary', '#EEEEEE')]);
     expect(d.ok).toBe(true);
-    if (!d.ok) return;
+    if (d.ok === false) return;
     expect(d.derived.neutrals.paperAlt).toBe('#EEEEEE');
     expect(d.derived.sources.paperAlt).toBe('--secondary');
     expect(d.derived.notes.join(' ')).toContain('--muted');
@@ -211,7 +211,7 @@ describe('the fallback chains', () => {
       t('--background', '#050505', '.dark'),
     ]);
     expect(d.ok).toBe(true);
-    if (!d.ok) return;
+    if (d.ok === false) return;
     expect(d.derived.neutrals.field).toBe('#050505');
     expect(d.derived.sources.field).toBe('.dark:--background');
   });
@@ -225,27 +225,27 @@ describe('the fallback chains', () => {
       // `--foreground`, so only the first two are fatal on their own.
       if (drop === '--aurixa-obsidian') { expect(d.ok).toBe(true); continue; }
       expect(d.ok, drop).toBe(false);
-      if (!d.ok) expect(d.error).toContain('cannot be set');
+      if (d.ok === false) expect(d.error).toContain('cannot be set');
     }
   });
 
   it('falls back to the sheet rather than to somebody else\'s champagne', () => {
     const d = deriveReportNeutrals(MINIMUM);
-    if (!d.ok) return;
+    if (d.ok === false) return;
     expect(d.derived.neutrals.paperAlt).toBe('#FFFFFF');
     expect(d.derived.notes.join(' ')).toContain('falls back to paper');
   });
 
   it('says so when a system declares no brand colour', () => {
     const d = deriveReportNeutrals(MINIMUM);
-    if (!d.ok) return;
+    if (d.ok === false) return;
     expect(d.derived.brandHex).toBeNull();
     expect(d.derived.notes.join(' ')).toContain('no brand colour');
   });
 
   it('takes the accent from --primary when there is no --brand', () => {
     const d = deriveReportNeutrals([...MINIMUM, t('--primary', '#2F5D50')]);
-    if (!d.ok) return;
+    if (d.ok === false) return;
     expect(d.derived.brandHex).toBe('#2F5D50');
     expect(d.derived.sources.brand).toBe('--primary');
   });
@@ -281,7 +281,7 @@ describe('reading a manifest', () => {
       ],
     });
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (r.ok === false) return;
     expect(r.manifest.tokens.map((t) => t.name)).toEqual(['--good']);
   });
 });
@@ -301,7 +301,7 @@ describe('importing either shape', () => {
       }`;
     const r = importDesignSystem(css, { name: 'From a file' });
     expect(r.ok).toBe(true);
-    if (!r.ok) return;
+    if (r.ok === false) return;
     expect(r.result.summary.kind).toBe('css');
     // The same eight values as the manifest path.
     expect(r.result.neutrals.paper).toBe(PRINT_SURFACE.paper);
@@ -312,7 +312,7 @@ describe('importing either shape', () => {
   it('refuses a file with no custom properties in it', () => {
     const r = importDesignSystem('body { color: red; }');
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error).toContain('--name: value');
+    if (r.ok === false) expect(r.error).toContain('--name: value');
   });
 
   it('never throws on rubbish', () => {
@@ -326,7 +326,7 @@ describe('an imported system reaches the renderer', () => {
   const imported = importDesignSystem(MANIFEST);
 
   it('resolves a palette from its own grounds, not the preset\'s', () => {
-    if (!imported.ok) throw new Error('import failed');
+    if (imported.ok === false) throw new Error('import failed');
     const withNeutrals = resolveReportPalette({
       preset: 'minimal_ink',
       brandHex: '#2F5D50',
@@ -340,7 +340,7 @@ describe('an imported system reaches the renderer', () => {
   });
 
   it('still spreads Category B last, unreachable from the import', () => {
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     const palette = resolveReportPalette({
       neutrals: { ...imported.result.neutrals, paper: '#FFFFFF' },
       brandHex: '#2F5D50',
@@ -393,25 +393,25 @@ describe('a foreign design system', () => {
 
   it('imports without either first-choice variable', () => {
     expect(imported.ok).toBe(true);
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     expect(imported.result.neutrals.paper).toBe('#F0F2F5');
     expect(imported.result.neutrals.bodyInk).toBe('#19242E');
   });
 
   it('takes the cover ground from the dark theme, and says so', () => {
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     expect(imported.result.sources.field).toBe('.dark:--background');
     expect(imported.result.notes.join(' ')).toContain('--aurixa-obsidian');
   });
 
   it('takes the accent from --primary, and says so', () => {
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     expect(imported.result.sources.brand).toBe('--primary');
     expect(imported.result.notes.join(' ')).toContain('--brand');
   });
 
   it('is legible, so it can actually be saved', () => {
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     expect(auditBrandDesignSystem(imported.result.system).ok).toBe(true);
   });
 
@@ -420,7 +420,7 @@ describe('a foreign design system', () => {
     // Category B colours clear 4.5:1 on ours by about a percent. Without the
     // correction this system would be refused for our calibration rather than
     // for anything it did.
-    if (!imported.ok) return;
+    if (imported.ok === false) return;
     const palette = resolveReportPalette({
       neutrals: imported.result.neutrals,
       brandHex: imported.result.brandHex,

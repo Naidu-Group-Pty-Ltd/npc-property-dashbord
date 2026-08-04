@@ -47,7 +47,7 @@ const IMPORTED = (() => {
     'utf8',
   ));
   const r = importDesignSystem(manifest);
-  if (!r.ok) throw new Error(r.error);
+  if (r.ok === false) throw new Error(r.error);
   return r.result;
 })();
 
