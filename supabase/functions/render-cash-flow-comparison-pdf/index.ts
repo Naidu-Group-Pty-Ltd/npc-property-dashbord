@@ -48,6 +48,7 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { CLIENT_NAME_COLUMNS, clientDisplayName } from '../_shared/clientName.ts';
 import { assertSafeRenderResources } from '../_shared/renderResourcePolicy.pure.ts';
@@ -139,6 +140,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     if (auth.error || !auth.userId || auth.userId === 'service_role') {
       return json({ error: auth.error || 'Authentication required' }, 401);
     }
+
+    // Cash Flow Comparisons is a Growth/Scale capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, auth, 'cashflow-comparisons');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     const parsed = parseRenderRequest(body);
     if (!parsed.ok) return json({ error: parsed.error }, 400);

@@ -4,6 +4,7 @@
 // outgoings line items) grounded in Australian commercial market norms.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { buildNoiPromptSnapshot } from "./promptSnapshot.ts";
@@ -139,8 +140,13 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ success: false, error: 'Invalid request body' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
     }
     const body = parsedBody;
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
+
+    // Commercial & Industrial is a Scale-or-add-on capability — enforced
+    // server-side, not just hidden in the UI.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'commercial-industrial');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     // The database-backed bucket is shared across isolates, so horizontal scaling
     // cannot bypass the paid-AI allowance. Fail closed if metering is unavailable.

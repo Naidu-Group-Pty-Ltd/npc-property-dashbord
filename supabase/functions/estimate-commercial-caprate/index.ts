@@ -3,6 +3,7 @@
 // for the supplied property snapshot, grounded in 2025 AU market evidence.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createUnauthorizedResponse, createCorsHeaders } from "../_shared/auth.ts";
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 import { checkModuleView } from "../_shared/permissions.ts";
 import { consumeRateLimit, enforceJsonBodyLimit, securityJsonError } from "../_shared/requestSecurity.ts";
 
@@ -101,6 +102,11 @@ Deno.serve(async (req) => {
     const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) return createUnauthorizedResponse(authError, corsHeaders);
     if (!userId) return createUnauthorizedResponse('Authentication required', corsHeaders);
+
+    // Commercial & Industrial is a Scale-or-add-on capability — enforced
+    // server-side, not just hidden in the UI.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'commercial-industrial');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     const permission = await checkModuleView(supabase, userId, 'listings', authMethod);
     if (!permission.allowed) return securityJsonError(403, 'module_permission_denied');

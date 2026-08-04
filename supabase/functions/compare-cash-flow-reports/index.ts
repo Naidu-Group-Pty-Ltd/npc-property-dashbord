@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const corsHeaders = {
@@ -37,11 +38,15 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
     
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       console.log('[compare-cash-flow-reports] Auth failed:', authError);
       return createUnauthorizedResponse(authError, corsHeaders);
     }
+
+    // Cash Flow Comparisons is a Growth/Scale capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'cashflow-comparisons');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
     console.log('[compare-cash-flow-reports] Authenticated user:', userId);
 
     if (!reportIds || !Array.isArray(reportIds) || reportIds.length < 2 || reportIds.length > 5) {

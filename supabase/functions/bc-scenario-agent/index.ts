@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { verifyAuth } from "../_shared/auth.ts";
+import { requireWorkspaceCapability, entitlementDeniedResponse } from "../_shared/entitlements.ts";
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import {
   validateAIScenarios,
@@ -394,13 +395,17 @@ Deno.serve(async (req) => {
     const { messages, clientContext, priorScenarios } = body;
 
     // Auth check
-    const { error: authError, userId } = await verifyAuth(supabase, req.headers, body);
+    const { error: authError, userId, authMethod } = await verifyAuth(supabase, req.headers, body);
     if (authError) {
       return new Response(JSON.stringify({ error: authError }), {
         status: 401,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Borrowing Capacity is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, { userId, authMethod }, 'borrowing-capacity');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     if (!messages || !Array.isArray(messages)) {
       return new Response(JSON.stringify({ error: "messages array required" }), {

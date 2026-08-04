@@ -7,6 +7,9 @@ interface ReportLibraryTabsProps {
   isMobile: boolean;
   investmentCount: number | null;
   comparisonCount: number;
+  /** Whether the workspace holds the Report Comparisons capability. When
+   * false the Comparisons tab is removed — not disabled, not badged. */
+  showComparisons?: boolean;
 }
 
 const workspaceTabs: Array<{
@@ -32,11 +35,13 @@ const workspaceTabs: Array<{
   },
 ];
 
-export function ReportLibraryTabs({ isMobile, investmentCount, comparisonCount }: ReportLibraryTabsProps) {
+export function ReportLibraryTabs({ isMobile, investmentCount, comparisonCount, showComparisons = true }: ReportLibraryTabsProps) {
   const counts = {
     investment: investmentCount,
     comparisons: comparisonCount,
   };
+
+  const visibleTabs = workspaceTabs.filter((tab) => tab.value !== 'comparisons' || showComparisons);
 
   return (
     <div className="-mx-4 overflow-x-auto px-4 pb-1 pt-1 md:mx-0 md:overflow-visible md:px-0">
@@ -47,8 +52,8 @@ export function ReportLibraryTabs({ isMobile, investmentCount, comparisonCount }
         variant="toolbar"
         className="min-w-max rounded-[1.6rem] p-3 md:min-w-0 md:p-4"
       >
-        <TabsList className={isMobile ? 'inline-flex h-auto w-auto min-w-full gap-3 bg-transparent p-0' : 'grid h-auto w-full grid-cols-2 gap-4 bg-transparent p-0 lg:gap-5'}>
-          {workspaceTabs.map(({ value, label, mobileLabel, description, icon: Icon }) => (
+        <TabsList className={isMobile ? 'inline-flex h-auto w-auto min-w-full gap-3 bg-transparent p-0' : `grid h-auto w-full ${visibleTabs.length > 1 ? 'grid-cols-2' : 'grid-cols-1'} gap-4 bg-transparent p-0 lg:gap-5`}>
+          {visibleTabs.map(({ value, label, mobileLabel, description, icon: Icon }) => (
             <TabsTrigger
               key={value}
               value={value}

@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyAuth, createCorsHeaders, createUnauthorizedResponse } from '../_shared/auth.ts';
+import { requireWorkspaceCapability, entitlementDeniedResponse } from '../_shared/entitlements.ts';
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 const META_API_VERSION = 'v21.0';
@@ -57,6 +58,10 @@ Deno.serve(async (req) => {
     if (authResult.error) {
       return createUnauthorizedResponse(authResult.error, corsHeaders);
     }
+
+    // Marketing is a Scale-or-add-on capability — enforced server-side.
+    const entitlement = await requireWorkspaceCapability(supabase, authResult, 'marketing');
+    if (!entitlement.ok) return entitlementDeniedResponse(entitlement, corsHeaders);
 
     const accessToken = Deno.env.get('META_ADS_ACCESS_TOKEN');
     const adAccountId = Deno.env.get('META_ADS_AD_ACCOUNT_ID');

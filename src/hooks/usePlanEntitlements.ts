@@ -1,10 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchTokenBalance } from "@/lib/missionControl";
-import {
-  isKnownPlan,
-  planEnablesSubModule,
-  planIncludesModule,
-} from "@/lib/pricing/planEntitlements";
+import { useCallback, useMemo } from "react";
+import { isKnownPlanSlug, toCapabilityKey } from "@/lib/entitlements";
+import { useWorkspaceEntitlements } from "./useWorkspaceEntitlements";
 
 /**
  * What this workspace's PLAN entitles it to.
@@ -13,63 +9,44 @@ import {
  * allowed to do. A feature needs both: the workspace has to have bought it,
  * and the user has to be permitted to use it.
  *
- * The plan slug comes from Mission Control's balance response, which the app
- * already fetches. While it is loading — or if it never arrives — everything
- * is enabled. Gating must never be the reason a paying customer loses access
- * to a feature over a lookup that was slow or failed.
+ * Backed by the shared WorkspaceEntitlementsProvider — one Mission Control
+ * fetch per session with a last-known-good cache — and by the canonical
+ * capability resolver. The legacy keys this hook accepts (module permission
+ * keys, pricing slugs, sub-module keys) are translated to capability keys at
+ * the boundary; a key the registry does not describe is not commercially
+ * gated and stays enabled.
+ *
+ * Failure posture: while loading, gates stay open so the UI does not flash
+ * a denial at startup; once Mission Control has answered (or a last-known-
+ * good snapshot is in play) the answer is exact. If no snapshot has EVER
+ * been obtained, premium capabilities are withheld — see resolver.ts.
  */
 export function usePlanEntitlements() {
-  const [planSlug, setPlanSlug] = useState<string | null>(null);
-  // Undefined until Mission Control answers. Distinct from [] — an empty array
-  // means "holds none", undefined means "we were not told", and the gate
-  // treats those differently on purpose.
-  const [addonSlugs, setAddonSlugs] = useState<string[] | undefined>(undefined);
-  const [loading, setLoading] = useState(true);
+  const { snapshot, snapshotState, isLoading, resolveWorkspaceCapability } =
+    useWorkspaceEntitlements();
 
-  useEffect(() => {
-    let cancelled = false;
-    fetchTokenBalance()
-      .then((b) => {
-        if (cancelled) return;
-        setPlanSlug(b?.planSlug ?? null);
-        setAddonSlugs(b?.addonSlugs);
-      })
-      .catch(() => {
-        // Unknown plan gates open; nothing to recover here.
-        if (!cancelled) {
-          setPlanSlug(null);
-          setAddonSlugs(undefined);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const isSubModuleEnabled = useCallback(
-    (key: string) => planEnablesSubModule(planSlug, key),
-    [planSlug],
-  );
-
-  const isModuleIncluded = useCallback(
-    (moduleSlug: string) => planIncludesModule(planSlug, moduleSlug, addonSlugs),
-    [planSlug, addonSlugs],
+  const isEnabled = useCallback(
+    (legacyKey: string) => {
+      const key = toCapabilityKey(legacyKey);
+      if (!key) return true; // not a gated capability
+      const decision = resolveWorkspaceCapability(key);
+      return decision.enabled || decision.status === "loading";
+    },
+    [resolveWorkspaceCapability],
   );
 
   return useMemo(
     () => ({
-      planSlug,
+      planSlug: snapshot?.planSlug ?? null,
       /** True once we know the plan is one the entitlement matrix describes. */
-      planKnown: isKnownPlan(planSlug),
-      /** Add-ons this workspace holds; undefined when Mission Control did not say. */
-      addonSlugs,
-      isSubModuleEnabled,
-      isModuleIncluded,
-      loading,
+      planKnown: isKnownPlanSlug(snapshot?.planSlug ?? null),
+      /** Canonical add-on slugs this workspace holds; undefined until known. */
+      addonSlugs: snapshot ? snapshot.addonSlugs : undefined,
+      isSubModuleEnabled: isEnabled,
+      isModuleIncluded: isEnabled,
+      snapshotState,
+      loading: isLoading,
     }),
-    [planSlug, addonSlugs, isSubModuleEnabled, isModuleIncluded, loading],
+    [snapshot, snapshotState, isLoading, isEnabled],
   );
 }

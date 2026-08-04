@@ -4,7 +4,9 @@ import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
 
 interface ReportLibraryHeroProps {
   investmentCount: number | null;
-  comparisonCount: number;
+  /** Null when the workspace does not hold the comparison capability — the
+   * metric is omitted entirely rather than shown as a zero. */
+  comparisonCount: number | null;
   visibleCount: number;
   activeFiltersCount: number;
   showArchived: boolean;
@@ -19,11 +21,13 @@ export function ReportLibraryHero({
   showArchived,
   selectedComparisonCount,
 }: ReportLibraryHeroProps) {
-  const totalReports = investmentCount === null ? null : investmentCount + comparisonCount;
+  const totalReports = investmentCount === null ? null : investmentCount + (comparisonCount ?? 0);
   const metrics = [
     { label: 'Total reports', value: totalReports, icon: Layers3 },
     { label: 'Investment reports', value: investmentCount, icon: TrendingUp },
-    { label: 'Comparison analyses', value: comparisonCount, icon: FileText },
+    ...(comparisonCount === null
+      ? []
+      : [{ label: 'Comparison analyses', value: comparisonCount, icon: FileText }]),
     { label: 'Currently visible', value: visibleCount, icon: Archive },
     { label: 'Active filters', value: activeFiltersCount, icon: Filter },
   ];

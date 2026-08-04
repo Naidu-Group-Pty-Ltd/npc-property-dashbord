@@ -12,6 +12,7 @@ import { BrandProvider } from "@/branding/BrandProvider";
 import { useBuildVersionCheck } from "@/hooks/useBuildVersionCheck";
 import { AuthProvider } from "@/hooks/useAuth";
 import { PermissionsProvider } from "@/hooks/usePermissions";
+import { WorkspaceEntitlementsProvider } from "@/hooks/useWorkspaceEntitlements";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 
 import { ModuleGuard } from "@/components/auth/ModuleGuard";
@@ -316,6 +317,7 @@ const App = () => (
         <AuthProvider>
           <BrandProvider>
             <PermissionsProvider>
+              <WorkspaceEntitlementsProvider>
               <BrowserRouter>
                 <PathNormalizer />
                 <NotificationsProvider>
@@ -521,8 +523,8 @@ const App = () => (
                   path="listings/:listingId"
                   element={<ModuleGuard moduleKey="listings"><ListingDetail /></ModuleGuard>}
                 />
-                <Route path="market-updates" element={<MarketUpdates />} />
-                <Route path="market-updates/archived" element={<MarketArchivePage />} />
+                <Route path="market-updates" element={<ModuleGuard moduleKey="market_updates"><MarketUpdates /></ModuleGuard>} />
+                <Route path="market-updates/archived" element={<ModuleGuard moduleKey="market_updates"><MarketArchivePage /></ModuleGuard>} />
                 <Route
                   path="calendar"
                   element={
@@ -641,21 +643,21 @@ const App = () => (
                 <Route path="lenders" element={<ModuleGuard moduleKey="lenders"><Lenders /></ModuleGuard>} />
                 <Route path="commissions" element={<Commissions />} />
                 <Route path="reports/analytics" element={<ReportsAnalytics />} />
-                <Route path="model-hub" element={<ModuleGuard moduleKey="integrations" requireEdit><ModelHub /></ModuleGuard>} />
+                <Route path="model-hub" element={<ModuleGuard moduleKey="model_hub" requireEdit><ModelHub /></ModuleGuard>} />
                 <Route path="billing" element={<Billing />} />
                 {/* Legacy deep links land on the consolidated page's Usage tab. */}
                 <Route path="billing/usage" element={<Navigate to="/billing?tab=usage" replace />} />
                 <Route path="admin/token-audit" element={<TokenAuditLog />} />
-                <Route path="commercial" element={<CommercialIndustrial />} />
-                <Route path="commercial/calculators" element={<PropertyCalculators />} />
+                <Route path="commercial" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrial /></ModuleGuard>} />
+                <Route path="commercial/calculators" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators /></ModuleGuard>} />
                 {/* Assessment routes sit above the :id property route so an
                     assessment id is never swallowed by the property detail page. */}
-                <Route path="commercial/assessments/:id" element={<CommercialAssessmentWorkspace />} />
-                <Route path="commercial/:id" element={<CommercialPropertyDetail />} />
-                <Route path="industrial" element={<CommercialIndustrial />} />
-                <Route path="industrial/calculators" element={<PropertyCalculators />} />
-                <Route path="calculators" element={<PropertyCalculators />} />
-                <Route path="industrial/:id" element={<IndustrialPropertyDetail />} />
+                <Route path="commercial/assessments/:id" element={<ModuleGuard moduleKey="commercial"><CommercialAssessmentWorkspace /></ModuleGuard>} />
+                <Route path="commercial/:id" element={<ModuleGuard moduleKey="commercial"><CommercialPropertyDetail /></ModuleGuard>} />
+                <Route path="industrial" element={<ModuleGuard moduleKey="commercial"><CommercialIndustrial /></ModuleGuard>} />
+                <Route path="industrial/calculators" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators /></ModuleGuard>} />
+                <Route path="calculators" element={<ModuleGuard moduleKey="commercial"><PropertyCalculators /></ModuleGuard>} />
+                <Route path="industrial/:id" element={<ModuleGuard moduleKey="commercial"><IndustrialPropertyDetail /></ModuleGuard>} />
                         </Route>
                         {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                         <Route path="*" element={<NotFound />} />
@@ -665,6 +667,7 @@ const App = () => (
                   </ComparisonProvider>
                 </NotificationsProvider>
               </BrowserRouter>
+              </WorkspaceEntitlementsProvider>
             </PermissionsProvider>
           </BrandProvider>
         </AuthProvider>
