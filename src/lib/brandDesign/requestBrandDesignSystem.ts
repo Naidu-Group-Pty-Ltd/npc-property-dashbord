@@ -63,6 +63,23 @@ export function listDesignSystems(includeInactive = false): Promise<BrandListRes
 }
 
 /** Resolve and audit a candidate. No model, no write. */
+/**
+ * Read a published design system into a candidate.
+ *
+ * The file contents go to the route rather than being parsed here, even though
+ * `import.pure.ts` is bridged and the browser could. Two reasons: the audit
+ * that gates every other design system runs server-side on the same modules the
+ * renderer uses, so the verdict shown is the one the document will get; and a
+ * browser-side parse would be a second place the derivation happens, which is
+ * exactly the drift this repo keeps finding.
+ */
+export function importDesignSystemFile(
+  source: string,
+  name = '',
+): Promise<BrandDesignSystemResult> {
+  return call<BrandDesignSystemResult>({ action: 'import', source, name }, 45_000);
+}
+
 export function auditDesignSystem(system: BrandDesignSystem): Promise<BrandDesignSystemResult> {
   return call<BrandDesignSystemResult>({ action: 'audit', system }, 30_000);
 }

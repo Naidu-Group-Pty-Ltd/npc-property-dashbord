@@ -73,6 +73,7 @@ import { DepreciationCompsAdmin } from "./components/admin/DepreciationCompsAdmi
 import TemplateBuilder from "./pages/admin/TemplateBuilder";
 import TemplateBuilderEdit from "./pages/admin/TemplateBuilderEdit";
 import TemplateConverter from "./pages/admin/TemplateConverter";
+import BrandSystems from "./pages/admin/BrandSystems";
 import TemplateSharePreview from "./pages/TemplateSharePreview";
 import ReportEngineInspector from "./pages/admin/ReportEngineInspector";
 import FigmaTemplates from "./pages/admin/FigmaTemplates";
@@ -549,6 +550,8 @@ const App = () => (
                 {/* Before the `:id` route for readability; react-router ranks the
                     static segment above the dynamic one regardless. */}
                 <Route path="admin/template-builder/converter" element={<ModuleGuard moduleKey="templates" requireEdit><TemplateConverter /></ModuleGuard>} />
+                {/* Before `:id`, or the parameterised route swallows it. */}
+                <Route path="admin/template-builder/brand-systems" element={<ModuleGuard moduleKey="templates" requireEdit><BrandSystems /></ModuleGuard>} />
                 <Route path="admin/template-builder/:id" element={<ModuleGuard moduleKey="templates" requireEdit><TemplateBuilderEdit /></ModuleGuard>} />
                 <Route path="admin/report-engine-inspector" element={<ReportEngineInspector />} />
                 <Route path="admin/figma-templates" element={<ModuleGuard moduleKey="templates"><FigmaTemplates /></ModuleGuard>} />

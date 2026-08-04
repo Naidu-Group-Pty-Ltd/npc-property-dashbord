@@ -81,6 +81,7 @@ import {
 } from '@/lib/reports/converted/binding.pure';
 import { DEFAULT_FIDELITY, type ConversionFidelity } from '@/lib/reports/converted/enrich.pure';
 import { FIDELITY_CHOICES, fidelityLabel } from '@/lib/reports/converted/fidelityChoices';
+import { BRAND_SYSTEMS_PATH } from '@/lib/reportTemplate/templateStartRoutes';
 import type { ReportArchetypeId } from '@/lib/reportDesign/structure.pure';
 
 const ACCEPT = [...TEXT_SUFFIXES, '.pdf'].join(',');
@@ -639,6 +640,17 @@ export default function TemplateConverter() {
               <Button variant="outline" onClick={() => setSystemDialogOpen(true)}>
                 <Plus className="mr-2 h-4 w-4" />
                 New design system
+              </Button>
+
+              {/* The dialog stays for the quick in-flow case — somebody halfway
+                  through a conversion who wants one colour changed. Managing
+                  design systems, importing one from Claude Design, and seeing
+                  what any of the levers actually do belong on their own page. */}
+              <Button variant="ghost" asChild>
+                <Link to={BRAND_SYSTEMS_PATH}>
+                  <Palette className="mr-2 h-4 w-4" aria-hidden />
+                  Manage brand systems
+                </Link>
               </Button>
 
               <Button onClick={handleRender} disabled={rendering}>

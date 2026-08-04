@@ -24,8 +24,16 @@ import {
   MAX_BRIEF_CHARS,
   readBrandDesignSystem,
 } from './system.pure.ts';
+import type { BrandSystemOrigin } from './system.pure.ts';
+import { MAX_IMPORT_CHARS } from './import.pure.ts';
+import type { ReportNeutrals } from '../reportDesign/brandResolve.pure.ts';
+import {
+  normalizeReportDesignOptions,
+  type ReportDesignOptions,
+} from '../reportDesign/options.pure.ts';
+import { readReportNeutrals } from '../reportDesign/brandResolve.pure.ts';
 
-export type BrandRouteAction = 'audit' | 'generate' | 'save' | 'list';
+export type BrandRouteAction = 'audit' | 'generate' | 'save' | 'list' | 'import';
 
 export interface BrandAuditRequest {
   action: 'audit';
@@ -71,11 +79,35 @@ export interface BrandListRequest {
   includeInactive: boolean;
 }
 
+/**
+ * Read a published design system into a candidate.
+ *
+ * The source is whatever a person dropped onto the page — a
+ * `_ds_manifest.json` exported from a Claude Design project, or a
+ * `tokens/*.css` copied out of one. It is sent to the route rather than parsed
+ * in the browser for one reason: the browser would then hold a second copy of
+ * the derivation, and the derivation is the feature. `import.pure.ts` is
+ * bridged, so both ends run the same code, and the route is where the audit
+ * that gates every other design system already lives.
+ *
+ * Like `generate`, this **does not save**. It returns a candidate and its
+ * verdict; the browser shows the specimen gallery and calls `save` if the
+ * person accepts it.
+ */
+export interface BrandImportRequest {
+  action: 'import';
+  /** The raw file contents. Manifest JSON or token CSS; the reader works it out. */
+  source: string;
+  /** What to call it. Empty falls back to the manifest's own namespace. */
+  name: string;
+}
+
 export type BrandRouteRequest =
   | BrandAuditRequest
   | BrandGenerateRequest
   | BrandSaveRequest
-  | BrandListRequest;
+  | BrandListRequest
+  | BrandImportRequest;
 
 export type BrandRequestParse =
   | { ok: true; request: BrandRouteRequest }
@@ -102,6 +134,27 @@ export function parseBrandRequest(body: unknown): BrandRequestParse {
   // and would refuse a listing request for having no design system in it.
   if (action === 'list') {
     return { ok: true, request: { action: 'list', includeInactive: b.includeInactive === true } };
+  }
+
+  // Also above `audit`/`save` — an import carries a file, not a design system.
+  if (action === 'import') {
+    const source = typeof b.source === 'string' ? b.source : '';
+    if (!source.trim()) return { ok: false, error: 'no file contents were sent' };
+    if (source.length > MAX_IMPORT_CHARS) {
+      return {
+        ok: false,
+        error: `that file is ${Math.round(source.length / 1024)} KB and the limit is `
+          + `${Math.round(MAX_IMPORT_CHARS / 1024)} KB — a design system's tokens are far smaller`,
+      };
+    }
+    return {
+      ok: true,
+      request: {
+        action: 'import',
+        source,
+        name: typeof b.name === 'string' ? b.name.trim().slice(0, 80) : '',
+      },
+    };
   }
 
   if (action === 'generate') {
@@ -142,7 +195,7 @@ export function parseBrandRequest(body: unknown): BrandRequestParse {
 
   return {
     ok: false,
-    error: `unknown action "${action.slice(0, 40)}" — expected audit, generate, save or list`,
+    error: `unknown action "${action.slice(0, 40)}" — expected audit, generate, import, save or list`,
   };
 }
 
@@ -174,12 +227,25 @@ export interface BrandDesignSystemSummary {
   name: string;
   slug: string;
   description: string;
-  origin: 'authored' | 'generated';
+  origin: BrandSystemOrigin;
   /** `#RRGGBB`, or null for the house brand. The *requested* hue, not the
    *  resolved accent — the palette is derived per render, never stored. */
   brandHex: string | null;
   isActive: boolean;
   updatedAt: string;
+  /**
+   * The system's own paper and ink, when it brought some.
+   *
+   * On the *summary* rather than only on the full row because the brand-systems
+   * page renders a live specimen for whichever system is selected, and having
+   * it here means that costs no second fetch. Null for everything authored or
+   * drafted from a brief — those take their grounds from the preset.
+   */
+  neutrals: ReportNeutrals | null;
+  /** The Claude Design project it came from. Empty unless imported. */
+  sourceNamespace: string;
+  /** The full options, so the page can render a specimen without re-reading. */
+  options: ReportDesignOptions;
 }
 
 /**
@@ -204,10 +270,21 @@ export function readBrandSystemSummary(row: Record<string, unknown>): BrandDesig
     name: String(row.name ?? ''),
     slug: String(row.slug ?? ''),
     description: String(row.description ?? ''),
-    origin: row.origin === 'generated' ? 'generated' : 'authored',
+    origin: row.origin === 'generated' || row.origin === 'imported'
+      ? row.origin
+      : 'authored',
     brandHex: typeof row.brand_hex === 'string' && row.brand_hex ? row.brand_hex : null,
     isActive: row.is_active !== false,
     updatedAt: String(row.updated_at ?? ''),
+    // All seven or none. A row whose `neutrals` column was hand-edited into a
+    // partial object reads as null here and takes the preset's grounds, which
+    // is a document that is merely not what was imported rather than one with
+    // half of two design systems in it.
+    neutrals: readReportNeutrals(row.neutrals),
+    sourceNamespace: typeof row.source_namespace === 'string' ? row.source_namespace : '',
+    options: normalizeReportDesignOptions(
+      (row.options ?? {}) as Partial<ReportDesignOptions>,
+    ),
   };
 }
 

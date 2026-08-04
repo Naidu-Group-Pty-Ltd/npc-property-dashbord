@@ -37,6 +37,8 @@
  */
 import {
   auditPaletteContrast,
+  readReportNeutrals,
+  type ReportNeutrals,
   type ReportPreset,
   resolveReportPalette,
 } from '../reportDesign/brandResolve.pure.ts';
@@ -59,16 +61,43 @@ export interface BrandDesignSystem {
   brandHex: string | null;
   options: ReportDesignOptions;
   /**
+   * The document's own paper and ink, when it has some.
+   *
+   * Null for everything authored in the form or drafted from a brief — those
+   * take their grounds from `options.preset`, as they always have. Non-null
+   * only for a system imported from a design system's token file, which brings
+   * a real stock the four presets cannot express.
+   *
+   * It is deliberately *not* in `BRAND_SYSTEM_JSON_SCHEMA`: a model choosing
+   * seven interdependent greys against four contrast floors is a worse
+   * proposition than a model choosing one accent hue, and the import path
+   * already produces these from values a designer set.
+   */
+  neutrals: ReportNeutrals | null;
+  /**
    * How this system came to exist.
    *
    * Recorded because a generated system and an authored one deserve different
    * scrutiny on review, and because "which of these did the model write?" is
    * otherwise unanswerable once they are all sitting in the same list.
+   * `imported` is the third: it came from a design system somebody published,
+   * and its paper and ink are that system's rather than ours.
    */
-  origin: 'authored' | 'generated';
+  origin: BrandSystemOrigin;
   /** The brief, when one was given. Kept so a system can be regenerated. */
   brief: string;
+  /**
+   * The design system it was imported from — `_ds_manifest.json`'s `namespace`.
+   *
+   * Empty unless `origin` is `imported`. Kept so a re-import can be recognised
+   * as an update to the same system rather than a second copy of it.
+   */
+  sourceNamespace: string;
 }
+
+export type BrandSystemOrigin = 'authored' | 'generated' | 'imported';
+
+const ORIGINS: readonly BrandSystemOrigin[] = ['authored', 'generated', 'imported'];
 
 /** What the audit found. Empty `problems` is the only shippable state. */
 export interface BrandSystemAudit {
@@ -139,8 +168,14 @@ export function readBrandDesignSystem(raw: unknown): { ok: true; system: BrandDe
       description: text(r.description, MAX_DESCRIPTION_CHARS),
       brandHex: rawHex ? rawHex.toUpperCase() : null,
       options: normalizeReportDesignOptions(merged),
-      origin: r.origin === 'generated' ? 'generated' : 'authored',
+      // All seven or none — a half-read neutral set prints somebody else's
+      // obsidian cover on our ivory. See `readReportNeutrals`.
+      neutrals: readReportNeutrals(r.neutrals),
+      origin: ORIGINS.includes(r.origin as BrandSystemOrigin)
+        ? r.origin as BrandSystemOrigin
+        : 'authored',
       brief: text(r.brief, MAX_BRIEF_CHARS),
+      sourceNamespace: text(r.sourceNamespace, 120),
     },
   };
 }
@@ -158,6 +193,11 @@ export function auditBrandDesignSystem(system: BrandDesignSystem): BrandSystemAu
   const palette = resolveReportPalette({
     preset: system.options.preset,
     brandHex: system.brandHex,
+    // Imported grounds go through the same audit as everything else. That is
+    // the whole reason this parameter exists here rather than in the renderer:
+    // a design system whose own stock makes its own body ink illegible is
+    // refused at save time, not discovered in a client's PDF.
+    neutrals: system.neutrals,
   });
   const problems = auditPaletteContrast(palette);
   return { ok: problems.length === 0, palette, problems };

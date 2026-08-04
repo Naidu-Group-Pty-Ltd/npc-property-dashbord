@@ -65,6 +65,22 @@ built from — is generated from code so it cannot drift:
 `npm run templates:library:cards`, then push `.design-system/report-templates/`.
 See [`docs/template-library/06-design-system.md`](./docs/template-library/06-design-system.md).
 
+Traffic also runs the **other way**, and that is newer. `npm run brand:sync`
+reads the committed subset of the project's `_ds_manifest.json` at
+`scripts/brandDesign/claudeDesign/npc-services.manifest.json` and asserts that
+the print tokens in `reportDesign/tokens.pure.ts` are still derivable from it —
+`--background` → paper, `--aurixa-obsidian` → the cover field, and so on. A
+failure means the two have diverged and somebody has to decide which is right;
+the rule above says the repo wins and the project needs re-syncing.
+
+To refresh the committed manifest, ask Claude Code in a session with
+design-system authorization: `list_projects`, then `get_file` on
+`_ds_manifest.json`, keep `namespace / globalCssPaths / themes / fonts /
+brandFonts / tokens / cards`, and run `npm run brand:sync`. The same file is
+what `/admin/template-builder/brand-systems` seeds the house design system
+from, so a person can import any other Claude Design project by dropping its
+manifest onto that page.
+
 For **generated PDFs**, read
 [`.claude/skills/npc-services-design/reports/REPORT_RULES.md`](./.claude/skills/npc-services-design/reports/REPORT_RULES.md)
 and [`docs/reports/DESIGN_SYSTEM.md`](./docs/reports/DESIGN_SYSTEM.md).
