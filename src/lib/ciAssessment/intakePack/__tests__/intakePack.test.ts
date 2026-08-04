@@ -651,3 +651,142 @@ describe('branded document output', () => {
     expect((await documentToBlob(doc)).size).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Foreign layouts — workbooks that lost their field keys
+//
+// Real returned packs get rebuilt: copied into fresh files, restructured by an
+// assistant, retyped by hand. The wording survives; the key rows do not. These
+// tests pin the fallback that matches on question and label text, modelled
+// directly on a workbook a user actually sent back.
+// ---------------------------------------------------------------------------
+
+describe('foreign layout fallback', () => {
+  /** A KV sheet in the rebuilt shape: QUESTION | ANSWER | GUIDANCE, no keys. */
+  function foreignKvSheet(rows: Array<[string, unknown]>): XLSX.WorkSheet {
+    return XLSX.utils.aoa_to_sheet([
+      ['Section title'],
+      ['Intro text'],
+      ['QUESTION', 'ANSWER', 'GUIDANCE'],
+      ...rows.map(([question, answer]) => [question, answer, 'Options: irrelevant']),
+    ]);
+  }
+
+  /** A table sheet in the rebuilt shape: one UPPERCASE ✱ label row, no keys. */
+  function foreignTableSheet(labels: string[], data: unknown[][], notes = true): XLSX.WorkSheet {
+    return XLSX.utils.aoa_to_sheet([
+      ['Section title'],
+      ['Intro text'],
+      labels.map((label) => `${label.toUpperCase()} ✱`),
+      ...data,
+      [''],
+      ...(notes ? [['NOTES'], ['Ownership (%) — All parties must total 100%.']] : []),
+    ]);
+  }
+
+  function foreignWorkbook(): XLSX.WorkBook {
+    const workbook = XLSX.utils.book_new();
+    // No "Start here" markers at all — recognition rides on the sheet names.
+    XLSX.utils.book_append_sheet(workbook, foreignKvSheet([
+      ['What kind of transaction is this — an investment purchase, owner-occupied premises, a refinance, or something else? ✱', 'Industrial investment'],
+      ['What is the full street address of the property? ✱', '88 Foundry Link'],
+      ['Which suburb? ✱', 'Truganina'],
+      ['Which state or territory? ✱', 'VIC'],
+      ['What is the purchase price, or the price being negotiated? ✱', 5_850_000],
+      ['How much are they looking to borrow?', 4_095_000],
+      ['What rate are we assuming?', 6.85],
+    ]), '1. Transaction');
+    XLSX.utils.book_append_sheet(workbook, foreignKvSheet([
+      ['Is the borrowing predominantly for business or investment purposes? ✱', 'Yes'],
+    ]), '2. Purpose');
+    XLSX.utils.book_append_sheet(workbook, foreignTableSheet(
+      ['Entity or person name', 'Structure', 'Ownership (%)', 'Trustee(s)'],
+      [
+        ['Asteron Industrial Holdings Pty Ltd ATF Asteron Trust', 'Trust', 100, 'Asteron Industrial Holdings Pty Ltd'],
+        ['Asteron Distribution Services Pty Ltd', 'Company', 0, 'Not applicable'],
+      ],
+    ), '3. Ownership');
+    XLSX.utils.book_append_sheet(workbook, foreignTableSheet(
+      ['Tenant', 'Annual rent', 'Lease expiry'],
+      // 47756 is 30 September 2030 as an Excel serial — the rebuilt file lost
+      // the date formatting, so the cell arrives as a bare number.
+      [['Atlas Cold Chain Pty Ltd', 255_000, 47756]],
+    ), '6. Tenancies');
+    return workbook;
+  }
+
+  it('imports a workbook whose key rows were deleted, by question and label text', async () => {
+    const parsed = parseIntakeWorkbook(foreignWorkbook());
+    expect(parsed.recognised).toBe(true);
+    expect(parsed.payload.assessmentType).toBe('industrial_investment');
+    expect(parsed.payload.property.address).toBe('88 Foundry Link');
+    expect(parsed.payload.property.state).toBe('VIC');
+    expect(parsed.payload.property.purchasePrice).toBe(5_850_000);
+    expect(parsed.payload.loan.requestedLoan).toBe(4_095_000);
+    expect(parsed.payload.loan.actualRatePercent).toBe(6.85);
+    expect(parsed.payload.ownership.purposeIsPredominantlyBusiness).toBe(true);
+  });
+
+  it('maps uppercased ✱-marked column labels onto table fields', async () => {
+    const parsed = parseIntakeWorkbook(foreignWorkbook());
+    expect(parsed.counts.entities).toBe(2);
+    const [trust, guarantor] = parsed.payload.ownership.entities;
+    expect(trust.structure).toBe('trust');
+    expect(trust.ownershipPercent).toBe(100);
+    expect(trust.trustees).toContain('Asteron');
+    expect(guarantor.structure).toBe('company');
+  });
+
+  it('reads a bare Excel serial in a date field as the date it encodes', async () => {
+    const parsed = parseIntakeWorkbook(foreignWorkbook());
+    expect(parsed.payload.lease.tenancies[0].leaseExpiry).toBe('2030-09-30');
+  });
+
+  it('stops at a NOTES row instead of minting phantom rows from footnotes', async () => {
+    const parsed = parseIntakeWorkbook(foreignWorkbook());
+    // The Ownership sheet carries a NOTES block; none of it may become an entity.
+    expect(parsed.payload.ownership.entities).toHaveLength(2);
+    expect(parsed.payload.ownership.entities.every(
+      (entity) => !entity.entityName.toLowerCase().includes('ownership (%)'),
+    )).toBe(true);
+  });
+
+  it('warns, rather than importing, when a money field holds prose', async () => {
+    const workbook = foreignWorkbook();
+    XLSX.utils.book_append_sheet(workbook, foreignKvSheet([
+      ['Is any equity being released, and what for?', 'No equity release — acquisition funding only.'],
+    ]), '1b. Extra');
+    // The prose answer sits on a sheet the parser does not know; move it onto
+    // the transaction sheet to exercise the money-decode path.
+    const parsed = parseIntakeWorkbook((() => {
+      const wb = foreignWorkbook();
+      const sheet = wb.Sheets['1. Transaction'];
+      const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
+      rows.push(['Is any equity being released, and what for?', 'No equity release — acquisition funding only.', '']);
+      wb.Sheets['1. Transaction'] = XLSX.utils.aoa_to_sheet(rows as never);
+      return wb;
+    })());
+    expect(parsed.payload.property.proposedEquityRelease).toBe(0);
+    expect(parsed.issues.some((issue) => issue.message.includes('Proposed equity release'))).toBe(true);
+  });
+
+  it('still prefers the field key when both key and heading are present', async () => {
+    // My generated layout has the key in column A and the question in column B.
+    // The key path must win, reading the answer from column C — not the
+    // heading path misreading column B's question text as a label.
+    const workbook = await buildAndRead();
+    setScalar(workbook, '1. Transaction', 'property.purchasePrice', 4_000_000);
+    const parsed = parseIntakeWorkbook(workbook);
+    expect(parsed.payload.property.purchasePrice).toBe(4_000_000);
+  });
+
+  it('takes the first value when a heading appears twice, not the last', async () => {
+    const workbook = foreignWorkbook();
+    const sheet = workbook.Sheets['1. Transaction'];
+    const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', blankrows: true });
+    rows.push(['Which suburb?', 'Duplicated Answer', '']);
+    workbook.Sheets['1. Transaction'] = XLSX.utils.aoa_to_sheet(rows as never);
+    const parsed = parseIntakeWorkbook(workbook);
+    expect(parsed.payload.property.suburb).toBe('Truganina');
+  });
+});
