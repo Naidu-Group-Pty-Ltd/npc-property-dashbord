@@ -253,6 +253,64 @@ the cleaner source legally.
 The seeder stays useful until the sweep deploys — and afterwards as a bulk
 backfill tool. The remaining ~970 linked records are one `worklist.json` away.
 
+## Sourcing externally, for records that arrived with no link
+
+384 records carry no source link at all — parsed out of an email body, so the
+marketplace knows the address and the price and has no idea what the house looks
+like. 265 of those have a full address, which makes them findable. This is the
+**second** pass, and it runs only after the link-following pass has taken
+everything it can: a record's own link is always better evidence than anything
+found by searching.
+
+### The portals are not the answer, and that is a finding, not a shrug
+
+| Source | From this environment |
+| --- | --- |
+| realestate.com.au listing page | **429** (Kasada) |
+| realestate.com.au via a rendering reader | **403** (WAF) |
+| realestate.com.au suggest API | 200 — resolves an address to a property id, carries **no imagery** |
+| domain.com.au | **403** |
+| view.com.au / homely.com.au | **403** |
+| Bing (HTML and the RSS endpoint) | 200, but bot-degraded: it answers `"14 Hillcrest Road" Anglesea` with articles about *the number 14* |
+
+Both portals also restrict re-use of listing imagery in their terms. The agency
+that emailed us the listing publishes the same photographs on its own site, is
+happy to be linked, and — measured — is reachable. So the route is: identify the
+agency, read its for-sale index, match by address.
+
+### Matching is the whole risk
+
+Searching for a property you have no link to means you can find the *wrong* one,
+and a wrong photograph on a marketplace card is worse than a grey box: it is a
+claim about a specific house at a specific price, and a buyer acts on it.
+
+`addressMatch.pure.ts` therefore refuses anything short of street number +
+street name + suburb, and the script never loosens the rule when strict matching
+comes up empty — records simply stay unmatched. Two rules earned their place by
+catching real errors in the first live crawl:
+
+- **A street is not a property.** "Great Ocean Road, Anglesea" must never match
+  "143D Great Ocean Road" — it could be any of a hundred houses.
+- **Units must agree whenever either side names one.** The tolerant version
+  matched a record for "143D Great Ocean Road" to a page for **"5/143D"** — one
+  townhouse out of a complex, whose interior is not this card's property unless
+  this card is unit 5. Nothing said it was, so it is now refused.
+
+First live run — Great Ocean Properties, 22 records: 8 index pages, 91 property
+pages read, **17 matched and written, 5 deliberately left unmatched.** Every
+match was checked by eye against the page title before anything was written.
+
+### A CDN that hid fourteen photographs
+
+The agency runs on Reapit/AgentPoint, which serves photographs as
+`phimg.reapit.website/<sha1>` — **no file extension at all**, the same failure
+class as the Google CDN documented above. `isPropertyImageUrl` rejected every
+one, so a page with fourteen photographs yielded zero and looked photo-less.
+Adding `reapit.website` (plus `arosoftware.com`, `idashboard.com.au` and
+`pushcreative.com.au`, all observed extension-less in this corpus) took that
+page from **0 to 19**. This fix is in the shared scraper, so the deployed sweep
+inherits it.
+
 ## Contacting the agent
 
 Enrichment exists so that someone can act on a listing, and the action is almost
