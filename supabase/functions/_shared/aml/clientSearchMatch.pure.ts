@@ -91,7 +91,7 @@ export function clientDisplayName(
   row: ClientSearchRow,
   prefix: 'primary' | 'secondary',
 ): string {
-  const r = row as Record<string, string | null | undefined>;
+  const r = row as unknown as Record<string, string | null | undefined>;
   return [r[`${prefix}_first_name`], r[`${prefix}_middle_name`], r[`${prefix}_surname`]]
     .filter(Boolean)
     .join(' ')
