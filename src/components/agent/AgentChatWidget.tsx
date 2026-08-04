@@ -21,7 +21,7 @@ import remarkGfm from 'remark-gfm';
 import { AgentMessageRenderer } from '@/components/agent/AgentMessageRenderer';
 import { MemoryCitations, type RecalledMemory } from '@/components/agent/MemoryCitations';
 import { AurixaMark } from '@/components/agent/AurixaMark';
-import { LiveModelBadge } from '@/components/agentModels';
+
 import { extractFileContent, formatFilesForAgent, ACCEPTED_EXTENSIONS, type ExtractedFile } from '@/lib/agentFileExtractor';
 
 const ROTATING_PLACEHOLDERS = [
