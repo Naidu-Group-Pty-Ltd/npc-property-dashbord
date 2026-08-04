@@ -1796,7 +1796,7 @@
       "reviewed": true
     },
     "manage-templates": {
-      "verify_jwt": true,
+      "verify_jwt": false,
       "exposure_class": "human-authenticated",
       "owner": "security-remediation-program",
       "reviewed": true,
@@ -2373,7 +2373,7 @@
       "wp14_auto_classified": true
     },
     "resume-investment-reports": {
-      "verify_jwt": true,
+      "verify_jwt": false,
       "exposure_class": "internal-service",
       "owner": "security-remediation-program",
       "reviewed": true,
@@ -2712,6 +2712,90 @@
       "exposure_class": "human-authenticated",
       "owner": "commercial-industrial-assessments",
       "reviewed": true
+    },
+    "aml-reliance": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "reviewed_in": "wp14-registry-backfill"
+    },
+    "convert-template-document": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "template-converter"
+    },
+    "generate-brand-design-system": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "brand-design-system"
+    },
+    "manage-branding": {
+      "verify_jwt": false,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "reviewed_in": "wp14-registry-backfill"
+    },
+    "notifications-feed-v2": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "security-remediation-program",
+      "reviewed": true,
+      "reviewed_in": "wp14-registry-backfill"
+    },
+    "render-cash-flow-comparison-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "cash-flow-comparison-render-path"
+    },
+    "render-cash-flow-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "cash-flow-render-path"
+    },
+    "render-client-details-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "client-details-render-path"
+    },
+    "render-market-intelligence-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "market-intelligence-render-path"
+    },
+    "render-portfolio-review-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "portfolio-render-path"
+    },
+    "render-property-comparison-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "property-comparison-render-path"
+    },
+    "render-report-qa-pdf": {
+      "verify_jwt": true,
+      "exposure_class": "human-authenticated",
+      "owner": "report-design-system",
+      "reviewed": true,
+      "reviewed_in": "report-qa-render-path"
     }
   }
 }
