@@ -201,3 +201,66 @@ describe("Client data contract", () => {
     expect(clientManagement).not.toMatch(/is_favorite[^\n]*as active status/i);
   });
 });
+
+describe("AML case actor identity — canonical Command Centre users (hotfix)", () => {
+  const ACTOR_FK_MIGRATION_PATH =
+    "supabase/migrations/20260804190000_aml_case_actor_fkeys_custom_users.sql";
+  const actorFkMigration = read(ACTOR_FK_MIGRATION_PATH);
+  const authSource = read("supabase/functions/_shared/auth.ts");
+
+  it("verifyAuth resolves Command Centre users against public.custom_users", () => {
+    // Session tokens resolve via user_sessions (custom auth) and JWT subs are
+    // confirmed against custom_users — the returned userId IS a
+    // custom_users.id, which is what the case actor columns store.
+    expect(authSource).toContain(".from('custom_users')");
+    expect(authSource).toContain(".from('user_sessions')");
+  });
+
+  it("case creation stamps the authenticated analyst as owner and creator", () => {
+    const activateBranch = edgeSource.slice(
+      edgeSource.indexOf("case 'activate_client'"),
+      edgeSource.indexOf("case 'update'"),
+    );
+    expect(activateBranch).toContain("assigned_analyst_id: userId,");
+    expect(activateBranch).toContain("created_by: userId,");
+    // Accountability is never dropped to dodge the FK.
+    expect(activateBranch).not.toContain("assigned_analyst_id: null");
+    expect(activateBranch).not.toContain("created_by: null");
+  });
+
+  it("a service-role caller can never be stored as the analyst", () => {
+    // Rejected at authentication, before any op (including case writes) runs.
+    const authGate = edgeSource.indexOf("auth.userId === 'service_role'");
+    const firstOp = edgeSource.indexOf("switch (op)");
+    expect(authGate).toBeGreaterThan(-1);
+    expect(authGate).toBeLessThan(firstOp);
+  });
+
+  it("the hotfix migration retargets all three actor FKs at public.custom_users(id)", () => {
+    expect(existsSync(join(repo, ACTOR_FK_MIGRATION_PATH))).toBe(true);
+    for (const col of ["assigned_analyst_id", "assigned_mlro_id", "created_by"]) {
+      expect(actorFkMigration).toContain(
+        `ADD CONSTRAINT cases_${col}_fkey`);
+      expect(actorFkMigration).toContain(
+        `FOREIGN KEY (${col}) REFERENCES public.custom_users(id)`);
+      expect(actorFkMigration).toContain(
+        `DROP CONSTRAINT IF EXISTS cases_${col}_fkey`);
+    }
+    // The wrong target is gone entirely — nothing re-adds auth.users.
+    expect(actorFkMigration).not.toMatch(/REFERENCES\s+auth\.users/);
+  });
+
+  it("the migration keeps FK enforcement — every drop is paired with a recreate", () => {
+    const drops = actorFkMigration.match(/DROP CONSTRAINT IF EXISTS cases_\w+_fkey/g) ?? [];
+    const adds = actorFkMigration.match(/ADD CONSTRAINT cases_\w+_fkey/g) ?? [];
+    expect(drops.length).toBe(3);
+    expect(adds.length).toBe(3);
+    expect(actorFkMigration).not.toMatch(/DISABLE TRIGGER|NOT VALID/);
+  });
+
+  it("the migration fails clearly on orphaned actor ids instead of dropping data", () => {
+    expect(actorFkMigration).toContain("RAISE EXCEPTION");
+    expect(actorFkMigration).toMatch(/NOT EXISTS \(\s*\n?\s*SELECT 1 FROM public\.custom_users/);
+    expect(actorFkMigration).not.toMatch(/DELETE FROM|UPDATE aml\.cases/);
+  });
+});
