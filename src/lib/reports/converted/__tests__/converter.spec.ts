@@ -850,7 +850,7 @@ describe('the raised surface style', () => {
     // worse than one that stays plain.
     expect(DEFAULT_REPORT_DESIGN_OPTIONS.surfaceStyle).toBe('flat');
     expect(normalizeReportDesignOptions({}).surfaceStyle).toBe('flat');
-    expect(normalizeReportDesignOptions({ surfaceStyle: 'nonsense' }).surfaceStyle).toBe('flat');
+    expect(normalizeReportDesignOptions({ surfaceStyle: 'nonsense' as never }).surfaceStyle).toBe('flat');
     expect(cssFor('flat')).not.toContain('── Raised');
   });
 
