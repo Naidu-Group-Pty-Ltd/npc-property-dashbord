@@ -95,8 +95,9 @@ export default function CommercialAssessmentWorkspace() {
 
   const {
     record, payload, loading, error, saveState, lastSavedAt,
-    update, saveNow, reload,
+    update, saveNow, saveTitle, reload,
   } = useCiAssessment(id ?? null);
+
 
   const [calculating, setCalculating] = useState(false);
   const [savedResult, setSavedResult] = useState<AssessmentResult | null>(null);
