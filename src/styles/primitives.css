@@ -559,6 +559,27 @@
   color: hsl(var(--muted-foreground));
 }
 
+.listings-pin-tip__note {
+  color: hsl(var(--warning));
+  font-weight: 600;
+}
+
+/* A suburb-centroid pin wears a dashed halo: visibly a region claim, not a
+   rooftop claim. The halo inherits the pin's own rounding so it fits chips
+   and dot pins alike. */
+.listings-map .listing-pin--approx {
+  opacity: 0.9;
+}
+
+.listings-map .listing-pin--approx::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1.5px dashed hsl(var(--warning) / 0.85);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
 /* --- Clusters -----------------------------------------------------------
    A cluster carries two facts, not one: how many listings it hides (the
    count) and what they are worth (a band-mix ring plus the median price).

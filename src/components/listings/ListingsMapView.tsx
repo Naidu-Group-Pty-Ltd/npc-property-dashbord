@@ -64,6 +64,8 @@ import {
   priceTier,
   propertyGlyph,
   PROPERTY_GLYPHS,
+  describeGeocodePrecision,
+  robustClusterAnchor,
   summariseCluster,
   tierMixGradientStops,
   type BasemapId,
@@ -154,6 +156,8 @@ interface ListingsMapViewProps {
 interface ListingMarker {
   listing: PropertyListing;
   point: GeoPoint;
+  /** Geocoder location_type for the point, when the lookup reported one. */
+  precision?: string | null;
 }
 
 type PinVariant = 'chip' | 'pin' | 'ghost';
@@ -279,13 +283,17 @@ function pinIcon(
   glyph: PropertyGlyph,
   label: string | null,
   pinState: PinState,
+  approx = false,
 ): L.DivIcon {
   const active = pinState === 'active';
   const state =
-    pinState === 'active' ? ' listing-pin--active' : pinState === 'peek' ? ' listing-pin--peek' : '';
+    (pinState === 'active' ? ' listing-pin--active' : pinState === 'peek' ? ' listing-pin--peek' : '') +
+    // Suburb-centroid pins are dressed differently so precision is visible at
+    // a glance, not only in the hover card.
+    (approx ? ' listing-pin--approx' : '');
 
   if (variant === 'ghost') {
-    return cacheIcon(`ghost|${pinState}`, () =>
+    return cacheIcon(`ghost|${pinState}|${approx}`, () =>
       L.divIcon({
         className: `listing-pin listing-pin--ghost${state}`,
         html: '<span class="listing-pin__dot"></span>',
@@ -297,7 +305,7 @@ function pinIcon(
   }
 
   if (variant === 'pin' || !label) {
-    return cacheIcon(`pin|${tier}|${glyph}|${pinState}`, () =>
+    return cacheIcon(`pin|${tier}|${glyph}|${pinState}|${approx}`, () =>
       L.divIcon({
         className: `listing-pin listing-pin--pin listing-pin--${tier}${state}`,
         html: (active ? HALO_HTML : '') + teardropSvg(glyph),
@@ -310,7 +318,7 @@ function pinIcon(
     );
   }
 
-  return cacheIcon(`chip|${tier}|${glyph}|${label}|${pinState}`, () => {
+  return cacheIcon(`chip|${tier}|${glyph}|${label}|${pinState}|${approx}`, () => {
     // Estimated so the icon box matches the rendered chip: Leaflet needs real
     // dimensions for hit-testing, anchoring, and cluster spiderfy geometry.
     // 40 covers the glyph disc, gutters and border; 7 is a generous per-character
@@ -797,7 +805,11 @@ function ResultsPanel({
  * listing identically. Bound lazily on first hover: fourteen hundred prebuilt
  * tooltips would be DOM ballast for the handful anyone touches.
  */
-function pinTooltipHtml(listing: PropertyListing, photoUrl?: string | null): string {
+function pinTooltipHtml(
+  listing: PropertyListing,
+  photoUrl?: string | null,
+  precision?: string | null,
+): string {
   const beds = listing.beds ?? listing.bedrooms;
   const baths = listing.baths ?? listing.bathrooms;
   const specs = [
@@ -818,7 +830,13 @@ function pinTooltipHtml(listing: PropertyListing, photoUrl?: string | null): str
       : '') +
     `<span class="listings-pin-tip__price">${escapeHtml(formatFullAud(listing.price) ?? 'Price on request')}</span>` +
     `<span class="listings-pin-tip__address">${escapeHtml(address)}</span>` +
-    (specs ? `<span class="listings-pin-tip__specs">${escapeHtml(specs)}</span>` : '')
+    (specs ? `<span class="listings-pin-tip__specs">${escapeHtml(specs)}</span>` : '') +
+    (() => {
+      const note = describeGeocodePrecision(precision).note;
+      return note
+        ? `<span class="listings-pin-tip__specs listings-pin-tip__note">${escapeHtml(note)}</span>`
+        : '';
+    })()
   );
 }
 
@@ -904,10 +922,11 @@ const ListingMarkers = memo(function ListingMarkers({
       iconCreateFunction={iconFactory}
       polygonOptions={{ opacity: 0, fillOpacity: 0 }}
     >
-      {markers.map(({ listing, point }) => {
+      {markers.map(({ listing, point, precision }) => {
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
         const glyph = propertyGlyph(listing.propertyType);
+        const approx = describeGeocodePrecision(precision).tier === 'area';
         const pinState: PinState =
           listing.id === selectedId ? 'active' : listing.id === hoveredId ? 'peek' : 'idle';
         const title = [
@@ -922,7 +941,7 @@ const ListingMarkers = memo(function ListingMarkers({
             key={listing.id}
             ref={(instance) => registerMarker(listing.id, instance)}
             position={[point.lat, point.lng]}
-            icon={pinIcon(variant, tier, glyph, label, pinState)}
+            icon={pinIcon(variant, tier, glyph, label, pinState, approx)}
             // Lift the open (or peeked) listing clear of its neighbours so the
             // highlighted pin is never buried under the ones around it.
             zIndexOffset={pinState === 'active' ? 1200 : pinState === 'peek' ? 900 : 0}
@@ -941,7 +960,11 @@ const ListingMarkers = memo(function ListingMarkers({
                 // image resolution may have delivered this listing's
                 // photograph since the last look, and the card should show it.
                 const marker = event.target as L.Marker;
-                const html = pinTooltipHtml(listing, images?.[listing.id]?.[0]?.url ?? null);
+                const html = pinTooltipHtml(
+                  listing,
+                  images?.[listing.id]?.[0]?.url ?? null,
+                  precision,
+                );
                 if (marker.getTooltip()) marker.setTooltipContent(html);
                 else {
                   marker.bindTooltip(html, {
@@ -1003,18 +1026,22 @@ function ClusterAnchorToProperty({
             if (typeof cluster.getAllChildMarkers !== 'function') return;
             const children = cluster.getAllChildMarkers();
             if (!children || children.length === 0) return;
-            const centre = cluster.getLatLng();
-            let best: L.LatLng | null = null;
-            let bestDistance = Infinity;
-            for (const child of children) {
-              const at = child.getLatLng();
-              const d = (at.lat - centre.lat) ** 2 + (at.lng - centre.lng) ** 2;
-              if (d < bestDistance) {
-                bestDistance = d;
-                best = at;
-              }
+            // Median-anchored, not nearest-to-current: when the library
+            // anchors the bubble on a member that is itself a wrong
+            // coordinate, "nearest member to the bubble" is that member, at
+            // distance zero — the snap would ratify the error. The median
+            // member cannot be dragged offshore by an outlier.
+            const anchor = robustClusterAnchor(
+              children.map((child) => {
+                const at = child.getLatLng();
+                return { lat: at.lat, lng: at.lng };
+              }),
+            );
+            if (!anchor) return;
+            const at = cluster.getLatLng();
+            if (at.lat !== anchor.lat || at.lng !== anchor.lng) {
+              cluster.setLatLng(L.latLng(anchor.lat, anchor.lng));
             }
-            if (best && bestDistance > 0) cluster.setLatLng(best);
           });
         } catch {
           /* presentational only — never let a snap failure touch the map */
@@ -1109,15 +1136,18 @@ function PopupTag({ children }: { children: React.ReactNode }) {
 function ListingPopupCard({
   listing,
   point,
+  precision,
   onOpenDetails,
   onEmailAgent,
 }: {
   listing: PropertyListing;
   point: GeoPoint;
+  precision?: string | null;
   onOpenDetails: () => void;
   onEmailAgent?: () => void;
 }) {
   const locality = [listing.suburb, listing.state, listing.zipCode].filter(Boolean).join(' ');
+  const precisionNote = describeGeocodePrecision(precision).note;
   // The same decision the card and the table make, so one listing cannot read
   // "$1,599,000" in the grid and "Price undisclosed" in the popup.
   const price = displayPrice(listing);
@@ -1223,6 +1253,12 @@ function ListingPopupCard({
             {listing.address || listing.title || 'Address not extracted'}
           </h3>
           {locality ? <p className="text-xs text-muted-foreground">{locality}</p> : null}
+          {precisionNote ? (
+            // The pin's honesty, repeated where the decision is made: someone
+            // about to drive to this property should know the pin marks the
+            // suburb, not the letterbox.
+            <p className="text-[11px] font-medium text-warning">{precisionNote}</p>
+          ) : null}
         </div>
         {photoCount > 1 ? (
           <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
@@ -1400,7 +1436,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
         held.push({ listing, reason: 'failed_check' });
         continue;
       }
-      rows.push({ listing, point });
+      rows.push({ listing, point, precision: resolved?.precision ?? null });
     }
     return { markers: rows, unmapped: held };
   }, [listings, points]);
@@ -1847,6 +1883,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
               <ListingPopupCard
                 listing={selected.listing}
                 point={selected.point}
+                precision={selected.precision}
                 onOpenDetails={openSelectedDetails}
                 onEmailAgent={onEmailAgent ? () => onEmailAgent(selected.listing) : undefined}
               />

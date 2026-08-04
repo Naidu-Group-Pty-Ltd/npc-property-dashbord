@@ -13,6 +13,12 @@ export interface ResolvedPoint {
   lat: number;
   lng: number;
   source: 'record' | 'cache' | 'geocoded';
+  /**
+   * How precisely the geocoder placed it — ROOFTOP is the address itself,
+   * APPROXIMATE is a locality centroid. Surfaced so the map can style and
+   * caption a suburb-level pin honestly instead of implying rooftop accuracy.
+   */
+  precision?: string | null;
 }
 
 /**
@@ -208,7 +214,13 @@ export function useListingCoordinates(listings: PropertyListing[]) {
       );
 
     const commit = (
-      resolved: Array<{ id: string; lat: number; lng: number; source: ResolvedPoint['source'] }>,
+      resolved: Array<{
+        id: string;
+        lat: number;
+        lng: number;
+        source: ResolvedPoint['source'];
+        precision?: string | null;
+      }>,
     ) => {
       const next: Record<string, ResolvedPoint> = {};
       const fingerprints = new Map(payloadRef.current.map((row) => [row.id, fingerprintOf(row)]));
@@ -222,7 +234,12 @@ export function useListingCoordinates(listings: PropertyListing[]) {
           attemptsRef.current.set(r.id, (attemptsRef.current.get(r.id) ?? 0) + 1);
           continue;
         }
-        const point: ResolvedPoint = { lat: r.lat, lng: r.lng, source: r.source ?? 'geocoded' };
+        const point: ResolvedPoint = {
+          lat: r.lat,
+          lng: r.lng,
+          source: r.source ?? 'geocoded',
+          precision: r.precision ?? null,
+        };
         next[r.id] = point;
         const fp = fingerprints.get(r.id);
         if (fp) writeCachedPoint(r.id, fp, point);
@@ -289,6 +306,7 @@ export function useListingCoordinates(listings: PropertyListing[]) {
           lat: number;
           lng: number;
           source: ResolvedPoint['source'];
+          precision?: string | null;
         }>;
         if (resolved.length > 0) setFailure(null);
         transientFailuresRef.current = 0;

@@ -14,6 +14,8 @@ export interface CachedPoint {
   lat: number;
   lng: number;
   source: 'record' | 'cache' | 'geocoded';
+  /** Provider location_type (ROOFTOP, APPROXIMATE, …), when the lookup said. */
+  precision?: string | null;
 }
 
 interface CacheEntry extends CachedPoint {
@@ -114,7 +116,7 @@ export function readCachedPoint(id: string, fingerprint: string): CachedPoint | 
     scheduleFlush();
     return null;
   }
-  return { lat: entry.lat, lng: entry.lng, source: entry.source };
+  return { lat: entry.lat, lng: entry.lng, source: entry.source, precision: entry.precision ?? null };
 }
 
 export function writeCachedPoint(id: string, fingerprint: string, point: CachedPoint): void {
