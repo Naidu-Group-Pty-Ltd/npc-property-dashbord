@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Plus, FileText, Edit, Trash2, CheckCircle2, Layers, Upload, History, Loader2, Search, SlidersHorizontal } from 'lucide-react';
+import { Plus, FileText, Edit, Trash2, CheckCircle2, Layers, Upload, History, Loader2, Search, SlidersHorizontal, Wand2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import {
@@ -195,6 +195,20 @@ export default function TemplateBuilder() {
             <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
               <Upload className="h-4 w-4 mr-1" />
               Import PDF
+            </Button>
+          )}
+          {/* Beside Import PDF, not instead of it. Import brings a PDF into the
+              visual editor as a template; the converter refurbishes one onto the
+              report design system and binds it to a report format. Different
+              destinations, and both stay. */}
+          {canEditTemplates && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => navigate('/admin/template-builder/converter')}
+            >
+              <Wand2 className="h-4 w-4 mr-1" />
+              Converter
             </Button>
           )}
           {canEditTemplates && (

@@ -72,6 +72,7 @@ import ActivityLogs from "./pages/ActivityLogs";
 import { DepreciationCompsAdmin } from "./components/admin/DepreciationCompsAdmin";
 import TemplateBuilder from "./pages/admin/TemplateBuilder";
 import TemplateBuilderEdit from "./pages/admin/TemplateBuilderEdit";
+import TemplateConverter from "./pages/admin/TemplateConverter";
 import TemplateSharePreview from "./pages/TemplateSharePreview";
 import ReportEngineInspector from "./pages/admin/ReportEngineInspector";
 import FigmaTemplates from "./pages/admin/FigmaTemplates";
@@ -545,6 +546,9 @@ const App = () => (
                 <Route path="admin/activity-logs" element={<ModuleGuard moduleKey="activity_logs"><ActivityLogs /></ModuleGuard>} />
                 <Route path="admin/depreciation-comps" element={<ModuleGuard moduleKey="depreciation_comps"><DepreciationCompsAdmin /></ModuleGuard>} />
                 <Route path="admin/template-builder" element={<ModuleGuard moduleKey="templates"><TemplateBuilder /></ModuleGuard>} />
+                {/* Before the `:id` route for readability; react-router ranks the
+                    static segment above the dynamic one regardless. */}
+                <Route path="admin/template-builder/converter" element={<ModuleGuard moduleKey="templates" requireEdit><TemplateConverter /></ModuleGuard>} />
                 <Route path="admin/template-builder/:id" element={<ModuleGuard moduleKey="templates" requireEdit><TemplateBuilderEdit /></ModuleGuard>} />
                 <Route path="admin/report-engine-inspector" element={<ReportEngineInspector />} />
                 <Route path="admin/figma-templates" element={<ModuleGuard moduleKey="templates"><FigmaTemplates /></ModuleGuard>} />

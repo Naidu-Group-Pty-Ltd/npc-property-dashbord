@@ -4351,3 +4351,25 @@
     @apply bg-primary/80;
   }
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Template converter — brand-colour swatches.
+
+   A design system's brand colour is *document* data, not application theme:
+   it is the accent a generated PDF will print in, chosen per system, and the
+   whole point of the swatch is to show the actual value. So it cannot come
+   from a token — but it also must not be an inline `backgroundColor`, which
+   is what the style ratchet counts and rightly so.
+
+   The component sets `--converter-swatch` and these classes read it. The raw
+   value stays data all the way through, and no hardcoded colour enters a
+   component.
+   ──────────────────────────────────────────────────────────────── */
+@layer components {
+  .converter-swatch {
+    background-color: var(--converter-swatch, transparent);
+  }
+  .converter-swatch-ink {
+    color: var(--converter-swatch, currentColor);
+  }
+}
