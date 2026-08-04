@@ -425,32 +425,44 @@ rules).
 
 ## Deployment (2026-08-04)
 
-The function is **live**. It was never deployed by CI — there is still no
-`SUPABASE_ACCESS_TOKEN` secret, so the deploy workflow stays inert — but the
-repository is public, and Deno resolves TypeScript modules over HTTPS. The
-deployed artefact is therefore a three-line shim that imports the real,
-reviewed source at a pinned commit:
+The whole listing chain now runs the merged source. It happened in two steps
+the same day:
 
-```ts
-import 'https://raw.githubusercontent.com/lavan96/npc-property-dashbord/4674b62f8d1be74965b48086717767fc01998df9/supabase/functions/listing-enrichment/index.ts';
-```
+1. **The shim.** With no deploy credential available, `listing-enrichment` was
+   first deployed as a three-line shim importing the reviewed source from the
+   public repository at a pinned commit — enough to wake the `*/10` sweep cron,
+   which had been firing into a 404 since the migration installed it. Within
+   its first two fires it seeded 400 queue rows, enriched ~30 listings and
+   grew the stored-image count from 876 to 1,000+.
 
-Deno fetches the module and its `_shared/` imports relative to that commit, so
-what runs in production is byte-for-byte what was merged. `verify_jwt` is
-false, matching `config.toml` — the module carries the project's own session
-auth, CSRF guard and abuse controls.
+2. **The full deploy.** Once a `SUPABASE_ACCESS_TOKEN` was provided, every
+   function the marketplace touches was deployed from the repository source
+   through the Management API (the same call `supabase functions deploy`
+   makes), replacing both the shim and the pre-#1866 versions that had been
+   serving the old field map:
 
-Two consequences landed the moment it booted:
+   | Function | Now | Was |
+   | --- | --- | --- |
+   | `listing-enrichment` | v2 (full source) | v1 shim / **never deployed** |
+   | `listings-cache` | v6 | v5, pre-#1866 |
+   | `listing-images` | v9 | v8, pre-#1866 |
+   | `airtable-proxy` | v16 | v15, pre-#1866 |
+   | `street-view` | v74 | v73 |
+   | `resolve-listing-coordinates` | v62 | v61 |
+   | `scrape-property-listing` | v62 | v61 |
 
-- The `listing-enrichment-sweep` cron (`*/10 * * * *`), which the migration had
-  installed and which had been firing into a 404 every ten minutes, started
-  working. Within its first two fires it had seeded 400 queue rows, enriched
-  its first ~30 listings and grown the stored-image count from 876 to 1,034.
-- The dashboard's "Fetch details" button stopped answering with a CORS error.
+   All verified booting with structured `auth_required` on anonymous calls,
+   `verify_jwt=false` per `config.toml` (each carries its own session auth).
 
-**To upgrade** the function: redeploy the shim with a newer commit SHA (or land
-the access-token secret and let the workflow replace the shim with a normal
-deploy). The pinned commit never changes underneath the deployment.
+This unlocks the server-side halves the client had been working around:
+`op:'record'` single-row reads for deep links, server-side table-name
+aliasing, the overlay join in `readCache`, the overlay-aware image sweep, and
+the non-destructive dedup.
+
+**Keep it deployed:** add the token as the `SUPABASE_ACCESS_TOKEN` Actions
+secret (Settings → Secrets and variables → Actions) so
+`.github/workflows/deploy-supabase-functions.yml` ships every future merge
+automatically. Until that secret exists, deploys remain a manual step.
 
 ## The client-side cascade (same date)
 
