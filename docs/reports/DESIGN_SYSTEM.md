@@ -642,3 +642,58 @@ Two things the engine does **not** warn about, and how each is caught instead:
 - **A page that is technically correct and badly composed.** Nothing mechanical
   sees it. That is what `critique.pure.ts`, `measure_pages.py` and the
   `report-critic` agent are for.
+
+### 11.5 A typographic decision made by an omission
+
+`Cinzel-Bold.ttf` was the only weight of the brand cover face in the image, so
+the cover title and the closing wordmark were both set Bold — and
+`typography.pure.ts` recorded the face as "confined to the two places set large
+and short" *because of it*. That reads as a design rule. It was a Dockerfile.
+
+Cinzel is an inscriptional roman cut after Trajan-column capitals, and those are
+light. At 34pt the Bold reads as blunt rather than grand, and it blooms on the
+obsidian ground a cover is set on, because light-on-dark type optically gains
+weight. Regular and SemiBold were sitting unused in
+`public/fonts/Cinzel_Playfair_Display.zip` — the same committed archive the Bold
+came from — the whole time.
+
+The cover title is now **Regular**, the closing wordmark **SemiBold**, and Bold
+is gone: `reportTypography.spec.ts` fails on a shipped file nothing requests,
+and inventing a use to keep 77KB would be the same mistake in the other
+direction.
+
+Two things now hold that open:
+
+- **`PROVENANCE.md`'s hashes are checked.** A font is a binary in a repository:
+  nothing about it is reviewable in a diff, and it is copied into the image that
+  renders every client's document. The table used to claim a SHA-256 per file
+  and nothing verified it. The spec now hashes each file, fails on a mismatch,
+  and fails on a file the table does not record.
+- **`selfcheck.py` proves resolution, not just presence.** It walks the font
+  directory, reads each file's own family, weight and italic flag out of its
+  `name` and `OS/2` tables, asks the engine for exactly that, and checks the face
+  that came back is the file that asked. Shipping a file is not the same as being
+  able to reach it: `Cinzel SemiBold` answers to `font-family: Cinzel;
+  font-weight: 600` only because it carries a typographic-family record, and when
+  that resolution fails fontconfig returns the nearest weight in silence. There is
+  no manifest to keep in step — the fonts are the source of truth about themselves.
+
+### 11.6 Render options: what was measured, and what not to change
+
+Measured against the real eleven-page Borrowing Capacity Snapshot, so these are
+numbers rather than opinions. Recorded because each one looks like an easy
+quality win and is not.
+
+| Option | Measured | Verdict |
+| --- | --- | --- |
+| `optimize_images` | 157,498 vs 157,502 bytes | **Irrelevant.** The reports embed *no raster images at all* — every figure is SVG. `jpeg_quality` and `dpi` are moot for the same reason. |
+| `full_fonts` | 157KB → **1.69MB** | No. Subsetting does not change how a glyph draws; this is 10× the file for nothing a reader can see. |
+| `hinting` | +7KB (4.5%) | No. Modern viewers rasterise with their own hinting and ignore the embedded instructions. |
+| `pdf_variant: pdf/a-2b` | **pixel-identical** to plain across all 11 pages | Keep. It costs nothing visually and the archival claim is worth having. |
+
+One artefact worth not chasing: under `pdf/a-2b`, poppler prints `Bad color
+space 'srgb'` ten times. WeasyPrint defines a named `/srgb` colour space in the
+page resources and its transparency-group XObjects reference it from their own
+resource dictionaries, where it is not defined. It is upstream, it affects
+nothing — the pixel diff above was taken with those warnings present — and the
+only way to avoid it would be to stop emitting SVG.
