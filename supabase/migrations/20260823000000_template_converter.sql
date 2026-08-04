@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS public.template_conversions (
 
   -- What came out.
   file_name text NOT NULL DEFAULT '',
-  storage_bucket text NOT NULL DEFAULT 'report-templates',
+  storage_bucket text NOT NULL DEFAULT 'converted-templates',
   storage_path text,
   bytes integer,
   page_count integer,
@@ -127,6 +127,34 @@ CREATE INDEX IF NOT EXISTS template_conversions_appendix_idx
 CREATE INDEX IF NOT EXISTS template_conversions_system_idx
   ON public.template_conversions (design_system_id)
   WHERE design_system_id IS NOT NULL;
+
+-- ── The bucket ──────────────────────────────────────────────────────────────
+--
+-- Private, and its own.
+--
+-- Not `report-templates`, where the Template Builder's assets go: that bucket
+-- is public, and its public-ness is load-bearing — asset URLs are embedded in
+-- saved template JSON. A converted draft carries whatever prose was in
+-- somebody's uploaded template, which does not belong behind a guessable public
+-- URL.
+--
+-- Not `template-import-artifacts` either, private though it is: that bucket
+-- belongs to the PDF import subsystem, whose monitoring reports any object it
+-- cannot tie to an import as an orphan. Borrowing it would create a standing
+-- false alarm.
+
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('converted-templates', 'converted-templates', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- Reads go through the render route's signed URLs, which are issued by the
+-- service role. Nothing authenticated needs direct object access, so nothing
+-- authenticated is granted it.
+CREATE POLICY "Service role manages converted templates"
+  ON storage.objects FOR ALL
+  TO service_role
+  USING (bucket_id = 'converted-templates')
+  WITH CHECK (bucket_id = 'converted-templates');
 
 -- ── Access ──────────────────────────────────────────────────────────────────
 --

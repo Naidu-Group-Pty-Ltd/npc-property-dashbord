@@ -191,6 +191,20 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     contentsPages: Math.max(1, Math.ceil(chapters.length / 22)),
   });
 
+  // Whether there is a contents page is the *spine's* answer, not this
+  // renderer's.
+  //
+  // `buildSpine` adds one only when the archetype asks for it — Borrowing
+  // Capacity declares `contents: false`, because a short format does not carry
+  // one. This renderer used to print a contents page unconditionally, which
+  // broke the binding's whole promise (a draft bound to a format opens *as*
+  // that format) and under-claimed the page budget by exactly one, since the
+  // spine was costing a page the document was not printing and vice versa.
+  //
+  // Reading it back off the spine is what makes the two incapable of
+  // disagreeing again.
+  const contentsEntry = spine.find((e) => e.slot === 'contents');
+
   // The page band is advisory here, and only here.
   //
   // A converted draft is not an instance of the format — it is a draft *bound*
@@ -225,10 +239,12 @@ export function renderConvertedBody(input: RenderConvertedInput): ConvertedRende
     footerRight: input.reference ?? '',
   });
 
-  const contents = renderContentsPage(
-    'Contents',
-    contentsEntriesFor(spine).map((e) => ({ number: e.number, title: e.title, note: e.note })),
-  );
+  const contents = contentsEntry
+    ? renderContentsPage(
+      'Contents',
+      contentsEntriesFor(spine).map((e) => ({ number: e.number, title: e.title, note: e.note })),
+    )
+    : '';
 
   // Said on page one, every time.
   //

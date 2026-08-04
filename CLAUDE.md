@@ -53,6 +53,20 @@ is the one whose page budget is fitted block by block against real renders rathe
 than summed, the one that clips a section and says so on the page, and the only
 one that writes a PDF a scheduled email later attaches.
 
+## The template converter
+An existing template can be brought *onto* the design system rather than into the
+visual editor: `/admin/template-builder/converter` extracts a template's section
+structure, binds it to one of the migrated report formats, and renders it through
+WeasyPrint under a **brand design system** — a saved brand colour plus a full
+`ReportDesignOptions`, authored in the UI or drafted by Claude from a brief. The
+palette is never stored, only resolved. Read
+[`docs/reports/TEMPLATE_CONVERTER.md`](./docs/reports/TEMPLATE_CONVERTER.md)
+before touching it: it records why binding is confirmed rather than guessed, why
+unmatched sections become an appendix instead of being dropped, and why the
+output goes to its own private bucket rather than `report-templates`. The
+existing `ImportPdfDialog` / `parse-template-document` path is a different
+destination and stays.
+
 ## Report templates
 The seeded PDF catalogue (40 templates) is **generated**, not hand-edited. Its look
 comes from `scripts/template-library/designSystem.ts` — five voices keyed to the
