@@ -1,3 +1,5 @@
+import { isOnAustralianLand } from './auLandMask.pure.ts';
+
 /**
  * Sanity for Australian listing coordinates.
  *
@@ -28,7 +30,7 @@
 
 export interface GeoAssessment {
   ok: boolean;
-  reason?: 'outside_australia' | 'wrong_state';
+  reason?: 'outside_australia' | 'offshore' | 'wrong_state';
 }
 
 interface Box {
@@ -101,6 +103,15 @@ export function assessAuPoint(
     return { ok: false, reason: 'outside_australia' };
   }
   if (!inBox(lat, lng, AUSTRALIA)) return { ok: false, reason: 'outside_australia' };
+
+  // The country box is a rectangle, and every rectangle around Australia
+  // contains sea — Bass Strait, the Bight and the Coral Sea are all inside
+  // it. A record with no state and no postcode used to get only the box, so
+  // open water could pass every gate. The land mask is the check rectangles
+  // cannot do, and because it runs here, every consumer of this module —
+  // the browser's validator, the map's final filter and the geocoder — asks
+  // the same question: could a property stand on this coordinate at all?
+  if (!isOnAustralianLand(lat, lng)) return { ok: false, reason: 'offshore' };
 
   const code = normaliseAuState(state);
   if (code) {

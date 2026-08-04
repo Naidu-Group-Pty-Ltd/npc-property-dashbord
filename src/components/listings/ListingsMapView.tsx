@@ -160,6 +160,18 @@ interface ListingsMapViewProps {
 interface ListingMarker {
   listing: PropertyListing;
   point: GeoPoint;
+  /**
+   * The SAME tuple instance across rebuilds while the coordinates are
+   * unchanged. react-leaflet compares `position` by reference and answers
+   * every "new" reference with `marker.setLatLng()`; Leaflet fires `move`
+   * even for identical values; and leaflet.markercluster answers every child
+   * move by REMOVING the marker from the cluster tree and re-adding it. An
+   * inline `[lat, lng]` therefore rebuilt the entire clustering, marker by
+   * marker, on every render — cluster bubbles reshuffled "without direction"
+   * on every filter tick, image wave and hover. A stable tuple makes all of
+   * that simply not happen.
+   */
+  position: [number, number];
   /** Geocoder location_type for the point, when the lookup reported one. */
   precision?: string | null;
 }
@@ -933,7 +945,7 @@ const ListingMarkers = memo(function ListingMarkers({
       iconCreateFunction={iconFactory}
       polygonOptions={{ opacity: 0, fillOpacity: 0 }}
     >
-      {markers.map(({ listing, point, precision }) => {
+      {markers.map(({ listing, position, precision }) => {
         const label = formatCompactAud(listing.price);
         const tier = priceTier(listing.price, tiers);
         const glyph = propertyGlyph(listing.propertyType);
@@ -951,7 +963,7 @@ const ListingMarkers = memo(function ListingMarkers({
           <Marker
             key={listing.id}
             ref={(instance) => registerMarker(listing.id, instance)}
-            position={[point.lat, point.lng]}
+            position={position}
             icon={pinIcon(variant, tier, glyph, label, pinState, approx)}
             // Lift the open (or peeked) listing clear of its neighbours so the
             // highlighted pin is never buried under the ones around it.
@@ -1352,6 +1364,7 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
   // pin, not into a cluster centroid, not into the heat surface. It joins the
   // unmapped list with its reason, which is the honest outcome — a pin in the
   // Southern Ocean is not "mapped", it is wrong with confidence.
+  const positionCache = useRef(new Map<string, [number, number]>());
   const { markers, unmapped } = useMemo(() => {
     const rows: ListingMarker[] = [];
     const held: Array<{ listing: PropertyListing; reason: 'no_coordinates' | 'failed_check' }> =
@@ -1372,7 +1385,14 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
         held.push({ listing, reason: 'failed_check' });
         continue;
       }
-      rows.push({ listing, point, precision: resolved?.precision ?? null });
+      const cache = positionCache.current;
+      const prior = cache.get(listing.id);
+      const position: [number, number] =
+        prior && prior[0] === point.lat && prior[1] === point.lng
+          ? prior
+          : [point.lat, point.lng];
+      cache.set(listing.id, position);
+      rows.push({ listing, point, position, precision: resolved?.precision ?? null });
     }
     return { markers: rows, unmapped: held };
   }, [listings, points]);
