@@ -391,6 +391,8 @@ export function useCiAssessment(assessmentId: string | null) {
     hasUnsavedChanges: saveState === 'dirty' || saveState === 'error',
     update,
     saveNow,
+    saveTitle,
+
     reload: load,
     setRecord,
     setLatestRun,
