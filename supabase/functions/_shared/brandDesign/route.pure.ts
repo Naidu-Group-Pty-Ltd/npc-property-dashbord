@@ -25,7 +25,7 @@ import {
   readBrandDesignSystem,
 } from './system.pure.ts';
 
-export type BrandRouteAction = 'audit' | 'generate' | 'save';
+export type BrandRouteAction = 'audit' | 'generate' | 'save' | 'list';
 
 export interface BrandAuditRequest {
   action: 'audit';
@@ -48,7 +48,34 @@ export interface BrandSaveRequest {
   isActive: boolean;
 }
 
-export type BrandRouteRequest = BrandAuditRequest | BrandGenerateRequest | BrandSaveRequest;
+/**
+ * List the saved systems.
+ *
+ * This exists because the browser cannot read the table.
+ *
+ * `brand_design_systems` is granted to `authenticated` only, and this app's
+ * browser Supabase client is permanently anonymous — identity lives in an
+ * HttpOnly cookie the custom auth flow owns, so `persistSession` is off and no
+ * GoTrue session is ever created. A direct `supabase.from('brand_design_systems')`
+ * is therefore refused at the *grant* level before RLS is even consulted, and
+ * the picker it feeds renders empty for everybody.
+ *
+ * The route is the only thing holding a service-role client that has already
+ * verified the cookie, so the read has to happen here. It is the same shape the
+ * repo already uses for `template_imports` (`TemplateBuilder.tsx`) and linked
+ * imports (`TemplateBuilderEdit.tsx`).
+ */
+export interface BrandListRequest {
+  action: 'list';
+  /** Inactive systems are hidden from pickers but kept for auditing. */
+  includeInactive: boolean;
+}
+
+export type BrandRouteRequest =
+  | BrandAuditRequest
+  | BrandGenerateRequest
+  | BrandSaveRequest
+  | BrandListRequest;
 
 export type BrandRequestParse =
   | { ok: true; request: BrandRouteRequest }
@@ -70,6 +97,12 @@ export function parseBrandRequest(body: unknown): BrandRequestParse {
   if (!body || typeof body !== 'object') return { ok: false, error: 'invalid json' };
   const b = body as Record<string, unknown>;
   const action = typeof b.action === 'string' ? b.action.trim() : '';
+
+  // Before `audit` and `save`, which both run `readBrandDesignSystem(b.system)`
+  // and would refuse a listing request for having no design system in it.
+  if (action === 'list') {
+    return { ok: true, request: { action: 'list', includeInactive: b.includeInactive === true } };
+  }
 
   if (action === 'generate') {
     const brief = typeof b.brief === 'string' ? b.brief.trim().slice(0, MAX_BRIEF_CHARS) : '';
@@ -107,7 +140,10 @@ export function parseBrandRequest(body: unknown): BrandRequestParse {
     };
   }
 
-  return { ok: false, error: `unknown action "${action.slice(0, 40)}" — expected audit, generate or save` };
+  return {
+    ok: false,
+    error: `unknown action "${action.slice(0, 40)}" — expected audit, generate, save or list`,
+  };
 }
 
 /** What comes back from every action. `id` is set only by `save`. */
@@ -130,6 +166,49 @@ export interface BrandRouteResponse {
   /** Present on `generate`: what the model was told, for the review screen. */
   brief: string;
   durationMs: number;
+}
+
+/** One row of the picker. */
+export interface BrandDesignSystemSummary {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  origin: 'authored' | 'generated';
+  /** `#RRGGBB`, or null for the house brand. The *requested* hue, not the
+   *  resolved accent — the palette is derived per render, never stored. */
+  brandHex: string | null;
+  isActive: boolean;
+  updatedAt: string;
+}
+
+/**
+ * The listing.
+ *
+ * A separate interface rather than a member of `BrandRouteResponse`, on
+ * purpose. Widening that type into a union would force every existing
+ * `.system` / `.audit` / `.id` access in `BrandDesignSystemDialog` to narrow
+ * first, for no gain — a listing and a single-system answer have nothing in
+ * common but the word "response".
+ */
+export interface BrandListResponse {
+  action: 'list';
+  systems: BrandDesignSystemSummary[];
+  durationMs: number;
+}
+
+/** One database row into one picker row. */
+export function readBrandSystemSummary(row: Record<string, unknown>): BrandDesignSystemSummary {
+  return {
+    id: String(row.id ?? ''),
+    name: String(row.name ?? ''),
+    slug: String(row.slug ?? ''),
+    description: String(row.description ?? ''),
+    origin: row.origin === 'generated' ? 'generated' : 'authored',
+    brandHex: typeof row.brand_hex === 'string' && row.brand_hex ? row.brand_hex : null,
+    isActive: row.is_active !== false,
+    updatedAt: String(row.updated_at ?? ''),
+  };
 }
 
 /**

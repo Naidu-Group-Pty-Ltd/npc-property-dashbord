@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useQuery } from '@tanstack/react-query';
@@ -42,13 +42,10 @@ import {
   FileText, Palette, Brain, BarChart3, TrendingUp, Building2, Settings, MessageSquare,
   Calculator, MapPin, Hash, Map, Layers, Edit, Trash2, CheckCircle2, Plus, Search,
   LibraryBig,
+  ArrowRight,
 } from 'lucide-react';
-import {
-  useReportTemplates,
-  useReportTemplateMutations,
-} from '@/hooks/useReportTemplates';
-import { makeBlankTemplate } from '@/lib/reportTemplate/templateSchema';
 import { TemplateLibraryTab } from '@/components/templateLibrary/TemplateLibraryTab';
+import { TemplateStartChoices } from '@/components/templateBuilder/TemplateStartChoices';
 import { isTemplateLibraryEnabled } from '@/lib/templateLibrary/featureFlag';
 
 type ReportFormat =
@@ -122,14 +119,10 @@ export default function Templates() {
   const { canEdit: canEditTemplates } = useModulePermissions('templates');
   const [activeTab, setActiveTab] = useState('report-formats');
   const [selectedFormat, setSelectedFormat] = useState<ReportFormat | null>(null);
-  const [builderSearch, setBuilderSearch] = useState('');
-  const [builderSort, setBuilderSort] = useState<'name_asc' | 'name_desc' | 'type' | 'tier' | 'version_desc' | 'updated_desc'>('updated_desc');
   // Read once per mount: the flag is resolved from the URL, localStorage and
   // the build env, none of which change under a mounted component.
   const [templateLibraryEnabled] = useState(isTemplateLibraryEnabled);
 
-  const { data: reportTemplates = [], isLoading: reportTemplatesLoading } = useReportTemplates();
-  const { create: createReportTemplate, remove: removeReportTemplate } = useReportTemplateMutations();
 
   const { data: templates, isLoading: templatesLoading } = useQuery({
     queryKey: ['report-structure-templates'],
@@ -272,239 +265,35 @@ export default function Templates() {
         </TabsContent>
 
         <TabsContent value="builder" className="space-y-6">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          {/* A pointer, not a second list.
+              This tab used to duplicate the whole Template Builder landing page
+              — its own search, sort, grid and New-template button — with a
+              weaker delete that skipped the is_active / locked_for_review
+              guards. Two surfaces doing one job, and only this one was
+              reachable from the sidebar, which is why the converter felt
+              missing. There is one list now; this is the way to it. */}
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-xl font-semibold">Visual PDF Template Builder</h2>
-              <p className="text-muted-foreground text-sm max-w-2xl">
-                Design PDF report layouts visually. Drag, drop, bind to live data, and preview the actual generated PDF in real time.
+              <p className="max-w-2xl text-sm text-muted-foreground">
+                Design PDF report layouts visually. Drag, drop, bind to live data, and preview the
+                actual generated PDF in real time.
               </p>
             </div>
-            <Button
-              onClick={() => {
-                createReportTemplate.mutate(
-                  { name: 'Untitled template', schema: makeBlankTemplate() },
-                  {
-                    onSuccess: (record: any) => {
-                      if (record?.id) navigate(`/admin/template-builder/${record.id}`);
-                    },
-                  }
-                );
-              }}
-              disabled={createReportTemplate.isPending}
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              New template
+            <Button asChild>
+              <Link to="/admin/template-builder">
+                Open the Template Builder
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Link>
             </Button>
           </div>
 
-          {/* Search & Sort */}
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search by name, type, or tier..."
-                value={builderSearch}
-                onChange={(e) => setBuilderSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <Select value={builderSort} onValueChange={(v) => setBuilderSort(v as any)}>
-              <SelectTrigger className="w-full sm:w-[200px]">
-                <SelectValue placeholder="Sort by..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="updated_desc">Recently updated</SelectItem>
-                <SelectItem value="name_asc">Name (A-Z)</SelectItem>
-                <SelectItem value="name_desc">Name (Z-A)</SelectItem>
-                <SelectItem value="type">Report type</SelectItem>
-                <SelectItem value="tier">Tier</SelectItem>
-                <SelectItem value="version_desc">Version (newest)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {(() => {
-            const query = builderSearch.trim().toLowerCase();
-            const filtered = reportTemplates.filter((tpl) => {
-              if (!query) return true;
-              const nameMatch = tpl.name.toLowerCase().includes(query);
-              const typeMatch = tpl.report_type?.toLowerCase().includes(query);
-              const tierMatch = tpl.tier?.toLowerCase().includes(query);
-              const descMatch = tpl.description?.toLowerCase().includes(query);
-              return nameMatch || typeMatch || tierMatch || descMatch;
-            });
-
-            const sorted = [...filtered].sort((a, b) => {
-              switch (builderSort) {
-                case 'name_asc':
-                  return a.name.localeCompare(b.name);
-                case 'name_desc':
-                  return b.name.localeCompare(a.name);
-                case 'type': {
-                  const ta = a.report_type || '';
-                  const tb = b.report_type || '';
-                  return ta.localeCompare(tb) || a.name.localeCompare(b.name);
-                }
-                case 'tier': {
-                  const tOrder: Record<string, number> = { compass: 0, executive: 1, snapshot: 2 };
-                  const ta = tOrder[a.tier || ''] ?? 99;
-                  const tb = tOrder[b.tier || ''] ?? 99;
-                  return ta - tb || a.name.localeCompare(b.name);
-                }
-                case 'version_desc':
-                  return (b.version || 0) - (a.version || 0);
-                case 'updated_desc':
-                default:
-                  return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-              }
-            });
-
-            if (reportTemplatesLoading) {
-              return (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-44" />
-                  ))}
-                </div>
-              );
-            }
-
-            if (reportTemplates.length === 0) {
-              return (
-                <Card>
-                  <CardContent className="py-16 text-center">
-                    <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <CardTitle className="text-lg">No builder templates yet</CardTitle>
-                    <CardDescription className="mt-2 max-w-md mx-auto">
-                      Create your first template to start designing report layouts visually.
-                    </CardDescription>
-                    <Button
-                      className="mt-6"
-                      disabled={createReportTemplate.isPending}
-                      onClick={() => {
-                        createReportTemplate.mutate(
-                          { name: 'Untitled template', schema: makeBlankTemplate() },
-                          {
-                            onSuccess: (record: any) => {
-                              if (record?.id) navigate(`/admin/template-builder/${record.id}`);
-                            },
-                          }
-                        );
-                      }}
-                    >
-                      <Plus className="h-4 w-4 mr-1" /> Create first template
-                    </Button>
-                  </CardContent>
-                </Card>
-              );
-            }
-
-            if (sorted.length === 0) {
-              return (
-                <div className="text-center py-12 text-muted-foreground">
-                  <FileText className="h-10 w-10 mx-auto mb-3 opacity-50" />
-                  <p className="text-sm">No templates match your search.</p>
-                  <Button variant="link" size="sm" onClick={() => setBuilderSearch('')}>
-                    Clear search
-                  </Button>
-                </div>
-              );
-            }
-
-            return (
-              <div className="space-y-3">
-                <p className="text-xs text-muted-foreground">
-                  {sorted.length} template{sorted.length === 1 ? '' : 's'}
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {sorted.map((tpl) => {
-                    const pageCount = tpl.schema?.pages?.length ?? 0;
-                    return (
-                      <Card key={tpl.id} className="hover:border-primary/40 transition-colors">
-                        <CardHeader className="pb-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <CardTitle className="text-base truncate">{tpl.name}</CardTitle>
-                              <CardDescription className="mt-1 line-clamp-2 text-xs">
-                                {tpl.description || 'No description'}
-                              </CardDescription>
-                            </div>
-                            {tpl.is_active && (
-                              <Badge variant="default" className="text-xs">
-                                <CheckCircle2 className="h-3 w-3 mr-1" /> Active
-                              </Badge>
-                            )}
-                          </div>
-                        </CardHeader>
-                        <CardContent className="space-y-3">
-                          <div className="flex flex-wrap gap-1.5 text-xs">
-                            {tpl.report_type && (
-                              <Badge variant="secondary">
-                                {REPORT_TYPE_LABELS[tpl.report_type] || tpl.report_type}
-                              </Badge>
-                            )}
-                            {tpl.tier && <Badge variant="outline">{tpl.tier}</Badge>}
-                            <Badge variant="outline">v{tpl.version}</Badge>
-                            {tpl.schema && (
-                              <Badge variant="outline">
-                                {pageCount} page{pageCount === 1 ? '' : 's'}
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex gap-2 pt-2">
-                            <Button
-                              size="sm"
-                              variant="default"
-                              className="flex-1"
-                              onClick={() => navigate(`/admin/template-builder/${tpl.id}`)}
-                            >
-                              <Edit className="h-3.5 w-3.5 mr-1" /> Open in Builder
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button
-                                  size="icon"
-                                  variant="ghost"
-                                  className="h-8 w-8 rounded-full text-destructive transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-destructive/40"
-                                  title={`Delete template ${tpl.name}`}
-                                  aria-label={`Delete template ${tpl.name}`}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent className="border-destructive/25 bg-background text-foreground shadow-2xl shadow-destructive/10 sm:max-w-md">
-                                <AlertDialogHeader className="space-y-3">
-                                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-destructive/10 text-destructive sm:mx-0">
-                                    <Trash2 className="h-5 w-5" />
-                                  </div>
-                                  <AlertDialogTitle className="text-destructive">Delete template?</AlertDialogTitle>
-                                  <AlertDialogDescription className="space-y-2 text-left text-muted-foreground">
-                                    <span className="block">
-                                      This will permanently delete <span className="font-medium text-foreground">{tpl.name}</span>.
-                                    </span>
-                                    <span className="block">This cannot be undone.</span>
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter className="gap-2 sm:gap-0">
-                                  <AlertDialogCancel className="border-border bg-background text-foreground hover:bg-muted">Cancel</AlertDialogCancel>
-                                  <AlertDialogAction
-                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/40"
-                                    onClick={() => removeReportTemplate.mutate(tpl.id)}
-                                  >
-                                    Delete template
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          })()}
+          <TemplateStartChoices
+            onBlank={() => navigate('/admin/template-builder')}
+            onImport={() => navigate('/admin/template-builder')}
+            onConvert={() => navigate('/admin/template-builder/converter')}
+            heading={null}
+          />
         </TabsContent>
 
         {templateLibraryEnabled && (

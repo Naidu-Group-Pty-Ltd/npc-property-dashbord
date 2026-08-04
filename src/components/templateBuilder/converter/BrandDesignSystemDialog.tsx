@@ -47,7 +47,7 @@ import {
   slugify,
 } from '@/lib/brandDesign/system.pure';
 import { DEFAULT_REPORT_DESIGN_OPTIONS } from '@/lib/reportDesign/options.pure';
-import { MIN_BRIEF_CHARS } from '@/lib/brandDesign/route.pure';
+import { type BrandDesignSystemSummary, MIN_BRIEF_CHARS } from '@/lib/brandDesign/route.pure';
 import {
   auditDesignSystem,
   type BrandDesignSystemResult,
@@ -80,8 +80,14 @@ const BLANK: BrandDesignSystem = {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Called with the saved row's id, so the picker can select it. */
-  onSaved: (id: string, name: string) => void;
+  /**
+   * The saved system, in picker shape.
+   *
+   * The whole summary rather than an id, so the caller can seed its cache and
+   * select the system on the same tick. Handing back only an id meant selecting
+   * something that was not yet in the list, which renders as an empty control.
+   */
+  onSaved: (summary: BrandDesignSystemSummary) => void;
   /** Printed into the prompt so a generated system knows whose documents these are. */
   companyName: string;
 }
@@ -222,7 +228,16 @@ export function BrandDesignSystemDialog({ open, onOpenChange, onSaved, companyNa
     try {
       const result = await saveDesignSystem(read.system);
       toast.success(`Saved "${result.system.name}"`);
-      onSaved(result.id ?? '', result.system.name);
+      onSaved({
+        id: result.id ?? '',
+        name: result.system.name,
+        slug: result.slug,
+        description: result.system.description,
+        origin: result.system.origin,
+        brandHex: result.system.brandHex,
+        isActive: true,
+        updatedAt: new Date().toISOString(),
+      });
       onOpenChange(false);
     } catch (e) {
       toast.error('Could not save the design system', { description: (e as Error).message });

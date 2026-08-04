@@ -51,9 +51,11 @@ import {
   slugify,
 } from '../_shared/brandDesign/system.pure.ts';
 import {
+  type BrandListResponse,
   type BrandRouteResponse,
   extractJsonObject,
   parseBrandRequest,
+  readBrandSystemSummary,
 } from '../_shared/brandDesign/route.pure.ts';
 
 const corsHeaders = {
@@ -196,6 +198,39 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     );
     if (!permission.ok) {
       return json({ error: permission.error || 'Templates edit permission required' }, 403);
+    }
+
+    // ── list ────────────────────────────────────────────────────────────────
+    //
+    // The only way the picker can be populated. See the note on
+    // `BrandListRequest`: the browser client is anonymous, so a direct read of
+    // this table is refused at the grant level and the picker silently empties.
+    //
+    // Gated on `can_edit` like the rest of this route, which is right today
+    // because the only surface that lists design systems is the converter, and
+    // that is `requireEdit`. If a read-only surface ever needs the picker, this
+    // is the line to split to `can_view`.
+
+    if (request.action === 'list') {
+      let query = supabase
+        .from('brand_design_systems')
+        .select('id, name, slug, description, origin, brand_hex, is_active, updated_at')
+        .order('updated_at', { ascending: false })
+        .limit(100);
+      if (!request.includeInactive) query = query.eq('is_active', true);
+
+      const { data, error } = await query;
+      // Thrown rather than answered with an empty list. A caller that cannot
+      // tell "no design systems exist" from "the read failed" will show the
+      // first and mean the second, which is the bug this action exists to fix.
+      if (error) throw new Error(`could not list design systems: ${error.message}`);
+
+      const response: BrandListResponse = {
+        action: 'list',
+        systems: ((data ?? []) as Record<string, unknown>[]).map(readBrandSystemSummary),
+        durationMs: Date.now() - started,
+      };
+      return json(response);
     }
 
     // ── audit ───────────────────────────────────────────────────────────────

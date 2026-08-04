@@ -77,7 +77,41 @@ export interface RenderRequest {
   designSystemId: string | null;
 }
 
-export type ConvertRouteRequest = ExtractRequest | ProposeRequest | RenderRequest;
+/**
+ * The conversions this caller has made.
+ *
+ * Without this a conversion is write-only. The PDF lives in a private bucket
+ * that grants `authenticated` no object access at all — deliberately, because
+ * it holds whatever prose was in somebody's uploaded template — so a stored
+ * `storage_path` cannot be turned back into a URL from the browser. Close the
+ * tab and the document is unreachable forever, which makes "where does the
+ * output go?" a question with no good answer.
+ *
+ * Each row is re-signed as it is listed rather than a `resign` action existing
+ * separately: a signed URL expires on a clock the browser cannot see, so a UI
+ * that had to ask for a fresh one would have to guess when.
+ */
+export interface ListRequest {
+  action: 'list';
+  limit: number;
+}
+
+/** Chapters and their prose, for building an editable template. */
+export interface ChaptersRequest {
+  action: 'chapters';
+  conversionId: string;
+}
+
+export type ConvertRouteRequest =
+  | ExtractRequest
+  | ProposeRequest
+  | RenderRequest
+  | ListRequest
+  | ChaptersRequest;
+
+/** The most conversions one listing will return. */
+export const MAX_LIST_LIMIT = 50;
+export const DEFAULT_LIST_LIMIT = 10;
 
 export type ConvertRequestParse =
   | { ok: true; request: ConvertRouteRequest }
@@ -112,6 +146,27 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
   if (!body || typeof body !== 'object') return { ok: false, error: 'invalid json' };
   const b = body as Record<string, unknown>;
   const action = typeof b.action === 'string' ? b.action.trim() : '';
+
+  // Above the format check, and that ordering is the whole point.
+  //
+  // `readFormat` runs for every request below and 400s a body without one.
+  // Listing past conversions names no format — they each carry their own — and
+  // neither does asking a stored conversion for its chapters. Put either branch
+  // after the check and it is rejected before it is ever reached, with an error
+  // message about report formats that has nothing to do with what was asked.
+  if (action === 'list') {
+    const asked = Number(b.limit);
+    const limit = Number.isFinite(asked)
+      ? Math.min(MAX_LIST_LIMIT, Math.max(1, Math.floor(asked)))
+      : DEFAULT_LIST_LIMIT;
+    return { ok: true, request: { action: 'list', limit } };
+  }
+
+  if (action === 'chapters') {
+    const conversionId = typeof b.conversionId === 'string' ? b.conversionId.trim() : '';
+    if (!UUID.test(conversionId)) return { ok: false, error: 'conversionId must be a uuid' };
+    return { ok: true, request: { action: 'chapters', conversionId } };
+  }
 
   const format = readFormat(b.format);
   if (!format) {
@@ -164,7 +219,7 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
 
   return {
     ok: false,
-    error: `unknown action "${action.slice(0, 40)}" — expected extract, propose or render`,
+    error: `unknown action "${action.slice(0, 40)}" — expected extract, propose, render, list or chapters`,
   };
 }
 
@@ -273,6 +328,54 @@ export interface ConvertProposeResponse {
   format: ReportArchetypeId;
   formatName: string;
   binding: unknown;
+  durationMs: number;
+}
+
+/** One earlier conversion, as the history panel shows it. */
+export interface ConvertListRow {
+  id: string;
+  status: string;
+  sourceFilename: string;
+  fileName: string;
+  boundFormat: string | null;
+  formatName: string | null;
+  designSystemName: string | null;
+  pageCount: number | null;
+  bytes: number | null;
+  boundChapters: number;
+  unfilledChapters: number;
+  appendixSections: number;
+  unstructured: boolean;
+  error: string | null;
+  createdAt: string;
+  /**
+   * Freshly signed on every listing. Null when nothing was rendered, or when
+   * signing this one row failed — a broken link on one conversion must not
+   * take the other nine down with it.
+   */
+  url: string | null;
+}
+
+export interface ConvertListResponse {
+  action: 'list';
+  conversions: ConvertListRow[];
+  durationMs: number;
+}
+
+/** One chapter of a converted document, with the prose that fills it. */
+export interface ConvertedChapterContent {
+  title: string;
+  kind: 'bound' | 'unfilled' | 'appendix';
+  markdown: string;
+}
+
+export interface ConvertChaptersResponse {
+  action: 'chapters';
+  conversionId: string;
+  title: string;
+  format: ReportArchetypeId;
+  formatName: string;
+  chapters: ConvertedChapterContent[];
   durationMs: number;
 }
 
