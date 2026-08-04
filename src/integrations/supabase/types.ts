@@ -21873,7 +21873,9 @@ export type Database = {
           precision: string | null
           provider: string
           resolved_at: string
+          state: string | null
           status: string
+          suburb: string | null
         }
         Insert: {
           lat?: number | null
@@ -21882,7 +21884,9 @@ export type Database = {
           precision?: string | null
           provider?: string
           resolved_at?: string
+          state?: string | null
           status?: string
+          suburb?: string | null
         }
         Update: {
           lat?: number | null
@@ -21891,7 +21895,9 @@ export type Database = {
           precision?: string | null
           provider?: string
           resolved_at?: string
+          state?: string | null
           status?: string
+          suburb?: string | null
         }
         Relationships: []
       }
