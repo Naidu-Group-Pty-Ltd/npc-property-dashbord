@@ -64,6 +64,7 @@ export function ActivateClientDialog({
   const [clientMatches, setClientMatches] = useState<PickerClient[]>([]);
   const [searchState, setSearchState] = useState<"idle" | "searching" | "ready" | "error">("idle");
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [inactiveMatches, setInactiveMatches] = useState(0);
   const [selectedClientLabel, setSelectedClientLabel] = useState<string | null>(null);
 
   const modelBReady = Boolean(program?.legal_approval && program?.program_version?.trim());
@@ -81,6 +82,7 @@ export function ActivateClientDialog({
     setClientMatches([]);
     setSearchState("idle");
     setSearchError(null);
+    setInactiveMatches(0);
     setSelectedClientLabel(clientId ? clientName ?? null : null);
 
     let alive = true;
@@ -102,15 +104,17 @@ export function ActivateClientDialog({
       setClientMatches([]);
       setSearchState("idle");
       setSearchError(null);
+      setInactiveMatches(0);
       return;
     }
     let alive = true;
     setSearchState("searching");
     const timer = setTimeout(() => {
       amlCasesApi.searchClients(q)
-        .then(({ clients: found }) => {
+        .then(({ clients: found, inactive_matches }) => {
           if (!alive) return;
           setClientMatches(found ?? []);
+          setInactiveMatches(inactive_matches ?? 0);
           setSearchState("ready");
           setSearchError(null);
         })
@@ -228,7 +232,9 @@ export function ActivateClientDialog({
                           {searchState === "searching" ? "Searching…"
                             : searchState === "error"
                               ? (searchError ?? "Client search is unavailable.")
-                              : "No active client matches that name."}
+                              : inactiveMatches > 0
+                                ? `${inactiveMatches} client${inactiveMatches === 1 ? "" : "s"} match that name but ${inactiveMatches === 1 ? "is" : "are"} not marked active. Mark the client active on their record first.`
+                                : "No active client matches that name."}
                         </li>
                       ) : (
                         clientMatches.map((c) => (

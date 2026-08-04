@@ -735,27 +735,59 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // AML-role action, so this op provides its own minimal, AML-gated
         // lookup instead of widening that broker.
         //
-        // Deliberately narrow: active clients only, name match only, capped
-        // result set, and a projection carrying no financial or contact data.
+        // Deliberately narrow: name match only, capped result set, and a
+        // projection carrying no financial or contact data. Only active
+        // clients are selectable; inactive name matches are counted so the
+        // operator is told *why* a real client is not offered instead of
+        // being shown a bare "no match".
         if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
         const q = String(body.query ?? '').trim();
-        if (q.length < 2) return jsonResponse({ clients: [] });
+        if (q.length < 2) return jsonResponse({ clients: [], inactive_matches: 0 });
 
         const safe = q.replace(/[%,()]/g, ' ').trim();
-        if (!safe) return jsonResponse({ clients: [] });
+        if (!safe) return jsonResponse({ clients: [], inactive_matches: 0 });
 
-        const { data: rows, error: searchErr } = await admin
+        // A full name ("Rugesh Naidu") never matches a single name column, so
+        // match each token independently and require all tokens to be present
+        // somewhere in the person's name.
+        const tokens = safe.split(/\s+/).filter((t) => t.length >= 2).slice(0, 4);
+        const terms = tokens.length > 0 ? tokens : [safe];
+        const nameCols = [
+          'primary_first_name', 'primary_middle_name', 'primary_surname',
+          'secondary_first_name', 'secondary_middle_name', 'secondary_surname',
+        ];
+        const orFilter = terms
+          .flatMap((t) => nameCols.map((c) => `${c}.ilike.%${t}%`))
+          .join(',');
+
+        const { data: candidates, error: searchErr } = await admin
           .from('clients')
-          .select('id, primary_first_name, primary_surname, is_active')
-          .eq('is_active', true)
-          .or(`primary_first_name.ilike.%${safe}%,primary_surname.ilike.%${safe}%`)
+          .select([
+            'id', 'is_active',
+            ...nameCols,
+          ].join(', '))
+          .or(orFilter)
           .order('primary_surname', { ascending: true })
-          .limit(20);
+          .limit(200);
         if (searchErr) return jsonResponse({ error: searchErr.message }, 400);
+
+        const nameOf = (r: any, prefix: 'primary' | 'secondary') =>
+          [r[`${prefix}_first_name`], r[`${prefix}_middle_name`], r[`${prefix}_surname`]]
+            .filter(Boolean).join(' ').trim();
+
+        const matched = (candidates ?? []).filter((r: any) => {
+          const primary = nameOf(r, 'primary').toLowerCase();
+          const secondary = nameOf(r, 'secondary').toLowerCase();
+          return terms.every((t) => primary.includes(t.toLowerCase()))
+            || terms.every((t) => secondary.includes(t.toLowerCase()));
+        });
+
+        const active = matched.filter((r: any) => r.is_active === true).slice(0, 20);
+        const inactiveMatches = matched.length - matched.filter((r: any) => r.is_active === true).length;
 
         // Flag clients that already hold an open case so the operator does not
         // start a duplicate (the unique index would reject it at 409 anyway).
-        const ids = (rows ?? []).map((r: any) => r.id);
+        const ids = active.map((r: any) => r.id);
         let openCaseIds = new Set<string>();
         if (ids.length > 0) {
           const { data: openCases } = await admin.schema('aml').from('cases')
@@ -766,14 +798,16 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
         return jsonResponse({
-          clients: (rows ?? []).map((r: any) => ({
+          clients: active.map((r: any) => ({
             id: r.id,
-            label: [r.primary_first_name, r.primary_surname].filter(Boolean).join(' ').trim() || 'Unnamed client',
+            label: nameOf(r, 'primary') || nameOf(r, 'secondary') || 'Unnamed client',
             is_active: r.is_active,
             has_open_case: openCaseIds.has(String(r.id)),
           })),
+          inactive_matches: inactiveMatches,
         });
       }
+
 
       case 'client_summary': {
         // Phase 4 — persistent AML summary for the master client record.
