@@ -496,14 +496,14 @@ export function importDesignSystem(
     }
   } else {
     const read = readDesignSystemManifest(raw);
-    if (!read.ok) return read;
+    if (read.ok === false) return read;
     manifest = read.manifest;
     tokens = manifest.tokens;
     kind = 'manifest';
   }
 
   const derived = deriveReportNeutrals(tokens);
-  if (!derived.ok) return derived;
+  if (derived.ok === false) return derived;
 
   const name = (opts.name ?? '').trim()
     || (manifest?.namespace ? manifest.namespace.replace(/_[0-9a-f]{6,}$/i, '').replace(/([a-z])([A-Z])/g, '$1 $2') : '')
