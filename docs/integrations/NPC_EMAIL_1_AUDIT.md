@@ -318,6 +318,33 @@ Retirement is now opt-in, in `_shared/listingImageReconcile.pure.ts`:
   not "there is nothing", and conflating the two is what turned a quiet upstream into a
   blank card.
 
+### Why one photograph became nine rows
+
+Retirement was only half of it. `imageIdentity` drops the query string and its
+docstring called that stable — "Airtable re-signs an attachment on every read, so
+the same photo arrives with a different `?ts=…&sig=…` each time … The path alone is
+stable." It is not. An Airtable attachment URL is
+
+```
+https://v5.airtableusercontent.com/v3/u/56/56/<epoch-ms>/<sig>/<sig>
+```
+
+and the expiry and signature are in the **path**. Every read of an unchanged
+attachment produced a brand-new identity, so the harvest filed another row for a
+photograph it already held — and then retired the copy from the previous pass.
+One listing carried the same photo under nine URLs recorded two hours apart, all
+with one checksum.
+
+Over a single day that produced 7,524 rows representing 4,152 distinct
+photographs, 4,076 of them `gone`, and 708 photographs across 67 listings left
+with no stored row at all.
+
+The bytes are the only thing that does not change between passes, so they settle
+identity: `harvestListing` now adopts the row already holding a checksum rather
+than inserting a second one. The accumulated damage is repaired by
+`supabase/migrations/20260828000000_listing_image_duplicate_repair.sql`, which
+restored 699 photographs and took the average gallery from 7.9 to 9.5.
+
 Two consequences worth knowing:
 
 - **Ordering merges rather than displaces.** Three URLs arriving from Airtable do not push
