@@ -1070,11 +1070,27 @@ Three things are worth knowing about how those lists were arrived at:
 of strings that could be written down and be true. Writing one anyway is exactly
 C5. Instead it is a **pass-through** format (`PASSTHROUGH` in `binding.pure.ts`):
 the archetype contributes the spine, the page band, the chapter label and the
-document name, and the uploaded template supplies the chapters. Every section is
-bound, in order, at full confidence, and nothing goes to the appendix. The plan
-is rebuilt from the structure rather than read back — rows are matched by chapter
+document name, and the uploaded template supplies the chapters. They are bound
+in order, at full confidence, and nothing goes to the appendix. The plan is
+rebuilt from the structure rather than read back — rows are matched by chapter
 title, and a template with two sections called *Notes* would otherwise collapse
 to one row and silently unbind the other.
+
+**The chapters are the template's *top-level* sections, not every section.** The
+first version bound all of them, and a render said what that costs: a Snapshot
+whose 19 sections are 8 `##` and 11 two-line `###` came out as 19 chapters, so
+fourteen of its twenty-one body pages carried a heading and one to three lines —
+page 11 at 0.6% ink. `.chapter { page-break-before: always }` is global, so a
+chapter is a sheet, and eight two-line sub-headings became eight sheets. It is
+the same defect **D1** records fixing, arriving by a different door:
+`planConvertedChapters` folds a sub-section into its parent only when the binding
+did not want it, and a pass-through binding wanted everything. Fixing it took the
+document from 19 chapters to 8 and from 23 pages to 14, still with nothing
+unfilled and nothing in the appendix. The real Report Q&A renderer already agreed
+— `planFromMarkdown` picks one heading level with `chapterLevelOf`. A sub-section
+with *no* shallower section before it still becomes a chapter, because it has no
+parent to fold into and `unbound` is empty for this format, so dropping it would
+lose it.
 
 Adding a format is one entry in `FORMAT_CHAPTERS` (or one in `PASSTHROUGH`).
 Three other places may need a line at the same time:

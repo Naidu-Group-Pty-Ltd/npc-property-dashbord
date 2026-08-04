@@ -174,10 +174,39 @@ export const FORMAT_CHAPTERS: Partial<Record<ReportArchetypeId, readonly string[
  * invented list that binds a few chapters, sends the rest to the appendix, and
  * looks entirely correct while doing it. So the honest answer is that this
  * format contributes a spine, a page band, a chapter label and a document name,
- * and the template supplies the chapters. Every section is bound, in order,
- * and nothing goes to the appendix.
+ * and the template supplies the chapters. Every section is accounted for, in
+ * order, and nothing goes to the appendix.
+ *
+ * ## One heading level, not every heading
+ *
+ * The chapters are the template's *top-level* sections. The first version bound
+ * every extracted section, and a render said what that costs: a Snapshot whose
+ * 19 sections are 8 `##` and 11 two-line `###` came out as 19 chapters, so
+ * fourteen of its twenty-one body pages carried a heading and one to three
+ * lines. `.chapter { page-break-before: always }` is global, so a chapter is a
+ * sheet, and eight two-line sub-headings became eight sheets.
+ *
+ * That is the same defect `planConvertedChapters` records fixing for the
+ * declarative formats, arriving by a different door: its folding rule skips
+ * anything the binding wanted, and a pass-through binding wanted everything.
+ * The real Report Q&A renderer already agrees — `planFromMarkdown` picks one
+ * heading level with `chapterLevelOf` and everything below it stays in the
+ * prose. So a section with a shallower section before it is left to fold into
+ * it, and nothing is lost.
  */
 const PASSTHROUGH: readonly ReportArchetypeId[] = ['report-qa'];
+
+/**
+ * The sections a pass-through format makes chapters of.
+ *
+ * A section earns a chapter when nothing before it is shallower — which is the
+ * top level, and also a document that opens at `##` before its first `#`, where
+ * there is no parent to fold into and dropping the section would lose it.
+ */
+function passthroughSections(structure: ExtractedStructure): ExtractedSection[] {
+  return structure.sections.filter((section, i) =>
+    !structure.sections.slice(0, i).some((earlier) => earlier.depth < section.depth));
+}
 
 /** True when a format takes its chapters from the template rather than declaring them. */
 export function isPassthroughFormat(format: ReportArchetypeId): boolean {
@@ -194,7 +223,7 @@ export function bindableChapters(
   format: ReportArchetypeId,
   structure: ExtractedStructure,
 ): readonly string[] {
-  if (isPassthroughFormat(format)) return structure.sections.map((s) => s.title);
+  if (isPassthroughFormat(format)) return passthroughSections(structure).map((s) => s.title);
   return FORMAT_CHAPTERS[format] ?? [];
 }
 
@@ -329,16 +358,22 @@ export function proposeBinding(
   const chapters = bindableChapters(format, structure);
   const sections = structure.sections;
 
-  // A pass-through format's chapters *are* the sections, in order. Scoring them
-  // against themselves would be a slow way of arriving here, and a wrong one:
-  // two sections with the same title would compete for one chapter and leave
-  // the other unbound.
+  // A pass-through format's chapters *are* its top-level sections, in order.
+  // Scoring them against themselves would be a slow way of arriving here, and a
+  // wrong one: two sections with the same title would compete for one chapter
+  // and leave the other unbound.
+  //
+  // `unbound` stays empty. The sub-sections that are not chapters are not
+  // orphans — `planConvertedChapters` folds each into the parent it sits under,
+  // which is where the uploader put it. Listing them as unbound would send them
+  // to an appendix instead, which is the one thing this format promises not to
+  // do.
   if (isPassthroughFormat(format)) {
     return {
       format,
-      bindings: sections.map((section, s) => ({
+      bindings: passthroughSections(structure).map((section) => ({
         chapter: section.title,
-        sectionIndex: s,
+        sectionIndex: section.index,
         confidence: 100,
         reason: 'This format takes its chapters from the template, so the section is the chapter.',
         confirmed: false,
@@ -548,9 +583,9 @@ export function readBindingPlan(
     const rows = Array.isArray(confirmed) ? confirmed : [];
     return {
       format,
-      bindings: structure.sections.map((section, s) => ({
+      bindings: passthroughSections(structure).map((section, s) => ({
         chapter: section.title,
-        sectionIndex: s,
+        sectionIndex: section.index,
         confidence: 100,
         reason: 'This format takes its chapters from the template, so the section is the chapter.',
         confirmed: (rows[s] as Record<string, unknown> | undefined)?.confirmed === true,

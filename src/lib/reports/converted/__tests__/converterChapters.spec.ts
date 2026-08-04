@@ -165,19 +165,36 @@ describe.each(FORMATS)('$id chapters', ({ id, printed, minimal, documentName }) 
   });
 });
 
-/** An uploaded template, as `extractStructure` would return it. */
+/**
+ * An uploaded template, as `extractStructure` would return it.
+ *
+ * A title prefixed with `>` is a `depth: 2` sub-section of whatever came
+ * before it, which is how a template's own `###` headings arrive.
+ */
 const structure = (titles: readonly string[]): ExtractedStructure => ({
   title: 'A Client Conversation',
-  sections: titles.map((title, index) => ({
-    index,
-    title,
-    markdown: `Something about ${title.toLowerCase()}.`,
-    level: 1,
-    tabular: false,
-    chars: 40,
-  })),
-  chars: 40 * titles.length,
-  truncated: false,
+  sections: titles.map((raw, index) => {
+    const depth = raw.startsWith('>') ? 2 : 1;
+    const title = depth === 2 ? raw.slice(1) : raw;
+    return {
+      index,
+      depth: depth as 1 | 2,
+      title,
+      markdown: `Something about ${title.toLowerCase()}.`,
+      chars: 40,
+      tables: 0,
+      tabular: false,
+    };
+  }),
+  headingCount: titles.length,
+  notices: {
+    flattened: 0,
+    tooShort: 0,
+    charsOmitted: 0,
+    unstructured: false,
+    labelsFolded: 0,
+    furnitureDropped: 0,
+  },
 });
 
 describe('report Q&A takes its chapters from the template', () => {
@@ -215,6 +232,36 @@ describe('report Q&A takes its chapters from the template', () => {
     const twins = structure(['Notes', 'Notes']);
     const plan = readBindingPlan(proposeBinding('report-qa', twins), 'report-qa', twins);
     expect(plan.bindings.map((b) => b.sectionIndex)).toEqual([0, 1]);
+    expect(plan.unbound).toEqual([]);
+  });
+
+  it('makes chapters of the top level only, leaving sub-sections to fold', () => {
+    // A chapter is a sheet — `.chapter { page-break-before: always }` is global.
+    // Binding every extracted section made every two-line `###` its own page:
+    // a real Snapshot of 8 `##` and 11 `###` rendered fourteen body pages
+    // carrying a heading and one to three lines. `planConvertedChapters` folds
+    // a sub-section into its parent only when the binding did not want it, so
+    // wanting everything is what defeated it.
+    const nested = structure([
+      'How this was calculated',
+      '>DTI ratio',
+      '>Stress test',
+      'Audit trail',
+    ]);
+    const plan = proposeBinding('report-qa', nested);
+    expect(plan.bindings.map((b) => b.chapter)).toEqual(['How this was calculated', 'Audit trail']);
+    expect(plan.bindings.map((b) => b.sectionIndex)).toEqual([0, 3]);
+    // Not unbound: unbound goes to the appendix, and this format promises none.
+    // The folding rule in `planConvertedChapters` puts them under their parent.
+    expect(plan.unbound).toEqual([]);
+  });
+
+  it('keeps a sub-section that has no parent to fold into', () => {
+    // A template that opens at `###`. There is nothing shallower before it, so
+    // folding would drop it and `unbound` is empty — it has to be a chapter.
+    const orphan = structure(['>Opening remarks', 'The conversation', '>A follow-up']);
+    const plan = proposeBinding('report-qa', orphan);
+    expect(plan.bindings.map((b) => b.chapter)).toEqual(['Opening remarks', 'The conversation']);
     expect(plan.unbound).toEqual([]);
   });
 
