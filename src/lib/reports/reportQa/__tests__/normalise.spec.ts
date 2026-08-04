@@ -155,27 +155,27 @@ describe('refusals', () => {
   ])('refuses %s', (_label, over, message) => {
     const r = build(over as never);
     expect(r.ok).toBe(false);
-    expect(!r.ok && r.error).toContain(message);
+    expect(r.ok === false && r.error).toContain(message);
   });
 
   it('refuses a structured report that was never written', () => {
     const r = build({ subject: 'structured' });
-    expect(!r.ok && r.error).toContain('no structured report stored');
+    expect(r.ok === false && r.error).toContain('no structured report stored');
   });
 
   it('refuses an answer id that is not in this conversation', () => {
     const r = build({ subject: 'answer', messageId: mid(99) });
-    expect(!r.ok && r.error).toContain('no assistant message with that id');
+    expect(r.ok === false && r.error).toContain('no assistant message with that id');
   });
 
   it('refuses a message id that is not a uuid', () => {
     const r = build({ subject: 'answer', messageId: 'nope' });
-    expect(!r.ok && r.error).toContain('must be a uuid');
+    expect(r.ok === false && r.error).toContain('must be a uuid');
   });
 
   it('refuses to typeset an empty answer', () => {
     const r = build({ subject: 'answer', messageId: mid(1), messages: pair(0, '   ') });
-    expect(!r.ok && r.error).toContain('empty');
+    expect(r.ok === false && r.error).toContain('empty');
   });
 });
 

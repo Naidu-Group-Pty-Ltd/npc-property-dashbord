@@ -30,7 +30,7 @@ const plan = (row: unknown, audienceOverride?: string) => {
     brandName: 'Tenant Advisory',
     audienceOverride,
   });
-  if (!built.ok) throw new Error(built.error);
+  if (built.ok === false) throw new Error(built.error);
   return { report: built.report, ...planSections(built.report) };
 };
 

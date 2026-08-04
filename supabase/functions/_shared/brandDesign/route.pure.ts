@@ -91,7 +91,7 @@ export function parseBrandRequest(body: unknown): BrandRequestParse {
 
   if (action === 'audit' || action === 'save') {
     const read = readBrandDesignSystem(b.system);
-    if (!read.ok) return { ok: false, error: read.error };
+    if (read.ok === false) return { ok: false, error: read.error };
     if (action === 'audit') return { ok: true, request: { action: 'audit', system: read.system } };
 
     const rawId = typeof b.id === 'string' ? b.id.trim() : '';

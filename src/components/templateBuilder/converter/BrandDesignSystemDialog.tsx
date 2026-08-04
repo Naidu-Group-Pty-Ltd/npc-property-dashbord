@@ -216,7 +216,7 @@ export function BrandDesignSystemDialog({ open, onOpenChange, onSaved, companyNa
     // The same reader the route uses, run here first so a missing name is a
     // sentence rather than a round trip.
     const read = readBrandDesignSystem(candidate);
-    if (!read.ok) { toast.error(read.error); return; }
+    if (read.ok === false) { toast.error(read.error); return; }
 
     setSaving(true);
     try {

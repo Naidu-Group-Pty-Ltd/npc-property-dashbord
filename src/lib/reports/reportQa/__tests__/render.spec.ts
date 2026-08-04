@@ -68,7 +68,7 @@ const render = (over: Partial<Parameters<typeof buildReportQaDocument>[0]> = {})
   const built = buildReportQaDocument({
     conversation: conv(), messages: pair(0), subject: 'transcript', preparedOn: NOW, ...over,
   });
-  if (!built.ok) throw new Error(built.error);
+  if (built.ok === false) throw new Error(built.error);
   return renderReportQaFromBrand({ document: built.document, snapshot });
 };
 
