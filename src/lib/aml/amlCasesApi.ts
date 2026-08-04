@@ -140,8 +140,12 @@ export const amlCasesApi = {
 
   /** Activation client picker — AML-role-gated, active clients only (§13.4). */
   searchClients: (query: string) =>
-    invoke<{ clients: Array<{ id: string; label: string; is_active: boolean; has_open_case: boolean }> }>(
-      { op: "search_clients", query }),
+    invoke<{
+      clients: Array<{ id: string; label: string; is_active: boolean; has_open_case: boolean }>;
+      /** Name matches that exist but are not marked active, so the UI can explain. */
+      inactive_matches?: number;
+    }>({ op: "search_clients", query }),
+
 
   clientSummary: (client_id: string) =>
     invoke<{
