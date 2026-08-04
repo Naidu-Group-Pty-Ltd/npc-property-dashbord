@@ -77,7 +77,7 @@ const EXEMPT: Readonly<Record<string, string>> = {
  */
 const OWN_TAGS = (() => {
   const source = readFileSync(
-    resolve(REPO, 'supabase/functions/_shared/reports/reportQa/markdown.pure.ts'),
+    resolve(REPO, 'supabase/functions/_shared/reports/markdown.pure.ts'),
     'utf8',
   );
   const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');

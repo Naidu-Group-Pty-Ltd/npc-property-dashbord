@@ -164,9 +164,49 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     documentName: 'Market Intelligence Report',
     chapterLabel: 'Section',
     slots: FULL_SLOTS,
-    pageBudget: [8, 20],
+    // Pinned by render when the format was implemented. The band had been
+    // declared before anything rendered against it, and the ceiling was wrong.
+    //
+    // Six shapes drawn from the record, rendered through WeasyPrint, claimed
+    // against actual pages: a `market_pulse` with four layers 14/14, a `full`
+    // with three layers empty 18/18, a `full` 23/23, an investor edition 22/23,
+    // one carrying a correlation block 24/24, and the record's 244,332-character
+    // runaway layer clipped to the section cap 31/29. So a real report is
+    // fourteen to twenty-four pages and the estimate is within a page of the
+    // print on five of six.
+    //
+    // The ceiling is set by the caps, not by the observed reports, and that is a
+    // deliberate departure from how the other seven bands were pinned. The
+    // render route treats a band violation as fatal, so a band tighter than what
+    // `MAX_SECTION_CHARS` and `MAX_DOCUMENT_LINES` actually permit would turn a
+    // pathological-but-correctly-handled payload into a failed render — the
+    // document would be right, clipped, and honest about it, and would be thrown
+    // away for being long.
+    //
+    // Measured at the caps: one runaway layer clipped to the section cap claims
+    // 33, two claim 39, and a payload where every prose block hits the cap
+    // claims 44. (All eight layers runaway claims 36 rather than more, because
+    // the document budget starts dropping sections and the page says so.) 46
+    // leaves two pages of margin.
+    //
+    // What the ceiling still catches is a cap that regressed — a document that
+    // escaped the clipping entirely — which is the only way past 46.
+    //
+    // The floor is the arithmetic minimum, and a render confirmed it exactly:
+    // cover, contents, an executive summary, a next-steps page and the closing
+    // page is five, and that is what a report whose layers all failed produces.
+    pageBudget: [5, 46],
     contents: true,
-    note: 'Comparables, trends and commentary for a locality.',
+    // The original note described a locality report — "comparables, trends and
+    // commentary for a locality" — which is not this document and never was. It
+    // reads as having been written from the archetype's name rather than from
+    // the generator, which is the hazard of declaring an archetype before
+    // anything implements it.
+    note: 'The eight-layer macro brief: RBA and rates, housing, sentiment, '
+      + 'regulation, the economy, suburb intelligence, competitive edge, and a '
+      + 'ninety-day outlook that synthesises the rest. National in scope, with '
+      + 'one suburb-level layer. The second format whose payload is '
+      + 'model-authored Markdown rather than typed figures.',
   },
   'borrowing-capacity': {
     id: 'borrowing-capacity',
@@ -328,6 +368,17 @@ export interface BuildSpineInput {
   closingPages?: number;
   /** Override the archetype's contents default. */
   contents?: boolean;
+  /**
+   * Pages the contents page will take. One, unless a format outgrows it.
+   *
+   * Added when the Market Intelligence format became the first with enough
+   * chapters — fourteen or fifteen, each with a note — to run the contents onto
+   * a second page. Every format before it had few enough that the fixed single
+   * page was right, and the assumption was invisible until a render disagreed
+   * with the budget by exactly one page. Formats that do not pass it are
+   * unchanged.
+   */
+  contentsPages?: number;
 }
 
 /**
@@ -353,7 +404,7 @@ export function buildSpine(input: BuildSpineInput): SpineEntry[] {
       slot: 'contents',
       id: `${archetype.id}.contents`,
       title: 'Contents',
-      pageBudget: 1,
+      pageBudget: Math.max(1, Math.trunc(input.contentsPages ?? 1)),
     });
   }
 

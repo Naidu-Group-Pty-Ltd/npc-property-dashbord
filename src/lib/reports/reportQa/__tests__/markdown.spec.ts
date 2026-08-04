@@ -508,6 +508,24 @@ describe('contract', () => {
 
   it('reduces markdown to plain text for a contents entry', () => {
     expect(markdownToPlainText('## **Heading** with `code` and 🏠')).toBe('Heading with code and');
-    expect(markdownToPlainText('a very long heading indeed', 10)).toBe('a very lon');
+  });
+
+  it('truncates on a word, inside the budget, and says it was cut', () => {
+    // Changed when the Market Intelligence render showed a chapter standfirst
+    // ending mid-word on a hyphenated compound — "…the board's statement noting
+    // trimmed" — which reads as a truncated database column rather than a
+    // summary. The ellipsis is inside the cap, not added to it, so a caller's
+    // budget still means what it says.
+    const cut = markdownToPlainText('a very long heading indeed about interest rates', 20);
+    expect(cut.length).toBeLessThanOrEqual(20);
+    expect(cut.endsWith('…')).toBe(true);
+    expect(cut).toBe('a very long heading…');
+
+    // A single very long token is cut where it falls rather than collapsing the
+    // whole string to an ellipsis.
+    expect(markdownToPlainText('Supercalifragilisticexpialidocious', 10)).toBe('Supercali…');
+
+    // Under the cap, nothing happens at all.
+    expect(markdownToPlainText('short', 40)).toBe('short');
   });
 });

@@ -30,19 +30,18 @@
  */
 import type { ChapterInput } from '../../reportDesign/structure.pure.ts';
 import type { MarkdownHeading, MarkdownResult } from './markdown.pure.ts';
+import { pagesForLines } from '../markdown.pure.ts';
 import type { ReportQaDocument } from './payload.pure.ts';
 
 /**
  * Body lines that fit one page.
  *
- * `TEXT_BLOCK.heightMm` is 253mm ≈ 717pt; body copy is 10.5pt on roughly 15.5pt
- * of leading, which is 46 lines of text with nothing else on the page. Real
- * pages carry headings, table furniture and callout padding, all of which
- * `markdown.pure.ts` already charges for in its own line counts, so the working
- * figure is lower than the arithmetic ceiling. **Pinned by render**, not by that
- * arithmetic.
+ * Moved to `../markdown.pure.ts` beside `CHARS_PER_LINE`, which is the other
+ * half of the same measurement, when the Market Intelligence report became the
+ * second format that needed it. Re-exported so this module's callers and
+ * `render.spec.ts` are unchanged.
  */
-export const LINES_PER_PAGE = 38;
+export { LINES_PER_PAGE } from '../markdown.pure.ts';
 
 /** A chapter always claims at least this, because a chapter header opens one. */
 export const MIN_CHAPTER_PAGES = 1;
@@ -60,8 +59,7 @@ export const MAX_CHAPTERS = 24;
 /** Turns before the transcript stops opening a chapter for each one. */
 export const MAX_TRANSCRIPT_CHAPTERS = 12;
 
-const pagesFor = (lines: number): number =>
-  Math.max(MIN_CHAPTER_PAGES, Math.ceil(lines / LINES_PER_PAGE));
+const pagesFor = pagesForLines;
 
 /**
  * The level whose headings become chapters.
