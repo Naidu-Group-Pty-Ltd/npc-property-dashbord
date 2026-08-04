@@ -18,6 +18,15 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.55.0";
 import { verifyAuth } from "../_shared/auth.ts";
+import {
+  CLIENT_SEARCH_SELECT,
+  buildClientSearchOrFilter,
+  sanitizeClientSearchQuery,
+  selectActivationMatches,
+  tokenizeClientSearch,
+  toActivationClientResult,
+  type ClientSearchRow,
+} from "../_shared/aml/clientSearchMatch.pure.ts";
 
 import { enforceCsrf, csrfDenied } from "../_shared/csrfGuard.ts";
 import { withRequestOrigin } from "../_shared/corsOrigin.ts";
@@ -108,6 +117,19 @@ function isMissingColumnError(error: any): boolean {
   return error?.code === 'PGRST204'
     || /column .* does not exist/i.test(msg)
     || /Could not find the '.*' column/i.test(msg);
+}
+
+/**
+ * True when an RPC call failed only because the function has not been migrated
+ * in this environment yet (edge functions deploy independently of migrations).
+ * Same fail-open-on-schema, never-on-authorization posture as
+ * isMissingColumnError above.
+ */
+function isMissingFunctionError(error: any): boolean {
+  const msg = String(error?.message ?? '');
+  return error?.code === 'PGRST202'
+    || /Could not find the function/i.test(msg)
+    || /function .* does not exist/i.test(msg);
 }
 
 function jsonResponse(data: any, status = 200) {
@@ -389,7 +411,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           return jsonResponse({ error: 'Human confirmation is required to open an AML case' }, 400);
         }
 
-        // Verify the client exists and is active before creating an AML case.
+        // Verify the client exists. An inactive client is NOT rejected here:
+        // this human-confirmed form is the sanctioned place an authorised user
+        // confirms an existing client is active, so the flip to active happens
+        // atomically with case creation below instead of being demanded of
+        // some other screen first.
         const { data: client, error: clientErr } = await admin
           .from('clients')
           .select('id, is_active')
@@ -397,9 +423,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           .maybeSingle();
         if (clientErr) throw clientErr;
         if (!client) return jsonResponse({ error: 'Client not found' }, 404);
-        if (client.is_active !== true) {
-          return jsonResponse({ error: 'Client is not active; cannot activate for AML' }, 409);
-        }
+        const clientWasInactive = client.is_active !== true;
 
         // Duplicate-open guard: one open case per client at a time.
         const { data: existing } = await admin
@@ -445,6 +469,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           reason,
           program_version: programVersion,
           human_confirmed: true,
+          client_was_inactive: clientWasInactive,
           activated_by: userId,
           activated_by_email: userEmail,
           activated_at: new Date().toISOString(),
@@ -477,26 +502,87 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           created_by: userId,
           metadata: { activation },
         };
-        let { data: created, error: createErr } = await admin
-          .schema('aml').from('cases')
-          .insert({ ...baseInsert, ...dimensionFields }).select('*').single();
-        if (createErr && isMissingColumnError(createErr)) {
-          ({ data: created, error: createErr } = await admin
-            .schema('aml').from('cases').insert(baseInsert).select('*').single());
-        }
-        if (createErr) {
-          // Partial unique index aml_cases_one_open_per_client closes the
-          // read-then-write race above; surface it as the same 409 contract.
-          if (createErr.code === '23505') {
-            return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+        let created: any = null;
+        let clientMarkedActive = false;
+
+        if (clientWasInactive) {
+          // Atomic path (Part 5): mark the client active and open the case in
+          // ONE database transaction, so a failed case insert can never leave
+          // the client active without a case (or the reverse). The RPC locks
+          // the client row, flips is_active, inserts the case and rolls the
+          // whole thing back on any error — including the duplicate-open
+          // unique index, which still surfaces as the same 409 contract.
+          const { data: txResult, error: txErr } = await admin.rpc(
+            'aml_activate_client_open_case',
+            { p_client_id: clientId, p_case: { ...baseInsert, ...dimensionFields } },
+          );
+          if (txErr && !isMissingFunctionError(txErr)) {
+            if (txErr.code === '23505' || /aml_cases_one_open_per_client|already exists/i.test(String(txErr.message ?? ''))) {
+              return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+            }
+            if (txErr.code === 'P0002') return jsonResponse({ error: 'Client not found' }, 404);
+            throw txErr;
           }
-          throw createErr;
+          if (!txErr) {
+            created = (txResult as any)?.case ?? null;
+            clientMarkedActive = Boolean((txResult as any)?.client_marked_active);
+            if (!created) throw new Error('Activation transaction returned no case');
+          } else {
+            // The transactional RPC has not been migrated in this environment
+            // yet. Compensated fallback: flip active, insert the case, and
+            // revert the flip if the insert fails for any reason so the client
+            // is never left active without their AML case.
+            const { error: flipErr } = await admin
+              .from('clients').update({ is_active: true }).eq('id', clientId);
+            if (flipErr) throw flipErr;
+            clientMarkedActive = true;
+            let { data: fallbackCreated, error: createErr } = await admin
+              .schema('aml').from('cases')
+              .insert({ ...baseInsert, ...dimensionFields }).select('*').single();
+            if (createErr && isMissingColumnError(createErr)) {
+              ({ data: fallbackCreated, error: createErr } = await admin
+                .schema('aml').from('cases').insert(baseInsert).select('*').single());
+            }
+            if (createErr) {
+              await admin.from('clients').update({ is_active: false }).eq('id', clientId);
+              if (createErr.code === '23505') {
+                return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+              }
+              throw createErr;
+            }
+            created = fallbackCreated;
+          }
+        } else {
+          // Already-active client: existing case-creation behaviour unchanged.
+          let { data: createdRow, error: createErr } = await admin
+            .schema('aml').from('cases')
+            .insert({ ...baseInsert, ...dimensionFields }).select('*').single();
+          if (createErr && isMissingColumnError(createErr)) {
+            ({ data: createdRow, error: createErr } = await admin
+              .schema('aml').from('cases').insert(baseInsert).select('*').single());
+          }
+          if (createErr) {
+            // Partial unique index aml_cases_one_open_per_client closes the
+            // read-then-write race above; surface it as the same 409 contract.
+            if (createErr.code === '23505') {
+              return jsonResponse({ error: 'An open AML case already exists for this client' }, 409);
+            }
+            throw createErr;
+          }
+          created = createdRow;
         }
 
+        const clientActivation = {
+          was_inactive: clientWasInactive,
+          marked_active: clientMarkedActive,
+        };
+
         await appendEvent(admin, created.id, 'case_created',
-          `Case ${ref} activated (Model ${model}) for ${displayName}`,
+          `Case ${ref} activated (Model ${model}) for ${displayName}` +
+            (clientMarkedActive ? ' — client record marked active' : ''),
           {
             activation, client_id: clientId,
+            client_activation: clientActivation,
             activation_contract: {
               activation_timing: dimensionFields.activation_timing,
               agreement_state: dimensionFields.agreement_state,
@@ -560,7 +646,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
           { client_portal: portalAccess, action_url: '/client/aml' },
           userId, userEmail);
 
-        return jsonResponse({ case: created, activation, client_portal: portalAccess });
+        return jsonResponse({
+          case: created,
+          activation,
+          client_activation: clientActivation,
+          client_portal: portalAccess,
+        });
       }
 
       case 'update': {
@@ -735,59 +826,33 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         // AML-role action, so this op provides its own minimal, AML-gated
         // lookup instead of widening that broker.
         //
-        // Deliberately narrow: name match only, capped result set, and a
-        // projection carrying no financial or contact data. Only active
-        // clients are selectable; inactive name matches are counted so the
-        // operator is told *why* a real client is not offered instead of
-        // being shown a bare "no match".
+        // Deliberately narrow: canonical `clients` table only, tokenised name
+        // match, capped result set, identification projection only (never
+        // financial data). Both ACTIVE and INACTIVE clients are returned and
+        // selectable — the activation form is the sanctioned place an
+        // authorised user confirms an existing client is active, so inactive
+        // records are offered (clearly labelled) instead of hidden behind a
+        // "mark them active somewhere else first" dead end. Matching lives in
+        // _shared/aml/clientSearchMatch.pure.ts so it is unit-testable.
         if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
-        const q = String(body.query ?? '').trim();
-        if (q.length < 2) return jsonResponse({ clients: [], inactive_matches: 0 });
-
-        const safe = q.replace(/[%,()]/g, ' ').trim();
-        if (!safe) return jsonResponse({ clients: [], inactive_matches: 0 });
-
-        // A full name ("Rugesh Naidu") never matches a single name column, so
-        // match each token independently and require all tokens to be present
-        // somewhere in the person's name.
-        const tokens = safe.split(/\s+/).filter((t) => t.length >= 2).slice(0, 4);
-        const terms = tokens.length > 0 ? tokens : [safe];
-        const nameCols = [
-          'primary_first_name', 'primary_middle_name', 'primary_surname',
-          'secondary_first_name', 'secondary_middle_name', 'secondary_surname',
-        ];
-        const orFilter = terms
-          .flatMap((t) => nameCols.map((c) => `${c}.ilike.%${t}%`))
-          .join(',');
+        const q = sanitizeClientSearchQuery(body.query);
+        const terms = tokenizeClientSearch(q);
+        if (q.length < 2 || terms.length === 0) return jsonResponse({ clients: [] });
 
         const { data: candidates, error: searchErr } = await admin
           .from('clients')
-          .select([
-            'id', 'is_active',
-            ...nameCols,
-          ].join(', '))
-          .or(orFilter)
+          .select(CLIENT_SEARCH_SELECT)
+          .or(buildClientSearchOrFilter(terms))
           .order('primary_surname', { ascending: true })
           .limit(200);
         if (searchErr) return jsonResponse({ error: searchErr.message }, 400);
 
-        const nameOf = (r: any, prefix: 'primary' | 'secondary') =>
-          [r[`${prefix}_first_name`], r[`${prefix}_middle_name`], r[`${prefix}_surname`]]
-            .filter(Boolean).join(' ').trim();
-
-        const matched = (candidates ?? []).filter((r: any) => {
-          const primary = nameOf(r, 'primary').toLowerCase();
-          const secondary = nameOf(r, 'secondary').toLowerCase();
-          return terms.every((t) => primary.includes(t.toLowerCase()))
-            || terms.every((t) => secondary.includes(t.toLowerCase()));
-        });
-
-        const active = matched.filter((r: any) => r.is_active === true).slice(0, 20);
-        const inactiveMatches = matched.length - matched.filter((r: any) => r.is_active === true).length;
+        const matched = selectActivationMatches(
+          (candidates ?? []) as ClientSearchRow[], q);
 
         // Flag clients that already hold an open case so the operator does not
         // start a duplicate (the unique index would reject it at 409 anyway).
-        const ids = active.map((r: any) => r.id);
+        const ids = matched.map((r) => r.id);
         let openCaseIds = new Set<string>();
         if (ids.length > 0) {
           const { data: openCases } = await admin.schema('aml').from('cases')
@@ -798,13 +863,44 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         }
 
         return jsonResponse({
-          clients: active.map((r: any) => ({
-            id: r.id,
-            label: nameOf(r, 'primary') || nameOf(r, 'secondary') || 'Unnamed client',
-            is_active: r.is_active,
-            has_open_case: openCaseIds.has(String(r.id)),
-          })),
-          inactive_matches: inactiveMatches,
+          clients: matched.map((r) =>
+            toActivationClientResult(r, openCaseIds.has(String(r.id)))),
+        });
+      }
+
+      case 'get_client_for_activation': {
+        // Route-based handoff (…/admin/aml/cases?activateClientId=<id>): the
+        // browser supplies ONLY the client ID; the display name, contact
+        // details and active status are loaded here from the authoritative
+        // record, so the URL carries no personal information and cannot
+        // misrepresent the client's status.
+        if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403);
+        const clientId = String(body.client_id ?? '').trim();
+        if (!/^[0-9a-f-]{36}$/i.test(clientId)) {
+          return jsonResponse({ error: 'client_id must be a UUID' }, 400);
+        }
+        const { data: row, error: rowErr } = await admin
+          .from('clients')
+          .select(CLIENT_SEARCH_SELECT)
+          .eq('id', clientId)
+          .maybeSingle();
+        if (rowErr) throw rowErr;
+        if (!row) return jsonResponse({ error: 'Client not found' }, 404);
+
+        const { data: openCase } = await admin.schema('aml').from('cases')
+          .select('id, case_reference, status')
+          .eq('client_id', clientId)
+          .not('status', 'in', '("cleared","blocked","closed")')
+          .limit(1)
+          .maybeSingle();
+
+        return jsonResponse({
+          client: {
+            ...toActivationClientResult(row as unknown as ClientSearchRow, Boolean(openCase)),
+            open_case: openCase
+              ? { id: openCase.id, case_reference: openCase.case_reference }
+              : null,
+          },
         });
       }
 

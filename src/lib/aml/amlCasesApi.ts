@@ -58,6 +58,22 @@ export interface AmlCaseEvent {
   created_at: string;
 }
 
+/**
+ * Activation picker projection — identification only, never financial data.
+ * Inactive clients are returned and selectable: the activation form is where
+ * an authorised user confirms an existing client is active.
+ */
+export interface AmlActivationClient {
+  id: string;
+  label: string;
+  email: string | null;
+  mobile: string | null;
+  is_active: boolean;
+  has_open_case: boolean;
+  /** Present on `get_client_for_activation` when an open case exists. */
+  open_case?: { id: string; case_reference: string } | null;
+}
+
 async function invoke<T = any>(payload: Record<string, any>): Promise<T> {
   return invokeAmlFunction<T>("aml-cases", payload);
 }
@@ -106,6 +122,8 @@ export const amlCasesApi = {
   }) => invoke<{
     case: AmlCase;
     activation: Record<string, any>;
+    /** Whether this activation flipped an inactive client to active (Part 5). */
+    client_activation?: { was_inactive: boolean; marked_active: boolean };
     /** Whether the client can actually reach the screening link we just posted. */
     client_portal?: { has_portal_access: boolean; notified: boolean; note: string };
   }>({ op: "activate_client", ...params }),
@@ -138,13 +156,21 @@ export const amlCasesApi = {
       history: Array<{ kind: string; version: string; accepted_at: string }>;
     }>({ op: "consent_status", case_id }),
 
-  /** Activation client picker — AML-role-gated, active clients only (§13.4). */
+  /**
+   * Activation client picker — AML-role-gated (§13.4). Tokenised full-name
+   * search over the canonical `clients` table; returns active AND inactive
+   * clients (inactive ones are activated through the confirmation form).
+   */
   searchClients: (query: string) =>
-    invoke<{
-      clients: Array<{ id: string; label: string; is_active: boolean; has_open_case: boolean }>;
-      /** Name matches that exist but are not marked active, so the UI can explain. */
-      inactive_matches?: number;
-    }>({ op: "search_clients", query }),
+    invoke<{ clients: AmlActivationClient[] }>({ op: "search_clients", query }),
+
+  /**
+   * Route-based activation handoff: load and validate the exact client by ID.
+   * The browser is never trusted for the client's name or active status —
+   * both come from the authoritative record via this call.
+   */
+  getClientForActivation: (client_id: string) =>
+    invoke<{ client: AmlActivationClient }>({ op: "get_client_for_activation", client_id }),
 
 
   clientSummary: (client_id: string) =>
