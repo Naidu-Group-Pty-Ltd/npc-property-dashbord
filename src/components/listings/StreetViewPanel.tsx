@@ -157,12 +157,8 @@ export function StreetViewPanel({
         // where blaming Google is accurate. Anything else here is an upstream
         // fault (an image fetch that failed, a quota answer) and should not be
         // reported to the user as missing coverage.
-        if (data.status === 'ZERO_RESULTS') {
-          writeStreetView(lat, lng, { kind: 'none' });
-          setState({ status: 'no_coverage' });
-        } else {
-          setState({ status: 'error' });
-        }
+        if (data.status === 'ZERO_RESULTS') writeStreetView(lat, lng, { kind: 'none' });
+        setState({ status: data.status === 'ZERO_RESULTS' ? 'no_coverage' : 'error' });
         return;
       }
       if (data.imageDataUrl) {

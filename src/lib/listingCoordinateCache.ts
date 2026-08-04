@@ -127,6 +127,17 @@ export function writeCachedPoint(id: string, fingerprint: string, point: CachedP
   scheduleFlush();
 }
 
+/**
+ * Drop one entry. Exists for the sanity gate: a cached point that fails the
+ * Australian-geography check is a poisoned answer from an earlier session,
+ * and leaving it in place would resurrect the same wrong pin on every load
+ * until the TTL finally aged it out.
+ */
+export function forgetCachedPoint(id: string): void {
+  hydrate();
+  if (memory.delete(id)) scheduleFlush();
+}
+
 /** Test / troubleshooting helper. */
 export function clearCoordinateCache(): void {
   memory.clear();
