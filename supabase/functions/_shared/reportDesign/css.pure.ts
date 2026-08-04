@@ -48,7 +48,7 @@ import {
 } from './page.pure.ts';
 import type { ResolvedReportPalette } from './roles.pure.ts';
 import { PRINT_TRACKING } from './tokens.pure.ts';
-import { NUMERIC_FEATURES, PRINT_STACK } from './typography.pure.ts';
+import { COVER_TITLE_SCALE, NUMERIC_FEATURES, PRINT_STACK } from './typography.pure.ts';
 
 export interface ReportCssInput {
   /** From `resolveReportPalette()` — or from the report's brand snapshot. */
@@ -470,6 +470,15 @@ function coverRules(
     position: absolute;
     top: 22mm; left: 22mm; right: 22mm;
     display: table;
+    /* Fixed, so a long company name cannot widen the table past the measure and
+       push the edition off the sheet. An auto table sizes to its content and
+       ignores the declared width, which is how a real cover printed a tenant's
+       name and its design system's name run together as one word.
+
+       Nothing in this file may name a company or a client: these comments ship
+       inside every tenant's PDF, and documentBrand.spec.ts scans the whole
+       document for ours. */
+    table-layout: fixed;
     width: calc(${PAGE_SIZE.widthMm}mm - 44mm);
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro + 0.5)};
@@ -477,10 +486,21 @@ function coverRules(
     text-transform: uppercase;
     color: ${palette.accentOnField};
   }
-  .report-cover .cover-masthead .mark { display: table-cell; text-align: left; }
+  /* 62/38 rather than the even split a fixed table would take. The mark is a
+     company name at the widest tracking in the system and the edition is one
+     word; an even split wrapped a long name onto a second line, which landed on
+     the cover rule 8mm below. */
+  .report-cover .cover-masthead .mark {
+    display: table-cell;
+    text-align: left;
+    width: 62%;
+    overflow-wrap: anywhere;
+    padding-right: 6mm;
+  }
   .report-cover .cover-masthead .vol {
     display: table-cell;
     text-align: right;
+    width: 38%;
     color: ${alpha(palette.onFieldInk, 0.7)};
   }
   .report-cover .cover-rule {
@@ -509,7 +529,19 @@ function coverRules(
     color: ${palette.onFieldInk};
     margin: 0;
     max-width: 165mm;
+    /* A title is somebody else's string, and one of them arrived as an uploaded
+       *filename* — fifty-odd characters joined by underscores, which are not a
+       break opportunity. At 56pt that is far wider than the measure, max-width
+       cannot clip what cannot wrap, and the overflow stretched the cover box so
+       that the masthead and the footer, both positioned 22mm from its right
+       edge, were dragged off the sheet. Three broken things, one unbreakable
+       word. */
+    overflow-wrap: anywhere;
   }
+  /* Set by coverTitleFit, which counts the characters CSS cannot. */
+  .report-cover h1.cover-title.fit-medium { font-size: ${pt(type.coverTitle * COVER_TITLE_SCALE.medium)}; }
+  .report-cover h1.cover-title.fit-long { font-size: ${pt(type.coverTitle * COVER_TITLE_SCALE.long)}; line-height: 1.06; }
+  .report-cover h1.cover-title.fit-longest { font-size: ${pt(type.coverTitle * COVER_TITLE_SCALE.longest)}; line-height: 1.1; }
   /* The subtitle sets smaller than the title and on its own line. At parity it
      wraps a locality onto a third line, which pushes the meta block into the
      cover footer — seen in a real render before this was corrected. */
@@ -554,6 +586,9 @@ function coverRules(
     position: absolute;
     bottom: 14mm; left: 22mm; right: 22mm;
     display: table;
+    /* Same reason as the masthead — "PRIVATE AND CONFIDENTIAL" and the
+       reference printed as one run on the cover this fixes. */
+    table-layout: fixed;
     width: calc(${PAGE_SIZE.widthMm}mm - 44mm);
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
@@ -772,6 +807,21 @@ ${options.showDropCaps
     font-size: ${pt(type.caption)};
     color: ${palette.mutedInk};
   }
+
+  /* ── The composed sheet ─────────────────────────────────────────────── */
+  /* A page whose contents were chosen rather than flowed into.
+
+     A break and nothing else — no min-height. Giving the sheet the height of
+     the content box seemed obvious and was wrong twice: a chapter header sits
+     above the first sheet, so a full-height box no longer fitted beside it and
+     the contents were pushed to the next page under a sheet of blank paper;
+     and a run of them turned a two-chapter document into ten pages. Whether a
+     sheet fills its page is a question about the composition, and the page
+     critique answers it by measuring the ink on the render. */
+  .sheet { break-after: page; }
+  /* Without this the last sheet's break emits a blank page before the closing
+     company page. */
+  .sheet:last-of-type { break-after: auto; }
 
   /* ── Columns and the asymmetric grid ────────────────────────────────── */
   .two-col {
@@ -1014,5 +1064,112 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
 ${tableRules(palette, options, type)}
 ${chapterRules(palette, options, type)}
 ${coverRules(palette, options, type)}
+${raisedRules(palette, options, type)}
 `;
+}
+
+/**
+ * The raised surface style.
+ *
+ * Appended last so every rule here overrides its flat counterpart by order
+ * rather than by specificity — no `!important`, and the flat sheet stays
+ * readable on its own.
+ *
+ * ## What is deliberately absent
+ *
+ * No `box-shadow` and no `filter: blur()`. WeasyPrint 69 ignores both as
+ * unknown properties, and its SVG renderer ignores `feGaussianBlur` too, so
+ * the soft glow a browser-rendered document gets under a card is genuinely
+ * unavailable here. Tested, not assumed. What replaces it is a gradient fill
+ * and a hairline ring, which read as *lifted* without pretending to a shadow —
+ * and everything else in a browser-designed reference page (flexbox, grid,
+ * radius, gradients, the paper texture, a rounded table shell, pill badges)
+ * WeasyPrint draws correctly.
+ */
+function raisedRules(
+  palette: ResolvedReportPalette,
+  options: ReportDesignOptions,
+  type: Record<string, number>,
+): string {
+  if (options.surfaceStyle !== 'raised') return '';
+  const d = DENSITY_METRICS[options.density];
+  const radius = '3.2mm';
+
+  return `
+  /* ── Raised ─────────────────────────────────────────────────────────── */
+
+  /* The paper carries a faint square grid. Two repeating gradients rather than
+     an image: nothing to fetch, nothing to inline, and it scales with the page
+     instead of resampling.
+
+     On the page box rather than on a section, because a section's background
+     paints its own box and stops. A later @page rule merges with the earlier
+     one, so this adds the image without disturbing the paper colour. */
+  @page {
+    background-image:
+      linear-gradient(${alpha(palette.rule, 0.38)} 0.2pt, transparent 0.2pt),
+      linear-gradient(90deg, ${alpha(palette.rule, 0.38)} 0.2pt, transparent 0.2pt);
+    background-size: 14mm 14mm;
+  }
+  /* Not on the field pages: a grid over an obsidian cover is a cutting mat. */
+  @page cover { background-image: none; }
+  @page disclaimer { background-image: none; }
+  /* The paper colour lives on the page box, which is what the texture is
+     drawn on. The root element's background is propagated to the canvas and
+     painted over that box, so leaving it set covered the content area and the
+     grid survived only in the margins — which read exactly like a printing
+     fault. Both are cleared; the page box still carries the paper. */
+  html, body { background: transparent; }
+
+  /* KPI cards, not a KPI strip. The single biggest visual difference between a
+     document that looks composed and one that looks printed out. */
+  .kpi-strip {
+    display: flex;
+    gap: ${pt(d.blockGapPt - 2)};
+    border-top: 0;
+    border-bottom: 0;
+  }
+  .kpi-strip .kpi {
+    display: block;
+    flex: 1 1 0;
+    border-right: 0;
+    border-radius: ${radius};
+    border: 0.3pt solid ${alpha(palette.rule, 0.9)};
+    background: linear-gradient(160deg, ${palette.paperBright} 0%, ${palette.paperAlt} 100%);
+    padding: ${pt(d.cellPadPt + 6)} ${pt(d.cellPadPt + 6)};
+  }
+
+  /* A shell around the table, and a header band inside it. */
+  .table-block, table.data {
+    border-radius: ${radius};
+    /* Clips the corners of the header band to the shell's own radius. */
+    overflow: hidden;
+  }
+  table.data {
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 0.3pt solid ${alpha(palette.rule, 0.9)};
+  }
+  table.data thead th {
+    background: ${palette.paperAlt};
+    border-bottom: 0.3pt solid ${palette.rule};
+  }
+  table.data caption { padding-bottom: ${pt(d.paragraphGapPt)}; }
+
+  /* Callouts, sidenotes and decision boxes become cards too, so a page of them
+     reads as one family rather than as three unrelated treatments. */
+  .callout, .sidenote, .decision-box {
+    border-radius: ${radius};
+    background: linear-gradient(160deg, ${palette.paperBright} 0%, ${palette.paperAlt} 100%);
+  }
+
+  /* An accent bar beside the section head, which is what carries the eyebrow
+     and the title as one object rather than two stacked lines. */
+  .chapter-header {
+    border-left: 1.2pt solid ${palette.accentOnPaper};
+    padding-left: ${pt(d.cellPadPt + 8)};
+  }
+
+  /* Rows sit apart rather than butting together. */
+  .grid-12 { gap: ${pt(d.blockGapPt)}; }`;
 }

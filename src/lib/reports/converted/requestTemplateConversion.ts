@@ -140,6 +140,13 @@ export function renderConvertedTemplate(args: {
   designSystemId: string | null;
   /** How much licence the design pass has. The route defaults it if absent. */
   fidelity?: ConversionFidelity;
+  /**
+   * Print it as a document rather than a draft — no caution block, no
+   * `converted draft` on the cover, no `From "…"` deks. Absent means draft.
+   */
+  final?: boolean;
+  /** Let the model compose the pages. See `composeHtml.pure.ts`. */
+  compose?: boolean;
 }): Promise<ConvertRenderResponse> {
   return call<ConvertRenderResponse>({ action: 'render', ...args }, 240_000);
 }

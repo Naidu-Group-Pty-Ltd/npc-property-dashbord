@@ -669,3 +669,81 @@ describe('the design system a render is given', () => {
     expect(auditPaletteContrast(onIvory)).toEqual([]);
   });
 });
+
+describe('the seeded design systems are not each other', () => {
+  /**
+   * Read against the migrations rather than a fixture.
+   *
+   * The seeded systems exist only as SQL — there is no const to import — so a
+   * fixture here would be a second copy of the rows and would drift from
+   * production the first time either moved. Parsing the migration is the only
+   * way this assertion is about what is actually in the database.
+   */
+  const migration = (name: string) =>
+    readFileSync(resolve(__dirname, '..', '..', '..', '..', '..', 'supabase', 'migrations', name), 'utf8');
+
+  const SEED = '20260825000100_seed_house_design_systems.sql';
+  const CHANCERY_FIX = '20260826000000_chancery_is_not_the_house_system.sql';
+
+  /**
+   * The seeded rows, by slug.
+   *
+   * Keyed on the slug rather than matched by value, which is the whole point:
+   * two rows carrying the *same* options string is the defect, so any parse
+   * that dedupes or matches on the string cannot see it. (My first version of
+   * this test did exactly that and reported a second duplicate that was its own
+   * substitution.)
+   */
+  const seededRows = (): Array<{ slug: string; options: string; neutrals: string }> =>
+    [...migration(SEED).matchAll(
+      /'([a-z-]+)',\s*'[^']*',\s*'(#[0-9A-Fa-f]{6})',\s*'(\{"preset":[^']+\})'::jsonb,\s*'(\{"paper":[^']+\})'::jsonb/g,
+    )].map((m) => ({ slug: m[1], options: m[3], neutrals: m[4] }));
+
+  it('gives no two systems the same set of design decisions', () => {
+    // The defect. Chancery's options were byte-identical to the NPC Services
+    // row's — every axis, every flag — so the only thing between them was three
+    // units of lightness on the paper, and picking one over the other changed
+    // nothing anybody could see. It was reported as the design system having no
+    // effect, which is exactly what it was.
+    const rows = seededRows();
+    expect(rows.map((r) => r.slug)).toContain('chancery');
+    expect(rows.length).toBeGreaterThanOrEqual(6);
+
+    // In the seed as it stands, before the fix.
+    const npc = rows.find((r) => r.slug === 'npc-services-design-system')!;
+    const chancery = rows.find((r) => r.slug === 'chancery')!;
+    expect(chancery.options).toBe(npc.options);
+
+    const [next] = [...migration(CHANCERY_FIX).matchAll(/'(\{"preset":[^']+\})'::jsonb/g)].map((m) => m[1]);
+    const applied = rows.map((r) => (r.slug === 'chancery' ? next : r.options));
+    expect(new Set(applied).size).toBe(applied.length);
+  });
+
+  it('leaves a system somebody has edited alone', () => {
+    // The WHERE clause is the whole safety of an UPDATE against seeded data. It
+    // has to match the seed byte for byte or it silently updates nothing, and it
+    // has to be there at all or it overwrites somebody's work.
+    const sql = migration(CHANCERY_FIX);
+    const matched = [...sql.matchAll(/'(\{"preset":[^']+\})'::jsonb/g)].map((m) => m[1]);
+    expect(matched).toHaveLength(2);
+    expect(seededRows().find((r) => r.slug === 'chancery')!.options).toBe(matched[1]);
+    expect(sql).toContain("WHERE slug = 'chancery'");
+  });
+
+  it('resolves every seeded palette to a legible document', () => {
+    // Options are only half of a system. The grounds have to clear the contrast
+    // floor too, and a new row added to the seed without checking is how an
+    // illegible document ships.
+    for (const row of seededRows()) {
+      const choice = readDesignSystemRow({
+        name: row.slug, brand_hex: '#D9A521',
+        options: JSON.parse(row.options), neutrals: JSON.parse(row.neutrals),
+      });
+      expect(choice.neutrals, row.slug).not.toBeNull();
+      const palette = resolveReportPalette({
+        preset: choice.options.preset, brandHex: choice.brandHex, neutrals: choice.neutrals,
+      });
+      expect(auditPaletteContrast(palette), row.slug).toEqual([]);
+    }
+  });
+});

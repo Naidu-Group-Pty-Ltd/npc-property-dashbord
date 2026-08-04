@@ -23,6 +23,8 @@ import {
   enrichmentPrompt,
   enrichmentRetryPrompt,
   isDesigned,
+  BLOCK_KINDS,
+  LEAF_BLOCK_KINDS,
   MAX_BLOCKS_PER_CHAPTER,
   MIN_DONUT_SEGMENTS,
   MIN_ENRICH_CHARS,
@@ -559,7 +561,192 @@ describe('fidelity and the prompts', () => {
 
   it('describes every block kind in the schema it enforces', () => {
     const props = ENRICHMENT_JSON_SCHEMA.properties.blocks.items.properties;
-    expect(props.kind.enum).toContain('bullet');
-    expect(props.kind.enum).toHaveLength(9);
+    expect([...props.kind.enum].sort()).toEqual([...BLOCK_KINDS].sort());
+    // The reason this is asserted against the const rather than a number: the
+    // schema is what the model is *allowed* to say, and a kind the reader
+    // understands but the schema omits is a primitive nobody can reach. That is
+    // exactly how a nine-word vocabulary ended up in front of a design system
+    // with thirty primitives in it.
+    for (const kind of ['waterfall', 'gauge', 'decision', 'quote', 'row']) {
+      expect(props.kind.enum, kind).toContain(kind);
+    }
+  });
+
+  it('lets a row hold every kind except another row', () => {
+    // Two levels of nesting is a layout engine, and a model that can nest rows
+    // inside rows produces documents nobody can budget the pages for.
+    const inner = ENRICHMENT_JSON_SCHEMA.properties.blocks.items.properties.blocks.items;
+    expect([...inner.properties.kind.enum].sort()).toEqual([...LEAF_BLOCK_KINDS].sort());
+    expect(inner.properties.kind.enum).not.toContain('row');
+  });
+});
+
+describe('the primitives the vocabulary used to hide', () => {
+  // The design system ships around thirty primitives and twelve chart types.
+  // The schema in front of it named nine. A natively designed report of the
+  // same figures used a waterfall, a row of cards and a pair of note boxes —
+  // every one of which already existed here and none of which a model could
+  // ask for. These specs are the guard against that happening again.
+
+  const filler = { kind: 'prose', markdown: 'A paragraph so the lede rule does not apply.' };
+
+  it('reads a waterfall, which is the shape a build-up chapter wants', () => {
+    const { blocks } = parseEnrichment({
+      blocks: [{
+        kind: 'waterfall',
+        caption: 'From gross income to capacity',
+        items: [
+          { label: 'Gross income', value: 223698 },
+          { label: 'Shading', value: -19739 },
+          { label: 'Living expenses', value: -40320 },
+          { label: 'Assessed', value: 163639, total: true },
+        ],
+      }, filler],
+    });
+    const w = blocks[0];
+    expect(w.kind).toBe('waterfall');
+    if (w.kind !== 'waterfall') return;
+    expect(w.items).toHaveLength(4);
+    expect(w.items[1].value).toBe(-19739);
+    expect(w.items[3].total).toBe(true);
+  });
+
+  it('refuses a waterfall of two, which is a subtraction', () => {
+    const { blocks, notes } = parseEnrichment({
+      blocks: [{
+        kind: 'waterfall',
+        items: [{ label: 'In', value: 100 }, { label: 'Out', value: -40 }],
+      }],
+    });
+    expect(blocks).toEqual([]);
+    expect(notes.join(' ')).toContain('waterfall of 2');
+  });
+
+  it('refuses a gauge with no ceiling to read against', () => {
+    // Same defect `bullet` has: the primitive floors its max at the value, so a
+    // gauge without one draws a full arc and says 100% of nothing.
+    const { blocks, notes } = parseEnrichment({
+      blocks: [{ kind: 'gauge', value: 76 }],
+    });
+    expect(blocks).toEqual([]);
+    expect(notes.join(' ')).toContain('no maximum');
+  });
+
+  it('reads a decision box and a pull quote', () => {
+    const { blocks } = parseEnrichment({
+      blocks: [
+        { kind: 'decision', text: 'Reduce the personal loan before applying.' },
+        { kind: 'quote', text: 'The position is limited.', attribution: 'Assessment' },
+      ],
+    });
+    expect(blocks.map((b) => b.kind)).toEqual(['decision', 'quote']);
+    // A decision box without a label still has one — it is a named furniture
+    // slot, not a free heading.
+    expect(blocks[0].kind === 'decision' && blocks[0].label).toBe('What this means');
+  });
+});
+
+describe('a row, which is the only layout the model may choose', () => {
+  const cell = (label: string, value: string) =>
+    ({ kind: 'kpi', cells: [{ label, value }, { label: `${label} basis`, value: 'assessed' }] });
+
+  it('sets two or three blocks across the page', () => {
+    const { blocks } = parseEnrichment({
+      blocks: [{
+        kind: 'row',
+        blocks: [cell('Capacity', '$856,932'), cell('Surplus', '$7,168'), cell('DTI', '10.6x')],
+      }],
+    });
+    const row = blocks[0];
+    expect(row.kind).toBe('row');
+    if (row.kind !== 'row') return;
+    expect(row.blocks).toHaveLength(3);
+  });
+
+  it('does not let a row hold another row', () => {
+    // Two levels of nesting is a layout engine.
+    const { blocks } = parseEnrichment({
+      blocks: [{
+        kind: 'row',
+        blocks: [
+          cell('Capacity', '$856,932'),
+          { kind: 'row', blocks: [cell('A', '1'), cell('B', '2')] },
+          cell('DTI', '10.6x'),
+        ],
+      }],
+    });
+    const row = blocks[0];
+    if (row.kind !== 'row') throw new Error('expected a row');
+    expect(row.blocks.map((b) => b.kind)).toEqual(['kpi', 'kpi']);
+  });
+
+  it('unwraps a row of one rather than printing a block with a margin on it', () => {
+    const { blocks, notes } = parseEnrichment({
+      blocks: [{ kind: 'row', blocks: [cell('Capacity', '$856,932')] }, { kind: 'prose', markdown: 'x' }],
+    });
+    expect(blocks[0].kind).toBe('kpi');
+    expect(notes.join(' ')).toContain('row of 1');
+  });
+
+  it('costs a row as its tallest column, not as the sum', () => {
+    // Summing them would charge three cards as twelve lines when they print as
+    // four, which is how a spine claims a page count the document has not.
+    const three: EnrichedBlock[] = [{
+      kind: 'row',
+      blocks: [
+        { kind: 'kpi', cells: [{ label: 'A', value: '1' }, { label: 'B', value: '2' }] },
+        { kind: 'kpi', cells: [{ label: 'C', value: '3' }, { label: 'D', value: '4' }] },
+      ],
+    }];
+    expect(enrichedLines(three)).toBe(blockLines(three[0]));
+    expect(blockLines(three[0])).toBe(4);
+  });
+
+  it('counts a row as designed only when something inside it is', () => {
+    // A row of three prose blocks is three paragraphs in columns, which is not
+    // design, it is a newspaper accident.
+    const prose: EnrichedBlock = {
+      kind: 'row',
+      blocks: [{ kind: 'prose', markdown: 'a' }, { kind: 'prose', markdown: 'b' }],
+    };
+    const kpis: EnrichedBlock = {
+      kind: 'row',
+      blocks: [
+        { kind: 'prose', markdown: 'a' },
+        { kind: 'kpi', cells: [{ label: 'A', value: '1' }, { label: 'B', value: '2' }] },
+      ],
+    };
+    expect(isDesigned(prose)).toBe(false);
+    expect(isDesigned(kpis)).toBe(true);
+  });
+
+  it('checks the figures inside a row exactly as it checks them outside one', () => {
+    const row: EnrichedBlock[] = [{
+      kind: 'row',
+      blocks: [
+        { kind: 'kpi', cells: [{ label: 'Capacity', value: '$856,932' }, { label: 'Rate', value: '9.44%' }] },
+        { kind: 'kpi', cells: [{ label: 'Surplus', value: '$99,999' }, { label: 'Term', value: '30 years' }] },
+      ],
+    }];
+    const v = checkFaithful('Capacity $856,932 at 9.44% over 30 years.', enrichedText(row));
+    expect(v.ok).toBe(false);
+    expect(v.invented.map((f) => f.token)).toContain('$99,999');
+  });
+
+  it('renders through the twelve-column grid, with each chart sized to its column', () => {
+    const { blocks } = parseEnrichment({
+      blocks: [{
+        kind: 'row',
+        blocks: [
+          { kind: 'kpi', cells: [{ label: 'A', value: '1' }, { label: 'B', value: '2' }] },
+          { kind: 'bars', items: [{ label: 'X', value: 10 }, { label: 'Y', value: 4 }] },
+        ],
+      }],
+    });
+    const html = renderEnrichedBlocks(blocks, CTX, 'r').html;
+    expect(html).toContain('class="grid-12"');
+    expect(html).toContain('col-8');
+    expect(html).toContain('col-4');
+    expect(html).toContain('<svg');
   });
 });

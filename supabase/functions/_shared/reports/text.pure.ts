@@ -48,3 +48,39 @@ export function countUrlTokens(value: string): number {
   const otherSchemes = value.match(/\b(?:file|ftp|gopher):\/*/gi)?.length ?? 0;
   return schemeRelative + otherSchemes;
 }
+
+/**
+ * Eight or more fraction digits is not precision, it is a binary float printed
+ * raw. Nothing this repo reports — a rate, a dollar, a ratio — carries that.
+ */
+const LONG_DECIMAL = /\b(\d{1,15})\.(\d{8,})\b/g;
+
+/**
+ * Repair IEEE-754 artefacts in transcribed text.
+ *
+ * `9.440000000000001%` is what a rate looks like when it was summed before it
+ * was displayed, and a real Borrowing Capacity Snapshot printed exactly that in
+ * its assumptions table. The converter transcribes what it is given, so the
+ * artefact came through onto a page a client would read.
+ *
+ * Twelve significant figures is comfortably more than any figure in this
+ * product needs and comfortably fewer than the seventeen at which the artefact
+ * appears, so the round trip removes the noise and cannot touch the value:
+ * `9.440000000000001` and `9.44` are the same number to any use anybody has for
+ * it. Applied at *extraction*, before the faithfulness snapshot is taken, so
+ * the guard and the output are comparing the same string — normalising later
+ * would make the design pass look as though it had invented a figure.
+ *
+ * Non-numeric text, ordinary decimals and version strings are untouched: the
+ * pattern needs eight fraction digits before it looks at anything.
+ */
+export function repairFloatArtefacts(value: string): string {
+  return String(value ?? '').replace(LONG_DECIMAL, (whole, int: string, frac: string) => {
+    const n = Number(`${int}.${frac}`);
+    if (!Number.isFinite(n)) return whole;
+    const tidied = Number(n.toPrecision(12));
+    // Only when the long form really was noise. A number that needs all those
+    // digits keeps them.
+    return String(tidied).length < whole.length ? String(tidied) : whole;
+  });
+}
