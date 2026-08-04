@@ -19,6 +19,7 @@ import {
   type AmlPortalOverview, type AmlSection, type AmlConsentDocument,
 } from '@/lib/aml/amlPortalApi';
 import { IdentityVerificationStep } from '@/components/portal/IdentityVerificationStep';
+import { ClientJourneyStrip } from '@/components/portal/ClientJourneyStrip';
 
 type PortalStep = { key: string; label: string; section?: AmlSection };
 
@@ -203,6 +204,8 @@ export default function PortalAml() {
               </AlertDescription>
             </Alert>
           )}
+
+          <ClientJourneyStrip overview={data!} />
 
           <Stepper
             steps={steps}

@@ -1283,3 +1283,49 @@ describe("optional consents are never recorded unticked", () => {
     expect(portalAml.slice(idx, idx + 400)).toContain("if (!checked[d.code]) continue;");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Compliance journey surfaces                                         */
+/* ------------------------------------------------------------------ */
+
+describe("compliance journey surfaces", () => {
+  const staffMap = readFileSync(
+    join(repo, "src/components/aml/ComplianceJourneyMap.tsx"), "utf8");
+  const clientStrip = readFileSync(
+    join(repo, "src/components/portal/ClientJourneyStrip.tsx"), "utf8");
+
+  it("client strip is built from the portal-safe overview alone", () => {
+    // The client's journey view must never import staff APIs or reach for
+    // internal vocabulary — it reads AmlPortalOverview and nothing else.
+    expect(clientStrip).toContain("AmlPortalOverview");
+    expect(clientStrip).not.toMatch(/amlRelianceApi|amlCasesApi|amlVerificationApi|amlRiskApi/);
+    const codeOnly = clientStrip.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    expect(codeOnly).not.toMatch(/risk|mlro|screening|service_gate|attestation/i);
+  });
+
+  it("staff map is a projection, not a control panel", () => {
+    // The journey renders state; it must never write anything.
+    expect(staffMap).not.toMatch(/\.update\(|\.insert\(|issueAttestation|grantAccess|\btransition\(/);
+  });
+
+  it("staff map derives 'approved' only from the explicit gate decision", () => {
+    expect(staffMap).toContain('["approved", "approved_with_controls"].includes(gate)');
+    expect(staffMap).not.toMatch(/risk_rating|risk_score/);
+  });
+
+  it("both surfaces use semantic tokens, not raw palette classes", () => {
+    for (const src of [staffMap, clientStrip]) {
+      // FRONTEND_TOOLING hard rule: no raw Tailwind palette colours.
+      expect(src).not.toMatch(/-(red|green|blue|emerald|amber|slate|zinc|gray|indigo|violet)-\d{2,3}/);
+      expect(src).not.toMatch(/#[0-9a-fA-F]{3,8}\b/);
+    }
+  });
+
+  it("both surfaces are wired into their pages", () => {
+    const workspace = readFileSync(join(repo, "src/pages/aml/AmlCaseWorkspace.tsx"), "utf8");
+    const portal = readFileSync(join(repo, "src/pages/portal/PortalAml.tsx"), "utf8");
+    expect(workspace).toContain("<ComplianceJourneyMap caseRow={caseRow} />");
+    expect(portal).toContain("<ClientJourneyStrip overview={data!} />");
+  });
+});
