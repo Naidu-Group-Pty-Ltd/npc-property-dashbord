@@ -543,6 +543,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
 
       if (op === "request_cdd_records") {
+        // Phase 9 action flag: partner writes roll out one capability at a
+        // time, enforced here — not by hidden buttons.
+        if (!(await flagEnabled(admin, "aml_partner_records_requests_write"))) {
+          return jr({ error: "Records requests are not enabled yet for this environment.", code: "records_requests_write_disabled" }, 409);
+        }
         const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
         if (!link) return jr({ error: "Not found" }, 404);
         if (link.state !== "active") {
@@ -608,6 +613,10 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       }
 
       if (op === "record_partner_determination") {
+        // Phase 9 action flag (server-side, like every write gate).
+        if (!(await flagEnabled(admin, "aml_partner_determinations_write"))) {
+          return jr({ error: "Recording determinations is not enabled yet for this environment.", code: "determinations_write_disabled" }, 409);
+        }
         const link = await loadScopedPartnerLink(admin, String(body.partner_case_link_id ?? ""), partnerOrg.id, surface);
         if (!link) return jr({ error: "Not found" }, 404);
         if (link.state !== "active") {
@@ -1346,6 +1355,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       case "grant_access": {
         if (!isMlro) return jr({ error: "MLRO role required" }, 403);
+        // Phase 9 action flag: NEW grants only — revoke_grant below is
+        // deliberately ungated (revocation is a safety action).
+        if (!(await flagEnabled(admin, "aml_partner_grants_write"))) {
+          return jr({ error: "Issuing new reliance grants is not enabled yet for this environment.", code: "grants_write_disabled" }, 409);
+        }
         const caseId = String(body.case_id ?? "");
         const agreementId = String(body.agreement_id ?? "");
         if (!caseId || !agreementId) return jr({ error: "case_id and agreement_id are required" }, 400);
@@ -2104,6 +2118,11 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
 
       case "record_partner_evidence_delivery": {
         if (!isMlro) return jr({ error: "MLRO role required" }, 403);
+        // Phase 9 action flag: same flag as partner object access — one
+        // capability, one switch.
+        if (!(await flagEnabled(admin, "aml_partner_evidence_delivery_write"))) {
+          return jr({ error: "Evidence delivery is not enabled yet for this environment.", code: "evidence_delivery_write_disabled" }, 409);
+        }
         const requestId = String(body.request_id ?? "");
         const recordCode = String(body.record_code ?? "");
         const safeLabel = String(body.safe_label ?? "").trim();
