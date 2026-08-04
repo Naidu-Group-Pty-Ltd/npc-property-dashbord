@@ -413,11 +413,11 @@ export function DashboardSidebar() {
           ) : (
             <BrandLockup
               slot="sidebar"
-              meta="Intake Dashboard"
               className="dashboard-brand-lockup"
               logoClassName="brand-logo brand-logo-sidebar"
               fallbackClassName="h-10 w-10"
             />
+
           )}
         </div>
 
