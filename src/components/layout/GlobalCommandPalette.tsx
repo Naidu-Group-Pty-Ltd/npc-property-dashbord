@@ -132,6 +132,7 @@ const ADMIN_ENTRIES: NavEntry[] = [
   // who types "converter" has to find it.
   { title: 'Template Builder', url: '/admin/template-builder', icon: Layers, moduleKey: 'templates', group: 'Admin', keywords: ['visual editor', 'pdf template', 'builder', 'report template'] },
   { title: 'Template Converter', url: '/admin/template-builder/converter', icon: Wand2, moduleKey: 'templates', group: 'Admin', keywords: ['convert', 'converter', 'refurbish', 'rebrand', 'existing template', 'design system'] },
+  { title: 'Brand systems', url: '/admin/template-builder/brand-systems', icon: Palette, moduleKey: 'templates', group: 'Admin', keywords: ['brand', 'design system', 'palette', 'paper', 'ink', 'claude design', 'import design system', 'tokens'] },
   { title: 'Branding', url: '/white-label', icon: Palette, moduleKey: 'white_label', group: 'Admin' },
   { title: 'Integrations', url: '/integrations', icon: Plug, moduleKey: 'integrations', group: 'Admin' },
   { title: 'Workflow Playground', url: '/workflow-playground', icon: Workflow, moduleKey: 'integrations', group: 'Admin' },

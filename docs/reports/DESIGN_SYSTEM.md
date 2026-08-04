@@ -186,9 +186,27 @@ and non-obvious:
 - **Contrast floors by size** (see the skill's `reports/REPORT_RULES.md` §2).
   `--brand` on ivory is 2.10:1 and fails at the 8.5pt eyebrow — the single most
   important adjustment, and the reason eight golds exist.
-- **Category B darkens, never brand-derives.** `PRINT_SEMANTIC` is frozen and
-  `resolveReportPalette` accepts no override for it, so tenant leakage is a type
-  error rather than a code-review question.
+- **Category B keeps its hue, never brand-derives.** `PRINT_SEMANTIC` is frozen
+  and `resolveReportPalette` accepts no override for it, so tenant leakage is a
+  type error rather than a code-review question.
+
+  It used to be spread in as literals, which was right while the grounds were
+  four permutations of three values we chose. The four clear 4.5:1 on NPC's
+  darkest stock by about a percent — `negative` is 4.58:1 on `#F2EBDE` — so they
+  stopped being safe as literals the moment a design system could bring its own
+  paper: any panel slightly darker pushed all four under the floor. They now go
+  through `ensureContrast` against whichever ground they read worst against,
+  which walks lightness and preserves hue. Risk is still red, the hue still
+  comes from a frozen constant, and no input reaches it. For all four presets it
+  is a no-op, and `printContrast.spec.ts` proves that byte for byte.
+- **The token derivation is executable, not only documented.** Every statement
+  of the form "`paper` is `--background`" above is mirrored by an entry in
+  `brandDesign/import.pure.ts › NEUTRAL_SOURCES`, and
+  `src/lib/brandDesign/__tests__/import.spec.ts` runs it over the real
+  `_ds_manifest.json` pulled from claude.ai/design, requiring every print token
+  to come back byte-identical. `npm run brand:sync` is the same check on the
+  command line. That is what makes importing somebody else's design system
+  possible: it is this derivation over their tokens instead of ours.
 - **Screen-only constructs are dropped, not translated** — gradient text,
   `box-shadow`, blur, motion.
 

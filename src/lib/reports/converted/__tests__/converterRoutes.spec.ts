@@ -43,6 +43,7 @@ import { bindableFormats, proposeBinding } from '../binding.pure';
 import { extractStructure } from '../structure.pure';
 import { planConvertedChapters, renderConvertedDocument } from '../render.pure';
 import { extractJsonObject, MIN_BRIEF_CHARS, parseBrandRequest } from '../../../brandDesign/route.pure';
+import { MAX_IMPORT_CHARS } from '../../../brandDesign/import.pure';
 import { REPORT_ARCHETYPES } from '../../../reportDesign/structure.pure';
 import { resolveReportPalette } from '../../../../../supabase/functions/_shared/reportDesign/brandResolve.pure';
 import { resolveCompanyBlock } from '../../../../../supabase/functions/_shared/reportDesign/companyBlock.pure';
@@ -362,6 +363,47 @@ describe('parseBrandRequest', () => {
   });
 });
 
+describe('parseBrandRequest — import', () => {
+  it('accepts a file with no design system in the body', () => {
+    // Parsed above `audit`/`save` for the same reason `list` is: those two run
+    // `readBrandDesignSystem(b.system)` and would refuse an import for carrying
+    // a file rather than a system.
+    const parsed = parseBrandRequest({ action: 'import', source: ':root { --brand: #D9A520; }' });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.request.action === 'import') {
+      expect(parsed.request.source).toContain('--brand');
+      expect(parsed.request.name).toBe('');
+    }
+  });
+
+  it('refuses an empty file rather than deriving a palette from nothing', () => {
+    for (const source of ['', '   ', undefined, 42]) {
+      expect(parseBrandRequest({ action: 'import', source }).ok, String(source)).toBe(false);
+    }
+  });
+
+  it('refuses a file too large to be a design system, saying how large', () => {
+    const parsed = parseBrandRequest({ action: 'import', source: 'x'.repeat(MAX_IMPORT_CHARS + 1) });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toContain('KB');
+  });
+
+  it('carries a name when one is given, and trims it', () => {
+    const parsed = parseBrandRequest({
+      action: 'import', source: ':root{--brand:#D9A520}', name: '  Harbour Editorial  ',
+    });
+    if (parsed.ok && parsed.request.action === 'import') {
+      expect(parsed.request.name).toBe('Harbour Editorial');
+    }
+  });
+
+  it('names import among the actions it knows', () => {
+    const parsed = parseBrandRequest({ action: 'nonsense' });
+    expect(parsed.ok).toBe(false);
+    if (!parsed.ok) expect(parsed.error).toContain('import');
+  });
+});
+
 describe('extractJsonObject', () => {
   it('finds an object behind a sentence of preamble', () => {
     expect(extractJsonObject('Here you go:\n{"name":"Warm"}')).toEqual({ name: 'Warm' });
@@ -447,6 +489,12 @@ describe('source of truth', () => {
       'reports/converted/renderBlocks.pure.ts',
       'reports/converted/faithfulness.pure.ts',
       'brandDesign/route.pure.ts',
+      // `system.pure.ts` was missing from this list, which is how it could have
+      // acquired a browser-side copy of "what a legal design system is".
+      // `import.pure.ts` holds the derivation the whole import feature rests
+      // on, and a second copy of that would be worse still.
+      'brandDesign/system.pure.ts',
+      'brandDesign/import.pure.ts',
     ]) {
       const source = bridge(rel);
       const code = source.split('\n').filter((l) => l.trim() && !l.trim().startsWith('*')

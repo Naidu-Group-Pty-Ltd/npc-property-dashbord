@@ -133,7 +133,8 @@
     "templates:library:verify": "vitest run src/lib/templateLibrary",
     "reportkit:specimen": "tsx scripts/reportDesign/buildSpecimen.ts",
     "reportkit:assets": "tsx scripts/reportDesign/buildDefaultAssets.ts",
-    "reportkit:assets:check": "tsx scripts/reportDesign/buildDefaultAssets.ts --check"
+    "reportkit:assets:check": "tsx scripts/reportDesign/buildDefaultAssets.ts --check",
+    "brand:sync": "tsx scripts/brandDesign/syncClaudeDesign.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

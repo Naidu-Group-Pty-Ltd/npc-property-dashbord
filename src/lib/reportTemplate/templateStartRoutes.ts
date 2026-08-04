@@ -75,3 +75,5 @@ export const TEMPLATE_START_ROUTES: readonly TemplateStartRoute[] = [
 /** Where the converter lives. One string, so a move is one edit. */
 export const TEMPLATE_CONVERTER_PATH = '/admin/template-builder/converter';
 export const TEMPLATE_BUILDER_PATH = '/admin/template-builder';
+/** Where design systems are managed, imported and previewed. */
+export const BRAND_SYSTEMS_PATH = '/admin/template-builder/brand-systems';

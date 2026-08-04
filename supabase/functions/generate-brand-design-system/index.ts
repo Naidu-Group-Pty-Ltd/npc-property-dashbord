@@ -41,6 +41,7 @@ import { createClient } from 'jsr:@supabase/supabase-js@2';
 import { verifyAuthOrNativeUser } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
 import { withRequestOrigin } from '../_shared/corsOrigin.ts';
+import { importDesignSystem } from '../_shared/brandDesign/import.pure.ts';
 import {
   auditBrandDesignSystem,
   BRAND_SYSTEM_JSON_SCHEMA,
@@ -190,14 +191,24 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // A design system decides what every generated document looks like, so
     // creating one is an edit even though nothing client-facing changes. The
     // module is the one the Template Builder page is already guarded by.
+    //
+    // Reading the list is not. That split was flagged as the line to change if
+    // a read-only surface ever needed the picker, and one does now: the
+    // brand-systems page shows which system a document was set in, and somebody
+    // who can view a report should be able to see that without being able to
+    // rewrite the house style.
+    const needed = request.action === 'list' ? 'can_view' : 'can_edit';
     const permission = await requireModulePermission(
       supabase,
       { userId: auth.userId, authMethod: auth.authMethod },
       'templates',
-      'can_edit',
+      needed,
     );
     if (!permission.ok) {
-      return json({ error: permission.error || 'Templates edit permission required' }, 403);
+      return json({
+        error: permission.error
+          || `Templates ${needed === 'can_view' ? 'view' : 'edit'} permission required`,
+      }, 403);
     }
 
     // ── list ────────────────────────────────────────────────────────────────
@@ -205,16 +216,17 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
     // The only way the picker can be populated. See the note on
     // `BrandListRequest`: the browser client is anonymous, so a direct read of
     // this table is refused at the grant level and the picker silently empties.
-    //
-    // Gated on `can_edit` like the rest of this route, which is right today
-    // because the only surface that lists design systems is the converter, and
-    // that is `requireEdit`. If a read-only surface ever needs the picker, this
-    // is the line to split to `can_view`.
 
     if (request.action === 'list') {
       let query = supabase
         .from('brand_design_systems')
-        .select('id, name, slug, description, origin, brand_hex, is_active, updated_at')
+        // `neutrals` and `options` come back with the summary so the
+        // brand-systems page can render a live specimen of any system in the
+        // list without a second round trip per selection.
+        .select(
+          'id, name, slug, description, origin, brand_hex, is_active, updated_at, '
+          + 'neutrals, source_namespace, options',
+        )
         .order('updated_at', { ascending: false })
         .limit(100);
       if (!request.includeInactive) query = query.eq('is_active', true);
@@ -243,6 +255,66 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
         id: null,
         slug: request.system.slug,
         brief: request.system.brief,
+        durationMs: Date.now() - started,
+      };
+      return json(response);
+    }
+
+    // ── import ──────────────────────────────────────────────────────────────
+    //
+    // A design system published on claude.ai/design, read into a candidate.
+    //
+    // No model, no network and no write. `import.pure.ts` runs the derivation
+    // `reportDesign/tokens.pure.ts` documents — paper is `--background`, the
+    // cover ground is `--aurixa-obsidian`, and so on — over somebody else's
+    // tokens instead of ours.
+    //
+    // The result goes through `readBrandDesignSystem` before it is audited, so
+    // a value the import produced and a value a person typed reach the palette
+    // through identical validation. There is one definition of a legal design
+    // system and this is not a second one.
+
+    if (request.action === 'import') {
+      const imported = importDesignSystem(request.source, { name: request.name });
+      if (!imported.ok) return json({ error: imported.error }, 400);
+
+      const provenance = {
+        namespace: imported.result.summary.namespace,
+        tokenCount: imported.result.summary.tokenCount,
+        colorCount: imported.result.summary.colorCount,
+        cardCount: imported.result.summary.cardCount,
+        themes: imported.result.summary.themes,
+        brandFonts: imported.result.summary.brandFonts,
+        sources: imported.result.sources as Record<string, string>,
+        notes: imported.result.notes,
+        kind: imported.result.summary.kind,
+      };
+
+      const read = readBrandDesignSystem(imported.result.system);
+      if (!read.ok) return json({ error: `the imported system was not usable: ${read.error}` }, 422);
+
+      const audit = auditBlock(read.system);
+      if (!audit.ok) {
+        // Refused, naming the role and the ground. An imported stock that
+        // cannot carry its own body ink is a real defect in that design
+        // system, and nudging the values until they pass would hand somebody a
+        // document in colours nobody chose under a name saying otherwise.
+        return json({
+          error: `this design system cannot be made legible in print: ${audit.summary}`,
+          audit,
+          system: read.system,
+          imported: provenance,
+        }, 422);
+      }
+
+      const response: BrandRouteResponse = {
+        action: 'import',
+        system: read.system,
+        audit,
+        id: null,
+        slug: read.system.slug,
+        brief: '',
+        imported: provenance,
         durationMs: Date.now() - started,
       };
       return json(response);
@@ -323,6 +395,13 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       options: request.system.options,
       origin: request.system.origin,
       brief: request.system.brief,
+      // Null for everything authored or drafted from a brief; the seven grounds
+      // for an import. Read all-seven-or-none on the way back out, so a
+      // hand-edited column degrades to the preset rather than to half a
+      // palette.
+      neutrals: request.system.neutrals,
+      source_namespace: request.system.sourceNamespace,
+      imported_at: request.system.origin === 'imported' ? new Date().toISOString() : null,
       is_active: request.isActive,
       updated_at: new Date().toISOString(),
     };

@@ -301,6 +301,113 @@ A person still confirms every row. Nothing here decides anything.
 
 ## Brand design systems
 
+A name, a brand colour, **optionally its own paper and ink**, and a full
+`ReportDesignOptions`. Managed at `/admin/template-builder/brand-systems`.
+
+### Importing one from Claude Design
+
+The published NPC Services Design System's `_ds_manifest.json` carries
+`tokens[]` as `{ name, value, kind, scope }` — already parsed — and the token
+names it exports are **exactly** the ones `reportDesign/tokens.pure.ts` names as
+the source of every print value: `--background` → paper, `--muted` → paperAlt,
+`--card` → paperBright, `--aurixa-obsidian` → the cover field, `--border` →
+rule, `--foreground` → body ink, `--muted-foreground` → muted ink, `--brand` →
+the accent.
+
+Until now that derivation existed only as prose in comments.
+`brandDesign/import.pure.ts` makes it executable, and
+`src/lib/brandDesign/__tests__/import.spec.ts` runs it over the committed real
+manifest and requires the result to equal `PRINT_SURFACE`, `PRINT_INK` and
+`PRINT_BRAND.base` **to the byte**. That spec is the acceptance test for the
+whole feature: if the derivation reproduces our own design system exactly, it
+works on somebody else's for the same reason.
+
+Two input shapes are accepted, because a person will have whichever they have:
+`_ds_manifest.json`, or a `tokens/*.css` copied out of the project. The CSS
+parser handles the `@kind` annotation sitting *after* the semicolon and the
+minified single-line form — `tokens/typography.css` really does put twenty
+declarations on one line, and a line-oriented parser loses nineteen of them.
+
+Every role has an ordered fallback chain and **taking any but the first is
+recorded and shown**. A project with no `--aurixa-obsidian` takes its dark
+theme's own page colour as the cover ground; one with no `--brand` takes
+`--primary`. Three roles have no honest substitute — without `paper`, `bodyInk`
+or `field` there is no document — and the import is refused rather than
+half-completed against our values.
+
+**The app cannot call claude.ai/design.** `DesignSync` is a Claude Code tool
+authenticated by a person's claude.ai login; the browser holds an anonymous key
+and the edge functions a service-role one. So this consumes what Claude Design
+*exports*. The panel says that rather than offering a Connect button that cannot
+work.
+
+### An imported system keeps its own paper and ink
+
+`resolveReportPalette` gained one optional input, `neutrals`, and everything
+downstream is unchanged — the worst-ground search, the accent correction and the
+frozen Category B spread now all run against the *imported* grounds, which is
+what makes an import safe rather than merely possible. All nine render routes
+pass `{ preset, brandHex }` and none passes `neutrals`, so their behaviour is
+byte-identical; `printContrast.spec.ts` asserts that over every preset and every
+tenant brand rather than assuming it.
+
+It is read **all seven or none**. A half-read set would print somebody else's
+obsidian cover on our ivory, which looks like a deliberate choice and is a parse
+error; a null sends the caller back to the preset whole.
+
+### Category B is now corrected, not copied
+
+The four semantic colours were a bare spread of `PRINT_SEMANTIC`, which was
+right while the grounds were four permutations of three values we chose. They
+are tuned to clear 4.5:1 on NPC's darkest stock **by about a percent** —
+`negative` is 4.58:1 on `#F2EBDE` — so a design system whose panel is slightly
+darker pushes all four under the floor and the audit refuses the import. It
+would be refusing it for our calibration rather than for anything the imported
+system did.
+
+They now go through `ensureContrast` against whichever ground they read worst
+against, which walks lightness only and preserves hue. "A tenant cannot make
+risk green" is preserved and strengthened: the hue comes from a frozen constant
+and no input reaches it; only the lightness moves, and only far enough to be
+readable. For all four presets it is a no-op, and the spec proves that by
+comparing byte for byte against `PRINT_SEMANTIC`.
+
+The same pass fixed a latent assumption in the accent derivation — "correct
+against the darkest ground" is right only while the ink is darker than the
+paper, which was guaranteed while the grounds were ours. It now finds whichever
+ground the ink actually reads worst against and re-checks after correcting.
+
+### The specimen gallery
+
+The page is laid out as the Claude Design pane: grouped cards, each with a name,
+a subtitle, a declared viewport, a mono token line and a paragraph saying why
+the thing is the way it is — the four fields and two lines a real `@dsCard`
+carries.
+
+Each card renders **`buildReportCss` plus the actual primitives** into a
+sandboxed iframe (`sandbox=""`, nothing granted), scaled from its own viewport.
+So changing `chapterStyle` redraws the Chapters card into what WeasyPrint will
+print, rather than into a React impression of it. There is no second
+implementation of the design system to drift from the first.
+
+### The seeded house systems
+
+Six rows: the NPC Services Design System derived from the committed manifest,
+and the five report voices — **Chancery, Broadsheet, Slip, Marque, Cadastre** —
+which already existed in Claude Design as `report-templates/voices.card.html`
+and in code as `scripts/template-library/designSystem.ts › VOICES`, and were not
+in the picker at all. Each carries its own paper, panel, cover ground and
+hairline; every row was resolved and cleared `auditPaletteContrast` with zero
+problems before the migration was written.
+
+**They carry a voice's colour and rhythm, not its typography.** Chancery is
+Playfair Display, Broadsheet is Fraunces, Marque is Cinzel, Cadastre is Public
+Sans — and `ReportDesignOptions` has no font axis: `PRINT_STACK` is fixed and
+`REPORT_RULES.md` records that Cinzel is not installed in the WeasyPrint
+container. A font axis is separate work with a container change in it.
+
+### The original contract
+
 A name, a brand colour, and a full `ReportDesignOptions`. That is the whole
 surface, deliberately — it is exactly the surface the report design system
 already reads, so a saved system is a *position* on the existing rendering path
@@ -541,6 +648,9 @@ change. Add the drift-guard spec at the same time.
    `converted-templates` bucket and its policies.
 2. Apply `20260824000000_converter_enrichment.sql`. Additive only — six
    nullable-or-defaulted columns recording the design pass.
+   Then `20260825000000_brand_system_neutrals.sql` (a design system's own paper
+   and ink) and `20260825000100_seed_house_design_systems.sql` (the house
+   system and the five voices; idempotent on `slug`).
 3. Deploy `convert-template-document` and `generate-brand-design-system`.
 4. `ANTHROPIC_API_KEY` must be set for PDF sources, for the design pass, for the
    binding proposal and for drafting a design system from a brief. Without it,
