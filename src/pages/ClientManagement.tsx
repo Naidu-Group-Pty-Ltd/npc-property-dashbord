@@ -73,6 +73,9 @@ interface Client {
   total_debt: number;
   net_monthly_cash_flow: number;
   created_at: string;
+  /** Real active status (clients.is_active) — set via AML/CTF activation. */
+  is_active?: boolean | null;
+  /** Starred/favourite flag — a separate concept from active status. */
   is_favorite?: boolean;
   client_properties?: { id: string }[];
   pipeline_status?: string | null;
@@ -132,7 +135,7 @@ export default function ClientManagement() {
   const [autoSyncEnabled, setAutoSyncEnabled] = useState(true);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
   const [isAutoSyncing, setIsAutoSyncing] = useState(false);
-  const [showActiveOnly, setShowActiveOnly] = useState(false);
+  const [showStarredOnly, setShowStarredOnly] = useState(false);
   const [showAddClientModal, setShowAddClientModal] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
   const queryClient = useQueryClient();
@@ -354,8 +357,10 @@ export default function ClientManagement() {
 
   // Apply filters
   const filteredClients = clients.filter(client => {
-    // Active clients filter - use is_favorite (star icon) as active status
-    if (showActiveOnly && !client.is_favorite) return false;
+    // Starred filter — is_favorite is the star flag only; it is NOT the
+    // client's active status (that is clients.is_active, set via AML/CTF
+    // activation and shown on the client record).
+    if (showStarredOnly && !client.is_favorite) return false;
 
     // Search filter
     const searchLower = searchQuery.toLowerCase();
@@ -431,8 +436,8 @@ export default function ClientManagement() {
     secondary_surname: smartCapitalize(client.secondary_surname),
   }));
 
-  // Count active clients for the button badge - use is_favorite (star icon)
-  const activeClientCount = clients.filter(c => c.is_favorite).length;
+  // Count starred clients for the button badge (is_favorite — not is_active)
+  const starredClientCount = clients.filter(c => c.is_favorite).length;
 
   // Calculate summary stats
   const totalClients = clients.length;
@@ -779,21 +784,21 @@ export default function ClientManagement() {
               />
             </div>
             <Button
-              variant={showActiveOnly ? "default" : "outline"}
+              variant={showStarredOnly ? "default" : "outline"}
               size="sm"
-              onClick={() => setShowActiveOnly(!showActiveOnly)}
-              aria-pressed={showActiveOnly}
+              onClick={() => setShowStarredOnly(!showStarredOnly)}
+              aria-pressed={showStarredOnly}
               className={`h-11 gap-2 rounded-xl px-4 font-semibold shadow-sm transition-all hover:-translate-y-0.5 hover:border-brand-400/50 focus-visible:ring-2 focus-visible:ring-brand-300/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
-                showActiveOnly
+                showStarredOnly
                   ? 'border-brand-300/40 bg-brand-400 text-black shadow-brand-500/20 hover:bg-brand-300 hover:text-black'
                   : 'border-brand-500/25 bg-background/70 text-muted-foreground hover:bg-brand-500/10 hover:text-brand-100'
               }`}
             >
-              <Star className={`h-4 w-4 ${showActiveOnly ? 'fill-current' : ''}`} />
-              Active Clients
-              {activeClientCount > 0 && (
-                <Badge variant={showActiveOnly ? "secondary" : "default"} className={`ml-1 rounded-full px-2 font-bold ${showActiveOnly ? 'bg-background dark:bg-black/15 text-black' : 'bg-brand-500/15 text-brand-100 border border-brand-500/25'}`}>
-                  {activeClientCount}
+              <Star className={`h-4 w-4 ${showStarredOnly ? 'fill-current' : ''}`} />
+              Starred
+              {starredClientCount > 0 && (
+                <Badge variant={showStarredOnly ? "secondary" : "default"} className={`ml-1 rounded-full px-2 font-bold ${showStarredOnly ? 'bg-background dark:bg-black/15 text-black' : 'bg-brand-500/15 text-brand-100 border border-brand-500/25'}`}>
+                  {starredClientCount}
                 </Badge>
               )}
             </Button>
@@ -849,22 +854,22 @@ export default function ClientManagement() {
               <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-brand-200/55 to-transparent" />
               <CardContent className="flex flex-col items-center justify-center px-6 py-16 text-center">
                 <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-3xl border border-brand-300/20 bg-brand-300/10 text-brand-100 shadow-lg shadow-brand-950/20">
-                  {searchQuery || filters !== defaultFilters || showActiveOnly ? (
+                  {searchQuery || filters !== defaultFilters || showStarredOnly ? (
                     <Search className="h-7 w-7" />
                   ) : (
                     <Users className="h-7 w-7" />
                   )}
                 </div>
                 <h3 className="text-xl font-bold tracking-tight text-foreground dark:text-white">
-                  {showActiveOnly
-                    ? 'No active clients found'
+                  {showStarredOnly
+                    ? 'No starred clients found'
                     : searchQuery || filters !== defaultFilters
                       ? 'No clients match your filters'
                       : 'No clients found'
                   }
                 </h3>
                 <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground dark:text-muted-foreground">
-                  {searchQuery || filters !== defaultFilters || showActiveOnly
+                  {searchQuery || filters !== defaultFilters || showStarredOnly
                     ? 'Try adjusting your filters'
                     : 'Import clients using the Import tab'}
                 </p>

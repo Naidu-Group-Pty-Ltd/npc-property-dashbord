@@ -86,9 +86,14 @@ describe("activation contract (Phase 1, directive §17)", () => {
     /case 'activate_client': \{([\s\S]*?)\n {6}\}/,
   )?.[1];
 
-  it("still requires human confirmation, an active client and a reason", () => {
+  it("still requires human confirmation and a reason; inactive clients are activated atomically", () => {
     expect(activateBranch).toContain("Human confirmation is required");
-    expect(activateBranch).toContain("Client is not active");
+    // Inactive clients are no longer bounced to another screen — the
+    // confirmed form flips them active in the same transaction as case
+    // creation (aml_activate_client_open_case), with a compensated fallback.
+    expect(activateBranch).not.toContain("Client is not active");
+    expect(activateBranch).toContain("const clientWasInactive = client.is_active !== true;");
+    expect(activateBranch).toContain("aml_activate_client_open_case");
     expect(activateBranch).toContain("reason must be at least 10 characters");
   });
 
@@ -169,15 +174,16 @@ describe("activation dialog has no raw-UUID entry (Phase 4, §13.4)", () => {
   it("uses a client picker instead of a UUID input", () => {
     expect(dialogSource).not.toContain("Client ID (UUID)");
     expect(dialogSource).not.toContain("00000000-0000-0000-0000-000000000000");
-    expect(dialogSource).toContain("Search clients by name");
+    expect(dialogSource).toContain("Search clients by first name, surname or full name");
   });
 
-  it("loads only a slim, non-sensitive client projection for the picker", () => {
-    // The projection now lives on the server (aml-cases `search_clients`) —
-    // the dialog receives a name-only shape and never a client record.
-    expect(casesSource).toContain("select('id, primary_first_name, primary_surname, is_active')");
-    expect(dialogSource).toMatch(/label: string;\s*\n?\s*is_active: boolean;/);
-    expect(dialogSource).not.toMatch(/total_portfolio_value|email|phone/);
+  it("loads only a slim, non-financial client projection for the picker", () => {
+    // The projection lives on the server (aml-cases `search_clients` via the
+    // shared CLIENT_SEARCH_SELECT) — identification data only (name, email,
+    // mobile, active flag), never financial fields.
+    expect(casesSource).toContain("select(CLIENT_SEARCH_SELECT)");
+    expect(dialogSource).toContain("AmlActivationClient");
+    expect(dialogSource).not.toMatch(/total_portfolio_value|total_debt|cash_flow|income/);
   });
 
   it("does not surface internal model vocabulary in the options", () => {
@@ -744,11 +750,15 @@ describe("activation client picker", () => {
       casesSource.indexOf("case 'search_clients':"),
       casesSource.indexOf("case 'client_summary':"));
     expect(branch).toContain("if (!canWrite) return jsonResponse({ error: 'Insufficient permissions' }, 403)");
-    expect(branch).toContain(".eq('is_active', true)");
-    expect(branch).toContain(".limit(20)");
-    // Projection must not leak financial or contact data into the picker.
-    expect(branch).toContain("select('id, primary_first_name, primary_surname, is_active')");
-    expect(branch).not.toMatch(/email|phone|portfolio|income/i);
+    // Candidate fetch is capped; the shared matcher caps offered results at
+    // 20 (CLIENT_SEARCH_RESULT_LIMIT) and includes inactive clients so the
+    // activation form can confirm them active.
+    expect(branch).toContain(".limit(200)");
+    expect(branch).toContain("selectActivationMatches");
+    expect(branch).not.toContain(".eq('is_active', true)");
+    // Projection must not leak financial data into the picker.
+    expect(branch).toContain("select(CLIENT_SEARCH_SELECT)");
+    expect(branch).not.toMatch(/portfolio|income|total_debt|cash_flow/i);
     // This file's response helper is jsonResponse; `jr` belongs to other
     // functions and would be a ReferenceError at runtime here.
     expect(casesSource).not.toMatch(/\bjr\(/);

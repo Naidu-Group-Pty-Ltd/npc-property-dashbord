@@ -57,6 +57,7 @@ import {
 import { format } from 'date-fns';
 import { ClientNotes } from './ClientNotes';
 import { ClientAmlSummaryCard } from './ClientAmlSummaryCard';
+import { ClientAmlActivateAction } from './ClientAmlActivateAction';
 import { ClientTags } from './ClientTags';
 import { ClientReminders } from './ClientReminders';
 import { ClientActivityTimeline } from './ClientActivityTimeline';
@@ -110,6 +111,8 @@ interface ClientDetailsModalProps {
     primary_surname: string;
     primary_email: string | null;
     primary_mobile: string | null;
+    /** Real active status from `clients.is_active` — distinct from is_favorite. */
+    is_active?: boolean | null;
   };
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -234,6 +237,11 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
 
   // Build dynamic contact list for employment/income tabs
   const contacts = useClientContacts(fullClient || undefined, additionalContacts);
+
+  // Authoritative active status (clients.is_active). Never derived from
+  // is_favorite — favourite and active are separate concepts.
+  const clientIsActive: boolean | null =
+    (fullClient as any)?.is_active ?? client.is_active ?? null;
 
   // Refetch function for backward compatibility
   const refetchClient = () => {
@@ -361,6 +369,14 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
           <span className={isMobile ? "text-xs" : ""}>{isMobile ? "Agreement" : "Send Agreement"}</span>
         </Button>
 
+        {/* Direct AML/CTF activation entry point (route handoff — client ID
+            only in the URL). Status-aware: Activate / Start / Open AML Case. */}
+        <ClientAmlActivateAction
+          clientId={client.id}
+          isActive={clientIsActive}
+          compact={isMobile}
+        />
+
         <Button
           variant="outline"
           size="sm"
@@ -444,6 +460,7 @@ export function ClientDetailsModal({ client, open, onOpenChange, initialTab, ini
               <ClientAmlSummaryCard
                 clientId={client.id}
                 clientName={`${smartCapitalize(client.primary_first_name || '')} ${smartCapitalize(client.primary_surname || '')}`.trim()}
+                isActive={clientIsActive}
               />
 
               {/* Contact Info */}

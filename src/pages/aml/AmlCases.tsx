@@ -100,6 +100,10 @@ export default function AmlCasesPage() {
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [activateOpen, setActivateOpen] = useState(false);
+  // Route-based activation handoff: /admin/aml/cases?activateClientId=<id>.
+  // Only the client ID travels in the URL — the dialog loads the name and
+  // active status server-side from the authoritative record.
+  const [activateClientId, setActivateClientId] = useState<string | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [initialTab, setInitialTab] = useState<string | undefined>(undefined);
   const [searchParams, setSearchParams] = useSearchParams();
@@ -133,6 +137,27 @@ export default function AmlCasesPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Activation handoff from the client record: ?activateClientId=<client-id>
+  // opens the activation dialog preselected on that exact client. The server
+  // validates the ID and supplies name/status; an invalid or inaccessible ID
+  // surfaces as a clear error inside the dialog rather than a silent no-op.
+  useEffect(() => {
+    const activateId = searchParams.get("activateClientId");
+    if (activateId) {
+      setActivateClientId(activateId);
+      setActivateOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const clearActivateParam = () => {
+    const next = new URLSearchParams(searchParams);
+    if (next.has("activateClientId")) {
+      next.delete("activateClientId");
+      setSearchParams(next, { replace: true });
+    }
+  };
 
 
   const load = async () => {
@@ -193,7 +218,10 @@ export default function AmlCasesPage() {
             <RefreshCw className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`} /> Refresh
           </Button>
           {access.canWrite && (
-            <Button size="sm" onClick={() => setActivateOpen(true)}>
+            <Button
+              size="sm"
+              onClick={() => { setActivateClientId(null); setActivateOpen(true); }}
+            >
               <ShieldCheck className="h-4 w-4 mr-2" /> Activate client
             </Button>
           )}
@@ -359,8 +387,20 @@ export default function AmlCasesPage() {
 
       <ActivateClientDialog
         open={activateOpen}
-        onOpenChange={setActivateOpen}
-        onActivated={(c) => { load(); openCase(c); }}
+        onOpenChange={(o) => {
+          setActivateOpen(o);
+          if (!o) {
+            setActivateClientId(null);
+            clearActivateParam();
+          }
+        }}
+        clientId={activateClientId ?? undefined}
+        onActivated={(c) => {
+          clearActivateParam();
+          setActivateClientId(null);
+          load();
+          openCase(c);
+        }}
       />
 
       <CaseDetailSheet
