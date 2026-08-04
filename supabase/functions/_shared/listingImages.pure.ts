@@ -115,9 +115,21 @@ function shortString(value: unknown, max = 200): string | undefined {
  * Strips the query string for identity purposes.
  *
  * Airtable re-signs an attachment on every read, so the same photo arrives with
- * a different `?ts=…&sig=…` each time. Keyed on the full URL, every poll would
- * look like a brand-new image and the library would re-download the entire set
- * forever. The path alone is stable.
+ * a different link each time. Keyed on the full URL, every poll would look like
+ * a brand-new image and the library would re-download the entire set forever.
+ *
+ * Dropping the query string is **not** sufficient, which this used to claim.
+ * An Airtable attachment URL looks like
+ * `https://v5.airtableusercontent.com/v3/u/56/56/<epoch-ms>/<sig>/<sig>`, and
+ * the signature and expiry sit in the **path**. Every re-sign produced a fresh
+ * identity, so a single photograph accumulated one row per poll — 4,076 of the
+ * 7,524 rows in the library were re-signed copies of something already held,
+ * nine URLs deep on some listings, each pass retiring the batch before it.
+ *
+ * `externalId` — the Airtable attachment id — is the stable key and is used
+ * whenever the caller has one. When it does not, no URL-derived key can be
+ * trusted for these hosts, so the duplicate is caught after download instead,
+ * by content checksum, in `harvestListing`. See `isVolatileSignedUrl`.
  */
 export function imageIdentity(candidate: ImageCandidate): string {
   if (candidate.externalId) return `att:${candidate.externalId}`;
@@ -126,6 +138,23 @@ export function imageIdentity(candidate: ImageCandidate): string {
     return `url:${url.origin}${url.pathname}`;
   } catch {
     return `url:${candidate.url}`;
+  }
+}
+
+/**
+ * Hosts whose URL path carries a rotating signature, so no part of the URL
+ * identifies the photograph across two reads.
+ *
+ * Nothing may key on these. A caller that has an attachment id should use it;
+ * otherwise the only reliable identity is the content itself.
+ */
+const VOLATILE_URL_HOSTS = /(^|\.)airtableusercontent\.com$/i;
+
+export function isVolatileSignedUrl(url: string): boolean {
+  try {
+    return VOLATILE_URL_HOSTS.test(new URL(url).hostname);
+  } catch {
+    return false;
   }
 }
 

@@ -269,12 +269,15 @@ async function harvestListing(
     .eq('listing_id', listingId);
 
   const existing = new Map<string, HeldImage>();
+  /** checksum -> the row already holding those exact bytes. */
+  const byChecksum = new Map<string, { identity: string; storagePath: string }>();
   for (const row of (existingRows ?? []) as Array<{
     image_identity: string;
     checksum: string | null;
     status: string;
     origin: string | null;
     position: number | null;
+    storage_path: string | null;
   }>) {
     existing.set(row.image_identity, {
       checksum: row.checksum,
@@ -282,6 +285,13 @@ async function harvestListing(
       origin: row.origin,
       position: row.position,
     });
+    if (row.checksum && row.storage_path) {
+      // First writer wins, so the oldest identity for a photograph is the one
+      // that survives re-signing rather than a fresh row each pass.
+      if (!byChecksum.has(row.checksum)) {
+        byChecksum.set(row.checksum, { identity: row.image_identity, storagePath: row.storage_path });
+      }
+    }
   }
 
   const heldCount = Array.from(existing.values()).filter((r) => r.status === 'stored').length;
@@ -356,6 +366,37 @@ async function harvestListing(
     }
 
     const checksum = await sha256Hex(fetched.bytes);
+
+    /*
+     * The same photograph, arriving under a new identity.
+     *
+     * Airtable rotates the signature inside the URL *path*, so a re-read of an
+     * unchanged attachment produces a URL that shares nothing with the last
+     * one. Keyed on that, every pass filed a fresh row and retired the previous
+     * copy — which is how one listing came to hold nine rows of a single photo
+     * and how 4,076 rows ended up `gone`. The bytes are the only thing that
+     * did not change, so they are what settles it: adopt the row already
+     * holding them rather than storing them again.
+     */
+    const twin = byChecksum.get(checksum);
+    if (twin && twin.identity !== identity) {
+      seen.add(twin.identity);
+      await supabase
+        .from('listing_images')
+        .update({
+          status: 'stored',
+          position,
+          source_url: candidate.url.slice(0, 2048),
+          last_verified_at: new Date(now).toISOString(),
+          error_count: 0,
+          last_error: null,
+        })
+        .eq('listing_id', listingId)
+        .eq('image_identity', twin.identity);
+      stored += 1;
+      continue;
+    }
+
     const path = await storagePathFor(listingId, identity, fetched.contentType);
 
     const { error: uploadError } = await supabase.storage
@@ -394,6 +435,7 @@ async function harvestListing(
       firstError ??= `row_failed: ${rowError.message}`;
       continue;
     }
+    byChecksum.set(checksum, { identity, storagePath: path });
     stored += 1;
   }
 
