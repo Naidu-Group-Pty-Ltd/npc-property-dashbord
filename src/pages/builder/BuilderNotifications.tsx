@@ -143,13 +143,15 @@ export default function BuilderNotifications() {
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="flex items-center gap-2 font-medium">
+                      {/* A div, not a p: Badge renders a div, and a div inside
+                          a p is invalid HTML the browser silently reflows. */}
+                      <div className="flex flex-wrap items-center gap-2 font-medium">
                         {record.title}
                         <Badge variant="outline">
                           {NOTIFICATION_TYPE_LABELS[
                             record.notification_type as BuilderNotificationType]}
                         </Badge>
-                      </p>
+                      </div>
                       {record.body ? (
                         <p className="mt-1 text-sm text-muted-foreground">{record.body}</p>
                       ) : null}

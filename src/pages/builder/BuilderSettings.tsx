@@ -14,6 +14,7 @@ import {
   BuilderOrganisationSettingsCard,
 } from '@/components/builder-portal/BuilderOrganisationSettingsCard';
 import { BUILDER_TOUR_EVENT } from '@/components/builder-portal/BuilderOnboardingTour';
+import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
 
 /**
  * Builder / Developer Portal account and session settings.
@@ -82,15 +83,10 @@ export default function BuilderSettings() {
   const active = sessions.filter((session) => !session.revoked_at);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Settings</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Your account, your preferences, your organisation's settings and the devices signed
-          into the Builder Portal.
-        </p>
-      </div>
-
+    <BuilderPortalShell
+      title="Settings"
+      description="Your account, your preferences, your organisation's settings and the devices signed into the Builder Portal."
+    >
       {error ? (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
@@ -248,6 +244,6 @@ export default function BuilderSettings() {
           ) : null}
         </CardContent>
       </Card>
-    </div>
+    </BuilderPortalShell>
   );
 }

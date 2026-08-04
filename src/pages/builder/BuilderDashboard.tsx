@@ -1,37 +1,39 @@
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Bell, Boxes, Building2, FileText, Hammer, History, ListChecks, Loader2,
-  MessageSquare, Receipt, RefreshCw, ShieldCheck, UserRound,
+  AlertTriangle, ArrowRight, Bell, Boxes, Building2, FileText, Hammer, History, ListChecks,
+  Loader2, MessageSquare, Receipt, RefreshCw, ShieldCheck, UserRound,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { smartCapitalize } from '@/lib/nameUtils';
 import { accessRoleLabel } from '@/lib/builderAccessTerms';
 import { useBuilderPortalAuth } from '@/hooks/useBuilderPortalAuth';
 import { useBuilderActivity, useBuilderWorkspaceSummary } from '@/lib/builderQueries';
 import {
   ACTIVITY_ENTITY_LABELS, ACTOR_TYPE_LABELS, activityActionLabel, formatWorkspaceTime,
 } from '@/lib/builderWorkspace';
-import { BuilderPortalMetricCard } from '@/components/builder-portal/ui/BuilderPortalMetricCard';
-import { BuilderPortalSection } from '@/components/builder-portal/ui/BuilderPortalSection';
-import { BuilderPortalEmptyState } from '@/components/builder-portal/ui/BuilderPortalEmptyState';
+import { BuilderPortalShell } from '@/components/builder-portal/BuilderPortalShell';
+import { BuilderPortalStatCard } from '@/components/builder-portal/ui/BuilderPortalStatCard';
 
 /**
  * Builder / Developer Portal landing surface.
  *
- * Every number on this page is computed by the database from an accessible-set
- * function, so a tile can never count a record this user cannot open — and a
- * count of zero means "nothing you can reach", not "nothing exists". The recent
- * activity list is the same feed as the Activity page, narrowed to the most
- * recent entries and filtered through the resolvers that govern each record.
+ * The hierarchy is the Solicitor dashboard's — gradient hero with an eyebrow, a
+ * primary action, a three-card KPI row, then lower content cards — carrying
+ * Builder's own figures.
+ *
+ * Every number is computed by the database from an accessible-set function, so
+ * a tile can never count a record this user cannot open, and a count of zero
+ * means "nothing you can reach", not "nothing exists". The recent activity list
+ * is the same feed as the Activity page, narrowed to the most recent entries
+ * and filtered through the resolvers that govern each record.
  *
  * There is deliberately no financial tile: no money, client position, AML
- * determination or commission is in the Builder audience.
- *
- * The two queries below are the only sources on this page. Nothing is derived
- * from a third, nothing is estimated, and the layout groups the figures without
- * changing what any of them counts.
+ * determination or commission is in the Builder audience. Nothing here invents
+ * a trend, a percentage, a runway or a projection — `useBuilderWorkspaceSummary`
+ * and `useBuilderActivity` are the only sources, and neither offers one.
  */
 const formatTimestamp = (value: string | null) =>
   value ? new Date(value).toLocaleString() : 'This is your first sign-in';
@@ -53,30 +55,20 @@ export default function BuilderDashboard() {
     ? activeOrganisation.trading_name || activeOrganisation.legal_name
     : 'No organisation selected';
 
-  /**
-   * The same eight figures as before, at the same routes, grouped by the stage
-   * of delivery they belong to. Grouping is presentation: no tile counts
-   * anything different from what it counted as a flat grid.
-   */
-  const tileGroups = [
-    {
-      title: 'Project delivery',
-      tiles: [
-        { label: 'Projects', value: summary?.projects ?? 0, icon: Building2, to: '/builder/projects', hint: 'Developments you can reach' },
-        { label: 'Units', value: summary?.units ?? 0, icon: Boxes, to: '/builder/inventory', hint: 'Lots and units in inventory' },
-        { label: 'Transactions', value: summary?.transactions ?? 0, icon: Receipt, to: '/builder/transactions', hint: 'Sales across your projects' },
-        { label: 'Builds', value: summary?.construction_cases ?? 0, icon: Hammer, to: '/builder/construction', hint: 'Construction programmes' },
-      ],
-    },
-    {
-      title: 'Workspace',
-      tiles: [
-        { label: 'Documents', value: summary?.documents ?? 0, icon: FileText, to: '/builder/documents', hint: 'Plans, certificates and packs' },
-        { label: 'Open conversations', value: summary?.open_conversations ?? 0, icon: MessageSquare, to: '/builder/messages', hint: 'Threads still open' },
-        { label: 'Open tasks', value: summary?.open_tasks ?? 0, icon: ListChecks, to: '/builder/tasks', hint: 'Assigned and not yet done' },
-        { label: 'Unread notifications', value: summary?.unread_notifications ?? 0, icon: Bell, to: '/builder/notifications', hint: 'Waiting for you to read' },
-      ],
-    },
+  /** The three headline figures, in the primary stat-card treatment. */
+  const primaryTiles = [
+    { label: 'Active projects', value: summary?.projects ?? 0, icon: Building2, to: '/builder/projects' },
+    { label: 'Units in inventory', value: summary?.units ?? 0, icon: Boxes, to: '/builder/inventory' },
+    { label: 'Active builds', value: summary?.construction_cases ?? 0, icon: Hammer, to: '/builder/construction' },
+  ];
+
+  /** The remaining five, in the smaller operational treatment. */
+  const secondaryTiles = [
+    { label: 'Transactions', value: summary?.transactions ?? 0, icon: Receipt, to: '/builder/transactions' },
+    { label: 'Documents', value: summary?.documents ?? 0, icon: FileText, to: '/builder/documents' },
+    { label: 'Open conversations', value: summary?.open_conversations ?? 0, icon: MessageSquare, to: '/builder/messages' },
+    { label: 'Open tasks', value: summary?.open_tasks ?? 0, icon: ListChecks, to: '/builder/tasks' },
+    { label: 'Unread notifications', value: summary?.unread_notifications ?? 0, icon: Bell, to: '/builder/notifications' },
   ];
 
   const attention = [
@@ -86,26 +78,14 @@ export default function BuilderDashboard() {
   ].filter((item) => item.value > 0);
 
   return (
-    <div className="space-y-6">
-      {/* ── Welcome and organisation context ── */}
-      <div className="overflow-hidden rounded-2xl border border-border/70 bg-gradient-to-br from-primary/[0.07] via-card to-card">
-        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-          <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              Welcome{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
-            </h1>
-            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
-              <span className="inline-flex min-w-0 items-center gap-1.5">
-                <Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                <span className="truncate font-medium text-foreground">{organisationName}</span>
-              </span>
-              <span aria-hidden>·</span>
-              <span>Last signed in: {formatTimestamp(previousSeenAt)}</span>
-            </p>
-          </div>
+    <BuilderPortalShell
+      eyebrow="Welcome back"
+      title={smartCapitalize(user?.name) || 'Builder'}
+      description="Your project-delivery workspace across every organisation and project shared with your account."
+      actions={
+        <>
           <Button
             variant="outline" size="sm"
-            className="w-full shrink-0 sm:w-auto"
             onClick={() => { void summaryQuery.refetch(); void activityQuery.refetch(); }}
             disabled={summaryQuery.isFetching || activityQuery.isFetching}
           >
@@ -116,160 +96,164 @@ export default function BuilderDashboard() {
             />
             Refresh
           </Button>
+          <Button asChild size="sm">
+            <Link to="/builder/projects">
+              Open projects <ArrowRight className="ml-2 h-4 w-4" aria-hidden />
+            </Link>
+          </Button>
+        </>
+      }
+    >
+      {summaryQuery.isLoading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border border-border/60 bg-card/70 px-6 py-7 shadow-lg shadow-primary/5">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" aria-hidden />
+            <p className="text-sm text-muted-foreground">Loading your dashboard…</p>
+          </div>
         </div>
-      </div>
-
-      {/* ── Attention strip: rendered only when the summary reports a figure
-             above zero. No severity is invented — the data carries none. ── */}
-      {attention.length ? (
-        <section
-          className="rounded-xl border border-warning/40 bg-warning/[0.06] p-4"
-          aria-label="Needs attention"
-        >
-          <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />
-            Needs attention
-          </p>
-          <ul className="mt-3 flex flex-wrap gap-2">
-            {attention.map((item) => (
-              <li key={item.label}>
-                <Link
-                  to={item.to}
-                  className="flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 text-sm transition-colors hover:border-primary/30 hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <span className="text-base font-semibold tabular-nums text-foreground">
-                    {item.value}
-                  </span>
-                  <span className="text-muted-foreground">{item.label.toLowerCase()}</span>
-                </Link>
-              </li>
+      ) : summaryQuery.isError ? (
+        <div role="alert" className="builder-portal-soft-panel p-6 text-center">
+          <p className="font-medium text-foreground">Your summary could not be loaded</p>
+          <p className="mt-1 text-sm text-muted-foreground">Check your connection and try again.</p>
+          <Button className="mt-4" variant="outline" onClick={() => void summaryQuery.refetch()}>
+            Try again
+          </Button>
+        </div>
+      ) : (
+        <>
+          {/* Primary KPI row */}
+          <div className="grid gap-3 sm:grid-cols-3">
+            {primaryTiles.map(({ label, value, icon, to }) => (
+              <BuilderPortalStatCard key={label} icon={icon} label={label} value={value} to={to} />
             ))}
-          </ul>
-        </section>
-      ) : null}
+          </div>
 
-      {/* ── Core operational metrics ── */}
-      <section aria-label="Your portal" className="space-y-4">
-        <div>
-          <h2 className="text-base font-semibold text-foreground">Your portal</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
+          {/* Secondary operational row */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {secondaryTiles.map(({ label, value, icon: Icon, to }) => (
+              <Link
+                key={label}
+                to={to}
+                className="builder-portal-soft-panel flex items-center gap-3 p-4 transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10"
+                  aria-hidden
+                >
+                  <Icon className="h-4 w-4 text-primary" />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-lg font-semibold tabular-nums leading-tight text-foreground">
+                    {value}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">{label}</span>
+                </span>
+              </Link>
+            ))}
+          </div>
+
+          <p className="text-xs text-muted-foreground">
             Every figure counts only what your access reaches. A zero means nothing you can see,
             not necessarily nothing at all.
           </p>
-        </div>
+        </>
+      )}
 
-        {summaryQuery.isLoading ? (
-          <div className="flex justify-center py-10">
-            <Loader2 className="h-6 w-6 animate-spin text-primary" aria-label="Loading summary" />
-          </div>
-        ) : summaryQuery.isError ? (
-          <div role="alert" className="rounded-xl border border-destructive/40 p-6 text-center">
-            <p className="font-medium">Your summary could not be loaded</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Check your connection and try again.
-            </p>
-            <Button className="mt-4" variant="outline" onClick={() => void summaryQuery.refetch()}>
-              Try again
-            </Button>
-          </div>
-        ) : (
-          <div className="space-y-5">
-            {tileGroups.map(({ title, tiles }) => (
-              <div key={title}>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
-                  {title}
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  {tiles.map(({ label, value, icon, to, hint }) => (
-                    <BuilderPortalMetricCard
-                      key={label}
-                      icon={icon}
-                      label={label}
-                      value={value}
-                      hint={hint}
-                      to={to}
-                    />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,20rem)]">
-        {/* ── Recent activity ── */}
-        <BuilderPortalSection
-          title="Recent activity"
-          icon={History}
-          description="Changes to records you can reach. Administrative events are not shown here."
-          action={
-            <Button asChild variant="outline" size="sm">
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Recent activity */}
+        <Card className="lg:col-span-2">
+          <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <History className="h-4 w-4 text-primary" aria-hidden />
+                Recent activity
+              </CardTitle>
+              <CardDescription>
+                Changes to records you can reach. Administrative events are not shown here.
+              </CardDescription>
+            </div>
+            <Button asChild variant="outline" size="sm" className="shrink-0">
               <Link to="/builder/activity">View all</Link>
             </Button>
-          }
-        >
-          {activityQuery.isLoading ? (
-            <div className="flex justify-center py-10">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" aria-label="Loading activity" />
-            </div>
-          ) : activityQuery.isError ? (
-            <div role="alert" className="rounded-xl border border-destructive/40 p-6 text-center">
-              <p className="font-medium">Activity could not be loaded</p>
-              <Button className="mt-4" variant="outline" onClick={() => void activityQuery.refetch()}>
-                Try again
-              </Button>
-            </div>
-          ) : !activity.length ? (
-            <BuilderPortalEmptyState
-              icon={History}
-              title="Nothing has happened yet"
-              description="Changes to your projects, builds and tasks will appear here."
-            />
-          ) : (
-            /* A timeline: one rail, one node per entry. The list, its order and
-               its eight-record limit are unchanged. */
-            <ol className="relative space-y-4 border-l border-border pl-6">
-              {activity.map((entry) => (
-                <li key={entry.id} className="relative">
-                  <span
-                    className="absolute -left-[1.8125rem] top-1.5 h-2 w-2 rounded-full bg-primary ring-4 ring-card"
-                    aria-hidden
-                  />
-                  {/* A div, not a p: Badge renders a div, and a div inside a
-                      p is invalid HTML that the browser silently reflows. */}
-                  <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
-                    {activityActionLabel(entry.action)}
-                    {entry.entity_type ? (
-                      <Badge variant="outline" className="font-normal">
-                        {ACTIVITY_ENTITY_LABELS[entry.entity_type] ?? entry.entity_type}
-                      </Badge>
-                    ) : null}
-                  </div>
-                  {entry.reason ? (
-                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{entry.reason}</p>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {activityQuery.isLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="h-5 w-5 animate-spin text-primary" aria-label="Loading activity" />
+              </div>
+            ) : activityQuery.isError ? (
+              <div role="alert" className="rounded-lg border border-destructive/40 px-4 py-8 text-center">
+                <p className="text-sm font-medium text-foreground">Activity could not be loaded</p>
+                <Button className="mt-4" variant="outline" onClick={() => void activityQuery.refetch()}>
+                  Try again
+                </Button>
+              </div>
+            ) : !activity.length ? (
+              <div className="rounded-lg border border-dashed border-border/70 px-4 py-10 text-center text-sm text-muted-foreground">
+                Nothing has happened yet. Changes to your projects, builds and tasks will appear here.
+              </div>
+            ) : activity.map((entry) => (
+              <div key={entry.id} className="rounded-lg border border-border/70 p-3">
+                <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                  {activityActionLabel(entry.action)}
+                  {entry.entity_type ? (
+                    <Badge variant="outline" className="font-normal">
+                      {ACTIVITY_ENTITY_LABELS[entry.entity_type] ?? entry.entity_type}
+                    </Badge>
                   ) : null}
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {ACTOR_TYPE_LABELS[entry.actor_type] ?? entry.actor_type} ·{' '}
-                    {formatWorkspaceTime(entry.created_at)}
-                  </p>
-                </li>
-              ))}
-            </ol>
-          )}
-        </BuilderPortalSection>
+                </div>
+                {entry.reason ? (
+                  <p className="mt-1 text-sm text-muted-foreground">{entry.reason}</p>
+                ) : null}
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {ACTOR_TYPE_LABELS[entry.actor_type] ?? entry.actor_type} ·{' '}
+                  {formatWorkspaceTime(entry.created_at)}
+                </p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
 
-        {/* ── Organisation, account and access context ── */}
         <div className="space-y-4">
+          {/* Project delivery attention */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <AlertTriangle className="h-4 w-4 text-destructive" aria-hidden />
+                Project delivery attention
+              </CardTitle>
+              <CardDescription>Open defects, overdue tasks and unread messages.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {attention.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border/70 px-4 py-8 text-center text-sm text-muted-foreground">
+                  Nothing needs your attention right now.
+                </p>
+              ) : attention.map((item) => (
+                <Link
+                  key={item.label}
+                  to={item.to}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 transition-colors hover:bg-destructive/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
+                  <span className="shrink-0 text-base font-semibold tabular-nums text-foreground">
+                    {item.value}
+                  </span>
+                </Link>
+              ))}
+            </CardContent>
+          </Card>
+
+          {/* Organisation context */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <CardTitle className="flex items-center gap-2 text-base">
                 <Building2 className="h-4 w-4 text-primary" aria-hidden />
-                Acting as
+                Organisation context
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="break-words text-base font-semibold leading-snug text-foreground">
+              <p className="break-words text-sm font-semibold leading-snug text-foreground">
                 {organisationName}
               </p>
               {activeOrganisation ? (
@@ -295,29 +279,12 @@ export default function BuilderDashboard() {
             </CardContent>
           </Card>
 
+          {/* Access and security */}
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium">
-                <UserRound className="h-4 w-4 text-primary" aria-hidden />
-                Your account
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-1.5 text-sm">
-              <p className="break-all font-medium text-foreground">{user?.email}</p>
-              {user?.job_title ? (
-                <Badge variant="outline" className="font-normal">{user.job_title}</Badge>
-              ) : null}
-              {user?.phone ? (
-                <p className="text-xs text-muted-foreground">{user.phone}</p>
-              ) : null}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <CardTitle className="flex items-center gap-2 text-base">
                 <ShieldCheck className="h-4 w-4 text-primary" aria-hidden />
-                Access
+                Access and security
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-1.5">
@@ -331,10 +298,17 @@ export default function BuilderDashboard() {
                 Permissions are resolved by the server on every request. Anything not explicitly
                 granted is denied.
               </p>
+              <p className="flex items-center gap-1.5 pt-2 text-xs text-muted-foreground">
+                <UserRound className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span className="truncate">{user?.email}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Last signed in: {formatTimestamp(previousSeenAt)}
+              </p>
             </CardContent>
           </Card>
         </div>
       </div>
-    </div>
+    </BuilderPortalShell>
   );
 }
