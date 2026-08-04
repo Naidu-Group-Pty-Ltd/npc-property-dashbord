@@ -320,6 +320,99 @@ describe('the converted document', () => {
     expect(chapters.slice(-appendix.length).every((c) => c.kind === 'appendix')).toBe(true);
   });
 
+  it('folds an unbound sub-section into its parent instead of giving it a page', () => {
+    // The defect that made a 14-page draft come out at 27. A transcription of a
+    // Snapshot returned 20 sections, 12 of them `###` sub-headings inside *How
+    // This Was Calculated* — `DTI Ratio` at 61 characters, `Stress Test` at 78.
+    // `planConvertedChapters` never read `depth`, so each stub became an
+    // appendix chapter with an eyebrow, a header and a page break of its own.
+    const nested = extractStructure([
+      '# Borrowing Power Assessment',
+      `## Client Position Summary\n\n${prose()}`,
+      `## Household Income\n\n${table}`,
+      `## How This Was Calculated\n\n${prose()}`,
+      '### DTI Ratio\n\nThe debt-to-income ratio is 5.4 times gross household income.',
+      '### Stress Test\n\nServiceability is assessed 3.00% above the advertised rate.',
+      '### Living Expenses\n\nTaken at the greater of the declared figure and the HEM benchmark.',
+    ].join('\n\n'));
+
+    const p = proposeBinding('borrowing-capacity', nested);
+    const chapters = planConvertedChapters(nested, p);
+    const titles = chapters.map((c) => c.title);
+    for (const stub of ['DTI Ratio', 'Stress Test', 'Living Expenses']) {
+      expect(titles, stub).not.toContain(stub);
+    }
+
+    // Not dropped — folded, under their own heading, in source order, into the
+    // one chapter their parent produced.
+    const parent = chapters.find((c) => c.markdown.includes('DTI Ratio'))!;
+    expect(parent).toBeDefined();
+    expect(parent.foldedSubsections).toBe(3);
+    expect(parent.markdown).toContain('### DTI Ratio');
+    expect(parent.markdown).toContain('Serviceability is assessed 3.00% above the advertised rate.');
+    expect(parent.markdown).toContain('the HEM benchmark');
+    expect(parent.markdown.indexOf('DTI Ratio')).toBeLessThan(parent.markdown.indexOf('Stress Test'));
+  });
+
+  it('gives a sub-section a chapter of its own when the binding asked for one', () => {
+    // Folding is what happens to sections *nobody chose*. A sub-section a
+    // person confirmed against a format chapter is a chapter.
+    const nested = extractStructure([
+      '# Borrowing Power Assessment',
+      `## Client Position Summary\n\n${prose()}`,
+      `### Household Income\n\n${table}`,
+    ].join('\n\n'));
+    const p = proposeBinding('borrowing-capacity', nested);
+    const boundIndex = p.bindings.find((b) => b.sectionIndex !== null && b.sectionIndex > 0);
+    expect(boundIndex).toBeDefined();
+    const chapters = planConvertedChapters(nested, p);
+    // The sub-section's content is a chapter body, not folded into section 0.
+    expect(chapters.find((c) => c.markdown.includes('| Lender | Rate |'))!.kind).toBe('bound');
+    expect(chapters.find((c) => c.title === 'Client Position Summary')?.foldedSubsections)
+      .toBeUndefined();
+  });
+
+  it('keeps a sub-section that has no parent to fold into', () => {
+    // Extraction levels a document that opens at `###`, so this shape does not
+    // arrive from `extractStructure` — the structure is built by hand on
+    // purpose. Folding must not be able to lose a section just because there is
+    // nowhere to put it, and a `depth: 2` section with nothing shallower before
+    // it is exactly that case.
+    const orphan = {
+      title: 'Late Addendum',
+      sections: [{
+        index: 0, depth: 2 as const, title: 'Late Addendum',
+        markdown: prose(), chars: prose().length, tables: 0, tabular: false,
+      }],
+      headingCount: 1,
+      notices: {
+        flattened: 0, tooShort: 0, charsOmitted: 0, unstructured: false, labelsFolded: 0,
+      },
+    };
+    const chapters = planConvertedChapters(orphan, {
+      format: 'borrowing-capacity', bindings: [], unbound: [0], unfilled: [],
+    });
+    expect(chapters.filter((c) => c.kind === 'appendix').map((c) => c.title)).toEqual(['Late Addendum']);
+  });
+
+  it('numbers appendix chapters by chapter, not by unbound section', () => {
+    // The id is what the enrichment map is keyed on, and planning runs twice —
+    // once to decide what to ask the model about, once to render the answers.
+    // A folded section that consumed an id would shift every id after it
+    // between the two calls, and every block would land on the wrong chapter.
+    const nested = extractStructure([
+      '# Borrowing Power Assessment',
+      `## Client Position Summary\n\n${prose()}`,
+      `## Fee Schedule\n\n${prose()}`,
+      '### Establishment\n\nCharged once, at settlement.',
+      `## Complaints\n\n${prose()}`,
+    ].join('\n\n'));
+    const p = proposeBinding('borrowing-capacity', nested);
+    const appendix = planConvertedChapters(nested, p).filter((c) => c.kind === 'appendix');
+    expect(appendix.map((c) => c.id)).toEqual(appendix.map((_, i) => `cv.a${i}`));
+    expect(appendix.map((c) => c.title)).not.toContain('Establishment');
+  });
+
   it('says on the page that it is a draft, not a client document', () => {
     // A converted document has the same cover, typography and closing page as a
     // finished one. Without this somebody sends it to a client by accident.

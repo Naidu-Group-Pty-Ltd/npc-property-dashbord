@@ -25,8 +25,11 @@ import {
   isDesigned,
   MAX_BLOCKS_PER_CHAPTER,
   MIN_DONUT_SEGMENTS,
+  MIN_ENRICH_CHARS,
   parseEnrichment,
+  partitionForEnrichment,
   readFidelity,
+  tooShortNote,
   type EnrichedBlock,
 } from '../enrich.pure';
 import { renderEnrichedBlocks } from '../renderBlocks.pure';
@@ -170,6 +173,44 @@ describe('the degenerate-block guards', () => {
     });
     expect(blocks).toEqual([]);
     expect(notes.join(' ')).toContain('neither a target nor a maximum');
+  });
+
+  it('keeps a callout that has a body but no label, and titles it from its tone', () => {
+    // A real conversion filled its notes with `block 0: a callout missing its
+    // label or body`. The bodies were there; the labels were not. Discarding a
+    // block that carries real content because nobody titled it is the wrong
+    // trade — the tone already says what the block is.
+    const { blocks, notes } = parseEnrichment({
+      blocks: [
+        { kind: 'callout', tone: 'caution', text: 'Rates are assumed to hold at 9.44%.' },
+        { kind: 'callout', tone: 'negative', text: 'The position is short by $1,240 a month.' },
+        { kind: 'sidenote', text: 'A buffer is added to the advertised rate.' },
+      ],
+    });
+    expect(blocks).toHaveLength(3);
+    expect(blocks.map((b) => (b.kind === 'callout' || b.kind === 'sidenote') && b.label))
+      .toEqual(['Caution', 'Shortfall', 'Note']);
+    expect(notes.join(' ')).not.toContain('missing its label');
+  });
+
+  it('still refuses a callout with a label and no body', () => {
+    // The other half of the old guard, and it stays: a title with nothing under
+    // it renders as an empty box.
+    const { blocks, notes } = parseEnrichment({
+      blocks: [{ kind: 'callout', tone: 'caution', label: 'Assumed', text: '   ' }],
+    });
+    expect(blocks).toEqual([]);
+    expect(notes.join(' ')).toContain('no body');
+  });
+
+  it('prefers the model\'s own label to the default', () => {
+    const { blocks } = parseEnrichment({
+      blocks: [
+        { kind: 'callout', tone: 'caution', label: 'Assumed', text: 'Rates hold.' },
+        { kind: 'prose', markdown: 'A paragraph so the lede rule does not apply.' },
+      ],
+    });
+    expect(blocks[0].kind === 'callout' && blocks[0].label).toBe('Assumed');
   });
 
   it('refuses a table with no rows and one with no columns', () => {
@@ -348,6 +389,38 @@ describe('faithfulness', () => {
     expect(v.invented.map((f) => f.value)).toContain(99999);
   });
 
+  it('does not read a bullet\'s maximum as a claim about the client', () => {
+    // The defect this exists to stop. A real conversion rejected *Capacity at a
+    // glance* — the flagship chapter, twice, then fell back to flat prose —
+    // with `it contains 1 figure the chapter does not: 100`. The chapter says
+    // "76% utilisation" and contains no 100. The model had done exactly the
+    // right thing: a `bullet` of 76 against a scale of 100.
+    //
+    // `max` is the axis, not an assertion. A wrong max mis-scales a bar; a
+    // wrong value misstates a figure, and only the second is worth throwing a
+    // chapter away for.
+    const blocks: EnrichedBlock[] = [
+      { kind: 'bullet', label: 'Proposed loan', value: 76, max: 100, sub: 'of capacity' },
+    ];
+    const v = checkFaithful('Utilisation is 76% of assessed capacity.', enrichedText(blocks));
+    expect(v.ok).toBe(true);
+    expect(enrichedText(blocks)).not.toContain('100');
+  });
+
+  it('still checks a bullet\'s value and its target', () => {
+    // The other two numbers on a bullet are claims — "you are at 88" and "the
+    // policy limit is 80" are both statements about the client.
+    const badValue: EnrichedBlock[] = [{ kind: 'bullet', label: 'Proposed loan', value: 88, max: 100 }];
+    expect(checkFaithful('Utilisation is 76% of capacity.', enrichedText(badValue)).ok).toBe(false);
+
+    const badTarget: EnrichedBlock[] = [
+      { kind: 'bullet', label: 'Proposed loan', value: 76, target: 8_432, max: 100 },
+    ];
+    const v = checkFaithful('Utilisation is 76% of capacity.', enrichedText(badTarget));
+    expect(v.ok).toBe(false);
+    expect(v.invented.map((f) => f.value)).toContain(8432);
+  });
+
   it('allows the output to omit what the source had', () => {
     // Only one direction is checked, on purpose: omission is visible, invention
     // is not.
@@ -399,6 +472,45 @@ describe('the content quota', () => {
       { kind: 'prose', markdown: 'x' },
     ];
     expect(kinds.filter(isDesigned).map((b) => b.kind)).toEqual(['lede']);
+  });
+});
+
+describe('which chapters are worth asking about', () => {
+  const chapter = (title: string, chars: number) => ({ title, markdown: 'x'.repeat(chars) });
+
+  it('skips a chapter too short to have anything to design', () => {
+    // A real conversion spent fourteen of its twenty calls on fragments —
+    // `DTI Ratio` at 61 characters, `Stress Test` at 78 — and got back "the
+    // model returned no blocks" fourteen times.
+    const { work, skipped } = partitionForEnrichment([
+      chapter('Capacity at a glance', 900),
+      chapter('DTI Ratio', 61),
+      chapter('Stress Test', 78),
+    ]);
+    expect(work.map((c) => c.title)).toEqual(['Capacity at a glance']);
+    expect(skipped.map((c) => c.title)).toEqual(['DTI Ratio', 'Stress Test']);
+  });
+
+  it('says a skipped chapter was skipped rather than letting it read as a failure', () => {
+    // "4 of 6 designed" with nothing else said means two chapters failed. They
+    // did not; they were never asked.
+    expect(tooShortNote(chapter('Warnings', 42)))
+      .toBe('Warnings: too short to design (42 characters)');
+  });
+
+  it('drops an empty chapter without calling it a skip', () => {
+    // An unfilled chapter has no source. There is nothing to tell anybody.
+    const { work, skipped } = partitionForEnrichment([chapter('Audit trail', 0), { title: 'Blank', markdown: '   \n  ' }]);
+    expect(work).toEqual([]);
+    expect(skipped).toEqual([]);
+  });
+
+  it('measures the trimmed length, at the floor exactly', () => {
+    const { work } = partitionForEnrichment([
+      { title: 'On it', markdown: `\n\n${'x'.repeat(MIN_ENRICH_CHARS)}\n\n` },
+      { title: 'Under it', markdown: 'x'.repeat(MIN_ENRICH_CHARS - 1) },
+    ]);
+    expect(work.map((c) => c.title)).toEqual(['On it']);
   });
 });
 
