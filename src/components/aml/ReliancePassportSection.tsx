@@ -3,11 +3,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Share2, FileSignature, ShieldCheck } from "lucide-react";
+import { Loader2, Share2, FileSignature, ShieldCheck, Link2 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import {
   amlRelianceApi, type ComplianceAttestation, type IndependentAssessment,
+  type PartnerCaseLink, type PartnerOrganisation,
   type RelianceAgreement, type RelianceGrant,
 } from "@/lib/aml/amlRelianceApi";
 
@@ -26,6 +27,8 @@ export function ReliancePassportSection({
   const [grants, setGrants] = useState<RelianceGrant[]>([]);
   const [assessments, setAssessments] = useState<IndependentAssessment[]>([]);
   const [agreements, setAgreements] = useState<RelianceAgreement[]>([]);
+  const [links, setLinks] = useState<PartnerCaseLink[]>([]);
+  const [organisations, setOrganisations] = useState<PartnerOrganisation[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const { prompt, dialog } = usePromptDialog();
@@ -44,6 +47,18 @@ export function ReliancePassportSection({
       setAgreements(ag.agreements ?? []);
     } catch {
       // Function not yet deployed in this environment — render empty state.
+    }
+    try {
+      // Phase 1 surfaces load separately so an environment without the
+      // partner-identity migration still renders the legacy panel.
+      const [l, o] = await Promise.all([
+        amlRelianceApi.listPartnerCaseLinks(caseId),
+        amlRelianceApi.listPartnerOrganisations(),
+      ]);
+      setLinks(l.links ?? []);
+      setOrganisations(o.partner_organisations ?? []);
+    } catch {
+      // Partner-identity tables not present yet — hide the links block.
     } finally {
       setLoaded(true);
     }
@@ -146,6 +161,107 @@ export function ReliancePassportSection({
     } finally { setBusy(null); }
   };
 
+  const addOrganisation = async () => {
+    const values = await prompt({
+      title: "Record a partner organisation",
+      description:
+        "The canonical legal identity of a partner. Classification stays 'unclassified' until the " +
+        "MLRO records it with evidence — the system never infers a legal status.",
+      confirmLabel: "Record organisation",
+      fields: [
+        { name: "legal_name", label: "Legal name", required: true, placeholder: "e.g. Meridian Finance Group Pty Ltd…" },
+        { name: "organisation_type", label: 'Type ("finance" / "builder" / "developer" / "solicitor_conveyancer" / "other")', required: true, placeholder: "finance" },
+        { name: "abn", label: "ABN (optional)", required: false, placeholder: "11 digits…" },
+      ],
+    });
+    if (!values) return;
+    setBusy("org");
+    try {
+      await amlRelianceApi.upsertPartnerOrganisation({
+        legal_name: values.legal_name,
+        organisation_type: values.organisation_type.trim() as any,
+        abn: values.abn || undefined,
+      });
+      toast({ title: "Partner organisation recorded", description: "Classification: unclassified until the MLRO records it." });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not record organisation", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  const addLink = async () => {
+    if (organisations.length === 0) {
+      toast({
+        title: "No partner organisations recorded",
+        description: "Record the canonical partner organisation first — a free-text name is not an identity.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const values = await prompt({
+      title: "Link a partner to this case",
+      description:
+        "The link records why this organisation may access this matter. It grants nothing by " +
+        "itself — no passport, no reliance, no data flow. The legal route is a recorded decision, " +
+        "never inferred from the portal.",
+      confirmLabel: "Link partner",
+      fields: [
+        {
+          name: "partner", label: `Partner organisation (${organisations.map((o) => o.legal_name).join(" · ")})`,
+          required: true, placeholder: "Exact legal name from the list above…",
+        },
+        { name: "portal_type", label: 'Portal ("finance" / "builder" / "developer" / "solicitor_conveyancer" / "other")', required: true, placeholder: "finance" },
+        { name: "relationship_role", label: "Relationship role", required: true, placeholder: "e.g. lender, buyer_solicitor, builder…" },
+        { name: "legal_route", label: 'Legal route ("reliance" / "outsourced_cdd" / "independent_cdd" / "information_share_only")', required: true, placeholder: "independent_cdd" },
+        { name: "purpose", label: "Documented purpose", type: "textarea", required: true, placeholder: "Why this organisation needs access to this matter…" },
+      ],
+    });
+    if (!values) return;
+    const org = organisations.find(
+      (o) => o.legal_name.toLowerCase() === values.partner.trim().toLowerCase());
+    if (!org) {
+      toast({ title: "No recorded organisation matches that name", variant: "destructive" });
+      return;
+    }
+    setBusy("link");
+    try {
+      await amlRelianceApi.linkPartnerToCase({
+        case_id: caseId, partner_org_id: org.id,
+        portal_type: values.portal_type.trim(),
+        relationship_role: values.relationship_role.trim(),
+        legal_route: values.legal_route.trim() as any,
+        purpose: values.purpose,
+      });
+      toast({ title: "Partner linked", description: "The link is an access root only — no reliance follows from it." });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not link partner", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
+  const endLink = async (link: PartnerCaseLink) => {
+    const values = await prompt({
+      title: "End partner link",
+      description: "Ending the link removes the access root. The reason code is partner-safe.",
+      confirmLabel: "End link",
+      fields: [{
+        name: "reason", label: 'Reason ("completed" / "withdrawn" / "superseded" / "client_declined" / "other")',
+        required: true, placeholder: "completed",
+      }],
+    });
+    if (!values) return;
+    setBusy("endlink");
+    try {
+      await amlRelianceApi.setPartnerCaseLinkState({
+        link_id: link.id, state: "ended", end_reason_code: values.reason.trim() as any,
+      });
+      toast({ title: "Partner link ended" });
+      await refresh();
+    } catch (e: any) {
+      toast({ title: "Could not end link", description: e?.message, variant: "destructive" });
+    } finally { setBusy(null); }
+  };
+
   if (!loaded) return null;
   const current = attestations.find((a) => !a.superseded_at) ?? null;
 
@@ -223,6 +339,67 @@ export function ReliancePassportSection({
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Canonical partner links (Phase 1). A link is the access root —
+            it explains WHY an organisation may see this matter. It is never
+            itself a passport, a reliance decision or a disclosure. */}
+        <div className="border-t pt-3">
+          <div className="flex items-center justify-between">
+            <div className="text-xs font-medium flex items-center gap-1.5">
+              <Link2 className="h-3.5 w-3.5 text-primary" /> Partner links
+            </div>
+            {isMlro && (
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" onClick={addOrganisation} disabled={busy !== null}>
+                  Record organisation
+                </Button>
+                <Button size="sm" variant="outline" onClick={addLink} disabled={busy !== null}>
+                  {busy === "link" && <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />}
+                  Link partner
+                </Button>
+              </div>
+            )}
+          </div>
+          {links.length === 0 ? (
+            <div className="text-xs text-muted-foreground mt-1.5">
+              No partners linked. A partner sees this matter only through an active link with a
+              recorded legal route and purpose — and a link alone still grants no passport or
+              reliance access.
+            </div>
+          ) : (
+            <ul className="mt-1.5 space-y-1.5 text-xs">
+              {links.map((l) => (
+                <li key={l.id} className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">
+                    {l.partner_organisations?.legal_name ?? "Partner organisation"}
+                  </span>
+                  <Badge variant="outline">{l.relationship_role}</Badge>
+                  <Badge variant="outline">{l.legal_route.replace(/_/g, " ")}</Badge>
+                  <Badge
+                    variant="outline"
+                    className={
+                      l.state === "active" ? "text-success"
+                        : l.state === "suspended" ? "text-warning" : "text-muted-foreground"
+                    }
+                  >
+                    {l.state}
+                  </Badge>
+                  {l.partner_organisations?.classification_status !== "classified" && (
+                    <Badge variant="outline" className="text-warning">classification incomplete</Badge>
+                  )}
+                  {isMlro && l.state === "active" && (
+                    <Button
+                      size="sm" variant="ghost" className="h-6 px-2 text-xs"
+                      onClick={() => endLink(l)} disabled={busy !== null}
+                    >
+                      End link
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </CardContent>
       {dialog}
