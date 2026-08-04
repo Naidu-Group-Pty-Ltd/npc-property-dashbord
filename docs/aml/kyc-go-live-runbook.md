@@ -289,3 +289,21 @@ completed as document sightings. No customer loses an attempt to a rollback.
 | Verification returns `pending` repeatedly, no error | Capture unusable — no face found, or too small | A capture problem, not an identity failure. Ask for a retake in better light |
 | Client cannot get past consent | Biometric consent marked required | Apply `20260729030000_optional_biometric_consent.sql` |
 | `parser produced 0 entries` | Publisher changed the file layout | Dry-run it and read the output; use `--dfat-url` / `--dfat-file` if it is DFAT |
+
+---
+
+## Phase 9 release-candidate status (controlled rollout)
+
+The partner/reliance domain (Phases 1–8 + pre-rollout remediation) is
+**source implemented and locally tested** on branch
+`claude/aml-ctf-remediation-and-controlled-rollout`: record classifications
+corrected (raw ID copy P3, legal hold P4, SMR P5 seeded), controlled
+expiring audited P3 evidence access completed, action-level write flags
+added (all default false; service/settlement blocking reserved and
+enforced nowhere). The 60-migration chain, behaviour battery, rollback
+rehearsal and flag dependency order were proven on a disposable local
+Postgres (`supabase/tests/aml-local-rehearsal/`). **Staging is not
+deployed, staging is not verified, production is not deployed** — no
+statement in this document may be read as claiming otherwise. The rollout
+sequence, evidence sheets, UAT plan, sign-off register (no sign-offs
+obtained) and open legal/MLRO decisions live in `docs/aml/rollout/`.

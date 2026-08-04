@@ -1,6 +1,85 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.55.0';
+import { buildPartnerNotification, partnerEventDeliveryDecision } from '../_shared/aml/partnerEvents.ts';
 const json=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
 const workerId=()=>`cross-portal-${crypto.randomUUID()}`;
+
+/** AML partner events (Phase 6). Consumer + sweep are DB-flag gated
+ * (aml_partner_event_outbox, default false) on top of the worker's own env
+ * kill switch. The consumer NEVER writes authoritative AML state — grants,
+ * attestations, links and the service gate are read-only here, so a
+ * duplicate, replayed or out-of-order event structurally cannot reopen
+ * revoked access or restore superseded content. Its only write is the
+ * idempotent partner-safe notification row (UNIQUE outbox_event_id). */
+async function amlPartnerEventsEnabled(db:any):Promise<boolean>{
+  const {data}=await db.from('feature_flags').select('value').eq('key','aml_partner_event_outbox').maybeSingle();
+  const v=data?.value; return v===true||v==='true'||(v&&typeof v==='object'&&(v as any).enabled===true);
+}
+
+async function deliverAmlPartnerEvent(db:any,event:any){
+  if(!await amlPartnerEventsEnabled(db)) return; // kill switch: skip delivery, keep the event as evidence
+  const current:{grant?:any;attestation?:any;link?:any}={};
+  if(event.aggregate_type==='reliance_grant'){
+    const {data}=await db.schema('aml').from('reliance_grants').select('revoked_at,expires_at').eq('id',event.aggregate_id).maybeSingle();
+    current.grant=data??null;
+  }else if(event.aggregate_type==='compliance_attestation'){
+    const {data}=await db.schema('aml').from('compliance_attestations').select('superseded_at,refresh_required_at').eq('id',event.aggregate_id).maybeSingle();
+    current.attestation=data??null;
+  }else if(event.aggregate_type==='partner_case_link'){
+    const {data}=await db.schema('aml').from('partner_case_links').select('state').eq('id',event.aggregate_id).maybeSingle();
+    current.link=data??null;
+  }
+  const decision=partnerEventDeliveryDecision(event.event_type,current,new Date());
+  if(decision!=='notify') return; // ops events surface via the health card; stale creations say nothing
+  if(!event.partner_org_id) return; // no partner destination on the event → nothing to deliver
+  const notification=buildPartnerNotification(event.event_type,event.payload?.safe_reason_code??null);
+  const {error}=await db.schema('aml').from('partner_notifications').upsert({
+    outbox_event_id:event.id,partner_org_id:event.partner_org_id,
+    partner_case_link_id:event.partner_case_link_id??null,
+    event_type:notification.event_type,safe_reason_code:notification.safe_reason_code,
+    title:notification.title,body:notification.body,
+  },{onConflict:'outbox_event_id',ignoreDuplicates:true});
+  if(error) throw error;
+}
+
+/** Time-based AML events that no row transition can emit: grant expiry and
+ * arrangement review due/overdue. Enqueued through the same catalogue-
+ * validated, duplicate-safe choke point (idempotency keys embed the grant id
+ * or the review-due date, so each occurrence emits exactly once no matter
+ * how many sweeps run). */
+async function sweepAmlTimeBasedEvents(db:any){
+  if(!await amlPartnerEventsEnabled(db)) return {expired:0,reviews:0};
+  const nowIso=new Date().toISOString();
+  let expired=0,reviews=0;
+  const {data:expiredGrants}=await db.schema('aml').from('reliance_grants')
+    .select('id,case_id,partner_org_id,partner_case_link_id,expires_at')
+    .is('revoked_at',null).lt('expires_at',nowIso)
+    .gt('expires_at',new Date(Date.now()-30*86400000).toISOString()).limit(100);
+  for(const g of expiredGrants||[]){
+    const {error}=await db.schema('aml').rpc('enqueue_partner_event',{
+      _event_type:'aml.partner_access.expired',_aggregate_type:'reliance_grant',
+      _aggregate_id:g.id,_aggregate_version:1,
+      _payload:{grant_id:g.id,case_id:g.case_id,expires_at:g.expires_at},
+      _idempotency_key:`aml.partner_access.expired:${g.id}`,
+      _partner_org_id:g.partner_org_id??null,_partner_case_link_id:g.partner_case_link_id??null,
+    });
+    if(!error) expired++;
+  }
+  const soon=new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+  const today=nowIso.slice(0,10);
+  const {data:agreements}=await db.schema('aml').from('reliance_agreements')
+    .select('id,next_review_due').eq('status','active').lte('next_review_due',soon).limit(100);
+  for(const a of agreements||[]){
+    const overdue=a.next_review_due<today;
+    const {error}=await db.schema('aml').rpc('enqueue_partner_event',{
+      _event_type:overdue?'aml.arrangement.overdue':'aml.arrangement.review_due',
+      _aggregate_type:'reliance_agreement',_aggregate_id:a.id,_aggregate_version:1,
+      _payload:{agreement_id:a.id,next_review_due:a.next_review_due},
+      _idempotency_key:`${overdue?'aml.arrangement.overdue':'aml.arrangement.review_due'}:${a.id}:${a.next_review_due}`,
+    });
+    if(!error) reviews++;
+  }
+  return {expired,reviews};
+}
 
 async function projectCase(db:any,event:any) {
   const caseId=event.payload?.case_id||event.aggregate_id;
@@ -76,10 +155,10 @@ Deno.serve(async req=>{
   const id=workerId(); const {data:events,error}=await db.rpc('claim_integration_outbox',{_worker_id:id,_limit:25}); if(error)return json({error:'claim_failed'},500);
   let succeeded=0,failed=0;
   for(const event of events||[]){
-    const consumer=event.event_type==='legal.message.created'?'cross_portal_delivery':event.event_type==='conversation.message.created'?'canonical_conversations':'case_projections';
+    const consumer=String(event.event_type).startsWith('aml.')?'aml_partner_events':event.event_type==='legal.message.created'?'cross_portal_delivery':event.event_type==='conversation.message.created'?'canonical_conversations':'case_projections';
     await db.from('integration_delivery_attempts').insert({outbox_id:event.id,consumer_name:consumer,attempt_number:event.attempts,status:'started'});
     try{
-      if(event.event_type==='legal.message.created')await deliverLegalMessage(db,event);else if(event.event_type==='conversation.message.created'){/* participant reads are immediate; channel delivery is claimed below */}else if(event.aggregate_type==='transaction_case')await projectCase(db,event);else if(event.event_type==='legal.audit_chain.failed')throw new Error('audit_chain_failure_requires_operator');
+      if(String(event.event_type).startsWith('aml.'))await deliverAmlPartnerEvent(db,event);else if(event.event_type==='legal.message.created')await deliverLegalMessage(db,event);else if(event.event_type==='conversation.message.created'){/* participant reads are immediate; channel delivery is claimed below */}else if(event.aggregate_type==='transaction_case')await projectCase(db,event);else if(event.event_type==='legal.audit_chain.failed')throw new Error('audit_chain_failure_requires_operator');
       await db.from('integration_delivery_attempts').update({status:'succeeded',completed_at:new Date().toISOString()}).eq('outbox_id',event.id).eq('consumer_name',consumer).eq('attempt_number',event.attempts);
       await db.from('integration_outbox').update({processed_at:new Date().toISOString(),locked_at:null,locked_by:null,last_error:null}).eq('id',event.id).eq('locked_by',id);
       await db.from('projection_checkpoints').upsert({consumer_name:consumer,last_event_id:event.id,last_occurred_at:event.occurred_at,updated_at:new Date().toISOString()},{onConflict:'consumer_name'});
@@ -104,5 +183,6 @@ Deno.serve(async req=>{
       }
     }
   }
-  return json({claimed:(events||[]).length,succeeded,failed,notification_delivered:notificationDelivered,notification_failed:notificationFailed});
+  const amlSweep=await sweepAmlTimeBasedEvents(db).catch(()=>({expired:0,reviews:0}));
+  return json({claimed:(events||[]).length,succeeded,failed,notification_delivered:notificationDelivered,notification_failed:notificationFailed,aml_sweep:amlSweep});
 });

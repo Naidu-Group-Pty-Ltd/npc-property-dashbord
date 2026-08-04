@@ -160,6 +160,12 @@
       "reviewed": true,
       "wp14_auto_classified": true
     },
+    "aml-reliance": {
+      "verify_jwt": false,
+      "exposure_class": "public-auth",
+      "owner": "security-remediation-program",
+      "reviewed": true
+    },
     "aml-reporting": {
       "verify_jwt": false,
       "exposure_class": "human-authenticated",

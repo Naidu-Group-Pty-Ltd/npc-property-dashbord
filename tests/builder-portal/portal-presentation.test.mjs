@@ -74,11 +74,16 @@ const AUTH_PAGES = [
   'src/pages/builder/BuilderSelectOrganisation.tsx',
 ];
 
-/** The twelve destinations, exactly as the route tree defines them. */
+/** The thirteen destinations, exactly as the route tree defines them.
+ * '/builder/compliance' is the flag-gated partner compliance workspace
+ * (AML partner domain Phase 5): its NAV entry is skipped in SidebarNav
+ * until the aml_partner_compliance_workspace + builder surface flags are
+ * on, so the rendered navigation is unchanged while the flags are off. */
 const ROUTES = [
   '/builder', '/builder/projects', '/builder/inventory', '/builder/transactions',
   '/builder/pipeline', '/builder/construction', '/builder/documents', '/builder/messages',
-  '/builder/tasks', '/builder/notifications', '/builder/activity', '/builder/settings',
+  '/builder/tasks', '/builder/notifications', '/builder/activity', '/builder/compliance',
+  '/builder/settings',
 ];
 
 /** Committed files, so "untouched" is measured against the merge base. */
@@ -480,7 +485,7 @@ test('40. the sidebar matches the Solicitor width and structure', () => {
   }
 });
 
-test('41. all twelve Builder routes remain in the navigation', () => {
+test('41. all thirteen Builder routes remain in the navigation', () => {
   const navBlock = layoutCode.slice(layoutCode.indexOf('const NAV: BuilderNavItem[]'),
     layoutCode.indexOf('function tourAnchor'));
   assert.deepEqual([...navBlock.matchAll(/\{ to: '([^']+)'/g)].map((m) => m[1]), ROUTES);
@@ -541,7 +546,7 @@ test('46. the mobile drawer contains every route', () => {
   // One SidebarNav definition, rendered by both surfaces, so the drawer cannot
   // fall behind the desktop list.
   assert.equal((layoutCode.match(/<SidebarNav /g) ?? []).length, 2);
-  assert.match(layoutCode, /<SidebarNav pathname=\{pathname\} onNavigate=\{\(\) => setMobileOpen\(false\)\} \/>/);
+  assert.match(layoutCode, /<SidebarNav pathname=\{pathname\} showCompliance=\{complianceNavEnabled\} onNavigate=\{\(\) => setMobileOpen\(false\)\} \/>/);
   assert.match(layoutCode, /role="dialog"\s*\n\s*aria-modal="true"/);
   assert.match(layoutCode, /aria-label="Builder portal navigation"/);
 });

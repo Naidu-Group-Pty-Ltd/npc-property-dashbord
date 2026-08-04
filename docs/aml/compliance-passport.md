@@ -64,6 +64,49 @@ when no party is verified (`nothing_to_attest`).
   arrangements, issue, grant, partner assessments at a glance.
 - `scripts`/schema: `20260729090000_aml_reliance_passport.sql` (applied live).
 
+## Partner domain phases 1–3 (2026-08)
+
+Three additive, flag-gated layers extend the engine. Flag off = behaviour
+above, unchanged. None of them encode a legal conclusion: every legal value
+is recorded configuration with a safe incomplete default, reliance defaults
+to unavailable, and the independent-CDD route is never gated.
+
+1. **Canonical partner identity** (`aml_partner_identity`, migration
+   `20260805100000`): `aml.partner_organisations` (classification requires
+   evidence; reliance-capable values are structurally unusable without it),
+   `partner_portal_memberships` (maps real portal users; no credentials
+   duplicated), `partner_case_links` (the access root: case + org + role +
+   one of the four distinct legal routes + documented purpose), and a
+   reviewed exact-copy backfill queue for historical free-text agreement
+   names (`partner_org_name_mappings` — no fuzzy matching, MLRO resolves
+   every row). With the flag on, a new grant requires an ACTIVE
+   reliance-route link; `partner_org_id`/`partner_case_link_id` are stamped
+   onto grants. Guard: `_shared/aml/relianceEligibility.ts` (pure,
+   vitest-covered).
+
+2. **Arrangement governance** (`aml_arrangement_governance`, migration
+   `20260805110000`): structured agreement scope + recorded eligibility
+   classification + `aml.arrangement_assessments` — an immutable,
+   supersede-only review history with one operative row per agreement.
+   With the flag on, new reliance grants additionally require an in-force,
+   in-scope, eligibility-recorded arrangement with an operative, current,
+   suitable assessment. Denials are partner-safe reason codes.
+
+3. **Attestation v2 + disclosure manifests** (`aml_attestation_v2`,
+   migration `20260805120000`): v2 issuance requires the EXPLICIT
+   approved/approved-with-controls `service_gate_decisions` record, hashes
+   canonically (sorted keys), records a deterministic material-input hash
+   (party/consent/screening/gate/limitations/subject — presentation fields
+   excluded so they cannot force meaningless supersession) and reason
+   codes. Each v2 grant carries an `aml.disclosure_manifests` row; every
+   partner read is BUILT by intersecting the payload with the manifest
+   (denied classes override allowed codes; unknown codes disclose nothing;
+   expiry/revocation checked at read; superseded content never served —
+   the partner gets `refresh_required`). A deep restricted-key tripwire
+   refuses to store or serve a payload carrying internal vocabulary.
+   Mechanics: `_shared/aml/attestationV2.ts` (pure, vitest-covered).
+   v1 rows remain readable exactly as before.
+
 ## Commercialisation note
 
 This is the module boundary for selling Command-Centre access: a partner
@@ -71,3 +114,21 @@ organisation's portal integration needs exactly one credential (the grant
 token) and one endpoint, receives only the sanitised passport, and gets its
 own compliance record out of it. Per-partner scoping, expiry, revocation and
 a full access log are already the billing/entitlement seams.
+
+---
+
+## Phase 9 release-candidate status (controlled rollout)
+
+The partner/reliance domain (Phases 1–8 + pre-rollout remediation) is
+**source implemented and locally tested** on branch
+`claude/aml-ctf-remediation-and-controlled-rollout`: record classifications
+corrected (raw ID copy P3, legal hold P4, SMR P5 seeded), controlled
+expiring audited P3 evidence access completed, action-level write flags
+added (all default false; service/settlement blocking reserved and
+enforced nowhere). The 60-migration chain, behaviour battery, rollback
+rehearsal and flag dependency order were proven on a disposable local
+Postgres (`supabase/tests/aml-local-rehearsal/`). **Staging is not
+deployed, staging is not verified, production is not deployed** — no
+statement in this document may be read as claiming otherwise. The rollout
+sequence, evidence sheets, UAT plan, sign-off register (no sign-offs
+obtained) and open legal/MLRO decisions live in `docs/aml/rollout/`.

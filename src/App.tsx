@@ -101,6 +101,7 @@ import {
   AmlMonitoring, AmlInvestigations, AmlAustracReporting, AmlRecords, AmlGovernance, AmlConfiguration,
 } from "./pages/aml/AmlShellPages";
 const AmlLaunchOps = lazyWithRetry(() => import("./pages/aml/AmlLaunchOps"));
+const AmlPartnerOperations = lazyWithRetry(() => import("./pages/aml/AmlPartnerOperations"));
 import { AmlLayout } from "@/components/aml/AmlLayout";
 import { AmlGuard } from "@/components/aml/AmlGuard";
 const AgentMemoryManager = lazyWithRetry(() => import("./pages/agent/MemoryManager"));
@@ -180,6 +181,7 @@ const SolicitorForgotPassword = lazyWithRetry(() => import("@/pages/solicitor/So
 const SolicitorChangePassword = lazyWithRetry(() => import("@/pages/solicitor/SolicitorChangePassword"));
 const SolicitorDashboard = lazyWithRetry(() => import("@/pages/solicitor/SolicitorDashboard"));
 const SolicitorMatters = lazyWithRetry(() => import("@/pages/solicitor/SolicitorMatters"));
+const SolicitorCompliance = lazyWithRetry(() => import("@/pages/solicitor/SolicitorCompliance"));
 const SolicitorPipeline = lazyWithRetry(() => import("@/pages/solicitor/SolicitorPipeline"));
 const SolicitorMatterDetail = lazyWithRetry(() => import("@/pages/solicitor/SolicitorMatterDetail"));
 const SolicitorTerms = lazyWithRetry(() => import("@/pages/solicitor/SolicitorTerms"));
@@ -199,6 +201,7 @@ const BuilderSelectOrganisation = lazyWithRetry(() => import("@/pages/builder/Bu
 const BuilderTerms = lazyWithRetry(() => import("@/pages/builder/BuilderTerms"));
 const BuilderOnboarding = lazyWithRetry(() => import("@/pages/builder/BuilderOnboarding"));
 const BuilderDashboard = lazyWithRetry(() => import("@/pages/builder/BuilderDashboard"));
+const BuilderCompliance = lazyWithRetry(() => import("@/pages/builder/BuilderCompliance"));
 const BuilderSettings = lazyWithRetry(() => import("@/pages/builder/BuilderSettings"));
 const BuilderProjects = lazyWithRetry(() => import("@/pages/builder/BuilderProjects"));
 const BuilderProjectDetail = lazyWithRetry(() => import("@/pages/builder/BuilderProjectDetail"));
@@ -233,6 +236,7 @@ const FinancePortalPurchaseFiles = lazyWithRetry(() => import("./pages/finance-p
 const FinancePortalPurchaseFileDetail = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalPurchaseFileDetail"));
 const FinancePortalClientInbox = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalClientInbox"));
 const FinancePortalPipeline = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalPipeline"));
+const FinancePortalComplianceWorkspace = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalComplianceWorkspace"));
 const FinancePortalInsights = lazyWithRetry(() => import("./pages/finance-portal/FinancePortalInsights"));
 const PartnerReferralInbox = lazyWithRetry(() => import("./pages/finance-portal/PartnerReferralInbox"));
 const AmlCaseSnapshot = lazyWithRetry(() => import("./pages/finance-portal/AmlCaseSnapshot"));
@@ -421,6 +425,7 @@ const App = () => (
                                 <Route path="reports" element={<FinancePortalReports />} />
                                 <Route path="settings" element={<FinancePortalSettings />} />
                                 <Route path="aml-snapshot/:token" element={<AmlCaseSnapshot />} />
+                                <Route path="compliance" element={<FinancePortalComplianceWorkspace />} />
                                 
 
 
@@ -449,6 +454,7 @@ const App = () => (
                                   <Route path="messages" element={<SolicitorWorkspacePage kind="messages" />} />
                                   <Route path="tasks" element={<SolicitorWorkspacePage kind="tasks" />} />
                                   <Route path="notifications" element={<SolicitorWorkspacePage kind="notifications" />} />
+                                  <Route path="compliance" element={<SolicitorCompliance />} />
                                   <Route path="settings" element={<SolicitorSettings />} />
                                   <Route path="settings/security" element={<SolicitorSecurity />} />
                                 </Route>
@@ -495,6 +501,7 @@ const App = () => (
                                   <Route path="tasks" element={<BuilderTasks />} />
                                   <Route path="notifications" element={<BuilderNotifications />} />
                                   <Route path="activity" element={<BuilderActivity />} />
+                                  <Route path="compliance" element={<BuilderCompliance />} />
                                   <Route path="settings" element={<BuilderSettings />} />
                                 </Route>
                               </Route>
@@ -605,6 +612,7 @@ const App = () => (
                   <Route path="records" element={<AmlGuard capability="aml.view"><AmlRecords /></AmlGuard>} />
                   <Route path="governance" element={<AmlGuard capability="aml.view"><AmlGovernance /></AmlGuard>} />
                   <Route path="launch-ops" element={<AmlGuard capability="aml.view"><AmlLaunchOps /></AmlGuard>} />
+                  <Route path="partner-operations" element={<AmlGuard capability="aml.view"><AmlPartnerOperations /></AmlGuard>} />
                   <Route path="configuration" element={<AmlGuard capability="aml.configure"><AmlConfiguration /></AmlGuard>} />
                 </Route>
                 <Route path="admin/aml-v3-cutover" element={<AmlV3Cutover />} />
