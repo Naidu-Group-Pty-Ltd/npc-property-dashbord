@@ -57,14 +57,33 @@ describe('report template cascade map', () => {
     expect(contract.sections[0].fields.map((f) => f.path)).toContain('sections.executive_summary.body');
   });
 
-  it('maps anchored visual targets to required structure sections', () => {
+  /**
+   * A section is `mapped` only when every *required* field it declares has an
+   * anchor. `DEFAULT_FIELD_SUFFIXES` declares two — title and body — so
+   * anchoring one of them is the definition of `partially_mapped`, and the
+   * three states are asserted here together because the distinction between
+   * them is the whole point of the status.
+   */
+  const anchorFor = (contract: any, sectionIndex: number, suffix: string) =>
+    makeFieldAnchor(contract.sections[sectionIndex].fields.find((f: any) => f.path.endsWith(`.${suffix}`))!);
+
+  it('maps a section whose every required field is anchored', () => {
     const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## Executive Summary\n\n## Risk Register' });
-    const anchor = makeFieldAnchor(contract.sections[0].fields.find((f) => f.path.endsWith('.body'))!);
-    const cascade = buildCascadeMap(baseTemplate([anchor]), contract, { data: { sections: { executive_summary: { body: 'Hello' } } } });
-    expect(cascade.stats.totalAnchors).toBe(1);
+    const anchors = [anchorFor(contract, 0, 'title'), anchorFor(contract, 0, 'body')];
+    const cascade = buildCascadeMap(baseTemplate(anchors), contract, { data: { sections: { executive_summary: { body: 'Hello' } } } });
+    expect(cascade.stats.totalAnchors).toBe(2);
     expect(cascade.sections.find((s) => s.sectionId === 'executive_summary')?.status).toBe('mapped');
     expect(cascade.sections.find((s) => s.sectionId === 'risk_register')?.status).toBe('missing_anchor');
     expect(cascade.issues.some((i) => i.code === 'missing_required_anchor' && i.sectionId === 'risk_register')).toBe(true);
+  });
+
+  it('calls a section partially mapped when only some required fields are anchored', () => {
+    const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## Executive Summary\n\n## Risk Register' });
+    const cascade = buildCascadeMap(baseTemplate([anchorFor(contract, 0, 'body')]), contract, { data: { sections: { executive_summary: { body: 'Hello' } } } });
+    expect(cascade.sections.find((s) => s.sectionId === 'executive_summary')?.status).toBe('partially_mapped');
+    // Partially mapped is not a blocker: the section has an anchor, so it
+    // raises no `missing_required_anchor`. Only a section with none does.
+    expect(cascade.issues.some((i) => i.code === 'missing_required_anchor' && i.sectionId === 'executive_summary')).toBe(false);
   });
 
   it('suggests cascade anchors from unanchored section bindings', () => {
@@ -137,8 +156,18 @@ describe('report template cascade map', () => {
 
   it('summarizes cascade activation readiness with blockers and auto-map actions', () => {
     const contract = contractFromStructureTemplate({ id: 'rst1', parsed_content: '## Executive Summary\n\n## Risk Register' });
-    const cascade = buildCascadeMap(baseTemplate(), contract, { data: { sections: { executive_summary: { body: 'Hello' } } } });
-    const suggestions = buildCascadeAnchorSuggestions(baseTemplate(), contract);
+    /*
+     * One blocker, and one auto-map suggestion, needs both to be true at once:
+     * Executive Summary must hold an anchor (so it does not block), and the
+     * overlay's own `{{sections.executive_summary.body}}` binding must still be
+     * unanchored (so there is something to suggest). Anchoring the *title*
+     * gives exactly that. Anchoring the body — as this fixture used to — makes
+     * the suggestion disappear, and anchoring nothing makes Executive Summary a
+     * second blocker.
+     */
+    const template = baseTemplate([anchorFor(contract, 0, 'title')]);
+    const cascade = buildCascadeMap(template, contract, { data: { sections: { executive_summary: { body: 'Hello' } } } });
+    const suggestions = buildCascadeAnchorSuggestions(template, contract);
     const readiness = buildCascadeActivationReadiness(cascade, suggestions);
 
     expect(readiness.status).toBe('blocked');
