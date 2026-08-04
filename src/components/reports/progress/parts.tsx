@@ -2,7 +2,7 @@
  * Sub-components for the report generation progress widget.
  * Kept in one file to limit fragmentation while still separating concerns.
  */
-import { useMemo, useState } from 'react';
+import { forwardRef, useMemo, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -12,17 +12,18 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Layers, Search } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Switch } from '@/components/ui/switch';
-import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
 import {
   AlertDialog,
@@ -52,7 +53,7 @@ import {
   History as HistoryIcon,
   Loader2,
   MoreVertical,
-  Octagon,
+  Square,
   PauseCircle,
   PlayCircle,
   RefreshCw,
@@ -67,6 +68,7 @@ import { format } from 'date-fns';
 import type { GenerationHistoryEntry } from '@/hooks/useGenerationHistory';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { activityState, isResumable, formatEta, formatElapsed } from './selectors.pure';
 
 /* ---------- Types shared with parent ---------- */
 
@@ -96,6 +98,7 @@ export interface AggregateCounts {
   processing: number;
   stalled: number;
   failed: number;
+  completed: number;
   total: number;
   completedSections: number;
   totalSections: number;
@@ -117,6 +120,8 @@ interface HeaderProps {
   onMinimize: () => void;
   onDragStart?: (e: React.PointerEvent) => void;
   draggable?: boolean;
+  /** Keyboard-reachable equivalent of the pointer-only drag. */
+  onMoveCorner?: (corner: 'br' | 'bl' | 'tr' | 'tl') => void;
 }
 
 export function GenerationProgressHeader({
@@ -133,6 +138,7 @@ export function GenerationProgressHeader({
   onMinimize,
   onDragStart,
   draggable,
+  onMoveCorner,
 }: HeaderProps) {
   const aggregatePct =
     counts.totalSections > 0
@@ -142,43 +148,35 @@ export function GenerationProgressHeader({
   return (
     <div
       className={cn(
-        'border-b border-border bg-muted/50',
+        // The card itself is the glass pane. Per glass.css, nested and repeated
+        // elements inside a pane get a translucent fill and a hairline only —
+        // never their own backdrop-filter.
+        'border-b border-border bg-muted/40',
         draggable && 'cursor-grab active:cursor-grabbing select-none'
       )}
       onPointerDown={draggable ? onDragStart : undefined}
     >
-      <div className="flex items-center justify-between px-3 py-2 gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+      <div className="flex items-start justify-between px-3 py-2 gap-2">
+        <div className="flex flex-col gap-0.5 min-w-0">
           <span className="text-sm font-medium text-foreground whitespace-nowrap">
             {historyOpen ? 'History' : 'Generating'}
           </span>
+          {/* One compact summary line rather than five pills. At 320px wide,
+              chips carrying both an icon and a word wrapped into a five-row
+              column and pushed the controls off the top of the card. This says
+              the same thing in one line, still in words rather than colour. */}
           {!historyOpen && (
-            <div className="flex items-center gap-1 flex-wrap">
-              <StatusChip
-                icon={<Clock className="h-3 w-3" />}
-                value={counts.queued}
-                label="Queued"
-                tone="muted"
-              />
-              <StatusChip
-                icon={<Loader2 className="h-3 w-3 animate-spin" />}
-                value={counts.processing}
-                label="Processing"
-                tone="primary"
-              />
-              <StatusChip
-                icon={<Zap className="h-3 w-3" />}
-                value={counts.stalled}
-                label="Stalled"
-                tone="warning"
-              />
-              <StatusChip
-                icon={<AlertCircle className="h-3 w-3" />}
-                value={counts.failed}
-                label="Failed"
-                tone="destructive"
-              />
-            </div>
+            <span className="text-xs text-muted-foreground">
+              {[
+                counts.processing > 0 && `${counts.processing} running`,
+                counts.queued > 0 && `${counts.queued} queued`,
+                counts.stalled > 0 && `${counts.stalled} stalled`,
+                counts.failed > 0 && `${counts.failed} failed`,
+                counts.completed > 0 && `${counts.completed} done`,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
           )}
         </div>
 
@@ -188,7 +186,7 @@ export function GenerationProgressHeader({
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-6 w-6"
+                className="h-8 w-8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                 onClick={onToggleHistory}
                 aria-label="Toggle history"
                 aria-pressed={historyOpen}
@@ -204,7 +202,7 @@ export function GenerationProgressHeader({
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-6 w-6"
+                className="h-8 w-8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                 aria-label="Generation options"
               >
                 <MoreVertical className="h-3.5 w-3.5" />
@@ -226,36 +224,71 @@ export function GenerationProgressHeader({
               <DropdownMenuItem onClick={onResumeAllStalled} disabled={counts.stalled === 0}>
                 <RefreshCw className="h-4 w-4 mr-2" /> Retry all stalled
               </DropdownMenuItem>
+              {/* Labelled for what it actually does: this clears the whole
+                  generation history, not just dismissed rows. */}
               <DropdownMenuItem onClick={onClearCompleted}>
-                <Trash2 className="h-4 w-4 mr-2" /> Clear dismissed
+                <Trash2 className="h-4 w-4 mr-2" /> Clear history
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuLabel>Auto-continue</DropdownMenuLabel>
-              <div className="px-2 py-1.5 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs">Enabled</span>
-                  <Switch
-                    checked={autoContinueSettings.enabled}
-                    onCheckedChange={onToggleAutoContinue}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs">
-                    <span>Retry delay</span>
-                    <span className="text-muted-foreground">
-                      {autoContinueSettings.delaySeconds}s
-                    </span>
-                  </div>
-                  <Slider
-                    min={5}
-                    max={60}
-                    step={5}
-                    value={[autoContinueSettings.delaySeconds]}
-                    onValueChange={(v) => onChangeDelay(v[0] ?? 15)}
+              {/* Native menu primitives, not a Switch and a Slider parked inside
+                  the menu's DOM. Radix menus own arrow keys for their own roving
+                  focus, so a Slider nested here could not be adjusted from the
+                  keyboard at all, and neither control had an accessible name —
+                  the adjacent <span>s were plain text, not labels. */}
+              <DropdownMenuCheckboxItem
+                checked={autoContinueSettings.enabled}
+                onCheckedChange={onToggleAutoContinue}
+              >
+                Resume stalled reports automatically
+              </DropdownMenuCheckboxItem>
+              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                Wait before resuming
+              </DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={String(autoContinueSettings.delaySeconds)}
+                onValueChange={(v) => onChangeDelay(Number(v))}
+              >
+                {[10, 15, 30, 60].map((seconds) => (
+                  <DropdownMenuRadioItem
+                    key={seconds}
+                    value={String(seconds)}
                     disabled={!autoContinueSettings.enabled}
-                  />
-                </div>
-              </div>
+                  >
+                    {seconds} seconds
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              {onMoveCorner && (
+                <>
+                  <DropdownMenuSeparator />
+                  {/* The only keyboard route to repositioning; dragging is
+                      pointer-only and the widget is fixed over every route. */}
+                  <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                    Move panel
+                  </DropdownMenuLabel>
+                  <div className="grid grid-cols-2 gap-1 px-2 pb-2">
+                    {(
+                      [
+                        ['tl', 'Top left'],
+                        ['tr', 'Top right'],
+                        ['bl', 'Bottom left'],
+                        ['br', 'Bottom right'],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <Button
+                        key={value}
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        onClick={() => onMoveCorner(value)}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -264,22 +297,26 @@ export function GenerationProgressHeader({
               <Button
                 size="icon"
                 variant="ghost"
-                className="h-6 w-6"
+                className="h-8 w-8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                 onClick={onMinimize}
                 aria-label="Minimize"
               >
                 <ChevronDown className="h-3.5 w-3.5" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Minimize (⌘⇧R)</TooltipContent>
+            <TooltipContent>Collapse (Esc)</TooltipContent>
           </Tooltip>
         </div>
       </div>
 
       {!historyOpen && counts.total > 0 && (
         <div className="px-3 pb-2 space-y-1">
-          <Progress value={aggregatePct} className="h-1" />
-          <div className="flex justify-between text-[10px] text-muted-foreground">
+          <Progress
+            value={aggregatePct}
+            className="h-1"
+            aria-label={`Overall generation progress: ${counts.completedSections} of ${counts.totalSections} sections`}
+          />
+          <div className="flex justify-between text-xs text-muted-foreground">
             <span>
               {counts.completedSections}/{counts.totalSections} sections across {counts.total}{' '}
               report{counts.total === 1 ? '' : 's'}
@@ -292,42 +329,6 @@ export function GenerationProgressHeader({
   );
 }
 
-function StatusChip({
-  icon,
-  value,
-  label,
-  tone,
-}: {
-  icon: React.ReactNode;
-  value: number;
-  label: string;
-  tone: 'muted' | 'primary' | 'warning' | 'destructive';
-}) {
-  if (value === 0) return null;
-  const toneClass = {
-    muted: 'bg-muted text-muted-foreground',
-    primary: 'bg-primary/10 text-primary',
-    warning: 'bg-warning/10 text-warning',
-    destructive: 'bg-destructive/10 text-destructive',
-  }[tone];
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={cn(
-            'inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium',
-            toneClass
-          )}
-        >
-          {icon}
-          {value}
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
-    </Tooltip>
-  );
-}
-
 /* ---------- Rich minimised pill ---------- */
 
 interface PillProps {
@@ -336,63 +337,93 @@ interface PillProps {
   onClick: () => void;
 }
 
-export function GenerationProgressPill({ counts, etaMs, onClick }: PillProps) {
-  const pct =
-    counts.totalSections > 0
-      ? Math.round((counts.completedSections / counts.totalSections) * 100)
-      : 0;
-  const eta = formatEta(etaMs);
-  return (
-    <Button
-      variant="default"
-      onClick={onClick}
-      aria-label={`${counts.total} reports generating, ${pct}% complete${eta ? `, ${eta} remaining` : ''}`}
-      className="h-11 rounded-full bg-primary text-primary-foreground shadow-2xl shadow-primary/35 ring-1 ring-primary-foreground/20 pl-2 pr-3 gap-2 transition-all duration-200 hover:scale-[1.03] hover:bg-primary/90 hover:shadow-primary/50 focus-visible:ring-2 focus-visible:ring-primary-foreground/70 active:scale-[0.98]"
-    >
-      <span className="relative flex h-7 w-7 items-center justify-center">
-        <svg className="absolute inset-0 -rotate-90" viewBox="0 0 28 28">
-          <circle
-            cx="14"
-            cy="14"
-            r="12"
-            strokeWidth="3"
-            className="fill-none stroke-primary-foreground/25"
-          />
-          <circle
-            cx="14"
-            cy="14"
-            r="12"
-            strokeWidth="3"
-            className="fill-none stroke-primary-foreground"
-            strokeDasharray={`${(pct / 100) * 75.4} 75.4`}
-            strokeLinecap="round"
-          />
-        </svg>
-        <span className="text-[10px] font-bold tabular-nums">{pct}</span>
-      </span>
-      <span className="flex flex-col items-start leading-tight">
-        <span className="text-xs font-semibold">
-          {counts.total} report{counts.total === 1 ? '' : 's'}
+/** Ring geometry. Derived, not inlined: the radius and the circumference used to
+ *  be two independent literals (`r="12"` and a hardcoded `75.4`), so changing the
+ *  size silently desynced the arc from the percentage it claimed to show. */
+const RING_RADIUS = 12;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+export const GenerationProgressPill = forwardRef<HTMLButtonElement, PillProps>(
+  function GenerationProgressPill({ counts, etaMs, onClick }, ref) {
+    const pct =
+      counts.totalSections > 0
+        ? Math.round((counts.completedSections / counts.totalSections) * 100)
+        : 0;
+    const eta = formatEta(etaMs);
+
+    // Spell the whole state out for assistive tech — the ring and the failure
+    // badge are decorative duplicates of it.
+    const summary = [
+      `${counts.total} report${counts.total === 1 ? '' : 's'} generating`,
+      `${pct}% complete`,
+      counts.failed > 0 ? `${counts.failed} failed` : null,
+      eta ? `about ${eta} remaining` : null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+
+    return (
+      <Button
+        ref={ref}
+        variant="default"
+        onClick={onClick}
+        aria-label={`${summary}. Open generation details.`}
+        className="glass-raised h-11 rounded-full pl-2 pr-3 gap-2 motion-safe:transition-transform motion-safe:duration-200 motion-safe:hover:scale-[1.03] motion-safe:active:scale-[0.98]"
+      >
+        <span className="relative flex h-7 w-7 items-center justify-center">
+          <svg className="absolute inset-0 -rotate-90" viewBox="0 0 28 28" aria-hidden="true">
+            <circle
+              cx="14"
+              cy="14"
+              r={RING_RADIUS}
+              strokeWidth="3"
+              className="fill-none stroke-primary-foreground/25"
+            />
+            <circle
+              cx="14"
+              cy="14"
+              r={RING_RADIUS}
+              strokeWidth="3"
+              className="fill-none stroke-primary-foreground"
+              strokeDasharray={`${(pct / 100) * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+              strokeLinecap="round"
+            />
+          </svg>
+          <span className="text-xs font-bold tabular-nums" aria-hidden="true">
+            {pct}
+          </span>
         </span>
-        <span className="text-[10px] opacity-80">{eta ?? 'Estimating…'}</span>
-      </span>
-      {counts.failed > 0 && (
-        <span className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-semibold text-destructive-foreground">
-          {counts.failed}
+        <span className="flex flex-col items-start leading-tight" aria-hidden="true">
+          <span className="text-xs font-semibold">
+            {counts.total} report{counts.total === 1 ? '' : 's'}
+          </span>
+          <span className="text-xs opacity-90">{eta ?? 'Estimating…'}</span>
         </span>
-      )}
-    </Button>
-  );
-}
+        {counts.failed > 0 && (
+          <span
+            aria-hidden="true"
+            className="ml-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1 text-xs font-semibold text-destructive-foreground"
+          >
+            {counts.failed}
+          </span>
+        )}
+      </Button>
+    );
+  },
+);
 
 /* ---------- Per-report item ---------- */
 
 interface ItemProps {
   report: ReportProgress;
   etaMs: number | null;
-  retryState?: { attempts: number; lastAttempt: number };
+  retryState?: { attempts: number; lastAttempt: number; retryAt?: number };
   autoContinueSettings: AutoContinueSettings;
   sectionTimeline: number[]; // epoch ms of each section completion
+  /** Clock from the container's tick, so elapsed readouts advance predictably. */
+  now: number;
+  /** Whether polling/auto-continue is paused, so the row can tell the truth. */
+  paused: boolean;
   onContinue: () => void;
   onDismiss: () => void;
   onKill?: () => void;
@@ -405,6 +436,8 @@ export function GenerationProgressItem({
   retryState,
   autoContinueSettings,
   sectionTimeline,
+  now,
+  paused,
   onContinue,
   onDismiss,
   onKill,
@@ -412,26 +445,37 @@ export function GenerationProgressItem({
 }: ItemProps) {
   const navigate = useNavigate();
   const [killOpen, setKillOpen] = useState(false);
-  const percentage = Math.round((report.sectionsCompleted / report.totalSections) * 100);
+  const percentage =
+    report.totalSections > 0
+      ? Math.round((report.sectionsCompleted / report.totalSections) * 100)
+      : 0;
 
-  const timeSinceUpdate = Date.now() - report.lastUpdated.getTime();
-  const timeSinceCreation = Date.now() - report.createdAt.getTime();
-  const minutesSinceUpdate = Math.floor(timeSinceUpdate / 60000);
-  const secondsSinceUpdate = Math.floor(timeSinceUpdate / 1000);
+  // "now" arrives as a prop from the container's 1s tick. Calling Date.now()
+  // here made the render impure and — worse — froze every elapsed readout
+  // whenever polling stopped, because nothing re-rendered to advance it.
+  const timeSinceUpdate = now - report.lastUpdated.getTime();
+  const timeSinceCreation = now - report.createdAt.getTime();
 
-  const isTimedOut = timeSinceUpdate > 120000;
-  const hasPartialContent = report.contentLength > 1000;
+  // One shared definition of state, so the row can never say "Processing" while
+  // the header chip above it says "Stalled".
+  const state = activityState(report, now);
+  const isStuck = state === 'stalled';
   const isIncomplete = report.sectionsCompleted < report.totalSections;
-  const isStuck =
-    report.status === 'processing' && isTimedOut && hasPartialContent && isIncomplete;
 
-  const showContinueButton =
-    isStuck || (report.status === 'pending' && report.sectionsCompleted > 0);
+  const showContinueButton = isResumable(report, now);
   const currentSection = Math.min(report.sectionsCompleted + 1, report.totalSections);
 
   const retriesUsed = retryState?.attempts || 0;
   const maxRetriesReached = retriesUsed >= autoContinueSettings.maxRetries;
-  const hasScheduledRetry = isStuck && autoContinueSettings.enabled && !maxRetriesReached;
+  // Derived from whether a timer genuinely exists, not from "would we schedule
+  // one". While paused, no timer is ever scheduled — yet rows used to promise
+  // "Auto-resuming in 15s" and disable Stop, locking the user out of stopping a
+  // job that was never going to resume.
+  const hasScheduledRetry = retryState?.retryAt !== undefined && !paused;
+  const retryInSeconds =
+    retryState?.retryAt !== undefined
+      ? Math.max(0, Math.ceil((retryState.retryAt - now) / 1000))
+      : null;
 
   const openReport = () => navigate(`/investment-report/${report.id}`);
 
@@ -459,97 +503,117 @@ export function GenerationProgressItem({
             <span className="truncate">{report.property_address}</span>
             <ExternalLink className="h-3 w-3 opacity-0 group-hover:opacity-100 shrink-0" />
           </button>
+          {/* Status line. Colour is never the only signal — each state pairs a
+              distinct icon with distinct words, which also sidesteps `--primary`
+              and `--warning` being the same hue in the dark theme. Foreground
+              tones use the `-foreground` token in light mode, because the raw
+              --success/--warning hues fall well under 4.5:1 as small text. */}
           <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-            {report.status === 'pending' && !isStuck && (
+            {state === 'queued' && (
               <>
-                <Loader2 className="h-3 w-3 text-muted-foreground animate-spin" />
+                <Clock className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
                 <span className="text-xs text-muted-foreground">Queued</span>
               </>
             )}
-            {report.status === 'processing' && !isStuck && (
+            {state === 'generating' && (
               <>
-                <Loader2 className="h-3 w-3 text-primary animate-spin" />
-                <span className="text-xs text-primary">
-                  Section {currentSection}/{report.totalSections}
+                <Loader2
+                  className="h-3 w-3 text-info motion-safe:animate-spin"
+                  aria-hidden="true"
+                />
+                <span className="text-xs font-medium text-foreground">
+                  Section {currentSection} of {report.totalSections}
                 </span>
                 <span className="text-xs text-muted-foreground">
-                  • {formatElapsed(timeSinceCreation)}
+                  • {formatElapsed(timeSinceCreation)} elapsed
                 </span>
                 {etaMs !== null && (
-                  <span className="text-xs text-muted-foreground">
-                    • ~{formatEta(etaMs)} left
-                  </span>
+                  <span className="text-xs text-muted-foreground">• ~{formatEta(etaMs)} left</span>
                 )}
               </>
             )}
-            {report.status === 'failed' && !isStuck && (
+            {state === 'completed' && (
               <>
-                <Octagon className="h-3 w-3 text-destructive" />
-                <span className="text-xs text-destructive font-medium">
-                  {report.error_message?.toLowerCase().startsWith('cancelled')
-                    ? report.error_message
-                    : 'Failed'}
+                <CheckCircle2 className="h-3 w-3 text-success" aria-hidden="true" />
+                <span className="text-xs font-medium text-foreground">
+                  Finished in {formatElapsed(timeSinceCreation)}
                 </span>
               </>
             )}
-            {isStuck && (
+            {state === 'failed' && (
               <>
-                {hasScheduledRetry ? (
-                  <>
-                    <Zap className="h-3 w-3 text-warning" />
-                    <span className="text-xs text-warning font-medium">
-                      Auto-retry {retriesUsed + 1}/{autoContinueSettings.maxRetries}
-                    </span>
-                  </>
-                ) : maxRetriesReached ? (
-                  <>
-                    <AlertCircle className="h-3 w-3 text-destructive" />
-                    <span className="text-xs text-destructive font-medium">
-                      Failed ({retriesUsed})
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="h-3 w-3 text-warning" />
-                    <span className="text-xs text-warning font-medium">Stalled</span>
-                  </>
-                )}
+                <AlertCircle className="h-3 w-3 text-destructive" aria-hidden="true" />
+                <span className="text-xs font-medium text-foreground">
+                  {report.error_message?.toLowerCase().startsWith('cancelled')
+                    ? report.error_message
+                    : maxRetriesReached
+                      ? `Failed after ${retriesUsed} attempt${retriesUsed === 1 ? '' : 's'}`
+                      : 'Failed'}
+                </span>
+              </>
+            )}
+            {state === 'stalled' && (
+              <>
+                <PauseCircle className="h-3 w-3 text-warning" aria-hidden="true" />
+                <span className="text-xs font-medium text-foreground">
+                  {hasScheduledRetry && retryInSeconds !== null
+                    ? `Stalled — resuming in ${retryInSeconds}s`
+                    : paused
+                      ? 'Stalled — auto-resume paused'
+                      : maxRetriesReached
+                        ? `Stalled — ${retriesUsed} attempts used`
+                        : 'Stalled'}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  • no progress for {formatElapsed(timeSinceUpdate)}
+                </span>
               </>
             )}
           </div>
         </div>
 
         <div className="flex items-center gap-1 shrink-0">
+          {state === 'completed' && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 px-2 text-xs"
+              onClick={openReport}
+            >
+              <ExternalLink className="h-3 w-3 mr-1" aria-hidden="true" />
+              Open
+            </Button>
+          )}
           {showContinueButton && !hasScheduledRetry && (
             <Button
               size="sm"
               variant="outline"
-              className={cn('h-6 text-xs', isMobile ? 'px-3' : 'px-2')}
+              className={cn('h-8 text-xs', isMobile ? 'px-3' : 'px-2')}
               onClick={onContinue}
             >
-              <PlayCircle className="h-3 w-3 mr-1" />
-              {isMobile ? 'Resume' : 'Continue'}
+              <PlayCircle className="h-3 w-3 mr-1" aria-hidden="true" />
+              Resume
             </Button>
           )}
           {onKill && (report.status === 'pending' || report.status === 'processing') && (
             <Tooltip>
               <TooltipTrigger asChild>
+                {/* Never disabled. A disabled button dispatches no pointer events,
+                    so the tooltip explaining *why* it was unavailable could never
+                    be shown — and while paused the row locked the user out of
+                    stopping a job that would never resume on its own. Stopping is
+                    always allowed; it cancels any pending retry too. */}
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="h-6 w-6 p-0 text-destructive hover:text-destructive hover:bg-destructive/10 disabled:opacity-40"
-                  disabled={hasScheduledRetry}
+                  className="h-8 w-8 p-0 text-destructive hover:text-destructive hover:bg-destructive/10 focus-visible:ring-2 focus-visible:ring-destructive"
                   onClick={() => setKillOpen(true)}
-                  aria-label="Stop report generation"
+                  aria-label={`Stop generating ${report.property_address}`}
                 >
-                  <Octagon className="h-3 w-3" />
+                  <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>
-                {hasScheduledRetry
-                  ? 'Wait — auto-retry in progress'
-                  : 'Stop / kill this job'}
-              </TooltipContent>
+              <TooltipContent>Stop this job</TooltipContent>
             </Tooltip>
           )}
           <AlertDialog open={killOpen} onOpenChange={setKillOpen}>
@@ -575,7 +639,7 @@ export function GenerationProgressItem({
               <AlertDialogFooter>
                 <AlertDialogCancel>Keep running</AlertDialogCancel>
                 <AlertDialogAction
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  className={buttonVariants({ variant: "destructive" })}
                   onClick={() => {
                     onKill?.();
                     setKillOpen(false);
@@ -586,16 +650,20 @@ export function GenerationProgressItem({
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-            onClick={onDismiss}
-            title="Dismiss (hide locally, job keeps running)"
-            aria-label="Dismiss report"
-          >
-            <X className="h-3 w-3" />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={onDismiss}
+                aria-label={`Hide ${report.property_address} from this list. Generation continues.`}
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Hide from this list — generation continues</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -607,47 +675,32 @@ export function GenerationProgressItem({
         failed={report.status === 'failed' || maxRetriesReached}
       />
 
+      {/* Plain text, no dotted-underline "cursor-help" affordance hiding detail
+          behind a hover-only tooltip. The two figures it used to reveal ("DB
+          saved" vs "content detected") were an artefact of counting markdown
+          headings client-side; there is now one authoritative count. The
+          content-size line is gone because the widget no longer downloads the
+          report body — it would read 0.0 KB for every row. */}
       <div className="mt-1.5 flex justify-between text-xs text-muted-foreground">
-        <TooltipProvider delayDuration={200}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="cursor-help underline decoration-dotted">
-                {report.sectionsCompleted}/{report.totalSections} sections
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="top" className="max-w-xs">
-              <div className="space-y-1 text-xs">
-                <p>
-                  <strong>DB Saved:</strong> Section {report.lastCompletedSection}/
-                  {report.totalSections}
-                </p>
-                <p>
-                  <strong>Content Detected:</strong> Section {report.sectionsCompleted}/
-                  {report.totalSections}
-                </p>
-                <p>
-                  <strong>Content Size:</strong> {(report.contentLength / 1024).toFixed(1)} KB
-                </p>
-                {sectionTimeline.length >= 2 && (
-                  <p>
-                    <strong>Avg/section:</strong>{' '}
-                    {formatElapsed(
-                      (sectionTimeline[sectionTimeline.length - 1] - sectionTimeline[0]) /
-                        Math.max(1, sectionTimeline.length - 1)
-                    )}
-                  </p>
-                )}
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <span>
+          {report.sectionsCompleted}/{report.totalSections} sections
+          {sectionTimeline.length >= 2 && report.sectionsCompleted > 0 && (
+            <>
+              {' · '}
+              {formatElapsed(
+                (sectionTimeline[sectionTimeline.length - 1] - sectionTimeline[0]) /
+                  Math.max(1, sectionTimeline.length - 1),
+              )}{' '}
+              each
+            </>
+          )}
+        </span>
         <span>{percentage}%</span>
       </div>
 
-      {/* Mini sparkline of section completion timestamps */}
-      {sectionTimeline.length >= 2 && (
-        <Sparkline timestamps={sectionTimeline} startedAt={report.createdAt.getTime()} />
-      )}
+      {/* Needs enough observations to show a shape. With two or three points the
+          line is flat and reads as a stray horizontal rule rather than a trend. */}
+      {sectionTimeline.length >= 5 && <Sparkline timestamps={sectionTimeline} />}
 
       {retriesUsed > 0 && (
         <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
@@ -689,7 +742,7 @@ export function GenerationProgressItem({
                 <>
                   <p className="font-medium">Max retries reached</p>
                   <p className="opacity-80">
-                    Tried {retriesUsed} times • Last update {minutesSinceUpdate}m ago
+                    Tried {retriesUsed} times • last update {formatElapsed(timeSinceUpdate)} ago
                   </p>
                   <p className="opacity-80">
                     Press <span className="font-medium">Continue</span> to manually retry from
@@ -700,10 +753,7 @@ export function GenerationProgressItem({
                 <>
                   <p className="font-medium">Generation stalled</p>
                   <p className="opacity-80">
-                    No progress for{' '}
-                    {minutesSinceUpdate > 0
-                      ? `${minutesSinceUpdate} min`
-                      : `${secondsSinceUpdate}s`}
+                    No progress for {formatElapsed(timeSinceUpdate)}
                   </p>
                   {autoContinueSettings.enabled ? (
                     <p className="opacity-80">Auto-continue will retry shortly…</p>
@@ -754,8 +804,46 @@ function SegmentedProgress({
   currentInProgress: boolean;
   failed: boolean;
 }) {
+  // Beyond this, individual segments stop being legible: a Compass report has 40
+  // sections and the card is 320px wide, which left ~5px per segment with 2px
+  // gaps. Past the cap we render one continuous bar, which reads better and
+  // says exactly the same thing as the "x of y" text beneath it.
+  const MAX_SEGMENTS = 20;
+  const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+  const label = `${completed} of ${total} sections complete`;
+
+  if (total > MAX_SEGMENTS) {
+    return (
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-sm bg-muted"
+        role="progressbar"
+        aria-valuenow={completed}
+        aria-valuemin={0}
+        aria-valuemax={total}
+        aria-valuetext={label}
+        aria-label="Section progress"
+      >
+        <div
+          className={cn(
+            'h-full rounded-sm motion-safe:transition-[width] motion-safe:duration-500',
+            failed ? 'bg-destructive' : 'bg-info',
+          )}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="flex gap-0.5" role="progressbar" aria-valuenow={completed} aria-valuemax={total}>
+    <div
+      className="flex gap-0.5"
+      role="progressbar"
+      aria-valuenow={completed}
+      aria-valuemin={0}
+      aria-valuemax={total}
+      aria-valuetext={label}
+      aria-label="Section progress"
+    >
       {Array.from({ length: total }).map((_, i) => {
         const isDone = i < completed;
         const isCurrent = i === completed && currentInProgress;
@@ -763,10 +851,14 @@ function SegmentedProgress({
         return (
           <span
             key={i}
+            aria-hidden="true"
             className={cn(
-              'h-1.5 flex-1 rounded-sm transition-colors',
-              isDone && 'bg-primary',
-              isCurrent && 'bg-primary/60 animate-pulse',
+              'h-1.5 flex-1 rounded-sm motion-safe:transition-colors',
+              isDone && 'bg-info',
+              // The pulse is the only cue for "this one is being written right
+              // now", and the global reduced-motion rule freezes animations —
+              // so under reduced motion the segment is distinguished by tone.
+              isCurrent && 'bg-info/60 motion-safe:animate-pulse motion-reduce:bg-info/70',
               isFailed && 'bg-destructive',
               !isDone && !isCurrent && !isFailed && 'bg-muted'
             )}
@@ -779,9 +871,12 @@ function SegmentedProgress({
 
 /* ---------- Sparkline ---------- */
 
-function Sparkline({ timestamps, startedAt }: { timestamps: number[]; startedAt: number }) {
-  const points = [startedAt, ...timestamps];
-  const intervals = points.slice(1).map((t, i) => t - points[i]);
+function Sparkline({ timestamps }: { timestamps: number[]; startedAt?: number }) {
+  // Intervals between observed sections only. Seeding the series with the
+  // report's creation time made the first "interval" the entire queue wait,
+  // which is typically an order of magnitude larger than any per-section gap —
+  // it set the maximum and flattened every real data point onto the baseline.
+  const intervals = timestamps.slice(1).map((t, i) => t - timestamps[i]);
   if (intervals.length === 0) return null;
   const max = Math.max(...intervals, 1);
   const w = 100;
@@ -794,10 +889,21 @@ function Sparkline({ timestamps, startedAt }: { timestamps: number[]; startedAt:
       return `${i === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(' ');
+  const slowest = Math.round(max / 1000);
+  const fastest = Math.round(Math.min(...intervals) / 1000);
   return (
-    <div className="mt-1.5" title="Time per section (lower is faster)">
-      <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-        <path d={path} fill="none" stroke="currentColor" strokeWidth="1" className="text-primary/60" />
+    <div className="mt-1.5">
+      {/* `title` on a div is not reliably exposed; give the graphic a real role
+          and name, and state the range in words since the chart has no axis. */}
+      <svg
+        width="100%"
+        height={h}
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={`Time per section, fastest ${fastest} seconds, slowest ${slowest} seconds`}
+      >
+        <path d={path} fill="none" stroke="currentColor" strokeWidth="1" className="text-info/70" />
       </svg>
     </div>
   );
@@ -870,9 +976,9 @@ export function GenerationHistoryList({
   }
   return (
     <>
-      <div className="px-3 py-2 space-y-2 border-b border-border bg-muted/30">
+      <div className="border-b border-border bg-muted/30 px-3 py-2 space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span className="text-xs uppercase tracking-wide text-muted-foreground">
             {filtered.length} of {entries.length}
           </span>
           <div className="flex items-center gap-2">
@@ -886,7 +992,7 @@ export function GenerationHistoryList({
                   setDateFrom(undefined);
                   setDateTo(undefined);
                 }}
-                className="text-[10px] text-primary hover:text-primary/80"
+                className="text-xs text-primary hover:text-primary/80"
               >
                 Reset filters
               </button>
@@ -894,7 +1000,7 @@ export function GenerationHistoryList({
             <button
               type="button"
               onClick={onClear}
-              className="text-[10px] text-muted-foreground hover:text-foreground"
+              className="text-xs text-muted-foreground hover:text-foreground"
             >
               Clear all
             </button>
@@ -1016,7 +1122,7 @@ export function GenerationHistoryList({
               ) : e.status === 'failed' ? (
                 <AlertCircle className="h-3.5 w-3.5 text-destructive mt-0.5 shrink-0" />
               ) : e.status === 'cancelled' ? (
-                <Octagon className="h-3.5 w-3.5 text-destructive mt-0.5 shrink-0" />
+                <Square className="h-3.5 w-3.5 fill-current text-destructive mt-0.5 shrink-0" />
               ) : (
                 <X className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
               )}
@@ -1024,17 +1130,17 @@ export function GenerationHistoryList({
                 <p className="text-xs font-medium text-foreground truncate">
                   {e.property_address}
                 </p>
-                <p className="text-[10px] text-muted-foreground">
+                <p className="text-xs text-muted-foreground">
                   {e.sectionsCompleted}/{e.totalSections} sections • {formatElapsed(e.durationMs)} •{' '}
                   {timeAgo(e.finishedAt)}
                 </p>
                 {e.status === 'cancelled' && (
-                  <p className="text-[10px] text-destructive/80 mt-0.5">
+                  <p className="text-xs text-destructive/80 mt-0.5">
                     Stopped by {e.cancelledBy || 'user'}
                   </p>
                 )}
                 {e.error_message && e.status !== 'cancelled' && (
-                  <p className="text-[10px] text-destructive line-clamp-1 mt-0.5">
+                  <p className="text-xs text-destructive line-clamp-1 mt-0.5">
                     {e.error_message}
                   </p>
                 )}
@@ -1098,11 +1204,18 @@ export function BulkJobGroup({
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [killAllOpen, setKillAllOpen] = useState(false);
 
-  const completedSections = group.reports.reduce((s, r) => s + r.sectionsCompleted, 0);
+  // A finished report counts as all of its sections. Without this the group
+  // aggregate fell every time one of its members succeeded — and the "n of m
+  // done" label counted only reports still in the list, so a 10-report batch
+  // with 8 finished proudly announced "0/2 done".
+  const completedSections = group.reports.reduce(
+    (s, r) => s + (r.status === 'completed' ? r.totalSections : r.sectionsCompleted),
+    0,
+  );
   const totalSections = group.reports.reduce((s, r) => s + r.totalSections, 0);
   const pct = totalSections > 0 ? Math.round((completedSections / totalSections) * 100) : 0;
   const completed = group.reports.filter(
-    (r) => r.sectionsCompleted >= r.totalSections,
+    (r) => r.status === 'completed' || r.sectionsCompleted >= r.totalSections,
   ).length;
 
   const failedReports = group.reports.filter((r) => r.status === 'failed');
@@ -1153,7 +1266,7 @@ export function BulkJobGroup({
             />
             <Layers className="h-3 w-3 shrink-0" />
             <span className="font-medium text-foreground">Bulk job</span>
-            <span className="font-mono text-[10px] opacity-70">
+            <span className="font-mono text-xs opacity-70">
               {group.jobId.slice(0, 8)}
             </span>
             <span className="opacity-50">•</span>
@@ -1169,7 +1282,7 @@ export function BulkJobGroup({
                 <Button
                   size="icon"
                   variant="ghost"
-                  className="h-6 w-6"
+                  className="h-8 w-8 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1"
                   onClick={() => setTimelineOpen((o) => !o)}
                   aria-pressed={timelineOpen}
                   aria-label="Toggle timeline"
@@ -1185,7 +1298,7 @@ export function BulkJobGroup({
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 px-2 text-[10px]"
+                    className="h-6 px-2 text-xs"
                     onClick={() => onRetryAllFailed(failedReports.map((r) => r.id))}
                   >
                     <RefreshCw className="h-3 w-3 mr-1" />
@@ -1207,10 +1320,10 @@ export function BulkJobGroup({
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 px-2 text-[10px] text-destructive hover:text-destructive hover:bg-destructive/10"
+                        className="h-6 px-2 text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => setKillAllOpen(true)}
                       >
-                        <Octagon className="h-3 w-3 mr-1" />
+                        <Square className="h-3 w-3 fill-current mr-1" />
                         Stop {active.length}
                       </Button>
                     </TooltipTrigger>
@@ -1233,7 +1346,7 @@ export function BulkJobGroup({
                               will be marked as{' '}
                               <span className="text-destructive font-medium">failed</span>:
                             </p>
-                            <ScrollArea className="max-h-40 rounded border border-border bg-muted/30 p-2">
+                            <ScrollArea className="glass-inset max-h-40 rounded p-2">
                               <ul className="space-y-1">
                                 {active.map((r) => (
                                   <li
@@ -1241,7 +1354,7 @@ export function BulkJobGroup({
                                     className="text-xs text-foreground flex items-center justify-between gap-2"
                                   >
                                     <span className="truncate">{r.property_address}</span>
-                                    <span className="text-[10px] text-muted-foreground shrink-0">
+                                    <span className="text-xs text-muted-foreground shrink-0">
                                       {r.sectionsCompleted}/{r.totalSections}
                                     </span>
                                   </li>
@@ -1257,7 +1370,7 @@ export function BulkJobGroup({
                       <AlertDialogFooter>
                         <AlertDialogCancel>Keep running</AlertDialogCancel>
                         <AlertDialogAction
-                          className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          className={buttonVariants({ variant: "destructive" })}
                           onClick={() => {
                             onKillAll(active.map((r) => r.id));
                             setKillAllOpen(false);
@@ -1277,7 +1390,7 @@ export function BulkJobGroup({
         {/* Aggregate progress + ETA */}
         <div className="space-y-0.5">
           <Progress value={pct} className="h-1" />
-          <div className="flex justify-between text-[10px] text-muted-foreground">
+          <div className="flex justify-between text-xs text-muted-foreground">
             <span>
               {completedSections}/{totalSections} sections
             </span>
@@ -1292,8 +1405,8 @@ export function BulkJobGroup({
 
         {/* Inline transition timeline */}
         {timelineOpen && transitions.length > 0 && (
-          <div className="rounded border border-border bg-background/60 p-2 mt-1 max-h-32 overflow-y-auto">
-            <ol className="space-y-1 text-[10px]">
+          <div className="glass-inset rounded p-2 mt-1 max-h-32 overflow-y-auto">
+            <ol className="space-y-1 text-xs">
               {transitions.map((t, i) => (
                 <li key={i} className="flex items-center gap-1.5">
                   <span
@@ -1332,21 +1445,7 @@ function formatClock(epoch: number): string {
 
 /* ---------- helpers ---------- */
 
-export function formatElapsed(ms: number): string {
-  const seconds = Math.floor(ms / 1000);
-  const minutes = Math.floor(seconds / 60);
-  if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
-  return `${seconds}s`;
-}
 
-export function formatEta(ms: number | null): string | null {
-  if (ms === null || !isFinite(ms) || ms < 0) return null;
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
 
 function timeAgo(epoch: number): string {
   const diff = Date.now() - epoch;
