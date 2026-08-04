@@ -178,8 +178,9 @@ export interface PropertyListing {
    */
   imageCandidates?: ImageCandidate[];
   imagesCapturedAt?: string | null;
-  imageCount?: number;
-  /** What intake counted, which can exceed `imageCount` if some URLs were malformed. */
+  /** How many candidates the projection resolved — not how many photos render. */
+  imageCandidateCount?: number;
+  /** What intake counted, which can exceed the resolved count if some URLs were malformed. */
   reportedImageCount?: number | null;
   imageSource?: string | null;
   primaryImageUrl?: string | null;

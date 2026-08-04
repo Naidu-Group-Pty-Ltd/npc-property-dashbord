@@ -4,6 +4,7 @@ import {
   imageIdentity,
   imageSetFingerprint,
   isFetchableImageUrl,
+  isVolatileSignedUrl,
   isRefreshDue,
   isSignedUrlUsable,
   nextRefreshAt,
@@ -432,5 +433,60 @@ describe('orderCandidatesForDisplay', () => {
 
   it('leaves an empty set alone', () => {
     expect(orderCandidatesForDisplay([])).toEqual([]);
+  });
+});
+
+describe('imageIdentity and re-signed URLs', () => {
+  /**
+   * The defect that duplicated the library. An Airtable attachment URL carries
+   * its expiry and signature in the PATH, so dropping the query string — which
+   * `imageIdentity` does, and which its docstring used to call sufficient —
+   * still yields a different key on every read.
+   */
+  const resigned = (epoch: string, sig: string) =>
+    `https://v5.airtableusercontent.com/v3/u/56/56/${epoch}/${sig}/abc123`;
+
+  it('cannot key a re-signed Airtable URL by path', () => {
+    const first = imageIdentity({ url: resigned('1785830400000', 'aaa'), origin: 'airtable' });
+    const second = imageIdentity({ url: resigned('1785837600000', 'bbb'), origin: 'airtable' });
+    // Same photograph, two reads two hours apart, two identities. This is why
+    // one listing accumulated nine rows of a single photo.
+    expect(first).not.toBe(second);
+  });
+
+  it('is stable when the attachment id came with it', () => {
+    const first = imageIdentity({
+      url: resigned('1785830400000', 'aaa'),
+      origin: 'airtable',
+      externalId: 'attABC123',
+    });
+    const second = imageIdentity({
+      url: resigned('1785837600000', 'bbb'),
+      origin: 'airtable',
+      externalId: 'attABC123',
+    });
+    expect(first).toBe(second);
+    expect(first).toBe('att:attABC123');
+  });
+
+  it('is stable for an ordinary CDN URL that only re-signs its query string', () => {
+    expect(imageIdentity({ url: 'https://cdn.agency.test/a.jpg?ts=1&sig=x', origin: 'scraped' })).toBe(
+      imageIdentity({ url: 'https://cdn.agency.test/a.jpg?ts=2&sig=y', origin: 'scraped' }),
+    );
+  });
+});
+
+describe('isVolatileSignedUrl', () => {
+  it('flags hosts whose path carries a rotating signature', () => {
+    expect(isVolatileSignedUrl('https://v5.airtableusercontent.com/v3/u/56/56/1/a/b')).toBe(true);
+    expect(isVolatileSignedUrl('https://airtableusercontent.com/x.jpg')).toBe(true);
+  });
+
+  it('leaves ordinary hosts alone, including look-alikes', () => {
+    expect(isVolatileSignedUrl('https://cdn.agency.test/a.jpg')).toBe(false);
+    expect(isVolatileSignedUrl('https://lh3.googleusercontent.com/d/abc=w1200')).toBe(false);
+    // Suffix match must be on a label boundary, not a substring.
+    expect(isVolatileSignedUrl('https://notairtableusercontent.com/a.jpg')).toBe(false);
+    expect(isVolatileSignedUrl('not a url')).toBe(false);
   });
 });

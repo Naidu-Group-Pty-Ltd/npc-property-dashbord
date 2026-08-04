@@ -262,7 +262,7 @@ describe('resolveListingImages', () => {
       'https://cdn.test/1.jpg',
       'https://cdn.test/2.jpg',
     ]);
-    expect(out.candidates.every((c) => c.origin === 'scraped')).toBe(true);
+    expect(out.candidates.every((c) => c.origin === 'listing_url')).toBe(true);
   });
 
   it('puts bytes we hold ahead of a hotlink we do not', () => {
@@ -270,7 +270,7 @@ describe('resolveListingImages', () => {
       [F.listingImages]: [attachment('attA', 'https://airtable.test/a.jpg')],
       [F.listingImageUrls]: 'https://cdn.test/1.jpg',
     });
-    expect(out.candidates.map((c) => c.origin)).toEqual(['airtable', 'scraped']);
+    expect(out.candidates.map((c) => c.origin)).toEqual(['airtable', 'listing_url']);
   });
 
   it('drops the primary URL when the list already carries it', () => {
@@ -322,7 +322,7 @@ describe('projectAirtableRecord images', () => {
     });
     expect((listing.imageCandidates as unknown[]).length).toBe(2);
     expect(listing.imagesCapturedAt).toBe('2026-08-03T00:00:00.000Z');
-    expect(listing.imageCount).toBe(2);
+    expect(listing.imageCandidateCount).toBe(2);
     expect(listing.imageSource).toBe('Web Scrape');
   });
 

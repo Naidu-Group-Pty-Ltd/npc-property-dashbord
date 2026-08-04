@@ -272,8 +272,8 @@ and exposes them as `imageCandidates`. `useListingImages` harvests that set and 
 `Images Captured At` alongside, which drives how soon a set is re-verified — a gallery
 re-scraped yesterday belongs on the daily tier even when the record itself is a year old.
 
-Two dashboard-side defects were fixed in the same pass, both of which would have wasted the
-upstream work:
+Dashboard-side defects fixed in the same pass, all of which would have wasted the upstream
+work:
 
 - **The resolve endpoint discarded candidate origins.** It called
   `normaliseImageCandidates(payload, 'airtable')` over candidates the client had already
@@ -283,3 +283,78 @@ upstream work:
   its hero forever.
 - **The cron sweep used `??` between the attachment columns**, taking the first non-nullish
   rather than the union, so a record carrying both would have lost half its photos.
+
+### Who may say a photograph is gone
+
+The one that matters most, because it empties galleries rather than degrading them.
+
+`harvestListing` **reconciles**: anything absent from the candidate list it is handed is
+marked `gone`, and `signStoredImages` renders only `stored` rows. The library has several
+contributors and none of them sees the same set — `listing-enrichment` scrapes the agency's
+listing page, intake writes what it captured into `Listing Image URLs`, the browser reads
+Airtable. A caller holding a partial view that is allowed to reconcile silently empties the
+gallery.
+
+That happened twice:
+
+- **The hourly sweep, and this predates the intake work.** It reads Airtable's image
+  columns, which were empty on every record, so it computed the fingerprint of `[]`, found
+  it differed from the one enrichment had written, and reconciled against nothing —
+  retiring every scraped photograph on whatever schedule `refresh_after` came round. It
+  reported success the whole time.
+- **The browser, as a direct result of this change.** `resolve` used to bail before
+  harvesting because the attachment columns were empty, so it only *signed* what was
+  stored — which is the sole reason the page had photographs at all. The moment intake
+  began filling `Listing Image URLs`, that same code path began reconciling against the
+  Airtable subset and retiring the scraped gallery **on page load**.
+
+Retirement is now opt-in, in `_shared/listingImageReconcile.pure.ts`:
+
+- `full` — for a caller that saw the whole gallery. `op:'harvest'` from `listing-enrichment`,
+  and nobody else.
+- `additive` — the default. Contribute photographs, take a place in the merged ordering,
+  never remove.
+- An **empty candidate set never retires anything, in either mode**. "I found nothing" is
+  not "there is nothing", and conflating the two is what turned a quiet upstream into a
+  blank card.
+
+### Why one photograph became nine rows
+
+Retirement was only half of it. `imageIdentity` drops the query string and its
+docstring called that stable — "Airtable re-signs an attachment on every read, so
+the same photo arrives with a different `?ts=…&sig=…` each time … The path alone is
+stable." It is not. An Airtable attachment URL is
+
+```
+https://v5.airtableusercontent.com/v3/u/56/56/<epoch-ms>/<sig>/<sig>
+```
+
+and the expiry and signature are in the **path**. Every read of an unchanged
+attachment produced a brand-new identity, so the harvest filed another row for a
+photograph it already held — and then retired the copy from the previous pass.
+One listing carried the same photo under nine URLs recorded two hours apart, all
+with one checksum.
+
+Over a single day that produced 7,524 rows representing 4,152 distinct
+photographs, 4,076 of them `gone`, and 708 photographs across 67 listings left
+with no stored row at all.
+
+The bytes are the only thing that does not change between passes, so they settle
+identity: `harvestListing` now adopts the row already holding a checksum rather
+than inserting a second one. The accumulated damage is repaired by
+`supabase/migrations/20260828000000_listing_image_duplicate_repair.sql`, which
+restored 699 photographs and took the average gallery from 7.9 to 9.5.
+
+Two consequences worth knowing:
+
+- **Ordering merges rather than displaces.** Three URLs arriving from Airtable do not push
+  a twelve-shot scraped gallery down to positions 3–14; they take their place within it,
+  ranked by origin (`airtable` → `listing_url` → `scraped` → `street_view`) and then by
+  each source's own order. `Listing Image URLs` is classified `listing_url` rather than
+  `scraped` precisely so it can be told apart from what enrichment harvests.
+- **The due check is identity-based, not fingerprint-based.**
+  `listing_image_sets.fingerprint` holds whatever the last pass wrote, so a browser
+  comparing an Airtable-derived fingerprint against enrichment's never matched and every
+  listing looked due on every page load. The question actually being asked is "am I
+  offering a photograph that is not already stored", and that is now what gets asked. Only
+  a `full` pass writes the fingerprint.
