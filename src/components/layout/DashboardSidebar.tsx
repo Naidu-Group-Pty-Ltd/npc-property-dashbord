@@ -448,9 +448,6 @@ export function DashboardSidebar() {
                 </button>
               )}
             </label>
-            <p className="mt-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-              Tip: press <kbd className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">⌘K</kbd> for the command palette.
-            </p>
           </div>
         )}
 
@@ -460,14 +457,17 @@ export function DashboardSidebar() {
               No matches for “{navFilter}”.
             </div>
           )}
-          {groupedNavItems.map((group) => renderGroup(group))}
+          {/* The framed/highlighted treatment now wraps the main modules
+              (Main Dashboard → AML/CTF Compliance); Administration renders plain. */}
+          {groupedNavItems.map((group) => renderGroup(group, { administration: true }))}
 
-          {amlGroupedItems && renderGroup(amlGroupedItems)}
+          {amlGroupedItems && renderGroup(amlGroupedItems, { administration: true })}
 
           {groupedAdminItems.items.length > 0 && (
             <div className="dashboard-sidebar-admin-divider">
-              {renderGroup(groupedAdminItems, { administration: true })}
+              {renderGroup(groupedAdminItems)}
             </div>
+
           )}
         </nav>
       </SidebarContent>
