@@ -50,8 +50,22 @@ Deno.serve(async (req) => {
       const { data: terms } = await supabase.from('portal_terms_versions').select('id, version').eq('portal','solicitor').is('retired_at',null).lte('effective_at',new Date().toISOString()).order('effective_at',{ascending:false}).limit(1).maybeSingle();
       if (!terms) return new Response(JSON.stringify({ error: 'Current terms unavailable' }), { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
       const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || null;
-      const { error: acceptanceError } = await supabase.from('portal_terms_acceptances').upsert({ portal:'solicitor', terms_version_id:terms.id, solicitor_user_id:session.user.id, ip_hash:ip ? await hashSessionToken(`ip:${ip}`):null, user_agent_hash:req.headers.get('user-agent') ? await hashSessionToken(`ua:${req.headers.get('user-agent')}`):null }, { onConflict:'terms_version_id,solicitor_user_id' });
-      if (acceptanceError) throw acceptanceError;
+      // Uniqueness is enforced by the per-portal PARTIAL unique indexes
+      // (`portal_terms_acceptances_solicitor_key`), which PostgREST cannot
+      // target with `on_conflict` — an upsert here fails with 42P10. Read the
+      // existing acceptance first and insert only when absent, tolerating a
+      // concurrent insert that trips the partial index.
+      const { data: existingAcceptance, error: existingError } = await supabase
+        .from('portal_terms_acceptances')
+        .select('id')
+        .eq('terms_version_id', terms.id)
+        .eq('solicitor_user_id', session.user.id)
+        .maybeSingle();
+      if (existingError) throw existingError;
+      if (!existingAcceptance) {
+        const { error: acceptanceError } = await supabase.from('portal_terms_acceptances').insert({ portal:'solicitor', terms_version_id:terms.id, solicitor_user_id:session.user.id, ip_hash:ip ? await hashSessionToken(`ip:${ip}`):null, user_agent_hash:req.headers.get('user-agent') ? await hashSessionToken(`ua:${req.headers.get('user-agent')}`):null });
+        if (acceptanceError && acceptanceError.code !== '23505') throw acceptanceError;
+      }
       await supabase
         .from('solicitor_portal_users')
         .update({ has_accepted_terms: true, terms_accepted_at: new Date().toISOString() })
