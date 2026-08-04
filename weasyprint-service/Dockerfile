@@ -69,11 +69,12 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /build
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt \
-    # Fail here rather than in a client's document: prove the engine imports and
-    # renders inside the image that installed it, before anything else is built
-    # on top of it.
-    && python -c "import weasyprint, pydyf; print('weasyprint', weasyprint.__version__, 'pydyf', pydyf.__version__)"
+    && pip install --no-cache-dir -r requirements.txt
+# No import check here. This stage has a compiler and no Pango, and WeasyPrint
+# loads its native libraries at import time — so `import weasyprint` fails in
+# the builder and the image cannot be built at all. That is what the first
+# version of this file did, and CI caught it. The check belongs in the runtime
+# stage, where the libraries and the fonts are; see selfcheck.py.
 
 # ── Stage 2: the runtime image ───────────────────────────────────────────────
 FROM python:3.12-slim-bookworm
@@ -122,7 +123,16 @@ RUN fc-cache -f \
 COPY --from=builder /opt/venv /opt/venv
 
 WORKDIR /app
-COPY app.py .
+COPY app.py selfcheck.py ./
+
+# Fail the build rather than a client's document.
+#
+# An import would prove only that the wheels installed. This renders: it is the
+# one thing that exercises the engine, its native libraries, fontconfig and the
+# brand faces together, and every one of those fails silently on its own. A
+# substituted face produces a perfectly valid PDF with somebody else's type in
+# it, and the engine does not even log that it happened.
+RUN python selfcheck.py
 
 # Unprivileged. The service takes untrusted HTML from an authenticated caller
 # and fetches the resources it names — a narrow surface, but not one to run as

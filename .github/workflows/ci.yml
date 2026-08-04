@@ -236,6 +236,12 @@ jobs:
             echo "ok: Playfair Display italic"
           '
 
+      # The build already ran this as its last layer; running it again proves it
+      # against the image that was actually produced, and leaves the output in
+      # the log — which is the only place a substituted face is ever visible.
+      - name: The image renders its own specimen
+        run: docker run --rm --entrypoint python weasyprint-service:ci selfcheck.py
+
       # The service's own tests, run against the engine and fonts that shipped
       # rather than against whatever a runner happens to have. The test file is
       # mounted rather than COPY-ed, because tests do not belong in the image.

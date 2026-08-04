@@ -19,7 +19,7 @@
  * branches. `scripts/reports/engineCheck.mts` closes the rest of it by
  * rendering through the pinned version and failing on any warning at all.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -111,6 +111,20 @@ describe('the render container', () => {
 
   it('renders as an unprivileged user', () => {
     expect(dockerCode).toMatch(/^USER\s+(?!root)\S+/m);
+  });
+
+  it('proves the engine by rendering, in the stage that has the libraries', () => {
+    // An import proves the wheels installed. It does not prove Pango is there,
+    // that fontconfig sees the brand faces, or that the faces resolve — and all
+    // three fail silently. The first version of this check ran in the builder,
+    // which has a compiler and no Pango, so `import weasyprint` failed and the
+    // image could not be built at all.
+    const runtime = dockerCode.slice(dockerCode.lastIndexOf('FROM python:'));
+    expect(runtime).toMatch(/RUN\s+python\s+selfcheck\.py/);
+    expect(existsSync(resolve(SERVICE, 'selfcheck.py'))).toBe(true);
+    const builder = dockerCode.slice(0, dockerCode.lastIndexOf('FROM python:'));
+    expect(builder, 'the builder has no native libraries to import against')
+      .not.toMatch(/import weasyprint/);
   });
 
   it('can be probed for liveness from inside itself', () => {
