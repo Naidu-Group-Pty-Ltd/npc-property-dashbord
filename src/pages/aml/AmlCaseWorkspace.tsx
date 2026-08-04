@@ -42,6 +42,7 @@ import {
 import { usePromptDialog } from "@/components/aml/usePromptDialog";
 import { VerificationSection } from "@/components/aml/VerificationSection";
 import { ReliancePassportSection } from "@/components/aml/ReliancePassportSection";
+import { ComplianceJourneyMap } from "@/components/aml/ComplianceJourneyMap";
 import {
   CASE_STAGE_LABELS, caseStage, clientPortalStatus, CLIENT_PORTAL_STATUS_LABELS,
   serviceGateStatus, progressRail, type ProgressRailState,
@@ -355,6 +356,7 @@ export default function AmlCaseWorkspace() {
         <main className="min-w-0 space-y-4">
           {section === "overview" && (
             <div className="space-y-4">
+            <ComplianceJourneyMap caseRow={caseRow} />
             <CaseOverviewSection
               caseRow={caseRow}
               openRequests={openRequests}
