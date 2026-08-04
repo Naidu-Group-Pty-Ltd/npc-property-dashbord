@@ -322,3 +322,58 @@ html {
   }
 }
 
+
+/* ── Premium scrollbar ────────────────────────────────────────────
+   Slim, inset, brand-tinted scroll thumb for chat/message surfaces.
+   Replaces the OS-default chunky bar (with stepper arrows) that reads
+   as generic inside glass panels. Colours come from semantic tokens. */
+@layer utilities {
+  .scrollbar-premium {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--primary) / 0.45) transparent;
+  }
+
+  .scrollbar-premium::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-premium::-webkit-scrollbar-track {
+    background: transparent;
+    border-radius: 999px;
+  }
+
+  .scrollbar-premium::-webkit-scrollbar-thumb {
+    background: linear-gradient(
+      to bottom,
+      hsl(var(--primary) / 0.55),
+      hsl(var(--primary) / 0.3)
+    );
+    border: 2px solid transparent;
+    background-clip: padding-box;
+    border-radius: 999px;
+    transition: background 0.2s ease;
+  }
+
+  .scrollbar-premium:hover::-webkit-scrollbar-thumb {
+    background: linear-gradient(
+      to bottom,
+      hsl(var(--primary) / 0.8),
+      hsl(var(--primary) / 0.5)
+    );
+    background-clip: padding-box;
+  }
+
+  .scrollbar-premium::-webkit-scrollbar-thumb:active {
+    background: hsl(var(--primary) / 0.9);
+    background-clip: padding-box;
+  }
+
+  /* Kill the legacy stepper arrows / corner square entirely. */
+  .scrollbar-premium::-webkit-scrollbar-button,
+  .scrollbar-premium::-webkit-scrollbar-corner {
+    display: none;
+    height: 0;
+    width: 0;
+  }
+}
