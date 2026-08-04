@@ -174,6 +174,39 @@ Surfaces carrying the trigger: gallery card (empty frame and menu), map popup,
 page it also refetches the record, because enrichment fills price, specs and
 contact details, not only photographs.
 
+## What a listing looks like with no photograph
+
+Image coverage is genuinely incomplete and will stay that way for some records —
+some listings arrive by email with nothing attached and link to a page that
+publishes no gallery. So the photo-less state is not a temporary condition to
+paper over; it is a permanent part of the product and has to be designed.
+
+Three tiers, cheapest first:
+
+1. **Stored photographs**, when the library holds them.
+2. **Street View**, where the listing is geocoded. On the property page and in
+   the map popup it is simply the last slide. In the gallery grid it is **behind
+   a button**, and that distinction is load-bearing: `street-view` caches
+   nothing and each panel costs two Google calls against a global 5,000/day
+   quota, so a 48-card grid auto-loading them would spend ~96 calls per page
+   view and exhaust the day in an afternoon. `ListingHero`'s `streetViewMode`
+   picks which.
+3. **A drawn cover** (`ListingCover`) otherwise — the map's own property-type
+   glyph over a wash keyed to the price band, with the locality set where a
+   photograph's subject would be.
+
+The cover is not a fake photograph and nothing about it claims to be the
+building. It exists because the alternative — a flat grey rectangle at four
+cards across — makes a working page look broken, and because a reader gets more
+from "house, City Beach WA, upper band" than from an empty box. The caption
+still says **No photo on record** in every case.
+
+Price bands are fixed AUD thresholds rather than corpus quantiles: a listing has
+to look the same wherever it is drawn, and quantiles would re-tint every cover
+whenever a filter changed the distribution. The four hues are chosen to be
+*distinguishable* — the brand ramp and `warning` are both amber here, so
+`success` carries the middle band.
+
 ## Contacting the agent
 
 Enrichment exists so that someone can act on a listing, and the action is almost

@@ -21,6 +21,16 @@ import { ListingGalleryGrid } from '@/components/listings/ListingGalleryGrid';
 import { ListingThumbnail } from '@/components/listings/ListingThumbnail';
 import { useListingImages } from '@/hooks/useListingImages';
 import { useEnrichListing } from '@/hooks/useEnrichListing';
+import { useListingCoordinates } from '@/hooks/useListingCoordinates';
+
+/**
+ * Stable identity for "resolve nothing".
+ *
+ * `useListingCoordinates` keys its pass off the payload signature, and a fresh
+ * `[]` on every render would restart it continuously while the reader is on any
+ * view other than the gallery.
+ */
+const EMPTY_LISTINGS: PropertyListing[] = [];
 import {
   DEFAULT_LISTING_FILTERS,
   listingHasPhotos,
@@ -616,6 +626,7 @@ export default function Listings() {
   const { enrich: findPhotos, pendingListingId: findingPhotosFor } =
     useEnrichListing(refreshListingImages);
 
+
   /** Ids the image library actually holds stored photos for. */
   const listingsWithPhotos = useMemo(() => {
     const ids = new Set<string>();
@@ -637,6 +648,28 @@ export default function Listings() {
   const showTableView = viewMode === 'table';
   const showMapView = viewMode === 'map';
   const showGalleryView = viewMode === 'gallery';
+
+  /**
+   * Coordinates for the gallery, so a photo-less listing can still show the
+   * building.
+   *
+   * The grid used to render with no `points` at all, which meant every card got
+   * `point={null}`, `ListingHero` never added its Street View slide, and all
+   * 1,441 tiles fell through to "No photo on record" — including the 811 that
+   * are already geocoded and could have shown the actual street frontage. That
+   * is the single largest source of empty tiles on this page, and it costs
+   * nothing to fix: the geocodes are stored.
+   *
+   * Scoped to the rendered slice rather than the filtered set. Resolving 1,441
+   * would exceed the geocoder's ten-calls-per-minute budget and spend it on
+   * cards nobody has scrolled to; the grid reports how many it is showing.
+   */
+  const [galleryVisibleCount, setGalleryVisibleCount] = useState(0);
+  const galleryCoordinateInput = useMemo(
+    () => (showGalleryView ? filteredListings.slice(0, galleryVisibleCount) : EMPTY_LISTINGS),
+    [showGalleryView, filteredListings, galleryVisibleCount],
+  );
+  const { points: galleryPoints } = useListingCoordinates(galleryCoordinateInput);
   const emptyStateCopy = hasSearchQuery
     ? {
         icon: Search,
@@ -941,6 +974,8 @@ export default function Listings() {
             onEmailAgent={openEmailAgent}
             onFindPhotos={(listing) => findPhotos(listing.id)}
             findingPhotosFor={findingPhotosFor}
+            points={galleryPoints}
+            onVisibleCountChange={setGalleryVisibleCount}
             formatDate={formatDate}
           />
         )

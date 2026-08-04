@@ -18,6 +18,7 @@ import { propertyDataService } from '@/services/propertyDataService';
 import { displayPrice, formatLocality } from '@/lib/listingDisplay';
 import { listingContact } from '@/lib/listingContact';
 import { EmailAgentDialog } from '@/components/listings/EmailAgentDialog';
+import { ListingLightbox } from '@/components/listings/ListingLightbox';
 import type { PropertyListing } from '@/lib/airtable';
 
 const PROPERTY_INTAKE_TABLE = 'Property Intake Master';
@@ -43,6 +44,7 @@ export default function ListingDetail() {
   const { listingId } = useParams<{ listingId: string }>();
   const navigate = useNavigate();
   const [emailOpen, setEmailOpen] = useState(false);
+  const [lightboxAt, setLightboxAt] = useState<number | null>(null);
   const { data, isLoading, isError, error, refetch } = useListingRecord(listingId, PROPERTY_INTAKE_TABLE);
   const listing = data?.listing ?? null;
 
@@ -131,8 +133,10 @@ export default function ListingDetail() {
           point={point}
           aspect="aspect-[16/9]"
           showThumbnails
+          onExpand={setLightboxAt}
           onFindPhotos={listing.url ? () => findPhotos(listing.id) : undefined}
           isFindingPhotos={isEnriching}
+          listing={listing}
         />
 
         <header className={cn(SURFACE, 'space-y-3')}>
@@ -231,6 +235,13 @@ export default function ListingDetail() {
           />
         </div>
       </div>
+
+      <ListingLightbox
+        images={images[listing.id] ?? []}
+        openAt={lightboxAt}
+        onClose={() => setLightboxAt(null)}
+        label={listing.address ?? listing.suburb ?? undefined}
+      />
 
       <EmailAgentDialog listing={listing} open={emailOpen} onOpenChange={setEmailOpen} />
 
