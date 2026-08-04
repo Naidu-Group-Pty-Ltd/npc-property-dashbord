@@ -147,11 +147,12 @@ export interface BaseFieldProps {
 }
 
 export function TextField({
-  value, onChange, placeholder, ...shell
+  value, onChange, placeholder, onBlur, ...shell
 }: BaseFieldProps & {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  onBlur?: () => void;
 }) {
   return (
     <FieldShell {...shell}>
@@ -163,12 +164,14 @@ export function TextField({
           placeholder={placeholder}
           aria-describedby={describedBy}
           aria-invalid={invalid || undefined}
+          onBlur={onBlur}
           onChange={(event) => onChange(event.target.value)}
         />
       )}
     </FieldShell>
   );
 }
+
 
 /**
  * Money input. Held as a string so a half-typed "1200" never round-trips
