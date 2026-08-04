@@ -141,20 +141,32 @@ export function ListingHero({
   );
 
   if (slideCount === 0) {
-    if (isResolving || isFindingPhotos) {
+    if (isFindingPhotos) {
       return (
         <div
           className={cn(frame, 'flex items-center justify-center border border-border/60 bg-muted/60')}
           aria-busy="true"
         >
-          {isFindingPhotos ? (
-            <span className="flex flex-col items-center gap-1.5">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />
-              <span className="text-[11px] font-medium text-muted-foreground">Looking for photos…</span>
-            </span>
-          ) : (
-            <span className="sr-only">Loading photos</span>
-          )}
+          <span className="flex flex-col items-center gap-1.5">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />
+            <span className="text-[11px] font-medium text-muted-foreground">Looking for photos…</span>
+          </span>
+        </div>
+      );
+    }
+    // Only a blank skeleton when there is genuinely nothing to draw. The first
+    // version blanked the frame for the whole resolution pass — and a pass over
+    // a thousand listings runs for minutes, so entire screenfuls of cards sat
+    // as white rectangles while their covers waited behind a spinner nobody
+    // could see. If the record can describe itself, draw the cover immediately
+    // and let a photograph replace it whenever one arrives.
+    if (isResolving && !listing) {
+      return (
+        <div
+          className={cn(frame, 'animate-pulse border border-border/60 bg-muted/60 motion-reduce:animate-none')}
+          aria-busy="true"
+        >
+          <span className="sr-only">Loading photos</span>
         </div>
       );
     }
@@ -176,10 +188,20 @@ export function ListingHero({
         )}
 
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-background/85 to-transparent px-2.5 pb-2 pt-6">
+          {isResolving ? (
+            // The pass has not reached this listing yet, so "no photo on
+            // record" would be a claim we cannot make. Say what is true.
+            <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground" aria-busy="true">
+              <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+              Checking for photos…
+            </span>
+          ) : (
           <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
             <ImageOff className="h-3 w-3" aria-hidden="true" />
             No photo on record
           </span>
+          )}
+          {!isResolving && (
           <span className="flex shrink-0 items-center gap-1.5">
             {/*
               Geocoded but unphotographed is the largest group on this page —
@@ -205,6 +227,7 @@ export function ListingHero({
               </button>
             )}
           </span>
+          )}
         </div>
       </div>
     );

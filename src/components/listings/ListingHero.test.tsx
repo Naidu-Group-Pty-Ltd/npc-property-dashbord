@@ -36,6 +36,24 @@ describe('ListingHero', () => {
     expect(screen.getByText('No photo on record')).toBeTruthy();
   });
 
+  it('draws the cover during the resolution pass instead of a blank frame', () => {
+    // The pass over a thousand listings runs for minutes. Blanking every
+    // unresolved card for that long made whole screenfuls read as broken —
+    // the exact page a screenshot caught in production.
+    render(<ListingHero images={[]} isResolving listing={LISTING} />);
+    expect(screen.getByText('City Beach WA')).toBeTruthy();
+    expect(screen.getByText('Checking for photos…')).toBeTruthy();
+    // And no premature claims or actions while the answer is unknown:
+    expect(screen.queryByText('No photo on record')).toBeNull();
+    expect(screen.queryByRole('button', { name: /find photos/i })).toBeNull();
+  });
+
+  it('still shows a plain skeleton while resolving when it cannot draw a cover', () => {
+    const { container } = render(<ListingHero images={[]} isResolving />);
+    expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
+    expect(screen.queryByText('Checking for photos…')).toBeNull();
+  });
+
   it('offers to fetch photos when the caller can, and shows progress while it does', () => {
     // The sweep works worst-first through 1,441 records, so a given listing may
     // be hours from its turn. The empty state is the only place someone looking
