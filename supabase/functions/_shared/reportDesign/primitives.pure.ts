@@ -447,11 +447,22 @@ export function renderDataTable(
     return `<tr${r.__total ? ' class="total"' : ''}>${cells}</tr>`;
   }).join('');
 
+  // A header row of empty labels is not a header row.
+  //
+  // A GFM table whose header cells are blank — which is what a two-column
+  // key/value table transcribed out of a PDF usually is — produced a `thead` of
+  // empty `th`s. Invisible while the header carried no styling of its own, and
+  // an empty tinted band across the top of the table the moment one did. There
+  // is nothing for a screen reader or a tagged PDF to announce either, so the
+  // row is dropped rather than styled around.
+  const hasHead = cols.some((c) => String(c.label ?? '').trim());
+
   // The wrapper is what keeps the caption with its table across a page break —
   // a `<caption>` is a separate box and WeasyPrint will strand it otherwise.
   return '<div class="table-block"><table class="data">'
     + (opts.caption ? `<caption>${escapeHtml(opts.caption)}</caption>` : '')
-    + `<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+    + (hasHead ? `<thead><tr>${head}</tr></thead>` : '')
+    + `<tbody>${body}</tbody></table></div>`;
 }
 
 /**

@@ -21,7 +21,8 @@
  * ## Typed blocks, not HTML
  *
  * The model returns a list of blocks from a **closed vocabulary**, each one
- * mapping to exactly one primitive, and `renderBlocks.pure.ts` renders them.
+ * mapping to exactly one primitive (`row` to the twelve-column grid), and
+ * `renderBlocks.pure.ts` renders them.
  * The model never emits HTML, never chooses a colour, never sets a size. It
  * says "these four figures are a KPI strip" and the design system decides what
  * a KPI strip looks like under the chosen brand.
@@ -32,17 +33,28 @@
  * `escapeHtml` in the primitives, and every number is checked against the
  * source by `faithfulness.pure.ts` before any of it is rendered.
  *
- * ## Why the vocabulary is small
+ * ## How wide the vocabulary is, and why it widened
  *
- * Nine kinds, and the omissions are deliberate. Waterfall, quadrant, heatmap,
- * pictograph, timeline and series-fan all need shapes a transcription rarely
- * yields — offering them to a model that has a page of prose and a target to
- * hit is an invitation to invent the data that would justify one. `renderGauge`
- * overlaps `bullet` and `bullet` is the better fit for the case that actually
- * turns up. `renderGrid12` and `renderTwoCol` are layout rather than content,
- * and layout is the design system's decision, not the model's.
- * `renderPullQuote` and `renderDecisionBox` are editorial voice, which is only
- * honest at `rewrite`.
+ * It began at nine kinds, on the reasoning that a transcription rarely yields
+ * the shapes the richer primitives want and that offering them to a model with
+ * a page of prose and a target to hit invites it to invent the data that would
+ * justify one. Layout was excluded outright as "the design system's decision,
+ * not the model's".
+ *
+ * A natively designed report of the same figures settled that argument. It put
+ * three headline cards *across* the page, built the capacity up as a waterfall,
+ * and set two short note boxes side by side — and every one of those primitives
+ * already existed here, unreachable, because this schema did not name them. The
+ * document that resulted from the narrow schema was not more faithful; it was
+ * the same content stacked in one column down the left of every page.
+ *
+ * So: the content kinds now cover what the design system can actually draw, and
+ * `row` is the one *layout* kind. The original worry stands and is answered by
+ * the guards rather than by the omission — a waterfall whose steps do not add
+ * up fails `checkFaithful` exactly as an invented figure in a sentence does.
+ * What is still excluded is anything needing data a transcription cannot carry:
+ * heatmaps, calendars, micro-maps and score wheels want coordinates, dates and
+ * dimensions that no uploaded template supplies.
  *
  * ## Fidelity
  *
@@ -140,16 +152,59 @@ export type EnrichedBlock =
     target?: number;
     max?: number;
   }
-  | { kind: 'prose'; markdown: string };
+  | {
+    kind: 'waterfall';
+    caption?: string;
+    unit?: string;
+    items: Array<{ label: string; value: number; total?: boolean }>;
+  }
+  | { kind: 'gauge'; value: number; max?: number; label?: string; caption?: string }
+  | { kind: 'decision'; label: string; text: string }
+  | { kind: 'quote'; text: string; attribution?: string }
+  | { kind: 'prose'; markdown: string }
+  | {
+    /**
+     * Two or three blocks set across the measure instead of down it.
+     *
+     * The one *layout* kind, and the reason the vocabulary was widened. A
+     * natively designed report of the same data put three KPI cards across the
+     * page and a pair of note boxes side by side; our documents could only ever
+     * stack, one thing under another, which is most of why our pages read as
+     * half-empty and theirs read as composed.
+     *
+     * Rows do not nest — a row holds leaf blocks only. Two levels of nesting is
+     * a layout engine, and a model that can nest rows inside rows produces
+     * documents nobody can budget the pages for.
+     */
+    kind: 'row';
+    blocks: EnrichedLeafBlock[];
+  };
+
+/** Every block that may sit inside a `row`: all of them except `row` itself. */
+export type EnrichedLeafBlock = Exclude<EnrichedBlock, { kind: 'row' }>;
 
 export type EnrichedBlockKind = EnrichedBlock['kind'];
 
-export const BLOCK_KINDS: readonly EnrichedBlockKind[] = [
-  'lede', 'kpi', 'table', 'callout', 'sidenote', 'bars', 'donut', 'bullet', 'prose',
-];
+/** The kinds a `row` may hold. */
+export const LEAF_BLOCK_KINDS = [
+  'lede', 'kpi', 'table', 'callout', 'sidenote', 'bars', 'donut', 'bullet',
+  'waterfall', 'gauge', 'decision', 'quote', 'prose',
+] as const satisfies readonly EnrichedLeafBlock['kind'][];
 
-/** A block that is not `prose` is design work. This is how enrichment is judged. */
+export const BLOCK_KINDS: readonly EnrichedBlockKind[] = [...LEAF_BLOCK_KINDS, 'row'];
+
+/** How many blocks may sit across one row. Four across an A4 measure is soup. */
+export const MIN_ROW_BLOCKS = 2;
+export const MAX_ROW_BLOCKS = 3;
+
+/**
+ * A block that is not `prose` is design work. This is how enrichment is judged.
+ *
+ * A `row` counts when anything inside it does — a row of three prose blocks is
+ * three paragraphs in columns, which is not design, it is a newspaper accident.
+ */
 export function isDesigned(block: EnrichedBlock): boolean {
+  if (block.kind === 'row') return block.blocks.some(isDesigned);
   return block.kind !== 'prose';
 }
 
@@ -171,6 +226,13 @@ export const MIN_BAR_ITEMS = 2;
 /** Below three segments a donut is a pie chart of one thing and a gap. */
 export const MIN_DONUT_SEGMENTS = 3;
 export const MAX_DONUT_SEGMENTS = 8;
+/**
+ * A waterfall of two steps is a subtraction, which a KPI pair says better.
+ * `renderWaterfall` refuses more than `MAX_WATERFALL_ITEMS` of its own accord;
+ * this is the floor that makes the shape worth drawing at all.
+ */
+export const MIN_WATERFALL_STEPS = 3;
+export const MAX_WATERFALL_STEPS = 10;
 /**
  * Below this a chapter has nothing to design, and asking costs eleven seconds.
  *
@@ -232,6 +294,117 @@ const BAR_TONES: readonly NonNullable<BarBlockItem['tone']>[] = [
  * turns a cell blank; positions cannot be misspelled, and `renderBlocks`
  * assigns the keys the primitive needs.
  */
+/**
+ * Everything a block may carry, whatever kind it is.
+ *
+ * One flat property bag rather than a discriminated union, because the API's
+ * tool schema has no `oneOf` on a discriminant that a model reliably honours,
+ * and `readBlock` is the real validator either way. The descriptions carry the
+ * per-kind meaning; the reader enforces it.
+ *
+ * Extracted to a const so that `row.blocks` can reuse it verbatim minus `row`.
+ * Two hand-maintained copies of this would drift within a week.
+ */
+const BLOCK_PROPERTIES = {
+  text: {
+    type: 'string',
+    description: 'lede: the opening sentence. callout/sidenote/decision: the body. quote: the sentence.',
+  },
+  markdown: { type: 'string', description: 'prose: Markdown, passed through unchanged.' },
+
+  cells: {
+    type: 'array',
+    description: `kpi: ${MIN_KPI_CELLS}\u2013${MAX_KPI_CELLS} headline figures.`,
+    items: {
+      type: 'object',
+      required: ['label', 'value'],
+      properties: {
+        label: { type: 'string', description: 'What the figure is. Two or three words.' },
+        value: { type: 'string', description: 'The figure exactly as the source wrote it, including $ , % and any sign.' },
+        foot: { type: 'string', description: 'One short qualifier beneath.' },
+        tone: { type: 'string', enum: VALUE_TONES },
+      },
+    },
+  },
+
+  caption: { type: 'string', description: 'table/chart: what it shows. One line.' },
+  columns: {
+    type: 'array',
+    description: 'table: the header row.',
+    items: {
+      type: 'object',
+      required: ['label'],
+      properties: {
+        label: { type: 'string' },
+        align: { type: 'string', enum: ['left', 'right'], description: 'right for figures.' },
+      },
+    },
+  },
+  rows: {
+    type: 'array',
+    description: 'table: body rows, cells positional and aligned to columns.',
+    items: {
+      type: 'object',
+      required: ['cells'],
+      properties: {
+        cells: { type: 'array', items: { type: 'string' } },
+        total: { type: 'boolean', description: 'A summed row. Gets the total rule.' },
+      },
+    },
+  },
+  signedColumns: {
+    type: 'array',
+    description: 'table: zero-based indices of columns whose values may be negative.',
+    items: { type: 'integer' },
+  },
+
+  tone: { type: 'string', enum: CALLOUT_TONES, description: 'callout: which of the five.' },
+  label: {
+    type: 'string',
+    description: 'callout/sidenote/decision: the heading on it. bullet/gauge: what is being measured.',
+  },
+  attribution: { type: 'string', description: 'quote: who said it, when the source says.' },
+
+  title: { type: 'string', description: 'bars/donut: the chart title.' },
+  unit: { type: 'string', description: 'bars/waterfall: what the values are in.' },
+  items: {
+    type: 'array',
+    description: `bars: ${MIN_BAR_ITEMS}\u2013${MAX_BAR_ITEMS} labelled magnitudes. `
+      + `waterfall: ${MIN_WATERFALL_STEPS}\u2013${MAX_WATERFALL_STEPS} steps that add up, `
+      + 'signed, with `total: true` on any line that restates the running sum.',
+    items: {
+      type: 'object',
+      required: ['label', 'value'],
+      properties: {
+        label: { type: 'string' },
+        value: { type: 'number', description: 'The figure as a plain number, no symbols. Negative for a deduction.' },
+        display: { type: 'string', description: 'bars: how the source printed it, e.g. "$1,240 /mo".' },
+        tone: { type: 'string', enum: BAR_TONES },
+        total: { type: 'boolean', description: 'waterfall: this step is a running total, not a movement.' },
+      },
+    },
+  },
+  segments: {
+    type: 'array',
+    description: `donut: ${MIN_DONUT_SEGMENTS}\u2013${MAX_DONUT_SEGMENTS} parts of one whole.`,
+    items: {
+      type: 'object',
+      required: ['label', 'value'],
+      properties: {
+        label: { type: 'string' },
+        value: { type: 'number' },
+      },
+    },
+  },
+  centerLabel: { type: 'string', description: 'donut: the figure in the hole.' },
+  centerSub: { type: 'string', description: 'donut: the word under it.' },
+
+  value: { type: 'number', description: 'bullet/gauge: where the measure stands.' },
+  target: { type: 'number', description: 'bullet: the marker to compare against.' },
+  max: { type: 'number', description: 'bullet/gauge: the top of the scale. Required for a gauge.' },
+  sub: { type: 'string', description: 'bullet: the qualifier under the label.' },
+} as const;
+
 export const ENRICHMENT_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -245,100 +418,22 @@ export const ENRICHMENT_JSON_SCHEMA = {
         required: ['kind'],
         properties: {
           kind: { type: 'string', enum: BLOCK_KINDS },
-
-          text: {
-            type: 'string',
-            description: 'lede: the opening sentence. callout/sidenote: the body, plain text.',
-          },
-          markdown: { type: 'string', description: 'prose: Markdown, passed through unchanged.' },
-
-          cells: {
+          blocks: {
             type: 'array',
-            description: `kpi: ${MIN_KPI_CELLS}–${MAX_KPI_CELLS} headline figures.`,
+            description:
+              `row: ${MIN_ROW_BLOCKS}\u2013${MAX_ROW_BLOCKS} blocks set across the page instead `
+              + 'of down it. Use for a set of headline figures, or a pair of short notes that '
+              + 'answer each other. Rows do not nest.',
             items: {
               type: 'object',
-              required: ['label', 'value'],
+              required: ['kind'],
               properties: {
-                label: { type: 'string', description: 'What the figure is. Two or three words.' },
-                value: { type: 'string', description: 'The figure exactly as the source wrote it, including $ , % and any sign.' },
-                foot: { type: 'string', description: 'One short qualifier beneath.' },
-                tone: { type: 'string', enum: VALUE_TONES },
+                kind: { type: 'string', enum: LEAF_BLOCK_KINDS },
+                ...BLOCK_PROPERTIES,
               },
             },
           },
-
-          caption: { type: 'string', description: 'table/chart: what it shows. One line.' },
-          columns: {
-            type: 'array',
-            description: 'table: the header row.',
-            items: {
-              type: 'object',
-              required: ['label'],
-              properties: {
-                label: { type: 'string' },
-                align: { type: 'string', enum: ['left', 'right'], description: 'right for figures.' },
-              },
-            },
-          },
-          rows: {
-            type: 'array',
-            description: 'table: body rows, cells positional and aligned to columns.',
-            items: {
-              type: 'object',
-              required: ['cells'],
-              properties: {
-                cells: { type: 'array', items: { type: 'string' } },
-                total: { type: 'boolean', description: 'A summed row. Gets the total rule.' },
-              },
-            },
-          },
-          signedColumns: {
-            type: 'array',
-            description: 'table: zero-based indices of columns whose values may be negative.',
-            items: { type: 'integer' },
-          },
-
-          tone: { type: 'string', enum: CALLOUT_TONES, description: 'callout: which of the five.' },
-          label: {
-            type: 'string',
-            description: 'callout/sidenote: the heading on it. bullet: what is being measured.',
-          },
-
-          title: { type: 'string', description: 'bars/donut: the chart title.' },
-          unit: { type: 'string', description: 'bars: what the values are in.' },
-          items: {
-            type: 'array',
-            description: `bars: ${MIN_BAR_ITEMS}–${MAX_BAR_ITEMS} labelled magnitudes.`,
-            items: {
-              type: 'object',
-              required: ['label', 'value'],
-              properties: {
-                label: { type: 'string' },
-                value: { type: 'number', description: 'The figure as a plain number, no symbols.' },
-                display: { type: 'string', description: 'How the source printed it, e.g. "$1,240 /mo".' },
-                tone: { type: 'string', enum: BAR_TONES },
-              },
-            },
-          },
-          segments: {
-            type: 'array',
-            description: `donut: ${MIN_DONUT_SEGMENTS}–${MAX_DONUT_SEGMENTS} parts of one whole.`,
-            items: {
-              type: 'object',
-              required: ['label', 'value'],
-              properties: {
-                label: { type: 'string' },
-                value: { type: 'number' },
-              },
-            },
-          },
-          centerLabel: { type: 'string', description: 'donut: the figure in the hole.' },
-          centerSub: { type: 'string', description: 'donut: the word under it.' },
-
-          value: { type: 'number', description: 'bullet: where the measure stands.' },
-          target: { type: 'number', description: 'bullet: the marker to compare against.' },
-          max: { type: 'number', description: 'bullet: the top of the scale.' },
-          sub: { type: 'string', description: 'bullet: the qualifier under the label.' },
+          ...BLOCK_PROPERTIES,
         },
       },
     },
@@ -384,16 +479,90 @@ const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | undefin
  * line budget would have already been charged for it. Refusing here means the
  * content falls back to prose instead of vanishing.
  */
-function readBlock(raw: unknown, notes: string[], at: number): EnrichedBlock | null {
+function readBlock(
+  raw: unknown,
+  notes: string[],
+  at: number,
+  /** False inside a `row`, where a nested row would be a layout engine. */
+  allowRow = true,
+): EnrichedBlock | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
-  const kind = oneOf(r.kind, BLOCK_KINDS);
+  const kind = oneOf(r.kind, allowRow ? BLOCK_KINDS : LEAF_BLOCK_KINDS);
   if (!kind) {
     notes.push(`block ${at}: unknown kind "${String(r.kind).slice(0, 40)}"`);
     return null;
   }
 
   switch (kind) {
+    case 'row': {
+      const inner = (Array.isArray(r.blocks) ? r.blocks : [])
+        .slice(0, MAX_ROW_BLOCKS)
+        .map((b, i) => readBlock(b, notes, at, false))
+        .filter((b): b is EnrichedLeafBlock => b !== null && b.kind !== 'row');
+      if (inner.length < MIN_ROW_BLOCKS) {
+        // A row of one is a block with a margin on it, and a row of none is a
+        // hole the page budget has already been charged for.
+        notes.push(`block ${at}: a row of ${inner.length} — needs ${MIN_ROW_BLOCKS}`);
+        return inner[0] ?? null;
+      }
+      return { kind, blocks: inner };
+    }
+
+    case 'waterfall': {
+      const items = (Array.isArray(r.items) ? r.items : [])
+        .slice(0, MAX_WATERFALL_STEPS)
+        .flatMap((i) => {
+          const it = (i ?? {}) as Record<string, unknown>;
+          const label = str(it.label, MAX_LABEL_CHARS);
+          const value = num(it.value);
+          if (!label || value === null) return [];
+          return [{ label, value, ...(it.total === true ? { total: true } : {}) }];
+        });
+      if (items.length < MIN_WATERFALL_STEPS) {
+        notes.push(`block ${at}: a waterfall of ${items.length} — needs ${MIN_WATERFALL_STEPS}`);
+        return null;
+      }
+      return {
+        kind,
+        items,
+        caption: str(r.caption, MAX_LABEL_CHARS) || undefined,
+        unit: str(r.unit, MAX_VALUE_CHARS) || undefined,
+      };
+    }
+
+    case 'gauge': {
+      const value = num(r.value);
+      if (value === null) { notes.push(`block ${at}: a gauge with no value`); return null; }
+      const max = num(r.max);
+      // `renderGauge` floors its max at the value, so a gauge without one draws
+      // a full arc and says "100%" of nothing — the same defect `bullet` has.
+      if (max === null || max <= 0) {
+        notes.push(`block ${at}: a gauge with no maximum to read against`);
+        return null;
+      }
+      return {
+        kind, value, max,
+        label: str(r.label, MAX_LABEL_CHARS) || undefined,
+        caption: str(r.caption, MAX_LABEL_CHARS) || undefined,
+      };
+    }
+
+    case 'decision': {
+      const text = block(r.text, MAX_CALLOUT_CHARS);
+      if (!text) { notes.push(`block ${at}: a decision box with no body`); return null; }
+      return { kind, label: str(r.label, MAX_LABEL_CHARS) || 'What this means', text };
+    }
+
+    case 'quote': {
+      const text = str(r.text, MAX_CALLOUT_CHARS);
+      if (!text) { notes.push(`block ${at}: an empty quote`); return null; }
+      return {
+        kind, text,
+        attribution: str(r.attribution, MAX_LABEL_CHARS) || undefined,
+      };
+    }
+
     case 'lede': {
       const text = str(r.text, MAX_LEDE_CHARS);
       if (!text) { notes.push(`block ${at}: an empty lede`); return null; }
@@ -624,6 +793,14 @@ export function blockLines(b: EnrichedBlock): number {
     case 'bars': return 12;
     case 'donut': return 14;
     case 'bullet': return 6;
+    case 'waterfall': return 14;
+    case 'gauge': return 12;
+    case 'decision': return textLines(b.text) + 3;
+    case 'quote': return textLines(b.text) + 2;
+    // The tallest column decides the row's height; that is what a row *is*.
+    // Summing them would charge three KPI cards as twelve lines when they print
+    // as four, which is how a spine claims a page count the document has not.
+    case 'row': return Math.max(...b.blocks.map(blockLines), 1);
     case 'prose': return renderMarkdown(b.markdown, { idPrefix: 'cost' }).lines;
   }
 }
@@ -682,6 +859,21 @@ export function enrichedText(blocks: readonly EnrichedBlock[]): string {
         // The exposure this creates is bounded and visible: a wrong `max`
         // mis-scales one bar. A wrong `value` or `target` misstates a figure,
         // and those two stay checked.
+        break;
+      case 'waterfall':
+        parts.push(b.caption ?? '', b.unit ?? '');
+        for (const i of b.items) parts.push(i.label, String(i.value));
+        break;
+      case 'gauge':
+        parts.push(b.label ?? '', b.caption ?? '', String(b.value));
+        // `max` is the axis, not a claim — the same exclusion as `bullet`, and
+        // for the same reason: it destroyed a chapter once already.
+        break;
+      case 'decision':
+      case 'quote': parts.push(('label' in b ? b.label : ''), b.text); break;
+      case 'row':
+        // A figure inside a row is exactly as invented as one outside it.
+        parts.push(enrichedText(b.blocks));
         break;
       case 'prose': parts.push(b.markdown); break;
     }
@@ -882,9 +1074,32 @@ The blocks, and when each is right:
   \`positive\` for a headroom, \`informative\` for a note, \`neutral\` otherwise.
 - \`sidenote\` — a definition or an aside that supports the argument without
   interrupting it.
-- \`lede\` — one sentence opening the chapter. At most one, and only first.
+- \`waterfall\` — a figure built up or worn down step by step, where the steps
+  add to a stated total: gross income, less shading, less expenses, less
+  commitments, giving the surplus. Deductions are negative; put \`total: true\`
+  on any line that restates the running sum. This is the shape a "how the
+  capacity is built" chapter almost always wants and prose almost always hides.
+- \`gauge\` — one figure against a ceiling where the *proportion* is the point
+  and there is no second measure to compare it with. Needs \`max\`. Prefer
+  \`bullet\` when the chapter names a target as well.
+- \`decision\` — "what this means" or "what would move this". One per chapter at
+  most, and only when the chapter genuinely draws a conclusion.
+- \`quote\` — a sentence from the source worth setting apart because everything
+  else turns on it.
+- \`lede\` — one sentence opening the chapter. At most one, and only first. It
+  must say something the chapter's own title does not.
 - \`prose\` — everything that is genuinely paragraphs. Use it freely for real
   prose; just do not use it for something above.
+
+And one that is not content but layout:
+
+- \`row\` — two or three of the blocks above, set **across** the page instead of
+  down it, in its \`blocks\` array. Three \`kpi\` blocks of one cell each become
+  three cards in a line; a \`callout\` beside a \`sidenote\` becomes a pair of
+  notes that answer each other. Use it wherever things belong together and each
+  is short — a page of blocks stacked one under another is the difference
+  between a document that looks composed and one that looks generated. Rows do
+  not nest.
 
 Rules:
 
@@ -893,7 +1108,11 @@ Rules:
 - Keep the chapter's order. A reader should be able to follow your blocks against
   the original top to bottom.
 - Do not invent a chart the data does not support. A donut needs three real
-  parts; a bar chart needs two real magnitudes. If it is not there, use prose.
+  parts; a bar chart needs two real magnitudes; a waterfall needs steps that
+  genuinely add up. If it is not there, use prose.
+- Fill the page. A chapter that comes back as four short blocks stacked down the
+  left prints as a mostly empty sheet. Where two or three things are short and
+  related, put them in a \`row\`.
 - Do not emit HTML, colours, sizes or CSS. The design system decides how each
   block looks.`;
 }

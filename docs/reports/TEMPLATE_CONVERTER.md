@@ -383,6 +383,109 @@ never who it happened to.
 
 ---
 
+## Looking at the document, and widening what it can be
+
+The third round fixed everything that was visibly broken and the output still
+did not look like a designed report beside one generated natively. Three things
+came out of comparing them, and the first is a method rather than a fix.
+
+### The rubric, and why it is measured against a real document
+
+`_shared/reports/critique.pure.ts` judges a *rendered* document: near-empty
+pages, ink outside the trim, a heading echoed as body copy on the same page, a
+block of lines printed on two pages, a page budget that missed.
+`scripts/reports/measure_pages.py` produces the measurements from a real
+WeasyPrint render — it samples the paper colour rather than assuming one, so a
+dark cover does not read as 100% ink — and `scripts/reports/critique.mts` is the
+loop:
+
+```
+npx tsx scripts/reports/critique.mts <file.html|file.pdf> --keep <dir>
+```
+
+The thresholds are calibrated between two real documents rather than invented. A
+natively designed report of the same figures measures **0.133–0.221 ink on every
+body page and produces zero findings**; the converter's draft had five pages
+between 0.017 and 0.053. `SPARSE_PAGE_INK` sits at 0.08, clear of both.
+
+On its first run against a real render it found a defect nobody had spotted: the
+"Supplied by the live report" callout printing its own label as its body.
+
+The rubric is a floor, not a standard — it cannot tell you a cover is ugly. The
+`report-critic` agent (`.claude/agents/report-critic.md`) runs it and then
+*looks at the page images*, which is what actually found every defect in rounds
+two and three.
+
+### The vocabulary was nine words in front of thirty primitives
+
+`reportDesign/` ships around twenty primitives and twelve chart types.
+`ENRICHMENT_JSON_SCHEMA` named nine of them, and `renderGrid12`, `renderTwoCol`,
+`renderWaterfall`, `renderGauge`, `renderDecisionBox` and `renderPullQuote` were
+used almost nowhere in the repo.
+
+That was a deliberate decision, recorded in `enrich.pure.ts` as "why the
+vocabulary is small", and the natively designed report settled the argument: it
+put three headline cards **across** the page, built the capacity up as a
+waterfall, and set two note boxes side by side. Every one of those primitives
+already existed and no model could ask for one.
+
+The vocabulary now covers what the design system can draw, plus **`row`** — the
+one *layout* kind, mapping two or three blocks onto the twelve-column grid. A
+chart inside a column is given a context at the column's width, because a chart
+drawn for the full measure and scaled into a third of it prints an axis label
+four points tall. Rows do not nest: two levels is a layout engine, and nobody
+can budget the pages for one.
+
+The original worry — that offering richer shapes invites a model to invent the
+data that justifies one — stands, and is answered by the guards rather than by
+the omission. A waterfall whose steps do not add up fails `checkFaithful`
+exactly as an invented figure in a sentence does. What stays excluded is
+anything needing data a transcription cannot carry: heatmaps, calendars,
+micro-maps and score wheels want coordinates, dates and dimensions no uploaded
+template supplies.
+
+### `surfaceStyle` — ink on paper, or content in containers
+
+A new axis on `ReportDesignOptions`, orthogonal to preset and neutrals. `raised`
+gives KPI **cards** rather than a strip, a shell around a table with a tinted
+header inside it, callouts and sidenotes as cards, an accent bar beside the
+section head, and a faint grid on the paper.
+
+**It defaults to `flat`**, which is every rule the first nine formats shipped
+with. Eight of them have golden renders taken against it. Opting in is a
+per-design-system decision — `20260827000000` turns it on for NPC Services and
+Chancery only, and deliberately not for the other four voices, because six
+systems that all print in cards would be one system again.
+
+### What WeasyPrint can and cannot do, tested rather than assumed
+
+The suspicion was that the renderer was the ceiling. It is not. Built as a page
+and run through WeasyPrint 69:
+
+| | |
+| --- | --- |
+| flexbox, **CSS Grid**, `border-radius`, pill shapes | ✅ |
+| `linear-gradient` fills, the repeating-gradient paper texture | ✅ |
+| rounded table shell via `overflow: hidden`, layered progress bars | ✅ |
+| `box-shadow` | ❌ unknown property |
+| `filter: blur()` | ❌ unknown property |
+| SVG `feGaussianBlur` as a substitute | ❌ also ignored |
+
+Two decorative effects out of everything on a browser-designed reference page.
+The soft glow under a card is genuinely unavailable; a gradient fill and a
+hairline ring stand in for it. Nothing else needed the renderer changed.
+
+Two things the texture cost, both found by rendering rather than reasoning: a
+section's background paints its own box and stops, so the grid must go on the
+page box — and the root element's background is propagated to the canvas and
+painted *over* that box, so `html, body` must be cleared or the grid survives
+only in the margins and reads as a printing fault. And an empty `thead`, which a
+key/value table transcribed out of a PDF always has, was invisible until the
+header carried a tint and then became a blank band; `renderDataTable` now omits
+a header row whose labels are all blank.
+
+---
+
 ## The design pass
 
 ### What was wrong
@@ -864,7 +967,10 @@ change. Add the drift-guard spec at the same time.
    and ink), `20260825000100_seed_house_design_systems.sql` (the house system
    and the five voices; idempotent on `slug`) and
    `20260826000000_chancery_is_not_the_house_system.sql` (E5 — a single UPDATE
-   guarded on the seeded options, so an edited row is untouched).
+   guarded on the seeded options, so an edited row is untouched) and
+   `20260827000000_raised_surfaces_for_the_house_systems.sql` (the raised
+   surface style, guarded on the *absence* of the key rather than on the whole
+   blob, because the migration before it rewrote one of the two rows).
 3. Deploy `convert-template-document` and `generate-brand-design-system`.
    D1–D5 need no migration; D1–D4 are in `_shared` and D5 spans `_shared` and
    the function, so all five reach production only on a redeploy. E1–E4 and E6

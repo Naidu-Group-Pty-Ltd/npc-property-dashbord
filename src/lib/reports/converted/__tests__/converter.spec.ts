@@ -25,6 +25,11 @@ import {
 } from '../render.pure';
 import { dropRedundantLede, enrichedLines, type EnrichedBlock } from '../enrich.pure';
 import { buildReportCss } from '../../../../../supabase/functions/_shared/reportDesign/css.pure';
+import {
+  DEFAULT_REPORT_DESIGN_OPTIONS,
+  normalizeReportDesignOptions,
+} from '../../../../../supabase/functions/_shared/reportDesign/options.pure';
+import { renderDataTable } from '../../../../../supabase/functions/_shared/reportDesign/primitives.pure';
 import { coverTitleFit } from '../../../../../supabase/functions/_shared/reportDesign/typography.pure';
 import { disclaimerParagraphs } from '../../../../../supabase/functions/_shared/reportDesign/companyBlock.pure';
 import { repairFloatArtefacts } from '../../../../../supabase/functions/_shared/reports/text.pure';
@@ -829,5 +834,80 @@ describe('figures transcribed out of a legacy PDF', () => {
     );
     expect(s.sections[0].markdown).toContain('9.44%');
     expect(s.sections[0].markdown).not.toContain('9.440000000000001');
+  });
+});
+
+describe('the raised surface style', () => {
+  const cssFor = (surfaceStyle: 'flat' | 'raised') => buildReportCss({
+    palette: resolveReportPalette({ preset: 'signature', brandHex: '#D9A520' }),
+    options: { surfaceStyle },
+    masthead: 'Harbour & Vale',
+  });
+
+  it('is off unless a design system asks for it', () => {
+    // Eight production formats have golden renders taken against the flat
+    // sheet. A document that restyles itself because somebody added a field is
+    // worse than one that stays plain.
+    expect(DEFAULT_REPORT_DESIGN_OPTIONS.surfaceStyle).toBe('flat');
+    expect(normalizeReportDesignOptions({}).surfaceStyle).toBe('flat');
+    expect(normalizeReportDesignOptions({ surfaceStyle: 'nonsense' }).surfaceStyle).toBe('flat');
+    expect(cssFor('flat')).not.toContain('── Raised');
+  });
+
+  it('turns a KPI strip into cards and a table into a shell', () => {
+    const css = cssFor('raised');
+    expect(css).toContain('── Raised');
+    // The single biggest visual difference between a document that looks
+    // composed and one that looks printed out.
+    expect(css).toMatch(/\.kpi-strip \{[^}]*display: flex/);
+    expect(css).toMatch(/\.kpi-strip \.kpi \{[^}]*border-radius/);
+    expect(css).toMatch(/table\.data \{[^}]*border-collapse: separate/);
+  });
+
+  it('puts the paper texture where it is actually visible', () => {
+    // Found by rendering: on a section it paints that box and stops; on the
+    // root it is propagated to the canvas and painted *over* the page box, so
+    // the grid survived only in the margins and read as a printing fault. It
+    // goes on the page box, with the root cleared.
+    const css = cssFor('raised');
+    expect(css).toMatch(/@page \{\s*background-image:/);
+    expect(css).toContain('html, body { background: transparent; }');
+    // And not over an obsidian cover, which would be a cutting mat.
+    expect(css).toContain('@page cover { background-image: none; }');
+  });
+
+  it('uses nothing WeasyPrint cannot draw', () => {
+    // Tested against WeasyPrint 69, not assumed: it ignores `box-shadow` and
+    // `filter` as unknown properties, and its SVG renderer ignores
+    // `feGaussianBlur` too, so the soft glow a browser gives a card is
+    // genuinely unavailable. A gradient and a hairline ring stand in for it.
+    const css = cssFor('raised');
+    for (const unsupported of ['box-shadow', 'filter:', 'backdrop-filter']) {
+      expect(css, unsupported).not.toContain(unsupported);
+    }
+    expect(css).toContain('linear-gradient');
+  });
+});
+
+describe('a table whose header says nothing', () => {
+  it('does not print an empty header row', () => {
+    // A key/value table transcribed out of a PDF arrives with blank header
+    // cells. Invisible while the header carried no styling of its own — and an
+    // empty tinted band across the top of the table the moment one did.
+    const html = renderDataTable(
+      [{ key: 'a', label: '' }, { key: 'b', label: '  ' }],
+      [{ a: 'Gross annual income', b: '$223,698' }],
+    );
+    expect(html).not.toContain('<thead>');
+    expect(html).toContain('$223,698');
+  });
+
+  it('keeps a header that says something, even partly', () => {
+    const html = renderDataTable(
+      [{ key: 'a', label: 'Component' }, { key: 'b', label: '' }],
+      [{ a: 'Salary', b: '$180,000' }],
+    );
+    expect(html).toContain('<thead>');
+    expect(html).toContain('Component');
   });
 });

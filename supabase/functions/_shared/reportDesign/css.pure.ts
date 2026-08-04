@@ -1049,5 +1049,112 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
 ${tableRules(palette, options, type)}
 ${chapterRules(palette, options, type)}
 ${coverRules(palette, options, type)}
+${raisedRules(palette, options, type)}
 `;
+}
+
+/**
+ * The raised surface style.
+ *
+ * Appended last so every rule here overrides its flat counterpart by order
+ * rather than by specificity — no `!important`, and the flat sheet stays
+ * readable on its own.
+ *
+ * ## What is deliberately absent
+ *
+ * No `box-shadow` and no `filter: blur()`. WeasyPrint 69 ignores both as
+ * unknown properties, and its SVG renderer ignores `feGaussianBlur` too, so
+ * the soft glow a browser-rendered document gets under a card is genuinely
+ * unavailable here. Tested, not assumed. What replaces it is a gradient fill
+ * and a hairline ring, which read as *lifted* without pretending to a shadow —
+ * and everything else in a browser-designed reference page (flexbox, grid,
+ * radius, gradients, the paper texture, a rounded table shell, pill badges)
+ * WeasyPrint draws correctly.
+ */
+function raisedRules(
+  palette: ResolvedReportPalette,
+  options: ReportDesignOptions,
+  type: Record<string, number>,
+): string {
+  if (options.surfaceStyle !== 'raised') return '';
+  const d = DENSITY_METRICS[options.density];
+  const radius = '3.2mm';
+
+  return `
+  /* ── Raised ─────────────────────────────────────────────────────────── */
+
+  /* The paper carries a faint square grid. Two repeating gradients rather than
+     an image: nothing to fetch, nothing to inline, and it scales with the page
+     instead of resampling.
+
+     On the page box rather than on a section, because a section's background
+     paints its own box and stops. A later @page rule merges with the earlier
+     one, so this adds the image without disturbing the paper colour. */
+  @page {
+    background-image:
+      linear-gradient(${alpha(palette.rule, 0.38)} 0.2pt, transparent 0.2pt),
+      linear-gradient(90deg, ${alpha(palette.rule, 0.38)} 0.2pt, transparent 0.2pt);
+    background-size: 14mm 14mm;
+  }
+  /* Not on the field pages: a grid over an obsidian cover is a cutting mat. */
+  @page cover { background-image: none; }
+  @page disclaimer { background-image: none; }
+  /* The paper colour lives on the page box, which is what the texture is
+     drawn on. The root element's background is propagated to the canvas and
+     painted over that box, so leaving it set covered the content area and the
+     grid survived only in the margins — which read exactly like a printing
+     fault. Both are cleared; the page box still carries the paper. */
+  html, body { background: transparent; }
+
+  /* KPI cards, not a KPI strip. The single biggest visual difference between a
+     document that looks composed and one that looks printed out. */
+  .kpi-strip {
+    display: flex;
+    gap: ${pt(d.blockGapPt - 2)};
+    border-top: 0;
+    border-bottom: 0;
+  }
+  .kpi-strip .kpi {
+    display: block;
+    flex: 1 1 0;
+    border-right: 0;
+    border-radius: ${radius};
+    border: 0.3pt solid ${alpha(palette.rule, 0.9)};
+    background: linear-gradient(160deg, ${palette.paperBright} 0%, ${palette.paperAlt} 100%);
+    padding: ${pt(d.cellPadPt + 6)} ${pt(d.cellPadPt + 6)};
+  }
+
+  /* A shell around the table, and a header band inside it. */
+  .table-block, table.data {
+    border-radius: ${radius};
+    /* Clips the corners of the header band to the shell's own radius. */
+    overflow: hidden;
+  }
+  table.data {
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 0.3pt solid ${alpha(palette.rule, 0.9)};
+  }
+  table.data thead th {
+    background: ${palette.paperAlt};
+    border-bottom: 0.3pt solid ${palette.rule};
+  }
+  table.data caption { padding-bottom: ${pt(d.paragraphGapPt)}; }
+
+  /* Callouts, sidenotes and decision boxes become cards too, so a page of them
+     reads as one family rather than as three unrelated treatments. */
+  .callout, .sidenote, .decision-box {
+    border-radius: ${radius};
+    background: linear-gradient(160deg, ${palette.paperBright} 0%, ${palette.paperAlt} 100%);
+  }
+
+  /* An accent bar beside the section head, which is what carries the eyebrow
+     and the title as one object rather than two stacked lines. */
+  .chapter-header {
+    border-left: 1.2pt solid ${palette.accentOnPaper};
+    padding-left: ${pt(d.cellPadPt + 8)};
+  }
+
+  /* Rows sit apart rather than butting together. */
+  .grid-12 { gap: ${pt(d.blockGapPt)}; }`;
 }
