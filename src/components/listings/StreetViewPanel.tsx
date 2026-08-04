@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, Camera, ExternalLink, RefreshCw } from 'lucide-react';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 import { Button } from '@/components/ui/button';
+import { readStreetView, writeStreetView } from '@/lib/streetViewCache';
 
 interface StreetViewPanelProps {
   lat: number;
@@ -21,6 +22,21 @@ interface StreetViewPanelProps {
   variant?: 'card' | 'inline';
   /** Frame height. Only meaningful for `inline`. */
   frameClassName?: string;
+  /**
+   * Told every time the panel's state settles. Exists for the gallery's
+   * automatic cascade: a hero that swapped its drawn cover for this panel needs
+   * to know when the panorama genuinely rendered — and when it did not, so it
+   * can put the cover back rather than leave an apology where imagery was
+   * promised.
+   */
+  onStatus?: (status: StreetViewStatus) => void;
+  /**
+   * Names the imagery as Street View on the frame itself. Where the panel is
+   * one slide among labelled slides that is redundant; where it stands alone in
+   * a photo grid a passer-by must not mistake a street frontage from years ago
+   * for the agency's photography.
+   */
+  showBadge?: boolean;
 }
 
 /**
@@ -33,7 +49,7 @@ interface StreetViewPanelProps {
  * imagery for every address in the country. A wrong explanation is worse than
  * no explanation: it sends people looking in the wrong place.
  */
-type Status =
+export type StreetViewStatus =
   | 'loading'
   /** Imagery returned. */
   | 'available'
@@ -45,6 +61,8 @@ type Status =
   | 'busy'
   /** Anything else. */
   | 'error';
+
+type Status = StreetViewStatus;
 
 interface StreetViewState {
   status: Status;
@@ -88,12 +106,35 @@ export function StreetViewPanel({
   className,
   variant = 'card',
   frameClassName,
+  onStatus,
+  showBadge = false,
 }: StreetViewPanelProps) {
   const [state, setState] = useState<StreetViewState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
 
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
+  useEffect(() => {
+    onStatusRef.current?.(state.status);
+  }, [state.status]);
+
   useEffect(() => {
     let cancelled = false;
+
+    // Answered this session already — for this location, from any panel. The
+    // imagery now loads automatically wherever a photo-less listing renders,
+    // so without this every remount (a view switch, a filter change, a "Load
+    // more") would spend two more metered Google calls per card.
+    const cached = readStreetView(lat, lng);
+    if (cached) {
+      setState(
+        cached.kind === 'image'
+          ? { status: 'available', imageDataUrl: cached.dataUrl, panoramaDate: cached.date }
+          : { status: 'no_coverage' },
+      );
+      return;
+    }
+
     setState({ status: 'loading' });
 
     (async () => {
@@ -116,8 +157,20 @@ export function StreetViewPanel({
         // where blaming Google is accurate. Anything else here is an upstream
         // fault (an image fetch that failed, a quota answer) and should not be
         // reported to the user as missing coverage.
-        setState({ status: data.status === 'ZERO_RESULTS' ? 'no_coverage' : 'error' });
+        if (data.status === 'ZERO_RESULTS') {
+          writeStreetView(lat, lng, { kind: 'none' });
+          setState({ status: 'no_coverage' });
+        } else {
+          setState({ status: 'error' });
+        }
         return;
+      }
+      if (data.imageDataUrl) {
+        writeStreetView(lat, lng, {
+          kind: 'image',
+          dataUrl: data.imageDataUrl,
+          date: data.panoramaDate ?? null,
+        });
       }
       setState({
         status: 'available',
@@ -181,9 +234,11 @@ export function StreetViewPanel({
         )}
 
         {/* Chrome as overlays so it costs no vertical space. */}
-        {state.status === 'available' && state.panoramaDate ? (
+        {state.status === 'available' && (showBadge || state.panoramaDate) ? (
           <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-background/85 px-1.5 py-0.5 text-[10px] text-muted-foreground backdrop-blur">
-            {state.panoramaDate}
+            {showBadge
+              ? `Street view${state.panoramaDate ? ` · ${state.panoramaDate}` : ''}`
+              : state.panoramaDate}
           </span>
         ) : null}
         {state.status === 'available' ? (

@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Expand, ImageOff, Loader2, MapPin, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Expand, ImageOff, Loader2, MapPin } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { StoredListingImage } from '@/lib/listingImages';
-import { StreetViewPanel } from '@/components/listings/StreetViewPanel';
+import { StreetViewPanel, type StreetViewStatus } from '@/components/listings/StreetViewPanel';
 import { ListingCover, type ListingCoverProps } from '@/components/listings/ListingCover';
-
-/** Small action sitting over imagery — legible on a photo or a drawn cover. */
-const PILL =
-  'inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/90 px-2 py-1 text-[10px] font-semibold text-foreground shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
+import { useInView } from '@/hooks/useInView';
 
 export interface ListingHeroProps {
   images: StoredListingImage[] | undefined;
@@ -29,11 +26,9 @@ export interface ListingHeroProps {
   /** Rounded corners. Off for a full-bleed hero. */
   rounded?: boolean;
   /**
-   * Fetch this listing's photos from its source page now. Supplying it turns the
-   * empty state from a statement into an action.
+   * A source-page search is in flight for this listing — manual or automatic.
+   * The frame keeps its cover and says so, rather than blanking.
    */
-  onFindPhotos?: () => void;
-  /** A fetch is in flight for this listing. */
   isFindingPhotos?: boolean;
   /**
    * Enough of the record to draw a cover when there is no photograph. Without
@@ -41,18 +36,21 @@ export interface ListingHeroProps {
    */
   listing?: ListingCoverProps['listing'];
   /**
-   * How the Street View slide is loaded.
+   * How Street View participates.
    *
    * `'slide'` — always present as the last slide. Right where one listing is on
-   * screen: the property page, the map popup.
+   * screen: the property page, the map popup. The panorama only loads when its
+   * slide is shown.
    *
-   * `'on-demand'` — the frame draws a cover, and Street View loads only when the
-   * reader asks for it. Required anywhere many listings render at once. Each
-   * panel costs the `street-view` function two Google calls against a global
-   * 5,000/day quota and it caches nothing, so a 48-card grid auto-loading them
-   * spends ~96 calls per page view and exhausts the day inside an afternoon.
+   * `'auto'` — the failsafe stage of the imagery cascade. When the record has
+   * no photographs and the source search has had its chance, the frame loads
+   * the street frontage on its own — but only once the card has scrolled into
+   * view, and never twice for the same location in a session (the panel's
+   * cache), because each panorama costs two metered Google calls against a
+   * global daily quota. There is no button; if the panorama fails or Google has
+   * no coverage, the drawn cover simply stays.
    */
-  streetViewMode?: 'slide' | 'on-demand';
+  streetViewMode?: 'slide' | 'auto';
 }
 
 /**
@@ -86,23 +84,25 @@ export function ListingHero({
   onExpand,
   showThumbnails = false,
   rounded = true,
-  onFindPhotos,
   isFindingPhotos = false,
   listing,
   streetViewMode = 'slide',
 }: ListingHeroProps) {
   const [index, setIndex] = useState(0);
   const [failed, setFailed] = useState<Set<string>>(new Set());
-  // Only meaningful in 'on-demand' mode: the reader has asked for the panorama,
-  // so it may now cost a Google call.
-  const [streetViewAsked, setStreetViewAsked] = useState(false);
+  // Only meaningful in 'auto' mode: how the failsafe panorama went. 'trying'
+  // keeps the cover on screen with the panel loading invisibly behind it;
+  // 'shown' crossfades the panorama in; 'failed' abandons it for good and lets
+  // the cover stand.
+  const [streetViewPhase, setStreetViewPhase] = useState<'trying' | 'shown' | 'failed'>('trying');
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const inView = useInView(containerRef);
 
   const photos = useMemo(
     () => (images ?? []).filter((image) => image.url && !failed.has(image.url)),
     [images, failed],
   );
-  const hasStreetView = Boolean(point) && (streetViewMode === 'slide' || streetViewAsked);
+  const hasStreetView = Boolean(point) && streetViewMode === 'slide';
   const slideCount = photos.length + (hasStreetView ? 1 : 0);
 
   // A listing change hands us a different set under the same component. Without
@@ -110,8 +110,13 @@ export function ListingHero({
   const signature = photos.map((p) => p.url).join('|');
   useEffect(() => setIndex(0), [signature]);
   // A recycled card showing a different property must not inherit the previous
-  // reader's request and silently spend a call on the new one.
-  useEffect(() => setStreetViewAsked(false), [listing?.address, listing?.suburb]);
+  // listing's verdict — its panorama, or its abandonment.
+  useEffect(() => setStreetViewPhase('trying'), [listing?.address, listing?.suburb]);
+
+  const onStreetViewStatus = useCallback((status: StreetViewStatus) => {
+    if (status === 'available') setStreetViewPhase('shown');
+    else if (status !== 'loading') setStreetViewPhase('failed');
+  }, []);
 
   const go = useCallback(
     (delta: number) => {
@@ -141,26 +146,13 @@ export function ListingHero({
   );
 
   if (slideCount === 0) {
-    if (isFindingPhotos) {
-      return (
-        <div
-          className={cn(frame, 'flex items-center justify-center border border-border/60 bg-muted/60')}
-          aria-busy="true"
-        >
-          <span className="flex flex-col items-center gap-1.5">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground motion-reduce:animate-none" aria-hidden="true" />
-            <span className="text-[11px] font-medium text-muted-foreground">Looking for photos…</span>
-          </span>
-        </div>
-      );
-    }
     // Only a blank skeleton when there is genuinely nothing to draw. The first
     // version blanked the frame for the whole resolution pass — and a pass over
     // a thousand listings runs for minutes, so entire screenfuls of cards sat
     // as white rectangles while their covers waited behind a spinner nobody
     // could see. If the record can describe itself, draw the cover immediately
     // and let a photograph replace it whenever one arrives.
-    if (isResolving && !listing) {
+    if ((isResolving || isFindingPhotos) && !listing) {
       return (
         <div
           className={cn(frame, 'animate-pulse border border-border/60 bg-muted/60 motion-reduce:animate-none')}
@@ -170,15 +162,36 @@ export function ListingHero({
         </div>
       );
     }
+
+    // The failsafe stage of the cascade: the record has no photographs, no
+    // search is in flight, so show the street frontage — automatically, once
+    // the frame is actually on screen. There is no button; the reader is
+    // browsing properties, not operating an imagery pipeline. The cover stays
+    // underneath until the panorama has genuinely rendered, and stays for good
+    // if it never does.
+    const streetViewAuto =
+      streetViewMode === 'auto' &&
+      Boolean(point) &&
+      !isResolving &&
+      !isFindingPhotos &&
+      inView &&
+      streetViewPhase !== 'failed';
+    const streetViewShown = streetViewAuto && streetViewPhase === 'shown';
+
+    // What the caption bar can truthfully say, in order of what is happening.
+    const caption = isResolving
+      ? ('checking' as const)
+      : isFindingPhotos
+        ? ('searching' as const)
+        : streetViewAuto && !streetViewShown
+          ? ('street-loading' as const)
+          : ('none' as const);
+
     // A drawn cover rather than a grey rectangle. At four cards across, a page
     // of blank tiles reads as a broken product; a page of covers reads as a
     // catalogue whose photography has not landed yet — which is the truth.
-    //
-    // The caption still says so plainly, and where the caller can do something
-    // about it the caption carries the remedy: the sweep works worst-first
-    // through 1,441 records, so this listing may be hours from its turn.
     return (
-      <div className={cn(frame, 'border border-border/60')}>
+      <div ref={containerRef} className={cn(frame, 'border border-border/60')}>
         {listing ? (
           <ListingCover listing={listing} />
         ) : (
@@ -187,48 +200,54 @@ export function ListingHero({
           </div>
         )}
 
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-background/85 to-transparent px-2.5 pb-2 pt-6">
-          {isResolving ? (
-            // The pass has not reached this listing yet, so "no photo on
-            // record" would be a claim we cannot make. Say what is true.
-            <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground" aria-busy="true">
-              <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-              Checking for photos…
-            </span>
-          ) : (
-          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
-            <ImageOff className="h-3 w-3" aria-hidden="true" />
-            No photo on record
-          </span>
-          )}
-          {!isResolving && (
-          <span className="flex shrink-0 items-center gap-1.5">
-            {/*
-              Geocoded but unphotographed is the largest group on this page —
-              811 of 1,441. There is a real picture of the street frontage one
-              click away, and this is that click. It is a button rather than an
-              automatic slide because loading it costs a metered Google call;
-              see `streetViewMode`.
-            */}
-            {point && streetViewMode === 'on-demand' && (
-              <button
-                type="button"
-                onClick={() => setStreetViewAsked(true)}
-                className={PILL}
-              >
+        {streetViewAuto && (
+          <div
+            className={cn(
+              'absolute inset-0 transition-opacity duration-500',
+              streetViewShown ? 'opacity-100' : 'pointer-events-none opacity-0',
+            )}
+          >
+            <StreetViewPanel
+              lat={point!.lat}
+              lng={point!.lng}
+              label={label}
+              variant="inline"
+              frameClassName="h-full w-full rounded-none border-0"
+              onStatus={onStreetViewStatus}
+              showBadge
+            />
+          </div>
+        )}
+
+        {!streetViewShown && (
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-background/85 to-transparent px-2.5 pb-2 pt-6">
+            {caption === 'checking' ? (
+              // The pass has not reached this listing yet, so "no photo on
+              // record" would be a claim we cannot make. Say what is true.
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground" aria-busy="true">
+                <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                Checking for photos…
+              </span>
+            ) : caption === 'searching' ? (
+              // The cascade is reading the listing's own source page. Named so
+              // photographs appearing seconds later have an explanation.
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground" aria-busy="true">
+                <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                Searching the source listing…
+              </span>
+            ) : caption === 'street-loading' ? (
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground" aria-busy="true">
                 <MapPin className="h-3 w-3" aria-hidden="true" />
-                Street View
-              </button>
+                Loading street imagery…
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+                <ImageOff className="h-3 w-3" aria-hidden="true" />
+                No photo on record
+              </span>
             )}
-            {onFindPhotos && (
-              <button type="button" onClick={onFindPhotos} className={PILL}>
-                <Search className="h-3 w-3" aria-hidden="true" />
-                Find photos
-              </button>
-            )}
-          </span>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     );
   }

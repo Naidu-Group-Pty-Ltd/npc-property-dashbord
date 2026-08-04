@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listingContact } from '@/lib/listingContact';
 import { EmailAgentDialog } from '@/components/listings/EmailAgentDialog';
-import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash, Loader2, Maximize2, Search, Send } from 'lucide-react';
+import { ExternalLink, Copy, Bed, Bath, Car, Calendar, MapPin, Building, User, Eye, TrendingUp, Phone, Mail, Ruler, Tag, FileText, Sparkles, Hash, Loader2, Maximize2, Send } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -16,7 +16,7 @@ import { buildFullAddress } from '@/lib/addressUtils';
 import { PropertyListing } from '@/lib/airtable';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
-import { useEnrichListing } from '@/hooks/useEnrichListing';
+import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 
 interface ListingDetailsModalProps {
   listing: PropertyListing | null;
@@ -42,7 +42,11 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
   const galleryInput = useMemo(() => (listing ? [listing] : []), [listing]);
   const { images: galleryByListing, isResolving: galleryResolving, refresh: refreshGallery } =
     useListingImages(galleryInput);
-  const { enrich: findPhotos, isEnriching } = useEnrichListing(refreshGallery);
+  // Unprompted, like everywhere else imagery appears: if the record has no
+  // stored photographs and carries a source link, the page is read and the
+  // grid below fills in — no button, no toast.
+  const { searchingId } = useAutoFindPhotos(galleryInput, galleryByListing, galleryResolving, refreshGallery);
+  const isSearching = listing !== null && searchingId === listing.id;
 
   if (!listing) return null;
 
@@ -370,34 +374,24 @@ export function ListingDetailsModal({ listing, isOpen, onClose }: ListingDetails
                   </p>
                 )}
               </div>
-              {listing.url && galleryImages.length === 0 && !galleryResolving && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 rounded-full text-xs"
-                  onClick={() => findPhotos(listing.id)}
-                  disabled={isEnriching}
-                >
-                  {isEnriching ? (
-                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin motion-reduce:hidden" aria-hidden="true" />
-                  ) : (
-                    <Search className="mr-1.5 h-3 w-3" aria-hidden="true" />
-                  )}
-                  {isEnriching ? 'Looking…' : 'Find photos'}
-                </Button>
+              {isSearching && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" aria-busy="true">
+                  <Loader2 className="h-3 w-3 animate-spin motion-reduce:hidden" aria-hidden="true" />
+                  Searching the source listing…
+                </span>
               )}
             </div>
-            {galleryImages.length === 0 && !galleryResolving && !isEnriching ? (
+            {galleryImages.length === 0 && !galleryResolving && !isSearching ? (
               <p className="rounded-lg border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
                 No photographs stored for this listing yet.
                 {listing.url
-                  ? ' They are fetched from the source page — use Find photos to do it now.'
+                  ? ' Its source page is checked automatically — anything found will appear here.'
                   : ' This record carries no source link to fetch them from.'}
               </p>
             ) : (
               <>
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {(galleryResolving || isEnriching) && galleryImages.length === 0
+                  {(galleryResolving || isSearching) && galleryImages.length === 0
                     ? Array.from({ length: 3 }, (_, index) => (
                         <div
                           key={`skeleton-${index}`}

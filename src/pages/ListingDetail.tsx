@@ -13,6 +13,7 @@ import {
 import { useListingImages } from '@/hooks/useListingImages';
 import { useListingRecord } from '@/hooks/useListingRecord';
 import { useEnrichListing } from '@/hooks/useEnrichListing';
+import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 import { useListingCoordinates } from '@/hooks/useListingCoordinates';
 import { propertyDataService } from '@/services/propertyDataService';
 import { displayPrice, formatLocality } from '@/lib/listingDisplay';
@@ -52,17 +53,20 @@ export default function ListingDetail() {
   const forResolution = useMemo(() => (listing ? [listing] : []), [listing]);
   const { images, isResolving, refresh: refreshImages } = useListingImages(forResolution);
 
+  const onEnriched = useCallback(
+    (id: string) => {
+      refreshImages(id);
+      void refetch();
+    },
+    [refreshImages, refetch],
+  );
+
   // On this page the enrichment can fill in more than photographs — price,
   // specs, a contact address — so the record is re-read alongside the imagery.
-  const { enrich: findPhotos, isEnriching } = useEnrichListing(
-    useCallback(
-      (id: string) => {
-        refreshImages(id);
-        void refetch();
-      },
-      [refreshImages, refetch],
-    ),
-  );
+  const { enrich: findPhotos, isEnriching } = useEnrichListing(onEnriched);
+  // And it also runs unprompted: someone deep-linked to an unphotographed
+  // listing should watch the photographs arrive, not hunt for a button.
+  const { searchingId } = useAutoFindPhotos(forResolution, images, isResolving, onEnriched);
   const { points } = useListingCoordinates(forResolution);
   const point = listing ? (points[listing.id] ?? null) : null;
 
@@ -135,8 +139,7 @@ export default function ListingDetail() {
           aspect="aspect-[16/9]"
           showThumbnails
           onExpand={setLightboxAt}
-          onFindPhotos={listing.url ? () => findPhotos(listing.id) : undefined}
-          isFindingPhotos={isEnriching}
+          isFindingPhotos={isEnriching || searchingId === listing.id}
           listing={listing}
         />
 

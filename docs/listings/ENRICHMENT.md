@@ -422,3 +422,56 @@ select count(*) from public.listing_images where status = 'stored';
 Unit tests: `src/lib/listingScrape.test.ts` (extraction, boilerplate rejection),
 `src/lib/listingUrlPolicy.test.ts` (classification, every SSRF range, merge
 rules).
+
+## Deployment (2026-08-04)
+
+The whole listing chain now runs the merged source. It happened in two steps
+the same day:
+
+1. **The shim.** With no deploy credential available, `listing-enrichment` was
+   first deployed as a three-line shim importing the reviewed source from the
+   public repository at a pinned commit — enough to wake the `*/10` sweep cron,
+   which had been firing into a 404 since the migration installed it. Within
+   its first two fires it seeded 400 queue rows, enriched ~30 listings and
+   grew the stored-image count from 876 to 1,000+.
+
+2. **The full deploy.** Once a `SUPABASE_ACCESS_TOKEN` was provided, every
+   function the marketplace touches was deployed from the repository source
+   through the Management API (the same call `supabase functions deploy`
+   makes), replacing both the shim and the pre-#1866 versions that had been
+   serving the old field map:
+
+   | Function | Now | Was |
+   | --- | --- | --- |
+   | `listing-enrichment` | v2 (full source) | v1 shim / **never deployed** |
+   | `listings-cache` | v6 | v5, pre-#1866 |
+   | `listing-images` | v9 | v8, pre-#1866 |
+   | `airtable-proxy` | v16 | v15, pre-#1866 |
+   | `street-view` | v74 | v73 |
+   | `resolve-listing-coordinates` | v62 | v61 |
+   | `scrape-property-listing` | v62 | v61 |
+
+   All verified booting with structured `auth_required` on anonymous calls,
+   `verify_jwt=false` per `config.toml` (each carries its own session auth).
+
+This unlocks the server-side halves the client had been working around:
+`op:'record'` single-row reads for deep links, server-side table-name
+aliasing, the overlay join in `readCache`, the overlay-aware image sweep, and
+the non-destructive dedup.
+
+**Keep it deployed:** add the token as the `SUPABASE_ACCESS_TOKEN` Actions
+secret (Settings → Secrets and variables → Actions) so
+`.github/workflows/deploy-supabase-functions.yml` ships every future merge
+automatically. Until that secret exists, deploys remain a manual step.
+
+## The client-side cascade (same date)
+
+The browser now runs the acquisition chain automatically wherever a listing
+renders with no photographs: stored images first (`useListingImages`), then a
+silent `op:'enrich'` against the listing's own source page
+(`useAutoFindPhotos` — one at a time, eight seconds apart, twelve per page
+view, remembered in localStorage for three days so fruitless searches are not
+repeated), then Street View loaded automatically in-viewport
+(`ListingHero` `streetViewMode:'auto'`, session-cached per location including
+negative answers, badged "Street view" on the frame). There are no imagery
+buttons left on the cards; the failsafe order is the interface.

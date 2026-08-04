@@ -82,7 +82,7 @@ import { listingContact } from '@/lib/listingContact';
 import { ListingHero } from './ListingHero';
 import { useToast } from '@/hooks/use-toast';
 import { useListingImages } from '@/hooks/useListingImages';
-import { useEnrichListing } from '@/hooks/useEnrichListing';
+import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 
 /**
  * Leaflet copies unknown constructor options straight onto `marker.options`, and
@@ -906,9 +906,10 @@ function ListingPopupCard({
   const forImages = useMemo(() => [listing], [listing]);
   const { images, isResolving: imagesResolving, refresh: refreshImages } = useListingImages(forImages);
   // The popup is where someone lands after zooming into a suburb, so it is a
-  // likely place to notice a listing has no photographs — and therefore a place
-  // worth being able to fetch them from.
-  const { enrich: findPhotos, isEnriching } = useEnrichListing(refreshImages);
+  // likely place to open a listing that has no photographs — and the cascade
+  // treats it like every other surface: the source page is searched without
+  // being asked, and anything found appears in the carousel.
+  const { searchingId } = useAutoFindPhotos(forImages, images, imagesResolving, refreshImages);
 
   /**
    * Keep clicks inside the card away from the map.
@@ -987,8 +988,7 @@ function ListingPopupCard({
         point={point}
         aspect="aspect-[16/10]"
         onExpand={onOpenDetails}
-        onFindPhotos={listing.url ? () => findPhotos(listing.id) : undefined}
-        isFindingPhotos={isEnriching}
+        isFindingPhotos={searchingId === listing.id}
         listing={listing}
       />
 
