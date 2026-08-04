@@ -363,6 +363,10 @@ function ConsentStep({ caseId, onDone }: { caseId: string; onDone: () => void | 
       // document, not a single blanket "consented" flag.
       for (const d of docs) {
         if (d.accepted_at) continue;
+        // Optional documents (e.g. compliance_sharing) are recorded ONLY if
+        // the client actually ticked them. Recording an unticked consent
+        // would fabricate an authorisation the client never gave.
+        if (!checked[d.code]) continue;
         await amlPortalApi.recordConsent(caseId, d.code, version ?? undefined, {
           acknowledged: true,
           presented_version: version,
