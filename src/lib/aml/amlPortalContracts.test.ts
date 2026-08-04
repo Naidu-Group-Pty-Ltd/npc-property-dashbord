@@ -1178,3 +1178,108 @@ describe("self-hosted verification stack", () => {
     expect(vcMigration2).toContain("trigger-based, never from upload");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Compliance passport — Pt 2 Div 7 reliance                           */
+/* ------------------------------------------------------------------ */
+
+describe("compliance passport (AML/CTF Act Pt 2 Div 7)", () => {
+  const reliance = readFileSync(
+    join(repo, "supabase/functions/aml-reliance/index.ts"), "utf8");
+  const relianceMigration = readFileSync(
+    join(repo, "supabase/migrations/20260729090000_aml_reliance_passport.sql"), "utf8");
+
+  it("makes the written agreement a statutory precondition, not a field", () => {
+    // No written CDD arrangement, no s 37A reliance.
+    expect(relianceMigration).toContain("agreement_reference text NOT NULL");
+    expect(relianceMigration).toContain("next_review_due date NOT NULL");
+    expect(reliance).toContain("reliance without a written CDD arrangement is not available");
+  });
+
+  it("suspends new grants when the arrangement's review is overdue", () => {
+    const branch = reliance.slice(reliance.indexOf('case "grant_access"'));
+    expect(branch).toContain("review_overdue");
+    expect(branch).toMatch(/next_review_due[\s\S]{0,120}< Date\.now\(\)/);
+  });
+
+  it("cannot grant without the client's sharing consent, traceably", () => {
+    const branch = reliance.slice(reliance.indexOf('case "grant_access"'));
+    expect(branch).toContain("sharing_consent_missing");
+    expect(branch).toContain("consent_id: consent.id");
+    expect(relianceMigration).toContain("consent_id uuid NOT NULL REFERENCES aml.consents(id)");
+  });
+
+  it("attestation states procedures performed, never our conclusions", () => {
+    const builder = reliance.slice(
+      reliance.indexOf("async function buildAttestationPayload"),
+      reliance.indexOf("async function resolveGrant"));
+    const codeOnly = builder.split("\n")
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join("\n");
+    // The exclusion list IS the outward contract.
+    expect(codeOnly).not.toMatch(/risk_rating|risk_score|reviewer_notes|mlro_commentary/);
+    // Screening: performed + freshness only; match content never selected.
+    expect(codeOnly).not.toContain("screening_matches");
+    expect(builder).toContain("list_freshness");
+    // Readiness derives from the explicit gate, same as the finance contract.
+    expect(builder).toContain('["approved", "approved_with_controls"]');
+    // Honesty travels with the passport.
+    expect(builder).toContain("documents_not_verified_against_issuing_authority");
+  });
+
+  it("refuses to attest to a process that has not happened", () => {
+    expect(reliance).toContain("nothing_to_attest");
+  });
+
+  it("issuing, granting and revoking are MLRO-only outward acts", () => {
+    for (const op of ['case "create_agreement"', 'case "issue_attestation"', 'case "grant_access"', 'case "revoke_grant"']) {
+      const idx = reliance.indexOf(op);
+      expect(idx).toBeGreaterThan(-1);
+      expect(reliance.slice(idx, idx + 400)).toContain("isMlro");
+    }
+  });
+
+  it("stores the partner token only as a hash, shown raw exactly once", () => {
+    expect(relianceMigration).toContain("access_token_hash text NOT NULL UNIQUE");
+    expect(reliance).toContain("access_token_hash: await sha256Hex(rawToken)");
+    expect(reliance).toContain("This token is shown once");
+    // list_grants must never return the hash to staff either.
+    const listBranch = reliance.slice(
+      reliance.indexOf('case "list_grants"'), reliance.indexOf('case "list_assessments"'));
+    expect(listBranch).not.toContain("access_token_hash");
+  });
+
+  it("logs every partner access and pins assessments to the content hash", () => {
+    expect(reliance).toContain("reliance_access_log");
+    expect(reliance).toContain("based_on_attestation_sha256: attestation.payload_sha256");
+  });
+
+  it("a partner's independent assessment never moves our case", () => {
+    const branch = reliance.slice(reliance.indexOf("record_independent_assessment —"));
+    expect(branch).toContain("Does not alter this case's status or service gate");
+    // No writes to aml.cases anywhere in the partner path.
+    const partnerPath = reliance.slice(
+      reliance.indexOf('if (op === "redeem_attestation"'),
+      reliance.indexOf("/* ── staff ops"));
+    expect(partnerPath).not.toMatch(/from\("cases"\)[\s\S]{0,80}\.update/);
+  });
+
+  it("publishes the sharing consent as optional, into the current version", () => {
+    // required=false: declining costs the client nothing with us, and no
+    // catalogue re-ask is triggered for every existing client.
+    expect(relianceMigration).toMatch(/'compliance_sharing', '2026\.2', 'consent'/);
+    expect(relianceMigration).toMatch(/false, 60\s*\)/);
+    expect(relianceMigration).toContain("Part 2 Division 7 (ss 37A");
+    expect(relianceMigration).toContain("This consent is optional");
+  });
+});
+
+describe("optional consents are never recorded unticked", () => {
+  const portalAml = readFileSync(join(repo, "src/pages/portal/PortalAml.tsx"), "utf8");
+  it("the consent submit loop skips documents the client did not tick", () => {
+    // With compliance_sharing published as optional, recording an unticked
+    // document would fabricate an authorisation the client never gave.
+    const idx = portalAml.indexOf("if (d.accepted_at) continue;");
+    expect(idx).toBeGreaterThan(-1);
+    expect(portalAml.slice(idx, idx + 400)).toContain("if (!checked[d.code]) continue;");
+  });
+});
