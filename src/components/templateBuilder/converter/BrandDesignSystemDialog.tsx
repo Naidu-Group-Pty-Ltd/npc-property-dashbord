@@ -239,6 +239,9 @@ export function BrandDesignSystemDialog({ open, onOpenChange, onSaved, companyNa
         brandHex: result.system.brandHex,
         isActive: true,
         updatedAt: new Date().toISOString(),
+        neutrals: result.system.neutrals,
+        sourceNamespace: result.system.sourceNamespace,
+        options: result.system.options,
       });
       onOpenChange(false);
     } catch (e) {
