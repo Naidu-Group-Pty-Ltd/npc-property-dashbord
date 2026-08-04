@@ -536,12 +536,21 @@ function coverRules(
     color: ${palette.accentOnField};
     margin-bottom: 14mm;
   }
-  /* Cinzel — the brand's cover face, and the only place it appears. It ships
-     Bold alone and sets lowercase as small capitals, which is why it is
-     confined to the two places set large and short. */
+  /* Cinzel — the brand's cover face, and one of only two places it appears. It
+     sets lowercase as small capitals, which is why it is confined to the two
+     places set large and short.
+
+     Regular, not Bold. Cinzel is an inscriptional roman cut after Trajan-column
+     capitals, and those are light: at 34pt the Bold reads as blunt rather than
+     grand, and it blooms on the obsidian field a cover is set on, because
+     light-on-dark type optically gains weight. The face was only being set Bold
+     because Bold was the only weight in the image — a typographic decision made
+     by an omission in a Dockerfile. Regular and SemiBold were sitting unused in
+     public/fonts/Cinzel_Playfair_Display.zip, the same archive the Bold came
+     from, the whole time. */
   .report-cover h1.cover-title {
     font-family: ${PRINT_STACK.cover};
-    font-weight: 700;
+    font-weight: 400;
     font-size: ${pt(type.coverTitle)};
     line-height: 1.02;
     letter-spacing: ${PRINT_TRACKING.snug};
@@ -1002,10 +1011,14 @@ ${(Object.entries(GRID_SPANS) as Array<[string, number]>)
   }
   .company-page .company-name {
     font-family: ${PRINT_STACK.cover};
-    /* Cinzel ships Bold alone. Stating 700 is not decoration: an unstated
-       weight is a 400 request, and a request the image cannot answer exactly is
-       how a face gets synthesised. */
-    font-weight: 700;
+    /* SemiBold, and stating it is not decoration: an unstated weight is a 400
+       request, and a request the image cannot answer exactly is how a face gets
+       synthesised.
+
+       A weight above the cover title's Regular, deliberately. This is a
+       wordmark set smaller than the title and it has to hold the page on its
+       own, where the title has a whole sheet of furniture around it. */
+    font-weight: 600;
     font-size: ${pt(type.h1 - 4)};
     line-height: 1.05;
     color: ${palette.accentOnField};

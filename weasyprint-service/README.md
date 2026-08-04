@@ -54,14 +54,29 @@ Two routes in:
 - **Debian packages** — Inter, IBM Plex, Roboto, Lato and the
   DejaVu/Liberation/Noto fallbacks. Every one is verified present in bookworm
   and trixie.
-- **`fonts/*.ttf`, COPY-ed and `fc-cache`-d** — Cinzel and Playfair Display
-  (upright and italic), the two brand faces. No distribution packages them.
-  They live in this directory rather than `public/fonts/` because Docker cannot
+- **`fonts/*.ttf`, COPY-ed and `fc-cache`-d** — Cinzel, Playfair Display
+  (upright and italic) and IBM Plex Mono. No distribution packages them. They
+  live in this directory rather than `public/fonts/` because Docker cannot
   `COPY` from outside its build context. SIL OFL 1.1; the licence files ship
   beside them, which redistribution inside an image requires.
 
 The `RUN fc-cache` layer asserts each brand family resolves and fails the build
-if one does not — a missing face must break the build, not the document.
+if one does not — a missing face must break the build, not the document. Then
+`selfcheck.py` runs as the last layer and proves the harder half: that every
+shipped file is *reachable*, at the weight it claims, by the CSS request that
+names it. A weight fontconfig cannot answer exactly is answered by its
+neighbour, silently.
+
+`fonts/PROVENANCE.md` records a SHA-256 per file, and
+`reportTypography.spec.ts` checks them. A binary in a repository is not
+reviewable in a diff, and these get copied into the image that renders every
+client's document.
+
+> Cinzel shipped **Bold alone** until recently, so the cover title was set Bold —
+> which the type module had written up as a design rule. It was not: Cinzel is an
+> inscriptional roman after Trajan capitals, those are light, and Regular and
+> SemiBold were sitting in the same committed archive the Bold came from. The
+> cover is now Regular, the closing wordmark SemiBold, and Bold is gone.
 
 > This previously installed `fonts-playfair-display`,
 > `fonts-cormorant-garamond` and `fonts-fraunces`. **None of the three exists in

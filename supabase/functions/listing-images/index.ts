@@ -6,6 +6,7 @@ import {
   createCorsHeaders,
 } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { verifyInternal } from '../_shared/auth_v2.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import {
   enforceActorQuota,
@@ -560,7 +561,12 @@ Deno.serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
     );
 
-    const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    // Read the body once as text. The internal HMAC signature binds a hash of
+    // the exact bytes, so `verifyInternal` needs them — a re-serialised object
+    // is a different string and would never verify.
+    const rawBody = await req.text().catch(() => '');
+    let body: Record<string, unknown> = {};
+    try { body = rawBody ? JSON.parse(rawBody) as Record<string, unknown> : {}; } catch { body = {}; }
     const op = typeof body.op === 'string' ? body.op : 'resolve';
 
     if (killSwitchActive('LISTING_IMAGES_KILL_SWITCH')) {
@@ -569,12 +575,37 @@ Deno.serve(async (req) => {
 
     /* -- Cron / service-role operations ---------------------------------- */
     if (op === 'refresh' || op === 'sync' || op === 'harvest') {
-      // These carry no user; they are only reachable with the service-role key,
-      // which cron holds and a browser never does.
-      const authHeader = req.headers.get('authorization') || '';
-      const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
-      if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
-        return createUnauthorizedResponse('Service role required', corsHeaders);
+      if (op === 'harvest') {
+        /*
+         * `harvest` has exactly one caller — the enrichment sweep — and it used
+         * to authenticate by presenting the service-role key as a Bearer token.
+         * That spreads the crown jewels across an inter-function hop: anything
+         * that captured the request held full database access, not permission
+         * to file photographs. `scan-auth-patterns.mjs` R6 exists to forbid it
+         * and the allowlist for it is empty.
+         *
+         * Now an HMAC-signed envelope (method, path, timestamp, nonce, caller,
+         * body hash) with a receiver-side allowlist of one. Nothing reusable
+         * crosses the wire, and a captured request is useless against any other
+         * endpoint.
+         */
+        const gate = await verifyInternal(supabase, req, rawBody, {
+          allowedCallers: ['listing-enrichment'],
+        });
+        if (!gate.ok) {
+          console.warn('[listing-images] internal harvest denied', { errorCode: gate.errorCode });
+          return createUnauthorizedResponse('Internal caller required', corsHeaders);
+        }
+      } else {
+        // `refresh` and `sync` are cron-driven and still arrive with the
+        // service-role key the scheduler holds. Untouched deliberately: this
+        // change is about the inter-function hop, and moving cron's own
+        // credential is a separate decision with its own blast radius.
+        const authHeader = req.headers.get('authorization') || '';
+        const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+        if (!serviceKey || authHeader !== `Bearer ${serviceKey}`) {
+          return createUnauthorizedResponse('Service role required', corsHeaders);
+        }
       }
 
       /**

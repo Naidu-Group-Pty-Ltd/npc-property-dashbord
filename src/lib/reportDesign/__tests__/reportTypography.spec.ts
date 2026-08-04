@@ -16,6 +16,7 @@
  * PDF renders, the tests pass, and the defect is only visible to whoever opens
  * the document — which is the client.
  */
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -120,6 +121,38 @@ describe('the font files themselves', () => {
     expect([...head]).toSatisfy((bytes: number[]) =>
       (bytes[0] === 0 && bytes[1] === 1 && bytes[2] === 0 && bytes[3] === 0)
       || String.fromCharCode(...bytes) === 'true');
+  });
+
+  /**
+   * The provenance table is a record of which bytes these are.
+   *
+   * A font is a binary in a repository: nothing about it is reviewable in a
+   * diff, and it is copied into an image that renders every client's document.
+   * `PROVENANCE.md` names a SHA-256 for each file, and until now that was a
+   * claim nobody checked. This makes it a fact — a swapped or truncated face
+   * fails here, and adding a weight without recording where it came from fails
+   * here too.
+   */
+  describe('every shipped font is the one PROVENANCE.md records', () => {
+    const table = readFileSync(resolve(FONT_DIR, 'PROVENANCE.md'), 'utf8');
+    const recorded = new Map<string, string>();
+    for (const row of table.matchAll(/^\|\s*`([^`]+\.ttf)`\s*\|[^|]*\|[^|]*\|\s*`([0-9a-f]{64})`\s*\|/gm)) {
+      recorded.set(row[1], row[2]);
+    }
+    const onDisk = readdirSync(FONT_DIR).filter((f) => f.endsWith('.ttf')).sort();
+
+    it('records every file, and no file it does not ship', () => {
+      expect([...recorded.keys()].sort()).toEqual(onDisk);
+    });
+
+    it.each(onDisk)('%s matches its recorded hash', (file) => {
+      const actual = createHash('sha256').update(readFileSync(resolve(FONT_DIR, file))).digest('hex');
+      expect(
+        actual,
+        `${file} is not the file PROVENANCE.md records. If the change is `
+          + 'deliberate, update the row and say where the new bytes came from.',
+      ).toBe(recorded.get(file));
+    });
   });
 
   it('ships a licence beside every redistributed family', () => {

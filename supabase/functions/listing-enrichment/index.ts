@@ -6,6 +6,7 @@ import {
   createCorsHeaders,
 } from '../_shared/auth.ts';
 import { requireModulePermission } from '../_shared/authz.ts';
+import { callInternalFunction } from '../_shared/internalCall.ts';
 import { enforceCsrf, csrfDenied } from '../_shared/csrfGuard.ts';
 import {
   enforceActorQuota,
@@ -498,55 +499,41 @@ async function harvestImages(
   listedAt: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
   if (urls.length === 0) return { ok: true };
-  const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-  const baseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-  if (!serviceKey || !baseUrl) return { ok: false, error: 'not_configured' };
 
-  const post = (body: unknown) =>
-    fetchWithTimeout(
-      `${baseUrl}/functions/v1/listing-images`,
-      {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      },
-      60_000,
-    );
-
+  /*
+   * Signed, not service-role.
+   *
+   * This used to present `SUPABASE_SERVICE_ROLE_KEY` as a Bearer token on the
+   * hop to `listing-images`. That hands the crown jewels to an inter-function
+   * request: anything that captured it held full database access, where the
+   * call only ever needed permission to file photographs.
+   * `scan-auth-patterns.mjs` R6 forbids it and its allowlist is empty.
+   *
+   * `callInternalFunction` HMAC-signs the method, path, timestamp, nonce,
+   * caller and a hash of the body. Nothing reusable crosses the wire, and
+   * `listing-images` allowlists this caller by name for the `harvest` op.
+   *
+   * The `resolve` fallback is gone with it. It existed for a deploy-ordering
+   * race — a `listing-images` predating `op:'harvest'` — which is long past,
+   * and it cannot survive this change on its own terms: `resolve` is the
+   * user-facing op, gated on a human plus the `listings` module permission,
+   * and an unattended sweep has neither. Retrying into it was only ever
+   * possible *because* the service-role key was being presented.
+   */
   try {
-    const response = await post({
-      op: 'harvest',
-      listingId,
-      listedAt,
-      candidates: urls.map((url) => ({ url, origin: 'scraped' })),
-    });
-    if (response.ok) return { ok: true };
-
-    /*
-     * Fall back to `resolve` when `harvest` is not there.
-     *
-     * `op:'harvest'` shipped in the same change as this service, and edge
-     * functions deploy individually — so this one can be live against a
-     * `listing-images` that predates it, which answers `unknown_op` and drops
-     * every photograph on the floor. That is not hypothetical: it is the state
-     * production was in, and it is invisible because the sweep still reports
-     * success.
-     *
-     * `resolve` has existed the whole time and harvests exactly the same way;
-     * it just takes its candidates as a listings array and accepts plain URL
-     * strings. Trying it second costs one request in the failure case and makes
-     * the service correct against either version of its neighbour.
-     */
-    if (response.status === 400 || response.status === 404) {
-      const legacy = await post({
-        op: 'resolve',
-        listings: [{ id: listingId, images: urls, listedAt }],
-      });
-      if (legacy.ok) return { ok: true };
-      return { ok: false, error: `harvest_${response.status}_resolve_${legacy.status}` };
-    }
-
-    return { ok: false, error: `harvest_${response.status}` };
+    const result = await callInternalFunction(
+      'listing-images',
+      {
+        op: 'harvest',
+        listingId,
+        listedAt,
+        candidates: urls.map((url) => ({ url, origin: 'scraped' })),
+      },
+      'listing-enrichment',
+      { timeoutMs: 60_000 },
+    );
+    if (result.ok) return { ok: true };
+    return { ok: false, error: `harvest_${result.status}` };
   } catch (error) {
     return { ok: false, error: redactError(error) };
   }

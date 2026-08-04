@@ -79,6 +79,26 @@ export const OPERATIONS_NODES: CatalogNode[] = [
   ]),
 
   // ── Identity and compliance ──────────────────────────────────────────────
+  ...provider({ integrationId: 'npc_aml_verification', category: 'compliance', docs: 'https://github.com/lavan96/npc-property-dashbord/blob/main/services/aml-verification-service/README.md' }, [
+    {
+      op: 'verify',
+      name: 'Verify an identity document',
+      summary: 'Reads the document’s MRZ, matches the selfie against the photo, and returns a decision.',
+      fields: [
+        f.expr('caseId', 'Case', { required: true }),
+        f.expr('subjectLabel', 'Subject', { required: true }),
+        f.expr('documentImage', 'Document image', { required: true, help: 'Base64. The MRZ is read from this.' }),
+        f.expr('selfieImage', 'Selfie image', { help: 'Base64. Required for anything but a document-only check.' }),
+        f.select('method', 'Check', [
+          opt('document_and_liveness', 'Document, face match and liveness'),
+          opt('document_only', 'Document only'),
+        ], { defaultValue: 'document_and_liveness' }),
+      ],
+      outputs: SCREENING_OUTPUTS,
+      keywords: ['kyc', 'idv', 'identity', 'liveness', 'face match', 'mrz', 'self-hosted'],
+    },
+  ]),
+
   ...provider({ integrationId: 'frankieone', category: 'compliance', docs: 'https://apidocs.frankiefinancial.com' }, [
     { op: 'kyc_check', name: 'Verify a person', summary: 'Runs a KYC check and returns a pass, fail or refer decision.', fields: PERSON_FIELDS, outputs: SCREENING_OUTPUTS, keywords: ['kyc', 'identity', 'onboarding', 'aml'] },
   ]),

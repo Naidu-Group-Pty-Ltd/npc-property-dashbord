@@ -90,8 +90,21 @@ export interface ContainerFontFile {
  * (family, weight) pair this table cannot answer exactly.
  */
 export const CONTAINER_FONT_FILES: Record<string, ContainerFontFile> = {
-  // Cover titles and the closing lockup only, and only ever bold.
-  'Cinzel-Bold.ttf': { family: 'Cinzel', weight: 700 },
+  // Cover titles and the closing lockup, and nowhere else.
+  //
+  // Regular and SemiBold, where this was Bold alone. Cinzel is an inscriptional
+  // roman cut after Trajan-column capitals, and those are light: the cover title
+  // is set Regular and the closing wordmark SemiBold, which is what the face was
+  // drawn for. It had been Bold in both places because Bold was the only weight
+  // in the image — a typographic decision made by an omission in a Dockerfile.
+  //
+  // Bold is gone rather than kept "in case": the rule below is that a file
+  // nothing requests does not ship, and inventing a use for 77KB to keep it
+  // would be the same mistake in the other direction. Both new files came out
+  // of public/fonts/Cinzel_Playfair_Display.zip, the archive the Bold came from,
+  // where they had been sitting unused all along.
+  'Cinzel-Regular.ttf': { family: 'Cinzel', weight: 400 },
+  'Cinzel-SemiBold.ttf': { family: 'Cinzel', weight: 600 },
 
   // Display and accent. The italic is a separate file and a separate decision:
   // without a real italic the engine synthesises a slant from the upright.
