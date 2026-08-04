@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2, ShieldAlert, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 
 import { ActivateClientDialog } from "@/components/aml/ActivateClientDialog";
-import { CaseWorkspaceTabs } from "@/components/aml/CaseWorkspaceTabs";
+import { AmlCaseWorkspaceDialog } from "@/components/aml/AmlCaseWorkspaceDialog";
 import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { useAmlV3Flags } from "@/lib/aml/useAmlV3Flags";
 import {
-  amlCasesApi, AmlCase, AmlCaseEvent, AmlCaseStatus, AmlRiskRating,
+  amlCasesApi, AmlCase, AmlCaseStatus, AmlRiskRating,
 } from "@/lib/aml/amlCasesApi";
 import {
-  CASE_STAGE_LABELS, caseStage, serviceGateStatus,
+  CASE_STAGE_LABELS, CASE_STATUS_LABELS, RISK_BADGE_CLASSES,
+  caseStage, serviceGateStatus,
 } from "@/lib/aml/caseDimensions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,50 +24,15 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Sheet, SheetContent, SheetHeader, SheetTitle,
-} from "@/components/ui/sheet";
-import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "@/hooks/use-toast";
 
-const STATUS_LABELS: Record<AmlCaseStatus, string> = {
-  draft: "Draft", kyc_in_progress: "Onboarding in progress", kyc_complete: "Submission received",
-  edd_required: "Additional information required", under_review: "Under review",
-  escalated_mlro: "Awaiting decision", cleared: "Cleared", blocked: "Blocked", closed: "Closed",
-};
-
 const SUBJECT_TYPE_LABELS: Record<string, string> = {
   individual: "Individual", entity: "Entity / company", trust: "Trust",
-};
-
-/**
- * Risk rating escalates through tone *and* weight rather than four unrelated
- * hues: the two "bad" ratings share the destructive token and are separated by
- * fill strength, so `prohibited` is unmistakably the loudest pill in the table.
- * All four consume semantic tokens, so they hold up in both themes.
- */
-const RISK_STYLES: Record<AmlRiskRating, string> = {
-  low: "bg-success/20 text-success border-success/40",
-  medium: "bg-warning/20 text-warning border-warning/40",
-  high: "bg-destructive/15 text-destructive border-destructive/40",
-  prohibited: "border-destructive bg-destructive text-destructive-foreground",
-};
-
-const NEXT_STATUSES: Record<AmlCaseStatus, AmlCaseStatus[]> = {
-  draft: ["kyc_in_progress", "closed"],
-  kyc_in_progress: ["kyc_complete", "edd_required", "blocked", "closed"],
-  kyc_complete: ["under_review", "edd_required", "cleared", "closed"],
-  edd_required: ["under_review", "escalated_mlro", "blocked", "closed"],
-  under_review: ["cleared", "escalated_mlro", "edd_required", "blocked", "closed"],
-  escalated_mlro: ["cleared", "blocked", "closed"],
-  cleared: ["under_review", "closed"],
-  blocked: ["under_review", "closed"],
-  closed: [],
 };
 
 /**
@@ -262,7 +228,7 @@ export default function AmlCasesPage() {
           <SelectTrigger className="w-48"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All statuses</SelectItem>
-            {Object.entries(STATUS_LABELS).map(([k, v]) => (
+            {Object.entries(CASE_STATUS_LABELS).map(([k, v]) => (
               <SelectItem key={k} value={k}>{v}</SelectItem>
             ))}
           </SelectContent>
@@ -331,7 +297,7 @@ export default function AmlCasesPage() {
                           </TableCell>
                           <TableCell>
                             {c.risk_rating ? (
-                              <Badge variant="outline" className={RISK_STYLES[c.risk_rating]}>
+                              <Badge variant="outline" className={RISK_BADGE_CLASSES[c.risk_rating]}>
                                 {c.risk_rating.toUpperCase()}
                               </Badge>
                             ) : (
@@ -367,7 +333,7 @@ export default function AmlCasesPage() {
                     </div>
                     <Badge variant="outline">{CASE_STAGE_LABELS[caseStage(c)]}</Badge>
                     {c.risk_rating && (
-                      <Badge variant="outline" className={RISK_STYLES[c.risk_rating]}>
+                      <Badge variant="outline" className={RISK_BADGE_CLASSES[c.risk_rating]}>
                         {c.risk_rating.toUpperCase()}
                       </Badge>
                     )}
@@ -403,7 +369,9 @@ export default function AmlCasesPage() {
         }}
       />
 
-      <CaseDetailSheet
+      {/* Centred case workspace (replaces the legacy right-side Sheet).
+          Radix restores focus to the case row that opened it on close. */}
+      <AmlCaseWorkspaceDialog
         caseId={activeId}
         initialTab={initialTab}
         onClose={() => { setActiveId(null); setInitialTab(undefined); }}
@@ -552,101 +520,5 @@ function CreateCaseDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-function CaseDetailSheet({
-  caseId, onClose, onChanged, canWrite, canInvestigate, initialTab,
-}: { caseId: string | null; onClose: () => void; onChanged: () => void; canWrite: boolean; canInvestigate: boolean; initialTab?: string }) {
-
-  const [caseRow, setCaseRow] = useState<AmlCase | null>(null);
-  const [events, setEvents] = useState<AmlCaseEvent[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [transitioning, setTransitioning] = useState(false);
-  const [reason, setReason] = useState("");
-
-  const load = async (id: string) => {
-    setLoading(true);
-    try {
-      const res = await amlCasesApi.get(id);
-      setCaseRow(res.case); setEvents(res.events);
-    } catch (e: any) {
-      toast({ title: "Failed to load case", description: e.message, variant: "destructive" });
-    } finally { setLoading(false); }
-  };
-
-  useEffect(() => {
-    if (caseId) load(caseId); else { setCaseRow(null); setEvents([]); setReason(""); }
-  }, [caseId]);
-
-  const nextOptions = useMemo(
-    () => (caseRow ? NEXT_STATUSES[caseRow.status] : []),
-    [caseRow],
-  );
-
-  const transition = async (to: AmlCaseStatus) => {
-    if (!caseRow) return;
-    setTransitioning(true);
-    try {
-      await amlCasesApi.transition(caseRow.id, to, reason || undefined);
-      toast({
-        title: "Status updated",
-        description: `${STATUS_LABELS[caseRow.status]} → ${STATUS_LABELS[to]}`,
-      });
-      setReason(""); await load(caseRow.id); onChanged();
-    } catch (e: any) {
-      toast({ title: "Transition failed", description: e.message, variant: "destructive" });
-    } finally { setTransitioning(false); }
-  };
-
-  return (
-    <Sheet open={!!caseId} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-full sm:max-w-2xl overflow-hidden flex flex-col">
-        <SheetHeader>
-          <SheetTitle>{caseRow?.subject_display_name ?? "Case"}</SheetTitle>
-          {caseRow && (
-            <p className="text-xs text-muted-foreground">
-              {caseRow.case_reference} · {STATUS_LABELS[caseRow.status]}
-              {caseRow.risk_rating ? ` · risk ${caseRow.risk_rating.toUpperCase()}` : ""}
-            </p>
-          )}
-        </SheetHeader>
-
-        <ScrollArea className="flex-1 mt-4 pr-4">
-          {loading || !caseRow ? (
-            <div className="py-10 flex justify-center"><Loader2 className="h-5 w-5 animate-spin" /></div>
-          ) : (
-            <div className="space-y-4">
-              {canWrite && nextOptions.length > 0 && (
-                <Card>
-                  <CardHeader><CardTitle className="text-sm">Advance status</CardTitle></CardHeader>
-                  <CardContent className="space-y-3">
-                    <Input placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
-                    <div className="flex flex-wrap gap-2">
-                      {nextOptions.map((s) => (
-                        <Button key={s} size="sm" variant="outline"
-                          disabled={transitioning} onClick={() => transition(s)}>
-                          → {STATUS_LABELS[s]}
-                        </Button>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              <CaseWorkspaceTabs
-                caseRow={caseRow}
-                events={events}
-                canWrite={canWrite}
-                canInvestigate={canInvestigate}
-                initialTab={initialTab}
-                onChanged={() => { void load(caseRow.id); onChanged(); }}
-              />
-
-            </div>
-          )}
-        </ScrollArea>
-      </SheetContent>
-    </Sheet>
   );
 }
