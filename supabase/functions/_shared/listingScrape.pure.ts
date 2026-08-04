@@ -21,6 +21,8 @@
  * Pure: no Deno, Supabase, network, DOM or clock.
  */
 
+import { orderImagesPhotosFirst } from './listingImageOrder.pure.ts';
+
 export interface ScrapedListing {
   imageUrls: string[];
   beds?: number;
@@ -190,7 +192,10 @@ export function extractPageImages(html: string, baseUrl: string, limit = 24): st
     if (found.length >= limit) break;
   }
 
-  return found;
+  // Agency galleries frequently lead with the floor plan — the first asset the
+  // agent uploaded. Stored order becomes display order downstream, so demote
+  // plans here at the source: the hero slot belongs to a photograph.
+  return orderImagesPhotosFirst(found, (url) => url);
 }
 
 /* -------------------------------------------------------------------------- */

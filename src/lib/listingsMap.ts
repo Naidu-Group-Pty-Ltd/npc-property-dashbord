@@ -503,9 +503,18 @@ export function heatGeometryForZoom(
   focus: HeatFocus,
 ): { radius: number; blur: number } {
   const safeZoom = Number.isFinite(zoom) ? zoom : 5;
-  const base = 13 + Math.max(0, safeZoom - 4) * 2.6;
-  const radius = Math.min(Math.max(base * FOCUS_RADIUS_SCALE[focus], 10), 62);
-  return { radius: Math.round(radius), blur: Math.round(radius * 0.72) };
+  // Country-to-state zooms get a deliberately tight, sharp core. At zoom 4 a
+  // capital city's entire stock projects into a couple of pixels, and the old
+  // radius smeared that mass across the coastline into open water — Melbourne
+  // read as a blob in Bass Strait. Nobody is judging density gradients at
+  // national scale; they are locating hotspots, and a hotspot should sit on
+  // the city that produced it.
+  const lowZoom = safeZoom <= 5;
+  const base = lowZoom
+    ? 10.4 - (5 - Math.max(safeZoom, 3)) * 2.2
+    : 13 + (safeZoom - 4) * 2.6;
+  const radius = Math.min(Math.max(base * FOCUS_RADIUS_SCALE[focus], lowZoom ? 5 : 10), 62);
+  return { radius: Math.round(radius), blur: Math.round(radius * (lowZoom ? 0.55 : 0.72)) };
 }
 
 export interface ProjectedWeight {

@@ -27,6 +27,13 @@ vi.mock('@/components/listings/StreetViewPanel', async () => {
   };
 });
 
+// The visual half of floor-plan detection needs a canvas; the hero's part is
+// only the ordering and the label, so it is answered from a stub.
+vi.mock('@/lib/imageKind', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/imageKind')>('@/lib/imageKind');
+  return { ...actual, classifyImageUrl: () => Promise.resolve('unknown') };
+});
+
 afterEach(() => {
   cleanup();
   mockPanelStatus = 'available';
@@ -150,6 +157,27 @@ describe('ListingHero', () => {
       />,
     );
     expect(screen.getByTestId('street-view')).toBeTruthy();
+  });
+
+  it('opens on a photograph and pushes the floor plan to the back, labelled', async () => {
+    // Agencies upload the plan first, so harvested order led with it — a hero
+    // slot opening on a line drawing. The photograph must lead; the plan is
+    // reference material at the end of the carousel, named for what it is.
+    const plan = {
+      url: 'https://cdn.example.com/floorplan-main.jpg',
+      position: 0,
+      origin: 'scraped',
+    } as StoredListingImage;
+    render(<ListingHero images={[plan, photo(1), photo(2)]} label="12 Example St" />);
+
+    // Slide 1 is a photograph, not the plan.
+    expect(screen.getByText('1/3')).toBeTruthy();
+    const first = screen.getByAltText('12 Example St — photo 1') as HTMLImageElement;
+    expect(first.src).toContain('p1.jpg');
+
+    // The plan sits last, and the counter names it.
+    fireEvent.click(screen.getByRole('button', { name: 'Previous photo' }));
+    expect(screen.getByText('3/3 · Floor plan')).toBeTruthy();
   });
 
   it('draws a cover instead of a blank frame when the record can describe itself', () => {

@@ -475,3 +475,24 @@ repeated), then Street View loaded automatically in-viewport
 (`ListingHero` `streetViewMode:'auto'`, session-cached per location including
 negative answers, badged "Street view" on the frame). There are no imagery
 buttons left on the cards; the failsafe order is the interface.
+
+## Photographs before floor plans (2026-08-04, second round)
+
+Agency galleries usually lead with the floor plan — the first asset the agent
+uploads — and harvested order became display order, so hero slots opened on
+line drawings. Two classifiers now put photographs first everywhere:
+
+- **URL tokens** (`_shared/listingImageOrder.pure.ts`, shared Deno/browser):
+  floorplan/siteplan/titleplan/lotplan naming, `/plans?/` segments, agentbox
+  `fp<digits>` assets. Applied at the source in `extractPageImages` (deployed
+  in `listing-enrichment` v4) and instantly in the browser.
+- **Pixels** (`src/lib/imageKind.ts`, browser only): hashed CDN paths say
+  nothing, so the browser draws each image 48×48 and measures near-white
+  ground vs real chroma. Thresholds are deliberately biased — misreading a
+  plan as a photo restores yesterday's behaviour, misreading a photo as a
+  plan buries the best asset, so the rule demands strong evidence. Verdicts
+  are session-cached by URL-without-query.
+
+Ordering is stable within each group (no shuffling under the reader's thumb),
+plan slides are labelled "Floor plan" in the counter, and the detail page
+orders once for both hero and lightbox so the expanded slide matches.
