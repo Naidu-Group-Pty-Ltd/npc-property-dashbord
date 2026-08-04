@@ -231,6 +231,25 @@ sentinels, 889 records, no attachments), and `standardizeListing` flattened
 attachment objects to bare URLs, discarding the stable id that stops the
 two-hourly Airtable URL rotation from re-harvesting bytes already stored.
 
+**Round two (same day):** the seeder ran over the remaining 976 linked records —
+609 pages reachable, **65 further records seeded** after filtering. Rejected this
+round, all found by inspecting the actual yield: WordPress homepage furniture
+(slider/title/testimonial backgrounds), agency logos, an agent headshot,
+business-sale collateral, and one agency's "recent listings" carousel that put
+photographs of four *different* addresses on four records — wrong-property
+imagery is worse than none, so all four were dropped.
+
+**External portals, probed and blocked.** realestate.com.au answers 429 to
+direct fetches, 403 via the `r.jina.ai` reader (WAF), and its open suggest API
+returns addresses but no imagery; domain.com.au answers 403. The sanctioned
+route to portal data is the already-deployed `scrape-property-listing` job
+service (Firecrawl with AU geolocation, allowlisting both portals) — it extracts
+listing *data*, not photographs, and each job spends paid quota. Portal
+photography needs either a Firecrawl key with image capture or a licensed feed;
+both are business decisions, not code. Note portals' terms restrict re-use of
+listing imagery — the agency's own site, which this pipeline prefers, is also
+the cleaner source legally.
+
 The seeder stays useful until the sweep deploys — and afterwards as a bulk
 backfill tool. The remaining ~970 linked records are one `worklist.json` away.
 

@@ -29,7 +29,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'seed-images-'));
@@ -39,7 +39,10 @@ fs.writeFileSync(entry, [
   `export { isBlockedHost } from '${repo}/supabase/functions/_shared/listingUrlPolicy.pure.ts';`,
 ].join('\n'));
 execSync(`npx esbuild ${entry} --bundle --format=cjs --platform=node --outfile=${tmp}/lib.cjs`, { stdio: 'inherit' });
-const { scrapeListingPage, isBlockedHost } = await import(pathToFileURL(path.join(tmp, 'lib.cjs')).href).then(m => m.default ?? m);
+// CJS bundle + ESM import interop is unreliable for named exports; require()
+// sees the exports object directly and always works.
+import { createRequire } from 'node:module';
+const { scrapeListingPage, isBlockedHost } = createRequire(import.meta.url)(path.join(tmp, 'lib.cjs'));
 
 const [, , worklistPath, outPath] = process.argv;
 const work = JSON.parse(fs.readFileSync(worklistPath, 'utf8'));
