@@ -87,6 +87,7 @@ import { useAutoFindPhotos } from '@/hooks/useAutoFindPhotos';
 import { assessAuPoint } from '../../../supabase/functions/_shared/auGeoSanity.pure';
 import { assessAuPostcodePoint } from '../../../supabase/functions/_shared/auPostcodeGeo.pure';
 import { installClusterAnchorPatch } from '@/lib/leafletClusterAnchor';
+import { BUILD_ID } from '@/lib/buildVersion';
 import type { StoredListingImage } from '@/lib/listingImages';
 
 /**
@@ -1888,7 +1889,14 @@ export function ListingsMapView({ listings, onSelectListing, onEmailAgent, image
             aria-live="polite"
           >
             <MapPin className="h-3.5 w-3.5 text-primary" />
-            <span className="tabular-nums">{plottedSummary}</span>
+            {/*
+              The chip's tooltip carries the running build id. Three rounds of
+              map debugging were spent against screenshots of a build that
+              predated every fix — undetectably, because nothing on screen said
+              which build produced it. Now any screenshot of this map
+              self-identifies: hover the chip, read the build.
+            */}
+            <span className="tabular-nums" title={`Build ${BUILD_ID}`}>{plottedSummary}</span>
             {isResolving && (
               <Loader2
                 className="h-3 w-3 animate-spin text-muted-foreground motion-reduce:animate-none"
