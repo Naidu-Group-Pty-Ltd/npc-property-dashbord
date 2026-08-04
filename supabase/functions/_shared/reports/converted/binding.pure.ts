@@ -39,25 +39,51 @@ import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
  * come from the payload. A converter has no payload yet, so the format's
  * expected sections have to be written down somewhere, and this is that place.
  *
- * Taken from each format's shipped document rather than invented: these are the
- * chapter titles the migrated renderers actually emit, which is what makes a
- * binding meaningful — bind to "Serviceability" here and the Borrowing Capacity
- * renderer's serviceability chapter is what receives it.
+ * ## These are the renderer's own titles, and a spec proves it
+ *
+ * Every string below appears verbatim in
+ * `_shared/reports/borrowingCapacity/sections.pure.ts › snapshotSections`, and
+ * `converterChapters.spec.ts` imports that function and asserts the two agree.
+ *
+ * The first version of this list did not. It said `Position Summary`, `Income`,
+ * `Commitments`, `Serviceability`, `Capacity & Scenarios`, `Assumptions`,
+ * `Next Steps` — seven noun phrases taken from the archetype's *description*,
+ * not one of which the renderer prints. A comment right here claimed they were
+ * "taken from each format's shipped document rather than invented"; they were
+ * invented, and the cost was measurable: converting a real Borrowing Capacity
+ * Snapshot bound 3 of 7 chapters and sent 3 sections to the appendix, because
+ * the document's actual chapters are editorial sentences and the list was
+ * functional labels. A binding list that does not match the renderer is worse
+ * than no list, because it fails while looking like it works.
+ *
+ * The last three are conditional in the real document — the renderer emits them
+ * only when the payload carries an explanation, an audit or scenarios. They are
+ * offered here regardless and simply go unfilled, which is the state the
+ * document already handles.
  */
 export const FORMAT_CHAPTERS: Partial<Record<ReportArchetypeId, readonly string[]>> = {
   'borrowing-capacity': [
-    'Position Summary',
-    'Income',
-    'Commitments',
-    'Serviceability',
-    'Capacity & Scenarios',
-    'Assumptions',
-    'Next Steps',
+    'Capacity at a glance',
+    'Income and commitments',
+    'How the capacity is built',
+    'How this was calculated',
+    'Audit trail',
+    'Scenario comparison',
   ],
 };
 
-/** Chapters whose content is characteristically a table rather than prose. */
-const TABULAR_CHAPTERS = new Set(['Income', 'Commitments', 'Capacity & Scenarios', 'Assumptions']);
+/**
+ * Chapters whose content is characteristically a table rather than prose.
+ *
+ * Keyed off the real titles. The previous version keyed off the invented ones,
+ * so it matched nothing and the shape signal in `scoreMatch` was dead weight.
+ */
+const TABULAR_CHAPTERS = new Set([
+  'Income and commitments',
+  'How the capacity is built',
+  'Audit trail',
+  'Scenario comparison',
+]);
 
 /** One archetype chapter and whatever the template offered for it. */
 export interface ChapterBinding {
@@ -213,9 +239,28 @@ export function bindableFormats(): ReportArchetypeId[] {
     .filter((id) => (FORMAT_CHAPTERS[id] ?? []).length > 0);
 }
 
+/**
+ * Formats whose renderer prints a different name from the archetype's.
+ *
+ * The archetype's `documentName` is metadata — it names the *kind* of report for
+ * the catalogue. The renderer's `DOCUMENT_NAME` is the string that appears on
+ * the cover. For Borrowing Capacity the two disagree: the archetype says
+ * "Borrowing Capacity Assessment", `borrowingCapacity/render.pure.ts:67` prints
+ * "Borrowing Capacity Snapshot".
+ *
+ * The review screen is telling a person what their converted document will be
+ * called, so it has to say what will be printed. Kept as an override rather than
+ * imported from the renderer because that module pulls the whole Borrowing
+ * Capacity render path into a browser bundle for one string;
+ * `converterChapters.spec.ts` imports it instead and asserts the two agree.
+ */
+const FORMAT_DOCUMENT_NAMES: Partial<Record<ReportArchetypeId, string>> = {
+  'borrowing-capacity': 'Borrowing Capacity Snapshot',
+};
+
 /** The document name a bound format prints, for the review screen. */
 export function formatName(format: ReportArchetypeId): string {
-  return REPORT_ARCHETYPES[format]?.documentName ?? format;
+  return FORMAT_DOCUMENT_NAMES[format] ?? REPORT_ARCHETYPES[format]?.documentName ?? format;
 }
 
 /**

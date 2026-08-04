@@ -52,6 +52,33 @@ const UPLOAD = [
   `## Fee Schedule\n\n${prose()}`,
 ].join('\n\n');
 
+/**
+ * One of *our* reports, as a transcription actually brings it back.
+ *
+ * Taken from the shape of a real failing conversion. Two things about it are
+ * hostile and both are the design system's own doing:
+ *
+ * 1. Our chapters print a small `SECTION 01` eyebrow above a large title. A
+ *    model reading the page maps visual size to heading level, so the eyebrow
+ *    returns as `##` and the title it labels as `#`. The hierarchy is inverted.
+ * 2. The masthead and the client name are large type on the cover, so they come
+ *    back as `#` headings that own nothing.
+ *
+ * A converter that cannot read its own house format back is not going to manage
+ * a stranger's, so this fixture is the one that matters most.
+ */
+const SNAPSHOT = [
+  '# Naidu Property Consulting Services',
+  '## Borrowing Capacity Snapshot',
+  '# Masline Nyawo',
+  '## Section 01',
+  `# Capacity at a glance\n\n${prose()}`,
+  '## Section 02',
+  `# Income and commitments\n\n${table}`,
+  '## Section 03',
+  `# How the capacity is built\n\n${table}`,
+].join('\n\n');
+
 describe('extracting structure', () => {
   it('treats a lone top-level heading as the title, not a section', () => {
     // One `#` over a run of `##` is the overwhelmingly common shape. Without
@@ -107,6 +134,38 @@ describe('extracting structure', () => {
       expect(() => extractStructure(bad as never)).not.toThrow();
     }
   });
+
+  it('folds an eyebrow label into the title it labels', () => {
+    // `## Section 01` over `# Capacity at a glance` is one chapter, not two, and
+    // the eyebrow is the one that is not it. Before this, every `## Section NN`
+    // became an empty stub that was dropped as too short — which was survivable
+    // — and the levelling that followed put sibling chapters at different
+    // depths, which was not.
+    const s = extractStructure(SNAPSHOT, 'BC Snapshot');
+    expect(s.notices.labelsFolded).toBe(3);
+    expect(s.sections.map((x) => x.title)).toEqual([
+      'Capacity at a glance', 'Income and commitments', 'How the capacity is built',
+    ]);
+    expect(s.sections.every((x) => x.depth === 1)).toBe(true);
+  });
+
+  it('does not fold a heading that owns a body, however label-shaped', () => {
+    // "Section 8" is a real chapter here — a clause of an act, with content. The
+    // fold applies only to headings that own nothing, because that is the tell
+    // that the title beneath them is the section.
+    const s = extractStructure(`# T\n\n## Section 8\n\n${prose()}\n\n## Notes\n\n${prose()}`);
+    expect(s.notices.labelsFolded).toBe(0);
+    expect(s.sections.map((x) => x.title)).toEqual(['Section 8', 'Notes']);
+  });
+
+  it('does not fold a real heading that merely happens to be empty', () => {
+    // A chapter with no body under it is still a chapter if it does not read
+    // like a label. It is dropped as too short, which is the old behaviour, not
+    // silently merged into its neighbour.
+    const s = extractStructure(`# T\n\n## Fee Schedule\n\n## Notes\n\n${prose()}`);
+    expect(s.notices.labelsFolded).toBe(0);
+    expect(s.sections.map((x) => x.title)).toEqual(['Notes']);
+  });
 });
 
 describe('binding to a report format', () => {
@@ -118,13 +177,35 @@ describe('binding to a report format', () => {
       .toEqual([...(FORMAT_CHAPTERS['borrowing-capacity'] ?? [])]);
   });
 
-  it('matches the obvious sections with high confidence', () => {
-    const byChapter = new Map(plan.bindings.map((b) => [b.chapter, b]));
-    for (const chapter of ['Position Summary', 'Income', 'Commitments', 'Capacity & Scenarios']) {
+  it('binds our own report to every chapter it has, and to nothing else', () => {
+    // The acceptance case. A Borrowing Capacity Snapshot put back through the
+    // converter must land on the three chapters the renderer always prints,
+    // leave the three conditional ones unfilled, and send nothing to an
+    // appendix. The run that prompted this work managed 3 bound, 4 unfilled and
+    // 3 in the appendix — against a chapter list that was invented.
+    const s = extractStructure(SNAPSHOT, 'BC Snapshot');
+    const p = proposeBinding('borrowing-capacity', s);
+    const byChapter = new Map(p.bindings.map((b) => [b.chapter, b]));
+
+    for (const chapter of ['Capacity at a glance', 'Income and commitments', 'How the capacity is built']) {
       const b = byChapter.get(chapter)!;
       expect(b.sectionIndex, chapter).not.toBeNull();
+      expect(s.sections[b.sectionIndex!].title, chapter).toBe(chapter);
       expect(b.confidence, chapter).toBeGreaterThanOrEqual(WEAK_MATCH);
     }
+    expect(p.unbound).toEqual([]);
+    expect(p.unfilled).toEqual(['How this was calculated', 'Audit trail', 'Scenario comparison']);
+  });
+
+  it('matches a foreign template where the wording genuinely overlaps', () => {
+    // `UPLOAD` is somebody else's document, and it binds partially — which is
+    // the honest outcome for a scorer that only knows about shared words. What
+    // it must not do is bind a chapter to a section with nothing in common.
+    const byChapter = new Map(plan.bindings.map((b) => [b.chapter, b]));
+    const income = byChapter.get('Income and commitments')!;
+    expect(income.sectionIndex).not.toBeNull();
+    expect(structure.sections[income.sectionIndex!].title).toBe('Household Income');
+    expect(income.confidence).toBeGreaterThanOrEqual(WEAK_MATCH);
   });
 
   it('never binds one section to two chapters', () => {
@@ -137,19 +218,20 @@ describe('binding to a report format', () => {
   it('refuses the second chapter when one section is the best match for two', () => {
     // The assertion above passed on a fixture where no section was ever the top
     // candidate twice, so removing the one-to-one check changed nothing. This
-    // is the shape that actually exercises it: "Income and Commitments" scores
-    // highest for the Income chapter *and* for the Commitments chapter.
+    // is the shape that actually exercises it: a section called "Capacity at a
+    // glance" is the best remaining match for the chapter of that name *and*
+    // for "How the capacity is built", which shares a word with it.
     const merged = extractStructure(
-      `# T\n\n## Income and Commitments\n\n${table}\n\n## Something Else Entirely\n\n${prose()}`,
+      `# T\n\n## Capacity at a glance\n\n${table}\n\n## Something Else Entirely\n\n${prose()}`,
     );
     const p = proposeBinding('borrowing-capacity', merged);
     const byChapter = new Map(p.bindings.map((b) => [b.chapter, b]));
-    const income = byChapter.get('Income')!.sectionIndex;
-    const commitments = byChapter.get('Commitments')!.sectionIndex;
+    const glance = byChapter.get('Capacity at a glance')!.sectionIndex;
+    const built = byChapter.get('How the capacity is built')!.sectionIndex;
 
     // Exactly one of them gets it; the other is left unfilled rather than
     // printing the same table under two headings.
-    expect([income, commitments].filter((i) => i !== null).length).toBe(1);
+    expect([glance, built].filter((i) => i !== null).length).toBe(1);
     const used = p.bindings.map((b) => b.sectionIndex).filter((i): i is number => i !== null);
     expect(new Set(used).size).toBe(used.length);
   });
@@ -173,30 +255,33 @@ describe('binding to a report format', () => {
   });
 
   it('scores an exact title match above an unrelated one', () => {
+    const chapter = 'Income and commitments';
     const a = structure.sections.find((s) => s.title === 'Household Income')!;
     const b = structure.sections.find((s) => s.title === 'Fee Schedule')!;
-    expect(scoreMatch('Income', 1, 7, a, 7)).toBeGreaterThan(scoreMatch('Income', 1, 7, b, 7));
+    expect(scoreMatch(chapter, 1, 6, a, 7)).toBeGreaterThan(scoreMatch(chapter, 1, 6, b, 7));
   });
 
   it('re-reads a plan from the client without trusting its indices', () => {
     const tampered = {
       bindings: [
-        { chapter: 'Income', sectionIndex: 999, confirmed: true },
-        { chapter: 'Commitments', sectionIndex: 1, confirmed: true },
+        { chapter: 'Income and commitments', sectionIndex: 999, confirmed: true },
+        { chapter: 'How the capacity is built', sectionIndex: 1, confirmed: true },
         // The same section again — the second must be refused.
-        { chapter: 'Serviceability', sectionIndex: 1, confirmed: true },
+        { chapter: 'Audit trail', sectionIndex: 1, confirmed: true },
       ],
     };
     const read = readBindingPlan(tampered, 'borrowing-capacity', structure);
     const byChapter = new Map(read.bindings.map((b) => [b.chapter, b]));
-    expect(byChapter.get('Income')!.sectionIndex).toBeNull();
-    expect(byChapter.get('Commitments')!.sectionIndex).toBe(1);
-    expect(byChapter.get('Serviceability')!.sectionIndex).toBeNull();
+    expect(byChapter.get('Income and commitments')!.sectionIndex).toBeNull();
+    expect(byChapter.get('How the capacity is built')!.sectionIndex).toBe(1);
+    expect(byChapter.get('Audit trail')!.sectionIndex).toBeNull();
   });
 
   it('names the formats it can bind to, and what they are called', () => {
     expect(bindableFormats()).toContain('borrowing-capacity');
-    expect(formatName('borrowing-capacity')).toBe('Borrowing Capacity Assessment');
+    // The cover prints "Snapshot"; the archetype's metadata says "Assessment".
+    // `converterChapters.spec.ts` holds this against the renderer's own const.
+    expect(formatName('borrowing-capacity')).toBe('Borrowing Capacity Snapshot');
   });
 });
 

@@ -267,6 +267,23 @@ describe('the PDF extraction prompt', () => {
   it('names the file, so a model has the document title if the page does not', () => {
     expect(prompt).toContain('Borrowing Power.pdf');
   });
+
+  it('tells the model an eyebrow label is not a heading', () => {
+    // The failure this rule exists for: reading a page, a model maps type size
+    // to heading level, so `SECTION 01` set small above a large chapter title
+    // comes back as that title's *parent*. Every chapter of a real Snapshot
+    // arrived inverted this way. `extractStructure` folds them anyway, but the
+    // repair should not be the only thing standing between us and it.
+    expect(prompt).toContain('SECTION 01');
+    expect(prompt).toContain('not by type size');
+    expect(prompt.toLowerCase()).toContain('siblings');
+  });
+
+  it('tells the model the cover is front matter, not sections', () => {
+    // A masthead and a client name set large on page one came back as two `#`
+    // headings owning nothing, which then defined the shallowest level.
+    expect(prompt.toLowerCase()).toContain('front matter');
+  });
 });
 
 describe('parseBrandRequest', () => {

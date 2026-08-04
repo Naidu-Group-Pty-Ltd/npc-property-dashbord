@@ -283,6 +283,18 @@ export const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7;
  * not ask for. It asks for no interpretation, and that is deliberate: the words
  * in the output should be the words in the upload, because a converter that
  * quietly rewrites somebody's template is not a converter.
+ *
+ * ## The eyebrow rule earns its length
+ *
+ * Reading a page, a model maps *visual size* to heading level, which is right
+ * almost everywhere and exactly wrong for the shape a well-designed report uses
+ * most: a small `SECTION 01` label above a large chapter title. Size says the
+ * label is the parent. It is not — it is furniture belonging to the title under
+ * it. Converting one of our own Borrowing Capacity Snapshots produced
+ * `## Section 01` over `# Capacity at a glance` for every chapter, which
+ * inverted the whole hierarchy. `extractStructure` now folds those labels
+ * defensively, but a prompt that stops them arriving is worth more than a repair
+ * that has to recognise them.
  */
 export function pdfExtractionPrompt(fileName: string): string {
   return `Transcribe this document to Markdown.
@@ -296,10 +308,20 @@ Rules:
   A line that is visually a heading in the original — larger, bolder, numbered,
   on its own — is a heading here. This is the single most important thing in the
   output; a transcription with no headings is useless.
+- **Nest by meaning, not by type size.** A small label sitting above a larger
+  title — \`SECTION 01\`, \`PART TWO\`, \`Chapter 3\`, a bare number — is not a
+  heading and is not the parent of anything. The title beneath it is the
+  heading; drop the label. Sections that are siblings in the document must come
+  back at the same \`#\` level even when the original set them in different
+  sizes.
+- The cover is not a section. A company name, a document title, a client name or
+  a date set large on the first page is front matter: give the document one
+  \`#\` title and leave the rest out rather than making each line a heading.
 - Transcribe the words as they are. Do not summarise, improve, reorder or
   translate. Do not add a section the document does not have.
 - Tables become GFM pipe tables.
-- Drop page furniture: running heads, page numbers, repeated footers.
+- Drop page furniture: running heads, page numbers, repeated footers, and any
+  line that repeats on every page.
 - Where the original has a placeholder — \`[Client Name]\`, a blank line for a
   figure, a box to fill in — keep it as text. It is part of the template.
 - Return Markdown only. No preamble, no code fence around the whole document.`;
