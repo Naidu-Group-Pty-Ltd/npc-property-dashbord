@@ -100,6 +100,7 @@ import {
   AmlMonitoring, AmlInvestigations, AmlAustracReporting, AmlRecords, AmlGovernance, AmlConfiguration,
 } from "./pages/aml/AmlShellPages";
 const AmlLaunchOps = lazyWithRetry(() => import("./pages/aml/AmlLaunchOps"));
+const AmlPartnerOperations = lazyWithRetry(() => import("./pages/aml/AmlPartnerOperations"));
 import { AmlLayout } from "@/components/aml/AmlLayout";
 import { AmlGuard } from "@/components/aml/AmlGuard";
 const AgentMemoryManager = lazyWithRetry(() => import("./pages/agent/MemoryManager"));
@@ -609,6 +610,7 @@ const App = () => (
                   <Route path="records" element={<AmlGuard capability="aml.view"><AmlRecords /></AmlGuard>} />
                   <Route path="governance" element={<AmlGuard capability="aml.view"><AmlGovernance /></AmlGuard>} />
                   <Route path="launch-ops" element={<AmlGuard capability="aml.view"><AmlLaunchOps /></AmlGuard>} />
+                  <Route path="partner-operations" element={<AmlGuard capability="aml.view"><AmlPartnerOperations /></AmlGuard>} />
                   <Route path="configuration" element={<AmlGuard capability="aml.configure"><AmlConfiguration /></AmlGuard>} />
                 </Route>
                 <Route path="admin/aml-v3-cutover" element={<AmlV3Cutover />} />

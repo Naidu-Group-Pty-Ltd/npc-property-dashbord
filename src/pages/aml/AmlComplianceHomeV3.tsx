@@ -26,6 +26,7 @@ import { useAmlAccess } from "@/hooks/useAmlAccess";
 import { hasAmlCapability, type AmlCapability } from "@/lib/aml/permissions";
 import { suggestAmlLanding } from "@/lib/aml/defaultLanding";
 import { CASE_STAGE_LABELS, caseStage } from "@/lib/aml/caseDimensions";
+import { PartnerOpsQueueStrip } from "@/components/aml/PartnerOpsQueueStrip";
 
 /**
  * AML V3 — Compliance Home (directive §8, completed in tri-portal Phase 2).
@@ -406,6 +407,10 @@ export default function AmlComplianceHomeV3() {
           <AlertDescription>{caseError}</AlertDescription>
         </Alert>
       )}
+
+      {/* Partner-domain queues (Phase 8): renders nothing while
+          aml_partner_operations_reporting is off — the home is unchanged. */}
+      <PartnerOpsQueueStrip />
 
       {/* Priority work queue — what requires attention, with a direct action. */}
       <Card>

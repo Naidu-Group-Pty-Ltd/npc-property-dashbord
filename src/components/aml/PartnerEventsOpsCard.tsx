@@ -67,7 +67,11 @@ export function PartnerEventsOpsCard() {
         <CardDescription>
           Outbox backlog, refresh obligations and arrangement reviews for the
           partner/reliance domain. Flag state is recorded configuration — this
-          card makes no claim about worker deployment or scheduling.
+          card makes no claim about worker deployment or scheduling. Full
+          queues, registers and readiness:{" "}
+          <a href="/admin/aml/partner-operations" className="underline underline-offset-2">
+            Partner Operations
+          </a>.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">

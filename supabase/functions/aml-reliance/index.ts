@@ -59,6 +59,18 @@ import {
   evaluateMaterialChange,
   materialInputsFromV2Payload,
 } from "../_shared/aml/partnerEvents.ts";
+import {
+  DEFAULT_SLA_TARGETS,
+  REGISTER_DEFS,
+  SLA_TARGET_NOTE,
+  buildQueueSummary,
+  normaliseReadinessItem,
+  registerAllowed,
+  type OperationsCapabilities,
+  type QueueCount,
+  type ReadinessItem,
+  type SlaTarget,
+} from "../_shared/aml/partnerOperations.ts";
 import { extractFinanceToken, resolveFinancePartner } from "../_shared/finance-portal-session.ts";
 import { resolveBuilderSession } from "../_shared/builderPortalAuth.ts";
 import { resolveSolicitorSession } from "../_shared/solicitorPortalAuth.ts";
@@ -2045,6 +2057,434 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
             refresh_required_attestations: flaggedAttestations.data ?? [],
             arrangement_reviews_due: agreementsDue.data ?? [],
             generated_at: nowIso,
+          },
+        });
+      }
+
+      /* ── operations, reporting and readiness (Phase 8) ────────────────── */
+
+      case "get_partner_operations_dashboard": {
+        // Compliance queues over the partner domain. Every count carries the
+        // register + filter it deep-links into, so the number always leads
+        // to the records behind it. Restricted queues are OMITTED for
+        // callers without the capability — never zeroed or placeholdered.
+        if (!(await flagEnabled(admin, "aml_partner_operations_reporting"))) {
+          return jr({ error: "Partner operations reporting is not enabled.", code: "operations_disabled" }, 409);
+        }
+        const caps: OperationsCapabilities = {
+          view: true,
+          investigate: isMlro || roles.has("reviewer") || roles.has("analyst"),
+          mlro: isMlro,
+        };
+        const now = new Date();
+        const nowIso = now.toISOString();
+        const soonIso = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+        const todayIso = nowIso.slice(0, 10);
+        const staleIso = new Date(Date.now() - 7 * 864e5).toISOString();
+
+        const oldest = (rows: any[] | null, col: string) =>
+          rows && rows.length > 0 ? rows[0][col] ?? null : null;
+        const q = async (builder: any, col: string): Promise<QueueCount> => {
+          const { data, count } = await builder;
+          return { count: count ?? 0, oldestAt: oldest(data, col) };
+        };
+
+        const [pendingRequests, awaitingDelivery, openObligations, dueArrangements,
+          overdueArrangements, unclassified, awaitingApproval, failedItems,
+          retrying, deadLetters, staleSyncs] = await Promise.all([
+          q(admin.schema("aml").from("partner_records_requests")
+            .select("requested_at", { count: "exact" }).in("status", ["submitted", "under_review"])
+            .order("requested_at", { ascending: true }).limit(1), "requested_at"),
+          q(admin.schema("aml").from("partner_records_requests")
+            .select("reviewed_at", { count: "exact" }).in("status", ["approved", "partly_approved"])
+            .order("reviewed_at", { ascending: true }).limit(1), "reviewed_at"),
+          q(admin.schema("aml").from("partner_refresh_obligations")
+            .select("created_at", { count: "exact" }).eq("status", "open")
+            .order("created_at", { ascending: true }).limit(1), "created_at"),
+          q(admin.schema("aml").from("reliance_agreements")
+            .select("next_review_due", { count: "exact" }).eq("status", "active")
+            .gte("next_review_due", todayIso).lte("next_review_due", soonIso)
+            .order("next_review_due", { ascending: true }).limit(1), "next_review_due"),
+          q(admin.schema("aml").from("reliance_agreements")
+            .select("next_review_due", { count: "exact" }).eq("status", "active")
+            .lt("next_review_due", todayIso)
+            .order("next_review_due", { ascending: true }).limit(1), "next_review_due"),
+          q(admin.schema("aml").from("partner_organisations")
+            .select("created_at", { count: "exact" })
+            .in("classification_status", ["unclassified", "pending_review"]).eq("status", "active")
+            .order("created_at", { ascending: true }).limit(1), "created_at"),
+          q(admin.schema("aml").from("retention_scans")
+            .select("created_at", { count: "exact" }).eq("status", "awaiting_approval")
+            .order("created_at", { ascending: true }).limit(1), "created_at"),
+          q(admin.schema("aml").from("retention_scan_items")
+            .select("processed_at", { count: "exact" }).eq("disposition", "failed")
+            .order("processed_at", { ascending: true }).limit(1), "processed_at"),
+          q(admin.from("integration_outbox")
+            .select("occurred_at", { count: "exact" }).like("event_type", "aml.%")
+            .is("processed_at", null).gt("attempts", 0)
+            .order("occurred_at", { ascending: true }).limit(1), "occurred_at"),
+          q(admin.from("integration_dead_letters")
+            .select("failed_at", { count: "exact" }).like("event_type", "aml.%")
+            .is("replayed_at", null).order("failed_at", { ascending: true }).limit(1), "failed_at"),
+          q(admin.schema("aml").from("sanctions_list_syncs")
+            .select("completed_at", { count: "exact" }).eq("status", "succeeded")
+            .lt("completed_at", staleIso).order("completed_at", { ascending: true }).limit(1), "completed_at"),
+        ]);
+
+        // Determinations outstanding: open obligations requiring
+        // re-determination are the partner-owned follow-up we can count
+        // reliably; the same rows back both partner-owned queues.
+        const counts: Record<string, QueueCount> = {
+          partner_records_requests_pending: pendingRequests,
+          evidence_delivery_approval: awaitingDelivery,
+          partner_determination_pending: openObligations,
+          partner_refresh_required: openObligations,
+          arrangement_assessment_due: dueArrangements,
+          arrangement_assessment_overdue: overdueArrangements,
+          partner_classification_pending: unclassified,
+          retention_approval: awaitingApproval,
+          disposal_failure: failedItems,
+          outbox_retry: retrying,
+          outbox_failed: deadLetters,
+          sanctions_freshness: staleSyncs,
+        };
+
+        const { data: targetRows } = await admin.schema("aml").from("partner_sla_targets")
+          .select("queue_key, warn_hours, escalate_hours").eq("active", true);
+        const targets: Record<string, SlaTarget> = { ...DEFAULT_SLA_TARGETS };
+        for (const t of targetRows ?? []) {
+          targets[t.queue_key] = { warnHours: t.warn_hours, escalateHours: t.escalate_hours };
+        }
+
+        return jr({
+          queues: buildQueueSummary(counts, caps, targets, now),
+          sla_note: SLA_TARGET_NOTE,
+          generated_at: nowIso,
+        });
+      }
+
+      case "list_partner_register": {
+        // Filtered operational registers. Capability boundaries come from
+        // the shared register catalogue; a register the caller may not see
+        // answers 403, and every result set is the same one the queue counts
+        // were computed from (same filters), so deep-links reproduce it.
+        if (!(await flagEnabled(admin, "aml_partner_operations_reporting"))) {
+          return jr({ error: "Partner operations reporting is not enabled.", code: "operations_disabled" }, 409);
+        }
+        const caps: OperationsCapabilities = {
+          view: true,
+          investigate: isMlro || roles.has("reviewer") || roles.has("analyst"),
+          mlro: isMlro,
+        };
+        const register = String(body.register ?? "");
+        if (!REGISTER_DEFS[register]) return jr({ error: "Unknown register" }, 400);
+        if (!registerAllowed(register, caps)) {
+          return jr({ error: "This register requires a capability your role does not hold.", code: "capability_required" }, 403);
+        }
+        const status = String(body.status ?? "");
+        const limit = Math.min(Number(body.limit ?? 100) || 100, 200);
+        const nowIso = new Date().toISOString();
+        const todayIso = nowIso.slice(0, 10);
+        const soonIso = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+        const aml = admin.schema("aml");
+
+        let rows: any[] = [];
+        if (register === "partner_organisations") {
+          let qb = aml.from("partner_organisations")
+            .select("id, legal_name, organisation_type, reporting_entity_classification, classification_status, status, created_at")
+            .order("created_at", { ascending: true }).limit(limit);
+          if (status === "unclassified") qb = qb.in("classification_status", ["unclassified", "pending_review"]).eq("status", "active");
+          rows = (await qb).data ?? [];
+        } else if (register === "partner_case_links") {
+          let qb = aml.from("partner_case_links")
+            .select("id, case_id, partner_org_id, portal_type, relationship_role, legal_route, state, linked_at, ended_at")
+            .order("linked_at", { ascending: false }).limit(limit);
+          if (status) qb = qb.eq("state", status);
+          rows = (await qb).data ?? [];
+        } else if (register === "arrangements") {
+          let qb = aml.from("reliance_agreements")
+            .select("id, partner_org_name, partner_org_type, status, eligibility_classification, next_review_due, last_reviewed_at, current_assessment_id")
+            .order("next_review_due", { ascending: true }).limit(limit);
+          if (status === "review_due") qb = qb.eq("status", "active").gte("next_review_due", todayIso).lte("next_review_due", soonIso);
+          else if (status === "overdue") qb = qb.eq("status", "active").lt("next_review_due", todayIso);
+          else if (status) qb = qb.eq("status", status);
+          rows = (await qb).data ?? [];
+        } else if (register === "attestations") {
+          const qb = aml.from("compliance_attestations")
+            .select("id, case_id, version, schema_version, payload_sha256, issued_at, superseded_at, refresh_required_at")
+            .order("issued_at", { ascending: false }).limit(limit);
+          rows = (await qb).data ?? [];
+        } else if (register === "records_requests") {
+          let qb = aml.from("partner_records_requests")
+            .select("id, case_id, partner_org_id, requested_record_codes, status, requested_at, reviewed_at, due_at, approved_record_codes, denied_record_codes")
+            .order("requested_at", { ascending: true }).limit(limit);
+          if (status === "pending_review") qb = qb.in("status", ["submitted", "under_review"]);
+          else if (status === "awaiting_delivery") qb = qb.in("status", ["approved", "partly_approved"]);
+          else if (status) qb = qb.eq("status", status);
+          rows = (await qb).data ?? [];
+        } else if (register === "evidence_deliveries") {
+          let qb = aml.from("partner_evidence_deliveries")
+            .select("id, case_id, partner_org_id, record_code, safe_label, delivered_at, expires_at, revoked_at")
+            .order("delivered_at", { ascending: false }).limit(limit);
+          if (status === "live") qb = qb.is("revoked_at", null).gt("expires_at", nowIso);
+          rows = (await qb).data ?? [];
+        } else if (register === "determinations") {
+          const qb = aml.from("independent_assessments")
+            .select("id, case_id, partner_org_id, status, decided_at, based_on_attestation_sha256, refresh_required_at, created_at")
+            .order("created_at", { ascending: false }).limit(limit);
+          rows = (await qb).data ?? [];
+        } else if (register === "refresh_obligations") {
+          let qb = aml.from("partner_refresh_obligations")
+            .select("id, case_id, partner_org_id, partner_case_link_id, safe_reason_code, required_action, status, due_at, created_at, completed_at")
+            .order("created_at", { ascending: true }).limit(limit);
+          if (status) qb = qb.eq("status", status);
+          rows = (await qb).data ?? [];
+        } else if (register === "integration_events") {
+          if (status === "dead_letter") {
+            rows = (await admin.from("integration_dead_letters")
+              .select("id, event_type, aggregate_type, attempts, failed_at, replayed_at")
+              .like("event_type", "aml.%").is("replayed_at", null)
+              .order("failed_at", { ascending: true }).limit(limit)).data ?? [];
+          } else {
+            let qb = admin.from("integration_outbox")
+              .select("id, event_type, aggregate_type, occurred_at, processed_at, attempts, last_error")
+              .like("event_type", "aml.%").order("occurred_at", { ascending: true }).limit(limit);
+            if (status === "retrying") qb = qb.is("processed_at", null).gt("attempts", 0);
+            else if (status === "pending") qb = qb.is("processed_at", null);
+            rows = (await qb).data ?? [];
+          }
+        } else if (register === "retention_candidates") {
+          const qb = aml.from("retention_triggers")
+            .select("id, entity_type, entity_id, case_id, record_category, trigger_kind, minimum_retention_date, legal_basis")
+            .is("superseded_at", null).lte("minimum_retention_date", nowIso)
+            .order("minimum_retention_date", { ascending: true }).limit(limit);
+          rows = (await qb).data ?? [];
+        } else if (register === "legal_holds") {
+          // MLRO-only (capability gate above): hold REASONS stay inside the
+          // Command Center; this register never feeds a partner surface.
+          let qb = aml.from("legal_holds")
+            .select("id, entity_type, entity_id, case_id, reason, imposed_at, imposed_by_label, released_at")
+            .order("imposed_at", { ascending: false }).limit(limit);
+          if (status === "active") qb = qb.is("released_at", null);
+          rows = (await qb).data ?? [];
+        } else if (register === "disposal_actions") {
+          let qb = aml.from("retention_scans")
+            .select("id, scope, status, requested_by_label, approved_by_label, approved_at, executed_at, candidates_count, held_count, disposed_count, skipped_count, created_at")
+            .order("created_at", { ascending: false }).limit(limit);
+          if (status === "awaiting_approval") qb = qb.eq("status", "awaiting_approval");
+          else if (status === "failed") qb = qb.eq("status", "failed");
+          rows = (await qb).data ?? [];
+          if (status === "failed") {
+            const { data: failedItems } = await aml.from("retention_scan_items")
+              .select("id, scan_id, entity_type, entity_id, disposition, note, processed_at")
+              .eq("disposition", "failed").order("processed_at", { ascending: true }).limit(limit);
+            rows = [...rows, ...(failedItems ?? [])];
+          }
+        } else if (register === "sanctions_sources") {
+          const qb = aml.from("sanctions_list_syncs")
+            .select("id, list_code, status, completed_at")
+            .order("completed_at", { ascending: false }).limit(limit);
+          rows = (await qb).data ?? [];
+        }
+        return jr({ register, status: status || null, rows, generated_at: nowIso });
+      }
+
+      case "get_partner_management_report": {
+        // Tenant-scoped management measures over the partner domain (§8.4).
+        // This deployment is single-tenant ('default'); every partner-domain
+        // table carries tenant_id for the day that changes.
+        if (!(await flagEnabled(admin, "aml_partner_operations_reporting"))) {
+          return jr({ error: "Partner operations reporting is not enabled.", code: "operations_disabled" }, 409);
+        }
+        const from = /^\d{4}-\d{2}-\d{2}$/.test(String(body.from ?? "")) ? String(body.from) : null;
+        const to = /^\d{4}-\d{2}-\d{2}$/.test(String(body.to ?? "")) ? String(body.to) : null;
+        const aml = admin.schema("aml");
+        const nowIso = new Date().toISOString();
+        const todayIso = nowIso.slice(0, 10);
+        const ranged = (qb: any, col: string) => {
+          if (from) qb = qb.gte(col, from);
+          if (to) qb = qb.lte(col, `${to}T23:59:59Z`);
+          return qb;
+        };
+        const count = async (qb: any) => (await qb).count ?? 0;
+
+        const [linksByRoute, grantsActive, grantsRevoked, grantsExpired, accesses,
+          requestsByStatus, deliveries, determinationsByStatus, refreshRequired,
+          arrangementsOverdue, eligibility, triggers, holdsActive, dueItems,
+          blockedItems, scanApprovals, scanFailures, receipts] = await Promise.all([
+          ranged(aml.from("partner_case_links").select("legal_route", { count: "exact" }), "linked_at"),
+          count(aml.from("reliance_grants").select("id", { count: "exact", head: true })
+            .is("revoked_at", null).gt("expires_at", nowIso)),
+          count(ranged(aml.from("reliance_grants").select("id", { count: "exact", head: true })
+            .not("revoked_at", "is", null), "granted_at")),
+          count(aml.from("reliance_grants").select("id", { count: "exact", head: true })
+            .is("revoked_at", null).lte("expires_at", nowIso)),
+          count(ranged(aml.from("reliance_access_log").select("id", { count: "exact", head: true }), "created_at")),
+          ranged(aml.from("partner_records_requests").select("status", { count: "exact" }), "requested_at"),
+          count(ranged(aml.from("partner_evidence_deliveries").select("id", { count: "exact", head: true }), "delivered_at")),
+          ranged(aml.from("independent_assessments").select("status", { count: "exact" }), "created_at"),
+          count(aml.from("partner_refresh_obligations").select("id", { count: "exact", head: true }).eq("status", "open")),
+          count(aml.from("reliance_agreements").select("id", { count: "exact", head: true })
+            .eq("status", "active").lt("next_review_due", todayIso)),
+          aml.from("reliance_agreements").select("eligibility_classification", { count: "exact" }),
+          count(ranged(aml.from("retention_triggers").select("id", { count: "exact", head: true })
+            .is("superseded_at", null), "created_at")),
+          count(aml.from("legal_holds").select("id", { count: "exact", head: true }).is("released_at", null)),
+          count(aml.from("retention_triggers").select("id", { count: "exact", head: true })
+            .is("superseded_at", null).lte("minimum_retention_date", nowIso)),
+          count(aml.from("retention_scan_items").select("id", { count: "exact", head: true })
+            .eq("disposition", "blocked")),
+          count(ranged(aml.from("retention_scans").select("id", { count: "exact", head: true })
+            .not("approved_at", "is", null), "created_at")),
+          count(aml.from("retention_scan_items").select("id", { count: "exact", head: true })
+            .eq("disposition", "failed")),
+          count(aml.from("retention_scan_items").select("id", { count: "exact", head: true })
+            .eq("disposition", "disposed")),
+        ]);
+        const tally = (rows: any[] | null, col: string) => {
+          const out: Record<string, number> = {};
+          for (const r of rows ?? []) out[r[col]] = (out[r[col]] ?? 0) + 1;
+          return out;
+        };
+        return jr({
+          report: {
+            tenant_id: "default",
+            range: { from, to },
+            partners: {
+              links_by_legal_route: tally(linksByRoute.data, "legal_route"),
+              grants_active: grantsActive,
+              grants_revoked: grantsRevoked,
+              grants_expired: grantsExpired,
+              access_events: accesses,
+              records_requests_by_status: tally(requestsByStatus.data, "status"),
+              evidence_deliveries: deliveries,
+              determinations_by_outcome: tally(determinationsByStatus.data, "status"),
+              refresh_required_open: refreshRequired,
+            },
+            arrangements: {
+              overdue_reviews: arrangementsOverdue,
+              eligibility_states: tally(eligibility.data, "eligibility_classification"),
+            },
+            records: {
+              operative_triggers: triggers,
+              active_legal_holds: holdsActive,
+              retention_due_items: dueItems,
+              blocked_disposals: blockedItems,
+              scan_approvals: scanApprovals,
+              disposal_failures: scanFailures,
+              disposal_evidence_receipts: receipts,
+            },
+            generated_at: nowIso,
+          },
+        });
+      }
+
+      case "get_partner_readiness": {
+        // Readiness + read-only preflight (§8.5, §8.6). Deliberately NOT
+        // gated by the reporting flag: this is the check an operator runs
+        // BEFORE enabling anything. Every item reports only what the
+        // database can evidence — structures present, recorded flag values,
+        // backlog and freshness thresholds — plus this function answering.
+        // Worker scheduling, function deployment and source-side checks
+        // cannot be verified from here and are reported as unknown.
+        // Read-only by construction: nothing below writes.
+        const items: ReadinessItem[] = [];
+        const probe = async (key: string, label: string, table: string, schema = "aml") => {
+          const client = schema === "aml" ? admin.schema("aml") : admin;
+          const { error } = await client.from(table).select("*", { count: "exact", head: true }).limit(0);
+          items.push(normaliseReadinessItem({
+            key, label,
+            state: error ? "missing" : "applied",
+            evidence: error
+              ? `probe of ${schema}.${table} failed: structure absent or not readable`
+              : `${schema}.${table} answered a head-only probe`,
+          }));
+        };
+        await probe("phase1_partner_identity", "Phase 1 — partner identity structures", "partner_organisations");
+        await probe("phase2_arrangements", "Phase 2 — arrangement governance structures", "arrangement_assessments");
+        await probe("phase3_manifests", "Phase 3 — disclosure manifest structures", "disclosure_manifests");
+        await probe("phase4_workspace", "Phase 4 — partner workspace structures", "partner_records_requests");
+        await probe("phase6_events", "Phase 6 — refresh obligation structures", "partner_refresh_obligations");
+        await probe("phase6_outbox_envelope", "Phase 6 — platform outbox", "integration_outbox", "public");
+        await probe("phase7_record_catalogue", "Phase 7 — record class catalogue", "record_class_catalogue");
+        await probe("phase8_sla_targets", "Phase 8 — operational target configuration", "partner_sla_targets");
+
+        const FLAG_KEYS = [
+          "aml_partner_identity", "aml_arrangement_governance", "aml_attestation_v2",
+          "aml_partner_compliance_workspace", "aml_partner_workspace_finance",
+          "aml_partner_workspace_builder", "aml_partner_workspace_developer",
+          "aml_partner_workspace_solicitor", "aml_partner_event_outbox",
+          "aml_partner_records_retention", "aml_partner_operations_reporting",
+        ];
+        for (const key of FLAG_KEYS) {
+          const { data: flagRow } = await admin.from("feature_flags")
+            .select("key").eq("key", key).maybeSingle();
+          const on = flagRow ? await flagEnabled(admin, key) : false;
+          items.push(normaliseReadinessItem({
+            key: `flag_${key}`, label: `Flag ${key}`,
+            state: !flagRow ? "missing" : on ? "enabled" : "disabled",
+            evidence: flagRow
+              ? `recorded value in public.feature_flags — configuration, not deployment state`
+              : "no row in public.feature_flags",
+          }));
+        }
+
+        const { count: backlog, data: oldestPending } = await admin.from("integration_outbox")
+          .select("occurred_at", { count: "exact" }).like("event_type", "aml.%")
+          .is("processed_at", null).order("occurred_at", { ascending: true }).limit(1);
+        const oldestAgeHours = oldestPending?.[0]
+          ? (Date.now() - new Date(oldestPending[0].occurred_at).getTime()) / 3_600_000 : 0;
+        items.push(normaliseReadinessItem({
+          key: "outbox_backlog", label: "Partner event backlog",
+          state: (backlog ?? 0) === 0 ? "healthy" : oldestAgeHours > 12 ? "action_required" : "attention",
+          evidence: `${backlog ?? 0} unprocessed aml.* events; oldest ${Math.round(oldestAgeHours)}h. A growing backlog means no consumer is being invoked — consumer scheduling cannot be verified from here.`,
+        }));
+
+        const { data: lastScan } = await admin.schema("aml").from("retention_scans")
+          .select("created_at, status").order("created_at", { ascending: false }).limit(1).maybeSingle();
+        items.push(normaliseReadinessItem({
+          key: "retention_scan_recency", label: "Retention scan recency",
+          state: !lastScan ? "unknown"
+            : (Date.now() - new Date(lastScan.created_at).getTime()) < 35 * 864e5 ? "healthy" : "attention",
+          evidence: lastScan
+            ? `last scan ${lastScan.created_at} (${lastScan.status})`
+            : "no retention scan recorded — recency not verifiable",
+        }));
+
+        const { data: lastSync } = await admin.schema("aml").from("sanctions_list_syncs")
+          .select("completed_at, list_code").eq("status", "succeeded")
+          .order("completed_at", { ascending: false }).limit(1).maybeSingle();
+        items.push(normaliseReadinessItem({
+          key: "sanctions_freshness", label: "Sanctions list freshness",
+          state: !lastSync ? "unknown"
+            : (Date.now() - new Date(lastSync.completed_at).getTime()) < 7 * 864e5 ? "healthy" : "attention",
+          evidence: lastSync
+            ? `latest successful sync ${lastSync.completed_at} (${lastSync.list_code})`
+            : "no successful sync recorded — freshness not verifiable",
+        }));
+
+        items.push(normaliseReadinessItem({
+          key: "function_aml_reliance", label: "aml-reliance function",
+          state: "responding", evidence: "produced this response",
+        }));
+        for (const [key, label] of [
+          ["function_outbox_worker", "cross-portal-outbox-worker scheduling"],
+          ["security_registry", "Security registry currency (source-side check)"],
+          ["required_tests", "Required test suites (source-side check)"],
+        ] as const) {
+          items.push(normaliseReadinessItem({
+            key, label, state: "unknown",
+            evidence: "not verifiable from the database — source presence is not deployment truth; verify in the deployment pipeline",
+          }));
+        }
+
+        return jr({
+          readiness: {
+            preflight: true,
+            read_only: true,
+            items,
+            notice: "States report database-verifiable facts and recorded configuration only. Nothing here asserts deployment, scheduling or production state.",
+            generated_at: new Date().toISOString(),
           },
         });
       }

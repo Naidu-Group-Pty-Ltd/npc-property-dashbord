@@ -306,6 +306,19 @@ export const amlRelianceApi = {
     invoke<{ obligations: PartnerRefreshObligation[] }>({ op: "staff_list_refresh_obligations", ...params }),
   getPartnerEventsHealth: () =>
     invoke<{ health: PartnerEventsHealth }>({ op: "get_partner_events_health" }),
+
+  /* ── operations, reporting and readiness (Phase 8) ────────────────────── */
+
+  getPartnerOperationsDashboard: () =>
+    invoke<{ queues: PartnerQueueEntry[]; sla_note: string; generated_at: string }>(
+      { op: "get_partner_operations_dashboard" }),
+  listPartnerRegister: (params: { register: string; status?: string; limit?: number }) =>
+    invoke<{ register: string; status: string | null; rows: Record<string, unknown>[]; generated_at: string }>(
+      { op: "list_partner_register", ...params }),
+  getPartnerManagementReport: (params: { from?: string; to?: string } = {}) =>
+    invoke<{ report: PartnerManagementReport }>({ op: "get_partner_management_report", ...params }),
+  getPartnerReadiness: () =>
+    invoke<{ readiness: PartnerReadiness }>({ op: "get_partner_readiness" }),
 };
 
 /* ── Phase 6 types ───────────────────────────────────────────────────────── */
@@ -322,6 +335,62 @@ export interface PartnerRefreshObligation {
   created_at: string;
   completed_at: string | null;
   partner_organisations?: { legal_name: string } | null;
+}
+
+export interface PartnerQueueEntry {
+  key: string;
+  label: string;
+  ownerRole: "mlro" | "reviewer" | "analyst" | "partner_organisation";
+  count: number;
+  oldestAt: string | null;
+  age: "ok" | "warn" | "escalate";
+  register: string;
+  registerStatus: string | null;
+}
+
+export interface PartnerManagementReport {
+  tenant_id: string;
+  range: { from: string | null; to: string | null };
+  partners: {
+    links_by_legal_route: Record<string, number>;
+    grants_active: number;
+    grants_revoked: number;
+    grants_expired: number;
+    access_events: number;
+    records_requests_by_status: Record<string, number>;
+    evidence_deliveries: number;
+    determinations_by_outcome: Record<string, number>;
+    refresh_required_open: number;
+  };
+  arrangements: {
+    overdue_reviews: number;
+    eligibility_states: Record<string, number>;
+  };
+  records: {
+    operative_triggers: number;
+    active_legal_holds: number;
+    retention_due_items: number;
+    blocked_disposals: number;
+    scan_approvals: number;
+    disposal_failures: number;
+    disposal_evidence_receipts: number;
+  };
+  generated_at: string;
+}
+
+export interface PartnerReadinessItem {
+  key: string;
+  label: string;
+  state: string;
+  evidence: string;
+}
+
+export interface PartnerReadiness {
+  preflight: boolean;
+  read_only: boolean;
+  items: PartnerReadinessItem[];
+  notice: string;
+  generated_at: string;
 }
 
 export interface PartnerEventsHealth {
