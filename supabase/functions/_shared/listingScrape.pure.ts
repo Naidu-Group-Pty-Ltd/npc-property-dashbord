@@ -58,6 +58,16 @@ const EXTENSIONLESS_IMAGE_HOSTS = [
   'imgix.net',
   'cloudfront.net',
   'akamaized.net',
+  // Reapit/AgentPoint, the platform behind a large slice of Australian agency
+  // sites. Photographs are served as `phimg.reapit.website/<sha1>` with no
+  // extension at all, so without this entry a page with fourteen photographs
+  // yields zero and the listing looks like it has none.
+  'reapit.website',
+  // Aro, Console, iDashboard and Push Creative — the remaining extension-less
+  // property CDNs observed while seeding this corpus.
+  'arosoftware.com',
+  'idashboard.com.au',
+  'pushcreative.com.au',
 ];
 
 /**
