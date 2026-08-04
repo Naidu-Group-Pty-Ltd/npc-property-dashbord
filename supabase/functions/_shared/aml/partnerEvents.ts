@@ -59,9 +59,10 @@ export const PARTNER_EVENT_CATALOGUE: Record<string, {
   "aml.retention_trigger.recorded": { aggregate: "retention_trigger", destination: "ops", emittedBy: "trigger" },
   "aml.legal_hold.added": { aggregate: "legal_hold", destination: "ops", emittedBy: "trigger" },
   "aml.legal_hold.released": { aggregate: "legal_hold", destination: "ops", emittedBy: "trigger" },
-  "aml.disposal.approved": { aggregate: "retention_scan", destination: "ops", emittedBy: "phase7" },
-  "aml.disposal.executed": { aggregate: "retention_scan", destination: "ops", emittedBy: "phase7" },
-  "aml.disposal.failed": { aggregate: "retention_scan", destination: "ops", emittedBy: "phase7" },
+  // Emitters arrived with Phase 7 (AFTER UPDATE on aml.retention_scans).
+  "aml.disposal.approved": { aggregate: "retention_scan", destination: "ops", emittedBy: "trigger" },
+  "aml.disposal.executed": { aggregate: "retention_scan", destination: "ops", emittedBy: "trigger" },
+  "aml.disposal.failed": { aggregate: "retention_scan", destination: "ops", emittedBy: "trigger" },
 };
 
 export const PARTNER_EVENT_TYPES = Object.keys(PARTNER_EVENT_CATALOGUE);
