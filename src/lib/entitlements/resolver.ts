@@ -18,6 +18,17 @@
 //   snapshot ever)          the platform is not bricked; PREMIUM capabilities
 //                           are withheld with status "unknown" — shown as
 //                           temporarily unavailable, never as an upsell.
+//
+// One role sits outside the purchase question entirely. A platform
+// superadministrator operates the deployment, and the previous rule — bypass
+// the USER axis, never the COMMERCIAL one — locked operators out of whole
+// surfaces (Email Copilot and Call Logs are add-on-only, so NO tier reaches
+// them and every superadmin saw "not included in your subscription"). They
+// now resolve through `operator_override`, which is recorded on the decision
+// so nothing pretends the workspace bought the capability: `operatorOnly`
+// marks a capability open to the operator alone, and callers say so on the
+// page. Product availability still binds — an operator override cannot open
+// something that does not run.
 
 import type {
   CapabilityDecision,
@@ -36,12 +47,18 @@ export interface ResolveContext {
   /**
    * Whether the current USER holds the capability's permission key.
    * `undefined` means "not evaluated here" (pure workspace-level question).
-   * Superadministrators bypass USER permissions, never workspace entitlement
-   * — pass `hasPermission: true` for them, and let the plan decide.
    */
   hasPermission?: boolean;
   /** True while user permissions are still loading. */
   permissionLoading?: boolean;
+  /**
+   * True when the signed-in user is a platform superadministrator. They
+   * bypass BOTH axes — the user permission and the commercial entitlement —
+   * because they administer the deployment the entitlement describes. The
+   * bypass is reported through the `operator_override` source, never
+   * silently, and it does not override `productStatus`.
+   */
+  isPlatformOperator?: boolean;
 }
 
 const CORE_PLAN_COUNT = 3; // capability in all three tiers = core platform
@@ -105,6 +122,9 @@ export function resolveCapability(key: CapabilityKey, ctx: ResolveContext): Capa
   }
 
   if (ctx.snapshotState === "loading") {
+    // An operator's access does not depend on the answer, so they do not wait
+    // for it — otherwise every superadmin sees a skeleton on first paint.
+    if (ctx.isPlatformOperator) return operatorGrant(base);
     return { ...base, enabled: false, status: "loading", entitlementSources: [] };
   }
 
@@ -114,6 +134,7 @@ export function resolveCapability(key: CapabilityKey, ctx: ResolveContext): Capa
       // unconfirmed; permission still applies below via the enabled path.
       return decideWithPermission(base, def.key, ["base_tier"], ctx);
     }
+    if (ctx.isPlatformOperator) return operatorGrant(base);
     return { ...base, enabled: false, status: "unknown", entitlementSources: [] };
   }
 
@@ -152,6 +173,17 @@ export function resolveCapability(key: CapabilityKey, ctx: ResolveContext): Capa
   }
 
   if (sources.length === 0) {
+    // Nothing the workspace holds reaches this capability. An operator still
+    // does — every add-on-only module (Email Copilot, Call Logs, Integrations,
+    // the agent, AML) lands here on every tier, and hiding them from the
+    // people who administer the deployment is what this branch used to do.
+    if (ctx.isPlatformOperator) {
+      return {
+        ...operatorGrant(base),
+        requiredPlan: cheapestIncludingPlan(def),
+        availableAddons: [...(def.addonSlugs ?? [])],
+      };
+    }
     return {
       ...base,
       enabled: false,
@@ -165,13 +197,29 @@ export function resolveCapability(key: CapabilityKey, ctx: ResolveContext): Capa
   return decideWithPermission(base, def.key, sources, ctx);
 }
 
+/** Grant reached through the operator role alone — the workspace holds no
+ * commercial source for it. `operatorOnly` says exactly that, so a page can
+ * tell its operator that a customer on this subscription sees a denial here. */
+function operatorGrant(
+  base: Pick<CapabilityDecision, "capability" | "planSlug" | "workspaceId" | "permissionKey">,
+): CapabilityDecision {
+  return {
+    ...base,
+    enabled: true,
+    status: "enabled",
+    entitlementSources: ["operator_override"],
+    effectiveSource: "operator_override",
+    operatorOnly: true,
+  };
+}
+
 function decideWithPermission(
   base: Pick<CapabilityDecision, "capability" | "planSlug" | "workspaceId" | "permissionKey">,
   key: CapabilityKey,
   sources: EntitlementSource[],
   ctx: ResolveContext,
 ): CapabilityDecision {
-  if (ctx.hasPermission === false) {
+  if (ctx.hasPermission === false && !ctx.isPlatformOperator) {
     if (ctx.permissionLoading) {
       return { ...base, enabled: false, status: "loading", entitlementSources: sources };
     }

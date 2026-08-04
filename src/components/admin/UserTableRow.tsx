@@ -169,38 +169,42 @@ export function UserTableRow({
       <TableCell className="py-4 pr-5 text-right">
         <TooltipProvider>
           <div className="flex items-center justify-end gap-1.5">
-            {!hasSuperadmin && !isSelf && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onEditPermissions(u.id)}
-                    className={actionButtonClass}
-                    aria-label={`Edit permissions for ${u.username}`}
-                  >
-                    <Settings className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Edit Permissions</TooltipContent>
-              </Tooltip>
-            )}
-            {!hasSuperadmin && !isSelf && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onClonePermissions(u.id)}
-                    className={actionButtonClass}
-                    aria-label={`Clone permissions from ${u.username}`}
-                  >
-                    <Copy className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Clone Permissions To Another User</TooltipContent>
-              </Tooltip>
-            )}
+            {/* Editing permissions is available on every row, including your
+                own and other superadmins'. The self-guards further down cover
+                the actions that can strand an account — deactivate, delete,
+                demote, force-logout — and permission editing is not one of
+                them: the superadmin role carries its own access, so a
+                superadmin editing their own grid cannot lock themselves out.
+                Hiding it made the role unable to administer the very thing it
+                exists to administer. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onEditPermissions(u.id)}
+                  className={actionButtonClass}
+                  aria-label={`Edit permissions for ${u.username}`}
+                >
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{isSelf ? 'Edit Your Permissions' : 'Edit Permissions'}</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onClonePermissions(u.id)}
+                  className={actionButtonClass}
+                  aria-label={`Clone permissions from ${u.username}`}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Clone Permissions To Another User</TooltipContent>
+            </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

@@ -6,7 +6,7 @@ the UI, at every route, and in the Edge Functions.
 
 ## The model
 
-Seven independent inputs combine into one decision:
+Eight independent inputs combine into one decision:
 
 1. **Base tier** — `launch` / `growth` / `scale`, from Mission Control.
 2. **Active add-ons** — canonical catalogue slugs, from Mission Control
@@ -21,10 +21,14 @@ Seven independent inputs combine into one decision:
    `module.clients`) and declared dependency capabilities.
 7. **Product status** — `coming_soon` / `unavailable` beat purchase state
    (Lenders is coming_soon: nobody sees it, nobody is upsold to it).
+8. **Operator override** — the viewer holds the `superadmin` role, reported as
+   `operator_override`. See below.
 
 ```
-effective capability = (base tier ∪ add-ons ∪ trials ∪ overrides)
-                       ∧ user permission ∧ dependencies ∧ product status
+effective capability = ((base tier ∪ add-ons ∪ trials ∪ overrides)
+                        ∧ user permission ∧ dependencies
+                        ∨ operator override)
+                       ∧ product status
 ```
 
 Add-ons never mutate the tier: `Launch + commercial-industrial` gets exactly
@@ -142,6 +146,40 @@ browser).
 | No snapshot ever obtained | Core capabilities (in every tier) stay usable; premium withheld with status `unknown` — shown as *temporarily unavailable*, never an upsell. Backend premium ops return 503 `PRODUCT_UNAVAILABLE`. |
 | Unprovisioned / unconfigured clone (MC 404) | Explicit answer → treated as billing-exempt override, so dev installs work. |
 
+### The operator override
+
+A `superadmin` reaches every available capability, on both axes, reported as
+the `operator_override` source.
+
+This reverses an earlier rule — *superadmins bypass the user permission, never
+the plan* — which was written to stop an operator seeing features nobody else
+could see and then answering support tickets with advice that cannot be
+followed. The cost landed somewhere it was not anticipated. **Add-on-only
+capabilities belong to no tier at all**, so `module.email_copilot`,
+`module.call_logs`, `module.integrations`, `module.aurixa_agent`,
+`module.intelligence_hub` and `module.aml_ctf` resolved `plan_excluded` for
+*every* superadmin on *every* plan. Two of them — Email Copilot and Call Logs
+— are ordinary CRM pages sitting in the main sidebar, and the people who
+administer the deployment could not open them.
+
+The override is reported rather than silent, which is what keeps the original
+concern addressed:
+
+- the decision carries `effectiveSource: "operator_override"`;
+- `operatorOnly: true` marks a capability the **workspace** holds no source
+  for, so it is open to the operator alone;
+- `requiredPlan` / `availableAddons` are still populated, so the decision
+  still says what the workspace would have to buy;
+- `ModuleGuard` renders that on the page: *"Open to you as a superadmin — this
+  workspace's subscription does not include X"*, together with the fact that
+  premium **server** operations enforce separately and can still refuse data;
+- `includedInPlan` from `useModulePermissions` keeps reporting the workspace's
+  position, not the viewer's, so upsell surfaces stay honest.
+
+`productStatus` is not overridable. Purchase state is negotiable; whether the
+capability runs at all is not — `client.lenders` (coming_soon) stays shut to
+everyone.
+
 ## Backend enforcement
 
 `requireWorkspaceCapability(supabase, actor, capability)` in
@@ -155,6 +193,17 @@ Denials are machine-readable: `ENTITLEMENT_REQUIRED` (403) /
 `PRODUCT_UNAVAILABLE` (503). Verified internal calls (`service_role`)
 bypass; **superadmins do not** — commercial bypass exists only as Mission
 Control's audited billing-exempt override.
+
+The operator override above is deliberately a **client-side** rule and stops
+here. This is a single-tenant clone architecture: every customer's principal
+holds `superadmin` in their own clone, so honouring the override at this layer
+would hand every clone its whole catalogue for free. Neither of the modules
+that motivated the override is gated here — nothing calls
+`requireWorkspaceCapability` with `email-copilot` or `call-logs` — so those
+pages work end to end. On a capability that *is* gated here, an operator gets
+in and sees the module, and premium data calls still answer 403; the guard's
+notice says so on the page. `serverMatrixParity.spec.ts` pins this boundary by
+asserting `_shared/entitlements.ts` never imports `actorIsSuperadmin`.
 
 `requireModulePermission` (user axis) is unchanged and still applies where
 it already did.

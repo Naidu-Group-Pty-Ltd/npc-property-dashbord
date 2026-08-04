@@ -72,6 +72,13 @@ export type EntitlementContext = {
   planSlug: string | null | undefined;
   /** Add-ons held. Undefined means Mission Control did not say. */
   addonSlugs?: readonly string[] | null;
+  /**
+   * The reader is a platform superadministrator. They reach every available
+   * module through the operator override, so hiding the documentation for a
+   * screen they can open is the same broken-product impression this gate
+   * exists to prevent — just pointed at the operator instead of the customer.
+   */
+  isPlatformOperator?: boolean;
 };
 
 /**
@@ -83,6 +90,7 @@ export type EntitlementContext = {
  * prevent, not a nice-to-have.
  */
 export function isSectionEntitled(sectionId: string, ctx: EntitlementContext): boolean {
+  if (ctx.isPlatformOperator) return true;
   if (!isKnownPlan(ctx.planSlug)) return true;
 
   const slug = SECTION_MODULE_SLUGS[sectionId] ?? SECTION_PROXY_MODULES[sectionId];
@@ -111,6 +119,7 @@ export function lockedSections<T extends { id: string; title: string }>(
   sections: readonly T[],
   ctx: EntitlementContext,
 ): Array<{ id: string; title: string; moduleSlug: string }> {
+  if (ctx.isPlatformOperator) return [];
   if (!isKnownPlan(ctx.planSlug)) return [];
   return sections
     .filter((s) => !isSectionEntitled(s.id, ctx))

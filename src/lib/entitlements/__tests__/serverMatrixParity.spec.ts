@@ -21,8 +21,13 @@ describe("server entitlement matrix agrees with the client registry", () => {
   });
 
   it("never lets a superadmin check into the server gate", () => {
-    // Commercial entitlement must not be silently bypassed by role — only the
-    // audited billing-exempt override or a verified internal call passes.
+    // The client resolver DOES grant superadmins an operator override, so
+    // this boundary is now a deliberate asymmetry rather than a shared rule.
+    // Single-tenant clone architecture: every customer's own principal holds
+    // `superadmin` in their clone, and honouring the override at the
+    // enforcement layer would hand each clone the whole catalogue for free.
+    // Only the audited billing-exempt override or a verified internal call
+    // passes here. See docs/entitlements/ARCHITECTURE.md.
     expect(serverSource).not.toContain("actorIsSuperadmin");
     expect(serverSource).not.toContain("requireSuperadmin");
   });

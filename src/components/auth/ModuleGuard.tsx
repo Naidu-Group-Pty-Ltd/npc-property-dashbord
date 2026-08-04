@@ -1,9 +1,10 @@
 import { Link } from 'react-router-dom';
 import { useModulePermissions } from '@/hooks/useModulePermissions';
 import { useWorkspaceEntitlements } from '@/hooks/useWorkspaceEntitlements';
+import { getCapabilityDefinition } from '@/lib/entitlements';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { CloudOff, Lock, Settings2, ShieldAlert } from 'lucide-react';
+import { CloudOff, Crown, Lock, Settings2, ShieldAlert } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 
 interface ModuleGuardProps {
@@ -29,6 +30,13 @@ interface ModuleGuardProps {
  * carries the workspace entitlement AND the capability's own user-permission
  * axis. Keys the registry does not describe fall back to the legacy
  * user-permission check unchanged.
+ *
+ * A superadministrator reaches every available module as the deployment's
+ * operator. Where that is the ONLY thing opening the door, the page says so
+ * in a line above itself: the alternative is an operator who cannot tell
+ * their own view from the customer's, which is the failure mode the old
+ * "superadmins do not bypass the plan" rule was written to avoid — and it
+ * avoided it by locking operators out of add-on-only modules entirely.
  */
 export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }: ModuleGuardProps) {
   const { canView, canEdit, canDelete, decision, loading } = useModulePermissions(moduleKey);
@@ -163,5 +171,38 @@ export function ModuleGuard({ moduleKey, children, requireEdit, requireDelete }:
     );
   }
 
+  if (decision?.operatorOnly) {
+    return (
+      <>
+        <div className="px-6 pt-4">
+          <Alert>
+            <Crown className="h-4 w-4" />
+            <AlertTitle>Open to you as a superadmin</AlertTitle>
+            <AlertDescription className="space-y-2">
+              <p>
+                This workspace's subscription does not include {moduleLabel(decision)}
+                {decision.availableAddons?.length
+                  ? ` — it is sold as the ${decision.availableAddons.join(' / ')} add-on.`
+                  : '.'}{' '}
+                Everyone without the superadmin role sees a "not included in your subscription"
+                screen here.
+              </p>
+              <p>
+                Premium server operations enforce the subscription separately, so some data on
+                this page can still be refused until the workspace holds it.
+              </p>
+            </AlertDescription>
+          </Alert>
+        </div>
+        {children}
+      </>
+    );
+  }
+
   return <>{children}</>;
+}
+
+/** Human label for the capability behind a decision, for the operator notice. */
+function moduleLabel(decision: NonNullable<ReturnType<typeof useModulePermissions>['decision']>): string {
+  return getCapabilityDefinition(decision.capability)?.label ?? 'this module';
 }

@@ -338,3 +338,73 @@ describe("registry hygiene", () => {
     expect(canonicaliseAddonSlugs(["AML"])).toEqual(["aml-ctf"]);
   });
 });
+
+describe("platform operator override", () => {
+  function asOperator(
+    key: Parameters<typeof resolveCapability>[0],
+    snapshot: WorkspaceEntitlementSnapshot | null,
+    snapshotState: SnapshotState = "ready",
+  ) {
+    return resolveCapability(key, { snapshot, snapshotState, isPlatformOperator: true });
+  }
+
+  // The regression this override exists for: Email Copilot and Call Logs are
+  // add-on-only, so NO tier reaches them and every superadmin on every plan
+  // was shown "not included in your subscription" on two ordinary CRM pages.
+  it("opens add-on-only modules that no tier can reach", () => {
+    for (const key of ["module.email_copilot", "module.call_logs"] as const) {
+      for (const planSlug of ["launch", "growth", "scale"] as const) {
+        expect(decide(key, snap({ planSlug })).status, `${key}/${planSlug}`).toBe("plan_excluded");
+
+        const d = asOperator(key, snap({ planSlug }));
+        expect(d.enabled, `${key}/${planSlug}`).toBe(true);
+        expect(d.effectiveSource).toBe("operator_override");
+        expect(d.operatorOnly).toBe(true);
+      }
+    }
+  });
+
+  it("covers every other capability an operator could not otherwise open", () => {
+    const s = snap({ planSlug: "launch" });
+    for (const def of CAPABILITY_DEFINITIONS) {
+      if (def.productStatus === "coming_soon" || def.productStatus === "unavailable") continue;
+      expect(asOperator(def.key, s).enabled, def.key).toBe(true);
+    }
+  });
+
+  it("still reports what the workspace would need to buy", () => {
+    const d = asOperator("module.market_news_feed", snap({ planSlug: "launch" }));
+    expect(d.requiredPlan).toBe("scale");
+    expect(d.availableAddons).toContain("market-updates");
+  });
+
+  it("does not claim an operator grant when the workspace holds the capability", () => {
+    const d = asOperator("module.market_news_feed", snap({ planSlug: "scale" }));
+    expect(d.enabled).toBe(true);
+    expect(d.effectiveSource).toBe("base_tier");
+    expect(d.operatorOnly).toBeFalsy();
+  });
+
+  it("overrides the user-permission axis as well", () => {
+    const d = resolveCapability("module.market_news_feed", {
+      snapshot: snap({ planSlug: "scale" }),
+      snapshotState: "ready",
+      hasPermission: false,
+      isPlatformOperator: true,
+    });
+    expect(d.enabled).toBe(true);
+    expect(d.status).toBe("enabled");
+  });
+
+  it("does not wait on a snapshot, and survives one never arriving", () => {
+    expect(asOperator("module.call_logs", null, "loading").enabled).toBe(true);
+    expect(asOperator("module.call_logs", null, "unavailable").enabled).toBe(true);
+  });
+
+  // Purchase state is negotiable; whether the thing runs is not.
+  it("cannot open a capability that is not built yet", () => {
+    const d = asOperator("client.lenders", snap({ planSlug: "scale" }));
+    expect(d.enabled).toBe(false);
+    expect(d.status).toBe("product_unavailable");
+  });
+});

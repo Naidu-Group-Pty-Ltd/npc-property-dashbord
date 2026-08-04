@@ -8,11 +8,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
 import { toast } from 'sonner';
-import { Users, Mail, Plus, Key, AlertCircle, UserPlus, ShieldCheck } from 'lucide-react';
+import { Users, Mail, Plus, Key, AlertCircle, UserPlus, ShieldCheck, Crown } from 'lucide-react';
 import { logActivityDirect } from '@/hooks/useActivityLogger';
 import { useNotifications } from '@/contexts/NotificationsContext';
 import { DashboardThemeFrame } from '@/components/layout/DashboardThemeFrame';
@@ -63,7 +63,7 @@ interface PermissionSetting {
 
 export default function UserManagement() {
   const { user } = useAuth();
-  const { isSuperadmin, loading: permLoading } = usePermissions();
+  const { isSuperadmin, loading: permLoading, refreshPermissions } = usePermissions();
   const { addNotification } = useNotifications();
   
   const [users, setUsers] = useState<User[]>([]);
@@ -93,6 +93,9 @@ export default function UserManagement() {
   const [editPermissions, setEditPermissions] = useState<PermissionSetting[]>([]);
   const [previousPermissions, setPreviousPermissions] = useState<PermissionSetting[]>([]);
   const [savingPermissions, setSavingPermissions] = useState(false);
+  /** Whether the account being edited holds the superadmin role — the grid
+   * means something different for them, and the dialog says so. */
+  const [editingUserIsSuperadmin, setEditingUserIsSuperadmin] = useState(false);
 
   // Mailbox editing state
   const [mailboxDialogOpen, setMailboxDialogOpen] = useState(false);
@@ -153,11 +156,12 @@ export default function UserManagement() {
         action: 'get_user_permissions', user_id: userId
       });
       if (data?.success) {
+        setEditingUserIsSuperadmin(data.target_is_superadmin === true);
         const perms = data.permissions.map((p: any) => ({
           module_key: p.dashboard_modules?.module_key,
           can_view: p.can_view, can_edit: p.can_edit, can_delete: p.can_delete,
         })).filter((p: any) => p.module_key);
-        
+
         const allPerms = modules.map(m => {
           const existing = perms.find((p: any) => p.module_key === m.module_key);
           return existing || { module_key: m.module_key, can_view: false, can_edit: false, can_delete: false };
@@ -230,6 +234,10 @@ export default function UserManagement() {
         addNotification({ type: 'user_role_updated', title: 'User Permissions Updated', message: `Permissions for ${targetUser?.username || 'user'} have been updated`, entityId: editingUserId });
         setEditPermDialogOpen(false);
         fetchUsers();
+        // Editing your own grid keeps your session (the server skips the
+        // revocation that would otherwise sign you out), so nothing else
+        // re-reads it — pull the new grants into this tab directly.
+        if (editingUserId === user?.id) void refreshPermissions();
       } else toast.error(data?.error || 'Failed to update permissions');
     } catch { toast.error('Failed to update permissions'); }
     finally { setSavingPermissions(false); }
@@ -736,12 +744,26 @@ export default function UserManagement() {
       <Dialog open={editPermDialogOpen} onOpenChange={setEditPermDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Permissions</DialogTitle>
+            <DialogTitle>{editingUserId === user?.id ? 'Edit Your Permissions' : 'Edit Permissions'}</DialogTitle>
             <DialogDescription>
               Update module access for {users.find(u => u.id === editingUserId)?.username || 'this user'}.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {editingUserIsSuperadmin && (
+              <Alert>
+                <Crown className="h-4 w-4" />
+                <AlertTitle>
+                  {editingUserId === user?.id ? 'You hold the superadmin role' : 'This account holds the superadmin role'}
+                </AlertTitle>
+                <AlertDescription>
+                  The superadmin role grants every module on its own, so these checkboxes do not
+                  restrict {editingUserId === user?.id ? 'you' : 'them'} while the role is held. They
+                  are the access that takes effect if the role is ever removed — worth setting
+                  deliberately rather than leaving empty.
+                </AlertDescription>
+              </Alert>
+            )}
             <PermissionsGrid
               modules={modules}
               permissions={editPermissions}
