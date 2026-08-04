@@ -102,10 +102,34 @@ export const REPORT_ARCHETYPES: Record<ReportArchetypeId, ReportArchetype> = {
     documentName: 'Investment Location & Property Fit Report',
     chapterLabel: 'Chapter',
     slots: FULL_SLOTS,
-    pageBudget: [34, 44],
+    // Re-pinned by render when the format was finally implemented. Both figures
+    // were wrong, and the note was wrong about the document.
+    //
+    // Seven shapes rendered through WeasyPrint, claimed against actual: a full
+    // report with every column populated 53/50, one with no financial model
+    // 47/48, one with no score 50/47, a location-only report 43/44, a minimal
+    // one whose prose is a single section 5/6, a report with a runaway appendix
+    // 61/55, and a payload where all 40 sections sit at the section cap 90/66 —
+    // that last one dropping 28 chapters to the document budget and saying so.
+    //
+    // So a real report is 43 to 53 pages. The ceiling is set by what the caps
+    // permit rather than by what the corpus contains, for the reason the Market
+    // Intelligence band records: the render route treats a band violation as
+    // fatal, and a correctly clipped document should not be thrown away for
+    // being long. The floor is the arithmetic minimum, confirmed by render.
+    pageBudget: [5, 92],
     contents: true,
-    note: 'The macro / locality / property-fit document. Carries no financial '
-      + 'modelling — that lives in the Financial Analysis report by design.',
+    // The original note claimed this document "carries no financial modelling —
+    // that lives in the Financial Analysis report by design". The corpus
+    // disagrees: sections 20 through 28 of the prose are base assumptions, yield
+    // calculations, both loan structures, sensitivity, three projection tables
+    // and the final LVR, in 541 reports. The note was written from the
+    // archetype's name rather than from the artefact, which is the same hazard
+    // the market-intelligence archetype carried.
+    note: 'The locality and property-fit document, and the largest in the '
+      + 'programme: a 36-section prose skeleton with up to sixteen infographics '
+      + 'attached to it by section number. Carries financial modelling when the '
+      + 'row has any — only 15% do, and the document says so when it does not.',
   },
   'financial-analysis': {
     id: 'financial-analysis',
