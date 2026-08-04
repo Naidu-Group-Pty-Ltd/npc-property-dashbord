@@ -37,6 +37,10 @@ const held = (
     ]),
   );
 
+/** What a pass actually wrote, which is what decides retirement. */
+const touched = (candidates: ImageCandidate[]): Set<string> =>
+  new Set(candidates.map(imageIdentity));
+
 /** The gallery `listing-enrichment` scraped off the agency's own listing page. */
 const SCRAPED = ['https://cdn.agency.test/1.jpg', 'https://cdn.agency.test/2.jpg', 'https://cdn.agency.test/3.jpg'];
 const scrapedHeld = held(
@@ -47,7 +51,7 @@ describe('identitiesToRetire', () => {
   it('retires nothing when the caller does not own the set', () => {
     // The browser knows only what Airtable holds. Letting it reconcile retired
     // the whole scraped gallery on page load.
-    const airtableOnly = [candidate('https://cdn.agency.test/9.jpg', 'listing_url')];
+    const airtableOnly = touched([candidate('https://cdn.agency.test/9.jpg', 'listing_url')]);
     expect(identitiesToRetire(airtableOnly, scrapedHeld, 'additive')).toEqual([]);
   });
 
@@ -55,20 +59,39 @@ describe('identitiesToRetire', () => {
     // "I found nothing" is not "there is nothing". The hourly sweep read
     // Airtable's empty image columns and reconciled against [], marking every
     // scraped photograph `gone` while reporting success.
-    expect(identitiesToRetire([], scrapedHeld, 'full')).toEqual([]);
-    expect(identitiesToRetire([], scrapedHeld, 'additive')).toEqual([]);
+    expect(identitiesToRetire(touched([]), scrapedHeld, 'full')).toEqual([]);
+    expect(identitiesToRetire(touched([]), scrapedHeld, 'additive')).toEqual([]);
   });
 
   it('retires what a full reconciliation no longer offers', () => {
     // Enrichment re-scraped the page and photo 2 is gone from it.
-    const rescraped = [candidate(SCRAPED[0]), candidate(SCRAPED[2])];
+    const rescraped = touched([candidate(SCRAPED[0]), candidate(SCRAPED[2])]);
     expect(identitiesToRetire(rescraped, scrapedHeld, 'full')).toEqual([
       imageIdentity(candidate(SCRAPED[1])),
     ]);
   });
 
   it('retires nothing when a full reconciliation offers everything back', () => {
-    expect(identitiesToRetire(SCRAPED.map((u) => candidate(u)), scrapedHeld, 'full')).toEqual([]);
+    expect(identitiesToRetire(touched(SCRAPED.map((u) => candidate(u))), scrapedHeld, 'full')).toEqual([]);
+  });
+});
+
+describe('identitiesToRetire and adopted duplicates', () => {
+  it('does not retire a row that was written under a different identity', () => {
+    /*
+     * A re-signed Airtable URL arrives with a new identity and is stored
+     * against the row already holding those bytes. That row's identity is
+     * nowhere in the candidate list, so retiring "everything not offered"
+     * would mark it `gone` in the very pass that restored it.
+     */
+    const heldPhoto = imageIdentity(candidate(SCRAPED[0]));
+    const resignedArrival = imageIdentity(
+      candidate('https://v5.airtableusercontent.com/v3/u/56/56/1785830400000/aaa/bbb', 'airtable'),
+    );
+    // The pass adopted the held row rather than inserting the new identity.
+    const writes = new Set([resignedArrival, heldPhoto]);
+
+    expect(identitiesToRetire(writes, scrapedHeld, 'full')).not.toContain(heldPhoto);
   });
 });
 
@@ -201,7 +224,7 @@ describe('the regression, end to end', () => {
     // resolves and hands that one URL to the harvest.
     const fromAirtable = [candidate('https://cdn.agency.test/intake.jpg', 'listing_url')];
 
-    const retired = identitiesToRetire(fromAirtable, scrapedHeld, 'additive');
+    const retired = identitiesToRetire(touched(fromAirtable), scrapedHeld, 'additive');
     const plan = planPositions(fromAirtable, scrapedHeld, 'additive');
 
     expect(retired).toEqual([]);
@@ -217,8 +240,8 @@ describe('the regression, end to end', () => {
     expect(isHarvestDue({ candidates: nothing, stored: new Set(), refreshAfter: 0, now: 1 })).toBe(
       false,
     );
-    expect(identitiesToRetire(nothing, scrapedHeld, 'additive')).toEqual([]);
+    expect(identitiesToRetire(touched(nothing), scrapedHeld, 'additive')).toEqual([]);
     // Belt and braces: even mislabelled as authoritative, empty retires nothing.
-    expect(identitiesToRetire(nothing, scrapedHeld, 'full')).toEqual([]);
+    expect(identitiesToRetire(touched(nothing), scrapedHeld, 'full')).toEqual([]);
   });
 });

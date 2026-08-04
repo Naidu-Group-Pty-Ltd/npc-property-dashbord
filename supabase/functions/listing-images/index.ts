@@ -442,7 +442,7 @@ async function harvestListing(
   let carried = 0;
   // Marked, not deleted: a report rendered months ago may still reference it.
   // Empty unless this caller owns the set — see `Reconciliation`.
-  const vanished = identitiesToRetire(capped, existing, reconcile);
+  const vanished = identitiesToRetire(seen, existing, reconcile);
   if (vanished.length > 0) {
     await supabase
       .from('listing_images')

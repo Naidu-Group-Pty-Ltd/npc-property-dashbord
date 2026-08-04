@@ -93,20 +93,26 @@ export function planPositions(
 /**
  * The identities this pass should mark `gone`.
  *
- * Empty unless the caller owns the set *and* actually found something. An empty
- * candidate list means the source had nothing to say — an empty Airtable
- * column, a failed scrape, a listing with no web link — which is not the same
- * claim as "this property has no photographs", and must never be treated as
- * one.
+ * Takes what the pass actually **touched**, not what it was offered, and the
+ * difference is load-bearing. A re-signed Airtable URL arrives under a new
+ * identity but is stored against the row already holding those bytes — see the
+ * checksum adoption in `harvestListing`. That row's identity is nowhere in the
+ * candidate list, so retiring "everything not offered" would mark it `gone` in
+ * the same pass that just restored it, and re-blank the gallery this whole
+ * mechanism exists to protect.
+ *
+ * Empty unless the caller owns the set *and* actually found something. Touching
+ * nothing means the source had nothing to say — an empty Airtable column, a
+ * failed scrape, a listing with no web link — which is not the same claim as
+ * "this property has no photographs", and must never be treated as one.
  */
 export function identitiesToRetire(
-  candidates: ImageCandidate[],
+  touched: ReadonlySet<string>,
   held: Map<string, HeldImage>,
   reconcile: Reconciliation,
 ): string[] {
-  if (reconcile !== 'full' || candidates.length === 0) return [];
-  const offered = new Set(candidates.map(imageIdentity));
-  return Array.from(held.keys()).filter((identity) => !offered.has(identity));
+  if (reconcile !== 'full' || touched.size === 0) return [];
+  return Array.from(held.keys()).filter((identity) => !touched.has(identity));
 }
 
 /**
