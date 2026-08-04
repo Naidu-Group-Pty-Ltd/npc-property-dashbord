@@ -247,6 +247,37 @@ should not be a rule nobody can run. Skipped chapters are *reported*
 (`tooShortNote`) rather than silently dropped — "4 of 6 designed" with nothing
 else said reads as two failures, and they were never asked.
 
+**D5 — the chosen design system's paper and ink never reached the page.** The
+render branch selected `id, name, brand_hex, options` and called
+`resolveReportPalette({ preset, brandHex })`. `neutrals` was never selected and
+never passed, so every conversion resolved to `PRESET_NEUTRALS` — and the four
+presets are permutations of the same three constants. A design system imported
+from a Claude Design project showed its real ivory, porcelain, obsidian and
+hairline in the specimen gallery, which reads the column, and printed on ours.
+
+Nothing failed. The ledger row recorded that a system had been *chosen*, which
+is not the same as its grounds having been used, and the two are
+indistinguishable from the outside — which is why this survived a round of
+diagnosis that had the row open in front of it.
+
+`readDesignSystemRow` in `route.pure.ts` now reads the row and the route passes
+all three of `preset`, `brandHex` and `neutrals`. It is a second reader beside
+`readBrandDesignSystem` because they take different shapes — Postgres returns
+snake_case, a browser or a model sends camelCase — and it is *only* a second
+reader: `normalizeReportDesignOptions` and `readReportNeutrals` are shared, so
+the two cannot drift on what an option or a ground is. It is in `route.pure.ts`
+rather than inline for the same reason as D4's partition: index.ts is an edge
+function no spec can import, and this decides what colour a client document
+prints in.
+
+The behaviour that was already right stays right. A null row is the house
+default with "House design" on the cover, exactly as `designSystemId: null` has
+always meant, and an unreadable `neutrals` falls back to the preset whole rather
+than half-applying. The six seeded systems are held in
+`converterRoutes.spec.ts` with the grounds they actually carry in the database —
+copied, not invented, because the defect was that those exact values existed and
+went nowhere.
+
 ---
 
 ## The design pass
@@ -423,10 +454,11 @@ work.
 `resolveReportPalette` gained one optional input, `neutrals`, and everything
 downstream is unchanged — the worst-ground search, the accent correction and the
 frozen Category B spread now all run against the *imported* grounds, which is
-what makes an import safe rather than merely possible. All nine render routes
-pass `{ preset, brandHex }` and none passes `neutrals`, so their behaviour is
-byte-identical; `printContrast.spec.ts` asserts that over every preset and every
-tenant brand rather than assuming it.
+what makes an import safe rather than merely possible. The converter's render
+route passes it (see **D5**); the other eight pass `{ preset, brandHex }` and
+cannot pick a design system at all, so their behaviour is byte-identical —
+`printContrast.spec.ts` asserts that over every preset and every tenant brand
+rather than assuming it.
 
 It is read **all seven or none**. A half-read set would print somebody else's
 obsidian cover on our ivory, which looks like a deliberate choice and is a parse
@@ -729,8 +761,15 @@ change. Add the drift-guard spec at the same time.
    and ink) and `20260825000100_seed_house_design_systems.sql` (the house
    system and the five voices; idempotent on `slug`).
 3. Deploy `convert-template-document` and `generate-brand-design-system`.
-   D1–D4 are all in `_shared`, so they reach production only on a redeploy of
-   `convert-template-document` — the migrations for them are none.
+   D1–D5 need no migration; D1–D4 are in `_shared` and D5 spans `_shared` and
+   the function, so all five reach production only on a redeploy.
+
+   **`.github/workflows/deploy-supabase-functions.yml` will not do this until
+   `SUPABASE_ACCESS_TOKEN` is set.** Without the secret it reports what it would
+   have deployed and stops — by design, so that adding the file did not start
+   pushing code to anyone's project. The consequence is that it is green and a
+   no-op, which is the same silent failure the workflow was written to prevent,
+   one level up. Check the run's `Deploy` step: `skipped` means nothing shipped.
 4. `ANTHROPIC_API_KEY` must be set for PDF sources, for the design pass, for the
    binding proposal and for drafting a design system from a brief. Without it,
    `.md`/`.txt` sources still convert, the binding falls back to the word-overlap

@@ -51,10 +51,6 @@ import { inlineAsset } from '../_shared/reportDesign/assets.pure.ts';
 import { inlineBrandAssets } from '../_shared/reportDesign/fetchBrandAssets.ts';
 import { resolveReportPalette } from '../_shared/reportDesign/brandResolve.pure.ts';
 import {
-  DEFAULT_REPORT_DESIGN_OPTIONS,
-  normalizeReportDesignOptions,
-} from '../_shared/reportDesign/options.pure.ts';
-import {
   describeStructure,
   type ExtractedStructure,
   extractStructure,
@@ -84,6 +80,7 @@ import {
   convertedStoragePath,
   base64Bytes,
   parseConvertRequest,
+  readDesignSystemRow,
   pdfExtractionPrompt,
   SIGNED_URL_TTL_SECONDS,
   STORAGE_BUCKET,
@@ -569,7 +566,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       request.designSystemId
         ? supabase
           .from('brand_design_systems')
-          .select('id, name, brand_hex, options')
+          .select('id, name, brand_hex, options, neutrals')
           .eq('id', request.designSystemId)
           .maybeSingle()
         : Promise.resolve({ data: null, error: null }),
@@ -590,13 +587,12 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       return json({ error: 'that design system no longer exists' }, 404);
     }
 
-    const systemRow = systemRes.data as Record<string, unknown> | null;
-    const systemName = String(systemRow?.name ?? 'House design');
-    const options = normalizeReportDesignOptions(
-      (systemRow?.options as Record<string, unknown>) ?? DEFAULT_REPORT_DESIGN_OPTIONS,
-    );
-    const brandHex = typeof systemRow?.brand_hex === 'string' ? systemRow.brand_hex : null;
-    const palette = resolveReportPalette({ preset: options.preset, brandHex });
+    // `neutrals` is the half this used to drop. Without it every document
+    // printed on `PRESET_NEUTRALS` — four permutations of the same three
+    // constants — whichever design system was chosen, so an import's own paper
+    // and ink reached the specimen gallery and never the page.
+    const { systemName, options, brandHex, neutrals } = readDesignSystemRow(systemRes.data);
+    const palette = resolveReportPalette({ preset: options.preset, brandHex, neutrals });
 
     const whitelabel = (whitelabelRes.data ?? null) as Record<string, unknown> | null;
     const settings = readReportSettings(settingsRes.data, settingsRes.error?.message ?? null);
