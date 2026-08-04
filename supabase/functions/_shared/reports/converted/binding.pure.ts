@@ -29,6 +29,7 @@
  * and the person confirming is looking at both lists anyway.
  */
 import { REPORT_ARCHETYPES, type ReportArchetypeId } from '../../reportDesign/structure.pure.ts';
+import { LAYER_ORDER, LAYER_TITLES } from '../marketIntelligence/payload.pure.ts';
 import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
 
 /**
@@ -41,9 +42,11 @@ import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
  *
  * ## These are the renderer's own titles, and a spec proves it
  *
- * Every string below appears verbatim in
- * `_shared/reports/borrowingCapacity/sections.pure.ts › snapshotSections`, and
- * `converterChapters.spec.ts` imports that function and asserts the two agree.
+ * Every string below appears verbatim in the section function named above each
+ * list — `borrowingCapacity/sections.pure.ts › snapshotSections` and its six
+ * siblings. `converterChapters.spec.ts` imports each of those functions, builds
+ * the payload that makes the format print everything it can, and asserts the
+ * two lists are equal in the same order. Nothing here is typed from memory.
  *
  * The first version of this list did not. It said `Position Summary`, `Income`,
  * `Commitments`, `Serviceability`, `Capacity & Scenarios`, `Assumptions`,
@@ -56,10 +59,22 @@ import type { ExtractedSection, ExtractedStructure } from './structure.pure.ts';
  * functional labels. A binding list that does not match the renderer is worse
  * than no list, because it fails while looking like it works.
  *
- * The last three are conditional in the real document — the renderer emits them
- * only when the payload carries an explanation, an audit or scenarios. They are
- * offered here regardless and simply go unfilled, which is the state the
- * document already handles.
+ * Conditional chapters are listed too. Most of these formats emit a section
+ * only when the payload has something to put in it — Borrowing Capacity's last
+ * three need an explanation, an audit or scenarios; Client Details omits `Where
+ * they live` for a renter. Every one is offered here regardless, because an
+ * unfilled chapter is a state the document already handles and a template that
+ * *does* carry an audit section should be able to bind it. So each list below
+ * is the longest the format can print, in printed order.
+ *
+ * ## Where the term-dependent titles come from
+ *
+ * Two Cash Flow titles interpolate the projection's term —
+ * `The ${termYears}-year projection`. A converted template has no payload and
+ * therefore no term, so the literal has to choose one, and it is ten: the
+ * catalogue standard, and what the spec's payload is built at. Nothing is lost
+ * by choosing wrong, because `tokens()` discards anything two characters or
+ * shorter and `10` never reaches the scorer.
  */
 export const FORMAT_CHAPTERS: Partial<Record<ReportArchetypeId, readonly string[]>> = {
   'borrowing-capacity': [
@@ -70,19 +85,150 @@ export const FORMAT_CHAPTERS: Partial<Record<ReportArchetypeId, readonly string[
     'Audit trail',
     'Scenario comparison',
   ],
+  // `cashFlow/sections.pure.ts › cashFlowSections`
+  'cash-flow-projection': [
+    'The purchase and the first year',
+    'The 10-year projection',
+    'Value, debt and equity',
+    'What this assumes',
+  ],
+  // `cashFlowComparison/sections.pure.ts › comparisonSections`
+  'cash-flow-comparison': [
+    'Which property comes out ahead',
+    'What each costs to get into',
+    '10 years of cash flow',
+    '10 years of value and equity',
+    'The measures side by side',
+    'What the analysis found',
+    'Each property in turn',
+    'Who each property suits',
+    'Risk, and what to avoid',
+    'On what basis',
+  ],
+  // `clientDetails/sections.pure.ts › clientDetailsSections`
+  'client-details': [
+    'Who this is about',
+    'Where they live',
+    'Work and income',
+    'What they own and owe',
+    'What they spend',
+    'The property portfolio',
+    'Each property in turn',
+    'Where they stand',
+  ],
+  // `portfolio/sections.pure.ts › portfolioSections`
+  'portfolio-performance': [
+    'Where the portfolio stands',
+    'What the portfolio is made of',
+    'Every property',
+    'How each property is performing',
+    'Financial health and risk',
+    'Borrowing capacity and headroom',
+    'Market and projections',
+    'What to do next',
+    'This review',
+  ],
+  // `propertyComparison/sections.pure.ts › comparisonSections`
+  'property-comparison': [
+    'What this comparison found',
+    'Who wins what',
+    'Each property in turn',
+    'The money',
+    'Location and lifestyle',
+    'Risk',
+    'Before you commit',
+    'Who each property suits',
+    'What sets each apart',
+    'Timing and holding',
+    'What we recommend',
+    'On what basis',
+  ],
+  // `marketIntelligence/sections.pure.ts › planSections`, whose layer titles are
+  // `LAYER_TITLES` in `LAYER_ORDER`. Imported rather than retyped: eight strings
+  // copied by hand is eight chances to make the mistake this module exists to
+  // stop, and `payload.pure.ts` is types and constants, not the render path.
+  'market-intelligence': [
+    'Executive Summary',
+    'Your 60-Second Briefing',
+    'Correlation Highlights',
+    ...LAYER_ORDER.map((key) => LAYER_TITLES[key]),
+    'What To Do About It',
+    'Market Events Timeline',
+    'Your Next Steps',
+    'Sources',
+  ],
 };
+
+/**
+ * Formats whose chapters are the uploaded template's own sections.
+ *
+ * ## Why Report Q&A cannot have a list
+ *
+ * Every format above declares its chapters in code. Report Q&A does not, and
+ * the difference is not an oversight to be tidied up: `planFromTurns` titles a
+ * chapter with the client's own question, and `planFromMarkdown` uses whatever
+ * headings the answer happens to carry. There is no set of strings that could
+ * be written here and be true.
+ *
+ * Writing one anyway is exactly the failure this module's header records — an
+ * invented list that binds a few chapters, sends the rest to the appendix, and
+ * looks entirely correct while doing it. So the honest answer is that this
+ * format contributes a spine, a page band, a chapter label and a document name,
+ * and the template supplies the chapters. Every section is bound, in order,
+ * and nothing goes to the appendix.
+ */
+const PASSTHROUGH: readonly ReportArchetypeId[] = ['report-qa'];
+
+/** True when a format takes its chapters from the template rather than declaring them. */
+export function isPassthroughFormat(format: ReportArchetypeId): boolean {
+  return PASSTHROUGH.includes(format);
+}
+
+/**
+ * The chapters to bind, for this format against this template.
+ *
+ * The one place either kind of format is asked what its chapters are, so a
+ * caller never has to know which kind it is holding.
+ */
+export function bindableChapters(
+  format: ReportArchetypeId,
+  structure: ExtractedStructure,
+): readonly string[] {
+  if (isPassthroughFormat(format)) return structure.sections.map((s) => s.title);
+  return FORMAT_CHAPTERS[format] ?? [];
+}
 
 /**
  * Chapters whose content is characteristically a table rather than prose.
  *
  * Keyed off the real titles. The previous version keyed off the invented ones,
- * so it matched nothing and the shape signal in `scoreMatch` was dead weight.
+ * so it matched nothing and the shape signal in `scoreMatch` was dead weight —
+ * which is why a spec now asserts every string here is a chapter of some format.
  */
-const TABULAR_CHAPTERS = new Set([
+export const TABULAR_CHAPTERS = new Set([
+  // Borrowing Capacity
   'Income and commitments',
   'How the capacity is built',
   'Audit trail',
   'Scenario comparison',
+  // Cash Flow, and the two landscape matrices of the comparison
+  'The 10-year projection',
+  '10 years of cash flow',
+  '10 years of value and equity',
+  'The measures side by side',
+  // Client Details
+  'What they own and owe',
+  'What they spend',
+  'The property portfolio',
+  // Portfolio
+  'Every property',
+  'How each property is performing',
+  // Property Comparison
+  'Who wins what',
+  'The money',
+  // Market Intelligence
+  'Market Events Timeline',
+  'Sources',
 ]);
 
 /** One archetype chapter and whatever the template offered for it. */
@@ -180,8 +326,27 @@ export function proposeBinding(
   format: ReportArchetypeId,
   structure: ExtractedStructure,
 ): BindingPlan {
-  const chapters = FORMAT_CHAPTERS[format] ?? [];
+  const chapters = bindableChapters(format, structure);
   const sections = structure.sections;
+
+  // A pass-through format's chapters *are* the sections, in order. Scoring them
+  // against themselves would be a slow way of arriving here, and a wrong one:
+  // two sections with the same title would compete for one chapter and leave
+  // the other unbound.
+  if (isPassthroughFormat(format)) {
+    return {
+      format,
+      bindings: sections.map((section, s) => ({
+        chapter: section.title,
+        sectionIndex: s,
+        confidence: 100,
+        reason: 'This format takes its chapters from the template, so the section is the chapter.',
+        confirmed: false,
+      })),
+      unbound: [],
+      unfilled: [],
+    };
+  }
 
   const pairs: Array<{ c: number; s: number; score: number }> = [];
   chapters.forEach((chapter, c) => {
@@ -319,10 +484,21 @@ For each chapter, say which section of the uploaded template plays that part.
 - \`sectionIndex\` is the number in brackets, not the position in your list.`;
 }
 
-/** Formats the converter can bind to today. */
+/**
+ * Formats the converter can bind to today — the eight migrated onto the design
+ * system, in the order they are offered.
+ *
+ * Seven declare their chapters; Report Q&A takes the template's. An archetype
+ * in neither list stays unbindable, which is the right answer for the three
+ * that have no renderer behind them: binding to one would produce a document
+ * with no chapters and no explanation.
+ */
 export function bindableFormats(): ReportArchetypeId[] {
-  return (Object.keys(FORMAT_CHAPTERS) as ReportArchetypeId[])
-    .filter((id) => (FORMAT_CHAPTERS[id] ?? []).length > 0);
+  return [
+    ...(Object.keys(FORMAT_CHAPTERS) as ReportArchetypeId[])
+      .filter((id) => (FORMAT_CHAPTERS[id] ?? []).length > 0),
+    ...PASSTHROUGH,
+  ];
 }
 
 /**
@@ -356,13 +532,35 @@ export function formatName(format: ReportArchetypeId): string {
  * is re-checked against the structure it claims to be about. An out-of-range
  * `sectionIndex` becomes `null` rather than an error: the chapter simply has
  * nothing bound, which is a state the document already handles.
+ *
+ * A pass-through format has nothing to re-check — its chapters are its sections
+ * — and is rebuilt rather than read back. Reading it back would be actively
+ * wrong: rows are matched by chapter title, and a template with two sections
+ * called `Notes` would collapse to one row and silently unbind the other.
  */
 export function readBindingPlan(
   raw: unknown,
   format: ReportArchetypeId,
   structure: ExtractedStructure,
 ): BindingPlan {
-  const chapters = FORMAT_CHAPTERS[format] ?? [];
+  if (isPassthroughFormat(format)) {
+    const confirmed = (raw as { bindings?: unknown })?.bindings;
+    const rows = Array.isArray(confirmed) ? confirmed : [];
+    return {
+      format,
+      bindings: structure.sections.map((section, s) => ({
+        chapter: section.title,
+        sectionIndex: s,
+        confidence: 100,
+        reason: 'This format takes its chapters from the template, so the section is the chapter.',
+        confirmed: (rows[s] as Record<string, unknown> | undefined)?.confirmed === true,
+      })),
+      unbound: [],
+      unfilled: [],
+    };
+  }
+
+  const chapters = bindableChapters(format, structure);
   const rows = Array.isArray((raw as { bindings?: unknown })?.bindings)
     ? (raw as { bindings: unknown[] }).bindings
     : [];

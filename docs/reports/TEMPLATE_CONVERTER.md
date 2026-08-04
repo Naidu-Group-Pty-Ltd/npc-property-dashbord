@@ -140,7 +140,11 @@ document's chapters are editorial sentences and the list was functional labels.
 `scoreMatch` had been inert since it was written. Nothing failed loudly — the
 review screen showed a plausible binding of the wrong things, which is the
 failure mode this whole feature is designed around. Fixed, and locked by
-`converterChapters.spec.ts` importing `snapshotSections`.
+`converterChapters.spec.ts` importing `snapshotSections` — now one row per
+declarative format, each against the maximal payload that makes that format
+print everything it can. The seven rows were written before the seven lists and
+watched to fail; three of them did, on fixtures that were not yet maximal, which
+is the only evidence that a guard guards anything.
 
 **C6 — the heading hierarchy arrived inverted.** Our chapters print a small
 `SECTION 01` eyebrow above a large title. A model transcribing that page maps
@@ -1020,21 +1024,69 @@ Template Builder's start menu with a sentence each saying which is which.
 
 ## Formats it can bind to
 
-`FORMAT_CHAPTERS` currently declares one: the **Borrowing Capacity Snapshot** —
-*Capacity at a glance*, *Income and commitments*, *How the capacity is built*,
-*How this was calculated*, *Audit trail*, *Scenario comparison*. The last three
-are conditional in the real document (the renderer emits them only when the
-payload carries an explanation, an audit or scenarios); the converter offers all
-six and the unmatched ones simply go unfilled, which is a state the document
-already handles.
+All eight formats migrated onto the report design system can be bound to.
+`bindableFormats()` is the list, and it drives the route's validation, the
+`chapters` action's gate and the page's dropdown alike — there is no second
+place a format has to be registered.
 
-These are the renderer's own titles and `converterChapters.spec.ts` proves it,
-by importing `snapshotSections` and asserting the two lists are identical. That
-spec exists because the first version of this list was not: see **C5** below.
+Seven of the eight **declare** their chapters in `FORMAT_CHAPTERS`:
 
-Adding a format is one entry in `FORMAT_CHAPTERS`; `bindableFormats()` drives
-both the route's validation and the page's dropdown, so nothing else has to
-change. Add the drift-guard spec at the same time.
+| Format | Chapters |
+|---|---|
+| Borrowing Capacity Snapshot | 6 |
+| 10 Year Cash Flow Analysis | 4 |
+| Cash Flow Comparison Analysis | 10 |
+| Client Details | 8 |
+| Portfolio Performance Review | 9 |
+| Property Comparison Analysis | 12 |
+| Market Intelligence Report | 15 |
+
+Each list is the **longest** the format can print. Most of these formats emit a
+section only when the payload has something to put in it — Borrowing Capacity's
+last three need an explanation, an audit or scenarios; Client Details omits
+*Where they live* for a renter — and the converter offers every one regardless.
+An unfilled chapter is a state the document already handles, and a template that
+*does* carry an audit section should be able to bind it.
+
+Three things are worth knowing about how those lists were arrived at:
+
+- **They are the renderers' own titles, and a spec proves it.**
+  `converterChapters.spec.ts` imports each format's section function, builds a
+  payload that makes it print everything it can (`formatPayloads.ts`), and
+  asserts the two lists are equal in the same order. That spec exists because the
+  first version of this list was invented: see **C5** below.
+- **Market Intelligence is imported, not retyped.** Its layer titles come from
+  `LAYER_TITLES` in `marketIntelligence/payload.pure.ts`, read in `LAYER_ORDER`.
+  Eight strings copied by hand is eight chances to make the C5 mistake.
+- **Two Cash Flow titles interpolate the projection's term** — *The 10-year
+  projection*. A converted template has no payload and so no term; the literal
+  is ten, the catalogue standard, and the spec's payload is built at ten so the
+  choice is checked. It never affects matching: `tokens()` discards anything two
+  characters or shorter, so `10` never reaches the scorer.
+
+**Report Q&A is the eighth, and it has no list.** Not an oversight:
+`planFromTurns` titles each chapter with the client's own question and
+`planFromMarkdown` uses whatever headings the answer carries, so there is no set
+of strings that could be written down and be true. Writing one anyway is exactly
+C5. Instead it is a **pass-through** format (`PASSTHROUGH` in `binding.pure.ts`):
+the archetype contributes the spine, the page band, the chapter label and the
+document name, and the uploaded template supplies the chapters. Every section is
+bound, in order, at full confidence, and nothing goes to the appendix. The plan
+is rebuilt from the structure rather than read back — rows are matched by chapter
+title, and a template with two sections called *Notes* would otherwise collapse
+to one row and silently unbind the other.
+
+Adding a format is one entry in `FORMAT_CHAPTERS` (or one in `PASSTHROUGH`).
+Three other places may need a line at the same time:
+
+- `TABULAR_CHAPTERS`, if any of its chapters is characteristically a table —
+  the shape signal in `scoreMatch` is keyed off the real titles.
+- `CONVERTED_REPORT_TYPES` in `src/lib/reports/converted/reportType.ts`, which
+  files an editable copy under an adapter key. That map is exhaustive over the
+  archetype union, so a new archetype fails the compiler here rather than
+  quietly inheriting the wrong report type.
+- The drift-guard row in `converterChapters.spec.ts`, with the maximal payload
+  it needs.
 
 ---
 

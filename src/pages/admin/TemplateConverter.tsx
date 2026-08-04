@@ -80,6 +80,7 @@ import {
   formatName,
   WEAK_MATCH,
 } from '@/lib/reports/converted/binding.pure';
+import { CONVERTED_REPORT_TYPES } from '@/lib/reports/converted/reportType';
 import { type ConversionFidelity } from '@/lib/reports/converted/enrich.pure';
 import { FIDELITY_CHOICES, fidelityLabel } from '@/lib/reports/converted/fidelityChoices';
 import { BRAND_SYSTEMS_PATH } from '@/lib/reportTemplate/templateStartRoutes';
@@ -89,15 +90,6 @@ const ACCEPT = [...TEXT_SUFFIXES, '.pdf'].join(',');
 /** The dropdown value for "no section", since a Select cannot hold empty. */
 const NONE = '__none__';
 
-/**
- * The adapter key an editable copy is filed under.
- *
- * Matches the archetype the converter binds to today
- * (`adapters/index.ts` registers `borrowing_capacity`), so the template lands
- * in the list under the report type it is actually about. When a second format
- * becomes bindable this needs a map rather than a constant.
- */
-const CONVERTED_REPORT_TYPE = 'borrowing_capacity';
 
 
 export default function TemplateConverter() {
@@ -264,7 +256,7 @@ export default function TemplateConverter() {
     if (!extracted || !result) return;
     setMaterialising(true);
     try {
-      const { chapters, title, formatName: boundName } =
+      const { chapters, title, format: boundFormat, formatName: boundName } =
         await conversionChapters(extracted.conversionId);
 
       const schema = buildConvertedTemplate({
@@ -285,7 +277,10 @@ export default function TemplateConverter() {
         name: `${title} (converted)`.slice(0, 120),
         description: `Converted from ${extracted.sections.length} sections of an uploaded template, `
           + `bound to ${boundName}.`,
-        report_type: CONVERTED_REPORT_TYPE,
+        // The *stored* bound format, not the picker's current value — this is
+        // asked for after a render, and the copy has to be filed under the
+        // format the document was actually produced as.
+        report_type: CONVERTED_REPORT_TYPES[boundFormat],
         schema,
       });
 

@@ -22,6 +22,8 @@ export const REPORT_TEMPLATE_ADAPTERS: ReportTemplateAdapter[] = [
   previewOnlyAdapter('postcode', 'Postcode Analysis'),
   previewOnlyAdapter('statewide', 'Statewide Analysis'),
   previewOnlyAdapter('comparison', 'Comparison Report'),
+  previewOnlyAdapter('client_details', 'Client Details'),
+  previewOnlyAdapter('market_intelligence', 'Market Intelligence'),
   previewOnlyAdapter('formara', 'Formara / Client Form'),
 ];
 

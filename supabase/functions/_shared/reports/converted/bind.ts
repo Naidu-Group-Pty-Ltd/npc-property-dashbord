@@ -23,6 +23,7 @@ import {
   bindingPrompt,
   FORMAT_CHAPTERS,
   formatName,
+  isPassthroughFormat,
   proposeBinding,
   readBindingPlan,
   type BindingPlan,
@@ -59,6 +60,13 @@ export async function proposeBindingWithModel(
 ): Promise<ProposedBinding> {
   const scored = proposeBinding(format, structure);
   const chapters = FORMAT_CHAPTERS[format] ?? [];
+  // A pass-through format's chapters are the template's own sections, so the
+  // binding is the identity and there is no judgement to buy. Said out loud
+  // rather than left to fall through the empty-chapters guard below, which
+  // would reach the same plan and label it a wording match.
+  if (isPassthroughFormat(format)) {
+    return { plan: scored, source: 'scorer', note: 'this format takes its chapters from the template' };
+  }
   if (!apiKey) {
     return { plan: scored, source: 'scorer', note: 'matched on wording — no model is configured' };
   }
