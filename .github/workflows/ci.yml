@@ -236,6 +236,27 @@ jobs:
             echo "ok: Playfair Display italic"
           '
 
+      # The service's own tests, run against the engine and fonts that shipped
+      # rather than against whatever a runner happens to have. The test file is
+      # mounted rather than COPY-ed, because tests do not belong in the image.
+      - name: The service's tests, inside the image
+        run: |
+          docker run --rm -v "$PWD/weasyprint-service:/tests:ro" -w /tests \
+            -e WEASYPRINT_SERVICE_TOKEN=ci-token -e PYTHONDONTWRITEBYTECODE=1 \
+            weasyprint-service:ci python -m unittest test_app -v
+
+      # The engine installed must be the engine the stylesheet was written
+      # against. While these were 62.3 and 69, `width: calc(210mm - 44mm)` was
+      # dropped on every production render and rendered fine in review, and the
+      # cover printed the classification and the reference as one word.
+      - name: The image installs the pinned engine
+        run: |
+          PINNED=$(grep -oP '(?<=^weasyprint==)[\d.]+' weasyprint-service/requirements.txt)
+          GOT=$(docker run --rm --entrypoint python weasyprint-service:ci \
+                  -c 'import weasyprint; print(weasyprint.__version__)')
+          echo "pinned=$PINNED installed=$GOT"
+          [ "$PINNED" = "$GOT" ] || { echo "engine drift"; exit 1; }
+
       # A render is the only thing that proves the engine, the fonts and the
       # service agree. Assert the bytes are a PDF and that the brand faces are
       # embedded in it — a substituted face still produces a valid PDF.
@@ -280,7 +301,7 @@ jobs:
       - name: Build the Borrowing Capacity Snapshot
         run: npx vitest run src/lib/reports/borrowingCapacity/__tests__/render.spec.ts
 
-      - name: Render it in the container and assert its typography
+      - name: Render it in the container and read what the engine said
         run: |
           docker run -d --name wp2 -p 8081:8080 \
             -e PORT=8080 -e WEASYPRINT_SERVICE_TOKEN=ci-token weasyprint-service:ci
@@ -296,10 +317,38 @@ jobs:
           curl -sf -X POST http://localhost:8081/render \
             -H "Authorization: Bearer ci-token" \
             -H "Content-Type: application/json" \
+            -D /tmp/bc.headers \
             --data @/tmp/bc.json -o /tmp/bc.pdf
+          cat /tmp/bc.headers
           docker logs wp2
-          docker rm -f wp2
           head -c 5 /tmp/bc.pdf | grep -q '%PDF-' || { echo "not a PDF"; exit 1; }
+          # The engine says what it ignored, once, and nothing used to read it.
+          # A dropped declaration is a design decision that did not reach the
+          # page, and no other check in this file can see one.
+          grep -qi '^x-weasyprint-warning-count: *0' /tmp/bc.headers || {
+            echo "the engine did not render the report whole:"
+            grep -i '^x-weasyprint-warnings:' /tmp/bc.headers
+            exit 1
+          }
+          # `tagged: true` was accepted by the service and never passed to the
+          # engine, so every report it produced was untagged.
+          grep -qi '^x-pdf-tagged: *1' /tmp/bc.headers || {
+            echo "the report is untagged"; exit 1;
+          }
+
+      # The repo's list of constructs the engine drops, checked against the
+      # engine that is actually deployed. A list like that rots the moment the
+      # engine moves, and a stale one is worked around rather than updated.
+      - name: The engine agrees with engineSupport.pure.ts
+        run: |
+          npx tsx scripts/reports/engineCheck.mts \
+            --service http://localhost:8081 --token ci-token \
+            --capabilities \
+            reports/html/borrowing-capacity-snapshot.html
+          docker rm -f wp2
+
+      - name: Assert the report's typography
+        run: |
           pdffonts /tmp/bc.pdf
           # Cinzel sets the cover title, Playfair the chapter headings and the
           # running head, Inter the body, IBM Plex Mono every figure and label.

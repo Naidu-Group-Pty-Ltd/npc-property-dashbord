@@ -89,6 +89,25 @@ function cssString(value: string): string {
   return `"${escaped}"`;
 }
 
+/**
+ * The cover's masthead and footer rows, in millimetres.
+ *
+ * Computed here rather than written as `calc(210mm - 44mm)` in the sheet.
+ * **WeasyPrint 62.3 — the version the render container pins — rejects that
+ * `calc()` outright**: `Ignored \`width: calc(210mm - 44mm)\`, invalid value`.
+ * Newer builds accept it, which is exactly how it survived review: it was
+ * verified against the engine on a developer's machine and dropped on the one
+ * that prints for clients.
+ *
+ * What it cost: `table-layout: fixed` needs a width to be fixed *to*. Without
+ * one the table auto-sized to its content, so the cover's classification and
+ * its reference printed as one run — `PRIVATE AND CONFIDENTIALAE8DDE86` — which
+ * is the defect the fixed layout was added to stop.
+ *
+ * 44 is the two 22mm cover margins. A number no version can misread.
+ */
+const COVER_ROW_WIDTH_MM = PAGE_SIZE.widthMm - 44;
+
 /** Trim `10.50pt` to `10.5pt`; keeps the golden readable and the output small. */
 function pt(value: number): string {
   return `${Number(value.toFixed(2))}pt`;
@@ -479,7 +498,7 @@ function coverRules(
        inside every tenant's PDF, and documentBrand.spec.ts scans the whole
        document for ours. */
     table-layout: fixed;
-    width: calc(${PAGE_SIZE.widthMm}mm - 44mm);
+    width: ${COVER_ROW_WIDTH_MM}mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro + 0.5)};
     letter-spacing: ${PRINT_TRACKING.widest};
@@ -589,7 +608,7 @@ function coverRules(
     /* Same reason as the masthead — "PRIVATE AND CONFIDENTIAL" and the
        reference printed as one run on the cover this fixes. */
     table-layout: fixed;
-    width: calc(${PAGE_SIZE.widthMm}mm - 44mm);
+    width: ${COVER_ROW_WIDTH_MM}mm;
     font-family: ${PRINT_STACK.mono};
     font-size: ${pt(type.micro)};
     letter-spacing: ${PRINT_TRACKING.widest};

@@ -530,7 +530,14 @@ the negative figures stay the one red and the positives the one green.
    Api2PDF fallback is disabled when WeasyPrint is configured, so a render failure
    is user-visible. The README is stale.
 4. **PDF/A + tagged output** constrain markup: heading levels must be semantically
-   correct, and external references are forbidden.
+   correct, and external references are forbidden. ~~And the output was tagged.~~
+   **It was not.** The service read `tagged` from the request body, defaulted it
+   to true, and never passed anything to the engine — the option that writes a
+   structure tree is `pdf_tags`, and it does not exist before WeasyPrint 63.
+   Every report the programme shipped was untagged: valid, printable, and
+   unnavigable to a screen reader. Fixed with the engine upgrade; asserted by
+   `X-Pdf-Tagged` in CI and by a service test that renders uncompressed and
+   looks for `/StructTreeRoot`.
 5. **Three divergent `InvestmentReport` types** bridged by a hand-maintained
    `overrideMapping` table. The system needs one payload contract or it inherits
    the drift.
@@ -555,3 +562,83 @@ the negative figures stay the one red and the positives the one green.
    keyword, and one trailing byte makes a deflate stream fail outright rather
    than inflate what it can — so the dictionary's `/Length` is used when it has
    one. That single byte is why the first attempt at the fix also counted zero.
+
+---
+
+## 11 · The render engine
+
+Everything above assumes the stylesheet reaches the page. It does not
+automatically, and the ways it fails to are all silent.
+
+### 11.1 The version split
+
+The stylesheet was written and visually reviewed against WeasyPrint **69**, on a
+developer machine. `weasyprint-service` pinned **62.3**. Those two do not agree,
+and the disagreement was invisible in exactly the way that costs the most:
+
+```
+WARNING: Ignored `width: calc(210mm - 44mm)` at 665:5, invalid value.
+```
+
+62.3 rejects `calc()` in a width. The declaration was dropped, the cover's
+masthead row had no width for its `table-layout: fixed` to fix to, the row
+auto-sized to its content, and the classification and the document reference
+printed as **one word**. The fix for that had shipped a day earlier and been
+verified — against 69. The render succeeded. Nothing was red.
+
+The container is now on 69.0, and the pin is mirrored by `PINNED_ENGINE` in
+`reportDesign/engineSupport.pure.ts` with a spec that reads
+`requirements.txt` and fails on drift. The `calc()` itself is gone regardless:
+every length in the sheet derives from a constant TypeScript already holds, so
+`calc()` buys nothing and costs a dependency on which engine is installed.
+
+### 11.2 Three lists, and where each is checked
+
+`engineSupport.pure.ts` carries them:
+
+| List | Meaning | Checked by |
+| --- | --- | --- |
+| `UNSUPPORTED` | the engine drops it | a spec sweeping all 1,296 generatable stylesheets |
+| `DISCOURAGED` | it renders, and must not be written anyway (`calc()`) | the same sweep |
+| `LOAD_BEARING` | the engine **must** render it — flex, grid, radius, gradients, hyphens, `break-inside`, `string()` | the container's own answer |
+
+The nine unsupported constructs were found by rendering probes, not by reading a
+support table: `box-shadow`, `filter`, `backdrop-filter`,
+`word-break: break-word`, `position: sticky`, `text-wrap`, `aspect-ratio`,
+`mix-blend-mode`, `writing-mode`.
+
+### 11.3 The list cannot rot
+
+A list of what an engine cannot do goes stale the moment the engine moves, and a
+stale one gets worked around rather than updated. So the engine grades the list,
+not the reverse: `POST /capabilities` answers, for a supplied set of probe
+declarations, which ones it ignored. `reconcileCapabilities` compares that to
+the three lists and distinguishes **broken** (a load-bearing construct dropped —
+the reports will not lay out) from **stale** (something listed as unsupported
+that now renders — news, and a prompt to move the entry).
+
+```bash
+npm run reportkit:engine:capabilities                    # the local binary
+npx tsx scripts/reports/engineCheck.mts \
+  --service $URL --token $TOKEN --capabilities *.html    # the deployed one
+```
+
+### 11.4 What is not on any list
+
+The defect that started this was not on a list, because nobody had met it yet.
+So `/render` returns the engine's warnings —
+`X-WeasyPrint-Warnings`, `X-WeasyPrint-Warning-Count` — and CI fails the
+Borrowing Capacity render if the count is not zero. `strict: true` turns any
+warning into a 422 for callers that want it. Before this, every one of those
+lines went to a container's stderr and no caller ever saw one.
+
+Two things the engine does **not** warn about, and how each is caught instead:
+
+- **A `font-family` naming nothing installed.** No log line at all. Caught by
+  the Dockerfile's build-time `fc-list` assertion, by CI's `pdffonts` check on a
+  real report, and now at runtime by `/capabilities`, which asks fontconfig as
+  the unprivileged user that actually renders — a face root can see and uid
+  10001 cannot is a substitution that happens only in production.
+- **A page that is technically correct and badly composed.** Nothing mechanical
+  sees it. That is what `critique.pure.ts`, `measure_pages.py` and the
+  `report-critic` agent are for.

@@ -1,4 +1,4 @@
-# WeasyPrint microservice for premium investment-report PDFs.
+# WeasyPrint microservice for the report design system.
 # Targets Google Cloud Run (or any container host: Fly.io, Railway, Render).
 #
 # Build & deploy (Cloud Run example):
@@ -9,12 +9,27 @@
 #     --memory 2Gi --cpu 2 --concurrency 4 --timeout 600 \
 #     --set-env-vars WEASYPRINT_SERVICE_TOKEN=<long-random-string>
 #
+# ── The engine version is a correctness boundary ─────────────────────────────
+# This image is the only thing that turns a report into a PDF, so the version it
+# installs is the version the stylesheet must be true against — not the one a
+# developer happens to have. While those were 62.3 here and 69 locally, 62.3
+# rejected `width: calc(210mm - 44mm)` as an invalid value, dropped the
+# declaration and rendered on: the cover's masthead row lost the width its
+# `table-layout: fixed` depended on, and the classification and the reference
+# printed as one word. The render succeeded. Nothing was red.
+#
+# `requirements.txt` is therefore mirrored by `PINNED_ENGINE` in
+# `supabase/functions/_shared/reportDesign/engineSupport.pure.ts`, and a spec
+# fails if the two drift.
+#
 # ── Fonts ────────────────────────────────────────────────────────────────────
 # The font list below is a CONTRACT with
 # `supabase/functions/_shared/reportDesign/typography.pure.ts`, asserted by
 # `src/lib/reportDesign/__tests__/reportTypography.spec.ts`, which reads this
 # file. A face a report names must be installed here, or it silently falls back
-# to the engine default — invisible in review, obvious in a client's hands.
+# to the engine default — invisible in review, obvious in a client's hands. The
+# engine does not even warn: a `font-family` naming nothing installed produces
+# no log line at all, which is why this is a build-time assertion.
 #
 # This previously installed `fonts-playfair-display`, `fonts-cormorant-garamond`,
 # `fonts-fraunces` and `fonts-ibm-plex`. **None of the four exists as a binary
@@ -30,22 +45,57 @@
 # Playfair Display and IBM Plex Mono now arrive as COPY-ed TTFs; Cormorant and
 # Fraunces are gone from the type stacks entirely.
 
+# ── Stage 1: build the virtualenv ────────────────────────────────────────────
+# Separated so the compiler and the headers do not travel to production. They
+# are needed only if a dependency has no wheel for this interpreter — today none
+# does, and the day one does, the build must still succeed rather than fail at
+# 3am with a missing `ffi.h`.
+#
 # Pinned to the distribution, not just the Python version. The font contract
-# above is only checkable against a known Debian release, and an unpinned
-# `-slim` silently moves from bookworm to trixie when the tag is rebuilt.
+# is only checkable against a known Debian release, and an unpinned `-slim`
+# silently moves from bookworm to trixie when the tag is rebuilt.
+FROM python:3.12-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# A venv rather than the system site-packages, because a venv is one directory
+# and can be COPY-ed whole into the runtime stage.
+ENV VIRTUAL_ENV=/opt/venv
+RUN python -m venv "$VIRTUAL_ENV"
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt \
+    # Fail here rather than in a client's document: prove the engine imports and
+    # renders inside the image that installed it, before anything else is built
+    # on top of it.
+    && python -c "import weasyprint, pydyf; print('weasyprint', weasyprint.__version__, 'pydyf', pydyf.__version__)"
+
+# ── Stage 2: the runtime image ───────────────────────────────────────────────
 FROM python:3.12-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8080
+    PORT=8080 \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH" \
+    # Non-root has no writable home, and fontconfig falls back to writing a
+    # per-user cache when it cannot use the system one. Point it somewhere
+    # writable so a first render does not spend seconds failing to cache.
+    HOME=/tmp \
+    XDG_CACHE_HOME=/tmp/.cache
 
-# WeasyPrint native deps + the packaged half of the font stack.
+# WeasyPrint's native deps + the packaged half of the font stack. No compiler:
+# every one of these is a shared library the engine dlopen()s at runtime.
 # Every package here is verified present in bookworm AND trixie.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential \
       libpango-1.0-0 libpangoft2-1.0-0 \
       libcairo2 libgdk-pixbuf-2.0-0 \
-      libffi-dev shared-mime-info \
+      libffi8 shared-mime-info \
       fontconfig \
       fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
       fonts-inter fonts-roboto fonts-lato \
@@ -69,11 +119,40 @@ RUN fc-cache -f \
     && fc-match "Playfair Display:italic" | grep -qi "playfair" \
        || { echo "FATAL: Playfair Display italic is not installed"; exit 1; }
 
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /opt/venv /opt/venv
 
+WORKDIR /app
 COPY app.py .
 
+# Unprivileged. The service takes untrusted HTML from an authenticated caller
+# and fetches the resources it names — a narrow surface, but not one to run as
+# uid 0 when the cost of not doing so is three lines.
+RUN useradd --system --no-create-home --uid 10001 weasy \
+    && mkdir -p /tmp/.cache \
+    && chown -R weasy:weasy /app /tmp/.cache
+USER weasy
+
+# Warm the engine in the gunicorn parent, before it forks. WeasyPrint's import
+# and fontconfig's first scan are seconds, and paying them on a client's first
+# report is the difference between a report that arrives and one somebody gives
+# up waiting for. See `warm_up()` in app.py.
+ENV WEASYPRINT_WARMUP=1
+
 EXPOSE 8080
-CMD exec gunicorn --bind :$PORT --workers 2 --threads 4 --timeout 600 app:app
+
+# Liveness from inside the container, so an orchestrator that has no probe of
+# its own still restarts a wedged worker. Python rather than curl: it is already
+# here, and curl would be another package on the attack surface.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD python -c "import os,urllib.request,sys; \
+sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:'+os.environ.get('PORT','8080')+'/healthz', timeout=4).status==200 else 1)"
+
+# `--preload` so the fork happens after the engine is imported and warmed:
+# every worker inherits the warm state instead of repeating it, and the image's
+# memory footprint drops by roughly the size of one engine per worker.
+#
+# `--timeout 600` matches `WEASYPRINT_TIMEOUT_MS` in `weasyprintClient.ts`. A
+# forty-page report with inlined assets is minutes; a shorter timeout turns a
+# slow render into a killed worker.
+CMD exec gunicorn --bind :$PORT --workers 2 --threads 4 --timeout 600 \
+      --preload --graceful-timeout 30 --access-logfile - app:app
