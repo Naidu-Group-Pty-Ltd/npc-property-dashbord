@@ -103,6 +103,21 @@ export interface RenderRequest {
    * less than asked.
    */
   fidelity: ConversionFidelity;
+  /**
+   * Print it as a document rather than as a draft.
+   *
+   * A converted draft carries furniture that exists to stop somebody sending it
+   * to a client by accident: a caution block at the top of the first chapter, a
+   * `converted draft` mark on the cover, and a `From "…"` dek under every
+   * chapter title saying which uploaded section it came from. All three are
+   * right for a draft and wrong for the thing a person converts *in order to
+   * send*, and a first render read as more warning than report.
+   *
+   * So the warning stays, and stops being permanent. Absent — which is every
+   * request written before this existed — means draft, because the safe reading
+   * of an unset flag on a document that might reach a client is the loud one.
+   */
+  final: boolean;
 }
 
 /**
@@ -242,6 +257,10 @@ export function parseConvertRequest(body: unknown): ConvertRequestParse {
         binding: b.binding ?? null,
         designSystemId: rawSystem || null,
         fidelity: readFidelity(b.fidelity),
+        // Strictly `=== true`. A truthy string from a hand-rolled request must
+        // not be what silently strips a document's "not a client document"
+        // warning.
+        final: b.final === true,
       },
     };
   }

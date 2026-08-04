@@ -136,14 +136,47 @@ export function disclaimerFontPt(size: string | null | undefined): number {
   return DISCLAIMER_FONT_PT[key as DisclaimerFontSize] ?? DISCLAIMER_FONT_PT.small;
 }
 
-/** The disclaimer as paragraphs, or `[]` when it is disabled or empty. */
+/** A line that ends mid-sentence was wrapped by an editor, not ended by one. */
+const ENDS_A_SENTENCE = /[.!?:;)"'’”]\s*$/;
+
+/**
+ * The disclaimer as paragraphs, or `[]` when it is disabled or empty.
+ *
+ * ## Why a single newline is not a paragraph
+ *
+ * This split on `/\n\s*\n|\n/`, so *every* newline started a paragraph. The
+ * stored text is hard-wrapped — it was typed into a textarea — and the closing
+ * page printed it as a column of ragged half-lines: "…based on our", then
+ * "expertise and experience in the real estate market. Please be aware…". Read
+ * off a real render; it is the last thing on the last page of every report this
+ * repo produces, in nine formats.
+ *
+ * A blank line is always a paragraph break. A lone newline is one only when the
+ * line before it *finished* — ended on sentence punctuation. Otherwise it is a
+ * wrap and the two halves are joined with a space. That reads both shapes
+ * correctly: the hard-wrapped paragraph, and the disclaimer written as
+ * single-newline-separated sentences, which some tenants have.
+ */
 export function disclaimerParagraphs(
   disclaimer: CompanyDisclaimer | null | undefined,
 ): string[] {
   if (!disclaimer?.is_enabled) return [];
   const cleaned = sanitizeReportText(disclaimer.text);
   if (!cleaned) return [];
-  return cleaned.split(/\n\s*\n|\n/).map((p) => p.trim()).filter(Boolean);
+
+  const out: string[] = [];
+  for (const block of cleaned.split(/\n\s*\n/)) {
+    let current = '';
+    for (const raw of block.split('\n')) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (!current) { current = line; continue; }
+      if (ENDS_A_SENTENCE.test(current)) { out.push(current); current = line; continue; }
+      current = `${current} ${line}`;
+    }
+    if (current) out.push(current);
+  }
+  return out;
 }
 
 /** Everything the closing page needs, resolved once. */

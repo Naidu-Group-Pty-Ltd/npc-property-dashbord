@@ -231,3 +231,44 @@ export function effectiveFamily(stack: string): string | null {
   const installed = new Set<string>(CONTAINER_INSTALLED_FAMILIES);
   return familiesInStack(stack).find((f) => installed.has(f)) ?? null;
 }
+
+// ── Fitting a cover title ───────────────────────────────────────────────────
+
+/**
+ * How hard a cover title has to work to fit.
+ *
+ * `coverTitle` is 56pt Cinzel Bold against a 165mm measure — about a dozen
+ * characters to the line. That is right for *Borrowing Capacity Snapshot* and
+ * wrong for a title three times as long, which sets five lines deep and lands
+ * in the meta block.
+ *
+ * CSS cannot measure a string, so the decision is made here, where it can be
+ * tested, and arrives at the stylesheet as a class. The thresholds are
+ * character counts rather than an em measure because Cinzel sets lowercase as
+ * small capitals, so its advance widths are far more even than a normal face's
+ * and a count is a good enough proxy.
+ */
+export type CoverTitleFit = 'full' | 'medium' | 'long' | 'longest';
+
+export const COVER_TITLE_FITS: readonly CoverTitleFit[] = [
+  'full', 'medium', 'long', 'longest',
+];
+
+/** Multipliers applied to `coverTitle`. One line each, at the measure. */
+export const COVER_TITLE_SCALE: Record<CoverTitleFit, number> = {
+  full: 1,
+  medium: 0.72,
+  long: 0.55,
+  longest: 0.42,
+};
+
+export function coverTitleFit(title: string, subtitle?: string | null): CoverTitleFit {
+  // A subtitle sets at 0.66em under the title and costs a line of its own, so a
+  // title with one has less room before it starts pushing the meta block down.
+  const chars = String(title ?? '').trim().length
+    + (subtitle ? Math.round(String(subtitle).trim().length * 0.66) : 0);
+  if (chars <= 26) return 'full';
+  if (chars <= 46) return 'medium';
+  if (chars <= 72) return 'long';
+  return 'longest';
+}

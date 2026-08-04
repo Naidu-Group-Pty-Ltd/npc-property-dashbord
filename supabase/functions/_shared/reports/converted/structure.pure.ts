@@ -26,7 +26,7 @@
  * candidates for chapters. `MAX_BIND_DEPTH` is what makes that explicit.
  */
 import { markdownToPlainText, renderMarkdown } from '../markdown.pure.ts';
-import { neutraliseUrls } from '../text.pure.ts';
+import { neutraliseUrls, repairFloatArtefacts } from '../text.pure.ts';
 
 /** No template in the record has more than this many sections worth binding. */
 export const MAX_SECTIONS = 80;
@@ -84,6 +84,15 @@ export interface ExtractedStructure {
      * person to wonder why their section list looks different from their PDF.
      */
     labelsFolded: number;
+    /**
+     * Trailing contact / disclaimer sections dropped.
+     *
+     * The one thing the converter throws away, because the design system prints
+     * its own closing page from `global_report_settings` and keeping the
+     * template's copy guarantees the same block twice, a page apart. Counted so
+     * the review screen can say so.
+     */
+    furnitureDropped: number;
   };
 }
 
@@ -117,6 +126,16 @@ const LABEL_HEADING =
   /^(?:section|chapter|part|step|stage|phase|appendix|schedule)?\s*(?:\d{1,3}|[ivxlcdm]{1,6}|one|two|three|four|five|six|seven|eight|nine|ten)?\s*[.:)-]?$/i;
 
 /**
+ * A closing block the design system prints for itself.
+ *
+ * Matched against the *title only*, and only at the very end of a document —
+ * see pass five. Deliberately short: "About us" and "Our process" are content a
+ * template author wrote, and belong in the appendix like everything else.
+ */
+const CLOSING_FURNITURE =
+  /^(?:contact(?:\s+us|\s+details)?|get\s+in\s+touch|disclaimers?|important\s+(?:information|notice|notes?)|legal(?:\s+(?:notice|disclaimer|information))?|general\s+information(?:\s+only)?)$/i;
+
+/**
  * Read an uploaded template's Markdown into sections.
  *
  * Never throws. A source with no headings at all produces one section holding
@@ -125,7 +144,11 @@ const LABEL_HEADING =
  * discover as an empty document.
  */
 export function extractStructure(markdown: string, fallbackTitle = ''): ExtractedStructure {
-  const source = String(markdown ?? '').slice(0, MAX_SOURCE_CHARS);
+  // Float artefacts are repaired here, at the door, so that everything
+  // downstream — the sections, the faithfulness snapshot, the enrichment prompt
+  // and the printed page — is looking at the same string. See
+  // `repairFloatArtefacts`.
+  const source = repairFloatArtefacts(String(markdown ?? '').slice(0, MAX_SOURCE_CHARS));
   const omittedBySource = Math.max(0, String(markdown ?? '').length - source.length);
 
   const lines = source.split('\n');
@@ -136,9 +159,23 @@ export function extractStructure(markdown: string, fallbackTitle = ''): Extracte
     charsOmitted: omittedBySource,
     unstructured: false,
     labelsFolded: 0,
+    furnitureDropped: 0,
   };
 
-  let title = clean(fallbackTitle);
+  // Empty, not the fallback.
+  //
+  // This used to be `clean(fallbackTitle)`, and the fallback is the uploaded
+  // file's name with its suffix removed. Seeding it meant every `if (!title)`
+  // below — including the rule that takes the document's own top-level heading
+  // — was dead code whenever a filename existed, which is always. A real
+  // Snapshot whose `#` heading named the firm and the format printed a cover
+  // reading `Report_Name_Client_Name_2026-08-02` instead, underscores and all:
+  // one unbreakable token, wide enough at cover size to push the cover box past
+  // the trim and drag the masthead and footer off the sheet with it.
+  //
+  // The return already ends `title || clean(fallbackTitle)`, so the fallback
+  // still applies — last, which is what "fallback" means.
+  let title = '';
   let headingCount = 0;
 
   // ── Pass one — every heading with the body it owns ────────────────────────
@@ -265,6 +302,27 @@ export function extractStructure(markdown: string, fallbackTitle = ''): Extracte
     carry = { depth: relative === 1 ? 1 : 2, title: entry.title, body: [...entry.body] };
   }
   if (carry && sections.length < MAX_SECTIONS) push(carry.depth, carry.title, carry.body);
+
+  // ── Pass five — drop the template's own closing furniture ─────────────────
+  //
+  // Every document this renders ends with `renderCompanyPage`: the company
+  // name, the contact rows and the professional disclaimer, taken from
+  // `global_report_settings`. An uploaded template has that page too, and a
+  // transcription brings it back as a final `## Contact Us` section — so the
+  // converted draft printed the contact block as a *chapter*, and then printed
+  // the design system's own version of it on the very next page.
+  //
+  // This is the one place the converter deliberately loses something, and it is
+  // deliberately narrow: the title has to read as furniture, and the section has
+  // to be at the end. A "Contact" section in the middle of a template is
+  // content. The count goes into `notices` so the review screen can say what
+  // happened rather than leaving somebody to notice an absence.
+  while (sections.length) {
+    const last = sections[sections.length - 1];
+    if (!CLOSING_FURNITURE.test(last.title)) break;
+    sections.pop();
+    notices.furnitureDropped += 1;
+  }
 
   if (!headingCount) {
     notices.unstructured = true;

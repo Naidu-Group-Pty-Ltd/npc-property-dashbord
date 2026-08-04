@@ -280,6 +280,109 @@ went nowhere.
 
 ---
 
+## The third round: it worked, and it did not look designed
+
+D1–D5 fixed the pipeline. A render of the same document came back at 17 pages
+with the flagship chapter designed, every callout labelled and the sub-sections
+folded — and was still reported as "not using Claude Design at all", because the
+first page showed the *uploaded filename* running off the edge of the paper.
+
+Worth stating plainly, because it is the lesson rather than the defect: the
+programme had been measuring block counts and page counts, and a document is not
+either of those. Everything below was visible in any render and needed no ledger
+row to find.
+
+**E1 — the cover printed the filename, off the page.** `extractStructure` did
+`let title = clean(fallbackTitle)`, seeding the title with the uploaded file's
+name, so every `if (!title)` after it — including the rule that reads the
+document's own top-level heading — was dead code whenever a filename existed,
+which is always. The return already ended `title || clean(fallbackTitle)`, so
+the seed was pure damage.
+
+Then the second half: a filename is one unbreakable token, underscores are not a
+break opportunity, and `max-width` cannot clip what cannot wrap. At 56pt it blew
+`.report-cover` past the trim, and the masthead and footer — both positioned
+`right: 22mm` against that stretched box — went off the sheet with it. One
+unbreakable word, three broken things: the wrong title, `SERVICESCHANCERY`, and
+`PRIVATE AND CONFIDENTIALAE8DDE86`.
+
+The fix is `overflow-wrap: anywhere` plus `table-layout: fixed` on both cover
+tables, and `coverTitleFit` — a character count in `typography.pure.ts` that
+steps the size down in four stops, because CSS cannot measure a string and a
+title is somebody else's. (`word-break: break-word` was tried and WeasyPrint
+rejects it as an invalid value; `overflow-wrap` is what does the work.) The
+62/38 split on the masthead is not decoration: an even split wrapped a long
+company name onto a second line that landed on the cover rule.
+
+**E2 — every chapter took a page, including the two-line ones.**
+`.chapter { page-break-before: always }` is global to all nine formats and stays
+that way, so a `Warnings` section of one bullet cost a whole sheet. Four of
+seventeen pages carried one to three lines. Consecutive appendix sections under
+`THIN_CHAPTER_LINES` are now packed into one chapter, each under its own
+heading, and the packed chapter names what it holds. A section big enough to
+hold a page keeps its own title — the appendix exists so nothing an uploader
+wrote disappears, and losing the name of a substantial section is a way of
+disappearing it. The decision is taken on the **flat** Markdown cost, never the
+enriched one, for the same id-stability reason as D1.
+
+**E3 — the document said things twice.** Three separate repetitions:
+
+- A `lede` restating the chapter title — *How the capacity is built* as a header
+  and again immediately beneath it. `dropRedundantLede` drops an opening lede
+  that matches the title word for word; one that expands on it stays.
+- The disclaimer as a column of ragged half-lines. `disclaimerParagraphs` split
+  on `/\n\s*\n|\n/`, so every newline of hard-wrapped text started a paragraph.
+  It now breaks on blank lines, and on a lone newline only when the line before
+  it ended on sentence punctuation — which reads both the wrapped paragraph and
+  the sentence-per-line disclaimer correctly. **This is the closing page of
+  every report the repo produces, in nine formats.**
+- The template's own `Contact Us` block printed as a chapter, one page before
+  the design system printed its own closing page. A *trailing* section whose
+  title reads as closing furniture is now dropped and counted in
+  `notices.furnitureDropped`. This is the one place the converter deliberately
+  loses something, and it is narrow on purpose: a "Contact" in the middle of a
+  template is content.
+
+**E4 — it read as a warning about a document rather than as a document.**
+`RenderRequest.final` drops the draft callout, the `converted draft` cover
+eyebrow and mark, the PDF's own title suffix, and the `From "…"` deks. Absent
+means draft, because the safe reading of an unset flag on something that might
+reach a client is the loud one. When it *is* a draft the notice is now a
+`sidenote` rather than a `caution` callout — the same words at a volume that
+does not own the top third of page one.
+
+**E5 — two of the six seeded design systems were the same design system.**
+Chancery's `options` were byte-identical to the NPC Services row's: same preset,
+density, `bodyScale`, `coverStyle`, `tableStyle`, `chapterStyle`,
+`visualIntensity`, every flag. The only thing between them was `neutrals`, and
+until D5 that never reached the render. So somebody picking Chancery got the
+house design and concluded the design system had no effect — correctly.
+`20260826000000_chancery_is_not_the_house_system.sql` gives it the ledger table,
+a compact measure and 98% type, matched on the seeded options so an edited row
+is left alone. `converterRoutes.spec.ts` now parses the migrations and asserts
+no two systems resolve to the same set of decisions.
+
+**E6 — the strict setting was the default, and floats leaked.** The converter
+screen opened on `restructure`, under which the model may not write a single new
+sentence, so a source line like `Stressed: $787,477` survived verbatim beneath a
+sentence that already said it. The screen now opens on `connective`;
+`DEFAULT_FIDELITY` stays `restructure` as the *parse* fallback, which is a
+different question. And `repairFloatArtefacts` rewrites `9.440000000000001%` —
+which a real Snapshot printed in its assumptions table — at **extraction**,
+before the faithfulness snapshot, so the guard and the page compare the same
+string. Normalising later would make the design pass look as though it had
+invented a figure.
+
+### One rule this pass added
+
+**Nothing in `css.pure.ts` may name a company or a client.** Those comments ship
+inside every tenant's PDF; `documentBrand.spec.ts` scans the whole document for
+our own name and caught a comment of mine, and a second comment named a real
+client. Explanatory comments in the stylesheet describe the shape of a failure,
+never who it happened to.
+
+---
+
 ## The design pass
 
 ### What was wrong
@@ -758,11 +861,14 @@ change. Add the drift-guard spec at the same time.
 2. Apply `20260824000000_converter_enrichment.sql`. Additive only — six
    nullable-or-defaulted columns recording the design pass.
    Then `20260825000000_brand_system_neutrals.sql` (a design system's own paper
-   and ink) and `20260825000100_seed_house_design_systems.sql` (the house
-   system and the five voices; idempotent on `slug`).
+   and ink), `20260825000100_seed_house_design_systems.sql` (the house system
+   and the five voices; idempotent on `slug`) and
+   `20260826000000_chancery_is_not_the_house_system.sql` (E5 — a single UPDATE
+   guarded on the seeded options, so an edited row is untouched).
 3. Deploy `convert-template-document` and `generate-brand-design-system`.
    D1–D5 need no migration; D1–D4 are in `_shared` and D5 spans `_shared` and
-   the function, so all five reach production only on a redeploy.
+   the function, so all five reach production only on a redeploy. E1–E4 and E6
+   are `_shared` too and land the same way; only E5 carries a migration.
 
    **`.github/workflows/deploy-supabase-functions.yml` will not do this until
    `SUPABASE_ACCESS_TOKEN` is set.** Without the secret it reports what it would

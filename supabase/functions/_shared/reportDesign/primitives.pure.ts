@@ -23,6 +23,7 @@
  */
 import type { CompanyBlock } from './companyBlock.pure.ts';
 import type { NamedPage } from './page.pure.ts';
+import { coverTitleFit } from './typography.pure.ts';
 
 /**
  * Escape for HTML text and double-quoted attributes.
@@ -201,7 +202,7 @@ export function renderCover(p: CoverProps): string {
       <div class="cover-body">
         ${lockup}
         <div class="cover-eyebrow">— ${escapeHtml(p.eyebrow)}</div>
-        <h1 class="cover-title">${title}</h1>
+        <h1 class="cover-title fit-${coverTitleFit(p.title, p.subtitle)}">${title}</h1>
         ${meta}
       </div>
       ${footer}

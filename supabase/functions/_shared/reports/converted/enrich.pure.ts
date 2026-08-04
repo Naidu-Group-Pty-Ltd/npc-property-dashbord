@@ -739,6 +739,34 @@ export function checkQuota(sourceMarkdown: string, blocks: readonly EnrichedBloc
   };
 }
 
+// ── A lede that is just the title again ─────────────────────────────────────
+
+/** Case, punctuation and spacing removed, so only the words are compared. */
+const bareWords = (v: string): string =>
+  String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Drop an opening `lede` that only restates the chapter's title.
+ *
+ * A real render printed *How the capacity is built* as a chapter header and
+ * then, immediately under it, a lede reading "How the capacity is built". The
+ * model is not wrong to do it — a chapter whose source begins with its own
+ * heading gives it nothing else to open with — but the page says the same thing
+ * twice in two sizes, which is the tell of a document nobody laid out.
+ *
+ * Only the *first* block, and only on an exact word match. A lede that expands
+ * on the title is the thing the lede is for and stays.
+ */
+export function dropRedundantLede(
+  blocks: readonly EnrichedBlock[],
+  chapterTitle: string,
+): EnrichedBlock[] {
+  const first = blocks[0];
+  if (!first || first.kind !== 'lede' || blocks.length < 2) return [...blocks];
+  const title = bareWords(chapterTitle);
+  return title && bareWords(first.text) === title ? blocks.slice(1) : [...blocks];
+}
+
 // ── What is worth asking about ──────────────────────────────────────────────
 
 /** The shape the partition needs. `enrich.ts`'s `ChapterToEnrich` satisfies it. */

@@ -680,6 +680,7 @@ const __corsWrappedHandler = (async (req: Request): Promise<Response> => {
       preparedOn: new Date().toISOString(),
       reference: convertedReference(request.conversionId),
       enriched: enrichment.enriched,
+      final: request.final,
     });
 
     // The page band is advisory for a converted draft and lives in `bandNote`

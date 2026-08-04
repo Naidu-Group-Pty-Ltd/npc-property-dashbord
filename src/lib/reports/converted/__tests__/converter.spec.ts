@@ -18,11 +18,16 @@ import {
   WEAK_MATCH,
 } from '../binding.pure';
 import {
+  APPENDIX_TITLE,
   CHAPTER_FURNITURE_LINES,
   planConvertedChapters,
   renderConvertedDocument,
 } from '../render.pure';
-import { enrichedLines, type EnrichedBlock } from '../enrich.pure';
+import { dropRedundantLede, enrichedLines, type EnrichedBlock } from '../enrich.pure';
+import { buildReportCss } from '../../../../../supabase/functions/_shared/reportDesign/css.pure';
+import { coverTitleFit } from '../../../../../supabase/functions/_shared/reportDesign/typography.pure';
+import { disclaimerParagraphs } from '../../../../../supabase/functions/_shared/reportDesign/companyBlock.pure';
+import { repairFloatArtefacts } from '../../../../../supabase/functions/_shared/reports/text.pure';
 import {
   auditBrandDesignSystem,
   describeAuditProblems,
@@ -387,6 +392,7 @@ describe('the converted document', () => {
       headingCount: 1,
       notices: {
         flattened: 0, tooShort: 0, charsOmitted: 0, unstructured: false, labelsFolded: 0,
+        furnitureDropped: 0,
       },
     };
     const chapters = planConvertedChapters(orphan, {
@@ -417,7 +423,33 @@ describe('the converted document', () => {
     // A converted document has the same cover, typography and closing page as a
     // finished one. Without this somebody sends it to a client by accident.
     const html = render().html;
-    expect(html).toContain('This is a converted draft, not a client document');
+    expect(html).toContain('Converted draft — not a client document');
+    // Beside the text, not on top of it. It arrived as a `caution` callout —
+    // the loudest primitive there is — at the head of chapter one, so the first
+    // thing anybody read was a warning about the document rather than the
+    // document. Same words, quieter.
+    expect(html).toContain('class="sidenote"');
+    expect(html).not.toContain('class="callout tone-caution"');
+  });
+
+  it('prints as a document, not a draft, when the render says it is final', () => {
+    // Right up to the moment somebody decides the binding is correct, and wrong
+    // from then on.
+    const html = renderConvertedDocument({
+      structure, plan, palette,
+      company: COMPANY, masthead: 'Harbour & Vale', systemName: 'Harbour Editorial',
+      preparedOn: '2026-08-04T00:00:00.000Z',
+      final: true,
+    }).html;
+    expect(html).not.toContain('Converted draft');
+    expect(html).not.toContain('converted draft');
+    // The provenance deks go with it — `From "Household Income"` is useful while
+    // checking a binding and noise on a document being sent out.
+    expect(html).not.toContain('From &quot;');
+    expect(html).not.toContain('From "');
+    // And it is still the same document otherwise.
+    expect(html).toContain('Borrowing Capacity Snapshot');
+    expect(html).toContain('class="report-cover');
   });
 
   it('says which format it was bound to, by one name', () => {
@@ -592,5 +624,210 @@ describe('brand design systems', () => {
     ]);
     expect(described).toContain('accentOnPaper');
     expect(described).toContain('1.62');
+  });
+});
+
+describe('what the cover is given', () => {
+  it('prefers the document\'s own title to the uploaded file\'s name', () => {
+    // The defect somebody saw first, because it is the first page. `title` was
+    // *seeded* with the fallback, so every `if (!title)` below it — including
+    // the rule that reads the document's own top-level heading — was dead code
+    // whenever a filename existed, which is always.
+    const s = extractStructure(
+      `# Borrowing Capacity Snapshot\n\n## Household Income\n\n${table}`,
+      'Report_Name_Client_Name_2026-08-02',
+    );
+    expect(s.title).toBe('Borrowing Capacity Snapshot');
+  });
+
+  it('still falls back to the file name when the source names nothing', () => {
+    const s = extractStructure(`## One\n\n${prose()}\n\n## Two\n\n${prose()}`, 'Quarterly_Review');
+    expect(s.title).toBe('Quarterly_Review');
+  });
+
+  it('steps the title down rather than letting it run off the page', () => {
+    // A cover title is somebody else's string and cannot be trusted to be
+    // short. CSS cannot measure one, so the step is decided here and arrives at
+    // the stylesheet as a class.
+    expect(coverTitleFit('Snapshot')).toBe('full');
+    expect(coverTitleFit('Borrowing Capacity Snapshot')).toBe('medium');
+    expect(coverTitleFit('Naidu Property Consulting — Borrowing Capacity Snapshot')).toBe('long');
+    expect(coverTitleFit(
+      'Borrowing Capacity Snapshot and Serviceability Assessment for the 2026 Financial Year',
+    )).toBe('longest');
+    // A subtitle costs room too, so the same title fits harder with one.
+    expect(coverTitleFit('Borrowing Capacity Snapshot')).toBe('medium');
+    expect(coverTitleFit('Borrowing Capacity Snapshot', 'Prepared August 2026 for a client'))
+      .toBe('long');
+  });
+
+  it('cannot be pushed outside the trim by a word that will not break', () => {
+    // The mechanism, not the symptom: `max-width` cannot clip what cannot wrap,
+    // and the overflow dragged the masthead and the footer off the sheet with
+    // it. Both tables are fixed for the same reason.
+    const css = buildReportCss({
+      palette: resolveReportPalette({ preset: 'signature', brandHex: '#1F4E79' }),
+      options: null,
+      masthead: 'A Very Long Company Name Indeed',
+    });
+    expect(css).toContain('overflow-wrap: anywhere');
+    expect(css).toContain('table-layout: fixed');
+    for (const fit of ['medium', 'long', 'longest']) {
+      expect(css, fit).toContain(`.fit-${fit}`);
+    }
+  });
+
+  it('names no company and no client in the stylesheet it ships', () => {
+    // These comments travel inside every tenant's PDF. `documentBrand.spec.ts`
+    // catches our own name; this catches the habit that put it there.
+    const css = buildReportCss({
+      palette: resolveReportPalette({ preset: 'signature' }), options: null, masthead: 'X',
+    });
+    for (const leak of ['Naidu', 'NAIDU', 'npcservices']) {
+      expect(css, leak).not.toContain(leak);
+    }
+  });
+});
+
+describe('the appendix stops printing near-empty pages', () => {
+  const thin = (title: string) => `## ${title}\n\n- One short bullet that is long enough to survive.`;
+
+  it('packs consecutive thin sections into one chapter', () => {
+    // Four of seventeen pages of a real render carried one to three lines each,
+    // because a chapter is a page and every unbound section became a chapter.
+    const s = extractStructure([
+      '# Assessment',
+      `## Household Income\n\n${table}`,
+      thin('Recommendations'),
+      thin('Warnings'),
+    ].join('\n\n'));
+    const p = proposeBinding('borrowing-capacity', s);
+    const appendix = planConvertedChapters(s, p).filter((c) => c.kind === 'appendix');
+    expect(appendix).toHaveLength(1);
+    expect(appendix[0].title).toBe(APPENDIX_TITLE);
+    expect(appendix[0].packedSections).toBe(2);
+    // Packed, not lost — each keeps its own heading, in source order.
+    expect(appendix[0].markdown).toContain('## Recommendations');
+    expect(appendix[0].markdown).toContain('## Warnings');
+    expect(appendix[0].markdown.indexOf('Recommendations'))
+      .toBeLessThan(appendix[0].markdown.indexOf('Warnings'));
+  });
+
+  it('leaves a section that can hold a page under its own name', () => {
+    // The appendix exists so nothing an uploader wrote disappears, and losing
+    // the name of a substantial section is a way of disappearing it.
+    const s = extractStructure([
+      '# Assessment',
+      `## Household Income\n\n${table}`,
+      `## Executive Summary\n\n${prose(6)}`,
+      thin('Warnings'),
+    ].join('\n\n'));
+    const p = proposeBinding('borrowing-capacity', s);
+    const appendix = planConvertedChapters(s, p).filter((c) => c.kind === 'appendix');
+    expect(appendix.map((c) => c.title)).toContain('Executive Summary');
+    expect(appendix.find((c) => c.title === 'Executive Summary')!.packedSections).toBeUndefined();
+    // Ids stay contiguous whatever the packing did.
+    expect(appendix.map((c) => c.id)).toEqual(appendix.map((_, i) => `cv.a${i}`));
+  });
+});
+
+describe('the document stops repeating itself', () => {
+  it('drops a lede that only restates the chapter title', () => {
+    // A real render printed "How the capacity is built" as a chapter header and
+    // again, immediately under it, as a lede. Two sizes, one sentence.
+    const blocks: EnrichedBlock[] = [
+      { kind: 'lede', text: 'How the capacity is built' },
+      { kind: 'kpi', cells: [{ label: 'Rate', value: '9.44%' }, { label: 'Term', value: '30 years' }] },
+    ];
+    expect(dropRedundantLede(blocks, 'How the capacity is built').map((b) => b.kind)).toEqual(['kpi']);
+    // Punctuation and case are not the difference.
+    expect(dropRedundantLede(
+      [{ kind: 'lede', text: 'How the Capacity Is Built.' }, blocks[1]], 'How the capacity is built',
+    )).toHaveLength(1);
+  });
+
+  it('keeps a lede that says more than the title', () => {
+    const blocks: EnrichedBlock[] = [
+      { kind: 'lede', text: 'How the capacity is built, from gross income to the assessed maximum.' },
+      { kind: 'kpi', cells: [{ label: 'Rate', value: '9.44%' }, { label: 'Term', value: '30 years' }] },
+    ];
+    expect(dropRedundantLede(blocks, 'How the capacity is built')).toHaveLength(2);
+  });
+
+  it('drops the template\'s own contact block, which the design system prints', () => {
+    // The one thing the converter throws away: a converted draft printed the
+    // uploaded contact section as a chapter and then the design system's own
+    // closing page one page later.
+    const s = extractStructure([
+      '# Assessment',
+      `## Household Income\n\n${table}`,
+      `## Contact Us\n\n${prose()}`,
+    ].join('\n\n'));
+    expect(s.sections.map((x) => x.title)).not.toContain('Contact Us');
+    expect(s.notices.furnitureDropped).toBe(1);
+  });
+
+  it('keeps a contact section that is not at the end', () => {
+    // Narrow on purpose. A "Contact" in the middle of a template is content.
+    const s = extractStructure([
+      '# Assessment',
+      `## Contact Us\n\n${prose()}`,
+      `## Household Income\n\n${table}`,
+    ].join('\n\n'));
+    expect(s.sections.map((x) => x.title)).toContain('Contact Us');
+    expect(s.notices.furnitureDropped).toBe(0);
+  });
+
+  it('reads a hard-wrapped disclaimer as paragraphs, not as a column of scraps', () => {
+    // The last thing on the last page of every report this repo produces, in
+    // nine formats. It split on every newline, so an editor's wrapping printed
+    // as ragged half-lines.
+    const paragraphs = disclaimerParagraphs({
+      is_enabled: true,
+      text: 'As a Professional Property Consultant, we provide information based on our\n'
+        + 'expertise and experience in the market. This is not financial advice.\n'
+        + 'Always conduct your own research and due diligence before you\n'
+        + 'transact.',
+      font_size: 'small',
+    } as never);
+    expect(paragraphs).toHaveLength(2);
+    expect(paragraphs[0]).toContain('based on our expertise and experience');
+    expect(paragraphs[1]).toContain('your own research and due diligence before you transact');
+  });
+
+  it('still treats a blank line as a paragraph break', () => {
+    const paragraphs = disclaimerParagraphs({
+      is_enabled: true, text: 'First point, unfinished\nand its ending.\n\nSecond point.', font_size: 'small',
+    } as never);
+    expect(paragraphs).toEqual(['First point, unfinished and its ending.', 'Second point.']);
+  });
+});
+
+describe('figures transcribed out of a legacy PDF', () => {
+  it('repairs a float artefact rather than printing it to a client', () => {
+    // `9.440000000000001%` is what a rate looks like when it was summed before
+    // it was displayed, and a real Snapshot printed exactly that in its
+    // assumptions table. The converter transcribes what it is given.
+    expect(repairFloatArtefacts('| Assessment Rate | 9.440000000000001% |'))
+      .toBe('| Assessment Rate | 9.44% |');
+    expect(repairFloatArtefacts('a surplus of 0.30000000000000004')).toBe('a surplus of 0.3');
+  });
+
+  it('leaves an ordinary figure exactly as it found it', () => {
+    for (const kept of ['$856,932', '9.44%', '$203,958.752/yr', '30 years', 'v1.2.3', '10.6x']) {
+      expect(repairFloatArtefacts(kept), kept).toBe(kept);
+    }
+  });
+
+  it('repairs before the faithfulness snapshot, not after', () => {
+    // The order is the whole point. Normalising later would leave the guard
+    // comparing `9.44` against a chapter that says `9.440000000000001`, and it
+    // would throw the chapter away for inventing a figure.
+    const s = extractStructure(
+      '# T\n\n## Rates\n\n| Assumption | Basis |\n| --- | --- |\n'
+      + '| Assessment Rate | 9.440000000000001% |\n| Loan Term | 30 years |',
+    );
+    expect(s.sections[0].markdown).toContain('9.44%');
+    expect(s.sections[0].markdown).not.toContain('9.440000000000001');
   });
 });

@@ -27,6 +27,7 @@
  */
 import {
   checkQuota,
+  dropRedundantLede,
   ENRICHMENT_JSON_SCHEMA,
   enrichedText,
   enrichmentPrompt,
@@ -167,8 +168,11 @@ async function enrichChapter(
       return { id: chapter.id, blocks: [], notes, attempts: attempt };
     }
 
-    const { blocks, notes: readNotes } = parseEnrichment(answer.raw);
+    const { blocks: read, notes: readNotes } = parseEnrichment(answer.raw);
     notes.push(...readNotes);
+    // Done here rather than in the reader because the reader is handed one
+    // chapter's blocks and knows nothing about the header printed above them.
+    const blocks = dropRedundantLede(read, chapter.title);
     if (!blocks.length) {
       if (attempt === 2) return { id: chapter.id, blocks: [], notes, attempts: attempt };
       prompt = enrichmentRetryPrompt(
