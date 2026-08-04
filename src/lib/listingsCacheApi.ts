@@ -13,6 +13,25 @@
  * because a cache was cold is worse than a slow one.
  */
 import type { PropertyListing } from '@/lib/airtable';
+
+/**
+ * Display name → the key the deployed cache stores rows under.
+ *
+ * The server's allowlist is env-driven and its sync cron sends no table name at
+ * all, so everything is keyed by the Airtable table ID. The UI speaks the human
+ * name. Sending the name gets `table_not_permitted`, the client silently falls
+ * back to the ~15-page proxy walk, and the whole cache — 1,441 rows, kept warm
+ * on a 10-minute cron — goes unread by the one page it was built for. That is
+ * how production ran for two days without anyone seeing an error.
+ */
+const TABLE_KEY_ALIASES: Record<string, string> = {
+  'Property Intake Master': 'tblWIg5cs85O30pcY',
+};
+
+function toTableKey(tableName?: string): string | undefined {
+  if (!tableName) return undefined;
+  return TABLE_KEY_ALIASES[tableName] ?? tableName;
+}
 import { projectAirtableRecord } from '@/lib/airtableListingTransform';
 import { invokeSecureFunction } from '@/lib/secureInvoke';
 
@@ -60,11 +79,12 @@ export const listingsCacheApi = {
    * synced; that is a real answer.
    */
   async read(tableName?: string): Promise<CachedListingsResult | null> {
+    const tableKey = toTableKey(tableName);
     let data: CacheReadResponse | null = null;
     try {
       const response = await invokeSecureFunction<CacheReadResponse>('listings-cache', {
         op: 'read',
-        ...(tableName ? { tableName } : {}),
+        ...(tableKey ? { tableName: tableKey } : {}),
       });
       if (response.error) {
         console.warn('[listingsCache] read failed, falling back to Airtable', response.error.message);
@@ -74,6 +94,19 @@ export const listingsCacheApi = {
     } catch (error) {
       console.warn('[listingsCache] read threw, falling back to Airtable', error);
       return null;
+    }
+
+    if (data?.error === 'table_not_permitted' && tableKey) {
+      // The alias missed — the server allowlists something else. Its own
+      // default table is by definition allowlisted and is the table the sync
+      // cron fills, so asking with no name at all is always answerable. One
+      // retry, not a loop.
+      try {
+        const retry = await invokeSecureFunction<CacheReadResponse>('listings-cache', { op: 'read' });
+        data = retry.error ? null : (retry.data ?? null);
+      } catch {
+        data = null;
+      }
     }
 
     if (!data || data.success === false || data.error) {

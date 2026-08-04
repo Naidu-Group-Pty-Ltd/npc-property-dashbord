@@ -428,6 +428,16 @@ class PropertyDataService {
       || raw.Images || raw.Property_Images || raw.property_images 
       || raw.Attachments || raw.attachments || raw.Photos || raw.photos || [];
 
+    // Legacy server projections stamp literal sentinels instead of nulls. The
+    // current projection stopped, but the deployed proxy can lag this bundle by
+    // days, and every consumer downstream — dedup, facets, the contact
+    // resolver, the cards — is written for null-means-unknown. Scrub at the
+    // door so one stale server cannot resurrect "Unknown Agent" in the UI.
+    const scrub = (value: unknown): string | undefined => {
+      if (typeof value !== 'string') return value as undefined;
+      return /^unknown(\s+(address|suburb|agent|agency))?$/i.test(value.trim()) ? undefined : value;
+    };
+
     // Resolve floorplans from multiple possible field names
     const resolvedFloorplans = listing.floorplans 
       || raw.Floorplans || raw.Floor_Plans || raw.floor_plans 
@@ -435,14 +445,22 @@ class PropertyDataService {
 
     return {
       ...listing,
+      address: scrub(listing.address),
+      agentName: scrub((listing as any).agentName),
+      agencyName: scrub((listing as any).agencyName),
       propertyType: this.standardizePropertyType(listing.propertyType),
-      suburb: this.standardizeSuburb(listing.suburb || listing.location),
+      suburb: this.standardizeSuburb(scrub(listing.suburb) || scrub(listing.location)),
       price: this.standardizePrice(listing.price),
       beds: this.standardizeBedBath(listing.beds || listing.bedrooms),
       baths: this.standardizeBedBath(listing.baths || listing.bathrooms),
       receivedAt: listing.receivedAt || listing.createdAt || listing.createdTime,
-      // Normalize images/floorplans - Airtable returns attachment objects or URL strings
-      images: this.normalizeAttachments(resolvedImages),
+      // Attachment OBJECTS pass through untouched; only non-arrays are dropped.
+      // Flattening them to bare URLs (the old behaviour) destroyed the stable
+      // attachment id, and Airtable rotates attachment URLs roughly two-hourly —
+      // so the image pipeline saw a "new" set every rotation and re-harvested
+      // bytes it already stored. `normaliseImageCandidates` handles both shapes
+      // and keeps the id as the identity.
+      images: Array.isArray(resolvedImages) ? resolvedImages.filter(Boolean) : [],
       floorplans: this.normalizeAttachments(resolvedFloorplans),
       dataQuality: this.calculateDataQualityScore(listing),
       isValidPrice: this.isValidPrice(listing.price),

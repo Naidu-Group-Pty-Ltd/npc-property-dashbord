@@ -207,6 +207,33 @@ whenever a filter changed the distribution. The four hues are chosen to be
 *distinguishable* — the brand ramp and `warning` are both amber here, so
 `success` carries the middle band.
 
+## Seeding images without a deploy (2026-08-04)
+
+The enrichment functions could not be deployed (no `SUPABASE_ACCESS_TOKEN`
+available anywhere the code runs), so the first photographs were put through the
+*deployed* pipeline instead of the waiting one:
+
+1. `scripts/listings/seed-listing-images.mjs` scraped the newest 320 listings'
+   own source pages with the repo's `listingScrape.pure.ts` — 232 pages
+   reachable, **80 records seeded** after filtering pixels, headshots, homepage
+   furniture, award badges and multi-property index pages.
+2. The URLs were written into Airtable's **`Listing Images`** attachment field —
+   which makes Airtable download and re-host the bytes itself, so link rot dies
+   at the system of record.
+3. The cache sync mirrors the attachments on its next 10-minute walk; the client
+   hands them to the deployed `listing-images` `op:'resolve'` as harvest
+   candidates; the deployed harvester stores them in the bucket and signs URLs.
+
+No function deploy anywhere in that chain. Two client bugs had to die for it to
+flow: the cache read sent the table *name* where the deployed server allowlists
+only the table *id* (so every page load silently fell back to the legacy proxy —
+sentinels, 889 records, no attachments), and `standardizeListing` flattened
+attachment objects to bare URLs, discarding the stable id that stops the
+two-hourly Airtable URL rotation from re-harvesting bytes already stored.
+
+The seeder stays useful until the sweep deploys — and afterwards as a bulk
+backfill tool. The remaining ~970 linked records are one `worklist.json` away.
+
 ## Contacting the agent
 
 Enrichment exists so that someone can act on a listing, and the action is almost
