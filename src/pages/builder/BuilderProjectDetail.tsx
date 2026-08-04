@@ -300,10 +300,12 @@ export default function BuilderProjectDetail() {
               ) : parties.map((party) => (
                 <div key={party.id} className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border/60 p-4">
                   <div className="min-w-0">
-                    <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    {/* A div, not a p: Badge renders a div, and a div inside a
+                        p is invalid HTML that the browser silently reflows. */}
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
                       <span className="truncate">{party.name}</span>
                       {party.is_primary_contact ? <Badge variant="outline">Primary</Badge> : null}
-                    </p>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {PARTY_ROLE_LABELS[party.role] || party.role}
                       {party.organisation ? ` · ${party.organisation}` : ''}

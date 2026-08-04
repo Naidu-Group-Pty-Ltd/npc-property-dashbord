@@ -188,8 +188,8 @@ export const AVAILABILITY_STATUS_LABELS: Record<BuilderAvailabilityStatus, strin
 /** Semantic tokens only — no raw palette classes (repository style rule). */
 export const AVAILABILITY_STATUS_CLASSES: Record<BuilderAvailabilityStatus, string> = {
   available: 'border-primary/50 text-primary',
-  on_hold: 'border-accent/60 text-accent-foreground',
-  reserved: 'border-accent/60 text-accent-foreground',
+  on_hold: 'border-accent/60 text-accent',
+  reserved: 'border-accent/60 text-accent',
   contracted: 'border-primary/60 text-primary',
   settled: 'border-border text-muted-foreground',
   withdrawn: 'border-destructive/50 text-destructive',
@@ -208,7 +208,7 @@ export const RELEASE_STATUS_LABELS: Record<BuilderReleaseStatus, string> = {
 
 export const RELEASE_STATUS_CLASSES: Record<BuilderReleaseStatus, string> = {
   unreleased: 'border-border text-muted-foreground',
-  coming_soon: 'border-accent/60 text-accent-foreground',
+  coming_soon: 'border-accent/60 text-accent',
   released: 'border-primary/50 text-primary',
   sold_out: 'border-border text-muted-foreground',
 };

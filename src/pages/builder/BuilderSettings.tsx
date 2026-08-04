@@ -204,11 +204,13 @@ export default function BuilderSettings() {
                 <div className="flex min-w-0 items-start gap-3">
                   <MonitorSmartphone className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                   <div className="min-w-0">
-                    <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    {/* A div, not a p: Badge renders a div, and a div inside a
+                        p is invalid HTML that the browser silently reflows. */}
+                    <div className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
                       <span className="truncate">{session.device_label || 'Unknown device'}</span>
                       {isCurrent ? <Badge variant="outline">This device</Badge> : null}
                       {session.revoked_at ? <Badge variant="secondary">Revoked</Badge> : null}
-                    </p>
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       Last used {new Date(session.last_used_at).toLocaleString()}
                       {session.revoked_at ? ` · ${session.revoked_reason || 'revoked'}` : ''}

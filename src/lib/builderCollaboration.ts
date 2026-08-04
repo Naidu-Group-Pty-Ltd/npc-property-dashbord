@@ -205,7 +205,7 @@ export const TASK_STATUS_CLASSES: Record<BuilderTaskStatus, string> = {
 export const TASK_PRIORITY_CLASSES: Record<BuilderTaskPriority, string> = {
   low: 'border-border text-muted-foreground',
   normal: 'border-border text-muted-foreground',
-  high: 'border-accent/60 text-accent-foreground',
+  high: 'border-accent/60 text-accent',
   urgent: 'border-destructive/60 text-destructive',
 };
 

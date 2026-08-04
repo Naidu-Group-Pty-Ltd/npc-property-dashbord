@@ -223,13 +223,13 @@ export const DEFECT_SEVERITY_LABELS: Record<BuilderDefectSeverity, string> = {
 export const DEFECT_SEVERITY_CLASSES: Record<BuilderDefectSeverity, string> = {
   cosmetic: 'border-border text-muted-foreground',
   minor: 'border-border text-muted-foreground',
-  major: 'border-accent/60 text-accent-foreground',
+  major: 'border-accent/60 text-accent',
   critical: 'border-destructive/60 text-destructive',
 };
 
 export const DEFECT_STATUS_CLASSES: Record<BuilderDefectStatus, string> = {
   open: 'border-destructive/50 text-destructive',
-  acknowledged: 'border-accent/60 text-accent-foreground',
+  acknowledged: 'border-accent/60 text-accent',
   in_rectification: 'border-primary/50 text-primary',
   rectified: 'border-primary/60 text-primary',
   verified: 'border-primary/60 text-primary',
